@@ -1,24 +1,29 @@
+from dataclasses import dataclass
 from functools import cached_property
 import os
 
 import numpy as np
 from openai import OpenAI
 
-from dimos.models.vl.base import VlModel
+from dimos.models.vl.base import VlModel, VlModelConfig
 from dimos.msgs.sensor_msgs import Image
 
 
-class QwenVlModel(VlModel):
-    _model_name: str
-    _api_key: str | None
+@dataclass
+class QwenVlModelConfig(VlModelConfig):
+    """Configuration for Qwen VL model."""
 
-    def __init__(self, api_key: str | None = None, model_name: str = "qwen2.5-vl-72b-instruct") -> None:
-        self._model_name = model_name
-        self._api_key = api_key
+    model_name: str = "qwen2.5-vl-72b-instruct"
+    api_key: str | None = None
+
+
+class QwenVlModel(VlModel):
+    default_config = QwenVlModelConfig
+    config: QwenVlModelConfig
 
     @cached_property
     def _client(self) -> OpenAI:
-        api_key = self._api_key or os.getenv("ALIBABA_API_KEY")
+        api_key = self.config.api_key or os.getenv("ALIBABA_API_KEY")
         if not api_key:
             raise ValueError(
                 "Alibaba API key must be provided or set in ALIBABA_API_KEY environment variable"
@@ -41,10 +46,13 @@ class QwenVlModel(VlModel):
 
             image = Image.from_numpy(image)
 
+        # Apply auto_resize if configured
+        image, _ = self._prepare_image(image)
+
         img_base64 = image.to_base64()
 
         response = self._client.chat.completions.create(
-            model=self._model_name,
+            model=self.config.model_name,
             messages=[
                 {
                     "role": "user",
@@ -60,3 +68,8 @@ class QwenVlModel(VlModel):
         )
 
         return response.choices[0].message.content  # type: ignore[return-value]
+
+    def stop(self) -> None:
+        """Release the OpenAI client."""
+        if "_client" in self.__dict__:
+            del self.__dict__["_client"]

@@ -32,7 +32,7 @@ from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("test_object_tracking_module")
+logger = setup_logger()
 
 # Suppress verbose Foxglove bridge warnings
 import logging

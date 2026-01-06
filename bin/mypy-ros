@@ -1,0 +1,19 @@
+#!/bin/bash
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+cd "$ROOT"
+
+main() {
+  if [ -z "$(docker images -q dimos-ros-dev)" ]; then
+    (cd docker/ros; docker build -t dimos-ros .)
+    docker build -t dimos-ros-python --build-arg FROM_IMAGE=dimos-ros -f docker/python/Dockerfile .
+    docker build -t dimos-ros-dev --build-arg FROM_IMAGE=dimos-ros-python -f docker/dev/Dockerfile .
+  fi
+
+  docker run --rm -v $(pwd):/app -w /app dimos-ros-dev bash -c "source /opt/ros/humble/setup.bash && MYPYPATH=/opt/ros/humble/lib/python3.10/site-packages mypy dimos"
+}
+
+main "$@"

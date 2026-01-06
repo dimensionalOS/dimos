@@ -43,7 +43,7 @@ from dimos.perception.pointcloud.utils import extract_centroids_from_masks
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.manipulation.visual_servoing.detection3d")
+logger = setup_logger()
 
 
 class Detection3DProcessor:

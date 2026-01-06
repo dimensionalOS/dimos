@@ -35,17 +35,16 @@ from dimos.simulation.mujoco.constants import (
     DEPTH_CAMERA_FOV,
     LIDAR_FPS,
     LIDAR_RESOLUTION,
-    STEPS_PER_FRAME,
     VIDEO_FPS,
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
 )
 from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud
-from dimos.simulation.mujoco.model import load_model
+from dimos.simulation.mujoco.model import load_model, load_scene_xml
 from dimos.simulation.mujoco.shared_memory import ShmReader
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class MockController:
@@ -76,12 +75,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
     if robot_name == "unitree_go2":
         robot_name = "unitree_go1"
 
-    mujoco_room = getattr(config, "mujoco_room", "office1")
-    if mujoco_room is None:
-        mujoco_room = "office1"
-
     controller = MockController(shm)
-    model, data = load_model(controller, robot=robot_name, scene=mujoco_room)
+    model, data = load_model(controller, robot=robot_name, scene_xml=load_scene_xml(config))
 
     if model is None or data is None:
         raise ValueError("Failed to load MuJoCo model: model or data is None")
@@ -94,7 +89,9 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         case _:
             z = 0
 
-    data.qpos[0:3] = [-1, 1, z]
+    pos = config.mujoco_start_pos_float
+
+    data.qpos[0:3] = [pos[0], pos[1], z]
 
     mujoco.mj_forward(model, data)
 
@@ -129,11 +126,16 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         video_interval = 1.0 / VIDEO_FPS
         lidar_interval = 1.0 / LIDAR_FPS
 
+        m_viewer.cam.lookat = config.mujoco_camera_position_float[0:3]
+        m_viewer.cam.distance = config.mujoco_camera_position_float[3]
+        m_viewer.cam.azimuth = config.mujoco_camera_position_float[4]
+        m_viewer.cam.elevation = config.mujoco_camera_position_float[5]
+
         while m_viewer.is_running() and not shm.should_stop():
             step_start = time.time()
 
             # Step simulation
-            for _ in range(STEPS_PER_FRAME):
+            for _ in range(config.mujoco_steps_per_frame):
                 mujoco.mj_step(model, data)
 
             m_viewer.sync()

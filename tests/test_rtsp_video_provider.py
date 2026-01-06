@@ -25,7 +25,7 @@ from dimos.stream.video_provider import get_scheduler
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
-logger = setup_logger("tests.test_rtsp_video_provider")
+logger = setup_logger()
 
 import os
 import sys

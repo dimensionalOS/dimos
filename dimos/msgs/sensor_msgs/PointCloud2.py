@@ -30,11 +30,11 @@ from dimos.msgs.geometry_msgs import Vector3
 
 # Import ROS types
 try:
-    from sensor_msgs.msg import (  # type: ignore[attr-defined]
+    from sensor_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
         PointCloud2 as ROSPointCloud2,
         PointField as ROSPointField,
     )
-    from std_msgs.msg import Header as ROSHeader  # type: ignore[attr-defined]
+    from std_msgs.msg import Header as ROSHeader  # type: ignore[attr-defined, import-untyped]
 
     ROS_AVAILABLE = True
 except ImportError:

@@ -14,10 +14,11 @@
 
 import pytest
 
+from dimos.mapping.pointclouds.accumulators.general import _splice_cylinder
 from dimos.robot.unitree_webrtc.testing.helpers import show3d
 from dimos.robot.unitree_webrtc.testing.mock import Mock
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.map import Map, splice_sphere
+from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.utils.testing import SensorReplay
 
 
@@ -48,7 +49,7 @@ def test_reconstruction_with_realtime_vis() -> None:
     for frame in mock.iterate():
         map.add_frame(frame)
 
-    show3d(map.pointcloud, title="Reconstructed Map").run()
+    show3d(map.o3d_geometry, title="Reconstructed Map").run()
 
 
 @pytest.mark.vis
@@ -56,7 +57,7 @@ def test_splice_vis() -> None:
     mock = Mock("test")
     target = mock.load("a")
     insert = mock.load("b")
-    show3d(splice_sphere(target.pointcloud, insert.pointcloud, shrink=0.7)).run()
+    show3d(_splice_cylinder(target.pointcloud, insert.pointcloud, shrink=0.7)).run()
 
 
 @pytest.mark.vis
@@ -69,32 +70,35 @@ def test_robot_vis() -> None:
     for frame in mock.iterate():
         map.add_frame(frame)
 
-    show3d(map.pointcloud, title="global dynamic map test").run()
+    show3d(map.o3d_geometry, title="global dynamic map test").run()
 
 
-def test_robot_mapping() -> None:
-    lidar_replay = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
+@pytest.fixture
+def map_():
     map = Map(voxel_size=0.5)
+    yield map
+    map.stop()
+
+
+def test_robot_mapping(map_) -> None:
+    lidar_replay = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
 
     # Mock the output streams to avoid publishing errors
     class MockStream:
         def publish(self, msg) -> None:
             pass  # Do nothing
 
-    map.local_costmap = MockStream()
-    map.global_costmap = MockStream()
-    map.global_map = MockStream()
+    map_.global_costmap = MockStream()
+    map_.global_map = MockStream()
 
     # Process all frames from replay
     for frame in lidar_replay.iterate():
-        map.add_frame(frame)
+        map_.add_frame(frame)
 
     # Check the built map
-    global_map = map.to_lidar_message()
+    global_map = map_.to_lidar_message()
     pointcloud = global_map.pointcloud
 
     # Verify map has points
     assert len(pointcloud.points) > 0
     print(f"Map contains {len(pointcloud.points)} points")
-
-    map._close_module()

@@ -18,8 +18,6 @@ from enum import Enum
 import threading
 import time
 
-import lcm
-
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 
 
@@ -133,7 +131,6 @@ class LCMSpy(LCMService, Topic):
         super().__init__(**kwargs)
         Topic.__init__(self, name="total", history_window=self.config.topic_history_window)  # type: ignore[attr-defined]
         self.topic = {}  # type: ignore[assignment]
-        self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
 
     def start(self) -> None:
         super().start()

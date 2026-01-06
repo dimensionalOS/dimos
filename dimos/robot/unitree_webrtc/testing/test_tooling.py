@@ -12,49 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
 import time
 
-from dotenv import load_dotenv
 import pytest
 
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.reactive import backpressure
-from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
-
-
-@pytest.mark.tool
-def test_record_all() -> None:
-    from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
-
-    load_dotenv()
-    robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
-
-    print("Robot is standing up...")
-
-    robot.standup()
-
-    lidar_store = TimedSensorStorage("unitree/lidar")
-    odom_store = TimedSensorStorage("unitree/odom")
-    video_store = TimedSensorStorage("unitree/video")
-
-    lidar_store.save_stream(robot.raw_lidar_stream()).subscribe(print)
-    odom_store.save_stream(robot.raw_odom_stream()).subscribe(print)
-    video_store.save_stream(robot.video_stream()).subscribe(print)
-
-    print("Recording, CTRL+C to kill")
-
-    try:
-        while True:
-            time.sleep(0.1)
-
-    except KeyboardInterrupt:
-        print("Robot is lying down...")
-        robot.liedown()
-        print("Exit")
-        sys.exit(0)
+from dimos.utils.testing import TimedSensorReplay
 
 
 @pytest.mark.tool

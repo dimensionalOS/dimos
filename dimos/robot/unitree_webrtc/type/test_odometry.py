@@ -15,15 +15,12 @@
 from __future__ import annotations
 
 from operator import add, sub
-import os
-import threading
 
-from dotenv import load_dotenv
 import pytest
 import reactivex.operators as ops
 
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from dimos.utils.testing import SensorReplay, SensorStorage
+from dimos.utils.testing import SensorReplay
 
 _EXPECTED_TOTAL_RAD = -4.05212
 
@@ -82,27 +79,3 @@ def test_total_rotation_travel_rxpy() -> None:
     )
 
     assert total_rad == pytest.approx(4.05, abs=0.01)
-
-
-# data collection tool
-@pytest.mark.tool
-def test_store_odometry_stream() -> None:
-    from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
-
-    load_dotenv()
-
-    robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
-    robot.standup()
-
-    storage = SensorStorage("raw_odometry_rotate_walk")
-    storage.save_stream(robot.raw_odom_stream())
-
-    shutdown = threading.Event()
-
-    try:
-        while not shutdown.wait(0.1):
-            pass
-    except KeyboardInterrupt:
-        shutdown.set()
-    finally:
-        robot.liedown()

@@ -18,7 +18,7 @@
 from dimos_lcm.std_msgs import Bool as LCMBool  # type: ignore[import-untyped]
 
 try:
-    from std_msgs.msg import Bool as ROSBool  # type: ignore[attr-defined]
+    from std_msgs.msg import Bool as ROSBool  # type: ignore[attr-defined, import-untyped]
 except ImportError:
     ROSBool = None  # type: ignore[assignment, misc]
 

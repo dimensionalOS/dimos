@@ -13,14 +13,19 @@
 # limitations under the License.
 
 try:
-    from geometry_msgs.msg import Vector3  # type: ignore[attr-defined]
+    from geometry_msgs.msg import Vector3  # type: ignore[attr-defined, import-untyped]
 except ImportError:
     from dimos.msgs.geometry_msgs import Vector3
 
 try:
-    from geometry_msgs.msg import Point, Pose, Quaternion, Twist  # type: ignore[attr-defined]
-    from nav_msgs.msg import OccupancyGrid, Odometry  # type: ignore[attr-defined]
-    from std_msgs.msg import Header  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
+        Point,
+        Pose,
+        Quaternion,
+        Twist,
+    )
+    from nav_msgs.msg import OccupancyGrid, Odometry  # type: ignore[attr-defined, import-untyped]
+    from std_msgs.msg import Header  # type: ignore[attr-defined, import-untyped]
 except ImportError:
     from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped, no-redef]
         Point,

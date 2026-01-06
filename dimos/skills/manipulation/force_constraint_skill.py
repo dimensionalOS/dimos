@@ -20,7 +20,7 @@ from dimos.types.manipulation import ForceConstraint, Vector  # type: ignore[att
 from dimos.utils.logging_config import setup_logger
 
 # Initialize logger
-logger = setup_logger("dimos.skills.force_constraint_skill")
+logger = setup_logger()
 
 
 class ForceConstraintSkill(AbstractManipulationSkill):

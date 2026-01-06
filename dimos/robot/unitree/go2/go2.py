@@ -19,7 +19,7 @@ from dimos.robot import foxglove_bridge
 from dimos.robot.unitree.connection import go2
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__name__, level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 def deploy(dimos: DimosCluster, ip: str):  # type: ignore[no-untyped-def]
@@ -32,6 +32,6 @@ def deploy(dimos: DimosCluster, ip: str):  # type: ignore[no-untyped-def]
     #     lidar=connection,
     # )
 
-    # agent = agents2.deploy(dimos)
+    # agent = agents.deploy(dimos)
     # agent.register_skills(detector)
     return connection

@@ -14,7 +14,7 @@
 
 import os
 
-from dimos.agents.agent import OpenAIAgent
+from dimos.agents_deprecated.agent import OpenAIAgent
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills

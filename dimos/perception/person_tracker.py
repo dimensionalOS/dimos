@@ -25,17 +25,17 @@ from dimos.perception.detection2d.utils import filter_detections
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector  # type: ignore[import-untyped]
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.person_tracker")
+logger = setup_logger()
 
 
 class PersonTrackingStream(Module):
     """Module for person tracking with LCM input/output."""
 
     # LCM inputs
-    video: In[Image] = None  # type: ignore[assignment]
+    video: In[Image]
 
     # LCM outputs
-    tracking_data: Out[dict] = None  # type: ignore[assignment, type-arg]
+    tracking_data: Out[dict]  # type: ignore[type-arg]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,
@@ -130,7 +130,7 @@ class PersonTrackingStream(Module):
 
         # Publish result to LCM
         if result:
-            self.tracking_data.publish(result)  # type: ignore[no-untyped-call]
+            self.tracking_data.publish(result)
 
     def _process_tracking(self, frame):  # type: ignore[no-untyped-def]
         """Process a single frame for person tracking."""

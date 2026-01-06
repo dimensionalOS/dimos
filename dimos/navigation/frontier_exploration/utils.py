@@ -59,7 +59,7 @@ def costmap_to_pil_image(costmap: OccupancyGrid, scale_factor: int = 2) -> Image
     # Scale up if requested
     if scale_factor > 1:
         new_size = (img.width * scale_factor, img.height * scale_factor)
-        img = img.resize(new_size, Image.NEAREST)  # Use NEAREST to keep sharp pixels
+        img = img.resize(new_size, Image.NEAREST)  # type: ignore[attr-defined]  # Use NEAREST to keep sharp pixels
 
     return img
 

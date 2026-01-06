@@ -66,12 +66,12 @@ Imagine you have this code:
 
 ```python
 class ModuleA(Module):
-    image: Out[Image] = None
-    start_explore: Out[Bool] = None
+    image: Out[Image]
+    start_explore: Out[Bool]
 
 class ModuleB(Module):
-    image: In[Image] = None
-    begin_explore: In[Bool] = None
+    image: In[Image]
+    begin_explore: In[Bool]
 
 module_a = partial(create_module_blueprint, ModuleA)
 module_b = partial(create_module_blueprint, ModuleB)
@@ -114,10 +114,10 @@ Sometimes you need to rename a connection to match what other modules expect. Yo
 
 ```python
 class ConnectionModule(Module):
-    color_image: Out[Image] = None  # Outputs on 'color_image'
+    color_image: Out[Image]  # Outputs on 'color_image'
 
 class ProcessingModule(Module):
-    rgb_image: In[Image] = None     # Expects input on 'rgb_image'
+    rgb_image: In[Image]  # Expects input on 'rgb_image'
 
 # Without remapping, these wouldn't connect automatically
 # With remapping, color_image is renamed to rgb_image

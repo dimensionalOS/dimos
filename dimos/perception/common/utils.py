@@ -32,7 +32,7 @@ from dimos.types.manipulation import ObjectData
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.common.utils")
+logger = setup_logger()
 
 # Optional CuPy support
 try:  # pragma: no cover - optional dependency

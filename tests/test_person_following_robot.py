@@ -21,8 +21,10 @@ from dimos.models.qwen.video_query import query_single_frame_observable
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.utils.logging_config import logger
+from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
+
+logger = setup_logger()
 
 
 def main():
