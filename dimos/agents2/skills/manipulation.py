@@ -91,8 +91,8 @@ greetings_skill_blueprint = autoconnect(
 # XArm7 complete system: hardware + skills + agent
 # This is the primary blueprint for full manipulation capabilities
 xarm7_manipulation_agent = autoconnect(
-    xarm7_manipulation,      # Hardware: driver + planner + controller
-    manipulation_skills,     # Skills: directional movement + agent
+    xarm7_manipulation,  # Hardware: driver + planner + controller
+    manipulation_skills,  # Skills: directional movement + agent
 )
 
 # ============================================================================
@@ -100,7 +100,7 @@ xarm7_manipulation_agent = autoconnect(
 # ============================================================================
 
 __all__ = [
-    "manipulation_skills",
     "greetings_skill_blueprint",
+    "manipulation_skills",
     "xarm7_manipulation_agent",
 ]

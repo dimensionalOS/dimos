@@ -89,4 +89,3 @@ class RobotCapabilities(Module):
 robot_capabilities = RobotCapabilities.blueprint
 
 __all__ = ["RobotCapabilities", "robot_capabilities"]
-

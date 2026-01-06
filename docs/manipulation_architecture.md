@@ -302,7 +302,7 @@ Skills use `@skill()` decorator and RPC dependencies:
 ```python
 class ManipulationSkillContainer(SkillModule):
     rpc_calls = ["MoveAxisModule.move_up"]
-    
+
     @skill()
     def move_arm_up(self, distance: float = 0.05) -> str:
         move_up = self.get_rpc_calls("MoveAxisModule.move_up")
@@ -345,4 +345,3 @@ To add a new manipulation skill:
 3. **Update RPC dependencies** if calling new modules
 
 That's it! The skill is automatically available to the LLM agent.
-

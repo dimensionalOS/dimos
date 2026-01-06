@@ -198,4 +198,3 @@ class MoveAxisModule(Module):
 move_axis_module = MoveAxisModule.blueprint
 
 __all__ = ["MoveAxisModule", "move_axis_module"]
-
