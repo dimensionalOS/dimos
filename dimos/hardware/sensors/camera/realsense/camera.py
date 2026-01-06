@@ -20,16 +20,15 @@ from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
-import pyrealsense2 as rs
+import pyrealsense2 as rs  # type: ignore[import-not-found]
 import reactivex as rx
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
 from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
-    SensorStatus,
     default_base_transform,
 )
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
@@ -40,7 +39,7 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
-    from reactivex.disposable import Disposable
+    from reactivex.disposable import DisposableBase
 
 
 @dataclass
@@ -104,11 +103,11 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
         self._latest_color_img: Image | None = None
         self._latest_depth_img: Image | None = None
         self._pointcloud_lock = threading.Lock()
-        self._pointcloud_disposable: Disposable | None = None
-        self._camera_info_disposable: Disposable | None = None
+        self._pointcloud_disposable: DisposableBase | None = None
+        self._camera_info_disposable: DisposableBase | None = None
 
     @rpc
-    def start(self) -> SensorStatus:
+    def start(self) -> None:
         self._pipeline = rs.pipeline()
         config = rs.config()
 
@@ -160,8 +159,6 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
             on_next=lambda _: self._publish_camera_info(),
             on_error=lambda e: print(f"CameraInfo error: {e}"),
         )
-
-        return SensorStatus.STARTED
 
     def _publish_camera_info(self) -> None:
         ts = time.time()
@@ -437,7 +434,7 @@ def main() -> None:
     dimos = ModuleCoordinator(n=2)
     dimos.start()
 
-    camera = dimos.deploy(RealSenseCamera, enable_pointcloud=True, pointcloud_fps=5.0)
+    camera = dimos.deploy(RealSenseCamera, enable_pointcloud=True, pointcloud_fps=5.0)  # type: ignore[type-var]
     foxglove_bridge = FoxgloveBridge()
     foxglove_bridge.start()
 

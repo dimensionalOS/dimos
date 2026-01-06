@@ -24,14 +24,13 @@ import cv2
 import numpy as np
 import pyzed.sl as sl
 import reactivex as rx
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
 from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
-    SensorStatus,
     default_base_transform,
 )
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
@@ -42,13 +41,16 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
-    from reactivex.disposable import Disposable
+    from typing import Any
+
+    from numpy.typing import NDArray
+    from reactivex.disposable import DisposableBase
 
 
 @dataclass
 class ZEDExtrinsics:
-    rotation: np.ndarray
-    translation: np.ndarray
+    rotation: NDArray[Any]
+    translation: NDArray[Any]
 
 
 @dataclass
@@ -121,7 +123,7 @@ class ZEDCamera(Module[ZEDCameraConfig]):
         self._latest_color_img: Image | None = None
         self._latest_depth_img: Image | None = None
         self._pointcloud_lock = threading.Lock()
-        self._pointcloud_disposable: Disposable | None = None
+        self._pointcloud_disposable: DisposableBase | None = None
         self._image_left: sl.Mat | None = None
         self._depth_map: sl.Mat | None = None
         self._pose: sl.Pose | None = None
@@ -129,7 +131,7 @@ class ZEDCamera(Module[ZEDCameraConfig]):
         self._stream_width = self.config.width
         self._stream_height = self.config.height
         self._camera_info: sl.CameraInformation | None = None
-        self._camera_info_disposable: Disposable | None = None
+        self._camera_info_disposable: DisposableBase | None = None
 
     def _publish_camera_info(self) -> None:
         ts = time.time()
@@ -141,7 +143,7 @@ class ZEDCamera(Module[ZEDCameraConfig]):
             self.depth_camera_info.publish(self._depth_camera_info)
 
     @rpc
-    def start(self) -> SensorStatus:
+    def start(self) -> None:
         self._zed = sl.Camera()
         self._init_params = sl.InitParameters()
         if self.config.resolution:
@@ -162,9 +164,8 @@ class ZEDCamera(Module[ZEDCameraConfig]):
 
         err = self._zed.open(self._init_params)
         if err != sl.ERROR_CODE.SUCCESS:
-            print(f"Failed to open ZED camera: {err}")
             self._zed = None
-            return SensorStatus.FAILED
+            raise RuntimeError(f"Failed to open ZED camera: {err}")
 
         self._runtime_params = sl.RuntimeParameters()
         self._runtime_params.enable_fill_mode = self.config.enable_fill_mode
@@ -199,8 +200,6 @@ class ZEDCamera(Module[ZEDCameraConfig]):
                 on_next=lambda _: self._generate_pointcloud(),
                 on_error=lambda e: print(f"Pointcloud error: {e}"),
             )
-
-        return SensorStatus.STARTED
 
     def _build_camera_info(self) -> None:
         if self._camera_info is None:
@@ -512,7 +511,7 @@ def main() -> None:
     dimos = ModuleCoordinator(n=2)
     dimos.start()
 
-    camera = dimos.deploy(ZEDCamera, enable_pointcloud=True, pointcloud_fps=5.0)
+    camera = dimos.deploy(ZEDCamera, enable_pointcloud=True, pointcloud_fps=5.0)  # type: ignore[type-var]
     foxglove_bridge = FoxgloveBridge()
     foxglove_bridge.start()
 

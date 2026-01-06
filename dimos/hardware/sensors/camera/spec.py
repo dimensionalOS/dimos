@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from enum import Enum
 from typing import Generic, Protocol, TypeVar
 
 from reactivex.observable import Observable
@@ -23,14 +22,6 @@ from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.service import Configurable
-
-
-class SensorStatus(Enum):
-    """Status returned by sensor start/stop operations."""
-
-    STARTED = "started"
-    STOPPED = "stopped"
-    FAILED = "failed"
 
 
 OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
@@ -124,8 +115,8 @@ class StereoCameraHardware(Protocol[StereoCameraConfigT]):
     @property
     def _depth_optical_frame(self) -> str: ...
 
-    def start(self) -> SensorStatus:
-        """Start the camera and begin streaming."""
+    def start(self) -> None:
+        """Start the camera and begin streaming; raise on failure."""
         ...
 
     def stop(self) -> None:

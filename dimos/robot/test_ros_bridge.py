@@ -284,7 +284,7 @@ class TestROSBridge(unittest.TestCase):
         self.assertEqual(len(received_cloud), 1, "Should receive point cloud")
 
         # Verify point data
-        received_points = received_cloud[0].as_numpy()
+        received_points, _ = received_cloud[0].as_numpy()
         self.assertEqual(received_points.shape, points.shape)
         np.testing.assert_array_almost_equal(received_points, points, decimal=5)
 

@@ -316,7 +316,7 @@ class PointCloud2(Timestamped):
         Returns:
             New PointCloud2 instance with transformed points in the new frame
         """
-        points = self.as_numpy()
+        points, _ = self.as_numpy()
 
         if len(points) == 0:
             return PointCloud2(
@@ -359,30 +359,18 @@ class PointCloud2(Timestamped):
         downsampled = self._pcd_tensor.voxel_down_sample(voxel_size)
         return PointCloud2(pointcloud=downsampled, frame_id=self.frame_id, ts=self.ts)
 
-    # TODO what's the usual storage here? is it already numpy?
     def as_numpy(
-        self, include_colors: bool = False
-    ) -> np.ndarray | tuple[np.ndarray, np.ndarray | None]:  # type: ignore[type-arg]
-        """Get points as numpy array, optionally with colors.
-
-        Args:
-            include_colors: If True, return a tuple of (points, colors).
-                           Colors are returned as Nx3 array in [0, 1] range,
-                           or None if the pointcloud has no colors.
+        self,
+    ) -> tuple[np.ndarray[tuple[int, int], np.dtype[np.floating[object]]], np.ndarray[tuple[int, int], np.dtype[np.floating[object]]] | None]:
+        """Get points and colors as numpy arrays.
 
         Returns:
-            If include_colors=False: Nx3 numpy array of points
-            If include_colors=True: Tuple of (points, colors) where colors
-                                   is Nx3 array or None
+            Tuple of (points, colors) where:
+            - points: Nx3 numpy array of 3D points
+            - colors: Nx3 array in [0, 1] range, or None if no colors
         """
         points = np.asarray(self.pointcloud.points)
-        if not include_colors:
-            return points
-
-        if self.pointcloud.has_colors():
-            colors = np.asarray(self.pointcloud.colors)
-        else:
-            colors = None
+        colors = np.asarray(self.pointcloud.colors) if self.pointcloud.has_colors() else None
         return points, colors
 
     @functools.cache
@@ -436,7 +424,7 @@ class PointCloud2(Timestamped):
         msg.header.stamp.sec = int(self.ts)
         msg.header.stamp.nsec = int((self.ts - int(self.ts)) * 1e9)
 
-        points = self.as_numpy()
+        points, _ = self.as_numpy()
 
         # Check if pointcloud has colors
         self._ensure_tensor_initialized()
@@ -652,7 +640,7 @@ class PointCloud2(Timestamped):
         Returns:
             rr.Points3D or rr.Boxes3D archetype for logging to Rerun
         """
-        points = self.as_numpy()
+        points, _ = self.as_numpy()
         if len(points) == 0:
             return rr.Points3D([]) if mode == "points" else rr.Boxes3D(centers=[])
 
@@ -721,7 +709,7 @@ class PointCloud2(Timestamped):
             raise ValueError("At least one of min_height or max_height must be specified")
 
         # Get points as numpy array
-        points = self.as_numpy()
+        points, _ = self.as_numpy()
 
         if len(points) == 0:
             # Empty pointcloud - return a copy
@@ -891,7 +879,7 @@ class PointCloud2(Timestamped):
         ros_msg.header.stamp.sec = int(self.ts)
         ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1e9)
 
-        points = self.as_numpy()
+        points, _ = self.as_numpy()
 
         if len(points) == 0:
             # Empty point cloud
