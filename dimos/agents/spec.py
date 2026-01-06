@@ -140,9 +140,6 @@ class AgentConfig(ModuleConfig):
     agent_transport: type[PubSub] = lcm.PickleLCM  # type: ignore[type-arg]
     agent_topic: Any = field(default_factory=lambda: lcm.Topic("/agent"))
 
-    # MCP server port (None = disabled)
-    mcp_port: int | None = None
-
 
 AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]
 

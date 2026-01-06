@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.protocol.mcp.server import DimensionalMCPServer
+from dimos.protocol.mcp.mcp import MCPModule
 
-__all__ = ["DimensionalMCPServer"]
+__all__ = ["MCPModule"]
