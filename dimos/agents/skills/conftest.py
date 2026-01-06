@@ -72,8 +72,6 @@ def google_maps_skill_container(mocker):
 @pytest.fixture
 def unitree_skills(mocker):
     container = UnitreeSkillContainer()
-    container._move = mocker.Mock()
-    container._publish_request = mocker.Mock()
     container.start()
     yield container
     container.stop()
