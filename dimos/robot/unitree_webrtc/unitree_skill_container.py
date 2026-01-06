@@ -18,7 +18,6 @@ import datetime
 import difflib
 import math
 import time
-from typing import TYPE_CHECKING
 
 from unitree_webrtc_connect.constants import RTC_TOPIC
 
@@ -30,9 +29,6 @@ from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Reducer, Stream
 from dimos.robot.unitree_webrtc.unitree_skills import UNITREE_WEBRTC_CONTROLS
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.rpc_client import RpcCall
 
 logger = setup_logger()
 
@@ -47,13 +43,12 @@ _UNITREE_COMMANDS = {
 class UnitreeSkillContainer(SkillModule):
     """Container for Unitree Go2 robot skills using the new framework."""
 
-    _publish_request: RpcCall | None = None
-
     rpc_calls: list[str] = [
         "NavigationInterface.set_goal",
         "NavigationInterface.get_state",
         "NavigationInterface.is_goal_reached",
         "NavigationInterface.cancel_goal",
+        "GO2Connection.publish_request",
     ]
 
     @rpc
@@ -65,16 +60,6 @@ class UnitreeSkillContainer(SkillModule):
     @rpc
     def stop(self) -> None:
         super().stop()
-
-    @rpc
-    def set_ConnectionModule_move(self, callable: RpcCall) -> None:
-        self._move = callable
-        self._move.set_rpc(self.rpc)  # type: ignore[arg-type]
-
-    @rpc
-    def set_ConnectionModule_publish_request(self, callable: RpcCall) -> None:
-        self._publish_request = callable
-        self._publish_request.set_rpc(self.rpc)  # type: ignore[arg-type]
 
     @skill()
     def relative_move(self, forward: float = 0.0, left: float = 0.0, degrees: float = 0.0) -> str:
@@ -166,8 +151,11 @@ class UnitreeSkillContainer(SkillModule):
 
     @skill()
     def execute_sport_command(self, command_name: str) -> str:
-        if self._publish_request is None:
-            return f"Error: Robot not connected (cannot execute {command_name})"
+        try:
+            publish_request = self.get_rpc_calls("GO2Connection.publish_request")
+        except Exception:
+            logger.error("GO2Connection not connected properly")
+            return "Failed to connect to GO2Connection."
 
         if command_name not in _UNITREE_COMMANDS:
             suggestions = difflib.get_close_matches(
@@ -178,7 +166,7 @@ class UnitreeSkillContainer(SkillModule):
         id_, _ = _UNITREE_COMMANDS[command_name]
 
         try:
-            self._publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": id_})
+            publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": id_})
             return f"'{command_name}' command executed successfully."
         except Exception as e:
             logger.error(f"Failed to execute {command_name}: {e}")
