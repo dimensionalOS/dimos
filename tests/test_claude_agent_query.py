@@ -14,7 +14,7 @@
 
 from dotenv import load_dotenv
 
-from dimos.agents.claude_agent import ClaudeAgent
+from dimos.agents_deprecated.claude_agent import ClaudeAgent
 
 # Load API key from environment
 load_dotenv()

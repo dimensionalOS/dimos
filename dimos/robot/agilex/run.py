@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 import reactivex as rx
 import reactivex.operators as ops
 
-from dimos.agents.claude_agent import ClaudeAgent
+from dimos.agents_deprecated.claude_agent import ClaudeAgent
 from dimos.robot.agilex.piper_arm import PiperArmRobot
 from dimos.skills.kill_skill import KillSkill
 from dimos.skills.manipulation.pick_and_place import PickAndPlace

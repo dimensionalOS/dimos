@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Unitree G1 skill container for the new agents2 framework.
+Unitree G1 skill container for the new agents framework.
 Dynamically generates skills for G1 humanoid robot including arm controls and movement modes.
 """
 

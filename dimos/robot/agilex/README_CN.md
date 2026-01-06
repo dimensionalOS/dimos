@@ -135,7 +135,7 @@ self.manipulation.camera_info.connect(self.camera.camera_info)
 #!/usr/bin/env python3
 import asyncio
 import reactivex as rx
-from dimos.agents.claude_agent import ClaudeAgent
+from dimos.agents_deprecated.claude_agent import ClaudeAgent
 from dimos.web.robot_web_interface import RobotWebInterface
 
 def main():
@@ -266,7 +266,7 @@ class MyRobot:
 import asyncio
 import os
 from my_robot import MyRobot
-from dimos.agents.claude_agent import ClaudeAgent
+from dimos.agents_deprecated.claude_agent import ClaudeAgent
 from dimos.skills.basic import BasicSkill
 from dimos.web.robot_web_interface import RobotWebInterface
 import reactivex as rx

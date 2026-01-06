@@ -11,907 +11,433 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-"""Agent framework for LLM-based autonomous systems.
-
-This module provides a flexible foundation for creating agents that can:
-- Process image and text inputs through LLM APIs
-- Store and retrieve contextual information using semantic memory
-- Handle tool/function calling
-- Process streaming inputs asynchronously
-
-The module offers base classes (Agent, LLMAgent) and concrete implementations
-like OpenAIAgent that connect to specific LLM providers.
-"""
-
-from __future__ import annotations
-
-# Standard library imports
+import asyncio
+import datetime
 import json
+from operator import itemgetter
 import os
-import threading
-from typing import TYPE_CHECKING, Any
+from typing import Any, TypedDict
+import uuid
 
-# Third-party imports
-from dotenv import load_dotenv
-from openai import NOT_GIVEN, OpenAI
-from pydantic import BaseModel
-from reactivex import Observable, Observer, create, empty, just, operators as RxOps
-from reactivex.disposable import CompositeDisposable, Disposable
-from reactivex.subject import Subject
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolCall,
+    ToolMessage,
+)
+from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
 
-# Local imports
-from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
-from dimos.agents.prompt_builder.impl import PromptBuilder
-from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
-from dimos.skills.skills import AbstractSkill, SkillLibrary
-from dimos.stream.frame_processor import FrameProcessor
-from dimos.stream.stream_merger import create_stream_merger
-from dimos.stream.video_operators import Operators as MyOps, VideoOperators as MyVidOps
+from dimos.agents.ollama_agent import ensure_ollama_model
+from dimos.agents.spec import AgentSpec, Model, Provider
+from dimos.agents.system_prompt import get_system_prompt
+from dimos.core import DimosCluster, rpc
+from dimos.protocol.skill.coordinator import (
+    SkillCoordinator,
+    SkillState,
+    SkillStateDict,
+)
+from dimos.protocol.skill.skill import SkillContainer
+from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.threadpool import get_scheduler
 
-if TYPE_CHECKING:
-    from reactivex.scheduler import ThreadPoolScheduler
-
-    from dimos.agents.memory.base import AbstractAgentSemanticMemory
-    from dimos.agents.tokenizer.base import AbstractTokenizer
-
-# Initialize environment variables
-load_dotenv()
-
-# Initialize logger for the agent module
 logger = setup_logger()
 
-# Constants
-_TOKEN_BUDGET_PARTS = 4  # Number of parts to divide token budget
-_MAX_SAVED_FRAMES = 100  # Maximum number of frames to save
+
+SYSTEM_MSG_APPEND = "\nYour message history will always be appended with a System Overview message that provides situational awareness."
 
 
-# -----------------------------------------------------------------------------
-# region Agent Base Class
-# -----------------------------------------------------------------------------
-class Agent:
-    """Base agent that manages memory and subscriptions."""
+def toolmsg_from_state(state: SkillState) -> ToolMessage:
+    if state.skill_config.output != Output.standard:
+        content = "output attached in separate messages"
+    else:
+        content = state.content()  # type: ignore[assignment]
 
-    def __init__(
-        self,
-        dev_name: str = "NA",
-        agent_type: str = "Base",
-        agent_memory: AbstractAgentSemanticMemory | None = None,
-        pool_scheduler: ThreadPoolScheduler | None = None,
-    ) -> None:
-        """
-        Initializes a new instance of the Agent.
-
-        Args:
-            dev_name (str): The device name of the agent.
-            agent_type (str): The type of the agent (e.g., 'Base', 'Vision').
-            agent_memory (AbstractAgentSemanticMemory): The memory system for the agent.
-            pool_scheduler (ThreadPoolScheduler): The scheduler to use for thread pool operations.
-                If None, the global scheduler from get_scheduler() will be used.
-        """
-        self.dev_name = dev_name
-        self.agent_type = agent_type
-        self.agent_memory = agent_memory or OpenAISemanticMemory()
-        self.disposables = CompositeDisposable()
-        self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
-
-    def dispose_all(self) -> None:
-        """Disposes of all active subscriptions managed by this agent."""
-        if self.disposables:
-            self.disposables.dispose()
-        else:
-            logger.info("No disposables to dispose.")
+    return ToolMessage(
+        # if agent call has been triggered by another skill,
+        # and this specific skill didn't finish yet but we need a tool call response
+        # we return a message explaining that execution is still ongoing
+        content=content
+        or "Running, you will be called with an update, no need for subsequent tool calls",
+        name=state.name,
+        tool_call_id=state.call_id,
+    )
 
 
-# endregion Agent Base Class
+class SkillStateSummary(TypedDict):
+    name: str
+    call_id: str
+    state: str
+    data: Any
 
 
-# -----------------------------------------------------------------------------
-# region LLMAgent Base Class (Generic LLM Agent)
-# -----------------------------------------------------------------------------
-class LLMAgent(Agent):
-    """Generic LLM agent containing common logic for LLM-based agents.
+def summary_from_state(state: SkillState, special_data: bool = False) -> SkillStateSummary:
+    content = state.content()
+    if isinstance(content, dict):
+        content = json.dumps(content)
 
-    This class implements functionality for:
-      - Updating the query
-      - Querying the agent's memory (for RAG)
-      - Building prompts via a prompt builder
-      - Handling tooling callbacks in responses
-      - Subscribing to image and query streams
-      - Emitting responses as an observable stream
+    if not isinstance(content, str):
+        content = str(content)
 
-    Subclasses must implement the `_send_query` method, which is responsible
-    for sending the prompt to a specific LLM API.
+    return {
+        "name": state.name,
+        "call_id": state.call_id,
+        "state": state.state.name,
+        "data": state.content() if not special_data else "data will be in a separate message",
+    }
 
-    Attributes:
-        query (str): The current query text to process.
-        prompt_builder (PromptBuilder): Handles construction of prompts.
-        system_query (str): System prompt for RAG context situations.
-        image_detail (str): Detail level for image processing ('low','high','auto').
-        max_input_tokens_per_request (int): Maximum input token count.
-        max_output_tokens_per_request (int): Maximum output token count.
-        max_tokens_per_request (int): Total maximum token count.
-        rag_query_n (int): Number of results to fetch from memory.
-        rag_similarity_threshold (float): Minimum similarity for RAG results.
-        frame_processor (FrameProcessor): Processes video frames.
-        output_dir (str): Directory for output files.
-        response_subject (Subject): Subject that emits agent responses.
-        process_all_inputs (bool): Whether to process every input emission (True) or
-            skip emissions when the agent is busy processing a previous input (False).
-    """
 
-    logging_file_memory_lock = threading.Lock()
+def _custom_json_serializers(obj):  # type: ignore[no-untyped-def]
+    if isinstance(obj, datetime.date | datetime.datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
 
-    def __init__(
-        self,
-        dev_name: str = "NA",
-        agent_type: str = "LLM",
-        agent_memory: AbstractAgentSemanticMemory | None = None,
-        pool_scheduler: ThreadPoolScheduler | None = None,
-        process_all_inputs: bool = False,
-        system_query: str | None = None,
-        max_output_tokens_per_request: int = 16384,
-        max_input_tokens_per_request: int = 128000,
-        input_query_stream: Observable | None = None,  # type: ignore[type-arg]
-        input_data_stream: Observable | None = None,  # type: ignore[type-arg]
-        input_video_stream: Observable | None = None,  # type: ignore[type-arg]
-    ) -> None:
-        """
-        Initializes a new instance of the LLMAgent.
 
-        Args:
-            dev_name (str): The device name of the agent.
-            agent_type (str): The type of the agent.
-            agent_memory (AbstractAgentSemanticMemory): The memory system for the agent.
-            pool_scheduler (ThreadPoolScheduler): The scheduler to use for thread pool operations.
-                If None, the global scheduler from get_scheduler() will be used.
-            process_all_inputs (bool): Whether to process every input emission (True) or
-                skip emissions when the agent is busy processing a previous input (False).
-        """
-        super().__init__(dev_name, agent_type, agent_memory, pool_scheduler)
-        # These attributes can be configured by a subclass if needed.
-        self.query: str | None = None
-        self.prompt_builder: PromptBuilder | None = None
-        self.system_query: str | None = system_query
-        self.image_detail: str = "low"
-        self.max_input_tokens_per_request: int = max_input_tokens_per_request
-        self.max_output_tokens_per_request: int = max_output_tokens_per_request
-        self.max_tokens_per_request: int = (
-            self.max_input_tokens_per_request + self.max_output_tokens_per_request
-        )
-        self.rag_query_n: int = 4
-        self.rag_similarity_threshold: float = 0.45
-        self.frame_processor: FrameProcessor | None = None
-        self.output_dir: str = os.path.join(os.getcwd(), "assets", "agent")
-        self.process_all_inputs: bool = process_all_inputs
-        os.makedirs(self.output_dir, exist_ok=True)
+# takes an overview of running skills from the coorindator
+# and builds messages to be sent to an agent
+def snapshot_to_messages(
+    state: SkillStateDict,
+    tool_calls: list[ToolCall],
+) -> tuple[list[ToolMessage], AIMessage | None]:
+    # builds a set of tool call ids from a previous agent request
+    tool_call_ids = set(
+        map(itemgetter("id"), tool_calls),
+    )
 
-        # Subject for emitting responses
-        self.response_subject = Subject()  # type: ignore[var-annotated]
+    # build a tool msg responses
+    tool_msgs: list[ToolMessage] = []
 
-        # Conversation history for maintaining context between calls
-        self.conversation_history = []  # type: ignore[var-annotated]
+    # build a general skill state overview (for longer running skills)
+    state_overview: list[dict[str, SkillStateSummary]] = []
 
-        # Initialize input streams
-        self.input_video_stream = input_video_stream
-        self.input_query_stream = (
-            input_query_stream
-            if (input_data_stream is None)
-            else (
-                input_query_stream.pipe(  # type: ignore[misc, union-attr]
-                    RxOps.with_latest_from(input_data_stream),
-                    RxOps.map(
-                        lambda combined: {
-                            "query": combined[0],  # type: ignore[index]
-                            "objects": combined[1]  # type: ignore[index]
-                            if len(combined) > 1  # type: ignore[arg-type]
-                            else "No object data available",
-                        }
-                    ),
-                    RxOps.map(
-                        lambda data: f"{data['query']}\n\nCurrent objects detected:\n{data['objects']}"  # type: ignore[index]
-                    ),
-                    RxOps.do_action(
-                        lambda x: print(f"\033[34mEnriched query: {x.split(chr(10))[0]}\033[0m")  # type: ignore[arg-type]
-                        or [print(f"\033[34m{line}\033[0m") for line in x.split(chr(10))[1:]]  # type: ignore[var-annotated]
-                    ),
-                )
-            )
-        )
+    # for special skills that want to return a separate message
+    # (images for example, requires to be a HumanMessage)
+    special_msgs: list[HumanMessage] = []
 
-        # Setup stream subscriptions based on inputs provided
-        if (self.input_video_stream is not None) and (self.input_query_stream is not None):
-            self.merged_stream = create_stream_merger(
-                data_input_stream=self.input_video_stream, text_query_stream=self.input_query_stream
-            )
+    # for special skills that want to return a separate message that should
+    # stay in history, like actual human messages, critical events
+    history_msgs: list[HumanMessage] = []
 
-            logger.info("Subscribing to merged input stream...")
+    # Initialize state_msg
+    state_msg = None
 
-            # Define a query extractor for the merged stream
-            def query_extractor(emission):  # type: ignore[no-untyped-def]
-                return (emission[0], emission[1][0])
-
-            self.disposables.add(
-                self.subscribe_to_image_processing(
-                    self.merged_stream, query_extractor=query_extractor
-                )
-            )
-        else:
-            # If no merged stream, fall back to individual streams
-            if self.input_video_stream is not None:
-                logger.info("Subscribing to input video stream...")
-                self.disposables.add(self.subscribe_to_image_processing(self.input_video_stream))
-            if self.input_query_stream is not None:
-                logger.info("Subscribing to input query stream...")
-                self.disposables.add(self.subscribe_to_query_processing(self.input_query_stream))
-
-    def _update_query(self, incoming_query: str | None) -> None:
-        """Updates the query if an incoming query is provided.
-
-        Args:
-            incoming_query (str): The new query text.
-        """
-        if incoming_query is not None:
-            self.query = incoming_query
-
-    def _get_rag_context(self) -> tuple[str, str]:
-        """Queries the agent memory to retrieve RAG context.
-
-        Returns:
-            Tuple[str, str]: A tuple containing the formatted results (for logging)
-            and condensed results (for use in the prompt).
-        """
-        results = self.agent_memory.query(
-            query_texts=self.query,
-            n_results=self.rag_query_n,
-            similarity_threshold=self.rag_similarity_threshold,
-        )
-        formatted_results = "\n".join(
-            f"Document ID: {doc.id}\nMetadata: {doc.metadata}\nContent: {doc.page_content}\nScore: {score}\n"
-            for (doc, score) in results
-        )
-        condensed_results = " | ".join(f"{doc.page_content}" for (doc, _) in results)
-        logger.info(f"Agent Memory Query Results:\n{formatted_results}")
-        logger.info("=== Results End ===")
-        return formatted_results, condensed_results
-
-    def _build_prompt(
-        self,
-        base64_image: str | None,
-        dimensions: tuple[int, int] | None,
-        override_token_limit: bool,
-        condensed_results: str,
-    ) -> list:  # type: ignore[type-arg]
-        """Builds a prompt message using the prompt builder.
-
-        Args:
-            base64_image (str): Optional Base64-encoded image.
-            dimensions (Tuple[int, int]): Optional image dimensions.
-            override_token_limit (bool): Whether to override token limits.
-            condensed_results (str): The condensed RAG context.
-
-        Returns:
-            list: A list of message dictionaries to be sent to the LLM.
-        """
-        # Budget for each component of the prompt
-        budgets = {
-            "system_prompt": self.max_input_tokens_per_request // _TOKEN_BUDGET_PARTS,
-            "user_query": self.max_input_tokens_per_request // _TOKEN_BUDGET_PARTS,
-            "image": self.max_input_tokens_per_request // _TOKEN_BUDGET_PARTS,
-            "rag": self.max_input_tokens_per_request // _TOKEN_BUDGET_PARTS,
-        }
-
-        # Define truncation policies for each component
-        policies = {
-            "system_prompt": "truncate_end",
-            "user_query": "truncate_middle",
-            "image": "do_not_truncate",
-            "rag": "truncate_end",
-        }
-
-        return self.prompt_builder.build(  # type: ignore[no-any-return, union-attr]
-            user_query=self.query,
-            override_token_limit=override_token_limit,
-            base64_image=base64_image,
-            image_width=dimensions[0] if dimensions is not None else None,
-            image_height=dimensions[1] if dimensions is not None else None,
-            image_detail=self.image_detail,
-            rag_context=condensed_results,
-            system_prompt=self.system_query,
-            budgets=budgets,
-            policies=policies,
-        )
-
-    def _handle_tooling(self, response_message, messages):  # type: ignore[no-untyped-def]
-        """Handles tooling callbacks in the response message.
-
-        If tool calls are present, the corresponding functions are executed and
-        a follow-up query is sent.
-
-        Args:
-            response_message: The response message containing tool calls.
-            messages (list): The original list of messages sent.
-
-        Returns:
-            The final response message after processing tool calls, if any.
-        """
-
-        # TODO: Make this more generic or move implementation to OpenAIAgent.
-        # This is presently OpenAI-specific.
-        def _tooling_callback(message, messages, response_message, skill_library: SkillLibrary):  # type: ignore[no-untyped-def]
-            has_called_tools = False
-            new_messages = []
-            for tool_call in message.tool_calls:
-                has_called_tools = True
-                name = tool_call.function.name
-                args = json.loads(tool_call.function.arguments)
-                result = skill_library.call(name, **args)
-                logger.info(f"Function Call Results: {result}")
-                new_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": str(result),
-                        "name": name,
-                    }
-                )
-            if has_called_tools:
-                logger.info("Sending Another Query.")
-                messages.append(response_message)
-                messages.extend(new_messages)
-                # Delegate to sending the query again.
-                return self._send_query(messages)
-            else:
-                logger.info("No Need for Another Query.")
-                return None
-
-        if response_message.tool_calls is not None:
-            return _tooling_callback(
-                response_message,
-                messages,
-                response_message,
-                self.skill_library,  # type: ignore[attr-defined]
-            )
-        return None
-
-    def _observable_query(  # type: ignore[no-untyped-def]
-        self,
-        observer: Observer,  # type: ignore[type-arg]
-        base64_image: str | None = None,
-        dimensions: tuple[int, int] | None = None,
-        override_token_limit: bool = False,
-        incoming_query: str | None = None,
+    for skill_state in sorted(
+        state.values(),
+        key=lambda skill_state: skill_state.duration(),
     ):
-        """Prepares and sends a query to the LLM, emitting the response to the observer.
+        if skill_state.call_id in tool_call_ids:
+            tool_msgs.append(toolmsg_from_state(skill_state))
 
-        Args:
-            observer (Observer): The observer to emit responses to.
-            base64_image (str): Optional Base64-encoded image.
-            dimensions (Tuple[int, int]): Optional image dimensions.
-            override_token_limit (bool): Whether to override token limits.
-            incoming_query (str): Optional query to update the agent's query.
+        if skill_state.skill_config.output == Output.human:
+            content = skill_state.content()
+            if not content:
+                continue
+            history_msgs.append(HumanMessage(content=content))  # type: ignore[arg-type]
+            continue
 
-        Raises:
-            Exception: Propagates any exceptions encountered during processing.
-        """
-        try:
-            self._update_query(incoming_query)
-            _, condensed_results = self._get_rag_context()
-            messages = self._build_prompt(
-                base64_image, dimensions, override_token_limit, condensed_results
-            )
-            # logger.debug(f"Sending Query: {messages}")
-            logger.info("Sending Query.")
-            response_message = self._send_query(messages)
-            logger.info(f"Received Response: {response_message}")
-            if response_message is None:
-                raise Exception("Response message does not exist.")
+        special_data = skill_state.skill_config.output == Output.image
+        if special_data:
+            content = skill_state.content()
+            if not content:
+                continue
+            special_msgs.append(HumanMessage(content=content))  # type: ignore[arg-type]
 
-            # TODO: Make this more generic. The parsed tag and tooling handling may be OpenAI-specific.
-            # If no skill library is provided or there are no tool calls, emit the response directly.
-            if (
-                self.skill_library is None  # type: ignore[attr-defined]
-                or self.skill_library.get_tools() in (None, NOT_GIVEN)  # type: ignore[attr-defined]
-                or response_message.tool_calls is None
-            ):
-                final_msg = (
-                    response_message.parsed
-                    if hasattr(response_message, "parsed") and response_message.parsed
-                    else (
-                        response_message.content
-                        if hasattr(response_message, "content")
-                        else response_message
-                    )
-                )
-                observer.on_next(final_msg)
-                self.response_subject.on_next(final_msg)
-            else:
-                response_message_2 = self._handle_tooling(response_message, messages)  # type: ignore[no-untyped-call]
-                final_msg = (
-                    response_message_2 if response_message_2 is not None else response_message
-                )
-                if isinstance(final_msg, BaseModel):  # TODO: Test
-                    final_msg = str(final_msg.content)  # type: ignore[attr-defined]
-                observer.on_next(final_msg)
-                self.response_subject.on_next(final_msg)
-            observer.on_completed()
-        except Exception as e:
-            logger.error(f"Query failed in {self.dev_name}: {e}")
-            observer.on_error(e)
-            self.response_subject.on_error(e)
+        if skill_state.call_id in tool_call_ids:
+            continue
 
-    def _send_query(self, messages: list) -> Any:  # type: ignore[type-arg]
-        """Sends the query to the LLM API.
+        state_overview.append(summary_from_state(skill_state, special_data))  # type: ignore[arg-type]
 
-        This method must be implemented by subclasses with specifics of the LLM API.
+    if state_overview:
+        state_overview_str = "\n".join(
+            json.dumps(s, default=_custom_json_serializers) for s in state_overview
+        )
+        state_msg = AIMessage("State Overview:\n" + state_overview_str)
 
-        Args:
-            messages (list): The prompt messages to be sent.
+    return {  # type: ignore[return-value]
+        "tool_msgs": tool_msgs,
+        "history_msgs": history_msgs,
+        "state_msgs": ([state_msg] if state_msg else []) + special_msgs,
+    }
 
-        Returns:
-            Any: The response message from the LLM.
 
-        Raises:
-            NotImplementedError: Always, unless overridden.
-        """
-        raise NotImplementedError("Subclasses must implement _send_query method.")
+# Agent class job is to glue skill coordinator state to an agent, builds langchain messages
+class Agent(AgentSpec):
+    system_message: SystemMessage
+    state_messages: list[AIMessage | HumanMessage]
 
-    def _log_response_to_file(self, response, output_dir: str | None = None) -> None:  # type: ignore[no-untyped-def]
-        """Logs the LLM response to a file.
-
-        Args:
-            response: The response message to log.
-            output_dir (str): The directory where the log file is stored.
-        """
-        if output_dir is None:
-            output_dir = self.output_dir
-        if response is not None:
-            with self.logging_file_memory_lock:
-                log_path = os.path.join(output_dir, "memory.txt")
-                with open(log_path, "a") as file:
-                    file.write(f"{self.dev_name}: {response}\n")
-                logger.info(f"LLM Response [{self.dev_name}]: {response}")
-
-    def subscribe_to_image_processing(  # type: ignore[no-untyped-def]
+    def __init__(  # type: ignore[no-untyped-def]
         self,
-        frame_observable: Observable,  # type: ignore[type-arg]
-        query_extractor=None,
-    ) -> Disposable:
-        """Subscribes to a stream of video frames for processing.
+        *args,
+        **kwargs,
+    ) -> None:
+        AgentSpec.__init__(self, *args, **kwargs)
 
-        This method sets up a subscription to process incoming video frames.
-        Each frame is encoded and then sent to the LLM by directly calling the
-        _observable_query method. The response is then logged to a file.
+        self.state_messages = []
+        self.coordinator = SkillCoordinator()
+        self._history = []  # type: ignore[var-annotated]
+        self._agent_id = str(uuid.uuid4())
+        self._agent_stopped = False
 
-        Args:
-            frame_observable (Observable): An observable emitting video frames or
-                                         (query, frame) tuples if query_extractor is provided.
-            query_extractor (callable, optional): Function to extract query and frame from
-                                                each emission. If None, assumes emissions are
-                                                raw frames and uses self.system_query.
-
-        Returns:
-            Disposable: A disposable representing the subscription.
-        """
-        # Initialize frame processor if not already set
-        if self.frame_processor is None:
-            self.frame_processor = FrameProcessor(delete_on_init=True)
-
-        print_emission_args = {"enabled": True, "dev_name": self.dev_name, "counts": {}}
-
-        def _process_frame(emission) -> Observable:  # type: ignore[no-untyped-def, type-arg]
-            """
-            Processes a frame or (query, frame) tuple.
-            """
-            # Extract query and frame
-            if query_extractor:
-                query, frame = query_extractor(emission)
+        if self.config.system_prompt:
+            if isinstance(self.config.system_prompt, str):
+                self.system_message = SystemMessage(self.config.system_prompt + SYSTEM_MSG_APPEND)
             else:
-                query = self.system_query
-                frame = emission
-            return just(frame).pipe(  # type: ignore[call-overload, no-any-return]
-                MyOps.print_emission(id="B", **print_emission_args),  # type: ignore[arg-type]
-                RxOps.observe_on(self.pool_scheduler),
-                MyOps.print_emission(id="C", **print_emission_args),  # type: ignore[arg-type]
-                RxOps.subscribe_on(self.pool_scheduler),
-                MyOps.print_emission(id="D", **print_emission_args),  # type: ignore[arg-type]
-                MyVidOps.with_jpeg_export(
-                    self.frame_processor,  # type: ignore[arg-type]
-                    suffix=f"{self.dev_name}_frame_",
-                    save_limit=_MAX_SAVED_FRAMES,
-                ),
-                MyOps.print_emission(id="E", **print_emission_args),  # type: ignore[arg-type]
-                MyVidOps.encode_image(),
-                MyOps.print_emission(id="F", **print_emission_args),  # type: ignore[arg-type]
-                RxOps.filter(
-                    lambda base64_and_dims: base64_and_dims is not None
-                    and base64_and_dims[0] is not None  # type: ignore[index]
-                    and base64_and_dims[1] is not None  # type: ignore[index]
-                ),
-                MyOps.print_emission(id="G", **print_emission_args),  # type: ignore[arg-type]
-                RxOps.flat_map(
-                    lambda base64_and_dims: create(  # type: ignore[arg-type, return-value]
-                        lambda observer, _: self._observable_query(
-                            observer,  # type: ignore[arg-type]
-                            base64_image=base64_and_dims[0],
-                            dimensions=base64_and_dims[1],
-                            incoming_query=query,
+                self.config.system_prompt.content += SYSTEM_MSG_APPEND  # type: ignore[operator]
+                self.system_message = self.config.system_prompt
+        else:
+            self.system_message = SystemMessage(get_system_prompt() + SYSTEM_MSG_APPEND)
+
+        self.publish(self.system_message)
+
+        # Use provided model instance if available, otherwise initialize from config
+        if self.config.model_instance:
+            self._llm = self.config.model_instance
+        else:
+            # For Ollama provider, ensure the model is available before initializing
+            if self.config.provider.value.lower() == "ollama":
+                ensure_ollama_model(self.config.model)
+
+            # For HuggingFace, we need to create a pipeline and wrap it in ChatHuggingFace
+            if self.config.provider.value.lower() == "huggingface":
+                llm = HuggingFacePipeline.from_model_id(
+                    model_id=self.config.model,
+                    task="text-generation",
+                    pipeline_kwargs={
+                        "max_new_tokens": 512,
+                        "temperature": 0.7,
+                    },
+                )
+                self._llm = ChatHuggingFace(llm=llm, model_id=self.config.model)
+            else:
+                self._llm = init_chat_model(  # type: ignore[call-overload]
+                    model_provider=self.config.provider, model=self.config.model
+                )
+
+    @rpc
+    def get_agent_id(self) -> str:
+        return self._agent_id
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.coordinator.start()
+
+    @rpc
+    def stop(self) -> None:
+        self.coordinator.stop()
+        self._agent_stopped = True
+        super().stop()
+
+    def clear_history(self) -> None:
+        self._history.clear()
+
+    def append_history(self, *msgs: list[AIMessage | HumanMessage]) -> None:
+        for msg in msgs:
+            self.publish(msg)  # type: ignore[arg-type]
+
+        self._history.extend(msgs)
+
+    def history(self):  # type: ignore[no-untyped-def]
+        return [self.system_message, *self._history, *self.state_messages]
+
+    # Used by agent to execute tool calls
+    def execute_tool_calls(self, tool_calls: list[ToolCall]) -> None:
+        """Execute a list of tool calls from the agent."""
+        if self._agent_stopped:
+            logger.warning("Agent is stopped, cannot execute tool calls.")
+            return
+        for tool_call in tool_calls:
+            logger.info(f"executing skill call {tool_call}")
+            self.coordinator.call_skill(
+                tool_call.get("id"),  # type: ignore[arg-type]
+                tool_call.get("name"),  # type: ignore[arg-type]
+                tool_call.get("args"),  # type: ignore[arg-type]
+            )
+
+    # used to inject skill calls into the agent loop without agent asking for it
+    def run_implicit_skill(self, skill_name: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        if self._agent_stopped:
+            logger.warning("Agent is stopped, cannot execute implicit skill calls.")
+            return
+        self.coordinator.call_skill(False, skill_name, {"args": kwargs})
+
+    async def agent_loop(self, first_query: str = ""):  # type: ignore[no-untyped-def]
+        # TODO: Should I add a lock here to prevent concurrent calls to agent_loop?
+
+        if self._agent_stopped:
+            logger.warning("Agent is stopped, cannot run agent loop.")
+            # return "Agent is stopped."
+            import traceback
+
+            traceback.print_stack()
+            return "Agent is stopped."
+
+        self.state_messages = []
+        if first_query:
+            self.append_history(HumanMessage(first_query))  # type: ignore[arg-type]
+
+        def _get_state() -> str:
+            # TODO: FIX THIS EXTREME HACK
+            update = self.coordinator.generate_snapshot(clear=False)
+            snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)  # type: ignore[attr-defined]
+            return json.dumps(snapshot_msgs, sort_keys=True, default=lambda o: repr(o))
+
+        try:
+            while True:
+                # we are getting tools from the coordinator on each turn
+                # since this allows for skillcontainers to dynamically provide new skills
+                tools = self.get_tools()  # type: ignore[no-untyped-call]
+                self._llm = self._llm.bind_tools(tools)  # type: ignore[assignment]
+
+                # publish to /agent topic for observability
+                for state_msg in self.state_messages:
+                    self.publish(state_msg)
+
+                # history() builds our message history dynamically
+                # ensures we include latest system state, but not old ones.
+                messages = self.history()  # type: ignore[no-untyped-call]
+
+                # Some LLMs don't work without any human messages. Add an initial one.
+                if len(messages) == 1 and isinstance(messages[0], SystemMessage):
+                    messages.append(
+                        HumanMessage(
+                            "Everything is initialized. I'll let you know when you should act."
                         )
                     )
-                ),  # Use the extracted query
-                MyOps.print_emission(id="H", **print_emission_args),  # type: ignore[arg-type]
-            )
+                    self.append_history(messages[-1])
 
-        # Use a mutable flag to ensure only one frame is processed at a time.
-        is_processing = [False]
+                msg = self._llm.invoke(messages)
 
-        def process_if_free(emission):  # type: ignore[no-untyped-def]
-            if not self.process_all_inputs and is_processing[0]:
-                # Drop frame if a request is in progress and process_all_inputs is False
-                return empty()
-            else:
-                is_processing[0] = True
-                return _process_frame(emission).pipe(
-                    MyOps.print_emission(id="I", **print_emission_args),  # type: ignore[arg-type]
-                    RxOps.observe_on(self.pool_scheduler),
-                    MyOps.print_emission(id="J", **print_emission_args),  # type: ignore[arg-type]
-                    RxOps.subscribe_on(self.pool_scheduler),
-                    MyOps.print_emission(id="K", **print_emission_args),  # type: ignore[arg-type]
-                    RxOps.do_action(
-                        on_completed=lambda: is_processing.__setitem__(0, False),
-                        on_error=lambda e: is_processing.__setitem__(0, False),
-                    ),
-                    MyOps.print_emission(id="L", **print_emission_args),  # type: ignore[arg-type]
+                self.append_history(msg)  # type: ignore[arg-type]
+
+                logger.info(f"Agent response: {msg.content}")
+
+                state = _get_state()
+
+                if msg.tool_calls:  # type: ignore[attr-defined]
+                    self.execute_tool_calls(msg.tool_calls)  # type: ignore[attr-defined]
+
+                # print(self)
+                # print(self.coordinator)
+
+                self._write_debug_history_file()
+
+                if not self.coordinator.has_active_skills():
+                    logger.info("No active tasks, exiting agent loop.")
+                    return msg.content
+
+                # coordinator will continue once a skill state has changed in
+                # such a way that agent call needs to be executed
+
+                if state == _get_state():
+                    await self.coordinator.wait_for_updates()
+
+                # we request a full snapshot of currently running, finished or errored out skills
+                # we ask for removal of finished skills from subsequent snapshots (clear=True)
+                update = self.coordinator.generate_snapshot(clear=True)
+
+                # generate tool_msgs and general state update message,
+                # depending on a skill having associated tool call from previous interaction
+                # we will return a tool message, and not a general state message
+                snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)  # type: ignore[attr-defined]
+
+                self.state_messages = snapshot_msgs.get("state_msgs", [])  # type: ignore[attr-defined]
+                self.append_history(
+                    *snapshot_msgs.get("tool_msgs", []),  # type: ignore[attr-defined]
+                    *snapshot_msgs.get("history_msgs", []),  # type: ignore[attr-defined]
                 )
 
-        observable = frame_observable.pipe(
-            MyOps.print_emission(id="A", **print_emission_args),  # type: ignore[arg-type]
-            RxOps.flat_map(process_if_free),
-            MyOps.print_emission(id="M", **print_emission_args),  # type: ignore[arg-type]
-        )
-
-        disposable = observable.subscribe(
-            on_next=lambda response: self._log_response_to_file(response, self.output_dir),
-            on_error=lambda e: logger.error(f"Error encountered: {e}"),
-            on_completed=lambda: logger.info(f"Stream processing completed for {self.dev_name}"),
-        )
-        self.disposables.add(disposable)
-        return disposable  # type: ignore[no-any-return]
-
-    def subscribe_to_query_processing(self, query_observable: Observable) -> Disposable:  # type: ignore[type-arg]
-        """Subscribes to a stream of queries for processing.
-
-        This method sets up a subscription to process incoming queries by directly
-        calling the _observable_query method. The responses are logged to a file.
-
-        Args:
-            query_observable (Observable): An observable emitting queries.
-
-        Returns:
-            Disposable: A disposable representing the subscription.
-        """
-        print_emission_args = {"enabled": False, "dev_name": self.dev_name, "counts": {}}
-
-        def _process_query(query) -> Observable:  # type: ignore[no-untyped-def, type-arg]
-            """
-            Processes a single query by logging it and passing it to _observable_query.
-            Returns an observable that emits the LLM response.
-            """
-            return just(query).pipe(
-                MyOps.print_emission(id="Pr A", **print_emission_args),  # type: ignore[arg-type]
-                RxOps.flat_map(
-                    lambda query: create(  # type: ignore[arg-type, return-value]
-                        lambda observer, _: self._observable_query(observer, incoming_query=query)  # type: ignore[arg-type]
-                    )
-                ),
-                MyOps.print_emission(id="Pr B", **print_emission_args),  # type: ignore[arg-type]
-            )
-
-        # A mutable flag indicating whether a query is currently being processed.
-        is_processing = [False]
-
-        def process_if_free(query):  # type: ignore[no-untyped-def]
-            logger.info(f"Processing Query: {query}")
-            if not self.process_all_inputs and is_processing[0]:
-                # Drop query if a request is already in progress and process_all_inputs is False
-                return empty()
-            else:
-                is_processing[0] = True
-                logger.info("Processing Query.")
-                return _process_query(query).pipe(
-                    MyOps.print_emission(id="B", **print_emission_args),  # type: ignore[arg-type]
-                    RxOps.observe_on(self.pool_scheduler),
-                    MyOps.print_emission(id="C", **print_emission_args),  # type: ignore[arg-type]
-                    RxOps.subscribe_on(self.pool_scheduler),
-                    MyOps.print_emission(id="D", **print_emission_args),  # type: ignore[arg-type]
-                    RxOps.do_action(
-                        on_completed=lambda: is_processing.__setitem__(0, False),
-                        on_error=lambda e: is_processing.__setitem__(0, False),
-                    ),
-                    MyOps.print_emission(id="E", **print_emission_args),  # type: ignore[arg-type]
-                )
-
-        observable = query_observable.pipe(
-            MyOps.print_emission(id="A", **print_emission_args),  # type: ignore[arg-type]
-            RxOps.flat_map(lambda query: process_if_free(query)),  # type: ignore[no-untyped-call]
-            MyOps.print_emission(id="F", **print_emission_args),  # type: ignore[arg-type]
-        )
-
-        disposable = observable.subscribe(
-            on_next=lambda response: self._log_response_to_file(response, self.output_dir),
-            on_error=lambda e: logger.error(f"Error processing query for {self.dev_name}: {e}"),
-            on_completed=lambda: logger.info(f"Stream processing completed for {self.dev_name}"),
-        )
-        self.disposables.add(disposable)
-        return disposable  # type: ignore[no-any-return]
-
-    def get_response_observable(self) -> Observable:  # type: ignore[type-arg]
-        """Gets an observable that emits responses from this agent.
-
-        Returns:
-            Observable: An observable that emits string responses from the agent.
-        """
-        return self.response_subject.pipe(
-            RxOps.observe_on(self.pool_scheduler),
-            RxOps.subscribe_on(self.pool_scheduler),
-            RxOps.share(),
-        )
-
-    def run_observable_query(self, query_text: str, **kwargs) -> Observable:  # type: ignore[no-untyped-def, type-arg]
-        """Creates an observable that processes a one-off text query to Agent and emits the response.
-
-        This method provides a simple way to send a text query and get an observable
-        stream of the response. It's designed for one-off queries rather than
-        continuous processing of input streams. Useful for testing and development.
-
-        Args:
-            query_text (str): The query text to process.
-            **kwargs: Additional arguments to pass to _observable_query. Supported args vary by agent type.
-                     For example, ClaudeAgent supports: base64_image, dimensions, override_token_limit,
-                     reset_conversation, thinking_budget_tokens
-
-        Returns:
-            Observable: An observable that emits the response as a string.
-        """
-        return create(
-            lambda observer, _: self._observable_query(
-                observer,  # type: ignore[arg-type]
-                incoming_query=query_text,
-                **kwargs,
-            )
-        )
-
-    def dispose_all(self) -> None:
-        """Disposes of all active subscriptions managed by this agent."""
-        super().dispose_all()
-        self.response_subject.on_completed()
-
-
-# endregion LLMAgent Base Class (Generic LLM Agent)
-
-
-# -----------------------------------------------------------------------------
-# region OpenAIAgent Subclass (OpenAI-Specific Implementation)
-# -----------------------------------------------------------------------------
-class OpenAIAgent(LLMAgent):
-    """OpenAI agent implementation that uses OpenAI's API for processing.
-
-    This class implements the _send_query method to interact with OpenAI's API.
-    It also sets up OpenAI-specific parameters, such as the client, model name,
-    tokenizer, and response model.
-    """
-
-    def __init__(
-        self,
-        dev_name: str,
-        agent_type: str = "Vision",
-        query: str = "What do you see?",
-        input_query_stream: Observable | None = None,  # type: ignore[type-arg]
-        input_data_stream: Observable | None = None,  # type: ignore[type-arg]
-        input_video_stream: Observable | None = None,  # type: ignore[type-arg]
-        output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
-        agent_memory: AbstractAgentSemanticMemory | None = None,
-        system_query: str | None = None,
-        max_input_tokens_per_request: int = 128000,
-        max_output_tokens_per_request: int = 16384,
-        model_name: str = "gpt-4o",
-        prompt_builder: PromptBuilder | None = None,
-        tokenizer: AbstractTokenizer | None = None,
-        rag_query_n: int = 4,
-        rag_similarity_threshold: float = 0.45,
-        skills: AbstractSkill | list[AbstractSkill] | SkillLibrary | None = None,
-        response_model: BaseModel | None = None,
-        frame_processor: FrameProcessor | None = None,
-        image_detail: str = "low",
-        pool_scheduler: ThreadPoolScheduler | None = None,
-        process_all_inputs: bool | None = None,
-        openai_client: OpenAI | None = None,
-    ) -> None:
-        """
-        Initializes a new instance of the OpenAIAgent.
-
-        Args:
-            dev_name (str): The device name of the agent.
-            agent_type (str): The type of the agent.
-            query (str): The default query text.
-            input_query_stream (Observable): An observable for query input.
-            input_data_stream (Observable): An observable for data input.
-            input_video_stream (Observable): An observable for video frames.
-            output_dir (str): Directory for output files.
-            agent_memory (AbstractAgentSemanticMemory): The memory system.
-            system_query (str): The system prompt to use with RAG context.
-            max_input_tokens_per_request (int): Maximum tokens for input.
-            max_output_tokens_per_request (int): Maximum tokens for output.
-            model_name (str): The OpenAI model name to use.
-            prompt_builder (PromptBuilder): Custom prompt builder.
-            tokenizer (AbstractTokenizer): Custom tokenizer for token counting.
-            rag_query_n (int): Number of results to fetch in RAG queries.
-            rag_similarity_threshold (float): Minimum similarity for RAG results.
-            skills (Union[AbstractSkill, List[AbstractSkill], SkillLibrary]): Skills available to the agent.
-            response_model (BaseModel): Optional Pydantic model for responses.
-            frame_processor (FrameProcessor): Custom frame processor.
-            image_detail (str): Detail level for images ("low", "high", "auto").
-            pool_scheduler (ThreadPoolScheduler): The scheduler to use for thread pool operations.
-                If None, the global scheduler from get_scheduler() will be used.
-            process_all_inputs (bool): Whether to process all inputs or skip when busy.
-                If None, defaults to True for text queries and merged streams, False for video streams.
-            openai_client (OpenAI): The OpenAI client to use. This can be used to specify
-                a custom OpenAI client if targetting another provider.
-        """
-        # Determine appropriate default for process_all_inputs if not provided
-        if process_all_inputs is None:
-            if input_query_stream is not None:
-                process_all_inputs = True
-            else:
-                process_all_inputs = False
-
-        super().__init__(
-            dev_name=dev_name,
-            agent_type=agent_type,
-            agent_memory=agent_memory,
-            pool_scheduler=pool_scheduler,
-            process_all_inputs=process_all_inputs,
-            system_query=system_query,
-            input_query_stream=input_query_stream,
-            input_data_stream=input_data_stream,
-            input_video_stream=input_video_stream,
-        )
-        self.client = openai_client or OpenAI()
-        self.query = query
-        self.output_dir = output_dir
-        os.makedirs(self.output_dir, exist_ok=True)
-
-        # Configure skill library.
-        self.skills = skills
-        self.skill_library = None
-        if isinstance(self.skills, SkillLibrary):
-            self.skill_library = self.skills
-        elif isinstance(self.skills, list):
-            self.skill_library = SkillLibrary()
-            for skill in self.skills:
-                self.skill_library.add(skill)
-        elif isinstance(self.skills, AbstractSkill):
-            self.skill_library = SkillLibrary()
-            self.skill_library.add(self.skills)
-
-        self.response_model = response_model if response_model is not None else NOT_GIVEN
-        self.model_name = model_name
-        self.tokenizer = tokenizer or OpenAITokenizer(model_name=self.model_name)
-        self.prompt_builder = prompt_builder or PromptBuilder(
-            self.model_name, tokenizer=self.tokenizer
-        )
-        self.rag_query_n = rag_query_n
-        self.rag_similarity_threshold = rag_similarity_threshold
-        self.image_detail = image_detail
-        self.max_output_tokens_per_request = max_output_tokens_per_request
-        self.max_input_tokens_per_request = max_input_tokens_per_request
-        self.max_tokens_per_request = max_input_tokens_per_request + max_output_tokens_per_request
-
-        # Add static context to memory.
-        self._add_context_to_memory()
-
-        self.frame_processor = frame_processor or FrameProcessor(delete_on_init=True)
-
-        logger.info("OpenAI Agent Initialized.")
-
-    def _add_context_to_memory(self) -> None:
-        """Adds initial context to the agent's memory."""
-        context_data = [
-            (
-                "id0",
-                "Optical Flow is a technique used to track the movement of objects in a video sequence.",
-            ),
-            (
-                "id1",
-                "Edge Detection is a technique used to identify the boundaries of objects in an image.",
-            ),
-            ("id2", "Video is a sequence of frames captured at regular intervals."),
-            (
-                "id3",
-                "Colors in Optical Flow are determined by the movement of light, and can be used to track the movement of objects.",
-            ),
-            (
-                "id4",
-                "Json is a data interchange format that is easy for humans to read and write, and easy for machines to parse and generate.",
-            ),
-        ]
-        for doc_id, text in context_data:
-            self.agent_memory.add_vector(doc_id, text)  # type: ignore[no-untyped-call]
-
-    def _send_query(self, messages: list) -> Any:  # type: ignore[type-arg]
-        """Sends the query to OpenAI's API.
-
-        Depending on whether a response model is provided, the appropriate API
-        call is made.
-
-        Args:
-            messages (list): The prompt messages to send.
-
-        Returns:
-            The response message from OpenAI.
-
-        Raises:
-            Exception: If no response message is returned.
-            ConnectionError: If there's an issue connecting to the API.
-            ValueError: If the messages or other parameters are invalid.
-        """
-        try:
-            if self.response_model is not NOT_GIVEN:
-                response = self.client.beta.chat.completions.parse(
-                    model=self.model_name,
-                    messages=messages,
-                    response_format=self.response_model,  # type: ignore[arg-type]
-                    tools=(
-                        self.skill_library.get_tools()  # type: ignore[arg-type]
-                        if self.skill_library is not None
-                        else NOT_GIVEN
-                    ),
-                    max_tokens=self.max_output_tokens_per_request,
-                )
-            else:
-                response = self.client.chat.completions.create(  # type: ignore[assignment]
-                    model=self.model_name,
-                    messages=messages,
-                    max_tokens=self.max_output_tokens_per_request,
-                    tools=(
-                        self.skill_library.get_tools()  # type: ignore[arg-type]
-                        if self.skill_library is not None
-                        else NOT_GIVEN
-                    ),
-                )
-            response_message = response.choices[0].message
-            if response_message is None:
-                logger.error("Response message does not exist.")
-                raise Exception("Response message does not exist.")
-            return response_message
-        except ConnectionError as ce:
-            logger.error(f"Connection error with API: {ce}")
-            raise
-        except ValueError as ve:
-            logger.error(f"Invalid parameters: {ve}")
-            raise
         except Exception as e:
-            logger.error(f"Unexpected error in API call: {e}")
-            raise
+            logger.error(f"Error in agent loop: {e}")
+            import traceback
 
-    def stream_query(self, query_text: str) -> Observable:  # type: ignore[type-arg]
-        """Creates an observable that processes a text query and emits the response.
+            traceback.print_exc()
 
-        This method provides a simple way to send a text query and get an observable
-        stream of the response. It's designed for one-off queries rather than
-        continuous processing of input streams.
+    @rpc
+    def loop_thread(self) -> bool:
+        asyncio.run_coroutine_threadsafe(self.agent_loop(), self._loop)  # type: ignore[arg-type]
+        return True
 
-        Args:
-            query_text (str): The query text to process.
+    @rpc
+    def query(self, query: str):  # type: ignore[no-untyped-def]
+        # TODO: could this be
+        # from distributed.utils import sync
+        # return sync(self._loop, self.agent_loop, query)
+        return asyncio.run_coroutine_threadsafe(self.agent_loop(query), self._loop).result()  # type: ignore[arg-type]
 
-        Returns:
-            Observable: An observable that emits the response as a string.
-        """
-        return create(
-            lambda observer, _: self._observable_query(observer, incoming_query=query_text)  # type: ignore[arg-type]
-        )
+    async def query_async(self, query: str):  # type: ignore[no-untyped-def]
+        return await self.agent_loop(query)
+
+    @rpc
+    def register_skills(self, container, run_implicit_name: str | None = None):  # type: ignore[no-untyped-def]
+        ret = self.coordinator.register_skills(container)  # type: ignore[func-returns-value]
+
+        if run_implicit_name:
+            self.run_implicit_skill(run_implicit_name)
+
+        return ret
+
+    def get_tools(self):  # type: ignore[no-untyped-def]
+        return self.coordinator.get_tools()
+
+    def _write_debug_history_file(self) -> None:
+        file_path = os.getenv("DEBUG_AGENT_HISTORY_FILE")
+        if not file_path:
+            return
+
+        history = [x.__dict__ for x in self.history()]  # type: ignore[no-untyped-call]
+
+        with open(file_path, "w") as f:
+            json.dump(history, f, default=lambda x: repr(x), indent=2)
 
 
-# endregion OpenAIAgent Subclass (OpenAI-Specific Implementation)
+class LlmAgent(Agent):
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.loop_thread()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+
+llm_agent = LlmAgent.blueprint
+
+
+def deploy(
+    dimos: DimosCluster,
+    system_prompt: str = "You are a helpful assistant for controlling a Unitree Go2 robot.",
+    model: Model = Model.GPT_4O,
+    provider: Provider = Provider.OPENAI,  # type: ignore[attr-defined]
+    skill_containers: list[SkillContainer] | None = None,
+) -> Agent:
+    from dimos.agents.cli.human import HumanInput
+
+    if skill_containers is None:
+        skill_containers = []
+    agent = dimos.deploy(  # type: ignore[attr-defined]
+        Agent,
+        system_prompt=system_prompt,
+        model=model,
+        provider=provider,
+    )
+
+    human_input = dimos.deploy(HumanInput)  # type: ignore[attr-defined]
+    human_input.start()
+
+    agent.register_skills(human_input)
+
+    for skill_container in skill_containers:
+        print("Registering skill container:", skill_container)
+        agent.register_skills(skill_container)
+
+    agent.run_implicit_skill("human")
+    agent.start()
+    agent.loop_thread()
+
+    return agent  # type: ignore[no-any-return]
+
+
+__all__ = ["Agent", "deploy", "llm_agent"]

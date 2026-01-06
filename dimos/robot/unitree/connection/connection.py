@@ -20,20 +20,20 @@ import time
 from typing import TypeAlias
 
 from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
-from go2_webrtc_driver.constants import (  # type: ignore[import-untyped]
-    RTC_TOPIC,
-    SPORT_CMD,
-    VUI_COLOR,
-)
-from go2_webrtc_driver.webrtc_driver import (  # type: ignore[import-untyped]
-    Go2WebRTCConnection,
-    WebRTCConnectionMethod,
-)
 import numpy as np
 from numpy.typing import NDArray
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
+from unitree_webrtc_connect.constants import (  # type: ignore[import-untyped]
+    RTC_TOPIC,
+    SPORT_CMD,
+    VUI_COLOR,
+)
+from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untyped]  # type: ignore[import-untyped]
+    UnitreeWebRTCConnection as LegionConnection,
+    WebRTCConnectionMethod,
+)
 
 from dimos.core import rpc
 from dimos.core.resource import Resource
@@ -82,7 +82,7 @@ class UnitreeWebRTCConnection(Resource):
         self.mode = mode
         self.stop_timer: threading.Timer | None = None
         self.cmd_vel_timeout = 0.2
-        self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
+        self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
         self.connect()
 
     def connect(self) -> None:

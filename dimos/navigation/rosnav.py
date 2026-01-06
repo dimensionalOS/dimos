@@ -45,7 +45,7 @@ from std_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
 from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined, import-untyped]
 
 from dimos import spec
-from dimos.agents2 import Reducer, Stream, skill  # type: ignore[attr-defined]
+from dimos.agents import Reducer, Stream, skill  # type: ignore[attr-defined]
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import (
