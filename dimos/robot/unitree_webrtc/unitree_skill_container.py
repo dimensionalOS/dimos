@@ -81,6 +81,7 @@ class UnitreeSkillContainer(SkillModule):
             # Move 3 meters left, and face that direction
             relative_move(forward=0, left=3, degrees=90)
         """
+        forward, left, degrees = float(forward), float(left), float(degrees)
 
         tf = self.tf.get("world", "base_link")
         if tf is None:
