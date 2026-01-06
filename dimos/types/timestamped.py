@@ -27,7 +27,7 @@ from sortedcontainers import SortedKeyList  # type: ignore[import-untyped]
 from dimos.types.weaklist import WeakList
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.timestampAlignment")
+logger = setup_logger()
 
 # any class that carries a timestamp should inherit from this
 # this allows us to work with timeseries in consistent way, allign messages, replay etc

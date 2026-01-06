@@ -23,7 +23,7 @@ from reactivex import Subject
 from dimos.skills.skills import AbstractSkill
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.skills.speak")
+logger = setup_logger()
 
 # Global lock to prevent multiple simultaneous audio playbacks
 _audio_device_lock = threading.RLock()

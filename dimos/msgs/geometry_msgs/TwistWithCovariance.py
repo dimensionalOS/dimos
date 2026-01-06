@@ -23,7 +23,7 @@ import numpy as np
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
         TwistWithCovariance as ROSTwistWithCovariance,
     )
 except ImportError:

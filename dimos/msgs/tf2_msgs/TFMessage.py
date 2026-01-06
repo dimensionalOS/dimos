@@ -32,10 +32,10 @@ from typing import TYPE_CHECKING, BinaryIO
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage  # type: ignore[import-untyped]
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
         TransformStamped as ROSTransformStamped,
     )
-    from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
+    from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined, import-untyped]
 except ImportError:
     ROSTFMessage = None  # type: ignore[assignment, misc]
     ROSTransformStamped = None  # type: ignore[assignment, misc]

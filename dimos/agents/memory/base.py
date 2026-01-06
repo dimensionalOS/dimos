@@ -37,7 +37,7 @@ class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
             UnknownConnectionTypeError: If an unrecognized connection type is specified.
             AgentMemoryConnectionError: If initializing the database connection fails.
         """
-        self.logger = setup_logger(self.__class__.__name__)
+        self.logger = setup_logger()
         self.logger.info("Initializing AgentMemory with connection type: %s", connection_type)
         self.connection_params = kwargs
         self.db_connection = (

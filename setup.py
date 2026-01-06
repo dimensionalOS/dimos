@@ -12,9 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
+from pybind11.setup_helpers import Pybind11Extension, build_ext
 from setuptools import find_packages, setup
+
+# C++ extensions
+ext_modules = [
+    Pybind11Extension(
+        "dimos.navigation.global_planner.min_cost_astar_ext",
+        [os.path.join("dimos", "navigation", "global_planner", "min_cost_astar_cpp.cpp")],
+        extra_compile_args=[
+            "-O3",  # Maximum optimization
+            "-march=native",  # Optimize for current CPU
+            "-ffast-math",  # Fast floating point
+        ],
+        define_macros=[
+            ("NDEBUG", "1"),
+        ],
+    ),
+]
 
 setup(
     packages=find_packages(),
     package_dir={"": "."},
+    ext_modules=ext_modules,
+    cmdclass={"build_ext": build_ext},
 )

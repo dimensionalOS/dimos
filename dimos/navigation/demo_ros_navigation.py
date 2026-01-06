@@ -14,7 +14,7 @@
 
 import time
 
-import rclpy
+import rclpy  # type: ignore[import-untyped]
 
 from dimos import core
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Twist, Vector3
@@ -24,7 +24,7 @@ from dimos.navigation.rosnav import ROSNav
 from dimos.protocol import pubsub
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 def main() -> None:

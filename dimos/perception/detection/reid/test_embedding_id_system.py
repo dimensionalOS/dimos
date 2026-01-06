@@ -27,7 +27,7 @@ def mobileclip_model():
 
     model_path = get_data("models_mobileclip") / "mobileclip2_s0.pt"
     model = MobileCLIPModel(model_name="MobileCLIP2-S0", model_path=model_path)
-    model.warmup()
+    model.start()
     return model
 
 

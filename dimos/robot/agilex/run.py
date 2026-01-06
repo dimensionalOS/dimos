@@ -34,7 +34,7 @@ from dimos.stream.audio.pipelines import stt, tts
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
-logger = setup_logger("dimos.robot.agilex.run")
+logger = setup_logger()
 
 # Load environment variables
 load_dotenv()

@@ -20,7 +20,8 @@ import time
 
 import cv2
 import onnxruntime  # type: ignore[import-untyped]
-from ultralytics import FastSAM
+import torch
+from ultralytics import FastSAM  # type: ignore[attr-defined]
 
 from dimos.perception.common.detection2d_tracker import get_tracked_results, target2dTracker
 from dimos.perception.segmentation.image_analyzer import ImageAnalyzer
@@ -31,10 +32,9 @@ from dimos.perception.segmentation.utils import (
     plot_results,
 )
 from dimos.utils.data import get_data
-from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.segmentation.sam_2d_seg")
+logger = setup_logger()
 
 
 class Sam2DSegmenter:
@@ -48,14 +48,20 @@ class Sam2DSegmenter:
         use_rich_labeling: bool = False,
         use_filtering: bool = True,
     ) -> None:
-        if is_cuda_available():  # type: ignore[no-untyped-call]
+        # Use GPU if available, otherwise fall back to CPU
+        if torch.cuda.is_available():
             logger.info("Using CUDA for SAM 2d segmenter")
             if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
                 onnxruntime.preload_dlls(cuda=True, cudnn=True)
             self.device = "cuda"
+        # MacOS Metal performance shaders
+        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            logger.info("Using Metal for SAM 2d segmenter")
+            self.device = "mps"
         else:
             logger.info("Using CPU for SAM 2d segmenter")
             self.device = "cpu"
+
         # Core components
         self.model = FastSAM(get_data(model_path) / model_name)
         self.use_tracker = use_tracker

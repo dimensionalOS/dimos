@@ -27,7 +27,7 @@ from dimos.mapping.types import LatLon
 from dimos.mapping.utils.distance import distance_in_meters
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class GoogleMaps:

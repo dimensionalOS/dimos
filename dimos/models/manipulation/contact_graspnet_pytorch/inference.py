@@ -4,8 +4,12 @@ import os
 
 from contact_graspnet_pytorch import config_utils  # type: ignore[import-not-found]
 from contact_graspnet_pytorch.checkpoints import CheckpointIO  # type: ignore[import-not-found]
-from contact_graspnet_pytorch.contact_grasp_estimator import GraspEstimator  # type: ignore[import-not-found]
-from contact_graspnet_pytorch.data import load_available_input_data  # type: ignore[import-not-found]
+from contact_graspnet_pytorch.contact_grasp_estimator import (  # type: ignore[import-not-found]
+    GraspEstimator,
+)
+from contact_graspnet_pytorch.data import (  # type: ignore[import-not-found]
+    load_available_input_data,
+)
 import numpy as np
 
 from dimos.utils.data import get_data

@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import traceback
 from typing import Any, TypeVar
 
 import dimos.core.colors as colors
@@ -26,7 +25,7 @@ from typing import (
     TypeVar,
 )
 
-from dimos.core.stream import In, RemoteIn, Transport
+from dimos.core.stream import In, Transport
 from dimos.protocol.pubsub.jpeg_shm import JpegSharedMemory
 from dimos.protocol.pubsub.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory
@@ -150,7 +149,7 @@ class SHMTransport(PubSubTransport[T]):
 
         self.shm.publish(self.topic, msg)
 
-    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
+    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[assignment, override]
         if not self._started:
             self.shm.start()
             self._started = True
@@ -175,7 +174,7 @@ class JpegShmTransport(PubSubTransport[T]):
 
         self.shm.publish(self.topic, msg)
 
-    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
+    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[assignment, override]
         if not self._started:
             self.shm.start()
             self._started = True

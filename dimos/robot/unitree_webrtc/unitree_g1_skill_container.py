@@ -25,7 +25,7 @@ from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1_skill_container")
+logger = setup_logger()
 
 # G1 Arm Actions - all use api_id 7106 on topic "rt/api/arm/request"
 G1_ARM_CONTROLS = [

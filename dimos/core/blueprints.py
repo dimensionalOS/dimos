@@ -21,7 +21,7 @@ import inspect
 import operator
 import sys
 from types import MappingProxyType
-from typing import Any, Literal, get_args, get_origin
+from typing import Any, Literal, get_args, get_origin, get_type_hints
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
@@ -29,6 +29,9 @@ from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.utils.generic import short_id
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 @dataclass(frozen=True)
@@ -205,6 +208,15 @@ class ModuleBlueprintSet:
             for module, original_name in connections[(remapped_name, type)]:
                 instance = module_coordinator.get_instance(module)
                 instance.set_transport(original_name, transport)  # type: ignore[union-attr]
+                logger.info(
+                    "Transport",
+                    name=remapped_name,
+                    original_name=original_name,
+                    topic=str(getattr(transport, "topic", None)),
+                    type=f"{type.__module__}.{type.__qualname__}",
+                    module=module.__name__,
+                    transport=transport.__class__.__name__,
+                )
 
     def _connect_rpc_methods(self, module_coordinator: ModuleCoordinator) -> None:
         # Gather all RPC methods.
@@ -268,10 +280,16 @@ class ModuleBlueprintSet:
                     requested_method_name, rpc_methods_dot[requested_method_name]
                 )
 
-    def build(self, global_config: GlobalConfig | None = None) -> ModuleCoordinator:
+    def build(
+        self,
+        global_config: GlobalConfig | None = None,
+        cli_config_overrides: Mapping[str, Any] | None = None,
+    ) -> ModuleCoordinator:
         if global_config is None:
             global_config = GlobalConfig()
-        global_config = global_config.model_copy(update=self.global_config_overrides)
+        global_config = global_config.model_copy(update=dict(self.global_config_overrides))
+        if cli_config_overrides:
+            global_config = global_config.model_copy(update=dict(cli_config_overrides))
 
         self._check_requirements()
         self._verify_no_name_conflicts()
@@ -293,16 +311,21 @@ def _make_module_blueprint(
 ) -> ModuleBlueprint:
     connections: list[ModuleConnection] = []
 
-    all_annotations = {}
-    for base_class in reversed(module.__mro__):
-        if hasattr(base_class, "__annotations__"):
-            all_annotations.update(base_class.__annotations__)
+    # Use get_type_hints() to properly resolve string annotations.
+    try:
+        all_annotations = get_type_hints(module)
+    except Exception:
+        # Fallback to raw annotations if get_type_hints fails.
+        all_annotations = {}
+        for base_class in reversed(module.__mro__):
+            if hasattr(base_class, "__annotations__"):
+                all_annotations.update(base_class.__annotations__)
 
     for name, annotation in all_annotations.items():
         origin = get_origin(annotation)
-        if origin not in (In, Out):  # type: ignore[comparison-overlap]
+        if origin not in (In, Out):
             continue
-        direction = "in" if origin == In else "out"  # type: ignore[comparison-overlap]
+        direction = "in" if origin == In else "out"
         type_ = get_args(annotation)[0]
         connections.append(ModuleConnection(name=name, type=type_, direction=direction))  # type: ignore[arg-type]
 

@@ -19,8 +19,10 @@ This module provides pre-configured blueprints for various G1 robot setups,
 from basic teleoperation to full autonomous agent configurations.
 """
 
-from dimos_lcm.foxglove_msgs import SceneUpdate
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
+from dimos_lcm.foxglove_msgs import SceneUpdate  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+    ImageAnnotations,
+)
 from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 
 from dimos.agents2.agent import llm_agent
@@ -30,7 +32,7 @@ from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.hardware.camera import zed
-from dimos.hardware.camera.module import CameraModule, camera_module
+from dimos.hardware.camera.module import camera_module
 from dimos.hardware.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
@@ -42,18 +44,18 @@ from dimos.msgs.geometry_msgs import (
 from dimos.msgs.nav_msgs import Odometry, Path
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Bool
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
+from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.navigation.bt_navigator.navigator import (
     behavior_tree_navigator,
 )
 from dimos.navigation.frontier_exploration import (
     wavefront_frontier_explorer,
 )
-from dimos.navigation.global_planner import astar_planner
+from dimos.navigation.global_planner.planner import astar_planner
 from dimos.navigation.local_planner.holonomic_local_planner import (
     holonomic_local_planner,
 )
-from dimos.navigation.rosnav import navigation_module
+from dimos.navigation.rosnav import ros_nav
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.module3D import Detection3DModule, detection3d_module
 from dimos.perception.detection.moduleDB import ObjectDBModule, detectionDB_module
@@ -61,19 +63,16 @@ from dimos.perception.detection.person_tracker import PersonTracker, person_trac
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
+from dimos.robot.unitree.connection.g1 import g1_connection
+from dimos.robot.unitree.connection.g1sim import g1_sim_connection
 from dimos.robot.unitree_webrtc.keyboard_teleop import keyboard_teleop
 from dimos.robot.unitree_webrtc.type.map import mapper
-from dimos.robot.unitree_webrtc.unitree_g1 import g1_connection
 from dimos.robot.unitree_webrtc.unitree_g1_skill_container import g1_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
-# Basic configuration with navigation and visualization
 _basic_no_nav = (
     autoconnect(
-        # Core connection module for G1
-        g1_connection(),
-        # Camera module
         camera_module(
             transform=Transform(
                 translation=Vector3(0.05, 0.0, 0.0),
@@ -99,11 +98,6 @@ _basic_no_nav = (
         foxglove_bridge(),
     )
     .global_config(n_dask_workers=4, robot_model="unitree_g1")
-    .remappings(
-        [
-            (CameraModule, "image", "color_image"),
-        ]
-    )
     .transports(
         {
             # G1 uses Twist for movement commands
@@ -131,11 +125,13 @@ _basic_no_nav = (
 
 basic_ros = autoconnect(
     _basic_no_nav,
-    navigation_module(),
+    g1_connection(),
+    ros_nav(),
 )
 
-basic_bt_nav = autoconnect(
+basic_sim = autoconnect(
     _basic_no_nav,
+    g1_sim_connection(),
     behavior_tree_navigator(),
 )
 
@@ -150,8 +146,8 @@ standard = autoconnect(
     _perception_and_memory,
 ).global_config(n_dask_workers=8)
 
-standard_bt_nav = autoconnect(
-    basic_bt_nav,
+standard_sim = autoconnect(
+    basic_sim,
     _perception_and_memory,
 ).global_config(n_dask_workers=8)
 
@@ -184,8 +180,8 @@ agentic = autoconnect(
     _agentic_skills,
 )
 
-agentic_bt_nav = autoconnect(
-    standard_bt_nav,
+agentic_sim = autoconnect(
+    standard_sim,
     _agentic_skills,
 )
 
@@ -198,7 +194,7 @@ with_joystick = autoconnect(
 # Detection configuration with person tracking and 3D detection
 detection = (
     autoconnect(
-        basic,
+        basic_ros,
         # Person detection modules with YOLO
         detection3d_module(
             camera_info=zed.CameraInfo.SingleWebcam,
@@ -227,49 +223,49 @@ detection = (
     .transports(
         {
             # Detection 3D module outputs
-            (Detection3DModule, "detections"): LCMTransport(
+            ("detections", Detection3DModule): LCMTransport(
                 "/detector3d/detections", Detection2DArray
             ),
-            (Detection3DModule, "annotations"): LCMTransport(
+            ("annotations", Detection3DModule): LCMTransport(
                 "/detector3d/annotations", ImageAnnotations
             ),
-            (Detection3DModule, "scene_update"): LCMTransport(
+            ("scene_update", Detection3DModule): LCMTransport(
                 "/detector3d/scene_update", SceneUpdate
             ),
-            (Detection3DModule, "detected_pointcloud_0"): LCMTransport(
+            ("detected_pointcloud_0", Detection3DModule): LCMTransport(
                 "/detector3d/pointcloud/0", PointCloud2
             ),
-            (Detection3DModule, "detected_pointcloud_1"): LCMTransport(
+            ("detected_pointcloud_1", Detection3DModule): LCMTransport(
                 "/detector3d/pointcloud/1", PointCloud2
             ),
-            (Detection3DModule, "detected_pointcloud_2"): LCMTransport(
+            ("detected_pointcloud_2", Detection3DModule): LCMTransport(
                 "/detector3d/pointcloud/2", PointCloud2
             ),
-            (Detection3DModule, "detected_image_0"): LCMTransport("/detector3d/image/0", Image),
-            (Detection3DModule, "detected_image_1"): LCMTransport("/detector3d/image/1", Image),
-            (Detection3DModule, "detected_image_2"): LCMTransport("/detector3d/image/2", Image),
+            ("detected_image_0", Detection3DModule): LCMTransport("/detector3d/image/0", Image),
+            ("detected_image_1", Detection3DModule): LCMTransport("/detector3d/image/1", Image),
+            ("detected_image_2", Detection3DModule): LCMTransport("/detector3d/image/2", Image),
             # Detection DB module outputs
-            (ObjectDBModule, "detections"): LCMTransport(
+            ("detections", ObjectDBModule): LCMTransport(
                 "/detectorDB/detections", Detection2DArray
             ),
-            (ObjectDBModule, "annotations"): LCMTransport(
+            ("annotations", ObjectDBModule): LCMTransport(
                 "/detectorDB/annotations", ImageAnnotations
             ),
-            (ObjectDBModule, "scene_update"): LCMTransport("/detectorDB/scene_update", SceneUpdate),
-            (ObjectDBModule, "detected_pointcloud_0"): LCMTransport(
+            ("scene_update", ObjectDBModule): LCMTransport("/detectorDB/scene_update", SceneUpdate),
+            ("detected_pointcloud_0", ObjectDBModule): LCMTransport(
                 "/detectorDB/pointcloud/0", PointCloud2
             ),
-            (ObjectDBModule, "detected_pointcloud_1"): LCMTransport(
+            ("detected_pointcloud_1", ObjectDBModule): LCMTransport(
                 "/detectorDB/pointcloud/1", PointCloud2
             ),
-            (ObjectDBModule, "detected_pointcloud_2"): LCMTransport(
+            ("detected_pointcloud_2", ObjectDBModule): LCMTransport(
                 "/detectorDB/pointcloud/2", PointCloud2
             ),
-            (ObjectDBModule, "detected_image_0"): LCMTransport("/detectorDB/image/0", Image),
-            (ObjectDBModule, "detected_image_1"): LCMTransport("/detectorDB/image/1", Image),
-            (ObjectDBModule, "detected_image_2"): LCMTransport("/detectorDB/image/2", Image),
+            ("detected_image_0", ObjectDBModule): LCMTransport("/detectorDB/image/0", Image),
+            ("detected_image_1", ObjectDBModule): LCMTransport("/detectorDB/image/1", Image),
+            ("detected_image_2", ObjectDBModule): LCMTransport("/detectorDB/image/2", Image),
             # Person tracker outputs
-            (PersonTracker, "target"): LCMTransport("/person_tracker/target", PoseStamped),
+            ("target", PersonTracker): LCMTransport("/person_tracker/target", PoseStamped),
         }
     )
 )

@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+from functools import reduce
+from operator import add
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 from dimos_lcm.vision_msgs import Detection2DArray  # type: ignore[import-untyped]
@@ -83,15 +85,8 @@ class ImageDetections(Generic[T], TableStr):
         )
 
     def to_foxglove_annotations(self) -> ImageAnnotations:
-        def flatten(xss):  # type: ignore[no-untyped-def]
-            return [x for xs in xss for x in xs]
-
-        texts = flatten(det.to_text_annotation() for det in self.detections)  # type: ignore[no-untyped-call]
-        points = flatten(det.to_points_annotation() for det in self.detections)  # type: ignore[no-untyped-call]
-
-        return ImageAnnotations(
-            texts=texts,
-            texts_length=len(texts),
-            points=points,
-            points_length=len(points),
-        )
+        if not self.detections:
+            return ImageAnnotations(
+                texts=[], texts_length=0, points=[], points_length=0, circles=[], circles_length=0
+            )
+        return reduce(add, (det.to_image_annotations() for det in self.detections))

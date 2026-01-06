@@ -55,7 +55,14 @@
         devShell = pkgs.mkShell {
           packages = devPackages;
           shellHook = ''
-            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
+            # Create nvidia-only lib symlinks to avoid glibc conflicts
+            NVIDIA_LIBS_DIR="/tmp/nix-nvidia-libs-$$"
+            mkdir -p "$NVIDIA_LIBS_DIR"
+            for lib in /usr/lib/libcuda.so* /usr/lib/libnvidia*.so*; do
+              [ -e "$lib" ] && ln -sf "$lib" "$NVIDIA_LIBS_DIR/" 2>/dev/null
+            done
+
+            export LD_LIBRARY_PATH="$NVIDIA_LIBS_DIR:${pkgs.lib.makeLibraryPath [
               pkgs.stdenv.cc.cc.lib pkgs.libGL pkgs.libGLU pkgs.mesa pkgs.glfw
               pkgs.xorg.libX11 pkgs.xorg.libXi pkgs.xorg.libXext pkgs.xorg.libXrandr
               pkgs.xorg.libXinerama pkgs.xorg.libXcursor pkgs.xorg.libXfixes

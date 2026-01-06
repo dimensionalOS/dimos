@@ -381,10 +381,10 @@ from dimos.core import Module, In, Out, rpc
 
 class CustomModule(Module):
     # 定义输入
-    input_data: In[DataType] = None
+    input_data: In[DataType]
 
     # 定义输出
-    output_data: Out[DataType] = None
+    output_data: Out[DataType]
 
     def __init__(self, param1, param2, **kwargs):
         super().__init__(**kwargs)

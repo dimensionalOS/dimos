@@ -22,7 +22,7 @@ from typing import BinaryIO, TypeAlias
 from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion  # type: ignore[import-untyped]
 import numpy as np
 from plum import dispatch
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 

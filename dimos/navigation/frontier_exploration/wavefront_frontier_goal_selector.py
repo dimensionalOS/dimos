@@ -29,12 +29,13 @@ import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
+from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance
 
-logger = setup_logger("dimos.robot.unitree.frontier_exploration")
+logger = setup_logger()
 
 
 class PointClassification(IntFlag):
@@ -90,14 +91,14 @@ class WavefrontFrontierExplorer(Module):
     """
 
     # LCM inputs
-    global_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
-    odom: In[PoseStamped] = None  # type: ignore[assignment]
-    goal_reached: In[Bool] = None  # type: ignore[assignment]
-    explore_cmd: In[Bool] = None  # type: ignore[assignment]
-    stop_explore_cmd: In[Bool] = None  # type: ignore[assignment]
+    global_costmap: In[OccupancyGrid]
+    odom: In[PoseStamped]
+    goal_reached: In[Bool]
+    explore_cmd: In[Bool]
+    stop_explore_cmd: In[Bool]
 
     # LCM outputs
-    goal_request: Out[PoseStamped] = None  # type: ignore[assignment]
+    goal_request: Out[PoseStamped]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,
@@ -762,7 +763,7 @@ class WavefrontFrontierExplorer(Module):
             )
 
             # Get exploration goal
-            costmap = self.latest_costmap.inflate(0.25)
+            costmap = simple_inflate(self.latest_costmap, 0.25)
             goal = self.get_exploration_goal(robot_pose, costmap)
 
             if goal:
@@ -775,7 +776,7 @@ class WavefrontFrontierExplorer(Module):
                 goal_msg.frame_id = "world"
                 goal_msg.ts = self.latest_costmap.ts
 
-                self.goal_request.publish(goal_msg)  # type: ignore[no-untyped-call]
+                self.goal_request.publish(goal_msg)
                 logger.info(f"Published frontier goal: ({goal.x:.2f}, {goal.y:.2f})")
 
                 goals_published += 1

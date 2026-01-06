@@ -150,11 +150,14 @@ def _lfs_pull(file_path: Path, repo_root: Path) -> None:
     try:
         relative_path = file_path.relative_to(repo_root)
 
+        env = os.environ.copy()
+        env["GIT_LFS_FORCE_PROGRESS"] = "1"
+
         subprocess.run(
             ["git", "lfs", "pull", "--include", str(relative_path)],
             cwd=repo_root,
             check=True,
-            capture_output=True,
+            env=env,
         )
     except subprocess.CalledProcessError as e:
         raise RuntimeError(f"Failed to pull LFS file {file_path}: {e}")

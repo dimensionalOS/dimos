@@ -41,7 +41,7 @@ from dimos.perception.pointcloud.utils import (
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.manip_aio_processor")
+logger = setup_logger()
 
 
 class ManipulationProcessor:

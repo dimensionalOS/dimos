@@ -68,6 +68,7 @@ class FastAPIServer(EdgeIO):
         print("Starting FastAPIServer initialization...")  # Debug print
         super().__init__(dev_name, edge_type)
         self.app = FastAPI()
+        self._server: uvicorn.Server | None = None
 
         # Add CORS middleware with more permissive settings for development
         self.app.add_middleware(
@@ -353,10 +354,18 @@ class FastAPIServer(EdgeIO):
             self.app.get(f"/video_feed/{key}")(self.create_video_feed_route(key))  # type: ignore[no-untyped-call]
 
     def run(self) -> None:
-        """Run the FastAPI server."""
-        uvicorn.run(
-            self.app, host=self.host, port=self.port
-        )  # TODO: Translate structure to enable in-built workers'
+        config = uvicorn.Config(
+            self.app,
+            host=self.host,
+            port=self.port,
+            log_level="error",  # Reduce verbosity
+        )
+        self._server = uvicorn.Server(config)
+        self._server.run()
+
+    def shutdown(self) -> None:
+        if self._server is not None:
+            self._server.should_exit = True
 
 
 if __name__ == "__main__":

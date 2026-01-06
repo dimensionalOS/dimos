@@ -18,7 +18,7 @@ from dimos_lcm.geometry_msgs import Twist as LCMTwist  # type: ignore[import-unt
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
         Twist as ROSTwist,
         Vector3 as ROSVector3,
     )

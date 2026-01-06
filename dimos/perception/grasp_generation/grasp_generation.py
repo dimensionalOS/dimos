@@ -25,7 +25,7 @@ from dimos.perception.grasp_generation.utils import parse_grasp_results
 from dimos.types.manipulation import ObjectData
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.grasp_generation")
+logger = setup_logger()
 
 
 class HostedGraspGenerator:

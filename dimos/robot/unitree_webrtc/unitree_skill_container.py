@@ -32,7 +32,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.core.rpc_client import RpcCall
 
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_skill_container")
+logger = setup_logger()
 
 
 _UNITREE_COMMANDS = {
@@ -104,11 +104,6 @@ class UnitreeSkillContainer(SkillModule):
         while True:
             yield str(datetime.datetime.now())
             time.sleep(1)
-
-    @skill()
-    def speak(self, text: str) -> str:
-        """Speak text out loud through the robot's speakers."""
-        return f"This is being said aloud: {text}"
 
     @skill()
     def execute_sport_command(self, command_name: str) -> str:

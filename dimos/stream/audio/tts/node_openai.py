@@ -29,7 +29,7 @@ from dimos.stream.audio.base import (
 from dimos.stream.audio.text.base import AbstractTextConsumer, AbstractTextEmitter
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.stream.audio.tts.openai")
+logger = setup_logger()
 
 
 class Voice(str, Enum):
