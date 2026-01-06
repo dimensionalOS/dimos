@@ -186,7 +186,119 @@ class WebsocketVisModule(Module):
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
         async def serve_index(request):  # type: ignore[no-untyped-def]
-            return HTMLResponse("<html><body>Use the extension.</body></html>")
+            html = """<!DOCTYPE html>
+<html>
+<head>
+    <title>Dimos Go2</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; }
+        .container { display: flex; height: 100vh; }
+        .rerun { flex: 1; border: none; }
+        .panel { width: 220px; padding: 20px; background: #1e1e1e; color: white; display: flex; flex-direction: column; }
+        h3 { margin: 0 0 20px 0; font-size: 20px; }
+        button { 
+            width: 100%; padding: 15px; margin: 8px 0; font-size: 15px; 
+            border: none; border-radius: 8px; cursor: pointer; font-weight: 600;
+            transition: all 0.2s;
+        }
+        button:hover { opacity: 0.9; transform: translateY(-1px); }
+        .explore { background: #28a745; color: white; }
+        .nav { background: #007bff; color: white; }
+        .active { box-shadow: 0 0 15px rgba(255,255,255,0.6); }
+        .status { padding: 12px; background: #333; border-radius: 8px; margin: 15px 0; font-size: 14px; }
+        .mode { font-weight: bold; color: #00ff88; }
+        .help { font-size: 12px; color: #888; margin-top: auto; line-height: 1.6; padding-top: 20px; border-top: 1px solid #333; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <iframe class="rerun" src="http://localhost:9090/viewer"></iframe>
+        <div class="panel">
+            <h3>🤖 Go2 Control</h3>
+            <div class="status">Mode: <span class="mode" id="mode">Idle</span></div>
+            <button id="exploreBtn" class="explore" onclick="toggleExplore()">🗺️ Start Exploration</button>
+            <button id="navBtn" class="nav" onclick="toggleNav()">🎮 Enable Navigation</button>
+            <div class="help">
+                <strong>Navigation Keys:</strong><br>
+                W/S: Forward/Back<br>
+                A/D: Turn L/R<br>
+                ←/→: Strafe L/R<br>
+                Space: Stop<br>
+                Shift: 2x Speed
+            </div>
+        </div>
+    </div>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io('http://localhost:7779');
+        let navActive = false, exploreActive = false, keysHeld = new Set(), publishInterval = null;
+        
+        socket.on('connect', () => console.log('Connected to dimos'));
+        
+        function toggleExplore() {
+            exploreActive = !exploreActive;
+            if (exploreActive) {
+                socket.emit('explore');
+                document.getElementById('exploreBtn').innerHTML = '⏹️ Stop Exploration';
+                document.getElementById('exploreBtn').classList.add('active');
+                document.getElementById('mode').textContent = 'Exploring';
+                if (navActive) toggleNav();
+            } else {
+                socket.emit('stop_explore');
+                document.getElementById('exploreBtn').innerHTML = '🗺️ Start Exploration';
+                document.getElementById('exploreBtn').classList.remove('active');
+                document.getElementById('mode').textContent = 'Idle';
+            }
+        }
+        
+        function toggleNav() {
+            navActive = !navActive;
+            if (navActive) {
+                document.getElementById('navBtn').classList.add('active');
+                document.getElementById('mode').textContent = 'Navigating';
+                document.addEventListener('keydown', onKeyDown);
+                document.addEventListener('keyup', onKeyUp);
+                publishInterval = setInterval(publishTwist, 100);
+                if (exploreActive) toggleExplore();
+            } else {
+                document.getElementById('navBtn').classList.remove('active');
+                document.getElementById('mode').textContent = 'Idle';
+                document.removeEventListener('keydown', onKeyDown);
+                document.removeEventListener('keyup', onKeyUp);
+                if (publishInterval) { clearInterval(publishInterval); publishInterval = null; }
+                keysHeld.clear();
+                sendTwist(0, 0, 0);
+            }
+        }
+        
+        function onKeyDown(e) {
+            if ([' ', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
+            keysHeld.add(e.key.toLowerCase());
+        }
+        
+        function onKeyUp(e) { keysHeld.delete(e.key.toLowerCase()); }
+        
+        function publishTwist() {
+            let lx = 0, ly = 0, az = 0, speed = 1.0;
+            if (keysHeld.has('shift')) speed = 2.0;
+            if (keysHeld.has('control')) speed = 0.5;
+            if (keysHeld.has(' ')) { sendTwist(0, 0, 0); return; }
+            if (keysHeld.has('w')) lx = 0.5 * speed;
+            if (keysHeld.has('s')) lx = -0.5 * speed;
+            if (keysHeld.has('a')) az = 0.8 * speed;
+            if (keysHeld.has('d')) az = -0.8 * speed;
+            if (keysHeld.has('arrowleft')) ly = 0.5 * speed;
+            if (keysHeld.has('arrowright')) ly = -0.5 * speed;
+            sendTwist(lx, ly, az);
+        }
+        
+        function sendTwist(lx, ly, az) {
+            socket.emit('cmd_vel', { linear: {x: lx, y: ly, z: 0}, angular: {x: 0, y: 0, z: az} });
+        }
+    </script>
+</body>
+</html>"""
+            return HTMLResponse(html)
 
         routes = [Route("/", serve_index)]
         starlette_app = Starlette(routes=routes)
