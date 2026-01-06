@@ -26,9 +26,15 @@ import pyzed.sl as sl
 import reactivex as rx
 from scipy.spatial.transform import Rotation
 
-from dimos.core import Module, ModuleConfig, Out, rpc
+from dimos.core import rpc
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
+from dimos.core import Module, ModuleConfig, Out
+from dimos.hardware.sensors.camera.spec import (
+    OPTICAL_ROTATION,
+    SensorStatus,
+    default_base_transform,
+)
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -38,17 +44,6 @@ from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
     from reactivex.disposable import Disposable
-
-OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
-
-
-def default_base_transform() -> Transform:
-    return Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
-        child_frame_id="camera_link",
-    )
 
 
 @dataclass
@@ -63,16 +58,17 @@ class ZEDCameraConfig(ModuleConfig):
     height: int = 720
     fps: int = 15
     camera_name: str = "camera"
+    base_frame_id: str = "base_link"
     base_transform: Transform | None = field(default_factory=default_base_transform)
-    camera_id: int = 0
-    serial_number: int | str | None = None
-    resolution: str | None = None
-    depth_mode: str | sl.DEPTH_MODE = "NEURAL"
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    camera_id: int = 0
+    serial_number: int | str | None = None
+    resolution: str | None = None
+    depth_mode: str | sl.DEPTH_MODE = "NEURAL"
     enable_fill_mode: bool = False
     enable_tracking: bool = True
     enable_imu_fusion: bool = True
@@ -91,6 +87,26 @@ class ZEDCamera(Module[ZEDCameraConfig]):
 
     config: ZEDCameraConfig
     default_config = ZEDCameraConfig
+
+    @property
+    def _camera_link(self) -> str:
+        return f"{self.config.camera_name}_link"
+
+    @property
+    def _color_frame(self) -> str:
+        return f"{self.config.camera_name}_color_frame"
+
+    @property
+    def _color_optical_frame(self) -> str:
+        return f"{self.config.camera_name}_color_optical_frame"
+
+    @property
+    def _depth_frame(self) -> str:
+        return f"{self.config.camera_name}_depth_frame"
+
+    @property
+    def _depth_optical_frame(self) -> str:
+        return f"{self.config.camera_name}_depth_optical_frame"
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
@@ -125,32 +141,8 @@ class ZEDCamera(Module[ZEDCameraConfig]):
             self._depth_camera_info.ts = ts
             self.depth_camera_info.publish(self._depth_camera_info)
 
-    @property
-    def _camera_link(self) -> str:
-        return f"{self.config.camera_name}_link"
-
-    @property
-    def _color_frame(self) -> str:
-        return f"{self.config.camera_name}_color_frame"
-
-    @property
-    def _color_optical_frame(self) -> str:
-        return f"{self.config.camera_name}_color_optical_frame"
-
-    @property
-    def _depth_frame(self) -> str:
-        return f"{self.config.camera_name}_depth_frame"
-
-    @property
-    def _depth_optical_frame(self) -> str:
-        return f"{self.config.camera_name}_depth_optical_frame"
-
-    @property
-    def _aligned_depth_to_color_frame(self) -> str:
-        return f"{self.config.camera_name}_aligned_depth_to_color_frame"
-
     @rpc
-    def start(self) -> str:
+    def start(self) -> SensorStatus:
         self._zed = sl.Camera()
         self._init_params = sl.InitParameters()
         if self.config.resolution:
@@ -158,7 +150,10 @@ class ZEDCamera(Module[ZEDCameraConfig]):
         else:
             self._init_params.camera_resolution = sl.RESOLUTION.HD720
         self._init_params.camera_fps = self.config.fps
-        self._init_params.depth_mode = sl.DEPTH_MODE.NEURAL
+        if isinstance(self.config.depth_mode, sl.DEPTH_MODE):
+            self._init_params.depth_mode = self.config.depth_mode
+        else:
+            self._init_params.depth_mode = getattr(sl.DEPTH_MODE, self.config.depth_mode)
         self._init_params.coordinate_system = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Z_UP_X_FWD
         self._init_params.coordinate_units = sl.UNIT.METER
         if self.config.serial_number is not None:
@@ -170,7 +165,7 @@ class ZEDCamera(Module[ZEDCameraConfig]):
         if err != sl.ERROR_CODE.SUCCESS:
             print(f"Failed to open ZED camera: {err}")
             self._zed = None
-            return "failed"
+            return SensorStatus.FAILED
 
         self._runtime_params = sl.RuntimeParameters()
         self._runtime_params.enable_fill_mode = self.config.enable_fill_mode
@@ -206,7 +201,7 @@ class ZEDCamera(Module[ZEDCameraConfig]):
                 on_error=lambda e: print(f"Pointcloud error: {e}"),
             )
 
-        return "started"
+        return SensorStatus.STARTED
 
     def _build_camera_info(self) -> None:
         if self._camera_info is None:
@@ -362,14 +357,14 @@ class ZEDCamera(Module[ZEDCameraConfig]):
         base_to_camera = Transform(
             translation=self.config.base_transform.translation,
             rotation=self.config.base_transform.rotation,
-            frame_id=self.config.base_transform.frame_id,
+            frame_id=self.config.base_frame_id,
             child_frame_id=self._camera_link,
             ts=ts,
         )
         camera_to_base = base_to_camera.inverse()
         world_to_base = world_to_camera + camera_to_base
         world_to_base.frame_id = self.config.world_frame
-        world_to_base.child_frame_id = base_to_camera.frame_id
+        world_to_base.child_frame_id = self.config.base_frame_id
         world_to_base.ts = ts
         return world_to_base
 
@@ -380,7 +375,7 @@ class ZEDCamera(Module[ZEDCameraConfig]):
             base_to_camera = Transform(
                 translation=self.config.base_transform.translation,
                 rotation=self.config.base_transform.rotation,
-                frame_id=self.config.base_transform.frame_id,
+                frame_id=self.config.base_frame_id,
                 child_frame_id=self._camera_link,
                 ts=ts,
             )

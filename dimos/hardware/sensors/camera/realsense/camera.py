@@ -24,9 +24,15 @@ import pyrealsense2 as rs
 import reactivex as rx
 from scipy.spatial.transform import Rotation
 
-from dimos.core import Module, ModuleConfig, Out, rpc
+from dimos.core import rpc
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
+from dimos.core import Module, ModuleConfig, Out
+from dimos.hardware.sensors.camera.spec import (
+    OPTICAL_ROTATION,
+    SensorStatus,
+    default_base_transform,
+)
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
@@ -37,17 +43,6 @@ from dimos.utils.reactive import backpressure
 if TYPE_CHECKING:
     from reactivex.disposable import Disposable
 
-OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
-
-
-def default_base_transform() -> Transform:
-    return Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="base_link",
-        child_frame_id="camera_link",
-    )
-
 
 @dataclass
 class RealSenseCameraConfig(ModuleConfig):
@@ -55,13 +50,14 @@ class RealSenseCameraConfig(ModuleConfig):
     height: int = 480
     fps: int = 15
     camera_name: str = "camera"
+    base_frame_id: str = "base_link"
     base_transform: Transform | None = field(default_factory=default_base_transform)
-    serial_number: str | None = None
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
     camera_info_fps: float = 1.0
+    serial_number: str | None = None
 
 
 class RealSenseCamera(Module[RealSenseCameraConfig]):
@@ -73,24 +69,6 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
 
     config: RealSenseCameraConfig
     default_config = RealSenseCameraConfig
-
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(*args, **kwargs)
-        self._pipeline: rs.pipeline | None = None
-        self._profile: rs.pipeline_profile | None = None
-        self._align: rs.align | None = None
-        self._running = False
-        self._thread: threading.Thread | None = None
-        self._color_camera_info: CameraInfo | None = None
-        self._depth_camera_info: CameraInfo | None = None
-        self._depth_scale: float = 0.001
-        self._color_to_depth_extrinsics: rs.extrinsics | None = None
-        # Pointcloud generation state
-        self._latest_color_img: Image | None = None
-        self._latest_depth_img: Image | None = None
-        self._pointcloud_lock = threading.Lock()
-        self._pointcloud_disposable: Disposable | None = None
-        self._camera_info_disposable: Disposable | None = None
 
     @property
     def _camera_link(self) -> str:
@@ -112,12 +90,26 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
     def _depth_optical_frame(self) -> str:
         return f"{self.config.camera_name}_depth_optical_frame"
 
-    @property
-    def _aligned_depth_to_color_frame(self) -> str:
-        return f"{self.config.camera_name}_aligned_depth_to_color_frame"
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(*args, **kwargs)
+        self._pipeline: rs.pipeline | None = None
+        self._profile: rs.pipeline_profile | None = None
+        self._align: rs.align | None = None
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._color_camera_info: CameraInfo | None = None
+        self._depth_camera_info: CameraInfo | None = None
+        self._depth_scale: float = 0.001
+        self._color_to_depth_extrinsics: rs.extrinsics | None = None
+        # Pointcloud generation state
+        self._latest_color_img: Image | None = None
+        self._latest_depth_img: Image | None = None
+        self._pointcloud_lock = threading.Lock()
+        self._pointcloud_disposable: Disposable | None = None
+        self._camera_info_disposable: Disposable | None = None
 
     @rpc
-    def start(self) -> str:
+    def start(self) -> SensorStatus:
         self._pipeline = rs.pipeline()
         config = rs.config()
 
@@ -170,7 +162,7 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
             on_error=lambda e: print(f"CameraInfo error: {e}"),
         )
 
-        return "started"
+        return SensorStatus.STARTED
 
     def _publish_camera_info(self) -> None:
         ts = time.time()
@@ -322,7 +314,7 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
             base_to_camera = Transform(
                 translation=self.config.base_transform.translation,
                 rotation=self.config.base_transform.rotation,
-                frame_id=self.config.base_transform.frame_id,
+                frame_id=self.config.base_frame_id,
                 child_frame_id=self._camera_link,
                 ts=ts,
             )
