@@ -15,7 +15,7 @@
 import logging
 import time
 
-from dimos.agents2.spec import Model, Provider
+from dimos.agents.spec import Model, Provider
 from dimos.core import LCMTransport, start
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import Image
@@ -63,8 +63,8 @@ def detection_unitree() -> None:
     connection.start()
     reid.start()
 
-    from dimos.agents2 import Agent  # type: ignore[attr-defined]
-    from dimos.agents2.cli.human import HumanInput
+    from dimos.agents import Agent  # type: ignore[attr-defined]
+    from dimos.agents.cli.human import HumanInput
 
     agent = Agent(
         system_prompt="You are a helpful assistant for controlling a Unitree Go2 robot.",

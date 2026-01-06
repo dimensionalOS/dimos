@@ -27,7 +27,7 @@ import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.agents2 import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
+from dimos.agents import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core import DimosCluster, In, LCMTransport, Module, ModuleConfig, Out, pSHMTransport, rpc
 from dimos.core.global_config import GlobalConfig

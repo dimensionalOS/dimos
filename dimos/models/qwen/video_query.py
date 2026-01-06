@@ -8,8 +8,8 @@ from openai import OpenAI
 from reactivex import Observable, operators as ops
 from reactivex.subject import Subject
 
-from dimos.agents.agent import OpenAIAgent
-from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
+from dimos.agents_deprecated.agent import OpenAIAgent
+from dimos.agents_deprecated.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 from dimos.utils.threadpool import get_scheduler
 
 BBox = tuple[float, float, float, float]  # (x1, y1, x2, y2)

@@ -17,7 +17,7 @@ import os
 import cv2
 from reactivex import Subject, operators as RxOps
 
-from dimos.agents.agent import OpenAIAgent
+from dimos.agents_deprecated.agent import OpenAIAgent
 from dimos.perception.semantic_seg import SemanticSegmentationStream
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl

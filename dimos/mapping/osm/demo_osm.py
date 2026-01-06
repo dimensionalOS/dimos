@@ -15,11 +15,11 @@
 
 from dotenv import load_dotenv
 
-from dimos.agents2.agent import llm_agent
-from dimos.agents2.cli.human import human_input
-from dimos.agents2.skills.demo_robot import demo_robot
-from dimos.agents2.skills.osm import osm_skill
-from dimos.agents2.system_prompt import get_system_prompt
+from dimos.agents.agent import llm_agent
+from dimos.agents.cli.human import human_input
+from dimos.agents.skills.demo_robot import demo_robot
+from dimos.agents.skills.osm import osm_skill
+from dimos.agents.system_prompt import get_system_prompt
 from dimos.core.blueprints import autoconnect
 
 load_dotenv()
