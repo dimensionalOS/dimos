@@ -58,13 +58,13 @@ class ManipulationModule(Module):
 def deploy(dimos: DimosCluster, ip: str):
     # 1. Deploy hardware modules
     robot = robot_detector.deploy(dimos, ip)
-    
+
     # 2. Deploy manipulation modules
     manip_module = dimos.deploy(ManipulationModule, ...)
-    
+
     # 3. Deploy perception modules
     object_stream = dimos.deploy(ObjectDetectionStream, ...)
-    
+
     # 4. Deploy skill container
     manip_skills = dimos.deploy(
         ManipulationSkillContainer,
@@ -73,7 +73,7 @@ def deploy(dimos: DimosCluster, ip: str):
         ...
     )
     manip_skills.start()
-    
+
     # 5. Deploy agent
     agent = agents2.deploy(
         dimos,
@@ -193,4 +193,3 @@ From `ManipulationModule`:
 - **G1 Agent Example**: `robot/unitree/g1/g1agent.py`
 - **Manipulation Module**: `manipulation/manipulation_module.py`
 - **Example Implementation**: `agents2/skills/manipulation_example.py`
-

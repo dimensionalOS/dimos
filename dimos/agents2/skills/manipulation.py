@@ -24,8 +24,8 @@ from dotenv import load_dotenv
 
 from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input
-from dimos.core.blueprints import autoconnect
 from dimos.agents2.skills.manipulation_skill_container import GreeterForAgents, RobotCapabilities
+from dimos.core.blueprints import autoconnect
 
 load_dotenv()
 

@@ -28,9 +28,9 @@ See: https://distributed.dask.org/en/stable/api.html
 import time
 
 from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.skill_module import SkillModule
-from dimos.core.module import Module
 from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
 
@@ -65,7 +65,7 @@ class RobotCapabilities(Module):
         return f"SPEAK: {text}"
 
     @rpc
-    def start(self) -> None:    
+    def start(self) -> None:
         super().start()
 
     @rpc
