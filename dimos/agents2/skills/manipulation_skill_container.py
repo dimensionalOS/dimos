@@ -230,19 +230,19 @@ class ManipulationSkillContainer(SkillModule):
         try:
             get_ee_pose = self.get_rpc_calls("ManipulationModule.get_ee_pose")
             move_to_pose = self.get_rpc_calls("ManipulationModule.move_to_pose")
-            
+
             # Get current pose to use current RPY if not provided
             pose = get_ee_pose()
             if pose is None:
                 return "End-effector pose not available (no feedback received)"
-            
+
             current_x, current_y, current_z, current_roll, current_pitch, current_yaw = pose
-            
+
             # Use provided values or current values
             final_roll = roll if roll is not None else current_roll
             final_pitch = pitch if pitch is not None else current_pitch
             final_yaw = yaw if yaw is not None else current_yaw
-            
+
             success = move_to_pose(x, y, z, final_roll, final_pitch, final_yaw)
             if success:
                 return (
@@ -274,7 +274,7 @@ class ManipulationSkillContainer(SkillModule):
         - X-axis: Forward (front direction, away from base)
         - Y-axis: Left (towards left from base)
         - Z-axis: Up (towards up, vertical from base)
-        
+
         Euler angles (roll, pitch, yaw) in ZYX convention:
         - Roll: Rotation around X-axis (forward/front axis)
         - Pitch: Rotation around Y-axis (left axis)
@@ -300,19 +300,19 @@ class ManipulationSkillContainer(SkillModule):
         try:
             get_ee_pose = self.get_rpc_calls("ManipulationModule.get_ee_pose")
             move_to_pose = self.get_rpc_calls("ManipulationModule.move_to_pose")
-            
+
             # Get current pose
             pose = get_ee_pose()
             if pose is None:
                 return "End-effector pose not available (no feedback received)"
-            
+
             x, y, z, current_roll, current_pitch, current_yaw = pose
-            
+
             # Use provided values or keep current
             new_roll = roll if roll is not None else current_roll
             new_pitch = pitch if pitch is not None else current_pitch
             new_yaw = yaw if yaw is not None else current_yaw
-            
+
             success = move_to_pose(x, y, z, new_roll, new_pitch, new_yaw)
             if success:
                 return (
@@ -389,7 +389,7 @@ class ManipulationSkillContainer(SkillModule):
         try:
             get_state = self.get_rpc_calls("ManipulationModule.get_state")
             state_value = get_state()
-            
+
             state_names = {
                 0: "IDLE",
                 1: "PLANNING",
@@ -397,9 +397,9 @@ class ManipulationSkillContainer(SkillModule):
                 3: "COMPLETED",
                 4: "FAULT",
             }
-            
+
             state_name = state_names.get(state_value, f"UNKNOWN({state_value})")
-            
+
             if state_value == 4:  # FAULT
                 return f"Arm state: {state_name} (value: {state_value}) - System is in fault state, call reset_arm() before attempting new commands"
             elif state_value == 2:  # EXECUTING
