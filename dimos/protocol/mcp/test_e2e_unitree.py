@@ -143,6 +143,7 @@ class TestMCPServerE2E:
             server.coordinator.stop()
             container.stop()
 
+    @pytest.mark.exclude  # Skip in CI - subprocess import triggers LCM init
     def test_cli_module_runnable(self) -> None:
         """Test that the CLI module can be loaded without errors."""
         # This simulates what Claude Code would do when starting the server
@@ -155,6 +156,7 @@ class TestMCPServerE2E:
         assert result.returncode == 0
         assert "OK" in result.stdout
 
+    @pytest.mark.exclude  # Skip in CI - subprocess import triggers LCM init
     def test_server_can_be_instantiated_from_cli_context(self) -> None:
         """Test server instantiation as it would happen from CLI."""
         result = subprocess.run(

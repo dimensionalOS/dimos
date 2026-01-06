@@ -59,7 +59,7 @@ class DimensionalMCPServer:
     def _setup_handlers(self) -> None:
         """Set up MCP protocol handlers."""
 
-        @self.server.list_tools()
+        @self.server.list_tools()  # type: ignore[misc]
         async def list_tools() -> list[Tool]:
             """List all available skills as MCP tools."""
             tools = []
@@ -81,7 +81,7 @@ class DimensionalMCPServer:
                 )
             return tools
 
-        @self.server.call_tool()
+        @self.server.call_tool()  # type: ignore[misc]
         async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[TextContent]:
             """Execute a skill and return the result."""
             call_id = str(uuid.uuid4())
