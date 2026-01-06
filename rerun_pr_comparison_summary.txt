@@ -1,0 +1,277 @@
+ .gitattributes                                     |    1 +
+ .gitignore                                         |    7 +
+ README.md                                          |    2 +-
+ .../{prompt_agents2.txt => prompt_agents.txt}      |    0
+ ...dimensional.command-center-extension-0.0.1.foxe |  Bin 0 -> 132 bytes
+ assets/foxglove_dashboards/go2.json                |  603 ++
+ .../old}/foxglove_g1_detections.json               |    0
+ .../old}/foxglove_image_sharpness_test.json        |    0
+ .../old}/foxglove_unitree_lcm_dashboard.json       |    0
+ .../old}/foxglove_unitree_yolo.json                |    0
+ data/.lfs/astar_corner_general.png.tar.gz          |    3 +
+ data/.lfs/astar_corner_min_cost.png.tar.gz         |    3 +
+ data/.lfs/astar_general.png.tar.gz                 |    3 +
+ data/.lfs/astar_min_cost.png.tar.gz                |    3 +
+ data/.lfs/big_office.ply.tar.gz                    |    3 +
+ .../big_office_height_cost_occupancy.png.tar.gz    |    3 +
+ data/.lfs/big_office_simple_occupancy.png.tar.gz   |    3 +
+ data/.lfs/expected_occupancy_scene.xml.tar.gz      |    3 +
+ data/.lfs/gradient_simple.png.tar.gz               |    3 +
+ data/.lfs/gradient_voronoi.png.tar.gz              |    3 +
+ data/.lfs/inflation_simple.png.tar.gz              |    3 +
+ data/.lfs/make_navigation_map_mixed.png.tar.gz     |    3 +
+ data/.lfs/make_navigation_map_simple.png.tar.gz    |    3 +
+ data/.lfs/make_path_mask_full.png.tar.gz           |    3 +
+ data/.lfs/make_path_mask_two_meters.png.tar.gz     |    3 +
+ data/.lfs/occupancy_simple.npy.tar.gz              |    3 +
+ data/.lfs/occupancy_simple.png.tar.gz              |    4 +-
+ data/.lfs/overlay_occupied.png.tar.gz              |    3 +
+ data/.lfs/resample_path_simple.png.tar.gz          |    3 +
+ data/.lfs/resample_path_smooth.png.tar.gz          |    3 +
+ data/.lfs/smooth_occupied.png.tar.gz               |    3 +
+ data/.lfs/three_paths.npy.tar.gz                   |    3 +
+ data/.lfs/three_paths.ply.tar.gz                   |    3 +
+ data/.lfs/three_paths.png.tar.gz                   |    3 +
+ data/.lfs/unitree_go2_bigoffice.tar.gz             |    3 +
+ data/.lfs/unitree_go2_bigoffice_map.pickle.tar.gz  |    3 +
+ data/.lfs/visualize_occupancy_rainbow.png.tar.gz   |    3 +
+ data/.lfs/visualize_occupancy_turbo.png.tar.gz     |    3 +
+ dimos/agents/__init__.py                           |   13 +
+ dimos/agents/agent.py                              | 1230 +--
+ dimos/{agents2 => agents}/cli/human.py             |    2 +-
+ dimos/{agents2 => agents}/cli/web.py               |    0
+ dimos/{agents2 => agents}/conftest.py              |    4 +-
+ dimos/{agents2 => agents}/constants.py             |    2 +-
+ .../test_get_gps_position_for_queries.json         |    0
+ .../fixtures/test_go_to_object.json                |    0
+ .../fixtures/test_go_to_semantic_location.json     |    0
+ .../test_how_much_is_124181112_plus_124124.json    |    0
+ .../{agents2 => agents}/fixtures/test_pounce.json  |    0
+ .../fixtures/test_set_gps_travel_points.json       |    0
+ .../test_set_gps_travel_points_multiple.json       |    0
+ .../fixtures/test_show_your_love.json              |    0
+ .../fixtures/test_stop_movement.json               |    0
+ .../fixtures/test_take_a_look_around.json          |    0
+ .../test_what_do_you_see_in_this_picture.json      |    0
+ .../fixtures/test_what_is_your_name.json           |    0
+ .../fixtures/test_where_am_i.json                  |    0
+ dimos/{agents2 => agents}/ollama_agent.py          |    0
+ dimos/{agents2 => agents}/skills/conftest.py       |    8 +-
+ .../skills/demo_calculator_skill.py                |    0
+ .../skills/demo_google_maps_skill.py               |   10 +-
+ dimos/{agents2 => agents}/skills/demo_gps_nav.py   |   10 +-
+ dimos/{agents2 => agents}/skills/demo_robot.py     |    0
+ dimos/{agents2 => agents}/skills/demo_skill.py     |    8 +-
+ .../skills/google_maps_skill_container.py          |    2 -
+ dimos/{agents2 => agents}/skills/gps_nav_skill.py  |    0
+ dimos/{agents2 => agents}/skills/navigation.py     |    0
+ dimos/{agents2 => agents}/skills/osm.py            |    0
+ dimos/{agents2 => agents}/skills/speak_skill.py    |    0
+ .../skills/test_google_maps_skill_container.py     |    0
+ .../skills/test_gps_nav_skills.py                  |    0
+ .../{agents2 => agents}/skills/test_navigation.py  |    8 +-
+ .../skills/test_unitree_skill_container.py         |    0
+ dimos/{agents2 => agents}/spec.py                  |    0
+ dimos/{agents2 => agents}/system_prompt.py         |    2 +-
+ dimos/{agents2 => agents}/temp/webcam_agent.py     |    8 +-
+ dimos/{agents2 => agents}/test_agent.py            |    2 +-
+ dimos/{agents2 => agents}/test_agent_direct.py     |    2 +-
+ dimos/{agents2 => agents}/test_agent_fake.py       |    0
+ dimos/{agents2 => agents}/test_mock_agent.py       |    4 +-
+ dimos/{agents2 => agents}/test_stash_agent.py      |    2 +-
+ dimos/{agents2 => agents}/testing.py               |    0
+ dimos/agents2/__init__.py                          |   13 -
+ dimos/agents2/agent.py                             |  443 -
+ .../memory => agents_deprecated}/__init__.py       |    0
+ dimos/agents_deprecated/agent.py                   |  917 ++
+ .../{agents => agents_deprecated}/agent_config.py  |    2 +-
+ .../{agents => agents_deprecated}/agent_message.py |    2 +-
+ dimos/{agents => agents_deprecated}/agent_types.py |    0
+ .../{agents => agents_deprecated}/claude_agent.py  |    6 +-
+ .../memory}/__init__.py                            |    0
+ dimos/{agents => agents_deprecated}/memory/base.py |    0
+ .../memory/chroma_impl.py                          |    2 +-
+ .../memory/image_embedding.py                      |    0
+ .../memory/spatial_vector_db.py                    |    4 +-
+ .../memory/test_image_embedding.py                 |    2 +-
+ .../memory/visual_memory.py                        |    0
+ .../modules/__init__.py                            |    0
+ .../{agents => agents_deprecated}/modules/base.py  |   10 +-
+ .../modules/base_agent.py                          |    8 +-
+ .../modules/gateway/__init__.py                    |    0
+ .../modules/gateway/client.py                      |    0
+ .../modules/gateway/tensorzero_embedded.py         |    0
+ .../modules/gateway/tensorzero_simple.py           |    0
+ .../modules/gateway/utils.py                       |    0
+ .../prompt_builder}/__init__.py                    |    0
+ .../prompt_builder/impl.py                         |    4 +-
+ dimos/agents_deprecated/tokenizer/__init__.py      |    0
+ .../tokenizer/base.py                              |    0
+ .../tokenizer/huggingface_tokenizer.py             |    2 +-
+ .../tokenizer/openai_tokenizer.py                  |    2 +-
+ dimos/core/blueprints.py                           |   22 +-
+ dimos/core/global_config.py                        |   30 +
+ dimos/core/module.py                               |    2 +-
+ dimos/core/test_blueprints.py                      |    7 +-
+ dimos/core/test_core.py                            |    2 +-
+ dimos/core/transport.py                            |    4 +-
+ dimos/dashboard/README.md                          |   80 +
+ dimos/dashboard/__init__.py                        |    3 +
+ dimos/dashboard/module.py                          |  144 +
+ dimos/dashboard/support/colors.py                  |   43 +
+ dimos/dashboard/support/utils.py                   |   71 +
+ dimos/e2e_tests/conftest.py                        |   86 +
+ dimos/e2e_tests/dimos_cli_call.py                  |   69 +
+ dimos/e2e_tests/lcm_spy.py                         |  191 +
+ dimos/e2e_tests/test_dimos_cli_e2e.py              |   40 +
+ dimos/e2e_tests/test_spatial_memory.py             |   62 +
+ dimos/hardware/camera/module.py                    |    2 +-
+ dimos/hardware/camera/webcam.py                    |    7 +-
+ dimos/mapping/costmapper.py                        |   65 +
+ dimos/mapping/occupancy/conftest.py                |   30 +
+ dimos/mapping/occupancy/extrude_occupancy.py       |  235 +
+ dimos/mapping/occupancy/gradient.py                |  202 +
+ dimos/mapping/occupancy/inflation.py               |   53 +
+ dimos/mapping/occupancy/operations.py              |   88 +
+ dimos/mapping/occupancy/path_map.py                |   40 +
+ dimos/mapping/occupancy/path_mask.py               |   98 +
+ dimos/mapping/occupancy/path_resampling.py         |  245 +
+ dimos/mapping/occupancy/test_extrude_occupancy.py  |   25 +
+ dimos/mapping/occupancy/test_gradient.py           |   37 +
+ dimos/mapping/occupancy/test_inflation.py          |   31 +
+ dimos/mapping/occupancy/test_operations.py         |   40 +
+ dimos/mapping/occupancy/test_path_map.py           |   34 +
+ dimos/mapping/occupancy/test_path_mask.py          |   48 +
+ dimos/mapping/occupancy/test_path_resampling.py    |   50 +
+ dimos/mapping/occupancy/test_visualizations.py     |   31 +
+ dimos/mapping/occupancy/visualizations.py          |  160 +
+ dimos/mapping/occupancy/visualize_path.py          |   89 +
+ dimos/mapping/osm/demo_osm.py                      |   10 +-
+ dimos/mapping/pointclouds/accumulators/general.py  |   77 +
+ dimos/mapping/pointclouds/accumulators/protocol.py |   28 +
+ dimos/mapping/pointclouds/demo.py                  |   86 +
+ dimos/mapping/pointclouds/occupancy.py             |  408 +-
+ dimos/mapping/pointclouds/test_occupancy.py        |   27 +-
+ dimos/mapping/pointclouds/test_occupancy_speed.py  |   58 +
+ dimos/mapping/test_voxels.py                       |   75 +-
+ dimos/mapping/voxels.py                            |  143 +-
+ dimos/models/__init__.py                           |    2 +-
+ dimos/models/qwen/video_query.py                   |    4 +-
+ dimos/models/vl/__init__.py                        |    4 +-
+ dimos/models/vl/base.py                            |  110 +-
+ dimos/models/vl/moondream.py                       |   43 +-
+ dimos/models/vl/test_base.py                       |   43 +-
+ dimos/models/vl/test_vlm.py                        |   69 +-
+ dimos/msgs/foxglove_msgs/ImageAnnotations.py       |    3 +
+ dimos/msgs/geometry_msgs/PoseStamped.py            |   26 -
+ dimos/msgs/nav_msgs/OccupancyGrid.py               |  273 +-
+ dimos/msgs/nav_msgs/Path.py                        |    9 +
+ dimos/msgs/nav_msgs/test_OccupancyGrid.py          |   21 +-
+ dimos/msgs/sensor_msgs/Image.py                    |   12 +-
+ dimos/msgs/sensor_msgs/PointCloud2.py              |  163 +-
+ dimos/msgs/sensor_msgs/image_impls/NumpyImage.py   |   18 -
+ dimos/navigation/bt_navigator/goal_validator.py    |   81 +-
+ dimos/navigation/bt_navigator/navigator.py         |   35 +-
+ .../navigation/bt_navigator/test_goal_validator.py |   53 +
+ .../wavefront_frontier_goal_selector.py            |   32 +-
+ dimos/navigation/global_planner/__init__.py        |    4 -
+ dimos/navigation/global_planner/astar.py           |   52 +
+ .../global_planner/{algo.py => general_astar.py}   |    2 +-
+ dimos/navigation/global_planner/min_cost_astar.py  |  227 +
+ .../global_planner/min_cost_astar_cpp.cpp          |  265 +
+ .../global_planner/min_cost_astar_ext.pyi          |   26 +
+ dimos/navigation/global_planner/planner.py         |  187 +-
+ dimos/navigation/global_planner/test_astar.py      |  102 +
+ dimos/navigation/global_planner/types.py           |   17 +
+ dimos/navigation/local_planner/__init__.py         |    2 +
+ dimos/navigation/local_planner/local_planner.py    |   35 +-
+ dimos/navigation/replanning_a_star/controllers.py  |  156 +
+ .../navigation/replanning_a_star/global_planner.py |  336 +
+ .../navigation/replanning_a_star/local_planner.py  |  355 +
+ dimos/navigation/replanning_a_star/module.py       |  106 +
+ .../navigation/replanning_a_star/navigation_map.py |   66 +
+ .../navigation/replanning_a_star/path_clearance.py |   94 +
+ .../navigation/replanning_a_star/path_distancer.py |   89 +
+ .../replanning_a_star/position_tracker.py          |   83 +
+ .../navigation/replanning_a_star/replan_limiter.py |   68 +
+ dimos/navigation/rosnav.py                         |    2 +-
+ dimos/perception/detection/module3D.py             |    2 +-
+ dimos/perception/detection/type/__init__.py        |    2 +
+ .../detection/type/detection2d/__init__.py         |    2 +
+ .../perception/detection/type/detection2d/base.py  |   14 -
+ .../perception/detection/type/detection2d/point.py |  184 +
+ .../detection/type/detection3d/test_pointcloud.py  |    7 +-
+ dimos/perception/detection/type/imageDetections.py |   19 +-
+ dimos/perception/object_tracker.py                 |    7 +-
+ dimos/perception/spatial_perception.py             |    6 +-
+ dimos/protocol/skill/coordinator.py                |   13 +-
+ dimos/robot/agilex/README.md                       |    4 +-
+ dimos/robot/agilex/README_CN.md                    |    4 +-
+ dimos/robot/agilex/run.py                          |    2 +-
+ dimos/robot/all_blueprints.py                      |   30 +-
+ dimos/robot/cli/README.md                          |    2 +-
+ dimos/robot/cli/dimos.py                           |   33 +-
+ dimos/robot/cli/test_dimos_robot_e2e.py            |    1 +
+ dimos/robot/cli/topic.py                           |  102 +
+ dimos/robot/drone/drone.py                         |   10 +-
+ dimos/robot/drone/test_drone.py                    |    4 +-
+ dimos/robot/test_ros_bridge.py                     |    8 +
+ dimos/robot/unitree/connection/connection.py       |   18 +-
+ dimos/robot/unitree/connection/go2.py              |   81 +-
+ dimos/robot/unitree/g1/g1agent.py                  |    6 +-
+ dimos/robot/unitree/go2/go2.py                     |    2 +-
+ dimos/robot/unitree/go2/go2.urdf                   |   22 +
+ .../unitree_webrtc/modular/connection_module.py    |    2 +-
+ dimos/robot/unitree_webrtc/modular/ivan_unitree.py |    6 +-
+ dimos/robot/unitree_webrtc/mujoco_connection.py    |    5 +
+ dimos/robot/unitree_webrtc/type/lidar.py           |   15 +
+ dimos/robot/unitree_webrtc/type/map.py             |  135 +-
+ dimos/robot/unitree_webrtc/type/odometry.py        |    7 +-
+ dimos/robot/unitree_webrtc/type/test_map.py        |   30 +-
+ .../robot/unitree_webrtc/unitree_g1_blueprints.py  |    8 +-
+ .../unitree_webrtc/unitree_g1_skill_container.py   |    2 +-
+ .../robot/unitree_webrtc/unitree_go2_blueprints.py |  102 +-
+ .../unitree_webrtc/unitree_skill_container.py      |    2 +-
+ dimos/robot/unitree_webrtc/unitree_skills.py       |    2 +-
+ dimos/simulation/mujoco/constants.py               |    1 -
+ dimos/simulation/mujoco/model.py                   |   39 +-
+ dimos/simulation/mujoco/mujoco_process.py          |   20 +-
+ dimos/skills/unitree/unitree_speak.py              |    2 +-
+ dimos/utils/data.py                                |    6 +-
+ dimos/utils/metrics.py                             |    2 +-
+ dimos/utils/test_trigonometry.py                   |   36 +
+ dimos/utils/testing/replay.py                      |   36 +-
+ dimos/utils/testing/test_moment.py                 |   19 +-
+ dimos/utils/trigonometry.py                        |   19 +
+ dimos/utils/urdf.py                                |   69 +
+ dimos/web/README.md                                |    2 +-
+ dimos/web/command-center-extension/package.json    |    2 +-
+ dimos/web/dimos_interface/api/README.md            |    2 +-
+ dimos/web/websocket_vis/websocket_vis_module.py    |    8 +-
+ docker/navigation/README.md                        |   20 -
+ docker/navigation/setup.sh                         |  706 --
+ pyproject.toml                                     |   72 +-
+ requirements.txt                                   |   96 -
+ setup.py                                           |   21 +
+ tests/agent_manip_flow_flask_test.py               |    2 +-
+ tests/agent_memory_test.py                         |    2 +-
+ tests/simple_agent_test.py                         |    2 +-
+ tests/test_agent_alibaba.py                        |    4 +-
+ tests/test_audio_agent.py                          |    2 +-
+ tests/test_audio_robot_agent.py                    |    2 +-
+ tests/test_claude_agent_query.py                   |    2 +-
+ tests/test_claude_agent_skills_query.py            |    2 +-
+ tests/test_dashboard_server_thread.py              |  292 +
+ tests/test_manipulation_agent.py                   |    2 +-
+ ...est_object_detection_agent_data_query_stream.py |    2 +-
+ tests/test_semantic_seg_robot_agent.py             |    2 +-
+ tests/test_skills.py                               |    6 +-
+ tests/test_skills_rest.py                          |    2 +-
+ tests/test_spatial_memory.py                       |    2 +-
+ tests/test_spatial_memory_query.py                 |    2 +-
+ tests/test_standalone_project_out.py               |    6 +-
+ tests/test_unitree_agent.py                        |    2 +-
+ tests/test_unitree_agent_queries_fastapi.py        |    2 +-
+ tests/test_unitree_ros_v0.0.4.py                   |    2 +-
+ uv.lock                                            | 9699 ++++++++++++++++++++
+ 276 files changed, 18820 insertions(+), 3383 deletions(-)

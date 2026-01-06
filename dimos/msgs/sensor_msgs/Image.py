@@ -319,6 +319,10 @@ class Image(Timestamped):
     def to_grayscale(self) -> Image:
         return Image(self._impl.to_grayscale())
 
+    def to_rerun(self):  # type: ignore[no-untyped-def]
+        """Convert to rerun Image format."""
+        return self._impl.to_rerun()
+
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> Image:
         return Image(self._impl.resize(width, height, interpolation))
 
