@@ -21,7 +21,7 @@ from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.protocol.service import Configurable
+from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 
 OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
 

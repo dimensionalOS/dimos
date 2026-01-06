@@ -43,7 +43,7 @@ try:
 except ImportError:
     ROS_AVAILABLE = False
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dimos.types.timestamped import Timestamped
 
@@ -361,10 +361,7 @@ class PointCloud2(Timestamped):
 
     def as_numpy(
         self,
-    ) -> tuple[
-        np.ndarray[tuple[int, int], np.dtype[np.floating[object]]],
-        np.ndarray[tuple[int, int], np.dtype[np.floating[object]]] | None,
-    ]:
+    ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any] | None]:
         """Get points and colors as numpy arrays.
 
         Returns:

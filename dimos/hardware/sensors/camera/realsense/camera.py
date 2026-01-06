@@ -39,7 +39,7 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
-    from reactivex.disposable import DisposableBase
+    from reactivex.disposable import Disposable
 
 
 @dataclass
@@ -103,8 +103,8 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
         self._latest_color_img: Image | None = None
         self._latest_depth_img: Image | None = None
         self._pointcloud_lock = threading.Lock()
-        self._pointcloud_disposable: DisposableBase | None = None
-        self._camera_info_disposable: DisposableBase | None = None
+        self._pointcloud_disposable: Disposable | None = None
+        self._camera_info_disposable: Disposable | None = None
 
     @rpc
     def start(self) -> None:
@@ -149,13 +149,13 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
 
         if self.config.enable_pointcloud and self.config.enable_depth:
             interval_sec = 1.0 / self.config.pointcloud_fps
-            self._pointcloud_disposable = backpressure(rx.interval(interval_sec)).subscribe(
+            self._pointcloud_disposable = backpressure(rx.interval(interval_sec)).subscribe(  # type: ignore[assignment]
                 on_next=lambda _: self._generate_pointcloud(),
                 on_error=lambda e: print(f"Pointcloud error: {e}"),
             )
 
         interval_sec = 1.0 / self.config.camera_info_fps
-        self._camera_info_disposable = backpressure(rx.interval(interval_sec)).subscribe(
+        self._camera_info_disposable = backpressure(rx.interval(interval_sec)).subscribe(  # type: ignore[assignment]
             on_next=lambda _: self._publish_camera_info(),
             on_error=lambda e: print(f"CameraInfo error: {e}"),
         )
