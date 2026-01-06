@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import uuid
 
 from dimos.core import Module, rpc
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillStateEnum
+
+if TYPE_CHECKING:
+    from dimos.protocol.skill.coordinator import SkillState
 
 
 class MCPModule(Module):
@@ -75,12 +78,12 @@ class MCPModule(Module):
         params = request.get("params", {}) or {}
         req_id = request.get("id")
         if method == "initialize":
-            result = {
+            init_result = {
                 "protocolVersion": "2024-11-05",
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "dimensional", "version": "1.0.0"},
             }
-            return {"jsonrpc": "2.0", "id": req_id, "result": result}
+            return {"jsonrpc": "2.0", "id": req_id, "result": init_result}
         if method == "tools/list":
             tools = [
                 {
@@ -105,7 +108,7 @@ class MCPModule(Module):
                 args = {}
             call_id = str(uuid.uuid4())
             self.coordinator.call_skill(call_id, name, args)
-            result = self.coordinator._skill_state.get(call_id)
+            result: SkillState | None = self.coordinator._skill_state.get(call_id)
             try:
                 await asyncio.wait_for(self.coordinator.wait_for_updates(), timeout=5.0)
             except asyncio.TimeoutError:
