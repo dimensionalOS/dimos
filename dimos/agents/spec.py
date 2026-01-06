@@ -179,6 +179,10 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
 
     @rpc
     @abstractmethod
+    def register_skills(self, container, run_implicit_name: str | None = None): ...
+
+    @rpc
+    @abstractmethod
     def query(self, query: str): ...  # type: ignore[no-untyped-def]
 
     def __str__(self) -> str:

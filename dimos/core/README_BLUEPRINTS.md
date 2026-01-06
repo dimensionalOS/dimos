@@ -217,7 +217,7 @@ class SomeSkill(Module):
         ...
 
     @rpc
-    def set_LlmAgent_register_skills(self, register_skills: RpcCall) -> None:
+    def set_AgentSpec_register_skills(self, register_skills: RpcCall) -> None:
         register_skills.set_rpc(self.rpc)
         register_skills(RPCClient(self, self.__class__))
 

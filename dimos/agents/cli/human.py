@@ -47,7 +47,7 @@ class HumanInput(Module):
         super().stop()
 
     @rpc
-    def set_LlmAgent_register_skills(self, callable: RpcCall) -> None:
+    def set_AgentSpec_register_skills(self, callable: RpcCall) -> None:
         callable.set_rpc(self.rpc)  # type: ignore[arg-type]
         callable(self, run_implicit_name="human")
 
