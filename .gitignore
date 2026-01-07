@@ -27,6 +27,7 @@ __pycache__
 /assets/saved_maps/
 /assets/model-cache/
 /assets/agent/memory.txt
+/temporal_memory_output/
 
 .bash_history
 

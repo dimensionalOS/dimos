@@ -183,6 +183,32 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
     @abstractmethod
     def query(self, image: Image, query: str, **kwargs) -> str: ...  # type: ignore[no-untyped-def]
 
+    def query_multi_images(self, images: list[Image], query: str, **kwargs) -> str:  # type: ignore[no-untyped-def]
+        """Query VLM with multiple images in a single request.
+
+        This is useful for temporal reasoning across multiple frames or
+        multi-view analysis. The VLM can see all images together and reason
+        about relationships between them.
+
+        Default implementation just uses the first image. Subclasses should
+        override for models that support multi-image input (e.g., GPT-4V, Qwen).
+
+        Args:
+            images: List of input images (e.g., frames from a video window)
+            query: Question to ask about all images together
+
+        Returns:
+            Response from the model
+        """
+        warnings.warn(
+            f"{self.__class__.__name__}.query_multi_images() is using default implementation "
+            "with only the first image. Override for true multi-image support.",
+            stacklevel=2,
+        )
+        if not images:
+            raise ValueError("Must provide at least one image")
+        return self.query(images[0], query, **kwargs)
+
     def query_batch(self, images: list[Image], query: str, **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
         """Query multiple images with the same question.
 
