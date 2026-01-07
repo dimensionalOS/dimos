@@ -20,7 +20,7 @@ import pytest
 @pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
 def test_dimos_skills(lcm_spy, start_blueprint, human_input) -> None:
-    lcm_spy.save_topic("/rpc/DemoCalculatorSkill/set_LlmAgent_register_skills/res")
+    lcm_spy.save_topic("/rpc/DemoCalculatorSkill/set_AgentSpec_register_skills/res")
     lcm_spy.save_topic("/rpc/HumanInput/start/res")
     lcm_spy.save_topic("/agent")
     lcm_spy.save_topic("/rpc/DemoCalculatorSkill/sum_numbers/req")
@@ -28,7 +28,7 @@ def test_dimos_skills(lcm_spy, start_blueprint, human_input) -> None:
 
     start_blueprint("demo-skill")
 
-    lcm_spy.wait_for_saved_topic("/rpc/DemoCalculatorSkill/set_LlmAgent_register_skills/res")
+    lcm_spy.wait_for_saved_topic("/rpc/DemoCalculatorSkill/set_AgentSpec_register_skills/res")
     lcm_spy.wait_for_saved_topic("/rpc/HumanInput/start/res")
     lcm_spy.wait_for_saved_topic_content("/agent", b"AIMessage")
 

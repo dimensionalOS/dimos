@@ -43,6 +43,7 @@ from dimos.navigation.replanning_a_star.module import (
 )
 from dimos.perception.detection.moduleDB import ObjectDBModule, detectionDB_module
 from dimos.perception.spatial_perception import spatial_memory
+from dimos.protocol.mcp.mcp import MCPModule
 from dimos.robot.foxglove_bridge import foxglove_bridge
 from dimos.robot.unitree.connection.go2 import GO2Connection, go2_connection
 from dimos.robot.unitree_webrtc.unitree_skill_container import unitree_skills
@@ -163,6 +164,11 @@ agentic = autoconnect(
     spatial,
     llm_agent(),
     _common_agentic,
+)
+
+agentic_mcp = autoconnect(
+    agentic,
+    MCPModule.blueprint(),
 )
 
 agentic_ollama = autoconnect(

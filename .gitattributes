@@ -4,8 +4,9 @@
 # Ensure Python files always use LF for line endings.
 *.py text eol=lf
 # Treat designated file types as binary and do not alter their contents or line endings.
-*.png binary
-*.jpg binary
+*.png filter=lfs diff=lfs merge=lfs -text binary
+*.jpg filter=lfs diff=lfs merge=lfs -text binary
+*.jpeg filter=lfs diff=lfs merge=lfs -text binary
 *.ico binary
 *.pdf binary
 # Explicit LFS tracking for test files
@@ -15,5 +16,3 @@
 *.mov filter=lfs diff=lfs merge=lfs -text binary
 *.gif filter=lfs diff=lfs merge=lfs -text binary
 *.foxe filter=lfs diff=lfs merge=lfs -text binary
-docs/**/*.png filter=lfs diff=lfs merge=lfs -text
-docs/**/*.jpg filter=lfs diff=lfs merge=lfs -text

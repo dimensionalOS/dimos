@@ -15,7 +15,6 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
-import inspect
 import sys
 import threading
 from typing import (
@@ -36,7 +35,7 @@ from typing_extensions import TypeVar
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
-from dimos.core.introspection.module import INTERNAL_RPCS, extract_module_info, render_module_io
+from dimos.core.introspection.module import extract_module_info, render_module_io
 from dimos.core.resource import Resource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
@@ -276,7 +275,6 @@ class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
     @classmethod
     def _module_info_class(cls) -> "ModuleInfo":
         """Class-level module_info() - returns ModuleInfo from annotations."""
-        from dimos.core.introspection.module import ModuleInfo
 
         hints = get_type_hints(cls)
 
