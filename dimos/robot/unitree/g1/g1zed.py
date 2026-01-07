@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TypedDict, cast
+from typing import cast
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core import DimosCluster, LCMTransport, pSHMTransport
@@ -26,10 +26,8 @@ from dimos.msgs.geometry_msgs import (
 )
 from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.navigation import rosnav
-from dimos.navigation.rosnav import ROSNav
 from dimos.robot import foxglove_bridge
 from dimos.robot.unitree.connection import g1
-from dimos.robot.unitree.connection.g1 import G1Connection
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

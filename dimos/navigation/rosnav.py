@@ -57,7 +57,6 @@ from dimos.msgs.geometry_msgs import (
 )
 from dimos.msgs.nav_msgs import Path
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.msgs.std_msgs import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.utils.logging_config import setup_logger

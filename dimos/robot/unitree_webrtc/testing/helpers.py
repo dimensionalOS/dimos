@@ -14,10 +14,9 @@
 
 from collections.abc import Callable, Iterable
 import time
-from typing import Any, Protocol
+from typing import Protocol
 
 import open3d as o3d  # type: ignore[import-untyped]
-from reactivex.observable import Observable
 
 color1 = [1, 0.706, 0]
 color2 = [0, 0.651, 0.929]
