@@ -62,6 +62,9 @@ dependencies = [
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
 
+    # MCP Server
+    "mcp>=1.0.0",
+
     # Agents
     "langchain>=1,<2",
     "langchain-chroma>=1,<2",

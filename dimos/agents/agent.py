@@ -33,11 +33,7 @@ from dimos.agents.ollama_agent import ensure_ollama_model
 from dimos.agents.spec import AgentSpec, Model, Provider
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.core import DimosCluster, rpc
-from dimos.protocol.skill.coordinator import (
-    SkillCoordinator,
-    SkillState,
-    SkillStateDict,
-)
+from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger

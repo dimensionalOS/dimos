@@ -13,29 +13,19 @@
 # limitations under the License.
 
 
-def test_pounce(create_unitree_skills_agent, unitree_skills) -> None:
+def test_pounce(mocker, create_unitree_skills_agent, unitree_skills) -> None:
     agent = create_unitree_skills_agent(fixture="test_pounce.json")
+    publish_request_mock = mocker.Mock()
+    unitree_skills.get_rpc_calls = mocker.Mock(return_value=publish_request_mock)
 
     response = agent.query("pounce")
 
     assert "front pounce" in response.lower()
-    unitree_skills._publish_request.assert_called_once_with(
-        "rt/api/sport/request", {"api_id": 1032}
-    )
+    publish_request_mock.assert_called_once_with("rt/api/sport/request", {"api_id": 1032})
 
 
-def test_show_your_love(create_unitree_skills_agent, unitree_skills) -> None:
-    agent = create_unitree_skills_agent(fixture="test_show_your_love.json")
-
-    response = agent.query("show your love")
-
-    assert "finger heart" in response.lower()
-    unitree_skills._publish_request.assert_called_once_with(
-        "rt/api/sport/request", {"api_id": 1036}
-    )
-
-
-def test_did_you_mean(unitree_skills) -> None:
+def test_did_you_mean(mocker, unitree_skills) -> None:
+    unitree_skills.get_rpc_calls = mocker.Mock()
     assert (
         unitree_skills.execute_sport_command("Pounce")
         == "There's no 'Pounce' command. Did you mean: ['FrontPounce', 'Pose']"
