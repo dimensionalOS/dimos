@@ -29,8 +29,8 @@ class VlmStreamTester(Module):
     """Smoke-test VLMAgent with replayed images and stream queries."""
 
     color_image: In[Image]
-    query: Out[HumanMessage]
-    answer: In[AIMessage]
+    query_stream: Out[HumanMessage]
+    answer_stream: In[AIMessage]
 
     rpc_calls: list[str] = [
         "VLMAgent.query_image",
@@ -62,7 +62,7 @@ class VlmStreamTester(Module):
     def start(self) -> None:
         super().start()
         self._disposables.add(self.color_image.subscribe(self._on_image))  # type: ignore[arg-type]
-        self._disposables.add(self.answer.subscribe(self._on_answer))  # type: ignore[arg-type]
+        self._disposables.add(self.answer_stream.subscribe(self._on_answer))  # type: ignore[arg-type]
         self._worker = threading.Thread(target=self._run_queries, daemon=True)
         self._worker.start()
 
@@ -127,7 +127,7 @@ class VlmStreamTester(Module):
                     )
 
             logger.info("Sending stream query", index=idx + 1, total=self._num_queries)
-            self.query.publish(
+            self.query_stream.publish(
                 HumanMessage(content=f"{self._prompt} (stream query {idx + 1}/{self._num_queries})")
             )
             time.sleep(self._query_interval_s)

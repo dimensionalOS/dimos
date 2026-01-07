@@ -15,7 +15,7 @@
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from dimos.agents.llm_init import build_llm, build_system_message
-from dimos.agents.spec import AgentSpec
+from dimos.agents.spec import AgentSpec, AnyMessage
 from dimos.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs import Image
@@ -28,8 +28,8 @@ class VLMAgent(AgentSpec):
     """Stream-first agent for vision queries with optional RPC access."""
 
     color_image: In[Image]
-    query: In[HumanMessage]
-    answer: Out[AIMessage]
+    query_stream: In[HumanMessage]
+    answer_stream: Out[AIMessage]
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
@@ -43,7 +43,7 @@ class VLMAgent(AgentSpec):
     def start(self) -> None:
         super().start()
         self._disposables.add(self.color_image.subscribe(self._on_image))  # type: ignore[arg-type]
-        self._disposables.add(self.query.subscribe(self._on_query))  # type: ignore[arg-type]
+        self._disposables.add(self.query_stream.subscribe(self._on_query))  # type: ignore[arg-type]
 
     @rpc
     def stop(self) -> None:
@@ -54,12 +54,12 @@ class VLMAgent(AgentSpec):
 
     def _on_query(self, msg: HumanMessage) -> None:
         if not self._latest_image:
-            self.answer.publish(AIMessage(content="No image available yet."))
+            self.answer_stream.publish(AIMessage(content="No image available yet."))
             return
 
         query_text = self._extract_text(msg)
         response = self._invoke_image(self._latest_image, query_text)
-        self.answer.publish(response)
+        self.answer_stream.publish(response)
 
     def _extract_text(self, msg: HumanMessage) -> str:
         content = msg.content
@@ -74,7 +74,7 @@ class VLMAgent(AgentSpec):
     def _invoke(self, msg: HumanMessage) -> AIMessage:
         messages = [self._system_message, msg]
         response = self._llm.invoke(messages)
-        self.append_history(msg, response)  # type: ignore[arg-type]
+        self.append_history([msg, response])  # type: ignore[arg-type]
         return response  # type: ignore[return-value]
 
     def _invoke_image(self, image: Image, query: str) -> AIMessage:
@@ -86,11 +86,12 @@ class VLMAgent(AgentSpec):
         self._history.clear()
 
     def append_history(self, *msgs: list[AIMessage | HumanMessage]) -> None:
-        for msg in msgs:
-            self.publish(msg)  # type: ignore[arg-type]
-        self._history.extend(msgs)
+        for msg_list in msgs:
+            for msg in msg_list:
+                self.publish(msg)  # type: ignore[arg-type]
+            self._history.extend(msg_list)
 
-    def history(self) -> list[SystemMessage | AIMessage | HumanMessage]:
+    def history(self) -> list[AnyMessage]:
         return [self._system_message, *self._history]
 
     @rpc
