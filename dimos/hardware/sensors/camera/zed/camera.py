@@ -18,22 +18,18 @@ import atexit
 from dataclasses import dataclass, field
 import threading
 import time
-from typing import TYPE_CHECKING
 
 import cv2
-import numpy as np
 import pyzed.sl as sl
 import reactivex as rx
-from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
-from dimos.core import ModuleConfig, Out, rpc
+from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
     StereoCameraConfig,
-    StereoCameraModule,
-    default_base_transform,
+    StereoCamera,
 )
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo
@@ -42,18 +38,13 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.utils.reactive import backpressure
 
-if TYPE_CHECKING:
-    from typing import Any
 
-    from numpy.typing import NDArray
-    from reactivex.disposable import Disposable
-
-
-@dataclass
-class ZEDExtrinsics:
-    rotation: NDArray[Any]
-    translation: NDArray[Any]
-
+def default_base_transform() -> Transform:
+    """Default identity transform for camera mounting."""
+    return Transform(
+        translation=Vector3(0.0, 0.0, 0.0),
+        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+    )
 
 @dataclass
 class ZEDCameraConfig(ModuleConfig, StereoCameraConfig):
@@ -81,7 +72,7 @@ class ZEDCameraConfig(ModuleConfig, StereoCameraConfig):
     world_frame: str = "world"
 
 
-class ZEDCamera(StereoCameraModule):
+class ZEDCamera(StereoCamera, Module):
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
@@ -121,11 +112,10 @@ class ZEDCamera(StereoCameraModule):
         self._color_camera_info: CameraInfo | None = None
         self._depth_camera_info: CameraInfo | None = None
         self._depth_scale: float = 1.0
-        self._color_to_depth_extrinsics: ZEDExtrinsics | None = None
+        self._camera_link_to_color_extrinsics: sl.Transform
         self._latest_color_img: Image | None = None
         self._latest_depth_img: Image | None = None
         self._pointcloud_lock = threading.Lock()
-        self._pointcloud_disposable: Disposable | None = None
         self._image_left: sl.Mat | None = None
         self._depth_map: sl.Mat | None = None
         self._pose: sl.Pose | None = None
@@ -133,7 +123,6 @@ class ZEDCamera(StereoCameraModule):
         self._stream_width = self.config.width
         self._stream_height = self.config.height
         self._camera_info: sl.CameraInformation | None = None
-        self._camera_info_disposable: Disposable | None = None
 
     def _publish_camera_info(self) -> None:
         ts = time.time()
@@ -187,9 +176,11 @@ class ZEDCamera(StereoCameraModule):
             self._enable_tracking()
 
         interval_sec = 1.0 / self.config.camera_info_fps
-        self._camera_info_disposable = backpressure(rx.interval(interval_sec)).subscribe(  # type: ignore[assignment]
-            on_next=lambda _: self._publish_camera_info(),
-            on_error=lambda e: print(f"CameraInfo error: {e}"),
+        self._disposables.add(
+            rx.interval(interval_sec).subscribe(
+                on_next=lambda _: self._publish_camera_info(),
+                on_error=lambda e: print(f"CameraInfo error: {e}"),
+            )
         )
 
         self._running = True
@@ -198,9 +189,11 @@ class ZEDCamera(StereoCameraModule):
 
         if self.config.enable_pointcloud and self.config.enable_depth:
             interval_sec = 1.0 / self.config.pointcloud_fps
-            self._pointcloud_disposable = backpressure(rx.interval(interval_sec)).subscribe(  # type: ignore[assignment]
-                on_next=lambda _: self._generate_pointcloud(),
-                on_error=lambda e: print(f"Pointcloud error: {e}"),
+            self._disposables.add(
+                backpressure(rx.interval(interval_sec)).subscribe(
+                    on_next=lambda _: self._generate_pointcloud(),
+                    on_error=lambda e: print(f"Pointcloud error: {e}"),
+                )
             )
 
     def _build_camera_info(self) -> None:
@@ -242,22 +235,23 @@ class ZEDCamera(StereoCameraModule):
         )
 
     def _get_extrinsics(self) -> None:
-        self._color_to_depth_extrinsics = ZEDExtrinsics(
-            rotation=np.eye(3, dtype=np.float64),
-            translation=np.zeros(3, dtype=np.float64),
-        )
+        if self._camera_info is None:
+            return
+        sensors_config = self._camera_info.sensors_configuration
+        # camera_imu_transform gives the transform from IMU (body center) to left camera
+        self._camera_link_to_color_extrinsics = sensors_config.camera_imu_transform
 
     def _extrinsics_to_transform(
         self,
-        extrinsics: ZEDExtrinsics,
+        extrinsics: sl.Transform,
         frame_id: str,
         child_frame_id: str,
         ts: float,
     ) -> Transform:
-        rotation_matrix = np.asarray(extrinsics.rotation).reshape(3, 3)
-        quat = Rotation.from_matrix(rotation_matrix).as_quat()  # [x, y, z, w]
+        translation = extrinsics.get_translation().get()
+        quat = extrinsics.get_orientation().get()  # [x, y, z, w]
         return Transform(
-            translation=Vector3(*extrinsics.translation),
+            translation=Vector3(*translation),
             rotation=Quaternion(quat[0], quat[1], quat[2], quat[3]),
             frame_id=frame_id,
             child_frame_id=child_frame_id,
@@ -381,13 +375,16 @@ class ZEDCamera(StereoCameraModule):
             )
             transforms.append(base_to_camera)
 
-        camera_link_to_depth = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id=self._camera_link,
-            child_frame_id=self._depth_frame,
-            ts=ts,
-        )
+        # camera_imu_transform is IMU -> left_camera (coordinate transform),
+        # we need to invert to get the pose of left camera in camera_link frame
+        camera_link_to_depth = self._extrinsics_to_transform(
+            self._camera_link_to_color_extrinsics,
+            self._camera_link,
+            self._depth_frame,
+            ts,
+        ).inverse()
+        camera_link_to_depth.frame_id = self._camera_link
+        camera_link_to_depth.child_frame_id = self._depth_frame
         transforms.append(camera_link_to_depth)
 
         depth_to_depth_optical = Transform(
@@ -399,25 +396,14 @@ class ZEDCamera(StereoCameraModule):
         )
         transforms.append(depth_to_depth_optical)
 
-        if self._color_to_depth_extrinsics is not None:
-            color_tf = self._extrinsics_to_transform(
-                self._color_to_depth_extrinsics,
-                self._camera_link,
-                self._color_frame,
-                ts,
-            )
-            color_tf = color_tf.inverse()
-            color_tf.frame_id = self._camera_link
-            color_tf.child_frame_id = self._color_frame
-            color_tf.ts = ts
-        else:
-            color_tf = Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id=self._camera_link,
-                child_frame_id=self._color_frame,
-                ts=ts,
-            )
+        color_tf = self._extrinsics_to_transform(
+            self._camera_link_to_color_extrinsics,
+            self._camera_link,
+            self._color_frame,
+            ts,
+        ).inverse()
+        color_tf.frame_id = self._camera_link
+        color_tf.child_frame_id = self._color_frame
         transforms.append(color_tf)
 
         color_to_color_optical = Transform(
@@ -459,14 +445,6 @@ class ZEDCamera(StereoCameraModule):
     def stop(self) -> None:
         self._running = False
 
-        if self._pointcloud_disposable:
-            self._pointcloud_disposable.dispose()
-            self._pointcloud_disposable = None
-
-        if self._camera_info_disposable:
-            self._camera_info_disposable.dispose()
-            self._camera_info_disposable = None
-
         if self._zed:
             if self._tracking_enabled:
                 try:
@@ -486,7 +464,6 @@ class ZEDCamera(StereoCameraModule):
 
         self._color_camera_info = None
         self._depth_camera_info = None
-        self._color_to_depth_extrinsics = None
         self._latest_color_img = None
         self._latest_depth_img = None
         self._image_left = None

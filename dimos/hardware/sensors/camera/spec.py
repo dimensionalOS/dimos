@@ -16,23 +16,12 @@ from abc import ABC, abstractmethod
 from typing import Generic, Protocol, TypeVar
 
 from reactivex.observable import Observable
-
-from dimos.core import Module
-from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
+from dimos.msgs.geometry_msgs import Quaternion, Transform
 from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 
 OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
-
-
-def default_base_transform() -> Transform:
-    """Default identity transform for camera mounting."""
-    return Transform(
-        translation=Vector3(0.0, 0.0, 0.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    )
-
 
 class CameraConfig(Protocol):
     frame_id_prefix: str | None
@@ -46,6 +35,7 @@ class CameraHardware(ABC, Configurable[CameraConfigT], Generic[CameraConfigT]):
     def image_stream(self) -> Observable[Image]:
         pass
 
+    @property
     @abstractmethod
     def camera_info(self) -> CameraInfo:
         pass
@@ -67,7 +57,7 @@ class StereoCameraConfig(Protocol):
     camera_info_fps: float
 
 
-class StereoCameraModule(Module):
+class StereoCamera(ABC):
     """Abstract class for stereo camera modules (RealSense, ZED, etc.)."""
 
     @abstractmethod

@@ -16,7 +16,6 @@ import atexit
 from dataclasses import dataclass, field
 import threading
 import time
-from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
@@ -24,14 +23,13 @@ import pyrealsense2 as rs  # type: ignore[import-not-found]
 import reactivex as rx
 from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
-from dimos.core import ModuleConfig, Out, rpc
+from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
     StereoCameraConfig,
-    StereoCameraModule,
-    default_base_transform,
+    StereoCamera,
 )
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo
@@ -40,9 +38,13 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.utils.reactive import backpressure
 
-if TYPE_CHECKING:
-    from reactivex.disposable import Disposable
 
+def default_base_transform() -> Transform:
+    """Default identity transform for camera mounting."""
+    return Transform(
+        translation=Vector3(0.0, 0.0, 0.0),
+        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+    )
 
 @dataclass
 class RealSenseCameraConfig(ModuleConfig, StereoCameraConfig):
@@ -60,7 +62,7 @@ class RealSenseCameraConfig(ModuleConfig, StereoCameraConfig):
     serial_number: str | None = None
 
 
-class RealSenseCamera(StereoCameraModule):
+class RealSenseCamera(StereoCamera, Module):
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
@@ -105,8 +107,6 @@ class RealSenseCamera(StereoCameraModule):
         self._latest_color_img: Image | None = None
         self._latest_depth_img: Image | None = None
         self._pointcloud_lock = threading.Lock()
-        self._pointcloud_disposable: Disposable | None = None
-        self._camera_info_disposable: Disposable | None = None
 
     @rpc
     def start(self) -> None:
@@ -151,15 +151,19 @@ class RealSenseCamera(StereoCameraModule):
 
         if self.config.enable_pointcloud and self.config.enable_depth:
             interval_sec = 1.0 / self.config.pointcloud_fps
-            self._pointcloud_disposable = backpressure(rx.interval(interval_sec)).subscribe(  # type: ignore[assignment]
-                on_next=lambda _: self._generate_pointcloud(),
-                on_error=lambda e: print(f"Pointcloud error: {e}"),
+            self._disposables.add(
+                backpressure(rx.interval(interval_sec)).subscribe(
+                    on_next=lambda _: self._generate_pointcloud(),
+                    on_error=lambda e: print(f"Pointcloud error: {e}"),
+                )
             )
 
         interval_sec = 1.0 / self.config.camera_info_fps
-        self._camera_info_disposable = backpressure(rx.interval(interval_sec)).subscribe(  # type: ignore[assignment]
-            on_next=lambda _: self._publish_camera_info(),
-            on_error=lambda e: print(f"CameraInfo error: {e}"),
+        self._disposables.add(
+            rx.interval(interval_sec).subscribe(
+                on_next=lambda _: self._publish_camera_info(),
+                on_error=lambda e: print(f"CameraInfo error: {e}"),
+            )
         )
 
     def _publish_camera_info(self) -> None:
@@ -387,15 +391,6 @@ class RealSenseCamera(StereoCameraModule):
     @rpc
     def stop(self) -> None:
         self._running = False
-
-        # Stop pointcloud generation
-        if self._pointcloud_disposable:
-            self._pointcloud_disposable.dispose()
-            self._pointcloud_disposable = None
-
-        if self._camera_info_disposable:
-            self._camera_info_disposable.dispose()
-            self._camera_info_disposable = None
 
         # Stop pipeline first to unblock wait_for_frames()
         if self._pipeline:
