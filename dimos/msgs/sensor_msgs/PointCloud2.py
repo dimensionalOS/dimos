@@ -29,7 +29,7 @@ import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
 import rerun as rr
 
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs import Transform, Vector3
 
 # Import ROS types
 try:
@@ -43,7 +43,13 @@ try:
 except ImportError:
     ROS_AVAILABLE = False
 
+from typing import TYPE_CHECKING, Any
+
 from dimos.types.timestamped import Timestamped
+
+if TYPE_CHECKING:
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+    from dimos.msgs.sensor_msgs.Image import Image
 
 
 @functools.lru_cache(maxsize=16)
@@ -162,6 +168,105 @@ class PointCloud2(Timestamped):
         pcd_t.point["positions"] = o3c.Tensor(points.astype(np.float32), dtype=o3c.float32)
         return cls(pointcloud=pcd_t, ts=timestamp, frame_id=frame_id)
 
+    @classmethod
+    def from_rgbd(
+        cls,
+        color_image: Image,
+        depth_image: Image,
+        camera_info: CameraInfo,
+        depth_scale: float = 1.0,
+        depth_trunc: float = 5.0,
+    ) -> PointCloud2:
+        """Create PointCloud2 from RGB and depth Image messages.
+
+        Uses frame_id and timestamp from the depth image.
+
+        Args:
+            color_image: RGB/BGR color Image message
+            depth_image: Depth Image message (float32 meters or uint16 mm)
+            camera_info: CameraInfo message with intrinsics
+            depth_scale: Scale factor to convert depth to meters (default 1.0 for float32)
+            depth_trunc: Maximum depth in meters to include
+
+        Returns:
+            PointCloud2 instance with colored points
+        """
+        # Get color as RGB numpy array
+        color_data = color_image.to_rgb().data
+        if hasattr(color_data, "get"):  # CuPy array
+            color_data = color_data.get()
+        color_data = np.ascontiguousarray(color_data)
+
+        # Get depth numpy array
+        depth_data = depth_image.data
+        if hasattr(depth_data, "get"):  # CuPy array
+            depth_data = depth_data.get()
+
+        # Convert depth to float32 meters if needed
+        if depth_data.dtype == np.uint16:
+            depth_data = depth_data.astype(np.float32) * depth_scale
+        elif depth_data.dtype != np.float32:
+            depth_data = depth_data.astype(np.float32)
+        depth_data = np.ascontiguousarray(depth_data)
+
+        # Verify dimensions match
+        color_h, color_w = color_data.shape[:2]
+        depth_h, depth_w = depth_data.shape[:2]
+        if (color_h, color_w) != (depth_h, depth_w):
+            raise ValueError(
+                f"Color {color_w}x{color_h} and depth {depth_w}x{depth_h} dimensions don't match"
+            )
+
+        # Get intrinsics from camera_info
+        intrinsic = camera_info.get_K_matrix()
+        fx, fy = intrinsic[0, 0], intrinsic[1, 1]
+        cx, cy = intrinsic[0, 2], intrinsic[1, 2]
+
+        # Verify intrinsics match image dimensions
+        if camera_info.width != color_w or camera_info.height != color_h:
+            # Scale intrinsics if resolution differs
+            scale_x = color_w / camera_info.width
+            scale_y = color_h / camera_info.height
+            fx *= scale_x
+            fy *= scale_y
+            cx *= scale_x
+            cy *= scale_y
+
+        # Create Open3D images
+        color_o3d = o3d.geometry.Image(color_data.astype(np.uint8))
+
+        # Filter invalid depth values
+        depth_filtered = depth_data.copy()
+        valid_mask = np.isfinite(depth_filtered) & (depth_filtered > 0)
+        depth_filtered[~valid_mask] = 0.0
+        depth_o3d = o3d.geometry.Image(depth_filtered.astype(np.float32))
+
+        o3d_intrinsic = o3d.camera.PinholeCameraIntrinsic(
+            width=color_w,
+            height=color_h,
+            fx=fx,
+            fy=fy,
+            cx=cx,
+            cy=cy,
+        )
+
+        # Create RGBD image and point cloud
+        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+            color_o3d,
+            depth_o3d,
+            depth_scale=1.0,  # Already scaled
+            depth_trunc=depth_trunc,
+            convert_rgb_to_intensity=False,
+        )
+
+        pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, o3d_intrinsic)
+
+        return cls(
+            pointcloud=pcd,
+            frame_id=depth_image.frame_id,
+            ts=depth_image.ts,
+        )
+
     def __str__(self) -> str:
         return f"PointCloud2(frame_id='{self.frame_id}', num_points={len(self)})"
 
@@ -199,13 +304,74 @@ class PointCloud2(Timestamped):
             ts=max(self.ts, other.ts),
         )
 
-    def as_numpy(self) -> np.ndarray:  # type: ignore[type-arg]
-        """Get points as numpy array (fast, no legacy conversion)."""
-        self._ensure_tensor_initialized()
-        if "positions" not in self._pcd_tensor.point:
-            return np.zeros((0, 3), dtype=np.float32)
-        result: np.ndarray = self._pcd_tensor.point["positions"].numpy()  # type: ignore[type-arg]
-        return result
+    def transform(self, tf: Transform) -> PointCloud2:
+        """Transform the pointcloud using a Transform object.
+
+        Applies the rotation and translation from the transform to all points,
+        converting them into the transform's frame_id.
+
+        Args:
+            tf: Transform object containing rotation and translation
+
+        Returns:
+            New PointCloud2 instance with transformed points in the new frame
+        """
+        points, _ = self.as_numpy()
+
+        if len(points) == 0:
+            return PointCloud2(
+                pointcloud=o3d.geometry.PointCloud(),
+                frame_id=tf.frame_id,
+                ts=self.ts,
+            )
+
+        # Build 4x4 transformation matrix from Transform
+        transform_matrix = tf.to_matrix()
+
+        # Convert points to homogeneous coordinates (N, 4)
+        ones = np.ones((len(points), 1))
+        points_homogeneous = np.hstack([points, ones])
+
+        # Apply transformation: (4, 4) @ (4, N) -> (4, N) -> transpose to (N, 4)
+        transformed_points = (transform_matrix @ points_homogeneous.T).T
+
+        # Extract xyz coordinates (drop homogeneous coordinate)
+        transformed_xyz = transformed_points[:, :3].astype(np.float64)
+
+        # Create new Open3D point cloud
+        new_pcd = o3d.geometry.PointCloud()
+        new_pcd.points = o3d.utility.Vector3dVector(transformed_xyz)
+
+        # Copy colors if available
+        if self.pointcloud.has_colors():
+            new_pcd.colors = self.pointcloud.colors
+
+        return PointCloud2(
+            pointcloud=new_pcd,
+            frame_id=tf.frame_id,
+            ts=self.ts,
+        )
+
+    def voxel_downsample(self, voxel_size: float = 0.025) -> PointCloud2:
+        """Downsample the pointcloud with a voxel grid."""
+        if len(self.pointcloud.points) < 20:
+            return self
+        downsampled = self._pcd_tensor.voxel_down_sample(voxel_size)
+        return PointCloud2(pointcloud=downsampled, frame_id=self.frame_id, ts=self.ts)
+
+    def as_numpy(
+        self,
+    ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any] | None]:
+        """Get points and colors as numpy arrays.
+
+        Returns:
+            Tuple of (points, colors) where:
+            - points: Nx3 numpy array of 3D points
+            - colors: Nx3 array in [0, 1] range, or None if no colors
+        """
+        points = np.asarray(self.pointcloud.points)
+        colors = np.asarray(self.pointcloud.colors) if self.pointcloud.has_colors() else None
+        return points, colors
 
     @functools.cache
     def get_axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
@@ -247,59 +413,80 @@ class PointCloud2(Timestamped):
         )
 
     def lcm_encode(self, frame_id: str | None = None) -> bytes:
-        """Convert to LCM PointCloud2 message."""
+        """Convert to LCM PointCloud2 message with optional RGB colors."""
         msg = LCMPointCloud2()
 
         # Header
         msg.header = Header()
-        msg.header.seq = 0  # Initialize sequence number
+        msg.header.seq = 0
         msg.header.frame_id = frame_id or self.frame_id
 
         msg.header.stamp.sec = int(self.ts)
         msg.header.stamp.nsec = int((self.ts - int(self.ts)) * 1e9)
 
-        points = self.as_numpy()
+        points, _ = self.as_numpy()
+
+        # Check if pointcloud has colors
+        self._ensure_tensor_initialized()
+        has_colors = "colors" in self._pcd_tensor.point
+
         if len(points) == 0:
-            # Empty point cloud
             msg.height = 0
             msg.width = 0
-            msg.point_step = 16  # 4 floats * 4 bytes (x, y, z, intensity)
+            msg.point_step = 16
             msg.row_step = 0
             msg.data_length = 0
             msg.data = b""
             msg.is_dense = True
             msg.is_bigendian = False
-            msg.fields_length = 4  # x, y, z, intensity
-            msg.fields = self._create_xyz_field()
+            msg.fields_length = 4
+            msg.fields = self._create_xyzrgb_fields() if has_colors else self._create_xyz_fields()
             return msg.lcm_encode()  # type: ignore[no-any-return]
 
-        # Point cloud dimensions
-        msg.height = 1  # Unorganized point cloud
+        msg.height = 1
         msg.width = len(points)
 
-        # Define fields (X, Y, Z, intensity as float32)
-        msg.fields_length = 4  # x, y, z, intensity
-        msg.fields = self._create_xyz_field()
+        if has_colors:
+            # Get colors (0-1 range) and convert to uint8
+            colors = self._pcd_tensor.point["colors"].numpy()
+            if colors.max() <= 1.0:
+                colors = (colors * 255).astype(np.uint8)
+            else:
+                colors = colors.astype(np.uint8)
 
-        # Point step and row step
-        msg.point_step = 16  # 4 floats * 4 bytes each (x, y, z, intensity)
+            # Pack RGB into float32 (ROS convention: bytes are [padding, r, g, b])
+            rgb_packed = np.zeros(len(points), dtype=np.float32)
+            rgb_uint32 = (
+                (colors[:, 0].astype(np.uint32) << 16)
+                | (colors[:, 1].astype(np.uint32) << 8)
+                | colors[:, 2].astype(np.uint32)
+            )
+            rgb_packed = rgb_uint32.view(np.float32)
+
+            msg.fields = self._create_xyzrgb_fields()
+            msg.fields_length = 4
+            msg.point_step = 16  # x, y, z, rgb (4 floats)
+
+            point_data = np.column_stack([points, rgb_packed]).astype(np.float32)
+        else:
+            msg.fields = self._create_xyz_fields()
+            msg.fields_length = 4
+            msg.point_step = 16  # x, y, z, intensity
+
+            point_data = np.column_stack(
+                [
+                    points,
+                    np.zeros(len(points), dtype=np.float32),
+                ]
+            ).astype(np.float32)
+
         msg.row_step = msg.point_step * msg.width
-
-        # Convert points to bytes with intensity padding (little endian float32)
-        # Add intensity column (zeros) to make it 4 columns: x, y, z, intensity
-        points_with_intensity = np.column_stack(
-            [
-                points,  # x, y, z columns
-                np.zeros(len(points), dtype=np.float32),  # intensity column (padding)
-            ]
-        )
-        data_bytes = points_with_intensity.astype(np.float32).tobytes()
+        data_bytes = point_data.tobytes()
         msg.data_length = len(data_bytes)
         msg.data = data_bytes
 
-        # Properties
-        msg.is_dense = True  # No invalid points
-        msg.is_bigendian = False  # Little endian
+        msg.is_dense = True
+        msg.is_bigendian = False
 
         return msg.lcm_encode()  # type: ignore[no-any-return]
 
@@ -308,7 +495,6 @@ class PointCloud2(Timestamped):
         msg = LCMPointCloud2.lcm_decode(data)
 
         if msg.width == 0 or msg.height == 0:
-            # Empty point cloud
             pc = o3d.geometry.PointCloud()
             return cls(
                 pointcloud=pc,
@@ -318,8 +504,8 @@ class PointCloud2(Timestamped):
                 else None,
             )
 
-        # Parse field information to find X, Y, Z offsets
-        x_offset = y_offset = z_offset = None
+        # Parse field offsets
+        x_offset = y_offset = z_offset = rgb_offset = None
         for msgfield in msg.fields:
             if msgfield.name == "x":
                 x_offset = msgfield.offset
@@ -327,43 +513,60 @@ class PointCloud2(Timestamped):
                 y_offset = msgfield.offset
             elif msgfield.name == "z":
                 z_offset = msgfield.offset
+            elif msgfield.name == "rgb":
+                rgb_offset = msgfield.offset
 
         if any(offset is None for offset in [x_offset, y_offset, z_offset]):
             raise ValueError("PointCloud2 message missing X, Y, or Z msgfields")
 
-        # Extract points from binary data using numpy for bulk conversion
         num_points = msg.width * msg.height
-        data = msg.data
+        raw_data = msg.data
         point_step = msg.point_step
 
-        # Check if we can use fast numpy path (common case: sequential float32 x,y,z)
+        # Fast path for standard layout
         if x_offset == 0 and y_offset == 4 and z_offset == 8 and point_step >= 12:
-            # Fast path: direct numpy conversion for tightly packed float32 x,y,z
             if point_step == 12:
-                # Perfectly packed x,y,z with no padding
-                points = np.frombuffer(data, dtype=np.float32).reshape(-1, 3)
+                points = np.frombuffer(raw_data, dtype=np.float32).reshape(-1, 3)
             else:
-                # Has additional fields after x,y,z (e.g., intensity), extract with stride
                 dt = np.dtype(
                     [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("_pad", f"V{point_step - 12}")]
                 )
-                structured = np.frombuffer(data, dtype=dt, count=num_points)
+                structured = np.frombuffer(raw_data, dtype=dt, count=num_points)
                 points = np.column_stack((structured["x"], structured["y"], structured["z"]))
         else:
-            # Slow fallback for non-standard field layouts
             points = np.zeros((num_points, 3), dtype=np.float32)
             for i in range(num_points):
                 base_offset = i * point_step
-                x_bytes = data[base_offset + x_offset : base_offset + x_offset + 4]
-                y_bytes = data[base_offset + y_offset : base_offset + y_offset + 4]
-                z_bytes = data[base_offset + z_offset : base_offset + z_offset + 4]
-                points[i, 0] = struct.unpack("<f", x_bytes)[0]
-                points[i, 1] = struct.unpack("<f", y_bytes)[0]
-                points[i, 2] = struct.unpack("<f", z_bytes)[0]
+                points[i, 0] = struct.unpack(
+                    "<f", raw_data[base_offset + x_offset : base_offset + x_offset + 4]
+                )[0]
+                points[i, 1] = struct.unpack(
+                    "<f", raw_data[base_offset + y_offset : base_offset + y_offset + 4]
+                )[0]
+                points[i, 2] = struct.unpack(
+                    "<f", raw_data[base_offset + z_offset : base_offset + z_offset + 4]
+                )[0]
 
-        # Create Open3D tensor point cloud (fast, no Vector3dVector)
+        # Create tensor pointcloud
         pcd_t = o3d.t.geometry.PointCloud()
         pcd_t.point["positions"] = o3c.Tensor(points, dtype=o3c.float32)
+
+        # Extract RGB colors if present
+        if rgb_offset is not None:
+            dt = np.dtype(
+                [
+                    ("_pre", f"V{rgb_offset}"),
+                    ("rgb", "<f4"),
+                    ("_post", f"V{point_step - rgb_offset - 4}"),
+                ]
+            )
+            structured = np.frombuffer(raw_data, dtype=dt, count=num_points)
+            rgb_packed = structured["rgb"].view(np.uint32)
+            r = ((rgb_packed >> 16) & 0xFF).astype(np.float32) / 255.0
+            g = ((rgb_packed >> 8) & 0xFF).astype(np.float32) / 255.0
+            b = (rgb_packed & 0xFF).astype(np.float32) / 255.0
+            colors = np.column_stack([r, g, b])
+            pcd_t.point["colors"] = o3c.Tensor(colors, dtype=o3c.float32)
 
         return cls(
             pointcloud=pcd_t,
@@ -373,41 +576,36 @@ class PointCloud2(Timestamped):
             else None,
         )
 
-    def _create_xyz_field(self) -> list:  # type: ignore[type-arg]
-        """Create standard X, Y, Z field definitions for LCM PointCloud2."""
+    def _create_xyz_fields(self) -> list:  # type: ignore[type-arg]
+        """Create X, Y, Z, intensity field definitions."""
         fields = []
+        for i, name in enumerate(["x", "y", "z", "intensity"]):
+            field = PointField()
+            field.name = name
+            field.offset = i * 4
+            field.datatype = 7  # FLOAT32
+            field.count = 1
+            fields.append(field)
+        return fields
 
-        # X field
-        x_field = PointField()
-        x_field.name = "x"
-        x_field.offset = 0
-        x_field.datatype = 7  # FLOAT32
-        x_field.count = 1
-        fields.append(x_field)
+    def _create_xyzrgb_fields(self) -> list:  # type: ignore[type-arg]
+        """Create X, Y, Z, RGB field definitions for colored pointclouds."""
+        fields = []
+        for i, name in enumerate(["x", "y", "z"]):
+            field = PointField()
+            field.name = name
+            field.offset = i * 4
+            field.datatype = 7  # FLOAT32
+            field.count = 1
+            fields.append(field)
 
-        # Y field
-        y_field = PointField()
-        y_field.name = "y"
-        y_field.offset = 4
-        y_field.datatype = 7  # FLOAT32
-        y_field.count = 1
-        fields.append(y_field)
-
-        # Z field
-        z_field = PointField()
-        z_field.name = "z"
-        z_field.offset = 8
-        z_field.datatype = 7  # FLOAT32
-        z_field.count = 1
-        fields.append(z_field)
-
-        # I field
-        i_field = PointField()
-        i_field.name = "intensity"
-        i_field.offset = 12
-        i_field.datatype = 7  # FLOAT32
-        i_field.count = 1
-        fields.append(i_field)
+        # RGB field (packed as float32, ROS convention)
+        rgb_field = PointField()
+        rgb_field.name = "rgb"
+        rgb_field.offset = 12
+        rgb_field.datatype = 7  # FLOAT32 (contains packed RGB)
+        rgb_field.count = 1
+        fields.append(rgb_field)
 
         return fields
 
@@ -442,7 +640,7 @@ class PointCloud2(Timestamped):
         Returns:
             rr.Points3D or rr.Boxes3D archetype for logging to Rerun
         """
-        points = self.as_numpy()
+        points, _ = self.as_numpy()
         if len(points) == 0:
             return rr.Points3D([]) if mode == "points" else rr.Boxes3D(centers=[])
 
@@ -511,7 +709,7 @@ class PointCloud2(Timestamped):
             raise ValueError("At least one of min_height or max_height must be specified")
 
         # Get points as numpy array
-        points = self.as_numpy()
+        points, _ = self.as_numpy()
 
         if len(points) == 0:
             # Empty pointcloud - return a copy
@@ -665,6 +863,8 @@ class PointCloud2(Timestamped):
     def to_ros_msg(self) -> ROSPointCloud2:
         """Convert to ROS sensor_msgs/PointCloud2 message.
 
+        Includes RGB color data if the pointcloud has colors.
+
         Returns:
             ROS PointCloud2 message
         """
@@ -679,7 +879,7 @@ class PointCloud2(Timestamped):
         ros_msg.header.stamp.sec = int(self.ts)
         ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1e9)
 
-        points = self.as_numpy()
+        points, _ = self.as_numpy()
 
         if len(points) == 0:
             # Empty point cloud
@@ -697,19 +897,51 @@ class PointCloud2(Timestamped):
         ros_msg.height = 1  # Unorganized point cloud
         ros_msg.width = len(points)
 
-        # Define fields (X, Y, Z as float32)
-        ros_msg.fields = [
-            ROSPointField(name="x", offset=0, datatype=ROSPointField.FLOAT32, count=1),  # type: ignore[no-untyped-call]
-            ROSPointField(name="y", offset=4, datatype=ROSPointField.FLOAT32, count=1),  # type: ignore[no-untyped-call]
-            ROSPointField(name="z", offset=8, datatype=ROSPointField.FLOAT32, count=1),  # type: ignore[no-untyped-call]
-        ]
+        # Check if pointcloud has colors
+        has_colors = self.pointcloud.has_colors()
 
-        # Set point step and row step
-        ros_msg.point_step = 12  # 3 floats * 4 bytes each
+        if has_colors:
+            # Include RGB field - pack as XYZRGB
+            ros_msg.fields = [
+                ROSPointField(name="x", offset=0, datatype=ROSPointField.FLOAT32, count=1),  # type: ignore[no-untyped-call]
+                ROSPointField(name="y", offset=4, datatype=ROSPointField.FLOAT32, count=1),  # type: ignore[no-untyped-call]
+                ROSPointField(name="z", offset=8, datatype=ROSPointField.FLOAT32, count=1),  # type: ignore[no-untyped-call]
+                ROSPointField(name="rgb", offset=12, datatype=ROSPointField.UINT32, count=1),  # type: ignore[no-untyped-call]
+            ]
+            ros_msg.point_step = 16  # 3 floats + 1 uint32
+
+            # Get colors and convert to packed RGB uint32
+            colors = np.asarray(self.pointcloud.colors)  # (N, 3) in [0, 1]
+            colors_uint8 = (colors * 255).astype(np.uint8)
+            rgb_packed = (
+                (colors_uint8[:, 0].astype(np.uint32) << 16)
+                | (colors_uint8[:, 1].astype(np.uint32) << 8)
+                | colors_uint8[:, 2].astype(np.uint32)
+            )
+
+            # Create structured array with x, y, z, rgb
+            cloud_data = np.zeros(
+                len(points),
+                dtype=[("x", np.float32), ("y", np.float32), ("z", np.float32), ("rgb", np.uint32)],
+            )
+            cloud_data["x"] = points[:, 0]
+            cloud_data["y"] = points[:, 1]
+            cloud_data["z"] = points[:, 2]
+            cloud_data["rgb"] = rgb_packed
+
+            ros_msg.data = cloud_data.tobytes()
+        else:
+            # No colors - just XYZ
+            ros_msg.fields = [
+                ROSPointField(name="x", offset=0, datatype=ROSPointField.FLOAT32, count=1),  # type: ignore[no-untyped-call]
+                ROSPointField(name="y", offset=4, datatype=ROSPointField.FLOAT32, count=1),  # type: ignore[no-untyped-call]
+                ROSPointField(name="z", offset=8, datatype=ROSPointField.FLOAT32, count=1),  # type: ignore[no-untyped-call]
+            ]
+            ros_msg.point_step = 12  # 3 floats * 4 bytes each
+
+            ros_msg.data = points.astype(np.float32).tobytes()
+
         ros_msg.row_step = ros_msg.point_step * ros_msg.width
-
-        # Convert points to bytes (little endian float32)
-        ros_msg.data = points.astype(np.float32).tobytes()
 
         # Set properties
         ros_msg.is_bigendian = False  # Little endian

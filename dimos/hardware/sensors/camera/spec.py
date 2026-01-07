@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractmethod, abstractproperty
+from abc import ABC, abstractmethod
 from typing import Generic, Protocol, TypeVar
 
 from reactivex.observable import Observable
 
-from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.geometry_msgs import Quaternion, Transform
+from dimos.msgs.sensor_msgs import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
+
+OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
 
 
 class CameraConfig(Protocol):
@@ -34,22 +37,67 @@ class CameraHardware(ABC, Configurable[CameraConfigT], Generic[CameraConfigT]):
     def image_stream(self) -> Observable[Image]:
         pass
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def camera_info(self) -> CameraInfo:
         pass
 
 
-# This is an example, feel free to change spec for stereo cameras
-# e.g., separate camera_info or streams for left/right, etc.
-class StereoCameraHardware(ABC, Configurable[CameraConfigT], Generic[CameraConfigT]):
+class StereoCameraConfig(Protocol):
+    """Protocol for stereo camera configuration."""
+
+    width: int
+    height: int
+    fps: int
+    camera_name: str
+    base_frame_id: str
+    base_transform: Transform | None
+    align_depth_to_color: bool
+    enable_depth: bool
+    enable_pointcloud: bool
+    pointcloud_fps: float
+    camera_info_fps: float
+
+
+class StereoCamera(ABC):
+    """Abstract class for stereo camera modules (RealSense, ZED, etc.)."""
+
     @abstractmethod
-    def image_stream(self) -> Observable[Image]:
+    def get_color_camera_info(self) -> CameraInfo | None:
+        """Get color camera intrinsics."""
         pass
 
     @abstractmethod
-    def depth_stream(self) -> Observable[Image]:
+    def get_depth_camera_info(self) -> CameraInfo | None:
+        """Get depth camera intrinsics."""
         pass
 
-    @abstractproperty
-    def camera_info(self) -> CameraInfo:
+    @abstractmethod
+    def get_depth_scale(self) -> float:
+        """Get the depth scale factor (meters per unit)."""
+        pass
+
+    @property
+    @abstractmethod
+    def _camera_link(self) -> str:
+        pass
+
+    @property
+    @abstractmethod
+    def _color_frame(self) -> str:
+        pass
+
+    @property
+    @abstractmethod
+    def _color_optical_frame(self) -> str:
+        pass
+
+    @property
+    @abstractmethod
+    def _depth_frame(self) -> str:
+        pass
+
+    @property
+    @abstractmethod
+    def _depth_optical_frame(self) -> str:
         pass

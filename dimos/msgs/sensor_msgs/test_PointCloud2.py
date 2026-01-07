@@ -45,8 +45,8 @@ def test_lcm_encode_decode() -> None:
     decoded = PointCloud2.lcm_decode(binary_msg)
 
     # 1. Check number of points
-    original_points = lidar_msg.as_numpy()
-    decoded_points = decoded.as_numpy()
+    original_points, _ = lidar_msg.as_numpy()
+    decoded_points, _ = decoded.as_numpy()
 
     print(f"Original points: {len(original_points)}")
     print(f"Decoded points: {len(decoded_points)}")
@@ -134,8 +134,8 @@ def test_ros_conversion() -> None:
     converted = PointCloud2.from_ros_msg(ros_msg)
 
     # Check points are preserved
-    original_points = original.as_numpy()
-    converted_points = converted.as_numpy()
+    original_points, _ = original.as_numpy()
+    converted_points, _ = converted.as_numpy()
 
     assert len(original_points) == len(converted_points), (
         f"Point count mismatch: {len(original_points)} vs {len(converted_points)}"
@@ -199,7 +199,7 @@ def test_ros_conversion() -> None:
         f"Frame ID not preserved: expected 'ros_test_frame', got '{dimos_pc.frame_id}'"
     )
 
-    decoded_points = dimos_pc.as_numpy()
+    decoded_points, _ = dimos_pc.as_numpy()
     assert len(decoded_points) == 3, (
         f"Wrong number of points: expected 3, got {len(decoded_points)}"
     )

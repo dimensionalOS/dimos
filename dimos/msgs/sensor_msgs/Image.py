@@ -430,10 +430,9 @@ class Image(Timestamped):
         channels = 1 if self.data.ndim == 2 else self.data.shape[2]
         msg.step = self.width * self.dtype.itemsize * channels
 
-        # Image data - use raw data to preserve format
-        image_bytes = self.data.tobytes()
-        msg.data_length = len(image_bytes)
-        msg.data = image_bytes
+        view = memoryview(np.ascontiguousarray(self.data)).cast("B")
+        msg.data_length = len(view)
+        msg.data = view
 
         return msg.lcm_encode()  # type: ignore[no-any-return]
 

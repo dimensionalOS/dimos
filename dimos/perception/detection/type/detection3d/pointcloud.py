@@ -252,7 +252,7 @@ class Detection3DPC(Detection3D):
         camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
 
         # Convert pointcloud to numpy array
-        world_points = world_pointcloud.as_numpy()
+        world_points, _ = world_pointcloud.as_numpy()
 
         # Project points to camera frame
         points_homogeneous = np.hstack([world_points, np.ones((world_points.shape[0], 1))])
