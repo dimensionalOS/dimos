@@ -25,9 +25,8 @@ try:
     )
 except ImportError:
     ROSPoseStamped = None  # type: ignore[assignment, misc]
-import rerun as rr
-
 from plum import dispatch
+import rerun as rr
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable

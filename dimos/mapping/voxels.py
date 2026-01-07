@@ -80,7 +80,7 @@ class VoxelGridMapper(Module):
     def __init__(self, global_config: GlobalConfig | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._global_config = global_config or GlobalConfig()
-        
+
         dev = (
             o3c.Device(self.config.device)
             if (self.config.device.startswith("CUDA") and o3c.cuda.is_available())
@@ -105,7 +105,7 @@ class VoxelGridMapper(Module):
         self._latest_frame_ts: float = 0.0
         # Monotonic timestamp of last received frame (for accurate latency in replay)
         self._latest_frame_rx_monotonic: float | None = None
-        
+
         # Background Rerun logging (decouples viz from data pipeline)
         self._rerun_queue: queue.Queue[PointCloud2 | None] = queue.Queue(maxsize=2)
         self._rerun_thread: threading.Thread | None = None
@@ -117,7 +117,7 @@ class VoxelGridMapper(Module):
                 pc = self._rerun_queue.get(timeout=1.0)
                 if pc is None:  # Shutdown signal
                     break
-                    
+
                 # Log to Rerun (blocks in background, doesn't affect data pipeline)
                 try:
                     rr.log(
@@ -136,11 +136,11 @@ class VoxelGridMapper(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        
+
         # Only start Rerun logging if Rerun backend is selected
         if self._global_config.viewer_backend.startswith("rerun"):
             connect_rerun(global_config=self._global_config)
-            
+
             # Start background Rerun logging thread (decouples viz from data pipeline)
             self._rerun_thread = threading.Thread(target=self._rerun_worker, daemon=True)
             self._rerun_thread.start()
@@ -171,7 +171,7 @@ class VoxelGridMapper(Module):
         if self._rerun_thread and self._rerun_thread.is_alive():
             self._rerun_queue.put(None)  # Shutdown signal
             self._rerun_thread.join(timeout=2.0)
-        
+
         super().stop()
 
     def _on_frame(self, frame: LidarMessage) -> None:
@@ -184,19 +184,19 @@ class VoxelGridMapper(Module):
     def publish_global_map(self) -> None:
         # Snapshot monotonic timestamp once (won't be overwritten during slow publish)
         rx_monotonic = self._latest_frame_rx_monotonic
-        
+
         start_total = time.perf_counter()
-        
+
         # 1. Extract pointcloud from GPU hashmap
         t1 = time.perf_counter()
         pc = self.get_global_pointcloud2()
         extract_ms = (time.perf_counter() - t1) * 1000
-        
+
         # 2. Publish to downstream (NO auto-logging - fast!)
         t2 = time.perf_counter()
         self.global_map.publish(pc)
         publish_ms = (time.perf_counter() - t2) * 1000
-        
+
         # 3. Queue for async Rerun logging (non-blocking, drops if queue full)
         try:
             self._rerun_queue.put_nowait(pc)

@@ -27,10 +27,10 @@ Viewer modes (set via VIEWER_BACKEND config or environment variable):
 Usage:
     # Set via environment:
     VIEWER_BACKEND=rerun-web   # or rerun-native or foxglove
-    
+
     # Or via .env file:
     viewer_backend=rerun-native
-    
+
     # In main process (blueprints.py handles this automatically):
     from dimos.dashboard.rerun_init import init_rerun_server
     server_addr = init_rerun_server(viewer_mode="rerun-web")
@@ -95,14 +95,18 @@ def init_rerun_server(viewer_mode: str = "rerun-web") -> str:
         # Start gRPC + web viewer (headless friendly)
         server_uri = rr.serve_grpc(grpc_port=RERUN_GRPC_PORT)
         rr.serve_web_viewer(web_port=RERUN_WEB_PORT, open_browser=False, connect_to=server_uri)
-        logger.info("Rerun: web viewer started", web_port=RERUN_WEB_PORT, url=f"http://localhost:{RERUN_WEB_PORT}")
+        logger.info(
+            "Rerun: web viewer started",
+            web_port=RERUN_WEB_PORT,
+            url=f"http://localhost:{RERUN_WEB_PORT}",
+        )
     else:
         # Just gRPC server, no viewer (connect externally)
         rr.serve_grpc(grpc_port=RERUN_GRPC_PORT)
         logger.info(
             "Rerun: gRPC server only",
             port=RERUN_GRPC_PORT,
-            connect_command=f"rerun --connect {RERUN_GRPC_ADDR}"
+            connect_command=f"rerun --connect {RERUN_GRPC_ADDR}",
         )
 
     _server_started = True
@@ -118,7 +122,7 @@ def connect_rerun(
     server_addr: str | None = None,
 ) -> None:
     """Connect to Rerun server from a worker process.
-    
+
     Modules should check global_config.viewer_backend before calling this.
 
     Args:
@@ -131,7 +135,7 @@ def connect_rerun(
         if _connected:
             logger.debug("Already connected to Rerun server")
             return
-        
+
         # Skip if foxglove backend selected
         if global_config and not global_config.viewer_backend.startswith("rerun"):
             logger.debug("Rerun connection skipped", viewer_backend=global_config.viewer_backend)
@@ -156,6 +160,6 @@ def shutdown_rerun() -> None:
             logger.info("Rerun: disconnected")
         except Exception as e:
             logger.warning("Rerun: error during disconnect", error=str(e))
-        
+
         _server_started = False
         _connected = False
