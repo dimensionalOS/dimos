@@ -61,3 +61,5 @@ yolo11n.pt
 *.so
 
 /.mypy_cache*
+
+*mobileclip*

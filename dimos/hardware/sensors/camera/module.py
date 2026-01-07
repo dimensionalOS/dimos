@@ -82,7 +82,7 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
         )
 
     def publish_metadata(self) -> None:
-        camera_info = self.hardware.camera_info().with_ts(time.time())
+        camera_info = self.hardware.camera_info.with_ts(time.time())
         self.camera_info.publish(camera_info)
 
         if not self.config.transform:

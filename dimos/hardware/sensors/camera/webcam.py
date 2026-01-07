@@ -163,6 +163,7 @@ class Webcam(CameraHardware[WebcamConfig]):
                 # We're running behind, reset timing
                 next_frame_time = time.time()
 
+    @property
     def camera_info(self) -> CameraInfo:
         return self.config.camera_info
 
