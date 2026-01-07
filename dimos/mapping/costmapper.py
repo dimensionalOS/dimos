@@ -44,6 +44,19 @@ class CostMapper(Module):
     global_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
 
+    @classmethod
+    def rerun_views(cls):  # type: ignore[no-untyped-def]
+        """Return Rerun view blueprints for costmap visualization."""
+        import rerun.blueprint as rrb
+
+        return [
+            rrb.TimeSeriesView(
+                name="Costmap (ms)",
+                origin="/metrics/costmap",
+                contents=["+ /metrics/costmap/calc_ms"],
+            ),
+        ]
+
     @rpc
     def start(self) -> None:
         super().start()

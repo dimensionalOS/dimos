@@ -55,6 +55,28 @@ class VoxelGridMapper(Module):
     lidar: In[LidarMessage]
     global_map: Out[PointCloud2]
 
+    @classmethod
+    def rerun_views(cls):  # type: ignore[no-untyped-def]
+        """Return Rerun view blueprints for voxel map visualization."""
+        import rerun.blueprint as rrb
+
+        return [
+            rrb.TimeSeriesView(
+                name="Voxel Pipeline (ms)",
+                origin="/metrics/voxel_map",
+                contents=[
+                    "+ /metrics/voxel_map/extract_ms",
+                    "+ /metrics/voxel_map/transport_ms",
+                    "+ /metrics/voxel_map/publish_ms",
+                ],
+            ),
+            rrb.TimeSeriesView(
+                name="Voxel Count",
+                origin="/metrics/voxel_map",
+                contents=["+ /metrics/voxel_map/voxel_count"],
+            ),
+        ]
+
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         dev = (
