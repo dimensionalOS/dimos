@@ -36,6 +36,7 @@ all_blueprints = {
     "unitree-g1-joystick": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:with_joystick",
     "unitree-g1-full": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:full_featured",
     "unitree-g1-detection": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:detection",
+    "unitree-go2-agentic-detection": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic_with_detection",
     # xArm manipulator blueprints
     "xarm-servo": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm_servo",
     "xarm5-servo": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm5_servo",

@@ -267,9 +267,22 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     #     return ret[0] if ret else None
 
-    def lookup(self, label: str) -> list[Detection3DPC]:
-        """Look up a detection by label."""
-        return []
+    @rpc
+    def lookup(self, label: str) -> list[Object3D]:
+        """Look up objects by label/name.
+
+        Args:
+            label: Name/class of object to search for
+
+        Returns:
+            List of Object3D instances matching the label
+        """
+        matching = []
+        for obj in self.objects.values():
+            if obj.name and label.lower() in obj.name.lower():
+                if obj.detections >= 3:  # Filter out noise
+                    matching.append(obj)
+        return matching
 
     @rpc
     def stop(self):  # type: ignore[no-untyped-def]

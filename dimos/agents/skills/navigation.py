@@ -52,6 +52,7 @@ class NavigationSkillContainer(SkillModule):
         "WavefrontFrontierExplorer.stop_exploration",
         "WavefrontFrontierExplorer.explore",
         "WavefrontFrontierExplorer.is_exploration_active",
+        "ObjectDBModule.lookup",
     ]
 
     color_image: In[Image]
@@ -112,6 +113,63 @@ class NavigationSkillContainer(SkillModule):
 
         logger.info(f"Tagged {location}")
         return f"Tagged '{location_name}': ({position.x},{position.y})."
+
+    @skill()
+    def navigate_to_detected_object(self, object_name: str) -> str:
+        """Navigate to an object that was detected by the vision system.
+
+        This uses ObjectDB to find objects that were previously seen and tracked.
+        Only use this for specific objects like "cup", "red box", "person", "chair".
+
+        The object must have been previously detected by the camera system.
+
+        Args:
+            object_name: Name/class of the object to navigate to
+
+        Returns:
+            Success or failure message
+        """
+        if not self._skill_started:
+            raise ValueError(f"{self} has not been started.")
+
+        try:
+            lookup_rpc = self.get_rpc_calls("ObjectDBModule.lookup")
+        except Exception:
+            logger.error("ObjectDBModule not connected")
+            return "Error: ObjectDB module not connected. Make sure detection blueprint is loaded."
+
+        try:
+            objects = lookup_rpc(object_name)
+        except Exception as e:
+            logger.error(f"Failed to query ObjectDB for '{object_name}': {e}")
+            return f"Error querying ObjectDB for '{object_name}'"
+
+        if not objects or len(objects) == 0:
+            logger.warning(f"No objects matching '{object_name}' found in ObjectDB")
+            return f"No detected object matching '{object_name}'. The object may not have been seen yet."
+
+        if len(objects) > 1:
+            logger.info(
+                f"Found {len(objects)} instances of '{object_name}', navigating to first one"
+            )
+
+        # Get pose from first matching object
+        try:
+            pose = objects[0].to_pose()
+        except Exception as e:
+            logger.error(f"Failed to get pose for object '{object_name}': {e}")
+            return f"Error: Could not determine location of '{object_name}'"
+
+        logger.info(
+            f"Navigating to detected '{object_name}' at ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
+        )
+
+        result = self._navigate_to(pose)
+
+        if result:
+            return f"Successfully navigated to '{object_name}'"
+        else:
+            return f"Failed to reach '{object_name}'. Navigation was cancelled or failed."
 
     @skill()
     def navigate_with_text(self, query: str) -> str:
