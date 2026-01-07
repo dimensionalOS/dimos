@@ -17,10 +17,10 @@ from typing import Generic, Protocol, TypeVar
 
 from reactivex.observable import Observable
 
+from dimos.core import Module
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 
 OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
@@ -67,57 +67,45 @@ class StereoCameraConfig(Protocol):
     camera_info_fps: float
 
 
-StereoCameraConfigT = TypeVar("StereoCameraConfigT", bound=StereoCameraConfig)
+class StereoCameraModule(Module):
+    """Abstract class for stereo camera modules (RealSense, ZED, etc.)."""
 
-
-class StereoCameraHardware(Protocol[StereoCameraConfigT]):
-    """Protocol for stereo cameras (RealSense, ZED, etc.)."""
-
-    config: StereoCameraConfigT
-
-    def color_image_stream(self) -> Observable[Image]:
-        """Get the color image stream."""
-        ...
-
-    def depth_image_stream(self) -> Observable[Image]:
-        """Get the depth image stream."""
-        ...
-
-    def pointcloud_stream(self) -> Observable[PointCloud2]:
-        """Get the pointcloud stream."""
-        ...
-
-    def color_camera_info(self) -> CameraInfo:
+    @abstractmethod
+    def get_color_camera_info(self) -> CameraInfo | None:
         """Get color camera intrinsics."""
-        ...
+        pass
 
-    def depth_camera_info(self) -> CameraInfo:
+    @abstractmethod
+    def get_depth_camera_info(self) -> CameraInfo | None:
         """Get depth camera intrinsics."""
-        ...
+        pass
 
-    def depth_scale(self) -> float:
+    @abstractmethod
+    def get_depth_scale(self) -> float:
         """Get the depth scale factor (meters per unit)."""
-        ...
+        pass
 
     @property
-    def _camera_link(self) -> str: ...
+    @abstractmethod
+    def _camera_link(self) -> str:
+        pass
 
     @property
-    def _color_frame(self) -> str: ...
+    @abstractmethod
+    def _color_frame(self) -> str:
+        pass
 
     @property
-    def _color_optical_frame(self) -> str: ...
+    @abstractmethod
+    def _color_optical_frame(self) -> str:
+        pass
 
     @property
-    def _depth_frame(self) -> str: ...
+    @abstractmethod
+    def _depth_frame(self) -> str:
+        pass
 
     @property
-    def _depth_optical_frame(self) -> str: ...
-
-    def start(self) -> None:
-        """Start the camera and begin streaming; raise on failure."""
-        ...
-
-    def stop(self) -> None:
-        """Stop the camera."""
-        ...
+    @abstractmethod
+    def _depth_optical_frame(self) -> str:
+        pass

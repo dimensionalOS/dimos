@@ -24,11 +24,13 @@ import pyrealsense2 as rs  # type: ignore[import-not-found]
 import reactivex as rx
 from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
-from dimos.core import Module, ModuleConfig, Out, rpc
+from dimos.core import ModuleConfig, Out, rpc
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
+    StereoCameraConfig,
+    StereoCameraModule,
     default_base_transform,
 )
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
@@ -43,7 +45,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class RealSenseCameraConfig(ModuleConfig):
+class RealSenseCameraConfig(ModuleConfig, StereoCameraConfig):
     width: int = 848
     height: int = 480
     fps: int = 15
@@ -58,7 +60,7 @@ class RealSenseCameraConfig(ModuleConfig):
     serial_number: str | None = None
 
 
-class RealSenseCamera(Module[RealSenseCameraConfig]):
+class RealSenseCamera(StereoCameraModule):
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
