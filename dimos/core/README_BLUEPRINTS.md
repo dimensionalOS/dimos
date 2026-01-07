@@ -184,15 +184,32 @@ class ModuleB(Module):
 
 And you want to call `ModuleA.get_time` in `ModuleB.request_the_time`.
 
-You can do so by defining a method like `set_<class_name>_<method_name>`. It will be called with an `RpcCall` that will call the original `ModuleA.get_time`. So you can write this:
+To do this, you can request a link to the method you want to call in `rpc_calls`. Calling `get_time_rcp` will call the original `ModuleA.get_time`.
 
 ```python
-class ModuleA(Module):
+class ModuleB(Module):
+    rpc_calls: list[str] = [
+        "ModuleA.get_time",
+    ]
 
-    @rpc
-    def get_time(self) -> str:
-        ...
+    def request_the_time(self) -> None:
+        get_time_rpc = self.get_rpc_calls("ModuleA.get_time")
+        print(get_time_rpc())
+```
 
+You can also request multiple methods at a time:
+
+```python
+method1_rpc, method2_rpc = self.get_rpc_calls("ModuleX.m1", "ModuleX.m2")
+```
+
+## Alternative RPC calls
+
+There is an alternative way of receiving RPC methods. It is useful when you want to perform an action at the time you receive the RPC methods.
+
+You can use it by defining a method like `set_<class_name>_<method_name>`:
+
+```python
 class ModuleB(Module):
     @rpc # Note that it has to be an rpc method.
     def set_ModuleA_get_time(self, rpc_call: RpcCall) -> None:
@@ -205,9 +222,51 @@ class ModuleB(Module):
 
 Note that `RpcCall.rpc` does not serialize, so you have to set it to the one from the module with `rpc_call.set_rpc(self.rpc)`
 
+## Calling an interface
+
+In the previous examples, you can only call methods in a module called `ModuleA`. But what if you want to deploy an alternative module in your blueprint?
+
+You can do so by extracting the common interface as an `ABC` (abstract base class) and linking to the `ABC` instead one particular class.
+
+```python
+class TimeInterface(ABC):
+    @abstractmethod
+    def get_time(self): ...
+
+class ProperTime(TimeInterface):
+    def get_time(self):
+        return "13:00"
+
+class BadTime(TimeInterface):
+    def get_time(self):
+        return "01:00 PM"
+
+
+class ModuleB(Module):
+    rpc_calls: list[str] = [
+        "TimeInterface.get_time", # TimeInterface instead of ProperTime or BadTime
+    ]
+
+    def request_the_time(self) -> None:
+        get_time_rpc = self.get_rpc_calls("TimeInterface.get_time")
+        print(get_time_rpc())
+```
+
+The actual method that you get in `get_time_rpc` depends on which module is deployed. If you deploy `ProperTime`, you get `ProperTime.get_time`:
+
+```python
+blueprint = autoconnect(
+    ProperTime.blueprint(),
+    # get_rpc_calls("TimeInterface.get_time") returns ProperTime.get_time
+    ModuleB.blueprint(),
+)
+```
+
+If both are deployed, the blueprint will throw an error because it's ambiguous.
+
 ## Defining skills
 
-Skills have to be registered with `LlmAgent.register_skills(self)`.
+Skills have to be registered with `AgentSpec.register_skills(self)`.
 
 ```python
 class SomeSkill(Module):
@@ -217,7 +276,7 @@ class SomeSkill(Module):
         ...
 
     @rpc
-    def set_LlmAgent_register_skills(self, register_skills: RpcCall) -> None:
+    def set_AgentSpec_register_skills(self, register_skills: RpcCall) -> None:
         register_skills.set_rpc(self.rpc)
         register_skills(RPCClient(self, self.__class__))
 
