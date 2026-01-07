@@ -29,122 +29,43 @@ requires-python = ">=3.10"
 readme = "README.md"
 
 dependencies = [
-    # Core requirements
-    "opencv-python",
-    "numba>=0.60.0",      # Python 3.12 support
-    "llvmlite>=0.42.0",   # Required by numba 0.60+
-    "python-dotenv",
-    "openai",
-    "anthropic>=0.19.0",
-    "cerebras-cloud-sdk",
-    "moondream",
-    "numpy>=1.26.4",
-    "rerun-sdk>=0.20.0",
-    "colorlog==6.9.0",
-    "yapf==0.40.2",
-    "typeguard",
-    "empy==3.3.4",
-    "catkin_pkg",
-    "lark",
-    "plum-dispatch==2.5.7",
-    "ffmpeg-python",
-    "tiktoken>=0.8.0",
-    "Flask>=2.2",
-    "python-multipart==0.0.20",
-    "reactivex",
-    "asyncio==3.4.3",
-    "unitree-webrtc-connect-leshy>=2.0.7",
-    "tensorzero==2025.7.5",
-    "structlog>=25.5.0,<26",
-
-    # Web Extensions
-    "fastapi>=0.115.6",
-    "sse-starlette>=2.2.1",
-    "uvicorn>=0.34.0",
-
-    # MCP Server
-    "mcp>=1.0.0",
-
-    # Agents
-    "langchain>=1,<2",
-    "langchain-chroma>=1,<2",
-    "langchain-core>=1,<2",
-    "langchain-openai>=1,<2",
-    "langchain-text-splitters>=1,<2",
-    "langchain-huggingface>=1,<2",
-    "langchain-ollama>=1,<2",
-    "bitsandbytes>=0.48.2,<1.0; sys_platform == 'linux'",
-    "ollama>=0.6.0",
-
-    # Class Extraction
-    "pydantic",
-
-    # Developer Specific
-    "ipykernel",
-
-    # Unitree webrtc streaming
-    "pycryptodome",
-    "sounddevice",
-    "pyaudio",
-    "requests",
-    "wasmtime",
-
-    # Image
+    # Transport Protocols
+    "dimos-lcm",
     "PyTurboJPEG==1.8.2",
 
-    # Audio
-    "openai-whisper",
-    "soundfile",
-
-    # Hugging Face
-    "transformers[torch]==4.49.0",
-
-    # Vector Embedding
-    "sentence_transformers",
-
-    # Perception Dependencies
-    "ultralytics>=8.3.70",
-    "filterpy>=1.4.5",
+    # Core
+    "numpy>=1.26.4",
     "scipy>=1.15.1",
-    "scikit-learn",
-    "Pillow",
-    "clip",
-    "timm>=1.0.15",
-    "lap>=0.5.12",
-    "opencv-contrib-python==4.10.0.84",
+    "reactivex",
+    "asyncio==3.4.3",
+    "sortedcontainers==2.4.0",
+    "pydantic",
+    "python-dotenv",
 
-    # embedding models
-    "open_clip_torch==3.2.0",
-    "torchreid==0.2.5",
-    "gdown==5.2.0",
-    "tensorboard==2.20.0",
-
-    # Mapping
-    "open3d",
-    "googlemaps>=4.10.0",
-
-    # Inference
-    "onnx",
-    "einops==0.8.1",
     # Multiprocess
     "dask[complete]==2025.5.1",
+    "plum-dispatch==2.5.7",
 
-    # LCM / DimOS utilities
-    "dimos-lcm==0.1.0",
+    # Logging
+    "structlog>=25.5.0,<26",
+    "colorlog==6.9.0",
+
+    # Core Msgs
+    "opencv-python",
+    "open3d",
 
     # CLI
     "pydantic-settings>=2.11.0,<3",
+    "textual==3.7.1",
+    "terminaltexteffects==0.12.2",
     "typer>=0.19.2,<1",
     "plotext==5.3.2",
 
-    # Teleop
-    "pygame>=2.6.1",
-    # Hardware SDKs
-    "xarm-python-sdk>=1.17.0",
-
+    # Used for calculating the occupancy map.
     "numba>=0.60.0",    # First version supporting Python 3.12
-    "llvmlite>=0.42.0", # Required by numba 0.59+
+    "llvmlite>=0.42.0", # Required by numba 0.60+
 ]
+
 
 [project.scripts]
 lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
@@ -155,6 +76,96 @@ humancli = "dimos.utils.cli.human.humanclianim:main"
 dimos = "dimos.robot.cli.dimos:main"
 
 [project.optional-dependencies]
+misc = [
+    # Core requirements
+    "cerebras-cloud-sdk",
+    "yapf==0.40.2",
+    "typeguard",
+    "empy==3.3.4",
+    "catkin_pkg",
+    "lark",
+    "tiktoken>=0.8.0",
+    "python-multipart==0.0.20",
+    "tensorzero==2025.7.5",
+
+    # Developer Specific
+    "ipykernel",
+
+    # Vector Embedding
+    "sentence_transformers",
+
+    # Perception Dependencies
+    "scikit-learn",
+    "clip",
+    "timm>=1.0.15",
+    "opencv-contrib-python==4.10.0.84",
+
+    # embedding models
+    "open_clip_torch==3.2.0",
+    "torchreid==0.2.5",
+    "gdown==5.2.0",
+    "tensorboard==2.20.0",
+
+    # Mapping
+    "googlemaps>=4.10.0",
+
+    # Inference
+    "onnx",
+    "einops==0.8.1",
+
+    # Teleop
+    "pygame>=2.6.1",
+    # Hardware SDKs
+    "xarm-python-sdk>=1.17.0",
+]
+
+visualization = [
+    "rerun-sdk>=0.20.0",
+]
+
+agents = [
+    "langchain>=1,<2",
+    "langchain-chroma>=1,<2",
+    "langchain-core>=1,<2",
+    "langchain-openai>=1,<2",
+    "langchain-text-splitters>=1,<2",
+    "langchain-huggingface>=1,<2",
+    "langchain-ollama>=1,<2",
+    "bitsandbytes>=0.48.2,<1.0; sys_platform == 'linux'",
+    "ollama>=0.6.0",
+    "anthropic>=0.19.0",
+
+    # Audio
+    "openai",
+    "openai-whisper",
+    "sounddevice",
+
+    # MCP Server
+    "mcp>=1.0.0",
+]
+
+web = [
+    "fastapi>=0.115.6",
+    "sse-starlette>=2.2.1",
+    "uvicorn>=0.34.0",
+    "ffmpeg-python",
+    "soundfile",
+]
+
+perception = [
+    "ultralytics>=8.3.70",
+    "filterpy>=1.4.5",
+    "Pillow",
+    "lap>=0.5.12",
+    "transformers[torch]==4.49.0",
+    "moondream",
+]
+
+unitree = [
+    "dimos[agents,web,perception,visualization]",
+    "unitree-webrtc-connect-leshy>=2.0.7"
+]
+
 manipulation = [
     # Contact Graspnet Dependencies
     "h5py>=3.7.0",
@@ -215,7 +226,6 @@ dev = [
     "pytest-env==1.1.5",
     "pytest-timeout==2.4.0",
     "coverage>=7.0",  # Required for numba compatibility (coverage.types)
-    "textual==3.7.1",
     "requests-mock==1.12.1",
     "terminaltexteffects==0.12.2",
     "watchdog>=3.0.0",
