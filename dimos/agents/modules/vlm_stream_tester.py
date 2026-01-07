@@ -11,20 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
 
 import threading
 import time
-from typing import TYPE_CHECKING
 
 from langchain_core.messages import AIMessage, HumanMessage
 
 from dimos.core import Module, rpc
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs import Image
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.stream import In, Out
-    from dimos.msgs.sensor_msgs import Image
 
 logger = setup_logger()
 
