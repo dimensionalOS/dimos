@@ -27,7 +27,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from dimos.agents.llm_init_mixin import LlmInitMixin
+from dimos.agents.llm_init import build_llm, build_system_message
 from dimos.agents.spec import AgentSpec, Model, Provider
 from dimos.core import DimosCluster, rpc
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
@@ -155,7 +155,7 @@ def snapshot_to_messages(
 
 
 # Agent class job is to glue skill coordinator state to an agent, builds langchain messages
-class Agent(LlmInitMixin, AgentSpec):
+class Agent(AgentSpec):
     system_message: SystemMessage
     state_messages: list[AIMessage | HumanMessage]
 
@@ -172,8 +172,9 @@ class Agent(LlmInitMixin, AgentSpec):
         self._agent_id = str(uuid.uuid4())
         self._agent_stopped = False
 
-        self.system_message = self._init_system_message(append=SYSTEM_MSG_APPEND)
-        self._llm = self._init_llm()
+        self.system_message = build_system_message(self.config, append=SYSTEM_MSG_APPEND)
+        self.publish(self.system_message)
+        self._llm = build_llm(self.config)
 
     @rpc
     def get_agent_id(self) -> str:

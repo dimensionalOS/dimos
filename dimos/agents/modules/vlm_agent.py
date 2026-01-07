@@ -14,7 +14,7 @@
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from dimos.agents.llm_init_mixin import LlmInitMixin
+from dimos.agents.llm_init import build_llm, build_system_message
 from dimos.agents.spec import AgentSpec
 from dimos.core import rpc
 from dimos.core.stream import In, Out
@@ -24,7 +24,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class VLMAgent(LlmInitMixin, AgentSpec):
+class VLMAgent(AgentSpec):
     """Stream-first agent for vision queries with optional RPC access."""
 
     color_image: In[Image]
@@ -33,10 +33,11 @@ class VLMAgent(LlmInitMixin, AgentSpec):
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
-        self._llm = self._init_llm()
+        self._llm = build_llm(self.config)
         self._latest_image: Image | None = None
         self._history: list[AIMessage | HumanMessage] = []
-        self._system_message = self._init_system_message()
+        self._system_message = build_system_message(self.config)
+        self.publish(self._system_message)
 
     @rpc
     def start(self) -> None:
