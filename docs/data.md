@@ -194,7 +194,7 @@ The [`lfs_push`](/bin/lfs_push) script:
 2. Uploads to Git LFS
 3. Stages the compressed file
 
-A pre-commit hook ([`bin/lfs_check`](/bin/lfs_check#L26)) blocks commits if you have uncompressed directories in `data/` without a corresponding `.tar.gz` in `data/.lfs/`.
+A pre-commit hook ([`bin/hooks/lfs_check`](/bin/hooks/lfs_check#L26)) blocks commits if you have uncompressed directories in `data/` without a corresponding `.tar.gz` in `data/.lfs/`.
 
 ## Location Resolution
 
