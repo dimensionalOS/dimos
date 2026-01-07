@@ -27,6 +27,8 @@ from dimos.agents.ollama_agent import ollama_installed
 from dimos.agents.skills.navigation import navigation_skill
 from dimos.agents.skills.speak_skill import speak_skill
 from dimos.agents.spec import Provider
+from dimos.agents.vlm_agent import vlm_agent
+from dimos.agents.vlm_stream_tester import vlm_stream_tester
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
@@ -189,4 +191,10 @@ agentic_huggingface = autoconnect(
         provider=Provider.HUGGINGFACE,  # type: ignore[attr-defined]
     ),
     _common_agentic,
+)
+
+vlm_stream_test = autoconnect(
+    basic,
+    vlm_agent(),
+    vlm_stream_tester(),
 )
