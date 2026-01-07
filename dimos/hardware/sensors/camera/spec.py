@@ -16,12 +16,14 @@ from abc import ABC, abstractmethod
 from typing import Generic, Protocol, TypeVar
 
 from reactivex.observable import Observable
+
 from dimos.msgs.geometry_msgs import Quaternion, Transform
 from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 
 OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
+
 
 class CameraConfig(Protocol):
     frame_id_prefix: str | None

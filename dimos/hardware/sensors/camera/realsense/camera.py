@@ -28,8 +28,8 @@ from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
-    StereoCameraConfig,
     StereoCamera,
+    StereoCameraConfig,
 )
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo
@@ -45,6 +45,7 @@ def default_base_transform() -> Transform:
         translation=Vector3(0.0, 0.0, 0.0),
         rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
     )
+
 
 @dataclass
 class RealSenseCameraConfig(ModuleConfig, StereoCameraConfig):
