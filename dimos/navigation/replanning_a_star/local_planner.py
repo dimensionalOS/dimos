@@ -62,16 +62,18 @@ class LocalPlanner(Resource):
     _state_unique_id: int
     _global_config: GlobalConfig
     _navigation_map: NavigationMap
+    _goal_tolerance: float
     _controller: Controller
 
     _speed: float = 0.55
     _control_frequency: float = 10
-    _goal_tolerance: float = 0.2
     _orientation_tolerance: float = 0.35
     _debug_navigation_interval: float = 1.0
     _debug_navigation_last: float = 0.0
 
-    def __init__(self, global_config: GlobalConfig, navigation_map: NavigationMap) -> None:
+    def __init__(
+        self, global_config: GlobalConfig, navigation_map: NavigationMap, goal_tolerance: float
+    ) -> None:
         self.cmd_vel = Subject()
         self.stopped_navigating = Subject()
         self.debug_navigation = Subject()
@@ -83,6 +85,7 @@ class LocalPlanner(Resource):
         self._state_unique_id = 0
         self._global_config = global_config
         self._navigation_map = navigation_map
+        self._goal_tolerance = goal_tolerance
 
         controller = PController if global_config.simulation else PdController
 
@@ -174,8 +177,15 @@ class LocalPlanner(Resource):
             robot_yaw = current_odom.orientation.euler[2]
             initial_yaw_error = angle_diff(first_yaw, robot_yaw)
             self._controller.reset_yaw_error(initial_yaw_error)
-            if abs(initial_yaw_error) < self._orientation_tolerance:
-                new_state = "path_following"
+            angle_in_tolerance = abs(initial_yaw_error) < self._orientation_tolerance
+            if angle_in_tolerance:
+                position_in_tolerance = (
+                    path.poses[0].position.distance(current_odom.position) < 0.01
+                )
+                if position_in_tolerance:
+                    new_state = "final_rotation"
+                else:
+                    new_state = "path_following"
 
         with self._lock:
             self._change_state(new_state)

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from typing import BinaryIO, TypeAlias
 
@@ -83,7 +84,7 @@ class PoseStamped(Pose, Timestamped):
     def __str__(self) -> str:
         return (
             f"PoseStamped(pos=[{self.x:.3f}, {self.y:.3f}, {self.z:.3f}], "
-            f"euler=[{self.roll:.3f}, {self.pitch:.3f}, {self.yaw:.3f}])"
+            f"euler=[{math.degrees(self.roll):.1f}, {math.degrees(self.pitch):.1f}, {math.degrees(self.yaw):.1f}])"
         )
 
     def new_transform_to(self, name: str) -> Transform:

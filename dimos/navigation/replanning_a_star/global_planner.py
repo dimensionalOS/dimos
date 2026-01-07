@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from threading import Event, RLock, Thread, current_thread
 import time
 
@@ -36,6 +37,7 @@ from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
 from dimos.navigation.replanning_a_star.position_tracker import PositionTracker
 from dimos.navigation.replanning_a_star.replan_limiter import ReplanLimiter
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.trigonometry import angle_diff
 
 logger = setup_logger()
 
@@ -61,6 +63,8 @@ class GlobalPlanner(Resource):
     _lock: RLock
 
     _safe_goal_tolerance: float = 4.0
+    _goal_tolerance: float = 0.2
+    _rotation_tolerance: float = math.radians(15)
     _replan_goal_tolerance: float = 0.5
     _max_replan_attempts: int = 10
     _stuck_time_window: float = 8.0
@@ -72,7 +76,9 @@ class GlobalPlanner(Resource):
 
         self._global_config = global_config
         self._navigation_map = NavigationMap(self._global_config)
-        self._local_planner = LocalPlanner(self._global_config, self._navigation_map)
+        self._local_planner = LocalPlanner(
+            self._global_config, self._navigation_map, self._goal_tolerance
+        )
         self._position_tracker = PositionTracker(self._stuck_time_window)
         self._replan_limiter = ReplanLimiter()
         self._disposables = CompositeDisposable()
@@ -114,6 +120,7 @@ class GlobalPlanner(Resource):
         self._navigation_map.update(msg)
 
     def handle_goal_request(self, goal: PoseStamped) -> None:
+        logger.info("Got new goal", goal=str(goal))
         with self._lock:
             self._current_goal = goal
             self._goal_reached = False
@@ -184,7 +191,13 @@ class GlobalPlanner(Resource):
             if not current_goal or not current_odom:
                 continue
 
-            if current_goal.position.distance(current_odom.position) < self._replan_goal_tolerance:
+            if (
+                current_goal.position.distance(current_odom.position) < self._goal_tolerance
+                and abs(
+                    angle_diff(current_goal.orientation.euler[2], current_odom.orientation.euler[2])
+                )
+                < self._rotation_tolerance
+            ):
                 logger.info("Close enough to goal. Accepting as arrived.")
                 self.cancel_goal(arrived=True)
                 continue
