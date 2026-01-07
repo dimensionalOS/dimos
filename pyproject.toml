@@ -353,6 +353,15 @@ addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and n
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
+[tool.largefiles]
+max_size_kb = 50
+ignore = [
+    "uv.lock",
+    "*/package-lock.json",
+    "dimos/dashboard/dimos.rbl",
+    "dimos/web/dimos_interface/themes.json",
+]
+
 [tool.uv]
 # Build dependencies for packages that don't declare them properly
 extra-build-dependencies = { detectron2 = ["torch"], contact-graspnet-pytorch = ["numpy"] }

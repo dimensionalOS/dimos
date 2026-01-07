@@ -75,8 +75,16 @@ repos:
         name: LFS data
         always_run: true
         pass_filenames: false
-        entry: bin/lfs_check
+        entry: bin/hooks/lfs_check
         language: script
+
+      - id: largefiles-check
+        name: Large files check
+        always_run: true
+        pass_filenames: false
+        entry: python bin/hooks/largefiles_check
+        language: python
+        additional_dependencies: ['tomli']
 
       - id: doclinks
         name: Doclinks
