@@ -94,7 +94,7 @@ async function detectOSName(): Promise<OSName> {
     if (Deno.build.os === "windows") return "windows";
 
     if (Deno.build.os === "linux") {
-        // Per your rule: ONLY call it debianBased if apt-get exists.
+        // only call it debianBased if apt-get exists.
         const [hasApt, hasPacman, hasDnf] = await Promise.all([
             $.commandExists("apt-get"),
             $.commandExists("pacman"),
@@ -110,7 +110,7 @@ async function detectOSName(): Promise<OSName> {
     return "unknown";
 }
 
-async function detectOSDetails(osName: OSName): Promise<{ version?: string; raw?: string; note?: string }> {
+async function detectOsDetails(osName: OSName): Promise<{ version?: string; raw?: string; note?: string }> {
     if (osName === "macos") {
         const { line } = await runFirstLine($`sw_vers -productVersion`);
         return {
@@ -343,7 +343,7 @@ export async function getToolCheckResults(): Promise<Record<string, ToolResult>>
     tasks.push(
         (async () => {
             const osName = await detectOSName();
-            const details = await detectOSDetails(osName);
+            const details = await detectOsDetails(osName);
             return ["os", { name: osName, exists: true, ...details }] as [
                 string,
                 ToolResult
