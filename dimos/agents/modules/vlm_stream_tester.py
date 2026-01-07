@@ -43,7 +43,7 @@ class VlmStreamTester(Module):
     def __init__(  # type: ignore[no-untyped-def]
         self,
         prompt: str = "What do you see?",
-        num_queries: int = 3,
+        num_queries: int = 10,
         query_interval_s: float = 2.0,
         max_image_age_s: float = 1.5,
         max_image_gap_s: float = 1.5,

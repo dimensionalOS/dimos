@@ -11,9 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -23,11 +20,9 @@ from dimos.agents.ollama_agent import ensure_ollama_model
 from dimos.agents.spec import AgentSpec
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.core import rpc
+from dimos.core.stream import In, Out
+from dimos.msgs.sensor_msgs import Image
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.stream import In, Out
-    from dimos.msgs.sensor_msgs import Image
 
 logger = setup_logger()
 
