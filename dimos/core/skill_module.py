@@ -25,6 +25,11 @@ class SkillModule(Module):
         callable.set_rpc(self.rpc)  # type: ignore[arg-type]
         callable(RPCClient(self, self.__class__))
 
+    @rpc
+    def set_MCPModule_register_skills(self, callable: RpcCall) -> None:
+        callable.set_rpc(self.rpc)  # type: ignore[arg-type]
+        callable(RPCClient(self, self.__class__))
+
     def __getstate__(self) -> None:
         pass
 
