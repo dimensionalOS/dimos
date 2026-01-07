@@ -96,6 +96,6 @@ repos:
 
       - id: filter-commit-message
         name: Filter generated signatures from commit message
-        entry: sed -i '/^.*Generated with/,$d'
-        language: system
+        entry: python bin/hooks/filter_commit_message.py
+        language: python
         stages: [commit-msg]
