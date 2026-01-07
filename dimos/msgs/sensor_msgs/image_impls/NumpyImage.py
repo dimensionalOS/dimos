@@ -128,23 +128,9 @@ class NumpyImage(AbstractImage):
 
     def to_rerun(self):  # type: ignore[no-untyped-def]
         """Convert to rerun Image format."""
-        import rerun as rr
+        from dimos.msgs.sensor_msgs.image_impls.AbstractImage import format_to_rerun
 
-        match self.format:
-            case ImageFormat.RGB:
-                return rr.Image(self.data, color_model="RGB")
-            case ImageFormat.RGBA:
-                return rr.Image(self.data, color_model="RGBA")
-            case ImageFormat.BGR:
-                return rr.Image(self.data, color_model="BGR")
-            case ImageFormat.BGRA:
-                return rr.Image(self.data, color_model="BGRA")
-            case ImageFormat.GRAY | ImageFormat.DEPTH:
-                return rr.Image(self.data, color_model="L")
-            case ImageFormat.GRAY16 | ImageFormat.DEPTH16:
-                return rr.Image(self.data, color_model="L")
-            case _:
-                raise ValueError(f"Unsupported format for Rerun: {self.format}")
+        return format_to_rerun(self.data, self.format)
 
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> NumpyImage:
         return NumpyImage(

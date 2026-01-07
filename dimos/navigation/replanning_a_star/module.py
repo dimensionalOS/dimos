@@ -67,10 +67,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         unsub = self.target.subscribe(self._planner.handle_goal_request)
         self._disposables.add(Disposable(unsub))
 
-        def _publish_path(nav_path: Path) -> None:
-            self.path.publish(nav_path)  # Auto-logs to Rerun
-
-        self._disposables.add(self._planner.path.subscribe(_publish_path))
+        self._disposables.add(self._planner.path.subscribe(self.path.publish))
 
         self._disposables.add(self._planner.cmd_vel.subscribe(self.cmd_vel.publish))
 
