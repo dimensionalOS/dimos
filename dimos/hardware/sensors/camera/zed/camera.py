@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,10 +16,10 @@ from types import TracebackType
 from typing import Any
 
 import cv2
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs import CameraInfo
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
-import pyzed.sl as sl  # type: ignore[import-not-found]
+import pyzed.sl as sl
 from reactivex import interval
 
 from dimos.core import Module, Out, rpc

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,9 +18,9 @@
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from etils import epath  # type: ignore[import-untyped]
-import mujoco  # type: ignore[import-untyped]
-from mujoco_playground._src import mjx_env  # type: ignore[import-untyped]
+from etils import epath
+import mujoco
+from mujoco_playground._src import mjx_env
 import numpy as np
 
 from dimos.core.global_config import GlobalConfig

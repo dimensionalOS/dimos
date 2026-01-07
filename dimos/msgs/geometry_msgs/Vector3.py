@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TypeAlias
 
-from dimos_lcm.geometry_msgs import Vector3 as LCMVector3  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import Vector3 as LCMVector3
 import numpy as np
 from plum import dispatch
 

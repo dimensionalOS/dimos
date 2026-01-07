@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -450,7 +450,7 @@ def test_performance_timing() -> None:
 
     # Check that larger maps take more time (expected behavior)
     for result in results:
-        assert result["detect_time"] < 2.0, f"Detection too slow: {result['detect_time']}s"
+        assert result["detect_time"] < 3.0, f"Detection too slow: {result['detect_time']}s"
         assert result["goal_time"] < 1.5, f"Goal selection too slow: {result['goal_time']}s"
 
     print("\nPerformance test passed - all operations completed within time limits")

@@ -1,0 +1,16 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 798.209 55.728">
+<path d="M9.66,53.568L170.524,53.568A7.5 7.5 0 0 0 178.024 46.068L178.024,9.66A7.5 7.5 0 0 0 170.524 2.16L9.66,2.16A7.5 7.5 0 0 0 2.16 9.66L2.16,46.068A7.5 7.5 0 0 0 9.66 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="90.0922" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">observable</text>
+<polygon points="221.224,27.864 209.704,32.184 209.704,23.544" style="fill:rgb(255,255,255)"/>
+<path d="M178.024,27.864L215.464,27.864"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M228.724,53.568L375.096,53.568A7.5 7.5 0 0 0 382.596 46.068L382.596,9.66A7.5 7.5 0 0 0 375.096 2.16L228.724,2.16A7.5 7.5 0 0 0 221.224 9.66L221.224,46.068A7.5 7.5 0 0 0 228.724 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="301.91" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">.pipe(ops)</text>
+<polygon points="425.796,27.864 414.276,32.184 414.276,23.544" style="fill:rgb(255,255,255)"/>
+<path d="M382.596,27.864L420.036,27.864"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M433.296,53.568L606.695,53.568A7.5 7.5 0 0 0 614.195 46.068L614.195,9.66A7.5 7.5 0 0 0 606.695 2.16L433.296,2.16A7.5 7.5 0 0 0 425.796 9.66L425.796,46.068A7.5 7.5 0 0 0 433.296 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="519.996" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">.subscribe()</text>
+<polygon points="657.395,27.864 645.875,32.184 645.875,23.544" style="fill:rgb(255,255,255)"/>
+<path d="M614.195,27.864L651.635,27.864"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M664.895,53.568L788.549,53.568A7.5 7.5 0 0 0 796.049 46.068L796.049,9.66A7.5 7.5 0 0 0 788.549 2.16L664.895,2.16A7.5 7.5 0 0 0 657.395 9.66L657.395,46.068A7.5 7.5 0 0 0 664.895 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="726.722" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">callback</text>
+</svg>

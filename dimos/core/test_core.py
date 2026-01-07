@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -87,7 +87,7 @@ def test_classmethods() -> None:
     # Check that we have the expected RPC methods
     assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
     assert "start" in class_rpcs, "start should be in rpcs"
-    assert len(class_rpcs) == 9
+    assert len(class_rpcs) == 8
 
     # Check that the values are callable
     assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"

@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@ import math
 
 import numpy as np
 from PIL import Image as PILImage
-import requests
+import requests  # type: ignore[import-untyped]
 
 from dimos.mapping.types import ImageCoord, LatLon
 from dimos.msgs.sensor_msgs import Image, ImageFormat

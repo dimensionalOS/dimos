@@ -1,0 +1,5 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 112.147 102.744">
+<path d="M27.1474,53.568L84.9998,53.568A7.5 7.5 0 0 0 92.4998 46.068L92.4998,9.66A7.5 7.5 0 0 0 84.9998 2.16L27.1474,2.16A7.5 7.5 0 0 0 19.6474 9.66L19.6474,46.068A7.5 7.5 0 0 0 27.1474 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="56.0736" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Box</text>
+<text x="56.0736" y="85.464" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">label below</text>
+</svg>

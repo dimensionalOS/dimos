@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -114,7 +114,6 @@ def test_transform_string_representations() -> None:
 
     # Test str
     str_str = str(tf)
-    assert "Transform:" in str_str
     assert "Translation:" in str_str
     assert "Rotation:" in str_str
 

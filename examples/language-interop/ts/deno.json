@@ -1,0 +1,9 @@
+{
+  "imports": {
+    "@dimos/lcm": "jsr:@dimos/lcm",
+    "@dimos/msgs": "jsr:@dimos/msgs"
+  },
+  "tasks": {
+    "start": "deno run --allow-net --unstable-net main.ts"
+  }
+}

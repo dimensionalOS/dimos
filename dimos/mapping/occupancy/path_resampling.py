@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -160,6 +160,17 @@ def smooth_resample_path(
     Returns:
         A new Path with smoothly resampled poses
     """
+
+    if len(path.poses) == 1:
+        p = path.poses[0].position
+        o = goal_pose.orientation
+        new_pose = PoseStamped(
+            frame_id=path.frame_id,
+            position=[p.x, p.y, p.z],
+            orientation=[o.x, o.y, o.z, o.w],
+        )
+        return Path(frame_id=path.frame_id, poses=[new_pose])
+
     if len(path) < 2 or spacing <= 0:
         return path
 

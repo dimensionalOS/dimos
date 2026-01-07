@@ -3,6 +3,7 @@ import * as React from "react";
 import Connection from "./Connection";
 import ExplorePanel from "./ExplorePanel";
 import GpsButton from "./GpsButton";
+import Button from "./Button";
 import KeyboardControlPanel from "./KeyboardControlPanel";
 import VisualizerWrapper from "./components/VisualizerWrapper";
 import LeafletMap from "./components/LeafletMap";
@@ -77,6 +78,16 @@ export default function App(): React.ReactElement {
     connectionRef.current?.stopMoveCommand();
   }, []);
 
+  const handleReturnHome = React.useCallback(() => {
+    connectionRef.current?.worldClick(0, 0);
+  }, []);
+
+  const handleStop = React.useCallback(() => {
+    if (state.robotPose) {
+      connectionRef.current?.worldClick(state.robotPose.coords[0]!, state.robotPose.coords[1]!);
+    }
+  }, [state.robotPose]);
+
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
       {isGpsMode ? (
@@ -105,6 +116,8 @@ export default function App(): React.ReactElement {
           onUseCostmap={() => setIsGpsMode(false)}
         ></GpsButton>
         <ExplorePanel onStartExplore={handleStartExplore} onStopExplore={handleStopExplore} />
+        <Button onClick={handleReturnHome} isActive={false}>Go Home</Button>
+        <Button onClick={handleStop} isActive={false}>Stop</Button>
         <KeyboardControlPanel
           onSendMoveCommand={handleSendMoveCommand}
           onStopMoveCommand={handleStopMoveCommand}

@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,10 +18,15 @@ from dimos.protocol.skill.skill import rpc
 
 
 class SkillModule(Module):
-    """Use this module if you want to auto-register skills to an LlmAgent."""
+    """Use this module if you want to auto-register skills to an AgentSpec."""
 
     @rpc
-    def set_LlmAgent_register_skills(self, callable: RpcCall) -> None:
+    def set_AgentSpec_register_skills(self, callable: RpcCall) -> None:
+        callable.set_rpc(self.rpc)  # type: ignore[arg-type]
+        callable(RPCClient(self, self.__class__))
+
+    @rpc
+    def set_MCPModule_register_skills(self, callable: RpcCall) -> None:
         callable.set_rpc(self.rpc)  # type: ignore[arg-type]
         callable(RPCClient(self, self.__class__))
 

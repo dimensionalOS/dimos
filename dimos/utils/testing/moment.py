@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -75,7 +75,7 @@ class Moment(Resource):
         for attr_name in dir(self):
             attr_value = getattr(self, attr_name)
             if isinstance(attr_value, classes):
-                moments.append(attr_value)  # type: ignore[arg-type]
+                moments.append(attr_value)
         return moments
 
     def seekable_moments(self) -> list[SensorMoment[Any]]:

@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ def deploy(dimos: DimosCluster, ip: str):  # type: ignore[no-untyped-def]
         detector=YoloPersonDetector,
     )
 
-    detector3d = moduleDB.deploy(
+    detector3d = moduleDB.deploy(  # type: ignore[attr-defined]
         dimos,
         camera=camera,
         lidar=nav,

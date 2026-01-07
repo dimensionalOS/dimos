@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@ from dotenv import load_dotenv
 from dimos.agents.agent import llm_agent
 from dimos.agents.cli.human import human_input
 from dimos.agents.skills.demo_calculator_skill import demo_calculator_skill
-from dimos.agents.system_prompt import get_system_prompt
 from dimos.core.blueprints import autoconnect
 
 load_dotenv()
@@ -27,5 +26,5 @@ load_dotenv()
 demo_skill = autoconnect(
     demo_calculator_skill(),
     human_input(),
-    llm_agent(system_prompt=get_system_prompt()),
+    llm_agent(),
 )
