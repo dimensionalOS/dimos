@@ -25,7 +25,7 @@ import rerun as rr
 from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.core.global_config import GlobalConfig
-from dimos.dashboard import rerun_init
+from dimos.dashboard.rerun_init import connect_rerun
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
@@ -212,6 +212,8 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     def _init_rerun(self) -> None:
         """Set up Rerun visualization (world frame, URDF, camera)."""
         import rerun.blueprint as rrb
+
+        connect_rerun()
 
         # Set up world coordinate system AND register it as a named frame
         # This is KEY - it connects entity paths to the named frame system

@@ -24,7 +24,7 @@ from reactivex.subject import Subject
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
-from dimos.dashboard import rerun_init
+from dimos.dashboard.rerun_init import connect_rerun
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.decorators import simple_mcache
@@ -77,6 +77,7 @@ class VoxelGridMapper(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        connect_rerun()
 
         # Auto-log global_map to Rerun as voxel boxes
         self.global_map.to_rerun(

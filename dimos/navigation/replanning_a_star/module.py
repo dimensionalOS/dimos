@@ -19,7 +19,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
-from dimos.dashboard import rerun_init
+from dimos.dashboard.rerun_init import connect_rerun
 from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
@@ -50,6 +50,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     @rpc
     def start(self) -> None:
         super().start()
+        connect_rerun()
 
         # Auto-log path to Rerun
         self.path.to_rerun("world/nav/path")

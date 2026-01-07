@@ -19,7 +19,7 @@ import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
-from dimos.dashboard import rerun_init
+from dimos.dashboard.rerun_init import connect_rerun
 from dimos.mapping.pointclouds.occupancy import (
     OCCUPANCY_ALGOS,
     HeightCostConfig,
@@ -46,6 +46,7 @@ class CostMapper(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        connect_rerun()
 
         def _publish_costmap(grid: OccupancyGrid) -> None:
             self.global_costmap.publish(grid)

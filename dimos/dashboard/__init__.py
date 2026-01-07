@@ -14,17 +14,21 @@
 
 """Dashboard module for visualization and monitoring.
 
-Importing this module initializes Rerun (happens at import time, before multiprocessing).
+Rerun Initialization:
+    Main process (e.g., blueprints.build) starts Rerun server automatically.
+    Worker modules connect to the server via connect_rerun().
 
 Usage in modules:
     import rerun as rr
-    from dimos.dashboard import rerun_init  # triggers Rerun initialization
+    from dimos.dashboard.rerun_init import connect_rerun
 
     class MyModule(Module):
         def start(self):
+            super().start()
+            connect_rerun()  # Connect to Rerun server
             rr.log("my/entity", my_data.to_rerun())
 """
 
-from dimos.dashboard import rerun_init
+from dimos.dashboard.rerun_init import connect_rerun, init_rerun_server, shutdown_rerun
 
-__all__ = ["rerun_init"]
+__all__ = ["init_rerun_server", "connect_rerun", "shutdown_rerun"]

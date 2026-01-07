@@ -294,6 +294,17 @@ class ModuleBlueprintSet:
         self._check_requirements()
         self._verify_no_name_conflicts()
 
+        # Initialize Rerun server before deploying modules (if enabled)
+        if global_config.rerun_enabled:
+            try:
+                from dimos.dashboard.rerun_init import init_rerun_server
+
+                server_addr = init_rerun_server()
+                global_config = global_config.model_copy(update={"rerun_server_addr": server_addr})
+                logger.info("Rerun server initialized", addr=server_addr)
+            except Exception as e:
+                logger.warning(f"Failed to initialize Rerun server: {e}")
+
         module_coordinator = ModuleCoordinator(global_config=global_config)
         module_coordinator.start()
 

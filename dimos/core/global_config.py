@@ -29,6 +29,8 @@ class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
     simulation: bool = False
     replay: bool = False
+    rerun_enabled: bool = True
+    rerun_server_addr: str | None = None
     n_dask_workers: int = 2
     memory_limit: str = "auto"
     mujoco_camera_position: str | None = None
