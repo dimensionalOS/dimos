@@ -33,11 +33,10 @@ max_bytes = max_size_kb * 1024
 ignore_patterns = config.get("ignore", [])
 
 # Get LFS files to exclude
-lfs_files = set(
-    subprocess.run(
-        ["git", "lfs", "ls-files", "-n"], capture_output=True, text=True
-    ).stdout.splitlines()
+result = subprocess.run(
+    ["git", "lfs", "ls-files", "-n"], capture_output=True, text=True, check=True
 )
+lfs_files = set(result.stdout.splitlines())
 
 # Get files to check
 if args.all:
@@ -46,7 +45,8 @@ else:
     files_cmd = ["git", "diff", "--cached", "--name-only"]
 
 violations = []
-for file in subprocess.run(files_cmd, capture_output=True, text=True).stdout.splitlines():
+result = subprocess.run(files_cmd, capture_output=True, text=True, check=True)
+for file in result.stdout.splitlines():
     if file in lfs_files:
         continue
     if any(fnmatch.fnmatch(file, p) for p in ignore_patterns):
