@@ -262,6 +262,7 @@ class RenderLogo:
         self._glitches: dict[str, _Glitch] = {}  # "y,x" -> _Glitch
         self._log_lines: list[str] = []
 
+        self._mutable_banner_ref: list[str] | None = self.banner
         self._t = 0
         self._stop_evt = threading.Event()
         self._thread: threading.Thread | None = None
@@ -332,6 +333,9 @@ class RenderLogo:
         sys.stdout.flush()
 
         while not self._stop_evt.is_set():
+            cols, _rows = self._term_size()
+            self._update_banner_for_width(cols)
+
             start = time.monotonic()
             self._spawn_glitches()
             self._tick_glitches()
@@ -350,19 +354,8 @@ class RenderLogo:
     def render(self, t: int) -> str:
         cols, rows = self._term_size()
 
-        # Pick the largest banner that fits.
-        banners = [
-            DEFAULT_BANNER,
-            ASCII_BANNER_80,
-            MINI_BANNER,
-        ]
-        chosen = MINI_BANNER
-        for candidate in banners:
-            width = max((len(l) for l in candidate), default=0)
-            if width <= cols:
-                chosen = candidate
-                break
-        self.banner = chosen
+        # Keep banner/mutable in sync with current width.
+        self._update_banner_for_width(cols)
 
         max_len = max((len(l) for l in self.banner), default=0)
         if self.is_centered:
@@ -429,6 +422,7 @@ class RenderLogo:
             if random.random() > self.glitchyness:
                 return
 
+        self._refresh_mutable()
         count = int(self.glitchyness) if self.glitchyness >= 1 else 1
         if not self._mutable:
             return
@@ -436,7 +430,12 @@ class RenderLogo:
         for _ in range(count):
             y, x = random.choice(self._mutable)
             key = f"{y},{x}"
-            orig = self.banner[y][x]
+            if y >= len(self.banner):
+                continue
+            line = self.banner[y]
+            if x >= len(line):
+                continue
+            orig = line[x]
 
             existing = self._glitches.get(key)
             if existing:
@@ -560,6 +559,38 @@ class RenderLogo:
         ch = rng.choice(choices)
         self._glitch_char_cache[key] = ch
         return ch
+
+    def _update_banner_for_width(self, cols: int) -> None:
+        banners = [
+            DEFAULT_BANNER,
+            ASCII_BANNER_80,
+            MINI_BANNER,
+        ]
+        chosen = MINI_BANNER
+        for candidate in banners:
+            width = max((len(l) for l in candidate), default=0)
+            if width <= cols:
+                chosen = candidate
+                break
+
+        if self.banner is not chosen:
+            self.banner = chosen
+        self._refresh_mutable()
+
+    def _refresh_mutable(self) -> None:
+        if self._mutable_banner_ref is self.banner:
+            return
+
+        self._mutable_banner_ref = self.banner
+        self._mutable = []
+        for y, line in enumerate(self.banner):
+            for x, ch in enumerate(line):
+                if ch not in (" ", "\t"):
+                    self._mutable.append((y, x))
+
+        valid_keys = {f"{y},{x}" for y, x in self._mutable}
+        self._glitches = {k: v for k, v in self._glitches.items() if k in valid_keys}
+        self._glitch_char_cache = {k: v for k, v in self._glitch_char_cache.items() if k in valid_keys}
 
 
 # -----------------------
