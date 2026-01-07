@@ -1494,6 +1494,7 @@ agents = [
     { name = "langchain-text-splitters" },
     { name = "mcp" },
     { name = "ollama" },
+    { name = "openai" },
     { name = "openai-whisper" },
     { name = "sounddevice" },
 ]
@@ -1571,7 +1572,6 @@ manipulation = [
     { name = "trimesh" },
 ]
 misc = [
-    { name = "anthropic" },
     { name = "catkin-pkg" },
     { name = "cerebras-cloud-sdk" },
     { name = "clip" },
@@ -1583,7 +1583,6 @@ misc = [
     { name = "lark" },
     { name = "onnx" },
     { name = "open-clip-torch" },
-    { name = "openai" },
     { name = "opencv-contrib-python" },
     { name = "pygame" },
     { name = "python-multipart" },
@@ -1628,6 +1627,7 @@ unitree = [
     { name = "mcp" },
     { name = "moondream" },
     { name = "ollama" },
+    { name = "openai" },
     { name = "openai-whisper" },
     { name = "pillow" },
     { name = "rerun-sdk" },
@@ -1653,7 +1653,6 @@ web = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'agents'", specifier = ">=0.19.0" },
-    { name = "anthropic", marker = "extra == 'misc'", specifier = ">=0.19.0" },
     { name = "asyncio", specifier = "==3.4.3" },
     { name = "bitsandbytes", marker = "sys_platform == 'linux' and extra == 'agents'", specifier = ">=0.48.2,<1.0" },
     { name = "catkin-pkg", marker = "extra == 'misc'" },
@@ -1713,7 +1712,7 @@ requires-dist = [
     { name = "onnxruntime-gpu", marker = "extra == 'cuda'", specifier = ">=1.17.1" },
     { name = "open-clip-torch", marker = "extra == 'misc'", specifier = "==3.2.0" },
     { name = "open3d" },
-    { name = "openai", marker = "extra == 'misc'" },
+    { name = "openai", marker = "extra == 'agents'" },
     { name = "openai-whisper", marker = "extra == 'agents'" },
     { name = "opencv-contrib-python", marker = "extra == 'misc'", specifier = "==4.10.0.84" },
     { name = "opencv-python" },
