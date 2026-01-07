@@ -33,6 +33,7 @@ from dimos.agents.ollama_agent import ensure_ollama_model
 from dimos.agents.spec import AgentSpec, Model, Provider
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.core import DimosCluster, rpc
+from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.skill.type import Output
@@ -361,6 +362,12 @@ class Agent(AgentSpec):
         # from distributed.utils import sync
         # return sync(self._loop, self.agent_loop, query)
         return asyncio.run_coroutine_threadsafe(self.agent_loop(query), self._loop).result()  # type: ignore[arg-type]
+
+    @rpc
+    def query_image(self, image: Image, query: str):  # type: ignore[no-untyped-def]
+        content = [{"type": "text", "text": query}, *image.agent_encode()]
+        self.append_history(HumanMessage(content=content))  # type: ignore[arg-type]
+        return asyncio.run_coroutine_threadsafe(self.agent_loop(), self._loop).result()  # type: ignore[arg-type]
 
     async def query_async(self, query: str):  # type: ignore[no-untyped-def]
         return await self.agent_loop(query)

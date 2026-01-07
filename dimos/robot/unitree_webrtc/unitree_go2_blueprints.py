@@ -23,6 +23,8 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-un
 from dimos.agents.agent import llm_agent
 from dimos.agents.cli.human import human_input
 from dimos.agents.cli.web import web_input
+from dimos.agents.modules.vlm_agent import vlm_agent
+from dimos.agents.modules.vlm_stream_tester import vlm_stream_tester
 from dimos.agents.ollama_agent import ollama_installed
 from dimos.agents.skills.navigation import navigation_skill
 from dimos.agents.skills.speak_skill import speak_skill
@@ -189,4 +191,10 @@ agentic_huggingface = autoconnect(
         provider=Provider.HUGGINGFACE,  # type: ignore[attr-defined]
     ),
     _common_agentic,
+)
+
+vlm_stream_test = autoconnect(
+    basic,
+    vlm_agent(),
+    vlm_stream_tester(),
 )

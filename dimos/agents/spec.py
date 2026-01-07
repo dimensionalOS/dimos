@@ -20,6 +20,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Union
 
 if TYPE_CHECKING:
+    from dimos.msgs.sensor_msgs import Image
     from dimos.protocol.skill.skill import SkillContainer
 
 from langchain.chat_models.base import _SUPPORTED_PROVIDERS
@@ -189,6 +190,10 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
     @rpc
     @abstractmethod
     def query(self, query: str): ...  # type: ignore[no-untyped-def]
+
+    @rpc
+    @abstractmethod
+    def query_image(self, image: "Image", query: str): ...  # type: ignore[no-untyped-def]
 
     def __str__(self) -> str:
         console = Console(force_terminal=True, legacy_windows=False)
