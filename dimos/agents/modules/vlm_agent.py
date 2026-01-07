@@ -12,13 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
 
-from dimos.agents.ollama_agent import ensure_ollama_model
+from dimos.agents.llm_init_mixin import LlmInitMixin
 from dimos.agents.spec import AgentSpec
-from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs import Image
@@ -27,7 +24,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class VLMAgent(AgentSpec):
+class VLMAgent(LlmInitMixin, AgentSpec):
     """Stream-first agent for vision queries with optional RPC access."""
 
     color_image: In[Image]
@@ -36,38 +33,10 @@ class VLMAgent(AgentSpec):
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
-        if self.config.model_instance:
-            self._llm = self.config.model_instance
-        else:
-            if self.config.provider.value.lower() == "ollama":
-                ensure_ollama_model(self.config.model)
-
-            if self.config.provider.value.lower() == "huggingface":
-                llm = HuggingFacePipeline.from_model_id(
-                    model_id=self.config.model,
-                    task="text-generation",
-                    pipeline_kwargs={
-                        "max_new_tokens": 512,
-                        "temperature": 0.7,
-                    },
-                )
-                self._llm = ChatHuggingFace(llm=llm, model_id=self.config.model)
-            else:
-                self._llm = init_chat_model(  # type: ignore[call-overload]
-                    model_provider=self.config.provider, model=self.config.model
-                )
+        self._llm = self._init_llm()
         self._latest_image: Image | None = None
         self._history: list[AIMessage | HumanMessage] = []
-
-        if self.config.system_prompt:
-            if isinstance(self.config.system_prompt, str):
-                self._system_message = SystemMessage(self.config.system_prompt)
-            else:
-                self._system_message = self.config.system_prompt
-        else:
-            self._system_message = SystemMessage(SYSTEM_PROMPT)
-
-        self.publish(self._system_message)
+        self._system_message = self._init_system_message()
 
     @rpc
     def start(self) -> None:

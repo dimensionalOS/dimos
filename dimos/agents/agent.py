@@ -19,7 +19,6 @@ import os
 from typing import Any, TypedDict
 import uuid
 
-from langchain.chat_models import init_chat_model
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
@@ -27,11 +26,9 @@ from langchain_core.messages import (
     ToolCall,
     ToolMessage,
 )
-from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
 
-from dimos.agents.ollama_agent import ensure_ollama_model
+from dimos.agents.llm_init_mixin import LlmInitMixin
 from dimos.agents.spec import AgentSpec, Model, Provider
-from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.core import DimosCluster, rpc
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
 from dimos.protocol.skill.skill import SkillContainer
@@ -158,7 +155,7 @@ def snapshot_to_messages(
 
 
 # Agent class job is to glue skill coordinator state to an agent, builds langchain messages
-class Agent(AgentSpec):
+class Agent(LlmInitMixin, AgentSpec):
     system_message: SystemMessage
     state_messages: list[AIMessage | HumanMessage]
 
@@ -175,40 +172,8 @@ class Agent(AgentSpec):
         self._agent_id = str(uuid.uuid4())
         self._agent_stopped = False
 
-        if self.config.system_prompt:
-            if isinstance(self.config.system_prompt, str):
-                self.system_message = SystemMessage(self.config.system_prompt + SYSTEM_MSG_APPEND)
-            else:
-                self.config.system_prompt.content += SYSTEM_MSG_APPEND  # type: ignore[operator]
-                self.system_message = self.config.system_prompt
-        else:
-            self.system_message = SystemMessage(SYSTEM_PROMPT + SYSTEM_MSG_APPEND)
-
-        self.publish(self.system_message)
-
-        # Use provided model instance if available, otherwise initialize from config
-        if self.config.model_instance:
-            self._llm = self.config.model_instance
-        else:
-            # For Ollama provider, ensure the model is available before initializing
-            if self.config.provider.value.lower() == "ollama":
-                ensure_ollama_model(self.config.model)
-
-            # For HuggingFace, we need to create a pipeline and wrap it in ChatHuggingFace
-            if self.config.provider.value.lower() == "huggingface":
-                llm = HuggingFacePipeline.from_model_id(
-                    model_id=self.config.model,
-                    task="text-generation",
-                    pipeline_kwargs={
-                        "max_new_tokens": 512,
-                        "temperature": 0.7,
-                    },
-                )
-                self._llm = ChatHuggingFace(llm=llm, model_id=self.config.model)
-            else:
-                self._llm = init_chat_model(  # type: ignore[call-overload]
-                    model_provider=self.config.provider, model=self.config.model
-                )
+        self.system_message = self._init_system_message(append=SYSTEM_MSG_APPEND)
+        self._llm = self._init_llm()
 
     @rpc
     def get_agent_id(self) -> str:
