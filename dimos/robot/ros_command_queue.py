@@ -41,17 +41,6 @@ class CommandType(Enum):
     ACTION = auto()  # Any action client or function call
 
 
-class WebRTCRequest(NamedTuple):
-    """Class to represent a WebRTC request in the queue"""
-
-    id: str  # Unique ID for tracking
-    api_id: int  # API ID for the command
-    topic: str  # Topic to publish to
-    parameter: str  # Optional parameter string
-    priority: int  # Priority level
-    timeout: float  # How long to wait for this request to complete
-
-
 class ROSCommand(NamedTuple):
     """Class to represent a command in the queue"""
 

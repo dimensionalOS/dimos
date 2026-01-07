@@ -100,18 +100,6 @@ class VisualMemory:
             logger.warning(f"Failed to decode image for ID {image_id}: {e!s}")
             return None
 
-    def contains(self, image_id: str) -> bool:
-        """
-        Check if an image ID exists in visual memory.
-
-        Args:
-            image_id: Unique identifier for the image
-
-        Returns:
-            True if the image exists, False otherwise
-        """
-        return image_id in self.images
-
     def count(self) -> int:
         """
         Get the number of images in visual memory.

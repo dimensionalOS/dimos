@@ -71,10 +71,6 @@ class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
             documents = self.db_connection.similarity_search(query=query_texts, k=n_results)
             return [(doc, None) for doc in documents]
 
-    def update_vector(self, vector_id, new_vector_data):  # type: ignore[no-untyped-def]
-        # TODO
-        return super().connect()  # type: ignore[no-untyped-call, safe-super]
-
     def delete_vector(self, vector_id):  # type: ignore[no-untyped-def]
         """Delete a vector from the ChromaDB using its identifier."""
         if not self.db_connection:
@@ -115,64 +111,6 @@ class OpenAISemanticMemory(ChromaAgentSemanticMemory):
             dimensions=self.dimensions,
             api_key=self.OPENAI_API_KEY,  # type: ignore[arg-type]
         )
-
-        # Create the database
-        self.db_connection = Chroma(  # type: ignore[assignment]
-            collection_name=self.collection_name,
-            embedding_function=self.embeddings,
-            collection_metadata={"hnsw:space": "cosine"},
-        )
-
-
-class LocalSemanticMemory(ChromaAgentSemanticMemory):
-    """Semantic memory implementation using local models."""
-
-    def __init__(
-        self,
-        collection_name: str = "my_collection",
-        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
-    ) -> None:
-        """Initialize the local semantic memory using SentenceTransformer.
-
-        Args:
-            collection_name (str): Name of the Chroma collection
-            model_name (str): Embeddings model
-        """
-
-        self.model_name = model_name
-        super().__init__(collection_name=collection_name)
-
-    def create(self) -> None:
-        """Create local embedding model and initialize the ChromaDB client."""
-        # Load the sentence transformer model
-
-        # Use GPU if available, otherwise fall back to CPU
-        if torch.cuda.is_available():
-            self.device = "cuda"
-        # MacOS Metal performance shaders
-        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            self.device = "mps"
-        else:
-            self.device = "cpu"
-
-        print(f"Using device: {self.device}")
-        self.model = SentenceTransformer(self.model_name, device=self.device)  # type: ignore[name-defined]
-
-        # Create a custom embedding class that implements the embed_query method
-        class SentenceTransformerEmbeddings:
-            def __init__(self, model) -> None:  # type: ignore[no-untyped-def]
-                self.model = model
-
-            def embed_query(self, text: str):  # type: ignore[no-untyped-def]
-                """Embed a single query text."""
-                return self.model.encode(text, normalize_embeddings=True).tolist()
-
-            def embed_documents(self, texts: Sequence[str]):  # type: ignore[no-untyped-def]
-                """Embed multiple documents/texts."""
-                return self.model.encode(texts, normalize_embeddings=True).tolist()
-
-        # Create an instance of our custom embeddings class
-        self.embeddings = SentenceTransformerEmbeddings(self.model)  # type: ignore[assignment]
 
         # Create the database
         self.db_connection = Chroma(  # type: ignore[assignment]

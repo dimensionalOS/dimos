@@ -14,7 +14,6 @@
 
 from abc import ABC
 from dataclasses import dataclass, field
-from enum import Enum
 import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 import uuid
@@ -25,14 +24,6 @@ from dimos.types.vector import Vector
 
 if TYPE_CHECKING:
     import open3d as o3d  # type: ignore[import-untyped]
-
-
-class ConstraintType(Enum):
-    """Types of manipulation constraints."""
-
-    TRANSLATION = "translation"
-    ROTATION = "rotation"
-    FORCE = "force"
 
 
 @dataclass

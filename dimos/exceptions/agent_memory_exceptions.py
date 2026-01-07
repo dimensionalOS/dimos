@@ -60,34 +60,3 @@ class UnknownConnectionTypeError(AgentMemoryConnectionError):
         self, message: str = "Unknown connection type used in AgentMemory connection"
     ) -> None:
         super().__init__(message)
-
-
-class DataRetrievalError(AgentMemoryError):
-    """
-    Exception raised for errors retrieving data from the database.
-    This could occur due to query failures, timeouts, or corrupt data issues.
-
-    Args:
-        message (str): Human-readable message describing the data retrieval error.
-    """
-
-    def __init__(
-        self, message: str = "Error in retrieving data during AgentMemory operation"
-    ) -> None:
-        super().__init__(message)
-
-
-class DataNotFoundError(DataRetrievalError):
-    """
-    Exception raised when the requested data is not found in the database.
-    This is used when a query completes successfully but returns no result for the specified identifier.
-
-    Args:
-        vector_id (int or str): The identifier for the vector that was not found.
-        message (str, optional): Human-readable message providing more detail. If not provided, a default message is generated.
-    """
-
-    def __init__(self, vector_id, message=None) -> None:  # type: ignore[no-untyped-def]
-        message = message or f"Requested data for vector ID {vector_id} was not found."
-        super().__init__(message)
-        self.vector_id = vector_id

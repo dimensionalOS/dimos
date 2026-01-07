@@ -95,13 +95,6 @@ class Metric3D(LocalModel):
 
         return depth_image.cpu().numpy()
 
-    def save_depth(self, pred_depth) -> None:  # type: ignore[no-untyped-def]
-        # Save the depth map to a file
-        pred_depth_np = pred_depth.cpu().numpy()
-        output_depth_file = "output_depth_map.png"
-        cv2.imwrite(output_depth_file, pred_depth_np)
-        print(f"Depth map saved to {output_depth_file}")
-
     # Adjusts input size to fit pretrained ViT model
     def rescale_input(self, rgb, rgb_origin):  # type: ignore[no-untyped-def]
         #### ajust input size to fit pretrained model
@@ -169,14 +162,3 @@ class Metric3D(LocalModel):
         pred_depth = pred_depth * canonical_to_real_scale  # now the depth is metric
         pred_depth = torch.clamp(pred_depth, 0, 1000)
         return pred_depth
-
-    def eval_predicted_depth(self, depth_file, pred_depth) -> None:  # type: ignore[no-untyped-def]
-        if depth_file is not None:
-            gt_depth = cv2.imread(depth_file, -1)
-            gt_depth = gt_depth / self.gt_depth_scale  # type: ignore[assignment]
-            gt_depth = torch.from_numpy(gt_depth).float().to(self.device)  # type: ignore[assignment]
-            assert gt_depth.shape == pred_depth.shape
-
-            mask = gt_depth > 1e-8
-            abs_rel_err = (torch.abs(pred_depth[mask] - gt_depth[mask]) / gt_depth[mask]).mean()
-            print("abs_rel_err:", abs_rel_err.item())

@@ -432,37 +432,6 @@ class Sample(BaseModel):
         return cls(d)
 
     @classmethod
-    def from_flat_dict(
-        cls,
-        flat_dict: builtins.dict[str, Any],
-        schema: builtins.dict | None = None,  # type: ignore[type-arg]
-    ) -> "Sample":
-        """Initialize a Sample instance from a flattened dictionary."""
-        """
-        Reconstructs the original JSON object from a flattened dictionary using the provided schema.
-
-        Args:
-            flat_dict (dict): A flattened dictionary with keys like "key1.nestedkey1".
-            schema (dict): A dictionary representing the JSON schema.
-
-        Returns:
-            dict: The reconstructed JSON object.
-        """
-        schema = schema or replace_refs(cls.model_json_schema())
-        reconstructed = {}  # type: ignore[var-annotated]
-
-        for flat_key, value in flat_dict.items():
-            keys = flat_key.split(".")
-            current = reconstructed
-            for key in keys[:-1]:
-                if key not in current:
-                    current[key] = {}
-                current = current[key]
-            current[keys[-1]] = value
-
-        return reconstructed  # type: ignore[return-value]
-
-    @classmethod
     def from_space(cls, space: spaces.Space) -> "Sample":
         """Generate a Sample instance from a Gym space."""
         sampled = space.sample()
@@ -527,23 +496,6 @@ class Sample(BaseModel):
             self.__class__(**{key: getattr(self, key)[i] for key in attributes})
             for i in range(list_size)
         ]
-
-    @classmethod
-    def default_space(cls) -> spaces.Dict:
-        """Return the Gym space for the Sample class based on its class attributes."""
-        return cls().space()
-
-    @classmethod
-    def default_sample(
-        cls, output_type: str = "Sample"
-    ) -> Union["Sample", builtins.dict[str, Any]]:
-        """Generate a default Sample instance from its class attributes. Useful for padding.
-
-        This is the "no-op" instance and should be overriden as needed.
-        """
-        if output_type == "Sample":
-            return cls()
-        return cls().dict()
 
     def model_field_info(self, key: str) -> FieldInfo:
         """Get the FieldInfo for a given attribute key."""
