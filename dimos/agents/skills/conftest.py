@@ -20,10 +20,8 @@ from reactivex.scheduler import ThreadPoolScheduler
 from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.agents.skills.gps_nav_skill import GpsNavSkillContainer
 from dimos.agents.skills.navigation import NavigationSkillContainer
-from dimos.agents.system_prompt import get_system_prompt
+from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
-
-system_prompt = get_system_prompt()
 
 
 @pytest.fixture(autouse=True)
@@ -85,7 +83,7 @@ def unitree_skills(mocker):
 def create_navigation_agent(navigation_skill_container, create_fake_agent):
     return partial(
         create_fake_agent,
-        system_prompt=system_prompt,
+        system_prompt=SYSTEM_PROMPT,
         skill_containers=[navigation_skill_container],
     )
 
@@ -93,7 +91,7 @@ def create_navigation_agent(navigation_skill_container, create_fake_agent):
 @pytest.fixture
 def create_gps_nav_agent(gps_nav_skill_container, create_fake_agent):
     return partial(
-        create_fake_agent, system_prompt=system_prompt, skill_containers=[gps_nav_skill_container]
+        create_fake_agent, system_prompt=SYSTEM_PROMPT, skill_containers=[gps_nav_skill_container]
     )
 
 
@@ -103,7 +101,7 @@ def create_google_maps_agent(
 ):
     return partial(
         create_fake_agent,
-        system_prompt=system_prompt,
+        system_prompt=SYSTEM_PROMPT,
         skill_containers=[gps_nav_skill_container, google_maps_skill_container],
     )
 
@@ -112,6 +110,6 @@ def create_google_maps_agent(
 def create_unitree_skills_agent(unitree_skills, create_fake_agent):
     return partial(
         create_fake_agent,
-        system_prompt=system_prompt,
+        system_prompt=SYSTEM_PROMPT,
         skill_containers=[unitree_skills],
     )

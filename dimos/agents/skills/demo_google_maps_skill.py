@@ -19,7 +19,6 @@ from dimos.agents.agent import llm_agent
 from dimos.agents.cli.human import human_input
 from dimos.agents.skills.demo_robot import demo_robot
 from dimos.agents.skills.google_maps_skill_container import google_maps_skill
-from dimos.agents.system_prompt import get_system_prompt
 from dimos.core.blueprints import autoconnect
 
 load_dotenv()
@@ -29,5 +28,5 @@ demo_google_maps_skill = autoconnect(
     demo_robot(),
     google_maps_skill(),
     human_input(),
-    llm_agent(system_prompt=get_system_prompt()),
+    llm_agent(),
 )

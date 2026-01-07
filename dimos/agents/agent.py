@@ -31,7 +31,7 @@ from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
 
 from dimos.agents.ollama_agent import ensure_ollama_model
 from dimos.agents.spec import AgentSpec, Model, Provider
-from dimos.agents.system_prompt import get_system_prompt
+from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.core import DimosCluster, rpc
 from dimos.protocol.skill.coordinator import (
     SkillCoordinator,
@@ -186,7 +186,7 @@ class Agent(AgentSpec):
                 self.config.system_prompt.content += SYSTEM_MSG_APPEND  # type: ignore[operator]
                 self.system_message = self.config.system_prompt
         else:
-            self.system_message = SystemMessage(get_system_prompt() + SYSTEM_MSG_APPEND)
+            self.system_message = SystemMessage(SYSTEM_PROMPT + SYSTEM_MSG_APPEND)
 
         self.publish(self.system_message)
 
