@@ -57,7 +57,7 @@ Usage:
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.std_msgs import Bool
+from dimos.msgs.std_msgs import Bool, Float32
 from dimos.teleop.quest3.quest3_teleop_module import quest3_teleop_module
 from dimos.teleop.teleop_robot_controller import teleop_robot_controller
 
@@ -103,9 +103,9 @@ quest3_teleop = autoconnect(
         ("right_controller_delta", PoseStamped): LCMTransport(
             "/quest3/right_controller_delta", PoseStamped
         ),
-        # Trigger states
-        ("left_trigger", Bool): LCMTransport("/quest3/left_trigger", Bool),
-        ("right_trigger", Bool): LCMTransport("/quest3/right_trigger", Bool),
+            # Gripper values (0.0-1.0)
+            ("left_trigger", Float32): LCMTransport("/quest3/left_trigger", Float32),
+            ("right_trigger", Float32): LCMTransport("/quest3/right_trigger", Float32),
     }
 )
 
