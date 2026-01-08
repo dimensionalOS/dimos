@@ -43,7 +43,7 @@ def test_streaming_single(dimos) -> None:
         ),
         hardware=lambda: Webcam(
             camera_index=0,
-            frequency=0.0,  # full speed but set something to test sharpness barrier
+            fps=0.0,  # full speed but set something to test sharpness barrier
             camera_info=zed.CameraInfo.SingleWebcam,
         ),
     )

@@ -29,3 +29,8 @@ class Camera(Image):
 
 class Pointcloud(Protocol):
     pointcloud: Out[PointCloud2]
+
+
+class StereoCamera(Camera):
+    depth_image: Out[ImageMsg]
+    depth_camera_info: Out[CameraInfo]

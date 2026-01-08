@@ -56,7 +56,7 @@ def deploy_g1_monozed(dimos: DimosCluster) -> CameraModule:
             ),
             hardware=lambda: Webcam(
                 camera_index=0,
-                frequency=5,
+                fps=5,
                 stereo_slice="left",
                 camera_info=zed.CameraInfo.SingleWebcam,
             ),

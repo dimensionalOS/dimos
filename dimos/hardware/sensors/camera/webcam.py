@@ -32,9 +32,9 @@ from dimos.utils.reactive import backpressure
 @dataclass
 class WebcamConfig(CameraConfig):
     camera_index: int = 0  # /dev/videoN
-    frame_width: int = 640
-    frame_height: int = 480
-    frequency: int = 15
+    width: int = 640
+    height: int = 480
+    fps: float = 15.0
     camera_info: CameraInfo = field(default_factory=CameraInfo)
     frame_id_prefix: str | None = None
     stereo_slice: Literal["left", "right"] | None = None  # For stereo cameras
@@ -84,8 +84,8 @@ class Webcam(CameraHardware[WebcamConfig]):
             raise RuntimeError(f"Failed to open camera {self.config.camera_index}")
 
         # Set camera properties
-        self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.frame_width)  # type: ignore[attr-defined]
-        self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.frame_height)  # type: ignore[attr-defined]
+        self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.width)  # type: ignore[attr-defined]
+        self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.height)  # type: ignore[attr-defined]
 
         # Clear stop event and start the capture thread
         self._stop_event.clear()
@@ -99,7 +99,8 @@ class Webcam(CameraHardware[WebcamConfig]):
 
         # Wait for thread to finish
         if self._capture_thread and self._capture_thread.is_alive():
-            self._capture_thread.join(timeout=(1.0 / self.config.frequency) + 0.1)
+            timeout = 0.1 if self.config.fps <= 0 else (1.0 / self.config.fps) + 0.1
+            self._capture_thread.join(timeout=timeout)
 
         # Release the capture
         if self._capture:
@@ -142,7 +143,7 @@ class Webcam(CameraHardware[WebcamConfig]):
 
     def _capture_loop(self) -> None:
         """Capture frames at the configured frequency"""
-        frame_interval = 1.0 / self.config.frequency
+        frame_interval = 0.0 if self.config.fps <= 0 else 1.0 / self.config.fps
         next_frame_time = time.time()
 
         while self._capture and not self._stop_event.is_set():
@@ -153,6 +154,8 @@ class Webcam(CameraHardware[WebcamConfig]):
                 self._observer.on_next(image)
 
             # Wait for next frame time or until stopped
+            if frame_interval <= 0:
+                continue
             next_frame_time += frame_interval
             sleep_time = next_frame_time - time.time()
             if sleep_time > 0:

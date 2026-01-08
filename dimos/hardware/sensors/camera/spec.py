@@ -27,6 +27,9 @@ OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
 
 class CameraConfig(Protocol):
     frame_id_prefix: str | None
+    width: int
+    height: int
+    fps: int | float
 
 
 CameraConfigT = TypeVar("CameraConfigT", bound=CameraConfig)
@@ -43,12 +46,9 @@ class CameraHardware(ABC, Configurable[CameraConfigT], Generic[CameraConfigT]):
         pass
 
 
-class StereoCameraConfig(Protocol):
+class StereoCameraConfig(CameraConfig):
     """Protocol for stereo camera configuration."""
 
-    width: int
-    height: int
-    fps: int
     camera_name: str
     base_frame_id: str
     base_transform: Transform | None
@@ -59,8 +59,10 @@ class StereoCameraConfig(Protocol):
     camera_info_fps: float
 
 
-class StereoCamera(ABC):
+class StereoCameraHardware(ABC):
     """Abstract class for stereo camera modules (RealSense, ZED, etc.)."""
+
+    config: StereoCameraConfig
 
     @abstractmethod
     def get_color_camera_info(self) -> CameraInfo | None:

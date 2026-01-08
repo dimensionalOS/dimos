@@ -75,7 +75,7 @@ _basic_no_nav = (
             ),
             hardware=lambda: Webcam(
                 camera_index=0,
-                frequency=15,
+                fps=15,
                 stereo_slice="left",
                 camera_info=zed.CameraInfo.SingleWebcam,
             ),

@@ -28,7 +28,7 @@ from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
-    StereoCamera,
+    StereoCameraHardware,
     StereoCameraConfig,
 )
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
@@ -36,6 +36,7 @@ from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.spec import perception
 from dimos.utils.reactive import backpressure
 
 
@@ -63,7 +64,7 @@ class RealSenseCameraConfig(ModuleConfig, StereoCameraConfig):
     serial_number: str | None = None
 
 
-class RealSenseCamera(StereoCamera, Module):
+class RealSenseCamera(StereoCameraHardware, Module, perception.StereoCamera):
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
