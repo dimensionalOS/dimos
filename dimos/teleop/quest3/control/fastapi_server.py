@@ -25,28 +25,27 @@ Now includes HTTPS support and serves the standalone HTML VR client.
 from __future__ import annotations
 
 import asyncio
-import json
-import os
+import time
 from pathlib import Path
 import subprocess
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 import uvicorn
 
+from dimos.msgs.geometry_msgs import Pose
 from dimos.teleop.quest3.control.tracking_processor import TrackingProcessor
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import numpy as np
-    from numpy.typing import NDArray
-
 logger = setup_logger()
+
+# Rate limiting for command messages (in seconds)
+COMMAND_DEBOUNCE_SECONDS = 2
 
 
 class ConnectionManager:
@@ -54,9 +53,9 @@ class ConnectionManager:
 
     def __init__(self):
         self.active_connections: list[WebSocket] = []
-        self.data_callback: Callable | None = None
-        self.command_callback: Callable | None = None
-        self.connection_count = 0
+        self.active_connections_lock = asyncio.Lock()
+        self.data_callback: Callable[[Pose, Pose, float, float]] | None = None
+        self.command_callback: Callable[[str, WebSocket]] | None = None
 
     async def connect(self, websocket: WebSocket) -> None:
         """Accept and register a new WebSocket connection.
@@ -65,8 +64,8 @@ class ConnectionManager:
             websocket: The WebSocket connection to register
         """
         await websocket.accept()
-        self.active_connections.append(websocket)
-        self.connection_count += 1
+        with self.active_connections_lock:
+            self.active_connections.append(websocket)
         logger.info(f"Client connected (total: {len(self.active_connections)})")
 
     def disconnect(self, websocket: WebSocket) -> None:
@@ -75,9 +74,10 @@ class ConnectionManager:
         Args:
             websocket: The WebSocket connection to remove
         """
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-        logger.info(f"Client disconnected (remaining: {len(self.active_connections)})")
+        with self.active_connections_lock:
+            if websocket in self.active_connections:
+                self.active_connections.remove(websocket)
+            logger.info(f"Client disconnected (remaining: {len(self.active_connections)})")
 
     def set_callback(self, callback: Callable) -> None:
         """Set callback function to send controller data to teleop module.
@@ -104,12 +104,13 @@ class ConnectionManager:
             message: Dictionary to send as JSON to all clients
         """
         disconnected = []
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except Exception as e:
-                logger.error(f"Failed to broadcast to client: {e}")
-                disconnected.append(connection)
+        with self.active_connections_lock:
+            for connection in self.active_connections:
+                try:
+                    await connection.send_json(message)
+                except Exception as e:
+                    logger.error(f"Failed to broadcast to client: {e}")
+                    disconnected.append(connection)
 
         # Clean up disconnected clients
         for conn in disconnected:
@@ -121,7 +122,8 @@ class ConnectionManager:
         Returns:
             Number of active WebSocket connections
         """
-        return len(self.active_connections)
+        with self.active_connections_lock:
+            return len(self.active_connections)
 
 
 class TeleopFastAPIServer:
@@ -131,6 +133,7 @@ class TeleopFastAPIServer:
         self,
         host: str = "0.0.0.0",
         port: int = 8443,  # Changed default to 8443 for HTTPS
+        # why 8443 ?
         use_https: bool = True,
     ):
         """Initialize the FastAPI server.
@@ -148,7 +151,7 @@ class TeleopFastAPIServer:
         self.server: uvicorn.Server | None = None
 
         # SSL certificate paths
-        self.cert_dir = Path(__file__).parent.parent / "certs"
+        self.cert_dir = Path(__file__).parent.parent / "certs" # any better way of writing this?
         self.cert_file = self.cert_dir / "cert.pem"
         self.key_file = self.cert_dir / "key.pem"
 
@@ -266,6 +269,9 @@ class TeleopFastAPIServer:
                 # Send acknowledgment
                 await websocket.send_json({"type": "handshake_ack", "status": "connected"})
 
+                # Track command timestamps for rate limiting
+                last_command_time: dict[int, float] = {}
+
                 # Main tracking loop
                 while True:
                     # Receive message
@@ -275,6 +281,13 @@ class TeleopFastAPIServer:
                     # Check if this is a command message (start_teleop/stop_teleop)
                     message_type = message.get("type")
                     if message_type in ("start_teleop", "stop_teleop"):
+                        # Rate limit commands to prevent double-triggers
+                        now = time.time()
+                        if now - last_command_time.get(id(websocket), 0) < COMMAND_DEBOUNCE_SECONDS:
+                            logger.debug(f"Rate limiting command: {message_type}")
+                            continue
+                        last_command_time[id(websocket)] = now
+
                         logger.info(f"Received command: {message_type}")
                         # Route to command handler
                         if self.manager.command_callback is not None:
@@ -386,6 +399,9 @@ class TeleopFastAPIServer:
         uvicorn.run(**run_kwargs)
 
     async def stop_async(self) -> None:
+        # close all connections
+        await self.manager.disconnect()
+
         """Stop the FastAPI server asynchronously."""
         if self.server:
             logger.info("Stopping FastAPI server...")
