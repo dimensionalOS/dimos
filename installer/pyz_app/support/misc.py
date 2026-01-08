@@ -27,11 +27,11 @@ import requests
 from . import prompt_tools as p
 from .bundled_data import DEP_2_HUMAN_NAME, PIP_DEP_DATABASE, PROJECT_TOML
 from .constants import (
+    DEFAULT_GITIGNORE_CONTENT,
     DEPENDENCY_APT_PACKAGES_SET_MINIMAL,
     DEPENDENCY_BREW_SET_MINIMAL,
     DEPENDENCY_HUMAN_NAMES_SET,
     DEPENDENCY_NIX_PACKAGES_SET_MINIMAL,
-    DEFAULT_GITIGNORE_CONTENT,
 )
 from .installer_status import installer_status
 from .shell_tooling import command_exists, run_command
@@ -425,7 +425,7 @@ def init_repo_with_gitignore(repo_dir: str | Path) -> None:
         git_ignore.write_text("", encoding="utf-8")
     else:
         p.boring_log("- git ignore file found")
-    
+
     add_git_ignore_patterns(git_ignore, DEFAULT_GITIGNORE_CONTENT.split("\n"))
     run_command(["git", "add", ".gitignore"], print_command=True)
     run_command(["git", "commit", "-m", "gitignore"], print_command=True)

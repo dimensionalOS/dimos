@@ -36,7 +36,7 @@ def phase3(selected_features: Iterable[str] | None) -> None:
 
     p.boring_log(" - running main install")
     res = run_command(["uv", "pip", "install", "numpy"], print_command=True)
-    
+
     selected_features_string = ""
     if features:
         selected_features_string = f"[{','.join(features)}]"

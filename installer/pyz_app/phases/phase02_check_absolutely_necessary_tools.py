@@ -31,7 +31,12 @@ from ..support.misc import (
     get_project_directory,
 )
 from ..support.shell_tooling import command_exists, run_command
-from ..support.venv import activate_venv, get_venv_dirs_at, purge_broken_external_venv, deactivate_external
+from ..support.venv import (
+    activate_venv,
+    deactivate_external,
+    get_venv_dirs_at,
+    purge_broken_external_venv,
+)
 
 
 def phase2(system_analysis, selected_features):
