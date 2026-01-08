@@ -25,9 +25,9 @@ Now includes HTTPS support and serves the standalone HTML VR client.
 from __future__ import annotations
 
 import asyncio
-import time
 from pathlib import Path
 import subprocess
+import time
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -35,12 +35,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import uvicorn
 
-from dimos.msgs.geometry_msgs import Pose
 from dimos.teleop.quest3.control.tracking_processor import TrackingProcessor
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from dimos.msgs.geometry_msgs import Pose
 
 logger = setup_logger()
 
@@ -151,7 +152,7 @@ class TeleopFastAPIServer:
         self.server: uvicorn.Server | None = None
 
         # SSL certificate paths
-        self.cert_dir = Path(__file__).parent.parent / "certs" # any better way of writing this?
+        self.cert_dir = Path(__file__).parent.parent / "certs"  # any better way of writing this?
         self.cert_file = self.cert_dir / "cert.pem"
         self.key_file = self.cert_dir / "key.pem"
 

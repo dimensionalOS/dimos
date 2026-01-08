@@ -77,7 +77,7 @@ class TrackingProcessor:
             Tuple of (left_pose, right_pose, left_gripper, right_gripper) or None if invalid
         """
         tracking_type = event.get("type")
-        if tracking_type != "controller": # TODO: handle hand tracking type
+        if tracking_type != "controller":  # TODO: handle hand tracking type
             logger.debug("Ignoring non-controller tracking type: %s", tracking_type)
             return None
 
@@ -97,9 +97,7 @@ class TrackingProcessor:
 
         return left_pose, right_pose, self.left_gripper_value, self.right_gripper_value
 
-    def _process_controller(
-        self, tracking_data: dict[str, Any], side: str
-    ) -> None:
+    def _process_controller(self, tracking_data: dict[str, Any], side: str) -> None:
         """Process single controller's tracking data.
 
         Args:
@@ -116,9 +114,7 @@ class TrackingProcessor:
         else:
             self.right_gripper_value = self._extract_gripper_value(tracking_data)
 
-    def _process_target_location(
-        self, target_location: list[float], side: str
-    ) -> None:
+    def _process_target_location(self, target_location: list[float], side: str) -> None:
         """Process controller pose from VR space to robot space.
 
         Args:
