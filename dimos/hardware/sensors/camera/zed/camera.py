@@ -28,8 +28,8 @@ from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
-    StereoCameraHardware,
     StereoCameraConfig,
+    StereoCameraHardware,
 )
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo
