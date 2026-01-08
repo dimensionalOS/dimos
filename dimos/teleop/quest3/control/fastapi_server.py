@@ -134,8 +134,7 @@ class TeleopFastAPIServer:
     def __init__(
         self,
         host: str = "0.0.0.0",
-        port: int = 8443,  # Changed default to 8443 for HTTPS
-        # why 8443 ?
+        port: int = 8443,  # Standard HTTPS port (alternative to 443). Any port works with HTTPS.
         use_https: bool = True,
     ):
         """Initialize the FastAPI server.
