@@ -77,39 +77,36 @@ from dimos.teleop.teleop_robot_controller import teleop_robot_controller
 #   TeleopRobotController.right_cartesian_command ──► Robot Driver (via LCM)
 # =============================================================================
 
-quest3_teleop = (
-    autoconnect(
-        quest3_teleop_module(
-            signaling_host="0.0.0.0",
-            signaling_port=8443,  # HTTPS port (required for WebXR)
-            use_https=True,  # Enable HTTPS for Quest 3 WebXR
-            enable_left_arm=True,
-            enable_right_arm=True,
-            visualize_in_rerun=True,
-            safety_limits=True,
+quest3_teleop = autoconnect(
+    quest3_teleop_module(
+        signaling_host="0.0.0.0",
+        signaling_port=8443,  # HTTPS port (required for WebXR)
+        use_https=True,  # Enable HTTPS for Quest 3 WebXR
+        enable_left_arm=True,
+        enable_right_arm=True,
+        visualize_in_rerun=True,
+        safety_limits=True,
+    ),
+    teleop_robot_controller(
+        driver_module_name="DummyDriver",
+        dummy_driver=True,  # Skip RPC calls, use zeros for initial pose
+        control_frequency=50.0,  # Hz - control loop frequency
+        enable_left_arm=True,
+        enable_right_arm=True,
+    ),
+).transports(
+    {
+        # Delta poses from Quest3TeleopModule to TeleopRobotController
+        ("left_controller_delta", PoseStamped): LCMTransport(
+            "/quest3/left_controller_delta", PoseStamped
         ),
-        teleop_robot_controller(
-            driver_module_name="DummyDriver",
-            dummy_driver=True,  # Skip RPC calls, use zeros for initial pose
-            control_frequency=50.0,  # Hz - control loop frequency
-            enable_left_arm=True,
-            enable_right_arm=True,
+        ("right_controller_delta", PoseStamped): LCMTransport(
+            "/quest3/right_controller_delta", PoseStamped
         ),
-    )
-    .transports(
-        {
-            # Delta poses from Quest3TeleopModule to TeleopRobotController
-            ("left_controller_delta", PoseStamped): LCMTransport(
-                "/quest3/left_controller_delta", PoseStamped
-            ),
-            ("right_controller_delta", PoseStamped): LCMTransport(
-                "/quest3/right_controller_delta", PoseStamped
-            ),
-            # Trigger states
-            ("left_trigger", Bool): LCMTransport("/quest3/left_trigger", Bool),
-            ("right_trigger", Bool): LCMTransport("/quest3/right_trigger", Bool),
-        }
-    )
+        # Trigger states
+        ("left_trigger", Bool): LCMTransport("/quest3/left_trigger", Bool),
+        ("right_trigger", Bool): LCMTransport("/quest3/right_trigger", Bool),
+    }
 )
 
 

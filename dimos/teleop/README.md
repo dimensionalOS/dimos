@@ -34,9 +34,9 @@ Robot Driver → Robot
 ## Supported Devices
 
 ### Quest 3 VR Headset [Any VR headset]
-**Module**: [`quest3/`](quest3/)  
-**Type**: VR controllers (6DOF dual-arm)  
-**Connection**: WebSocket/HTTPS (WebXR)  
+**Module**: [`quest3/`](quest3/)
+**Type**: VR controllers (6DOF dual-arm)
+**Connection**: WebSocket/HTTPS (WebXR)
 **Features**: AR mode, dual-arm control, trigger buttons
 
 ```python
@@ -133,7 +133,7 @@ Example devices you could add:
 All devices publish:
 
 - `left_controller_delta: Out[PoseStamped]` - Left delta pose
-- `right_controller_delta: Out[PoseStamped]` - Right delta pose  
+- `right_controller_delta: Out[PoseStamped]` - Right delta pose
 - `left_trigger: Out[Bool]` - Left trigger state
 - `right_trigger: Out[Bool]` - Right trigger state
 
@@ -207,4 +207,3 @@ Just call `reset_calibration()` and press calibration button again.
 - [Base Module](base/README.md) - Creating new devices
 - [Quest3 Module](quest3/README.md) - Quest 3 VR setup
 - [Blueprints](../../docs/api/blueprints.md) - System composition
-

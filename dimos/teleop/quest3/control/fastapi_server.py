@@ -25,9 +25,9 @@ Now includes HTTPS support and serves the standalone HTML VR client.
 from __future__ import annotations
 
 import asyncio
-import threading
 from pathlib import Path
 import subprocess
+import threading
 import time
 from typing import TYPE_CHECKING
 

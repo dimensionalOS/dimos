@@ -478,8 +478,6 @@ class TeleopRobotController(Module):
 
             # Log and publish
             if arm_side == "left":
-                quat = target_pose.orientation
-
                 # Unwrap Euler angles for smooth logging (handles +pi and -pi discontinuities)
                 current_rpy = np.array([target_pose.roll, target_pose.pitch, target_pose.yaw])
                 if arm_side in self._last_logged_rpy:
@@ -497,8 +495,6 @@ class TeleopRobotController(Module):
                         logger.error(f"Failed to publish left cartesian command: {e}")
 
             elif arm_side == "right":
-                quat = target_pose.orientation
-
                 # Unwrap Euler angles for smooth logging (handles +pi and -pi discontinuities)
                 current_rpy = np.array([target_pose.roll, target_pose.pitch, target_pose.yaw])
                 if arm_side in self._last_logged_rpy:
@@ -509,7 +505,9 @@ class TeleopRobotController(Module):
                 self._last_logged_rpy[arm_side] = current_rpy
 
                 # Publish to robot
-                if self.right_cartesian_command and hasattr(self.right_cartesian_command, "publish"):
+                if self.right_cartesian_command and hasattr(
+                    self.right_cartesian_command, "publish"
+                ):
                     try:
                         self.right_cartesian_command.publish(target_pose)
                     except Exception as e:
