@@ -35,6 +35,11 @@ from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.protocol import pubsub
 
+# Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
+_BUILD_WITHOUT_RERUN = {
+    "global_config": GlobalConfig(rerun_enabled=False, viewer_backend="foxglove"),
+}
+
 
 class Scratch:
     pass
@@ -162,10 +167,7 @@ def test_build_happy_path() -> None:
 
     blueprint_set = autoconnect(module_a(), module_b(), module_c())
 
-    # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
-    coordinator = blueprint_set.build(
-        global_config=GlobalConfig(rerun_enabled=False, viewer_backend="foxglove")
-    )
+    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
 
     try:
         assert isinstance(coordinator, ModuleCoordinator)
@@ -301,10 +303,7 @@ def test_remapping() -> None:
     assert ("color_image", Data1) not in blueprint_set._all_name_types
 
     # Build and verify connections work
-    # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
-    coordinator = blueprint_set.build(
-        global_config=GlobalConfig(rerun_enabled=False, viewer_backend="foxglove")
-    )
+    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
 
     try:
         source_instance = coordinator.get_instance(SourceModule)
@@ -357,10 +356,7 @@ def test_future_annotations_autoconnect() -> None:
 
     blueprint_set = autoconnect(FutureModuleOut.blueprint(), FutureModuleIn.blueprint())
 
-    # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
-    coordinator = blueprint_set.build(
-        global_config=GlobalConfig(rerun_enabled=False, viewer_backend="foxglove")
-    )
+    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
 
     try:
         out_instance = coordinator.get_instance(FutureModuleOut)
