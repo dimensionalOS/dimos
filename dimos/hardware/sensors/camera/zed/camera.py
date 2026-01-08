@@ -124,7 +124,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._tracking_enabled = False
         self._stream_width = self.config.width
         self._stream_height = self.config.height
-        self._camera_info: sl.CameraInformation | None = None
+        self._sl_camera_info: sl.CameraInformation | None = None
 
     def _publish_camera_info(self) -> None:
         ts = time.time()
@@ -166,10 +166,10 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._depth_map = sl.Mat()
         self._pose = sl.Pose()
 
-        self._camera_info = self._zed.get_camera_information()
-        if self._camera_info is not None:
-            self._stream_width = self._camera_info.camera_configuration.resolution.width
-            self._stream_height = self._camera_info.camera_configuration.resolution.height
+        self._sl_camera_info = self._zed.get_camera_information()
+        if self._sl_camera_info is not None:
+            self._stream_width = self._sl_camera_info.camera_configuration.resolution.width
+            self._stream_height = self._sl_camera_info.camera_configuration.resolution.height
 
         self._build_camera_info()
         self._get_extrinsics()
@@ -199,9 +199,9 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
             )
 
     def _build_camera_info(self) -> None:
-        if self._camera_info is None:
+        if self._sl_camera_info is None:
             return
-        calib = self._camera_info.camera_configuration.calibration_parameters
+        calib = self._sl_camera_info.camera_configuration.calibration_parameters
         left_cam = calib.left_cam
 
         self._color_camera_info = self._intrinsics_to_camera_info(
@@ -237,9 +237,9 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         )
 
     def _get_extrinsics(self) -> None:
-        if self._camera_info is None:
+        if self._sl_camera_info is None:
             return
-        sensors_config = self._camera_info.sensors_configuration
+        sensors_config = self._sl_camera_info.sensors_configuration
         # camera_imu_transform gives the transform from IMU (body center) to left camera
         self._camera_link_to_color_extrinsics = sensors_config.camera_imu_transform
 
@@ -471,7 +471,7 @@ class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
         self._image_left = None
         self._depth_map = None
         self._pose = None
-        self._camera_info = None
+        self._sl_camera_info = None
         self._tracking_enabled = False
         super().stop()
 
