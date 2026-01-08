@@ -145,7 +145,6 @@ class NavigationSkillContainer(SkillModule):
         except Exception:
             return f"Error querying ObjectDB for '{object_name}'"
 
-        # Check if we found anything
         if not objects or len(objects) == 0:
             return f"No detected object matching '{object_name}'. The object may not have been seen yet."
 
@@ -156,7 +155,7 @@ class NavigationSkillContainer(SkillModule):
 
         # Extract pose from dict (not Object3D anymore!)
         try:
-            obj = objects[0]  # First match (now a dict)
+            obj = objects[0]
 
             # Create pose from dict fields
             goal_pose = PoseStamped(
@@ -177,7 +176,6 @@ class NavigationSkillContainer(SkillModule):
         except Exception:
             return f"Error: Could not determine location of '{object_name}'"
 
-        # Navigate to the object
         result = self._navigate_to(goal_pose)
 
         if result:

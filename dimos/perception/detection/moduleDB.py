@@ -42,8 +42,8 @@ class Object3D(Detection3DPC):
     center: Vector3 | None = None  # type: ignore[assignment]
     track_id: str | None = None  # type: ignore[assignment]
     detections: int = 0
-    yolo_label: str | None = None  # Original YOLO detection class
-    vlm_label: str | None = None  # VLM-enriched description
+    yolo_label: str | None = None
+    vlm_label: str | None = None
 
     def to_repr_dict(self) -> dict[str, Any]:
         if self.center is None:
@@ -108,7 +108,7 @@ class Object3D(Detection3DPC):
     def scene_entity_label(self) -> str:
         return f"{self.name} ({self.detections})"
 
-    def agent_encode(self):  # type: ignore[no-untyped-def]
+    def agent_encode(self):
         return {
             "id": self.track_id,
             "name": self.name,
@@ -127,8 +127,6 @@ class Object3D(Detection3DPC):
             frame_id="camera_link",
             child_frame_id="camera_optical",
         ).inverse()
-
-        print("transform is", self.best_detection.transform)
 
         global_transform = optical_inverse + self.best_detection.transform
 
@@ -192,7 +190,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
         self.detection_stream_3d.subscribe(update_objects)
 
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.goto = None
         self.objects = {}
@@ -219,18 +217,15 @@ class ObjectDBModule(Detection3DModule, TableStr):
             return obj.yolo_label  # Fall back to YOLO label
 
         try:
-            # Get image from best detection
             image = obj.get_image()
             if image is None:
                 logger.warning(f"No image for {obj.track_id}, using YOLO label")
                 return obj.yolo_label
 
-            # Generate rich description with VLM
             prompt = f"Describe this {obj.yolo_label} in detail. Include color, appearance, and distinguishing features. Keep it concise (under 10 words)."
 
             description = self.vlm_model.query(image, prompt)
 
-            # Clean up the description
             rich_label = description.strip()
 
             logger.info(f"VLM enrichment: '{obj.yolo_label}' → '{rich_label}'")
@@ -272,7 +267,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         """Add detection to existing object."""
         new_object = closest + detection
 
-        # Re-enrich every 5 detections
+        # Re-enrich every 10 detections
         if self.enable_vlm_enrichment and new_object.detections % 10 == 0:
             logger.info(
                 f"Re-enriching {new_object.track_id} after {new_object.detections} detections"
@@ -312,11 +307,9 @@ class ObjectDBModule(Detection3DModule, TableStr):
     def agent_encode(self) -> str:
         ret = []
         for obj in copy(self.objects).values():
-            # we need at least 3 detectieons to consider it a valid object
-            # for this to be serious we need a ratio of detections within the window of observations
-            if len(obj.detections) < 4:  # type: ignore[arg-type]
+            if len(obj.detections) < 4:
                 continue
-            ret.append(str(obj.agent_encode()))  # type: ignore[no-untyped-call]
+            ret.append(str(obj.agent_encode()))
         if not ret:
             return "No objects detected yet."
         return "\n".join(ret)
@@ -389,7 +382,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
     #     return ret[0] if ret else None
 
     @rpc
-    def lookup(self, label: str, min_detections: int = 0.5) -> list[dict]:
+    def lookup(self, label: str, min_detections: int = 1) -> list[dict]:
         """Look up objects by label/name.
 
         Returns lightweight dict instead of full Object3D to avoid RPC timeout.
@@ -403,48 +396,37 @@ class ObjectDBModule(Detection3DModule, TableStr):
         """
         import time
 
-        # DEBUG: Log search details
-        logger.error(f"Lookup called for '{label}'")
-        logger.error(f"Total objects in DB: {len(self.objects)}")
-
-        # DEBUG: Log ALL object names in database
-        all_names = [obj.name for obj in self.objects.values() if obj.name]
-        logger.error(f"All object names in DB: {all_names}")
+        logger.info(f"Looking up '{label}' (min_detections: {min_detections})")
+        logger.debug(f"Total objects in DB: {len(self.objects)}")
 
         matching = []
 
         for obj in self.objects.values():
-            # DEBUG: Log each comparison
-            if obj.name:
-                logger.debug(
-                    f"  Checking: '{obj.name}' vs '{label}' (detections: {obj.detections})"
+            if not obj.name or label.lower() not in obj.name.lower():
+                continue
+
+            if obj.detections < min_detections:
+                continue
+
+            try:
+                pose = obj.to_pose()
+                matching.append(
+                    {
+                        "track_id": obj.track_id,
+                        "name": obj.name,
+                        "detections": obj.detections,
+                        "confidence": obj.confidence,
+                        "pos_x": pose.position.x,
+                        "pos_y": pose.position.y,
+                        "pos_z": pose.position.z,
+                        "frame_id": pose.frame_id,
+                        "last_seen": time.time() - obj.ts,
+                    }
                 )
+            except Exception as e:
+                logger.warning(f"Failed to get pose for {obj.track_id}: {e}")
 
-            # Check name match
-            if obj.name and label.lower() in obj.name.lower():
-                # Check detection threshold
-                if obj.detections >= min_detections:
-                    # Create lightweight dict (NO pointcloud, NO heavy data)
-                    try:
-                        pose = obj.to_pose()
-                        result = {
-                            "track_id": obj.track_id,
-                            "name": obj.name,
-                            "detections": obj.detections,
-                            "confidence": obj.confidence,
-                            "pos_x": pose.position.x,
-                            "pos_y": pose.position.y,
-                            "pos_z": pose.position.z,
-                            "frame_id": pose.frame_id,
-                            "last_seen": time.time() - obj.ts,
-                        }
-                        matching.append(result)
-                        logger.error(f"Added to results: {result}")
-                    except Exception as e:
-                        logger.error(f"Failed to get pose for {obj.track_id}: {e}")
-                        continue
-
-        logger.error(f"Returning {len(matching)} matches")
+        logger.info(f"Found {len(matching)} objects matching '{label}'")
         return matching
 
     @rpc
