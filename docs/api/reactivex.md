@@ -21,7 +21,6 @@ print("received:", received)
 
 <!--Result:-->
 ```
-<reactivex.disposable.disposable.Disposable object at 0x7ff377df2f30>
 received: [0, 1, 2, 3, 4]
 ```
 
@@ -32,16 +31,20 @@ Chain operators using `.pipe()`:
 ```python session=rx
 # Transform values: multiply by 2, then filter > 4
 result = []
-source.pipe(
+
+# we build another observable, it's passive until subscribe is called
+observable = source.pipe(
     ops.map(lambda x: x * 2),
     ops.filter(lambda x: x > 4),
-).subscribe(lambda x: result.append(x))
+)
+
+observable.subscribe(lambda x: result.append(x))
+
 print("transformed:", result)
 ```
 
 <!--Result:-->
 ```
-<reactivex.disposable.disposable.Disposable object at 0x7ff377c9d2e0>
 transformed: [6, 8]
 ```
 
@@ -60,7 +63,7 @@ rx.of(1, 2, 3).pipe(
 item_1
 item_2
 item_3
-<reactivex.disposable.disposable.Disposable object at 0x7ff377c9c3e0>
+<reactivex.disposable.disposable.Disposable object at 0x7f3c2c9448c0>
 ```
 
 ### Filter: `filter`
@@ -75,7 +78,7 @@ rx.of(1, 2, 3, 4, 5).pipe(
 ```
 2
 4
-<reactivex.disposable.disposable.Disposable object at 0x7ff377c9d220>
+<reactivex.disposable.disposable.Disposable object at 0x7f3c2c9447d0>
 ```
 
 ### Limit emissions: `take`
@@ -91,7 +94,7 @@ rx.of(1, 2, 3, 4, 5).pipe(
 1
 2
 3
-<reactivex.disposable.disposable.Disposable object at 0x7ff377c9d100>
+<reactivex.disposable.disposable.Disposable object at 0x7f3c2c944a10>
 ```
 
 ### Flatten nested observables: `flat_map`
@@ -111,7 +114,7 @@ rx.of(1, 2).pipe(
 2
 20
 200
-<reactivex.disposable.disposable.Disposable object at 0x7ff377c9e240>
+<reactivex.disposable.disposable.Disposable object at 0x7f3c2c945700>
 ```
 
 ## Rate Limiting
@@ -172,13 +175,40 @@ sample: latest value at each tick
 throttle_first: first value, then block
 ```
 
+
 ## What is an Observable?
 
-An Observable is a **lazy push-based collection**:
+An Observable is like a list, but instead of holding all values at once, it produces values over time.
 
-- **Lazy**: Does nothing until subscribed
-- **Push-based**: Producer pushes values to consumers (vs pull where consumer requests)
-- **Collection**: Represents 0 to infinite values over time
+|             | List                  | Iterator              | Observable       |
+|-------------|-----------------------|-----------------------|------------------|
+| **Values**  | All exist now         | Generated on demand   | Arrive over time |
+| **Control** | You pull (`for x in`) | You pull (`next()`)   | Pushed to you    |
+| **Size**    | Finite                | Can be infinite       | Can be infinite  |
+| **Async**   | No                    | Yes (with asyncio)    | Yes              |
+| **Cancel**  | N/A                   | Stop calling `next()` | `.dispose()`     |
+
+The key difference from iterators: with an Observable, **you don't control when values arrive**. A camera produces frames at 30fps whether you're ready or not. An iterator waits for you to call `next()`.
+
+**Observables are lazy.** An Observable is just a description of work to be done - it sits there doing nothing until you call `.subscribe()`. That's when it "wakes up" and starts producing values.
+
+This means you can build complex pipelines, pass them around, and nothing happens until someone subscribes.
+
+**The three things an Observable can tell you:**
+
+1. **"Here's a value"** (`on_next`) - A new value arrived
+2. **"Something went wrong"** (`on_error`) - An error occurred, stream stops
+3. **"I'm done"** (`on_completed`) - No more values coming
+
+**The basic pattern:**
+
+```
+observable.subscribe(what_to_do_with_each_value)
+```
+
+That's it. You create or receive an Observable, then subscribe to start receiving values.
+
+When you subscribe, data flows through a pipeline:
 
 <details>
 <summary>diagram source</summary>
@@ -196,15 +226,12 @@ arrow right 0.3in
 Handler: box "callback" rad 5px fit wid 170% ht 170%
 ```
 
-</details>
-
 <!--Result:-->
 ![output](assets/observable_flow.svg)
 
-Three event types:
-- `on_next(value)` - A new value
-- `on_error(error)` - An error occurred, stream terminates
-- `on_completed()` - Stream finished normally
+**Key property: Observables are lazy.** Nothing happens until you call `.subscribe()`. This means you can build up complex pipelines without any work being done, then start the flow when ready.
+
+Here's the full subscribe signature with all three callbacks:
 
 ```python session=rx
 rx.of(1, 2, 3).subscribe(
@@ -220,12 +247,69 @@ value: 1
 value: 2
 value: 3
 done
-<reactivex.disposable.disposable.Disposable object at 0x7ff377c9f0b0>
+<reactivex.disposable.disposable.Disposable object at 0x7f3c2c947680>
 ```
 
-## Backpressure
+## Disposables: Cancelling Subscriptions
 
-**Problem**: A fast producer can overwhelm a slow consumer, causing memory buildup or dropped frames.
+When you subscribe, you get back a `Disposable`. This is your "cancel button":
+
+```python session=rx
+import reactivex as rx
+
+source = rx.interval(0.1)  # emits 0, 1, 2, ... every 100ms forever
+subscription = source.subscribe(lambda x: print(x))
+
+# Later, when you're done:
+subscription.dispose()  # Stop receiving values, clean up resources
+print("disposed")
+```
+
+<!--Result:-->
+```
+disposed
+```
+
+**Why does this matter?**
+
+- Observables can be infinite (sensor feeds, websockets, timers)
+- Without disposing, you leak memory and keep processing values forever
+- Disposing also cleans up any resources the Observable opened (connections, file handles, etc.)
+
+**Rule of thumb:** If you subscribe to something that doesn't naturally complete, save the disposable and call `.dispose()` when done.
+
+**In dimos modules:** Every `Module` has a `self._disposables` (a `CompositeDisposable`) that automatically disposes everything when the module closes:
+
+```python session=rx
+import time
+from dimos.core import Module
+
+class MyModule(Module):
+    def start(self):
+        source = rx.interval(0.05)
+        self._disposables.add(source.subscribe(lambda x: print(f"got {x}")))
+
+module = MyModule()
+module.start()
+time.sleep(0.25)
+
+# unsubscribes disposables
+module.stop()
+```
+
+<!--Result:-->
+```
+got 0
+got 1
+got 2
+got 3
+```
+
+## Backpressure and parallel subscribers to hardware
+
+In robotics, we deal with hardware that produces data at its own pace - a camera outputs 30fps whether you're ready or not. We can't tell the camera to slow down. And we often have multiple consumers: one module wants every frame for recording, another runs slow ML inference and only needs the latest frame.
+
+**The problem:** A fast producer can overwhelm a slow consumer, causing memory buildup or dropped frames. We might have multiple subscribers to the same hardware that operate at different speeds.
 
 <details>
 <summary>diagram source</summary>
@@ -243,15 +327,14 @@ Slow: box "ML Model" "2 fps" rad 5px fit wid 130% ht 130%
 text "items pile up!" at (Queue.x, Queue.y - 0.45in)
 ```
 
-</details>
-
 <!--Result:-->
 ![output](assets/backpressure.svg)
 
-**Solution**: The `backpressure()` wrapper. It:
-1. Shares the source among subscribers (so camera runs once)
-2. Each subscriber gets the **latest** value when ready (skips stale data)
-3. Processing happens on thread pool (won't block source)
+**The solution:** The `backpressure()` wrapper handles this by:
+
+1. **Sharing the source** - Camera runs once, all subscribers share the stream
+2. **Per-subscriber speed** - Fast subscribers get every frame, slow ones get the latest when ready
+3. **No blocking** - Slow subscribers never block the source or each other
 
 ```python session=bp
 import time
@@ -260,6 +343,7 @@ from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 from dimos.utils.reactive import backpressure
 
+# we need this scaffolding here, normally dimos handles this
 scheduler = ThreadPoolScheduler(max_workers=4)
 
 # Simulate fast source
@@ -285,8 +369,6 @@ scheduler.executor.shutdown(wait=True)
 
 <!--Result:-->
 ```
-<reactivex.disposable.disposable.Disposable object at 0x7fd0b0cdf230>
-<reactivex.disposable.disposable.Disposable object at 0x7fd0b0535760>
 fast got 20 items: [0, 1, 2, 3, 4]...
 slow got 7 items (skipped 13)
 ```
@@ -303,7 +385,7 @@ linewid = 0.3in
 
 Source: box "Camera" "60 fps" rad 5px fit wid 170% ht 170%
 arrow
-Core: box "replay(1)" "ref_count()" rad 5px fit wid 170% ht 170%
+Core: box "backpressure" rad 5px fit wid 170% ht 170%
 arrow from Core.e right 0.3in then up 0.35in then right 0.3in
 Fast: box "Fast Sub" rad 5px fit wid 170% ht 170%
 arrow from Core.e right 0.3in then down 0.35in then right 0.3in
@@ -312,8 +394,6 @@ arrow
 Slow: box "Slow Sub" rad 5px fit wid 170% ht 170%
 ```
 
-</details>
-
 <!--Result:-->
 ![output](assets/backpressure_solution.svg)
 
@@ -321,43 +401,59 @@ The `LATEST` strategy means: when the slow subscriber finishes processing, it ge
 
 ### Usage in modules
 
-Most module streams return backpressured observables by default via `ObservableMixin`:
+Most module streams offer backpressured observables
 
 ```python session=bp
-from dimos.core.stream import ObservableMixin
+from dimos.core import Module, In
+from dimos.msgs.sensor_msgs import Image
 
-# .observable() returns backpressured by default
-# .pure_observable() returns raw stream without backpressure
-print("ObservableMixin methods:", [m for m in dir(ObservableMixin) if not m.startswith('_')])
+class MLModel(Module):
+    color_image: In[Image]
+    def start(self):
+       # no reactivex, simple callback
+       self.color_image.subscribe(...)
+       # backpressured
+       self.color_image.observable().subscribe(...)
+       # non-backpressured - will pile up queue
+       self.color_image.pure_observable().subscribe(...)
+
+
 ```
 
-<!--Result:-->
-```
-ObservableMixin methods: ['get_next', 'hot_latest', 'observable', 'pure_observable']
-```
 
 ## Getting Values Synchronously
 
-### `getter_streaming()` - Continuously updated latest value
+Sometimes you don't want a stream - you just want to call a function and get the latest value. We provide two approaches:
 
-Returns a callable that always returns the most recent value:
+|                  | `getter_hot()`                 | `getter_cold()`                  |
+|------------------|--------------------------------|----------------------------------|
+| **Subscription** | Stays active in background     | Fresh subscription each call     |
+| **Read speed**   | Instant (value already cached) | Slower (waits for value)         |
+| **Resources**    | Keeps connection open          | Opens/closes each call           |
+| **Use when**     | Frequent reads, need latest    | Occasional reads, save resources |
+
+**Prefer `getter_cold()`** when you can afford to wait and warmup isn't expensive. It's simpler (no cleanup needed) and doesn't hold resources. Only use `getter_hot()` when you need instant reads or the source is expensive to start.
+
+### `getter_hot()` - Background subscription, instant reads
+
+Subscribes immediately and keeps updating in the background. Each call returns the cached latest value instantly.
 
 ```python session=sync
 import time
 import reactivex as rx
 from reactivex import operators as ops
-from dimos.utils.reactive import getter_streaming
+from dimos.utils.reactive import getter_hot
 
 source = rx.interval(0.1).pipe(ops.take(10))
-get_val = getter_streaming(source, timeout=5.0)
+get_val = getter_hot(source, timeout=5.0)
 
-print("first call:", get_val())
+print("first call:", get_val())  # instant - value already there
 time.sleep(0.35)
-print("after 350ms:", get_val())
+print("after 350ms:", get_val())  # instant - returns cached latest
 time.sleep(0.35)
 print("after 700ms:", get_val())
 
-get_val.dispose()
+get_val.dispose()  # Don't forget to clean up!
 ```
 
 <!--Result:-->
@@ -367,21 +463,20 @@ after 350ms: 3
 after 700ms: 6
 ```
 
+### `getter_cold()` - Fresh subscription each call
 
-### `getter_ondemand()` - Fresh value each call
-
-Each call subscribes, waits for one value, and unsubscribes:
+Each call creates a new subscription, waits for one value, and cleans up. Slower but doesn't hold resources:
 
 ```python session=sync
-from dimos.utils.reactive import getter_ondemand
+from dimos.utils.reactive import getter_cold
 
 source = rx.of(0, 1, 2, 3, 4)
-get_val = getter_ondemand(source, timeout=5.0)
+get_val = getter_cold(source, timeout=5.0)
 
-# Each call re-subscribes to the cold observable
-print("call 1:", get_val())
-print("call 2:", get_val())
-print("call 3:", get_val())
+# Each call creates fresh subscription, gets first value
+print("call 1:", get_val())  # subscribes, gets 0, disposes
+print("call 2:", get_val())  # subscribes again, gets 0, disposes
+print("call 3:", get_val())  # subscribes again, gets 0, disposes
 ```
 
 <!--Result:-->
@@ -460,13 +555,12 @@ print("results:", results)
 <!--Result:-->
 ```
 cleaned up
-<reactivex.disposable.disposable.Disposable object at 0x7f9ef092c230>
 results: ['first', 'second', 'DONE']
 ```
 
-## Disposing Subscriptions
+## CompositeDIsposable
 
-Always dispose subscriptions when done to prevent leaks:
+As we know we can always dispose subscriptions when done to prevent leaks:
 
 ```python session=dispose
 import time
@@ -515,19 +609,19 @@ after dispose: True
 
 ## Reference
 
-| Operator | Purpose | Example |
-|----------|---------|---------|
-| `map(fn)` | Transform each value | `ops.map(lambda x: x * 2)` |
-| `filter(pred)` | Keep values matching predicate | `ops.filter(lambda x: x > 0)` |
-| `take(n)` | Take first n values | `ops.take(10)` |
-| `first()` | Take first value only | `ops.first()` |
-| `sample(sec)` | Emit latest every interval | `ops.sample(0.5)` |
-| `throttle_first(sec)` | Emit first, block for interval | `ops.throttle_first(0.5)` |
-| `flat_map(fn)` | Map + flatten nested observables | `ops.flat_map(lambda x: rx.of(x, x))` |
-| `observe_on(sched)` | Switch scheduler | `ops.observe_on(pool_scheduler)` |
-| `replay(n)` | Cache last n values for late subscribers | `ops.replay(buffer_size=1)` |
-| `ref_count()` | Auto-connect/disconnect shared observable | `ops.ref_count()` |
-| `share()` | Shorthand for `publish().ref_count()` | `ops.share()` |
-| `timeout(sec)` | Error if no value within timeout | `ops.timeout(5.0)` |
+| Operator              | Purpose                                   | Example                               |
+|-----------------------|-------------------------------------------|---------------------------------------|
+| `map(fn)`             | Transform each value                      | `ops.map(lambda x: x * 2)`            |
+| `filter(pred)`        | Keep values matching predicate            | `ops.filter(lambda x: x > 0)`         |
+| `take(n)`             | Take first n values                       | `ops.take(10)`                        |
+| `first()`             | Take first value only                     | `ops.first()`                         |
+| `sample(sec)`         | Emit latest every interval                | `ops.sample(0.5)`                     |
+| `throttle_first(sec)` | Emit first, block for interval            | `ops.throttle_first(0.5)`             |
+| `flat_map(fn)`        | Map + flatten nested observables          | `ops.flat_map(lambda x: rx.of(x, x))` |
+| `observe_on(sched)`   | Switch scheduler                          | `ops.observe_on(pool_scheduler)`      |
+| `replay(n)`           | Cache last n values for late subscribers  | `ops.replay(buffer_size=1)`           |
+| `ref_count()`         | Auto-connect/disconnect shared observable | `ops.ref_count()`                     |
+| `share()`             | Shorthand for `publish().ref_count()`     | `ops.share()`                         |
+| `timeout(sec)`        | Error if no value within timeout          | `ops.timeout(5.0)`                    |
 
 See [RxPY documentation](https://rxpy.readthedocs.io/) for complete operator reference.
