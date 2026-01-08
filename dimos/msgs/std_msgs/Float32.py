@@ -56,4 +56,3 @@ class Float32(LCMFloat32):  # type: ignore[misc]
         ros_msg = ROSFloat32()  # type: ignore[no-untyped-call]
         ros_msg.data = float(self.data)
         return ros_msg
-

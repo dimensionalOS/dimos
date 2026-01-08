@@ -103,9 +103,9 @@ quest3_teleop = autoconnect(
         ("right_controller_delta", PoseStamped): LCMTransport(
             "/quest3/right_controller_delta", PoseStamped
         ),
-            # Gripper values (0.0-1.0)
-            ("left_trigger", Float32): LCMTransport("/quest3/left_trigger", Float32),
-            ("right_trigger", Float32): LCMTransport("/quest3/right_trigger", Float32),
+        # Gripper values (0.0-1.0)
+        ("left_trigger", Float32): LCMTransport("/quest3/left_trigger", Float32),
+        ("right_trigger", Float32): LCMTransport("/quest3/right_trigger", Float32),
     }
 )
 

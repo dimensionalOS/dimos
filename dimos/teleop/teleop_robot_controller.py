@@ -446,7 +446,9 @@ class TeleopRobotController(Module):
                         right_gripper_val = self._right_gripper_value
 
                     if self.config.enable_left_arm:
-                        if self.left_gripper_command and hasattr(self.left_gripper_command, "publish"):
+                        if self.left_gripper_command and hasattr(
+                            self.left_gripper_command, "publish"
+                        ):
                             try:
                                 # Convert float to bool: > 0.5 = closed
                                 left_gripper_closed = left_gripper_val > 0.5
@@ -455,7 +457,9 @@ class TeleopRobotController(Module):
                                 logger.debug(f"Failed to publish left gripper command: {e}")
 
                     if self.config.enable_right_arm:
-                        if self.right_gripper_command and hasattr(self.right_gripper_command, "publish"):
+                        if self.right_gripper_command and hasattr(
+                            self.right_gripper_command, "publish"
+                        ):
                             try:
                                 # Convert float to bool: > 0.5 = closed
                                 right_gripper_closed = right_gripper_val > 0.5
