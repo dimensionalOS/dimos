@@ -73,7 +73,7 @@ class Detection2DModule(Module):
         self.vlm_detections_subject = Subject()  # type: ignore[var-annotated]
         self.previous_detection_count = 0
 
-    def process_image_frame(self, image: Image) -> ImageDetections2D[Any]:
+    def process_image_frame(self, image: Image) -> ImageDetections2D:
         imageDetections = self.detector.process_image(image)
         if not self.config.filter:
             return imageDetections
@@ -88,10 +88,10 @@ class Detection2DModule(Module):
         )
 
     @simple_mcache
-    def detection_stream_2d(self) -> Observable[ImageDetections2D[Any]]:
+    def detection_stream_2d(self) -> Observable[ImageDetections2D]:
         return backpressure(self.sharp_image_stream().pipe(ops.map(self.process_image_frame)))
 
-    def track(self, detections: ImageDetections2D[Any]) -> None:
+    def track(self, detections: ImageDetections2D) -> None:
         sensor_frame = self.tf.get("sensor", "camera_optical", detections.image.ts, 5.0)
 
         if not sensor_frame:
@@ -144,7 +144,7 @@ class Detection2DModule(Module):
             lambda det: self.annotations.publish(det.to_foxglove_annotations())
         )
 
-        def publish_cropped_images(detections: ImageDetections2D[Any]) -> None:
+        def publish_cropped_images(detections: ImageDetections2D) -> None:
             for index, detection in enumerate(detections[:3]):
                 image_topic = getattr(self, "detected_image_" + str(index))
                 image_topic.publish(detection.cropped_image())

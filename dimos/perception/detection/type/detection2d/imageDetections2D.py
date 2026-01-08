@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
     from dimos.msgs.vision_msgs import Detection2DArray
 
-T2D = TypeVar("T2D", bound=Detection2D)
+T2D = TypeVar("T2D", bound=Detection2D, default=Detection2DBBox)
 
 
 class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):

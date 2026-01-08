@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import Any
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import ImageDetections2D
@@ -21,4 +20,4 @@ from dimos.perception.detection.type import ImageDetections2D
 
 class Detector(ABC):
     @abstractmethod
-    def process_image(self, image: Image) -> ImageDetections2D[Any]: ...
+    def process_image(self, image: Image) -> ImageDetections2D: ...

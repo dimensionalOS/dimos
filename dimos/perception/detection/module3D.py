@@ -13,8 +13,6 @@
 # limitations under the License.
 
 
-from typing import Any
-
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
@@ -61,7 +59,7 @@ class Detection3DModule(Detection2DModule):
 
     def process_frame(
         self,
-        detections: ImageDetections2D[Any],
+        detections: ImageDetections2D,
         pointcloud: PointCloud2,
         transform: Transform,
     ) -> ImageDetections3DPC:
@@ -140,7 +138,7 @@ class Detection3DModule(Detection2DModule):
         if isinstance(result, str) or not result or not len(result):
             return None  # type: ignore[return-value]
 
-        detections: ImageDetections2D[Any] = result
+        detections: ImageDetections2D = result
 
         print(detections)
         if not len(detections):
@@ -150,7 +148,7 @@ class Detection3DModule(Detection2DModule):
         pc = self.pointcloud.get_next()
         transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
 
-        detections3d = self.process_frame(detections, pc, transform)  # type: ignore[arg-type]
+        detections3d = self.process_frame(detections, pc, transform)
 
         if len(detections3d):
             return detections3d[0].pose  # type: ignore[no-any-return]

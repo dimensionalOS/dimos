@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
-
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
     TextAnnotation,
@@ -58,7 +56,7 @@ class ReidModule(Module):
 
         self.idsystem = idsystem
 
-    def detections_stream(self) -> Observable[ImageDetections2D[Any]]:
+    def detections_stream(self) -> Observable[ImageDetections2D]:
         return backpressure(
             align_timestamped(
                 self.image.pure_observable(),
@@ -67,7 +65,7 @@ class ReidModule(Module):
                 ),
                 match_tolerance=0.0,
                 buffer_size=2.0,
-            ).pipe(ops.map(lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)))  # type: ignore[misc, arg-type]
+            ).pipe(ops.map(lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)))  # type: ignore[misc]
         )
 
     @rpc
@@ -78,7 +76,7 @@ class ReidModule(Module):
     def stop(self) -> None:
         super().stop()
 
-    def ingress(self, imageDetections: ImageDetections2D[Any]) -> None:
+    def ingress(self, imageDetections: ImageDetections2D) -> None:
         text_annotations = []
 
         for detection in imageDetections:

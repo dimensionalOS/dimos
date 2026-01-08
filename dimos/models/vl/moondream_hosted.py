@@ -74,7 +74,7 @@ class MoondreamHostedVlModel(VlModel):
         objects = result.get("objects", [])
 
         # Convert to ImageDetections2D
-        image_detections: ImageDetections2D[Detection2DBBox] = ImageDetections2D(image)
+        image_detections = ImageDetections2D(image)
         height, width = image.height, image.width
 
         for track_id, obj in enumerate(objects):
