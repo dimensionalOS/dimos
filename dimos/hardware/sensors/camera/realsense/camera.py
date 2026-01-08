@@ -28,8 +28,8 @@ from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
-    StereoCameraConfig,
-    StereoCameraHardware,
+    DepthCameraConfig,
+    DepthCameraHardware,
 )
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo
@@ -49,7 +49,7 @@ def default_base_transform() -> Transform:
 
 
 @dataclass
-class RealSenseCameraConfig(ModuleConfig, StereoCameraConfig):
+class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     width: int = 848
     height: int = 480
     fps: int = 15
@@ -64,7 +64,7 @@ class RealSenseCameraConfig(ModuleConfig, StereoCameraConfig):
     serial_number: str | None = None
 
 
-class RealSenseCamera(StereoCameraHardware, Module, perception.StereoCamera):
+class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]

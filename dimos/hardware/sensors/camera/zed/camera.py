@@ -28,8 +28,8 @@ from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
-    StereoCameraConfig,
-    StereoCameraHardware,
+    DepthCameraConfig,
+    DepthCameraHardware,
 )
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo
@@ -49,7 +49,7 @@ def default_base_transform() -> Transform:
 
 
 @dataclass
-class ZEDCameraConfig(ModuleConfig, StereoCameraConfig):
+class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
     width: int = 1280
     height: int = 720
     fps: int = 15
@@ -74,7 +74,7 @@ class ZEDCameraConfig(ModuleConfig, StereoCameraConfig):
     world_frame: str = "world"
 
 
-class ZEDCamera(StereoCameraHardware, Module, perception.StereoCamera):
+class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]

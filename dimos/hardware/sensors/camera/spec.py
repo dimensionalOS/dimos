@@ -46,8 +46,8 @@ class CameraHardware(ABC, Configurable[CameraConfigT], Generic[CameraConfigT]):
         pass
 
 
-class StereoCameraConfig(CameraConfig):
-    """Protocol for stereo camera configuration."""
+class DepthCameraConfig(CameraConfig):
+    """Protocol for depth camera configuration."""
 
     camera_name: str
     base_frame_id: str
@@ -59,10 +59,10 @@ class StereoCameraConfig(CameraConfig):
     camera_info_fps: float
 
 
-class StereoCameraHardware(ABC):
-    """Abstract class for stereo camera modules (RealSense, ZED, etc.)."""
+class DepthCameraHardware(ABC):
+    """Abstract class for depth camera modules (RealSense, ZED, etc.)."""
 
-    config: StereoCameraConfig
+    config: DepthCameraConfig
 
     @abstractmethod
     def get_color_camera_info(self) -> CameraInfo | None:
