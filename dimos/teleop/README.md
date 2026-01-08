@@ -65,56 +65,34 @@ Robot Driver → Robot
 **Features**: AR mode, dual-arm control, trigger buttons
 
 ```python
-from dimos.teleop.quest3 import Quest3TeleopModule
+from dimos.teleop.teleop_blueprints import quest3_teleop
 
-teleop = Quest3TeleopModule()
-teleop.start()
+coordinator = quest3_teleop.build()
+coordinator.loop()
 # Open https://your-ip:8443 on Quest 3
 ```
 
-See [Quest3 README](quest3/README.md) for details.
-
 ## Quick Start
 
-### 1. Choose Your Device
+**Use the pre-built blueprint** - it's ready to run:
 
 ```python
-# Quest 3 VR
-from dimos.teleop.quest3 import Quest3TeleopModule
-device = Quest3TeleopModule()
+from dimos.teleop.teleop_blueprints import quest3_teleop
 
-# Future: SpaceMouse, other VR headsets, etc.
-```
-
-### 2. Start Teleoperation
-
-```python
-device.start()
-# Press calibration button (X button for Quest3)
-# Move controllers to control robot
-```
-
-### 3. Use with Blueprint
-
-```python
-from dimos.core.blueprints import autoconnect
-from dimos.teleop.quest3 import quest3_teleop_module
-from dimos.teleop import teleop_robot_controller
-
-system = autoconnect(
-    quest3_teleop_module(
-        enable_left_arm=True,
-        enable_right_arm=True,
-    ),
-    teleop_robot_controller(
-        driver_module_name="YourDriver",
-    ),
-    your_robot_blueprint,
-)
-
-coordinator = system.build()
+# Pre-built blueprint with Quest3 + TeleopRobotController
+coordinator = quest3_teleop.build()
 coordinator.loop()
 ```
+
+That's it! The blueprint includes:
+- Quest3TeleopModule (VR calibration, delta computation)
+- TeleopRobotController (robot calibration, delta application)
+- All LCM topic connections configured
+
+Then:
+1. Open `https://your-ip:8443/` on Quest 3
+2. Press X button to calibrate and start teleoperation
+3. Move controllers to control robot
 
 ## How It Works
 
@@ -140,18 +118,6 @@ Controllers → Device Module → Delta Poses → Arm Controller → Robot
 - ✅ Robot-agnostic (works with any robot)
 - ✅ Recalibrable (just press button again)
 
-## Creating New Devices
-
-See [`base/README.md`](base/README.md) for instructions on creating new teleoperation devices.
-
-Example devices you could add:
-- SpaceMouse (USB 6DOF controller)
-- Other VR headsets (HTC Vive, Valve Index)
-- Haptic devices (Force Dimension Omega)
-- Game controllers with custom mapping
-- Mobile phone IMU-based control
-
-
 
 ## LCM Topics
 
@@ -159,23 +125,9 @@ All devices publish:
 
 - `left_controller_delta: Out[PoseStamped]` - Left delta pose
 - `right_controller_delta: Out[PoseStamped]` - Right delta pose
-- `left_trigger: Out[Bool]` - Left trigger state
-- `right_trigger: Out[Bool]` - Right trigger state
+- `left_trigger: Out[Float32]` - Left trigger/gripper value (0.0-1.0)
+- `right_trigger: Out[Float32]` - Right trigger/gripper value (0.0-1.0)
 
-## Components
-
-- **[`base/`](base/)** - Base teleoperation module (abstract)
-- **[`quest3/`](quest3/)** - Quest 3 VR implementation
-- **[`teleop_robot_controller.py`](teleop_robot_controller.py)** - Applies deltas to robot
-- **[`teleop_blueprints.py`](teleop_blueprints.py)** - Pre-built system blueprints
-
-## Benefits of This Architecture
-
-1. **Reusability**: Common code shared across all devices
-2. **Consistency**: Same behavior and interface for all devices
-3. **Maintainability**: Bug fixes in base class benefit all devices
-4. **Rapid Development**: New devices in ~50-100 lines of code
-5. **Device Agnostic**: Robot doesn't know/care what device is used
 
 ## Example: Full System
 
@@ -199,7 +151,7 @@ from dimos.teleop import teleop_robot_controller
 my_system = (
     autoconnect(
         quest3_teleop_module(signaling_port=8443),
-        teleop_robot_controller(driver_module_name="XArmDriver"),
+        teleop_robot_controller(driver_module_name="RobotDriver"),
         your_robot,
     )
     .transports({
@@ -211,21 +163,6 @@ my_system = (
 coordinator = my_system.build()
 coordinator.loop()
 ```
-
-## Troubleshooting
-
-### Device Not Publishing Deltas
-1. Press calibration button to capture initial poses
-2. Check `is_vr_calibrated()` returns True
-3. Move controllers and check LCM topics
-
-### Robot Not Moving
-1. Ensure TeleopRobotController received first delta (auto-calibrates)
-2. Check robot driver is running
-3. Verify LCM topic connections in blueprint
-
-### Want to Recalibrate
-Just call `reset_calibration()` and press calibration button again.
 
 ## Related Documentation
 

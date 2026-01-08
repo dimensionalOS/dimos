@@ -44,55 +44,32 @@ teleop.start()
 
 ```
 Quest 3 Browser
-    ↓ Opens: https://your-ip:8443/
-    ↓ Loads: Standalone HTML/JS VR client (no build step!)
-    ↓ Connects: wss://your-ip:8443/ws
-    ↓ X button pressed → calibrate_vr() via WebSocket
+    ↓ Opens https://your-ip:8443/ (WebXR)
+    ↓ X button → calibrate_vr() via WebSocket
     ↓
-FastAPI Server (Quest3-specific)
-    ↓ Serves static HTML + WebSocket
-    ↓ Auto-generates SSL certificates
-    ↓ Receives tracking data (left/right controller poses)
-    ↓ Calls: update_controller_poses()
+FastAPI Server
+    ↓ Receives tracking data (controller poses)
     ↓
 Quest3TeleopModule (inherits BaseTeleopModule)
-    ├── FastAPI/WebSocket server (Quest3-specific)
-    ├── X button handler (Quest3-specific)
-    └── Calibration, delta computation, publishing (from base)
-        ↓ Publishes delta pose topics (PoseStamped)
-        ↓
+    ↓ Computes delta poses (current - initial)
+    ↓ Publishes delta poses (PoseStamped)
+    ↓
 TeleopRobotController
-    ↓ Receives delta poses from Quest3TeleopModule
     ↓ Auto-calibrates robot on first delta
-    ↓ Calculates: target = initial_robot + delta
+    ↓ Applies: target = initial_robot + delta
     ↓ Publishes cartesian commands (Pose)
     ↓
 Robot Driver
-    ↓ Executes cartesian commands
+    ↓ Executes commands
 ```
 
-### What's Inherited from BaseTeleopModule
-
-Quest3TeleopModule inherits these features:
-- ✅ Calibration logic (capture initial controller poses)
-- ✅ Delta pose computation (current - initial)
-- ✅ LCM publishing (delta poses + trigger states)
-- ✅ Rerun visualization
-- ✅ Standard RPC interface
-
-Quest3-specific implementation:
-- 🔧 FastAPI/WebSocket server for VR headset
-- 🔧 HTTPS certificate generation
-- 🔧 X button handler
 
 ## Key Features
 
-✅ Pure Python + vanilla JS
-✅ Press X to start/stop teleoperation
-✅ Captures initial poses on first X press
-✅ Robot follows controller movement relative to initial pose
-✅ Low latency controller data
-✅ AR mode
+Press X to start/stop teleoperation
+Captures initial poses on first X press
+Robot follows controller movement relative to initial pose
+AR mode
 
 ## Configuration
 
@@ -122,16 +99,6 @@ module = Quest3TeleopModule(config=config)
 module.start()
 ```
 
-
-## RPC Methods
-
-All inherited from `BaseTeleopModule`:
-- `start()` → Start module and FastAPI server
-- `stop()` → Stop module and server
-- `calibrate_vr()` → Calibrate VR (capture initial controller poses)
-- `reset_calibration()` → Reset VR calibration
-- `is_vr_calibrated()` → Check if VR is calibrated
-- `get_status()` → Get teleoperation status
 
 ## WebSocket Protocol
 
@@ -176,23 +143,7 @@ Inherited from `BaseTeleopModule`:
 **Note**: These are **delta poses**, not absolute poses. TeleopRobotController applies these deltas to the robot's initial pose.
 
 
-### WebSocket Connection Fails
-**Check**:
-1. Server is running: `curl https://your-ip:8443/health`
-2. Firewall allows port: `sudo ufw allow 8443`
-3. Same network (Quest 3 and server)
-4. Correct IP (not localhost)
-
-### No Tracking Data / Robot Not Moving
-1. **Press X button** to calibrate VR (captures initial controller poses)
-2. **Move controllers** - deltas are published automatically after calibration
-3. Verify WebSocket connection in browser console
-4. Check server logs: `is_vr_calibrated()` should return True
-5. TeleopRobotController auto-calibrates robot on first delta
-6. Ensure controllers are being tracked in VR
-
 ## Development
-
 
 ### Standalone Server Testing
 ```bash
