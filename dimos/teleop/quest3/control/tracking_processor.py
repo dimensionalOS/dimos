@@ -145,18 +145,18 @@ class TrackingProcessor:
             self.right_wrist_pose = wrist_mat
 
     def _extract_gripper_value(self, tracking_data: dict[str, Any]) -> float:
-        """Extract and validate gripper value from tracking data.
+        """Extract gripper value from tracking data.
 
         Args:
             tracking_data: Controller data containing 'trigger'
 
         Returns:
-            Gripper value clamped to [0.0, 1.0]
+            Gripper value (0.0-1.0) from VR controller trigger
         """
         gripper_value = tracking_data.get("trigger", 0.0)
         try:
-            gripper_value = float(gripper_value)
-            return max(0.0, min(1.0, gripper_value))
+            # VR trigger value is already 0.0-1.0, just convert to float
+            return float(gripper_value)
         except (ValueError, TypeError):
-            logger.warning("Invalid trigger value: %s", gripper_value)
+            logger.warning("Invalid trigger value: %s, using 0.0", gripper_value)
             return 0.0
