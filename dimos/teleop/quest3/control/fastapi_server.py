@@ -25,6 +25,7 @@ Now includes HTTPS support and serves the standalone HTML VR client.
 from __future__ import annotations
 
 import asyncio
+import threading
 from pathlib import Path
 import subprocess
 import time
@@ -54,7 +55,7 @@ class ConnectionManager:
 
     def __init__(self):
         self.active_connections: list[WebSocket] = []
-        self.active_connections_lock = asyncio.Lock()
+        self.active_connections_lock = threading.Lock()
         self.data_callback: Callable[[Pose, Pose, float, float]] | None = None
         self.command_callback: Callable[[str, WebSocket]] | None = None
 
