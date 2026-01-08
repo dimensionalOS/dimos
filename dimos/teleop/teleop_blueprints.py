@@ -16,7 +16,7 @@
 Blueprints for Quest3 teleoperation.
 
 This module provides declarative blueprints for combining Quest3TeleopModule
-and TeleopArmController for VR teleoperation with any robot arm.
+and TeleopRobotController for VR teleoperation with any robot arm.
 
 Architecture:
     Quest3TeleopModule (VR calibration, delta computation)
@@ -24,7 +24,7 @@ Architecture:
         ↓ Computes: delta = current_controller - initial_controller
         ↓ Publishes: delta poses (PoseStamped)
         ↓
-    TeleopArmController (Robot calibration, delta application)
+    TeleopRobotController (Robot calibration, delta application)
         ↓ First delta → auto-calibrate robot
         ↓ Computes: target = initial_robot + delta
         ↓ Publishes: cartesian commands (PoseStamped)
@@ -38,15 +38,15 @@ Usage:
     coordinator.loop()
 
     # Or build your own composition with a specific driver:
-    from dimos.teleop.quest3.teleop_module import quest3_teleop_module
-    from dimos.teleop.teleop_arm_controller import teleop_arm_controller
+    from dimos.teleop.quest3.quest3_teleop_module import quest3_teleop_module
+    from dimos.teleop.teleop_robot_controller import teleop_robot_controller
     from dimos.core.blueprints import autoconnect
 
     my_system = autoconnect(
         quest3_teleop_module(
             signaling_port=8443,
         ),
-        teleop_arm_controller(
+        teleop_robot_controller(
             driver_module_name="MyRobotDriver",
             enable_left_arm=True,
         ),
@@ -58,23 +58,23 @@ from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.std_msgs import Bool
-from dimos.teleop.quest3.teleop_module import quest3_teleop_module
-from dimos.teleop.teleop_arm_controller import teleop_arm_controller
+from dimos.teleop.quest3.quest3_teleop_module import quest3_teleop_module
+from dimos.teleop.teleop_robot_controller import teleop_robot_controller
 
 # =============================================================================
 # Quest3 Teleoperation Blueprint
 # =============================================================================
 # Combines:
 #   - Quest3TeleopModule: VR calibration + delta computation
-#   - TeleopArmController: Robot calibration + delta application
+#   - TeleopRobotController: Robot calibration + delta application
 #
 # Data flow:
-#   Quest3TeleopModule.left_controller_delta ──► TeleopArmController.left_controller_delta
-#   Quest3TeleopModule.right_controller_delta ──► TeleopArmController.right_controller_delta
-#   Quest3TeleopModule.left_trigger ──► TeleopArmController.left_trigger
-#   Quest3TeleopModule.right_trigger ──► TeleopArmController.right_trigger
-#   TeleopArmController.left_cartesian_command ──► Robot Driver (via LCM)
-#   TeleopArmController.right_cartesian_command ──► Robot Driver (via LCM)
+#   Quest3TeleopModule.left_controller_delta ──► TeleopRobotController.left_controller_delta
+#   Quest3TeleopModule.right_controller_delta ──► TeleopRobotController.right_controller_delta
+#   Quest3TeleopModule.left_trigger ──► TeleopRobotController.left_trigger
+#   Quest3TeleopModule.right_trigger ──► TeleopRobotController.right_trigger
+#   TeleopRobotController.left_cartesian_command ──► Robot Driver (via LCM)
+#   TeleopRobotController.right_cartesian_command ──► Robot Driver (via LCM)
 # =============================================================================
 
 quest3_teleop = (
@@ -85,8 +85,10 @@ quest3_teleop = (
             use_https=True,  # Enable HTTPS for Quest 3 WebXR
             enable_left_arm=True,
             enable_right_arm=True,
+            visualize_in_rerun=True,
+            safety_limits=True,
         ),
-        teleop_arm_controller(
+        teleop_robot_controller(
             driver_module_name="DummyDriver",
             dummy_driver=True,  # Skip RPC calls, use zeros for initial pose
             control_frequency=50.0,  # Hz - control loop frequency
@@ -96,7 +98,7 @@ quest3_teleop = (
     )
     .transports(
         {
-            # Delta poses from Quest3TeleopModule to TeleopArmController
+            # Delta poses from Quest3TeleopModule to TeleopRobotController
             ("left_controller_delta", PoseStamped): LCMTransport(
                 "/quest3/left_controller_delta", PoseStamped
             ),
