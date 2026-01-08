@@ -24,12 +24,12 @@ from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
 from reactivex.observable import Observable
 
 from dimos.core import In, Out, rpc
+from dimos.models.vl.qwen import QwenVlModel  # ← Correct path
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.module3D import Detection3DModule
 from dimos.perception.detection.type import ImageDetections3DPC, TableStr
-from dimos.perception.detection.type.detection3d import Detection3DPC
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -41,6 +41,8 @@ class Object3D(Detection3DPC):
     center: Vector3 | None = None  # type: ignore[assignment]
     track_id: str | None = None  # type: ignore[assignment]
     detections: int = 0
+    yolo_label: str | None = None  # Original YOLO detection class
+    vlm_label: str | None = None  # VLM-enriched description
 
     def to_repr_dict(self) -> dict[str, Any]:
         if self.center is None:
@@ -94,6 +96,9 @@ class Object3D(Detection3DPC):
         else:
             new_object.best_detection = self.best_detection
 
+        new_object.yolo_label = self.yolo_label
+        new_object.vlm_label = self.vlm_label
+
         return new_object
 
     def get_image(self) -> Image | None:
@@ -145,6 +150,9 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     goto: Callable[[PoseStamped], Any] | None = None
 
+    _vlm_model: QwenVlModel | None = None
+    enable_vlm_enrichment: bool = True
+
     color_image: In[Image]
     pointcloud: In[PointCloud2]
 
@@ -189,9 +197,53 @@ class ObjectDBModule(Detection3DModule, TableStr):
         self.objects = {}
         self.remembered_locations = {}
 
+    def vlm_model(self):
+        """Lazy load VLM model."""
+        if self._vlm_model is None and self.enable_vlm_enrichment:
+            logger.info("Initializing VLM model for label enrichment")
+            self._vlm_model = QwenVlModel()
+        return self._vlm_model
+
+    def _enrich_with_vlm(self, obj: Object3D) -> str:
+        """Generate rich description using VLM.
+
+        Args:
+            obj: Object3D with detection
+
+        Returns:
+            Rich description string
+        """
+        if not self.enable_vlm_enrichment or self.vlm_model is None:
+            return obj.yolo_label  # Fall back to YOLO label
+
+        try:
+            # Get image from best detection
+            image = obj.get_image()
+            if image is None:
+                logger.warning(f"No image for {obj.track_id}, using YOLO label")
+                return obj.yolo_label
+
+            # Generate rich description with VLM
+            prompt = f"Describe this {obj.yolo_label} in detail. Include color, appearance, and distinguishing features. Keep it concise (under 10 words)."
+
+            description = self.vlm_model.query(image, prompt)
+
+            # Clean up the description
+            rich_label = description.strip()
+
+            logger.info(f"VLM enrichment: '{obj.yolo_label}' → '{rich_label}'")
+            return rich_label
+
+        except Exception as e:
+            logger.error(f"VLM enrichment failed for {obj.track_id}: {e}")
+            return obj.yolo_label  # Fall back to YOLO label
+
     def closest_object(self, detection: Detection3DPC) -> Object3D | None:
-        # Filter objects to only those with matching names
-        matching_objects = [obj for obj in self.objects.values() if obj.name == detection.name]
+        matching_objects = [
+            obj
+            for obj in self.objects.values()
+            if obj.yolo_label == detection.name  # ← Use yolo_label for tracking
+        ]
 
         if not matching_objects:
             return None
@@ -214,17 +266,45 @@ class ObjectDBModule(Detection3DModule, TableStr):
         else:
             return self.create_new_object(detection)
 
-    def add_to_object(self, closest: Object3D, detection: Detection3DPC):  # type: ignore[no-untyped-def]
+    def add_to_object(self, closest: Object3D, detection: Detection3DPC):
+        """Add detection to existing object."""
         new_object = closest + detection
+
+        # Re-enrich every 5 detections
+        if self.enable_vlm_enrichment and new_object.detections % 5 == 0:
+            logger.info(
+                f"Re-enriching {new_object.track_id} after {new_object.detections} detections"
+            )
+            rich_label = self._enrich_with_vlm(new_object)
+            new_object.vlm_label = rich_label
+            new_object.name = rich_label
+        else:
+            new_object.name = new_object.vlm_label or new_object.yolo_label
+
         if closest.track_id is not None:
             self.objects[closest.track_id] = new_object
+
         return new_object
 
-    def create_new_object(self, detection: Detection3DPC):  # type: ignore[no-untyped-def]
+    def create_new_object(self, detection: Detection3DPC):
+        """Create new object and enrich with VLM."""
         new_object = Object3D(f"obj_{self.cnt}", detection)
+
+        # Enrich label with VLM
+        if self.enable_vlm_enrichment and new_object.track_id is not None:
+            rich_label = self._enrich_with_vlm(new_object)
+            new_object.vlm_label = rich_label
+            new_object.name = rich_label
+        else:
+            new_object.name = new_object.yolo_label
+
         if new_object.track_id is not None:
             self.objects[new_object.track_id] = new_object
+
         self.cnt += 1
+        logger.info(
+            f"Created object {new_object.track_id}: YOLO='{new_object.yolo_label}' VLM='{new_object.vlm_label}'"
+        )
         return new_object
 
     def agent_encode(self) -> str:
