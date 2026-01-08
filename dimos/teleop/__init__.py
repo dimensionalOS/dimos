@@ -15,8 +15,11 @@
 """Teleoperation modules for dimos."""
 
 from dimos.teleop.base import BaseTeleopConfig, BaseTeleopModule
+from dimos.teleop.quest3 import Quest3TeleopConfig, Quest3TeleopModule
 
 __all__ = [
     "BaseTeleopConfig",
     "BaseTeleopModule",
+    "Quest3TeleopConfig",
+    "Quest3TeleopModule",
 ]
