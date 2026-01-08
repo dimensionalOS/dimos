@@ -47,12 +47,12 @@ class TeleopArmControllerConfig(ModuleConfig):
     """Configuration for Teleop Arm Controller."""
 
     # Driver settings
-    driver_module_name: str = "XArmDriver"  # Name of the driver module to get robot pose from
+    driver_module_name: str = "RobotDriver"  # Name of the driver module to get robot pose from
 
     # Control settings
     control_frequency: float = 50.0  # Hz - control loop frequency
     enable_left_arm: bool = True
-    enable_right_arm: bool = False
+    enable_right_arm: bool = True
 
     # Safety settings
     workspace_limits: dict[str, tuple[float, float]] | None = None  # Optional workspace limits
@@ -187,7 +187,7 @@ class TeleopArmController(Module):
 
         # Auto-calibrate robot on first delta received
         if not self._robot_calibrated:
-            logger.info("📥 First delta received - auto-calibrating robot...")
+            logger.info("First delta received - auto-calibrating robot...")
             self._calibrate_robot()
 
         with self._state_lock:
@@ -199,7 +199,7 @@ class TeleopArmController(Module):
             self._left_delta_count += 1
             if self._left_delta_count <= 5:
                 logger.info(
-                    f"📥 Received left delta #{self._left_delta_count}: "
+                    f"Received left delta #{self._left_delta_count}: "
                     f"pos=[{delta.position.x:.3f}, {delta.position.y:.3f}, {delta.position.z:.3f}], "
                     f"frame_id={delta.frame_id}"
                 )
@@ -214,7 +214,7 @@ class TeleopArmController(Module):
 
         # Auto-calibrate robot on first delta received
         if not self._robot_calibrated:
-            logger.info("📥 First delta received - auto-calibrating robot...")
+            logger.info("First delta received - auto-calibrating robot...")
             self._calibrate_robot()
 
         with self._state_lock:
@@ -225,7 +225,7 @@ class TeleopArmController(Module):
             self._right_delta_count += 1
             if self._right_delta_count <= 5:
                 logger.info(
-                    f"📥 Received right delta #{self._right_delta_count}: "
+                    f"Received right delta #{self._right_delta_count}: "
                     f"pos=[{delta.position.x:.3f}, {delta.position.y:.3f}, {delta.position.z:.3f}], "
                     f"frame_id={delta.frame_id}"
                 )
@@ -252,7 +252,7 @@ class TeleopArmController(Module):
         Returns:
             True if calibration successful, False otherwise
         """
-        logger.info("🤖 Calibrating robot (getting initial pose)...")
+        logger.info("Calibrating robot (getting initial pose)...")
 
         try:
             driver_name = self.config.driver_module_name
@@ -280,7 +280,7 @@ class TeleopArmController(Module):
                         pose_data.get("yaw", 0.0),
                     )
                     logger.info(
-                        f"✅ Robot initial pose: "
+                        f"Robot initial pose: "
                         f"pos=[{self._left_robot_initial_position.x:.3f}, "
                         f"{self._left_robot_initial_position.y:.3f}, "
                         f"{self._left_robot_initial_position.z:.3f}], "
