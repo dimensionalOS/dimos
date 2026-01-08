@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 # Coordinate frame transformation from VR to robot
-# IMPORTANT: Adjust this matrix to match YOUR robot's coordinate system
 VR_TO_ROBOT_FRAME = np.array(
     [
         [0, 0, -1, 0],  # Robot X-axis = -VR Z-axis (flip forward/back)
@@ -53,7 +52,7 @@ class TrackingProcessor:
     Handles:
     - VR to robot coordinate frame transformation
     - Controller orientation alignment
-    - Safety constraints (Z position clamping)
+    - Safety constraints (Z position clamping) (optional)
     """
 
     def __init__(self) -> None:
@@ -78,7 +77,7 @@ class TrackingProcessor:
             Tuple of (left_pose, right_pose, left_gripper, right_gripper) or None if invalid
         """
         tracking_type = event.get("type")
-        if tracking_type != "controller":
+        if tracking_type != "controller": # TODO: handle hand tracking type
             logger.debug("Ignoring non-controller tracking type: %s", tracking_type)
             return None
 
@@ -90,7 +89,7 @@ class TrackingProcessor:
                     logger.warning("Invalid tracking data format for %s", side)
                     continue
 
-                self._process_controller(tracking_data, side, tracking_type)
+                self._process_controller(tracking_data, side)
 
         # Get controller poses
         left_pose = self.left_wrist_pose.copy()
@@ -99,18 +98,17 @@ class TrackingProcessor:
         return left_pose, right_pose, self.left_gripper_value, self.right_gripper_value
 
     def _process_controller(
-        self, tracking_data: dict[str, Any], side: str, tracking_type: str
+        self, tracking_data: dict[str, Any], side: str
     ) -> None:
         """Process single controller's tracking data.
 
         Args:
             tracking_data: Controller data with 'targetLocation' and 'trigger'
             side: 'left' or 'right'
-            tracking_type: 'controller' or 'hand'
         """
         # Process target location (pose)
         if "targetLocation" in tracking_data:
-            self._process_target_location(tracking_data["targetLocation"], side, tracking_type)
+            self._process_target_location(tracking_data["targetLocation"], side)
 
         # Process gripper (trigger)
         if side == "left":
@@ -119,14 +117,13 @@ class TrackingProcessor:
             self.right_gripper_value = self._extract_gripper_value(tracking_data)
 
     def _process_target_location(
-        self, target_location: list[float], side: str, tracking_type: str
+        self, target_location: list[float], side: str
     ) -> None:
         """Process controller pose from VR space to robot space.
 
         Args:
             target_location: Flat 16-element transformation matrix (column-major)
             side: 'left' or 'right'
-            tracking_type: 'controller' or 'hand'
         """
         # Convert to 4x4 matrix
         target_matrix_flat = np.array(target_location, dtype=np.float32)
@@ -138,10 +135,9 @@ class TrackingProcessor:
         target_matrix = target_matrix_flat.reshape(4, 4).T
 
         # Rotate controller 90° around Z-axis for gripper alignment
-        if tracking_type == "controller":
-            direction = -1 if side == "right" else 1
-            rotation = Rotation.from_euler("z", 90 * direction, degrees=True)
-            target_matrix[:3, :3] = target_matrix[:3, :3] @ rotation.as_matrix()
+        direction = -1 if side == "right" else 1
+        rotation = Rotation.from_euler("z", 90 * direction, degrees=True)
+        target_matrix[:3, :3] = target_matrix[:3, :3] @ rotation.as_matrix()
 
         # Apply VR to robot frame transformation
         wrist_mat = VR_TO_ROBOT_FRAME @ target_matrix
