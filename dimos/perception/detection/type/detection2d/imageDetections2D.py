@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Generic
+from typing import TYPE_CHECKING, Any, Generic
 
 import cv2
 import numpy as np
@@ -41,7 +41,7 @@ class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):
         cls,
         image: Image,
         ros_detections: Detection2DArray,
-        **kwargs,  # type: ignore[name-defined]
+        **kwargs,
     ) -> ImageDetections2D[Detection2DBBox]:
         """Convert from ROS Detection2DArray message to ImageDetections2D object."""
         detections: list[Detection2DBBox] = []

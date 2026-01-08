@@ -34,7 +34,7 @@ else:
 
 demo_object_scene_registration = autoconnect(
     camera_module,
-    object_scene_registration_module(target_frame="world", prompt_mode=YoloePromptMode.PROMPT),
+    object_scene_registration_module(target_frame="world", prompt_mode=YoloePromptMode.LRPC),
     foxglove_bridge(),
     human_input(),
     llm_agent(),

@@ -21,7 +21,6 @@ import uuid
 
 import cv2
 from dimos_lcm.geometry_msgs import Pose
-from dimos_lcm.vision_msgs import ObjectHypothesis, ObjectHypothesisWithPose
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
@@ -110,27 +109,17 @@ class Object(Detection3D):
 
     def to_ros_detection3d(self) -> ROSDetection3D:
         """Convert to ROS Detection3D message."""
-        msg = ROSDetection3D()
-        msg.header = Header(self.ts, self.frame_id)
-        msg.results = [
-            ObjectHypothesisWithPose(
-                hypothesis=ObjectHypothesis(
-                    class_id=str(self.class_id),
-                    score=self.confidence,
-                )
-            )
-        ]
-
         obb = self.get_oriented_bounding_box()  # type: ignore[no-untyped-call]
-        obb_center = obb.center
-        obb_extent = obb.extent
         orientation = Quaternion.from_rotation_matrix(obb.R)
 
+        msg = ROSDetection3D()
+        msg.header = Header(self.ts, self.frame_id)
+        msg.id = str(self.track_id)
         msg.bbox.center = Pose(
-            position=Vector3(obb_center[0], obb_center[1], obb_center[2]),
+            position=Vector3(obb.center[0], obb.center[1], obb.center[2]),
             orientation=orientation,
         )
-        msg.bbox.size = Vector3(obb_extent[0], obb_extent[1], obb_extent[2])
+        msg.bbox.size = Vector3(obb.extent[0], obb.extent[1], obb.extent[2])
 
         return msg
 

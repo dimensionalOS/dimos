@@ -41,7 +41,7 @@ class ObjectDB:
 
     def __init__(
         self,
-        distance_threshold: float = 0.15,
+        distance_threshold: float = 0.1,
         min_detections_for_permanent: int = 6,
         pending_ttl_s: float = 5.0,
         track_id_ttl_s: float = 2.0,
