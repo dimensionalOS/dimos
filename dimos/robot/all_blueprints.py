@@ -54,6 +54,8 @@ all_blueprints = {
     "demo-remapping": "dimos.robot.unitree_webrtc.demo_remapping:remapping",
     "demo-remapping-transport": "dimos.robot.unitree_webrtc.demo_remapping:remapping_and_transport",
     "demo-error-on-name-conflicts": "dimos.robot.unitree_webrtc.demo_error_on_name_conflicts:blueprint",
+    # Teleop blueprints
+    "quest3-teleop": "dimos.teleop.teleop_blueprints:quest3_teleop",
 }
 
 
@@ -87,6 +89,9 @@ all_modules = {
     "xarm_driver": "dimos.hardware.manipulators.xarm.xarm_driver",
     "cartesian_motion_controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller",
     "joint_trajectory_controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller",
+    # Teleop modules
+    "quest3_teleop_module": "dimos.teleop.quest3.teleop_module",
+    "teleop_arm_controller": "dimos.teleop.teleop_arm_controller",
 }
 
 
