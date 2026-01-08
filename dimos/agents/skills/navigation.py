@@ -53,6 +53,7 @@ class NavigationSkillContainer(SkillModule):
         "WavefrontFrontierExplorer.explore",
         "WavefrontFrontierExplorer.is_exploration_active",
         "ObjectDBModule.lookup",
+        "ObjectDBModule.get_all_detected_objects",
     ]
 
     color_image: In[Image]
@@ -184,7 +185,54 @@ class NavigationSkillContainer(SkillModule):
         else:
             return f"Failed to reach '{object_name}'. Navigation was cancelled or failed."
 
-    # @skill()
+    @skill()
+    def list_detected_objects(self) -> str:
+        """List all objects and people detected by the vision system.
+        
+        Use this skill when the user asks questions about what the robot can see
+        or what objects are in the environment, such as:
+        - "What do you see?"
+        - "What have you detected?"
+        - "What objects are around?"
+        - "List everything you can see"
+        - "What's in the room?"
+        - "Are there any people nearby?"
+        
+        This provides situational awareness of the robot's surroundings based on
+        what the camera system has detected and tracked.
+        
+        Returns:
+            A description of all detected objects with their names and detection counts
+        """
+        if not self._skill_started:
+            raise ValueError(f"{self} has not been started.")
+        
+        # Get objects
+        try:
+            get_all_rpc = self.get_rpc_calls("ObjectDBModule.get_all_detected_objects")
+        except Exception as e:
+            logger.error(f"ObjectDBModule not connected: {e}")
+            return "Error: ObjectDB module not connected. Detection system may not be running."
+        
+        try:
+            objects = get_all_rpc()
+        except Exception as e:
+            logger.error(f"Failed to query ObjectDB: {e}")
+            return "Error: Cannot access detection system"
+        
+        if not objects:
+            return "I haven't detected any objects yet."
+        
+        # Build list of detected objects
+        lines = [f"I've detected {len(objects)} object(s):"]
+        for obj in objects[:10]:  # Limit to 10 most recent
+            lines.append(f"- {obj['name']} ({obj['detections']} detections)")
+        
+        if len(objects) > 10:
+            lines.append(f"... and {len(objects) - 10} more objects")
+        
+        return "\n".join(lines)
+
     def navigate_with_text(self, query: str) -> str:
         """Navigate to a location by querying the existing semantic map..."""
         if not self._skill_started:

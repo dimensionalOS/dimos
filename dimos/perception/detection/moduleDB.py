@@ -24,12 +24,13 @@ from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
 from reactivex.observable import Observable
 
 from dimos.core import In, Out, rpc
-from dimos.models.vl.qwen import QwenVlModel  # ← Correct path
+from dimos.models.vl.qwen import QwenVlModel  
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.module3D import Detection3DModule
 from dimos.perception.detection.type import ImageDetections3DPC, TableStr
+from dimos.perception.detection.type.detection3d import Detection3DPC
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -197,6 +198,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         self.objects = {}
         self.remembered_locations = {}
 
+    @property
     def vlm_model(self):
         """Lazy load VLM model."""
         if self._vlm_model is None and self.enable_vlm_enrichment:
@@ -271,7 +273,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         new_object = closest + detection
 
         # Re-enrich every 5 detections
-        if self.enable_vlm_enrichment and new_object.detections % 5 == 0:
+        if self.enable_vlm_enrichment and new_object.detections % 10 == 0:
             logger.info(
                 f"Re-enriching {new_object.track_id} after {new_object.detections} detections"
             )
@@ -318,6 +320,40 @@ class ObjectDBModule(Detection3DModule, TableStr):
         if not ret:
             return "No objects detected yet."
         return "\n".join(ret)
+
+    @rpc
+    def get_all_detected_objects(self) -> list[dict]:
+        """Get all detected objects with their details."""
+        import time
+        
+        results = []
+        current_time = time.time()
+        
+        for obj in self.objects.values():
+            if not obj.name:
+                continue
+                
+            try:
+                pose = obj.to_pose()
+            except Exception as e:
+                logger.warning(f"Failed to get pose for {obj.track_id}: {e}")
+                continue
+            
+            results.append({
+                "track_id": obj.track_id,
+                "name": obj.name,
+                "yolo_label": obj.yolo_label,
+                "vlm_label": obj.vlm_label,
+                "detections": obj.detections,
+                "confidence": obj.confidence,
+                "pos_x": pose.position.x,
+                "pos_y": pose.position.y,
+                "pos_z": pose.position.z,
+                "last_seen": current_time - obj.ts,
+            })
+        
+        results.sort(key=lambda x: x["last_seen"])
+        return results
 
     # @rpc
     # def vlm_query(self, description: str) -> Object3D | None:
