@@ -13,8 +13,9 @@
 # limitations under the License.
 
 from .Bool import Bool
+from .Float32 import Float32
 from .Header import Header
 from .Int8 import Int8
 from .Int32 import Int32
 
-__all__ = ["Bool", "Header", "Int8", "Int32"]
+__all__ = ["Bool", "Float32", "Header", "Int8", "Int32"]
