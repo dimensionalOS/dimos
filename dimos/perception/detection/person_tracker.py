@@ -85,7 +85,7 @@ class PersonTracker(Module):
             ).pipe(
                 ops.map(
                     lambda pair: ImageDetections2D.from_ros_detection2d_array(
-                        pair[0],
+                        pair[0],  # type: ignore[index, arg-type]
                         pair[1],  # type: ignore[index, arg-type]
                     )
                 )
