@@ -24,7 +24,7 @@ authors = [
 ]
 version = "0.0.4"
 description = "Powering agentive generalist robotics"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 readme = "README.md"
 
 dependencies = [
@@ -121,6 +121,7 @@ dependencies = [
     # Inference
     "onnx",
     "einops==0.8.1",
+
     # Multiprocess
     "dask[complete]==2025.5.1",
 
@@ -139,6 +140,9 @@ dependencies = [
 
     "numba>=0.60.0",    # First version supporting Python 3.12
     "llvmlite>=0.42.0", # Required by numba 0.59+
+
+    # VLA
+    "openpi-client"
 ]
 
 [project.scripts]
@@ -373,3 +377,4 @@ default-groups = []
 clip = { git = "https://github.com/openai/CLIP.git" }
 contact-graspnet-pytorch = { git = "https://github.com/dimensionalOS/contact_graspnet_pytorch.git" }
 detectron2 = { git = "https://github.com/facebookresearch/detectron2.git", tag = "v0.6" }
+openpi-client = { git = "https://github.com/Physical-Intelligence/openpi.git", subdirectory = "packages/openpi-client" }
