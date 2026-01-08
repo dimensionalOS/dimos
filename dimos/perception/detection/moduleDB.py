@@ -30,6 +30,9 @@ from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.module3D import Detection3DModule
 from dimos.perception.detection.type import ImageDetections3DPC, TableStr
 from dimos.perception.detection.type.detection3d import Detection3DPC
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 # Represents an object in space, as collection of 3d detections over time
@@ -267,21 +270,64 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     #     return ret[0] if ret else None
 
+
     @rpc
-    def lookup(self, label: str) -> list[Object3D]:
+    def lookup(self, label: str, min_detections: int = 0.5) -> list[dict]:
         """Look up objects by label/name.
-
+        
+        Returns lightweight dict instead of full Object3D to avoid RPC timeout.
+        
         Args:
-            label: Name/class of object to search for
-
+            label: Name/class to search for
+            min_detections: Minimum number of detections required (default: 1)
+            
         Returns:
-            List of Object3D instances matching the label
+            List of dicts with object info (track_id, name, position, etc.)
         """
+        import time
+        
+        # DEBUG: Log search details
+        logger.error(f"Lookup called for '{label}'")
+        logger.error(f"Total objects in DB: {len(self.objects)}")
+        
+        # DEBUG: Log ALL object names in database
+        all_names = [obj.name for obj in self.objects.values() if obj.name]
+        logger.error(f"All object names in DB: {all_names}")
+        
         matching = []
+        
         for obj in self.objects.values():
+            # DEBUG: Log each comparison
+            if obj.name:
+                logger.debug(f"  Checking: '{obj.name}' vs '{label}' (detections: {obj.detections})")
+            
+            # Check name match
             if obj.name and label.lower() in obj.name.lower():
-                if obj.detections >= 1:  # Filter out noise
-                    matching.append(obj)
+                
+                # Check detection threshold
+                if obj.detections >= min_detections:
+                    
+                    # Create lightweight dict (NO pointcloud, NO heavy data)
+                    try:
+                        pose = obj.to_pose()
+                        result = {
+                            "track_id": obj.track_id,
+                            "name": obj.name,
+                            "detections": obj.detections,
+                            "confidence": obj.confidence,
+                            "pos_x": pose.position.x,
+                            "pos_y": pose.position.y,
+                            "pos_z": pose.position.z,
+                            "frame_id": pose.frame_id,
+                            "last_seen": time.time() - obj.ts,
+                        }
+                        matching.append(result)
+                        logger.error(f"Added to results: {result}")
+                    except Exception as e:
+                        logger.error(f"Failed to get pose for {obj.track_id}: {e}")
+                        continue
+        
+        logger.error(f"Returning {len(matching)} matches")
         return matching
 
     @rpc

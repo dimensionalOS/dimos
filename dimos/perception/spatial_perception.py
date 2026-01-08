@@ -193,8 +193,6 @@ class SpatialMemory(SkillModule):
 
         # Subscribe to LCM streams
         def set_video(image_msg: Image) -> None:
-            logger.info("Received camera frame")
-            # Convert Image message to numpy array
             if hasattr(image_msg, "data"):
                 frame = image_msg.data
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
@@ -222,15 +220,13 @@ class SpatialMemory(SkillModule):
     def _process_frame(self) -> None:
         """Process the latest frame with pose data if available."""
         tf = self.tf.get("world", "base_link")
-        if self._latest_video_frame is None or tf is None:
+        if self._latest_video_frame is None:
             logger.warning(" No video frame available")
             return
 
         if tf is None:
             logger.warning("No TF transform (map -> base_link) available")
             return
-
-        logger.info(f"Processing frame with TF at ({tf.translation.x:.2f}, {tf.translation.y:.2f})")
 
         # Create Pose object with position and orientation
         current_pose = tf.to_pose()
@@ -297,11 +293,11 @@ class SpatialMemory(SkillModule):
             self.last_record_time = current_time
             self.stored_frame_count += 1
 
-            logger.info(
-                f"Stored frame at position ({current_pose.position.x:.2f}, {current_pose.position.y:.2f}, {current_pose.position.z:.2f}), "
-                f"rotation ({euler.x:.2f}, {euler.y:.2f}, {euler.z:.2f}) "
-                f"stored {self.stored_frame_count}/{self.frame_count} frames"
-            )
+            #logger.info(
+            #    f"Stored frame at position ({current_pose.position.x:.2f}, {current_pose.position.y:.2f}, {current_pose.position.z:.2f}), "
+            #    f"rotation ({euler.x:.2f}, {euler.y:.2f}, {euler.z:.2f}) "
+            #    f"stored {self.stored_frame_count}/{self.frame_count} frames"
+            #)
 
             # Periodically save visual memory to disk
             if self._visual_memory is not None and self.visual_memory_path is not None:
@@ -513,7 +509,7 @@ class SpatialMemory(SkillModule):
         Returns:
             True if successfully added, False otherwise
         """
-        tf = self.tf.get("map", "base_link")
+        tf = self.tf.get("world", "base_link")
         if not tf:
             logger.error("No position available for robot location")
             return False

@@ -31,7 +31,6 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-
 class NavigationSkillContainer(SkillModule):
     _latest_image: Image | None = None
     _latest_odom: PoseStamped | None = None
@@ -114,95 +113,95 @@ class NavigationSkillContainer(SkillModule):
         logger.info(f"Tagged {location}")
         return f"Tagged '{location_name}': ({position.x},{position.y})."
 
-    #@skill()
+    @skill()
     def navigate_to_detected_object(self, object_name: str) -> str:
         """Navigate to an object or person that was detected by the vision system.
-
+        
         This uses ObjectDB to find objects that were previously seen and tracked.
         Only use this for specific objects like "cup", "red box", "person", "chair".
-
         The object must have been previously detected by the camera system.
-
+        
         Args:
             object_name: Name/class of the object to navigate to
-
+            
         Returns:
             Success or failure message
         """
         if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
-
+        
+        # Get RPC handle
         try:
             lookup_rpc = self.get_rpc_calls("ObjectDBModule.lookup")
         except Exception:
             logger.error("ObjectDBModule not connected")
             return "Error: ObjectDB module not connected. Make sure detection blueprint is loaded."
-
+        
+        # Query ObjectDB
         try:
             objects = lookup_rpc(object_name)
         except Exception as e:
-            logger.error(f"Failed to query ObjectDB for '{object_name}': {e}")
             return f"Error querying ObjectDB for '{object_name}'"
-
+        
+        # Check if we found anything
         if not objects or len(objects) == 0:
-            logger.warning(f"No objects matching '{object_name}' found in ObjectDB")
             return f"No detected object matching '{object_name}'. The object may not have been seen yet."
-
+        
         if len(objects) > 1:
             logger.info(
                 f"Found {len(objects)} instances of '{object_name}', navigating to first one"
             )
-
-        # Get pose from first matching object
+        
+        # Extract pose from dict (not Object3D anymore!)
         try:
-            pose = objects[0].to_pose()
-        except Exception as e:
-            logger.error(f"Failed to get pose for object '{object_name}': {e}")
+            obj = objects[0]  # First match (now a dict)
+            
+            # Create pose from dict fields
+            goal_pose = PoseStamped(
+                position=make_vector3(obj["pos_x"], obj["pos_y"], obj["pos_z"]),
+                orientation=Quaternion(),
+                frame_id=obj["frame_id"]
+            )
+            
+            logger.info(
+                f"Navigating to detected '{obj['name']}' at ({obj['pos_x']:.2f}, {obj['pos_y']:.2f}, {obj['pos_z']:.2f})"
+            )
+            logger.info(
+                f"Object info: {obj['detections']} detections, confidence: {obj['confidence']:.2f}, last seen: {obj['last_seen']:.1f}s ago"
+            )
+            
+        except (KeyError, TypeError) as e:
             return f"Error: Could not determine location of '{object_name}'"
-
-        logger.info(
-            f"Navigating to detected '{object_name}' at ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
-        )
-
-        result = self._navigate_to(pose)
-
+        except Exception as e:
+            return f"Error: Could not determine location of '{object_name}'"
+        
+        # Navigate to the object
+        result = self._navigate_to(goal_pose)
+        
         if result:
             return f"Successfully navigated to '{object_name}'"
         else:
             return f"Failed to reach '{object_name}'. Navigation was cancelled or failed."
-
-    @skill()
+    
+    #@skill()
     def navigate_with_text(self, query: str) -> str:
-        """Navigate to a location by querying the existing semantic map using natural language.
-
-        First attempts to locate an object in the robot's camera view using vision.
-        If the object is found, navigates to it. If not, falls back to querying the
-        semantic map for a location matching the description.
-        CALL THIS SKILL FOR ONE SUBJECT AT A TIME. For example: "Go to the person wearing a blue shirt in the living room",
-        you should call this skill twice, once for the person wearing a blue shirt and once for the living room.
-        Args:
-            query: Text query to search for in the semantic map
-        """
-
+        """Navigate to a location by querying the existing semantic map..."""
         if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
+        
         success_msg = self._navigate_by_tagged_location(query)
         if success_msg:
             return success_msg
-
-        logger.info(f"No tagged location found for {query}")
-
+        
         success_msg = self._navigate_to_object(query)
         if success_msg:
             return success_msg
-
-        logger.info(f"No object in view found for {query}")
-
+        
         success_msg = self._navigate_using_semantic_map(query)
         if success_msg:
             return success_msg
-
-        return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
+        
+        return f"Could not find '{query}' using any method"
 
     def _navigate_by_tagged_location(self, query: str) -> str | None:
         try:
@@ -220,7 +219,7 @@ class NavigationSkillContainer(SkillModule):
         goal_pose = PoseStamped(
             position=make_vector3(*robot_location.position),
             orientation=Quaternion.from_euler(Vector3(*robot_location.rotation)),
-            frame_id="map",
+            frame_id="world",
         )
 
         result = self._navigate_to(goal_pose)
@@ -330,30 +329,30 @@ class NavigationSkillContainer(SkillModule):
         return get_object_bbox_from_image(self._vl_model, self._latest_image, query)
 
     def _navigate_using_semantic_map(self, query: str) -> str:
-        try:
-            query_by_text_rpc = self.get_rpc_calls("SpatialMemory.query_by_text")
-        except Exception:
-            return "Error: The SpatialMemory module is not connected."
+            try:
+                query_by_text_rpc = self.get_rpc_calls("SpatialMemory.query_by_text")
+            except Exception:
+                return "Error: The SpatialMemory module is not connected."
 
-        results = query_by_text_rpc(query)
+            results = query_by_text_rpc(query)
 
-        if not results:
-            return f"No matching location found in semantic map for '{query}'"
+            if not results:
+                return f"No matching location found in semantic map for '{query}'"
 
-        best_match = results[0]
+            best_match = results[0]
 
-        goal_pose = self._get_goal_pose_from_result(best_match)
+            goal_pose = self._get_goal_pose_from_result(best_match)
 
-        print("Goal pose for semantic nav:", goal_pose)
-        if not goal_pose:
-            return f"Found a result for '{query}' but it didn't have a valid position."
+            print("Goal pose for semantic nav:", goal_pose)
+            if not goal_pose:
+                return f"Found a result for '{query}' but it didn't have a valid position."
 
-        result = self._navigate_to(goal_pose)
+            result = self._navigate_to(goal_pose)
 
-        if not result:
-            return f"Failed to navigate for '{query}'"
+            if not result:
+                return f"Failed to navigate for '{query}'"
 
-        return f"Successfuly arrived at '{query}'"
+            return f"Successfuly arrived at '{query}'"
 
     @skill()
     def follow_human(self, person: str) -> str:
@@ -451,7 +450,7 @@ class NavigationSkillContainer(SkillModule):
         return PoseStamped(
             position=make_vector3(pos_x, pos_y, 0),
             orientation=Quaternion.from_euler(make_vector3(0, 0, theta)),
-            frame_id="map",
+            frame_id="world",
         )
 
 

@@ -132,7 +132,7 @@ class SpatialVectorDB:
             ids=[vector_id], embeddings=[embedding.tolist()], metadatas=[metadata]
         )
 
-        logger.info(f"Added image vector {vector_id} with metadata: {metadata}")
+        #logger.info(f"Added image vector {vector_id} with metadata: {metadata}")
 
     def query_by_embedding(self, embedding: np.ndarray, limit: int = 5) -> list[dict]:  # type: ignore[type-arg]
         """
@@ -225,8 +225,8 @@ class SpatialVectorDB:
                 )
 
             # Get the image from visual memory
-            image = self.visual_memory.get(lookup_id)
-            result["image"] = image
+            #image = self.visual_memory.get(lookup_id)
+            #result["image"] = image
 
             processed_results.append(result)
 
