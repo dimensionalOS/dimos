@@ -13,110 +13,86 @@
 # limitations under the License.
 
 """
-Blueprints for Quest3 teleoperation with XArm.
+Blueprints for Quest3 teleoperation.
 
-This module provides declarative blueprints for combining Quest3TeleopModule,
-TeleopArmController, and XArmDriver for VR teleoperation.
+This module provides declarative blueprints for combining Quest3TeleopModule
+and TeleopArmController for VR teleoperation with any robot arm.
 
 Architecture:
     Quest3TeleopModule (VR calibration, delta computation)
         ↓ X button → calibrate VR
         ↓ Computes: delta = current_controller - initial_controller
-        ↓ Publishes: delta poses (Pose)
+        ↓ Publishes: delta poses (PoseStamped)
         ↓
     TeleopArmController (Robot calibration, delta application)
         ↓ First delta → auto-calibrate robot
         ↓ Computes: target = initial_robot + delta
-        ↓ Publishes: cartesian commands (Pose)
+        ↓ Publishes: cartesian commands (PoseStamped)
         ↓
-    XArmDriver (Robot control)
+    Robot Driver (any manipulator driver)
 
 Usage:
     # Programmatically:
-    from dimos.teleop.teleop_blueprints import quest3_xarm6_teleop
-    coordinator = quest3_xarm6_teleop.build()
+    from dimos.teleop.teleop_blueprints import quest3_teleop
+    coordinator = quest3_teleop.build()
     coordinator.loop()
 
-    # Or build your own composition:
+    # Or build your own composition with a specific driver:
     from dimos.teleop.quest3.teleop_module import quest3_teleop_module
     from dimos.teleop.teleop_arm_controller import teleop_arm_controller
-    from dimos.hardware.manipulators.xarm.xarm_driver import xarm_driver
     from dimos.core.blueprints import autoconnect
 
     my_system = autoconnect(
         quest3_teleop_module(
-            driver_module_name="XArmDriver",
             signaling_port=8443,
         ),
         teleop_arm_controller(
-            driver_module_name="XArmDriver",
+            driver_module_name="MyRobotDriver",
             enable_left_arm=True,
         ),
-        xarm_driver(
-            ip="192.168.1.210",
-            dof=6,
-            connection_type="hardware",
-        ),
+        my_robot_driver(...),
     )
 """
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.hardware.manipulators.xarm.xarm_driver import XArmDriver, xarm_driver
-from dimos.msgs.geometry_msgs import Pose, PoseStamped
+from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.std_msgs import Bool
-from dimos.teleop.quest3.teleop_module import Quest3TeleopModule, quest3_teleop_module
-from dimos.teleop.teleop_arm_controller import TeleopArmController, teleop_arm_controller
+from dimos.teleop.quest3.teleop_module import quest3_teleop_module
+from dimos.teleop.teleop_arm_controller import teleop_arm_controller
 
 # =============================================================================
-# Quest3 + XArm6 Teleoperation Blueprint
+# Quest3 Teleoperation Blueprint
 # =============================================================================
 # Combines:
 #   - Quest3TeleopModule: VR calibration + delta computation
 #   - TeleopArmController: Robot calibration + delta application
-#   - XArmDriver: Hardware/sim interface
 #
 # Data flow:
 #   Quest3TeleopModule.left_controller_delta ──► TeleopArmController.left_controller_delta
 #   Quest3TeleopModule.right_controller_delta ──► TeleopArmController.right_controller_delta
 #   Quest3TeleopModule.left_trigger ──► TeleopArmController.left_trigger
 #   Quest3TeleopModule.right_trigger ──► TeleopArmController.right_trigger
-#   TeleopArmController.left_cartesian_command ──► XArmDriver.cartesian_command
-#   TeleopArmController (RPC) ──► XArmDriver.get_cartesian_state (auto-calibration)
+#   TeleopArmController.left_cartesian_command ──► Robot Driver (via LCM)
+#   TeleopArmController.right_cartesian_command ──► Robot Driver (via LCM)
 # =============================================================================
 
-quest3_xarm6_teleop = (
+quest3_teleop = (
     autoconnect(
         quest3_teleop_module(
-            driver_module_name="XArmDriver",
             signaling_host="0.0.0.0",
             signaling_port=8443,  # HTTPS port (required for WebXR)
             use_https=True,  # Enable HTTPS for Quest 3 WebXR
             enable_left_arm=True,
-            enable_right_arm=False,
+            enable_right_arm=True,
         ),
         teleop_arm_controller(
-            driver_module_name="XArmDriver",
-            control_frequency=20.0,  # 20 Hz for consistent control
+            driver_module_name="DummyDriver",
+            dummy_driver=True,  # Skip RPC calls, use zeros for initial pose
+            control_frequency=50.0,  # Hz - control loop frequency
             enable_left_arm=True,
-            enable_right_arm=False,
+            enable_right_arm=True,
         ),
-        xarm_driver(
-            ip="192.168.1.210",
-            dof=6,
-            has_gripper=False,
-            has_force_torque=False,
-            has_cartesian_control=True,  # Enable Cartesian control for teleop
-            control_rate=20,  # 20 Hz to match teleop frequency
-            monitor_rate=10,
-            connection_type="hardware",  # Change to "hardware" for real robot
-        ),
-    )
-    .remappings(
-        [
-            # Map TeleopArmController's left_cartesian_command to XArmDriver's cartesian_command
-            (TeleopArmController, "left_cartesian_command", "cartesian_command"),
-        ]
     )
     .transports(
         {
@@ -130,15 +106,11 @@ quest3_xarm6_teleop = (
             # Trigger states
             ("left_trigger", Bool): LCMTransport("/quest3/left_trigger", Bool),
             ("right_trigger", Bool): LCMTransport("/quest3/right_trigger", Bool),
-            # Cartesian commands to robot
-            ("left_cartesian_command", Pose): LCMTransport("/xarm/cartesian_command", Pose),
-            ("right_cartesian_command", Pose): LCMTransport("/xarm/right_cartesian_command", Pose),
-            ("cartesian_command", Pose): LCMTransport("/xarm/cartesian_command", Pose),
         }
     )
 )
 
 
 __all__ = [
-    "quest3_xarm6_teleop",
+    "quest3_teleop",
 ]
