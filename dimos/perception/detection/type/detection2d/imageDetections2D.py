@@ -37,11 +37,11 @@ T2D = TypeVar("T2D", bound=Detection2D, default=Detection2DBBox)
 
 class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):
     @classmethod
-    def from_ros_detection2d_array(  # type: ignore[no-untyped-def]
+    def from_ros_detection2d_array(
         cls,
         image: Image,
         ros_detections: Detection2DArray,
-        **kwargs,
+        **kwargs: Any,
     ) -> ImageDetections2D[Detection2DBBox]:
         """Convert from ROS Detection2DArray message to ImageDetections2D object."""
         detections: list[Detection2DBBox] = []

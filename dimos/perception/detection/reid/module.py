@@ -65,7 +65,7 @@ class ReidModule(Module):
                 ),
                 match_tolerance=0.0,
                 buffer_size=2.0,
-            ).pipe(ops.map(lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)))  # type: ignore[misc]
+            ).pipe(ops.map(lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)))  # type: ignore[misc, arg-type]
         )
 
     @rpc
