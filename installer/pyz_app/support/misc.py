@@ -536,6 +536,7 @@ def add_git_ignore_patterns(
         "ignore_did_not_exist": False,
     }
 
+
 def maybe_write(path: Path, content: str) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
