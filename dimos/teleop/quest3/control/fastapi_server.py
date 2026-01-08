@@ -400,10 +400,17 @@ class TeleopFastAPIServer:
         uvicorn.run(**run_kwargs)
 
     async def stop_async(self) -> None:
-        # close all connections
-        await self.manager.disconnect()
-
         """Stop the FastAPI server asynchronously."""
+        # Close all connections
+        with self.manager.active_connections_lock:
+            connections_to_close = list(self.manager.active_connections)
+        for websocket in connections_to_close:
+            self.manager.disconnect(websocket)
+            try:
+                await websocket.close()
+            except Exception as e:
+                logger.debug(f"Error closing websocket: {e}")
+
         if self.server:
             logger.info("Stopping FastAPI server...")
             self.server.should_exit = True
