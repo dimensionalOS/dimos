@@ -61,6 +61,9 @@ class ManipulationSkillContainer(SkillModule):
         "ManipulationModule.get_state",
         "ManipulationModule.cancel",
         "ManipulationModule.reset",
+        # From PerceptionModule
+        "PerceptionModule.get_images",
+        "PerceptionModule.get_grasp_pose",
         # From RobotCapabilities (for greet skill)
         "RobotCapabilities.speak",
     ]
@@ -458,6 +461,98 @@ class ManipulationSkillContainer(SkillModule):
                 return "Cannot reset while executing (cancel first)"
         except Exception as e:
             logger.error(f"reset_arm failed: {e}")
+            return f"Error: {e}"
+
+    # =========================================================================
+    # Perception Skills
+    # =========================================================================
+
+    @skill()
+    def get_images(self) -> str:
+        """Get the latest camera images (RGB and depth) from the perception system.
+
+        This skill retrieves the most recent camera data captured by the perception
+        module, including RGB color images and depth information. Use this to see
+        what the robot's camera is currently viewing.
+
+        Returns:
+            Status message describing the retrieved images, including dimensions if available
+        """
+        try:
+            get_images = self.get_rpc_calls("PerceptionModule.get_images")
+            result = get_images()
+
+            if "error" in result:
+                return f"Error getting images: {result['error']}"
+
+            has_rgb = result.get("has_rgb", False)
+            result.get("has_depth", False)
+            rgb_shape = result.get("rgb_shape")
+            depth_shape = result.get("depth_shape")
+            K = result.get("K")
+
+            if not has_rgb:
+                return "No RGB image available"
+
+            msg = "Successfully retrieved images"
+            if rgb_shape:
+                # rgb_shape is a tuple like (height, width, channels) or (height, width)
+                if len(rgb_shape) >= 2:
+                    msg += f" - RGB: {rgb_shape[1]}x{rgb_shape[0]} pixels"
+                else:
+                    msg += f" - RGB: shape {rgb_shape}"
+            if depth_shape:
+                if len(depth_shape) >= 2:
+                    msg += f" - Depth: {depth_shape[1]}x{depth_shape[0]} pixels"
+                else:
+                    msg += f" - Depth: shape {depth_shape}"
+            if K:
+                msg += " - Camera matrix available"
+
+            return msg
+        except Exception as e:
+            logger.error(f"get_images failed: {e}")
+            return f"Error: {e}"
+
+    @skill()
+    def get_grasp_pose(self, object_name: str) -> str:
+        """Get grasp pose for a specific object.
+
+        This skill requests grasp poses for a specified object from the perception
+        system. The system will analyze the current camera view and return the best
+        grasp pose (position and orientation) for grasping the specified object.
+
+        Args:
+            object_name: Name or label of the object to get grasp poses for (e.g., "cup", "bottle", "apple")
+
+        Returns:
+            Status message with the best grasp pose information, including position (x, y, z)
+            and orientation (roll, pitch, yaw), or an error message if failed
+        """
+        try:
+            get_grasp_pose = self.get_rpc_calls("PerceptionModule.get_grasp_pose")
+            result = get_grasp_pose(label=object_name)
+
+            if "error" in result:
+                return f"Error getting grasp pose for '{object_name}': {result['error']}"
+
+            transform = result.get("transform")
+            score = result.get("score")
+            gripper_type = result.get("gripper_type", "unknown")
+
+            if transform is None or len(transform) != 6:
+                return f"Invalid grasp pose data returned for '{object_name}'"
+
+            x, y, z, roll, pitch, yaw = transform
+
+            return (
+                f"Best grasp pose for '{object_name}': "
+                f"position=({x:.4f}, {y:.4f}, {z:.4f})m, "
+                f"orientation=({roll:.3f}, {pitch:.3f}, {yaw:.3f})rad, "
+                f"score={score:.3f}, gripper_type={gripper_type}"
+            )
+        except Exception as e:
+            logger.error(f"get_grasp_pose failed: {e}")
             return f"Error: {e}"
 
     # =========================================================================

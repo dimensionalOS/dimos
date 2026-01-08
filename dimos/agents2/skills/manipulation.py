@@ -23,6 +23,7 @@ Provides manipulation skill systems:
 Skills layer includes:
 - MoveAxisModule (directional movement commands)
 - ManipulationSkillContainer (high-level skills for LLM agents)
+- PerceptionModule (camera images and grasp pose planning)
 - RobotCapabilities (basic robot functions like speech)
 
 Complete systems combine hardware stack with skills and agent for
@@ -32,9 +33,11 @@ immediate interactive use.
 from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input
 from dimos.agents2.skills.manipulation_skill_container import ManipulationSkillContainer
+from dimos.agents2.spec import Model, Provider
 from dimos.core.blueprints import autoconnect
 from dimos.manipulation.manipulation_blueprints import xarm6_manipulation, xarm7_manipulation
 from dimos.manipulation.modules.move_axis import MoveAxisModule
+from dimos.manipulation.modules.perception import PerceptionModule
 from dimos.manipulation.modules.robot_capabilities import RobotCapabilities
 
 # ============================================================================
@@ -51,14 +54,16 @@ from dimos.manipulation.modules.robot_capabilities import RobotCapabilities
 manipulation_skills = autoconnect(
     RobotCapabilities.blueprint(),
     MoveAxisModule.blueprint(),
+    PerceptionModule.blueprint(),  # Directly connects to DepthAI camera hardware
     ManipulationSkillContainer.blueprint(),
     llm_agent(
         system_prompt=(
             "You are a helpful robotic manipulation assistant. You can control a robot arm "
             "to move in different directions (up, down, left, right, forward, backward) and "
-            "perform manipulation tasks. You can also greet people by name. When someone tells "
-            "you their name, remember to use it when greeting them."
-        )
+            "perform manipulation tasks. You can get camera images and request grasp poses "
+            "for objects. You can also greet people by name. When someone tells you their name, "
+            "remember to use it when greeting them."
+        ),
     ),
     human_input(),
 )
