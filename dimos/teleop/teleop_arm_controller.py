@@ -48,6 +48,7 @@ class TeleopArmControllerConfig(ModuleConfig):
 
     # Driver settings
     driver_module_name: str = "RobotDriver"  # Name of the driver module to get robot pose from
+    dummy_driver: bool = False  # If True, skip RPC calls and use zeros for initial pose
 
     # Control settings
     control_frequency: float = 50.0  # Hz - control loop frequency
@@ -96,7 +97,7 @@ class TeleopArmController(Module):
         # Set RPC calls dynamically based on driver name
         driver_name = self.config.driver_module_name
         self.rpc_calls = [
-            f"{driver_name}.get_cartesian_state",
+            f"{driver_name}.get_state",
         ]
 
         # Latest delta data
@@ -248,23 +249,41 @@ class TeleopArmController(Module):
         """Calibrate robot by getting its initial pose via RPC.
 
         Called automatically when first delta pose is received.
+        If dummy_driver=True, uses zeros instead of making RPC calls.
 
         Returns:
             True if calibration successful, False otherwise
         """
         logger.info("Calibrating robot (getting initial pose)...")
 
+        # If dummy_driver is enabled, use zeros for initial pose
+        if self.config.dummy_driver:
+            logger.info("Dummy driver mode - using zeros for initial pose")
+            if self.config.enable_left_arm:
+                self._left_robot_initial_position = Vector3(0.0, 0.0, 0.0)
+                self._left_robot_initial_rpy = Vector3(0.0, 0.0, 0.0)
+                logger.info("Left arm initial pose: pos=[0, 0, 0], rpy=[0, 0, 0]")
+
+            if self.config.enable_right_arm:
+                self._right_robot_initial_position = Vector3(0.0, 0.0, 0.0)
+                self._right_robot_initial_rpy = Vector3(0.0, 0.0, 0.0)
+                logger.info("Right arm initial pose: pos=[0, 0, 0], rpy=[0, 0, 0]")
+
+            self._robot_calibrated = True
+            logger.info("Robot calibration complete (dummy mode) - control active!")
+            return True
+
         try:
             driver_name = self.config.driver_module_name
-            rpc_method_name = f"{driver_name}.get_cartesian_state"
+            rpc_method_name = f"{driver_name}.get_state"
 
-            get_cartesian_state = self.get_rpc_calls(rpc_method_name)
+            get_state = self.get_rpc_calls(rpc_method_name)
 
-            if get_cartesian_state is None:
+            if get_state is None:
                 logger.error("RPC callable is None - check blueprint wiring")
                 return False
 
-            result = get_cartesian_state()
+            result = get_state()
 
             if result and result.get("success"):
                 pose_data = result.get("pose", {})
@@ -454,7 +473,7 @@ class TeleopArmController(Module):
             target_rpy = Vector3(target_roll, target_pitch, target_yaw)
             target_orientation = Quaternion.from_euler(target_rpy)
 
-            # Apply workspace limits if configured
+            # Apply workspace limits if configured # TODO: move to a method
             if self.config.workspace_limits:
                 target_x = max(
                     self.config.workspace_limits["x"][0],
@@ -488,19 +507,19 @@ class TeleopArmController(Module):
                     current_rpy = prev_rpy + diff
                 self._last_logged_rpy[arm_side] = current_rpy
 
-                print(
-                    f"Target Pose: pos=[{target_pose.x:.3f}, {target_pose.y:.3f}, {target_pose.z:.3f}], "
-                    f"rpy=[{current_rpy[0]:.3f}, {current_rpy[1]:.3f}, {current_rpy[2]:.3f}], "
-                    f"quat=[{quat.x:.4f}, {quat.y:.4f}, {quat.z:.4f}, {quat.w:.4f}]",
-                    flush=True,
-                )
+                # print(
+                #     f"Target Pose: pos=[{target_pose.x:.3f}, {target_pose.y:.3f}, {target_pose.z:.3f}], "
+                #     f"rpy=[{current_rpy[0]:.3f}, {current_rpy[1]:.3f}, {current_rpy[2]:.3f}], "
+                #     f"quat=[{quat.x:.4f}, {quat.y:.4f}, {quat.z:.4f}, {quat.w:.4f}]",
+                #     flush=True,
+                # )
 
                 # Publish to robot
-                # if self.left_cartesian_command and hasattr(self.left_cartesian_command, "publish"):
-                #     try:
-                #         self.left_cartesian_command.publish(target_pose)
-                #     except Exception as e:
-                #         logger.error(f"Failed to publish left cartesian command: {e}")
+                if self.left_cartesian_command and hasattr(self.left_cartesian_command, "publish"):
+                    try:
+                        self.left_cartesian_command.publish(target_pose)
+                    except Exception as e:
+                        logger.error(f"Failed to publish left cartesian command: {e}")
 
             elif arm_side == "right":
                 quat = target_pose.orientation
@@ -513,19 +532,19 @@ class TeleopArmController(Module):
                     current_rpy = prev_rpy + diff
                 self._last_logged_rpy[arm_side] = current_rpy
 
-                print(
-                    f"Target Pose: pos=[{target_pose.x:.3f}, {target_pose.y:.3f}, {target_pose.z:.3f}], "
-                    f"rpy=[{current_rpy[0]:.3f}, {current_rpy[1]:.3f}, {current_rpy[2]:.3f}], "
-                    f"quat=[{quat.x:.4f}, {quat.y:.4f}, {quat.z:.4f}, {quat.w:.4f}]",
-                    flush=True,
-                )
+                # print(
+                #     f"Target Pose: pos=[{target_pose.x:.3f}, {target_pose.y:.3f}, {target_pose.z:.3f}], "
+                #     f"rpy=[{current_rpy[0]:.3f}, {current_rpy[1]:.3f}, {current_rpy[2]:.3f}], "
+                #     f"quat=[{quat.x:.4f}, {quat.y:.4f}, {quat.z:.4f}, {quat.w:.4f}]",
+                #     flush=True,
+                # )
 
                 # Publish to robot
-                # if self.right_cartesian_command and hasattr(self.right_cartesian_command, "publish"):
-                #     try:
-                #         self.right_cartesian_command.publish(target_pose)
-                #     except Exception as e:
-                #         logger.error(f"Failed to publish right cartesian command: {e}")
+                if self.right_cartesian_command and hasattr(self.right_cartesian_command, "publish"):
+                    try:
+                        self.right_cartesian_command.publish(target_pose)
+                    except Exception as e:
+                        logger.error(f"Failed to publish right cartesian command: {e}")
 
         except Exception as e:
             logger.error(f"Error applying {arm_side} delta: {e}", exc_info=True)
