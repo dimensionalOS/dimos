@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
 from dimos.utils.logging_config import setup_logger
 
@@ -158,5 +158,5 @@ class TrackingProcessor:
             # VR trigger value is already 0.0-1.0, just convert to float
             return float(gripper_value)
         except (ValueError, TypeError):
-            logger.warning("Invalid trigger value: %s, using 0.0", gripper_value)
+            logger.warning("Invalid trigger value: %s", gripper_value)
             return 0.0

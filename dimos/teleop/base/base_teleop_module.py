@@ -108,6 +108,7 @@ class BaseTeleopModule(Module, ABC):
     """
 
     default_config = BaseTeleopConfig
+    config: BaseTeleopConfig
 
     # LCM Output topics
     left_controller_delta: Out[PoseStamped] = None  # type: ignore[assignment]
@@ -115,7 +116,9 @@ class BaseTeleopModule(Module, ABC):
     left_trigger: Out[Float32] = None  # type: ignore[assignment]
     right_trigger: Out[Float32] = None  # type: ignore[assignment]
 
-    def __init__(self, global_config: GlobalConfig | None = None, *args, **kwargs) -> None:
+    def __init__(
+        self, global_config: GlobalConfig | None = None, *args: Any, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
 
         # Get global config for Rerun connection
@@ -162,6 +165,12 @@ class BaseTeleopModule(Module, ABC):
         ):
             connect_rerun(global_config=self._global_config)
             logger.info("Connected to Rerun for controller visualization")
+
+    @rpc
+    def stop(self) -> None:
+        """Stop the teleoperation module."""
+        logger.info(f"Stopping {self.__class__.__name__}...")
+        super().stop()
 
     # =========================================================================
     # Calibration
@@ -263,7 +272,7 @@ class BaseTeleopModule(Module, ABC):
         return self._is_calibrated
 
     @rpc
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, Any]:
         """Get current teleoperation status.
 
         Returns:
@@ -477,7 +486,7 @@ class BaseTeleopModule(Module, ABC):
             # Log absolute controller pose transform
             rr.log(
                 f"world/teleop/{arm_side}_controller",
-                controller_pose_stamped.to_rerun(),
+                controller_pose_stamped.to_rerun(),  # type: ignore[no-untyped-call]
             )
             # Log coordinate frame axes to visualize the transform
             rr.log(

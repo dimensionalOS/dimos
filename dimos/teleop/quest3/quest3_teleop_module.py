@@ -99,9 +99,15 @@ class Quest3TeleopModule(BaseTeleopModule):
     """
 
     default_config = Quest3TeleopConfig
+    config: Quest3TeleopConfig
 
-    def __init__(self, global_config: GlobalConfig | None = None, *args, **kwargs) -> None:
-        super().__init__(global_config=global_config, *args, **kwargs)
+    def __init__(
+        self, global_config: GlobalConfig | None = None, *args: Any, **kwargs: Any
+    ) -> None:
+        # Remove global_config from kwargs to avoid passing it twice
+        kwargs.pop("global_config", None)
+        # Pass global_config as positional argument to match base class signature
+        super().__init__(global_config, *args, **kwargs)
 
         # Quest3-specific: FastAPI WebSocket server
         self._fastapi_server: TeleopFastAPIServer | None = None
@@ -147,7 +153,7 @@ class Quest3TeleopModule(BaseTeleopModule):
     def _start_signaling_server(self) -> None:
         """Start the FastAPI WebSocket server in a background thread."""
 
-        def run_server():
+        def run_server() -> None:
             # Create new event loop for this thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -198,7 +204,9 @@ class Quest3TeleopModule(BaseTeleopModule):
     # Quest3-Specific: X Button Handler
     # =========================================================================
 
-    async def _handle_x_button(self, command_type: str, websocket) -> dict:
+    async def _handle_x_button(
+        self, command_type: str, websocket: Any
+    ) -> dict[str, Any]:
         """Handle X button press from VR client.
 
         X button toggles calibration:

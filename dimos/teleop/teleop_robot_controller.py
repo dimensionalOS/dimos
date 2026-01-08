@@ -29,9 +29,12 @@ from dataclasses import dataclass
 import threading
 import time
 import traceback
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
@@ -120,7 +123,7 @@ class TeleopRobotController(Module):
         self._robot_calibrated = False
 
         # State for unwrapped logging
-        self._last_logged_rpy = {}
+        self._last_logged_rpy: dict[str, NDArray[np.float64]] = {}
 
         # Control loop
         self._control_thread: threading.Thread | None = None
@@ -364,7 +367,7 @@ class TeleopRobotController(Module):
         return self._robot_calibrated
 
     @rpc
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, Any]:
         """Get controller status.
 
         Returns:
@@ -521,8 +524,8 @@ class TeleopRobotController(Module):
             target_yaw = robot_initial_rpy.z + delta_euler.z
 
             # Wrap angles to [-π, π]
-            def wrap_angle(angle):
-                return np.arctan2(np.sin(angle), np.cos(angle))
+            def wrap_angle(angle: float) -> float:
+                return float(np.arctan2(np.sin(angle), np.cos(angle)))
 
             target_roll = wrap_angle(target_roll)
             target_pitch = wrap_angle(target_pitch)

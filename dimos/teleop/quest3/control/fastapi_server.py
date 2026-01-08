@@ -29,7 +29,7 @@ from pathlib import Path
 import subprocess
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,9 +40,10 @@ from dimos.teleop.quest3.control.tracking_processor import TrackingProcessor
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
-    from dimos.msgs.geometry_msgs import Pose
+    import numpy as np
+    from numpy.typing import NDArray
 
 logger = setup_logger()
 
@@ -53,11 +54,13 @@ COMMAND_DEBOUNCE_SECONDS = 2
 class ConnectionManager:
     """Manages active WebSocket connections for teleoperation."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.active_connections: list[WebSocket] = []
         self.active_connections_lock = threading.Lock()
-        self.data_callback: Callable[[Pose, Pose, float, float]] | None = None
-        self.command_callback: Callable[[str, WebSocket]] | None = None
+        self.data_callback: Callable[
+            [NDArray[np.float32], NDArray[np.float32], float, float], None
+        ] | None = None
+        self.command_callback: Callable[[str, WebSocket], Awaitable[dict[str, Any]]] | None = None
 
     async def connect(self, websocket: WebSocket) -> None:
         """Accept and register a new WebSocket connection.
@@ -81,7 +84,10 @@ class ConnectionManager:
                 self.active_connections.remove(websocket)
             logger.info(f"Client disconnected (remaining: {len(self.active_connections)})")
 
-    def set_callback(self, callback: Callable) -> None:
+    def set_callback(
+        self,
+        callback: Callable[[NDArray[np.float32], NDArray[np.float32], float, float], None],
+    ) -> None:
         """Set callback function to send controller data to teleop module.
 
         Args:
@@ -90,7 +96,9 @@ class ConnectionManager:
         self.data_callback = callback
         logger.info("Controller data callback registered")
 
-    def set_command_callback(self, callback: Callable) -> None:
+    def set_command_callback(
+        self, callback: Callable[[str, WebSocket], Awaitable[dict[str, Any]]]
+    ) -> None:
         """Set callback function to handle teleop commands (start_teleop/stop_teleop).
 
         Args:
@@ -99,7 +107,7 @@ class ConnectionManager:
         self.command_callback = callback
         logger.info("Command callback registered")
 
-    async def broadcast(self, message: dict) -> None:
+    async def broadcast(self, message: dict[str, Any]) -> None:
         """Broadcast a message to all connected clients.
 
         Args:
@@ -222,7 +230,7 @@ class TeleopFastAPIServer:
         """Setup FastAPI routes and WebSocket endpoints."""
 
         @self.app.get("/")
-        async def root():
+        async def root() -> FileResponse | dict[str, Any]:
             """Serve the VR client HTML page."""
             html_file = self.static_dir / "index.html"
             if html_file.exists():
@@ -236,7 +244,7 @@ class TeleopFastAPIServer:
                 }
 
         @self.app.get("/health")
-        async def health():
+        async def health() -> dict[str, Any]:
             """Health check endpoint."""
             return {
                 "status": "healthy",
@@ -244,7 +252,7 @@ class TeleopFastAPIServer:
             }
 
         @self.app.websocket("/ws")
-        async def websocket_endpoint(websocket: WebSocket):
+        async def websocket_endpoint(websocket: WebSocket) -> None:
             """WebSocket endpoint for VR teleoperation tracking data.
 
             Args:
@@ -336,7 +344,10 @@ class TeleopFastAPIServer:
                 self.manager.disconnect(websocket)
                 logger.info(f"Connection closed after {message_count} messages")
 
-    def set_callback(self, callback: Callable) -> None:
+    def set_callback(
+        self,
+        callback: Callable[[NDArray[np.float32], NDArray[np.float32], float, float], None],
+    ) -> None:
         """Set callback function for controller data.
 
         Args:
@@ -344,7 +355,9 @@ class TeleopFastAPIServer:
         """
         self.manager.set_callback(callback)
 
-    def set_command_callback(self, callback: Callable) -> None:
+    def set_command_callback(
+        self, callback: Callable[[str, WebSocket], Awaitable[dict[str, Any]]]
+    ) -> None:
         """Set callback function for teleop commands.
 
         Args:
@@ -354,7 +367,7 @@ class TeleopFastAPIServer:
 
     async def start_async(self) -> None:
         """Start the FastAPI server asynchronously."""
-        config_kwargs = {
+        config_kwargs: dict[str, Any] = {
             "app": self.app,
             "host": self.host,
             "port": self.port,
@@ -372,7 +385,7 @@ class TeleopFastAPIServer:
             protocol = "http"
             ws_protocol = "ws"
 
-        config = uvicorn.Config(**config_kwargs)
+        config = uvicorn.Config(**config_kwargs)  # type: ignore[misc]
         self.server = uvicorn.Server(config)
 
         logger.info(f"FastAPI server starting on {protocol}://{self.host}:{self.port}")
@@ -386,7 +399,7 @@ class TeleopFastAPIServer:
 
         This is for standalone testing only.
         """
-        run_kwargs = {
+        run_kwargs: dict[str, Any] = {
             "app": self.app,
             "host": self.host,
             "port": self.port,
@@ -397,7 +410,7 @@ class TeleopFastAPIServer:
             run_kwargs["ssl_keyfile"] = str(self.key_file)
             run_kwargs["ssl_certfile"] = str(self.cert_file)
 
-        uvicorn.run(**run_kwargs)
+        uvicorn.run(**run_kwargs)  # type: ignore[misc]
 
     async def stop_async(self) -> None:
         """Stop the FastAPI server asynchronously."""
@@ -416,7 +429,7 @@ class TeleopFastAPIServer:
             self.server.should_exit = True
             await asyncio.sleep(0.1)  # Give time for graceful shutdown
 
-    async def broadcast_robot_state(self, state: dict) -> None:
+    async def broadcast_robot_state(self, state: dict[str, Any]) -> None:
         """Broadcast robot state to all connected clients.
 
         Args:
@@ -433,7 +446,9 @@ if __name__ == "__main__":
         level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
-    def test_callback(left_pose, right_pose, left_gripper, right_gripper):
+    def test_callback(
+        left_pose: Any, right_pose: Any, left_gripper: float, right_gripper: float
+    ) -> None:
         """Test callback for tracking data."""
         print(f"Left pose: {left_pose[:3, 3]}, gripper: {left_gripper}")
         print(f"Right pose: {right_pose[:3, 3]}, gripper: {right_gripper}")
