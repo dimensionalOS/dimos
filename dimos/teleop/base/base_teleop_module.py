@@ -37,7 +37,7 @@ from dimos.core import Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Vector3
-from dimos.msgs.std_msgs import Bool
+from dimos.msgs.std_msgs import Bool, Float32
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose
 
@@ -97,8 +97,8 @@ class BaseTeleopModule(Module, ABC):
     ## LCM Topics (Output):
     - left_controller_delta: Out[PoseStamped] - Left controller delta pose
     - right_controller_delta: Out[PoseStamped] - Right controller delta pose
-    - left_trigger: Out[Bool] - Left trigger button state
-    - right_trigger: Out[Bool] - Right trigger button state
+    - left_trigger: Out[Float32] - Left trigger/gripper value (0.0-1.0)
+    - right_trigger: Out[Float32] - Right trigger/gripper value (0.0-1.0)
 
     ## RPC Methods:
     - calibrate_vr() -> dict: Calibrate by capturing initial poses
@@ -112,8 +112,8 @@ class BaseTeleopModule(Module, ABC):
     # LCM Output topics
     left_controller_delta: Out[PoseStamped] = None  # type: ignore[assignment]
     right_controller_delta: Out[PoseStamped] = None  # type: ignore[assignment]
-    left_trigger: Out[Bool] = None  # type: ignore[assignment]
-    right_trigger: Out[Bool] = None  # type: ignore[assignment]
+    left_trigger: Out[Float32] = None  # type: ignore[assignment]
+    right_trigger: Out[Float32] = None  # type: ignore[assignment]
 
     def __init__(self, global_config: GlobalConfig | None = None, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -132,8 +132,8 @@ class BaseTeleopModule(Module, ABC):
         # Latest controller data (absolute poses)
         self._left_pose: NDArray[np.float32] | None = None
         self._right_pose: NDArray[np.float32] | None = None
-        self._left_trigger_pressed: bool = False
-        self._right_trigger_pressed: bool = False
+        self._left_gripper_value: float = 0.0  # 0.0 to 1.0
+        self._right_gripper_value: float = 0.0  # 0.0 to 1.0
 
         # Tracking counters
         self._tracking_msg_count = 0
@@ -276,8 +276,8 @@ class BaseTeleopModule(Module, ABC):
             "right_arm_enabled": self.config.enable_right_arm,
             "has_left_data": self._left_pose is not None,
             "has_right_data": self._right_pose is not None,
-            "left_trigger_pressed": self._left_trigger_pressed,
-            "right_trigger_pressed": self._right_trigger_pressed,
+            "left_gripper_value": self._left_gripper_value,
+            "right_gripper_value": self._right_gripper_value,
         }
 
     # =========================================================================
@@ -313,9 +313,9 @@ class BaseTeleopModule(Module, ABC):
         self._left_pose = left_pose
         self._right_pose = right_pose
 
-        # Convert gripper values to trigger booleans (threshold at 0.5)
-        self._left_trigger_pressed = left_gripper > 0.5
-        self._right_trigger_pressed = right_gripper > 0.5
+        # Store gripper values (0.0 to 1.0)
+        self._left_gripper_value = float(left_gripper)
+        self._right_gripper_value = float(right_gripper)
 
         # Only stream deltas if calibrated
         if not self._is_calibrated:
@@ -391,18 +391,22 @@ class BaseTeleopModule(Module, ABC):
                         except Exception as e:
                             logger.error(f"Failed to publish right delta: {e}")
 
-            # Publish trigger states
+            # Publish gripper values (0.0 to 1.0)
             if self.left_trigger and hasattr(self.left_trigger, "publish"):
                 try:
-                    self.left_trigger.publish(Bool(data=self._left_trigger_pressed))
+                    self.left_trigger.publish(Float32(data=self._left_gripper_value))
+                    # Visualize gripper value in Rerun
+                    self._visualize_gripper_in_rerun(self._left_gripper_value, "left")
                 except Exception as e:
-                    logger.debug(f"Failed to publish left trigger: {e}")
+                    logger.debug(f"Failed to publish left gripper: {e}")
 
             if self.right_trigger and hasattr(self.right_trigger, "publish"):
                 try:
-                    self.right_trigger.publish(Bool(data=self._right_trigger_pressed))
+                    self.right_trigger.publish(Float32(data=self._right_gripper_value))
+                    # Visualize gripper value in Rerun
+                    self._visualize_gripper_in_rerun(self._right_gripper_value, "right")
                 except Exception as e:
-                    logger.debug(f"Failed to publish right trigger: {e}")
+                    logger.debug(f"Failed to publish right gripper: {e}")
 
         except Exception as e:
             logger.error(f"Error computing/publishing delta poses: {e}")
@@ -486,3 +490,26 @@ class BaseTeleopModule(Module, ABC):
             )
         except Exception as e:
             logger.debug(f"Failed to log {arm_side} controller to Rerun: {e}")
+
+    def _visualize_gripper_in_rerun(self, gripper_value: float, arm_side: str) -> None:
+        """Visualize gripper/trigger value in Rerun as a scalar time series.
+
+        Args:
+            gripper_value: Gripper value (0.0-1.0) from VR controller
+            arm_side: "left" or "right"
+        """
+        if not (
+            self.config.visualize_in_rerun
+            and RERUN_AVAILABLE
+            and self._global_config.viewer_backend.startswith("rerun")
+        ):
+            return
+
+        try:
+            # Log gripper value as scalar time series
+            rr.log(
+                f"world/teleop/{arm_side}_controller/gripper",
+                rr.Scalars(gripper_value),  # type: ignore[attr-defined]
+            )
+        except Exception as e:
+            logger.debug(f"Failed to log {arm_side} gripper to Rerun: {e}")
