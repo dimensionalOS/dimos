@@ -57,9 +57,9 @@ class ConnectionManager:
     def __init__(self) -> None:
         self.active_connections: list[WebSocket] = []
         self.active_connections_lock = threading.Lock()
-        self.data_callback: Callable[
-            [NDArray[np.float32], NDArray[np.float32], float, float], None
-        ] | None = None
+        self.data_callback: (
+            Callable[[NDArray[np.float32], NDArray[np.float32], float, float], None] | None
+        ) = None
         self.command_callback: Callable[[str, WebSocket], Awaitable[dict[str, Any]]] | None = None
 
     async def connect(self, websocket: WebSocket) -> None:

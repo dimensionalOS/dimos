@@ -204,9 +204,7 @@ class Quest3TeleopModule(BaseTeleopModule):
     # Quest3-Specific: X Button Handler
     # =========================================================================
 
-    async def _handle_x_button(
-        self, command_type: str, websocket: Any
-    ) -> dict[str, Any]:
+    async def _handle_x_button(self, command_type: str, websocket: Any) -> dict[str, Any]:
         """Handle X button press from VR client.
 
         X button toggles calibration:
