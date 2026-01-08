@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Teleop Arm Controller
+Teleop Robot Controller
 
 Receives DELTA poses from Quest3TeleopModule and applies them to the robot.
 Auto-calibrates robot on first delta received.
@@ -43,8 +43,8 @@ logger = setup_logger()
 
 
 @dataclass
-class TeleopArmControllerConfig(ModuleConfig):
-    """Configuration for Teleop Arm Controller."""
+class TeleopRobotControllerConfig(ModuleConfig):
+    """Configuration for Teleop Robot Controller."""
 
     # Driver settings
     driver_module_name: str = "RobotDriver"  # Name of the driver module to get robot pose from
@@ -55,12 +55,9 @@ class TeleopArmControllerConfig(ModuleConfig):
     enable_left_arm: bool = True
     enable_right_arm: bool = True
 
-    # Safety settings
-    workspace_limits: dict[str, tuple[float, float]] | None = None  # Optional workspace limits
 
-
-class TeleopArmController(Module):
-    """Teleop Arm Controller - applies delta poses to robot.
+class TeleopRobotController(Module):
+    """Teleop Robot Controller - applies delta poses to robot.
 
     This controller:
     1. Receives DELTA poses (PoseStamped) from Quest3TeleopModule
@@ -74,8 +71,8 @@ class TeleopArmController(Module):
     - cartesian_command input topic (Pose)
     """
 
-    default_config = TeleopArmControllerConfig
-    config: TeleopArmControllerConfig
+    default_config = TeleopRobotControllerConfig
+    config: TeleopRobotControllerConfig
 
     # Input topics - receiving DELTA poses as PoseStamped
     left_controller_delta: In[PoseStamped] = None  # type: ignore[assignment]
@@ -91,7 +88,7 @@ class TeleopArmController(Module):
     rpc_calls: list[str] = []
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """Initialize the teleop arm controller."""
+        """Initialize the teleop robot controller."""
         super().__init__(*args, **kwargs)
 
         # Set RPC calls dynamically based on driver name
@@ -123,7 +120,7 @@ class TeleopArmController(Module):
         # State lock
         self._state_lock = threading.Lock()
 
-        logger.info("TeleopArmController initialized - waiting for delta poses")
+        logger.info("TeleopRobotController initialized - waiting for delta poses")
 
     # =========================================================================
     # Module Lifecycle
@@ -131,8 +128,8 @@ class TeleopArmController(Module):
 
     @rpc
     def start(self) -> None:
-        """Start the teleop arm controller."""
-        logger.info("🚀 Starting TeleopArmController...")
+        """Start the teleop robot controller."""
+        logger.info("Starting TeleopRobotController...")
         super().start()
 
         # Subscribe to input topics (delta poses)
@@ -155,16 +152,16 @@ class TeleopArmController(Module):
         # Start control loop
         self._stop_event.clear()
         self._control_thread = threading.Thread(
-            target=self._control_loop, daemon=True, name="TeleopArmController"
+            target=self._control_loop, daemon=True, name="TeleopRobotController"
         )
         self._control_thread.start()
 
-        logger.info("TeleopArmController started - waiting for delta poses to auto-calibrate")
+        logger.info("TeleopRobotController started - waiting for delta poses to auto-calibrate")
 
     @rpc
     def stop(self) -> None:
-        """Stop the teleop arm controller."""
-        logger.info("Stopping TeleopArmController")
+        """Stop the teleop Robot controller."""
+        logger.info("Stopping TeleopRobotController")
 
         # Stop control loop
         self._stop_event.set()
@@ -172,7 +169,7 @@ class TeleopArmController(Module):
             self._control_thread.join(timeout=2.0)
 
         super().stop()
-        logger.info("TeleopArmController stopped")
+        logger.info("TeleopRobotController stopped")
 
     # =========================================================================
     # Input Callbacks
@@ -319,7 +316,7 @@ class TeleopArmController(Module):
                     )
 
                 self._robot_calibrated = True
-                logger.info("✅ Robot calibration complete - control active!")
+                logger.info("Robot calibration complete - control active!")
                 return True
             else:
                 error_msg = f"Failed to get robot cartesian state: {result}"
@@ -395,7 +392,7 @@ class TeleopArmController(Module):
                 if loop_count <= 10 or loop_count % 100 == 0:
                     logger.debug(
                         f"Control loop #{loop_count}: robot_calibrated={robot_calibrated}, "
-                        f"left_delta={'✓' if left_delta else '✗'}, right_delta={'✓' if right_delta else '✗'}"
+                        f"left_delta={left_delta is not None}, right_delta={right_delta is not None}"
                     )
 
                 # Only process if robot is calibrated
@@ -473,21 +470,6 @@ class TeleopArmController(Module):
             target_rpy = Vector3(target_roll, target_pitch, target_yaw)
             target_orientation = Quaternion.from_euler(target_rpy)
 
-            # Apply workspace limits if configured # TODO: move to a method
-            if self.config.workspace_limits:
-                target_x = max(
-                    self.config.workspace_limits["x"][0],
-                    min(self.config.workspace_limits["x"][1], target_x),
-                )
-                target_y = max(
-                    self.config.workspace_limits["y"][0],
-                    min(self.config.workspace_limits["y"][1], target_y),
-                )
-                target_z = max(
-                    self.config.workspace_limits["z"][0],
-                    min(self.config.workspace_limits["z"][1], target_z),
-                )
-
             # Create target pose
             target_pose = Pose(
                 position=Vector3(target_x, target_y, target_z),
@@ -498,7 +480,7 @@ class TeleopArmController(Module):
             if arm_side == "left":
                 quat = target_pose.orientation
 
-                # Unwrap Euler angles for smooth logging
+                # Unwrap Euler angles for smooth logging (handles +pi and -pi discontinuities)
                 current_rpy = np.array([target_pose.roll, target_pose.pitch, target_pose.yaw])
                 if arm_side in self._last_logged_rpy:
                     prev_rpy = self._last_logged_rpy[arm_side]
@@ -506,13 +488,6 @@ class TeleopArmController(Module):
                     diff = (diff + np.pi) % (2 * np.pi) - np.pi
                     current_rpy = prev_rpy + diff
                 self._last_logged_rpy[arm_side] = current_rpy
-
-                # print(
-                #     f"Target Pose: pos=[{target_pose.x:.3f}, {target_pose.y:.3f}, {target_pose.z:.3f}], "
-                #     f"rpy=[{current_rpy[0]:.3f}, {current_rpy[1]:.3f}, {current_rpy[2]:.3f}], "
-                #     f"quat=[{quat.x:.4f}, {quat.y:.4f}, {quat.z:.4f}, {quat.w:.4f}]",
-                #     flush=True,
-                # )
 
                 # Publish to robot
                 if self.left_cartesian_command and hasattr(self.left_cartesian_command, "publish"):
@@ -524,6 +499,7 @@ class TeleopArmController(Module):
             elif arm_side == "right":
                 quat = target_pose.orientation
 
+                # Unwrap Euler angles for smooth logging (handles +pi and -pi discontinuities)
                 current_rpy = np.array([target_pose.roll, target_pose.pitch, target_pose.yaw])
                 if arm_side in self._last_logged_rpy:
                     prev_rpy = self._last_logged_rpy[arm_side]
@@ -531,13 +507,6 @@ class TeleopArmController(Module):
                     diff = (diff + np.pi) % (2 * np.pi) - np.pi
                     current_rpy = prev_rpy + diff
                 self._last_logged_rpy[arm_side] = current_rpy
-
-                # print(
-                #     f"Target Pose: pos=[{target_pose.x:.3f}, {target_pose.y:.3f}, {target_pose.z:.3f}], "
-                #     f"rpy=[{current_rpy[0]:.3f}, {current_rpy[1]:.3f}, {current_rpy[2]:.3f}], "
-                #     f"quat=[{quat.x:.4f}, {quat.y:.4f}, {quat.z:.4f}, {quat.w:.4f}]",
-                #     flush=True,
-                # )
 
                 # Publish to robot
                 if self.right_cartesian_command and hasattr(self.right_cartesian_command, "publish"):
@@ -551,4 +520,4 @@ class TeleopArmController(Module):
 
 
 # Expose blueprint for declarative composition
-teleop_arm_controller = TeleopArmController.blueprint
+teleop_robot_controller = TeleopRobotController.blueprint
