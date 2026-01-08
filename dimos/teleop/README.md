@@ -9,19 +9,44 @@ The teleoperation system consists of:
 - **Device modules** (e.g., [`quest3/`](quest3/)) - Device-specific implementations
 - **Robot controller** ([`teleop_robot_controller.py`](teleop_robot_controller.py)) - Applies deltas to robot
 
+## Folder Structure
+
+```
+teleop/
+├── __init__.py                    # Package exports
+├── README.md                       # This file
+├── base/                           # Base teleoperation module
+│   ├── __init__.py
+│   ├── base_teleop_module.py      # BaseTeleopModule (calibration, deltas, publishing)
+│   └── README.md                   # Guide for creating new devices
+├── quest3/                         # Quest 3 VR implementation
+│   ├── __init__.py
+│   ├── quest3_teleop_module.py    # Quest3TeleopModule (WebSocket server)
+│   ├── README.md                   # Quest3 setup and usage
+│   ├── control/
+│   │   ├── fastapi_server.py      # FastAPI/WebSocket server
+│   │   └── tracking_processor.py  # VR tracking data processing
+│   ├── static/
+│   │   └── index.html             # VR client (HTML/JS)
+│   └── certs/                      # SSL certificates (auto-generated)
+├── teleop_robot_controller.py     # Applies deltas to robot
+└── teleop_blueprints.py            # Pre-built system blueprints
+```
+
 ## Architecture
 
 ```
-Device Module (Quest3, SpaceMouse, etc.)
-    ├── Inherits from BaseTeleopModule
-    ├── Device-specific connection (WebSocket, USB, etc.)
-    └── Calls: update_controller_poses()
-        ↓
-BaseTeleopModule
+BaseTeleopModule (base class)
     ├── Calibration (capture initial poses)
     ├── Delta computation (current - initial)
     ├── Publishes delta poses (LCM)
-    └── Rerun visualization
+    ├── Rerun visualization
+    └── update_controller_poses() ← Device modules call this
+        ↑
+Device Module (Quest3, SpaceMouse, etc.)
+    ├── Inherits from BaseTeleopModule
+    ├── Device-specific connection (WebSocket, USB, etc.)
+    └── Receives tracking data → calls update_controller_poses()
         ↓
 TeleopRobotController
     ├── Receives delta poses
