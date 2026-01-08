@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.core import Module, Out, rpc
 from dimos.core.module import ModuleConfig
+from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Vector3
 from dimos.msgs.std_msgs import Bool
 from dimos.teleop.quest3.control.fastapi_server import TeleopFastAPIServer
@@ -49,6 +50,13 @@ if TYPE_CHECKING:
     from websockets.server import WebSocketServerProtocol
 
 logger = setup_logger()
+
+try:
+    import rerun as rr
+    from dimos.dashboard.rerun_init import connect_rerun
+    RERUN_AVAILABLE = True
+except ImportError:
+    RERUN_AVAILABLE = False
 
 
 @dataclass
@@ -64,6 +72,9 @@ class Quest3TeleopConfig(ModuleConfig):
     position_scale: float = 1.0  # Scale factor for positions
     enable_left_arm: bool = True
     enable_right_arm: bool = True
+
+    # Visualization settings
+    visualize_in_rerun: bool = True  # Visualize VR controller poses in Rerun
 
     # Safety limits
     safety_limits: bool = True
@@ -107,8 +118,13 @@ class Quest3TeleopModule(Module):
     left_trigger: Out[Bool] = None  # type: ignore[assignment]
     right_trigger: Out[Bool] = None  # type: ignore[assignment]
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(
+        self, global_config: GlobalConfig | None = None, *args, **kwargs
+    ) -> None:
         super().__init__(*args, **kwargs)
+
+        # Get global config for Rerun connection
+        self._global_config = global_config or GlobalConfig()
 
         # No RPC dependencies - data-driven activation
         self.rpc_calls = []
@@ -132,10 +148,7 @@ class Quest3TeleopModule(Module):
         # Connection state [for future use]
         self._connected_clients = 0
 
-        # Rate limiting: streaming frequency
-        self._last_stream_time: float = 0.0
-        self._stream_frequency = 20  # Hz - stream controller data at 20Hz
-        self._stream_period = 1.0 / self._stream_frequency
+        # Note: Rate limiting is done client-side (VR headset), not server-side
 
         logger.info("Quest3TeleopModule initialized")
 
@@ -148,6 +161,15 @@ class Quest3TeleopModule(Module):
         """Start the Quest3 teleoperation module and signaling server."""
         logger.info("Starting Quest3 Teleoperation Module...")
         super().start()
+
+        # Connect to Rerun for visualization if enabled
+        if (
+            self.config.visualize_in_rerun
+            and RERUN_AVAILABLE
+            and self._global_config.viewer_backend.startswith("rerun")
+        ):
+            connect_rerun(global_config=self._global_config)
+            logger.info("Connected to Rerun for VR controller visualization")
 
         # Start signaling server in background thread
         self._start_signaling_server()
@@ -291,7 +313,6 @@ class Quest3TeleopModule(Module):
                 )
 
             self._is_calibrated = True
-            self._last_stream_time = 0.0  # Reset to start streaming immediately
 
             logger.info("VR calibration complete. Now streaming delta poses...")
             return {"success": True, "message": "VR calibrated - move controllers to control robot"}
@@ -363,7 +384,9 @@ class Quest3TeleopModule(Module):
         try:
             if command_type == "start_teleop":
                 logger.info("X button pressed - calibrating VR...")
+                logger.info(f"Current state: left_pose={self._left_pose is not None}, right_pose={self._right_pose is not None}")
                 result = self.calibrate_vr()
+                logger.info(f"Calibration result: {result}")
 
                 if result.get("success"):
                     return {
@@ -413,6 +436,15 @@ class Quest3TeleopModule(Module):
             left_gripper: Left gripper value (0.0-1.0)
             right_gripper: Right gripper value (0.0-1.0)
         """
+        # Track how many tracking messages we've received
+        if not hasattr(self, "_tracking_msg_count"):
+            self._tracking_msg_count = 0
+        self._tracking_msg_count += 1
+        
+        # Log first few tracking messages to confirm data is arriving
+        if self._tracking_msg_count <= 3:
+            logger.info(f"Received tracking data #{self._tracking_msg_count}")
+
         # Store absolute poses
         self._left_pose = left_pose
         self._right_pose = right_pose
@@ -423,15 +455,12 @@ class Quest3TeleopModule(Module):
 
         # Only stream deltas if VR is calibrated
         if not self._is_calibrated:
-            logger.warning("VR is not calibrated. Not streaming delta poses...")
+            # Only log this warning once every 100 messages to avoid spam
+            if self._tracking_msg_count <= 1 or self._tracking_msg_count % 100 == 0:
+                logger.warning("VR is not calibrated. Press X button to calibrate.")
             return
 
-        # Rate limit streaming
-        current_time = time.time()
-        if current_time - self._last_stream_time < self._stream_period:
-            return
-
-        self._last_stream_time = current_time
+        # Stream delta poses (client already rate-limits, so no server-side limiting needed)
         self._stream_delta_poses(left_pose, right_pose)
 
     def _stream_delta_poses(
@@ -467,6 +496,9 @@ class Quest3TeleopModule(Module):
                     try:
                         self.left_controller_delta.publish(delta_pose_stamped)
 
+                        # Visualize in Rerun (absolute pose + delta)
+                        self._visualize_controller_in_rerun(left_pose_obj, "left")
+
                         # Log periodically
                         if self._publish_count <= 5 or self._publish_count % 100 == 0:
                             logger.info(
@@ -492,6 +524,9 @@ class Quest3TeleopModule(Module):
                     try:
                         self.right_controller_delta.publish(delta_pose_stamped)
 
+                        # Visualize in Rerun (absolute pose + delta)
+                        self._visualize_controller_in_rerun(right_pose_obj, "right")
+
                         if self._publish_count <= 5 or self._publish_count % 100 == 0:
                             logger.info(
                                 f"Published right delta #{self._publish_count}: "
@@ -516,6 +551,43 @@ class Quest3TeleopModule(Module):
 
         except Exception as e:
             logger.error(f"Error streaming delta poses: {e}")
+
+    def _visualize_controller_in_rerun(
+        self, controller_pose: Pose, arm_side: str
+    ) -> None:
+        """Visualize VR controller absolute pose and delta in Rerun.
+
+        Args:
+            controller_pose: Absolute controller pose in robot space
+            arm_side: "left" or "right"
+        """
+        if not (
+            self.config.visualize_in_rerun
+            and RERUN_AVAILABLE
+            and self._global_config.viewer_backend.startswith("rerun")
+        ):
+            return
+
+        try:
+            # Convert to PoseStamped for Rerun visualization
+            controller_pose_stamped = PoseStamped(
+                ts=time.time(),
+                frame_id=f"world/teleop/{arm_side}_controller",
+                position=controller_pose.position,
+                orientation=controller_pose.orientation,
+            )
+            # Log absolute controller pose transform
+            rr.log(
+                f"world/teleop/{arm_side}_controller",
+                controller_pose_stamped.to_rerun(),
+            )
+            # Log coordinate frame axes to visualize the transform
+            rr.log(
+                f"world/teleop/{arm_side}_controller",
+                rr.TransformAxes3D(length=0.15),  # type: ignore[attr-defined]
+            )
+        except Exception as e:
+            logger.debug(f"Failed to log {arm_side} controller to Rerun: {e}")
 
     def _compute_delta(
         self, current: Pose, initial: Pose, timestamp: float, frame_id: str
