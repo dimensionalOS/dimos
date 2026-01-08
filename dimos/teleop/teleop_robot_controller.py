@@ -36,7 +36,7 @@ import numpy as np
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Vector3
-from dimos.msgs.std_msgs import Bool
+from dimos.msgs.std_msgs import Bool, Float32
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -54,6 +54,9 @@ class TeleopRobotControllerConfig(ModuleConfig):
     control_frequency: float = 50.0  # Hz - control loop frequency
     enable_left_arm: bool = True
     enable_right_arm: bool = True
+
+    # Safety settings
+    delta_timeout: float = 1  # Seconds - stop publishing if no new delta received
 
 
 class TeleopRobotController(Module):
@@ -77,12 +80,14 @@ class TeleopRobotController(Module):
     # Input topics - receiving DELTA poses as PoseStamped
     left_controller_delta: In[PoseStamped] = None  # type: ignore[assignment]
     right_controller_delta: In[PoseStamped] = None  # type: ignore[assignment]
-    left_trigger: In[Bool] = None  # type: ignore[assignment]
-    right_trigger: In[Bool] = None  # type: ignore[assignment]
+    left_trigger: In[Float32] = None  # type: ignore[assignment]  # Gripper value 0.0-1.0
+    right_trigger: In[Float32] = None  # type: ignore[assignment]  # Gripper value 0.0-1.0
 
     # Output topics (Pose for commands)
     left_cartesian_command: Out[Pose] = None  # type: ignore[assignment]
     right_cartesian_command: Out[Pose] = None  # type: ignore[assignment]
+    left_gripper_command: Out[Bool] = None  # type: ignore[assignment]
+    right_gripper_command: Out[Bool] = None  # type: ignore[assignment]
 
     # RPC dependencies (dynamically set based on config)
     rpc_calls: list[str] = []
@@ -100,8 +105,12 @@ class TeleopRobotController(Module):
         # Latest delta data
         self._left_delta: PoseStamped | None = None
         self._right_delta: PoseStamped | None = None
-        self._left_trigger_pressed: bool = False
-        self._right_trigger_pressed: bool = False
+        self._left_gripper_value: float = 0.0  # 0.0 to 1.0
+        self._right_gripper_value: float = 0.0  # 0.0 to 1.0
+
+        # Timestamps for delta timeout detection
+        self._left_delta_timestamp: float | None = None
+        self._right_delta_timestamp: float | None = None
 
         # Robot initial state (auto-calibrated on first delta)
         self._left_robot_initial_position: Vector3 | None = None
@@ -190,6 +199,7 @@ class TeleopRobotController(Module):
 
         with self._state_lock:
             self._left_delta = delta
+            self._left_delta_timestamp = time.time()
 
             # Log first few deltas
             if not hasattr(self, "_left_delta_count"):
@@ -217,6 +227,7 @@ class TeleopRobotController(Module):
 
         with self._state_lock:
             self._right_delta = delta
+            self._right_delta_timestamp = time.time()
 
             if not hasattr(self, "_right_delta_count"):
                 self._right_delta_count = 0
@@ -228,15 +239,15 @@ class TeleopRobotController(Module):
                     f"frame_id={delta.frame_id}"
                 )
 
-    def _on_left_trigger(self, trigger: Bool) -> None:
-        """Callback for left trigger."""
+    def _on_left_trigger(self, gripper: Float32) -> None:
+        """Callback for left gripper value (0.0-1.0)."""
         with self._state_lock:
-            self._left_trigger_pressed = trigger.data
+            self._left_gripper_value = float(gripper.data)
 
-    def _on_right_trigger(self, trigger: Bool) -> None:
-        """Callback for right trigger."""
+    def _on_right_trigger(self, gripper: Float32) -> None:
+        """Callback for right gripper value (0.0-1.0)."""
         with self._state_lock:
-            self._right_trigger_pressed = trigger.data
+            self._right_gripper_value = float(gripper.data)
 
     # =========================================================================
     # Robot Calibration (Auto-triggered on first delta)
@@ -383,10 +394,33 @@ class TeleopRobotController(Module):
                 loop_count += 1
 
                 # Get latest state
+                current_time = time.time()
                 with self._state_lock:
                     left_delta = self._left_delta
                     right_delta = self._right_delta
                     robot_calibrated = self._robot_calibrated
+                    left_delta_time = self._left_delta_timestamp
+                    right_delta_time = self._right_delta_timestamp
+
+                # Check for stale deltas (timeout)
+                delta_timeout = self.config.delta_timeout
+                if left_delta_time is not None:
+                    if current_time - left_delta_time > delta_timeout:
+                        logger.debug("Left delta timed out - clearing")
+                        with self._state_lock:
+                            self._left_delta = None
+                            self._left_delta_timestamp = None
+                            self._left_gripper_value = 0.0  # Clear gripper value too
+                        left_delta = None
+
+                if right_delta_time is not None:
+                    if current_time - right_delta_time > delta_timeout:
+                        logger.debug("Right delta timed out - clearing")
+                        with self._state_lock:
+                            self._right_delta = None
+                            self._right_delta_timestamp = None
+                            self._right_gripper_value = 0.0  # Clear gripper value too
+                        right_delta = None
 
                 # Log state periodically
                 if loop_count <= 10 or loop_count % 100 == 0:
@@ -404,6 +438,30 @@ class TeleopRobotController(Module):
                     # Process right arm
                     if self.config.enable_right_arm and right_delta is not None:
                         self._apply_delta(right_delta, "right")
+
+                    # Publish gripper commands (only when calibrated)
+                    # Convert float (0.0-1.0) to Bool (threshold at 0.5)
+                    with self._state_lock:
+                        left_gripper_val = self._left_gripper_value
+                        right_gripper_val = self._right_gripper_value
+
+                    if self.config.enable_left_arm:
+                        if self.left_gripper_command and hasattr(self.left_gripper_command, "publish"):
+                            try:
+                                # Convert float to bool: > 0.5 = closed
+                                left_gripper_closed = left_gripper_val > 0.5
+                                self.left_gripper_command.publish(Bool(data=left_gripper_closed))
+                            except Exception as e:
+                                logger.debug(f"Failed to publish left gripper command: {e}")
+
+                    if self.config.enable_right_arm:
+                        if self.right_gripper_command and hasattr(self.right_gripper_command, "publish"):
+                            try:
+                                # Convert float to bool: > 0.5 = closed
+                                right_gripper_closed = right_gripper_val > 0.5
+                                self.right_gripper_command.publish(Bool(data=right_gripper_closed))
+                            except Exception as e:
+                                logger.debug(f"Failed to publish right gripper command: {e}")
 
             except Exception as e:
                 logger.error(f"Error in control loop: {e}", exc_info=True)
