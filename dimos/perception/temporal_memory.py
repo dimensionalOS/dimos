@@ -35,6 +35,7 @@ from reactivex.disposable import Disposable
 from dimos import spec
 from dimos.agents import skill
 from dimos.core import DimosCluster, In, rpc
+from dimos.core.module import ModuleConfig
 from dimos.core.skill_module import SkillModule
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
@@ -65,7 +66,7 @@ class Frame:
 
 
 @dataclass
-class TemporalMemoryConfig:
+class TemporalMemoryConfig(ModuleConfig):
     fps: float = 1.0
     window_s: float = 2.0
     stride_s: float = 2.0
@@ -165,25 +166,87 @@ class TemporalMemory(SkillModule):
             logger.info("Created OpenAIVlModel from OPENAI_API_KEY environment variable")
         return self._vlm
 
+    @rpc
+    def set_AgentSpec_register_skills(self, callable) -> None:  # type: ignore[no-untyped-def]
+        """Override SkillModule to pass self directly instead of RPCClient.
+
+        This avoids pickle issues with RPCClient's WeakSet. Since we've implemented
+        proper __getstate__/__setstate__, self can be safely pickled and sent across workers.
+        """
+        from dimos.core.rpc_client import RpcCall
+
+        if isinstance(callable, RpcCall):
+            callable.set_rpc(self.rpc)  # type: ignore[arg-type]
+        callable(self)
+
+    @rpc
+    def set_MCPModule_register_skills(self, callable) -> None:  # type: ignore[no-untyped-def]
+        """Override SkillModule to pass self directly instead of RPCClient.
+
+        This avoids pickle issues with RPCClient's WeakSet. The instance is pickled
+        with minimal state for skill introspection, but actual skill execution
+        happens via RPC back to this original instance with full state.
+        """
+        from dimos.core.rpc_client import RpcCall
+
+        if isinstance(callable, RpcCall):
+            callable.set_rpc(self.rpc)  # type: ignore[arg-type]
+        callable(self)
+
     def __getstate__(self) -> dict[str, Any]:
+        """Pickle with minimal state needed for skill introspection.
+
+        The agent needs to introspect @skill() methods, which may access properties.
+        We preserve simple attributes but set unpicklable objects to None.
+        """
+        # Start with parent's state (which properly handles ModuleBase attributes)
         state = super().__getstate__()
         if state is None:
-            # Parent doesn't implement __getstate__, so we need to manually exclude unpicklable attrs
-            state = self.__dict__.copy()
-            # Remove unpicklable attributes
-            state.pop("_disposables", None)
-            state.pop("_loop", None)
-        state.pop("_state_lock", None)
+            state = {}
+
+        # Override with our minimal state
+        state.update(
+            {
+                "__class__": self.__class__,
+                "config": self.config,
+                # Preserve simple state attributes (set to safe defaults)
+                "_vlm": None,  # VLM instance - unpicklable, set to None
+                "_state": default_state(),  # Simple dict - can pickle
+                "_frame_buffer": None,  # Deque - set to None to avoid issues
+                "_recent_windows": None,  # Deque - set to None
+                "_frame_count": 0,
+                "_last_analysis_time": 0.0,
+                "_video_start_wall_time": None,
+                "_clip_filter": None,  # CLIPFrameFilter - unpicklable
+                # Output paths (simple strings/Paths - can pickle)
+                "_output_path": getattr(self, "_output_path", None),
+                "_evidence_file": getattr(self, "_evidence_file", None),
+                "_state_file": getattr(self, "_state_file", None),
+                "_entities_file": getattr(self, "_entities_file", None),
+                "_frames_index_file": getattr(self, "_frames_index_file", None),
+            }
+        )
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
-        # Let parent restore what it needs
-        if hasattr(super(), "__setstate__"):
-            super().__setstate__(state)
-        else:
-            self.__dict__.update(state)
-        # Recreate unpicklable attributes
-        self._state_lock = threading.Lock()
+        """Restore minimal state after unpickling.
+
+        This creates a minimal shell for skill introspection. The actual skill
+        execution happens via RPC back to the original instance with full state.
+        """
+        # First let parent restore its critical attributes (_disposables, _loop, _rpc, etc.)
+        super().__setstate__(state)
+
+        # Then restore our specific attributes
+        self.__dict__.update(state)
+
+        # Recreate critical attributes that need special handling
+        if not hasattr(self, "_state_lock") or self._state_lock is None:
+            self._state_lock = threading.Lock()
+        if not hasattr(self, "_frame_buffer") or self._frame_buffer is None:
+            self._frame_buffer = deque(maxlen=self.config.frame_buffer_size if self.config else 300)
+        if not hasattr(self, "_recent_windows") or self._recent_windows is None:
+            self._recent_windows = deque(maxlen=50)
 
     @rpc
     def start(self) -> None:
@@ -416,6 +479,7 @@ class TemporalMemory(SkillModule):
             logger.error(f"query failed: {e}", exc_info=True)
             return f"error: {e}"
 
+    @rpc
     def clear_history(self) -> None:
         """Clear temporal memory state."""
         with self._state_lock:
@@ -424,6 +488,7 @@ class TemporalMemory(SkillModule):
             self._recent_windows.clear()
         logger.info("cleared history")
 
+    @rpc
     def get_state(self) -> dict[str, Any]:
         with self._state_lock:
             return {
@@ -436,14 +501,17 @@ class TemporalMemory(SkillModule):
                 "currently_present": list(self._state.get("last_present", [])),
             }
 
+    @rpc
     def get_entity_roster(self) -> list[dict[str, Any]]:
         with self._state_lock:
             return list(self._state.get("entity_roster", []))
 
+    @rpc
     def get_rolling_summary(self) -> str:
         with self._state_lock:
             return str(self._state.get("rolling_summary", ""))
 
+    @rpc
     def save_state(self) -> bool:
         if not self.config.output_dir:
             return False
