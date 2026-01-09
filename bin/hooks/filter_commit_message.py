@@ -17,6 +17,11 @@ from pathlib import Path
 import sys
 
 
+bot_names = [
+    "[bot]",
+    "greptile",
+]
+
 def main() -> int:
     if len(sys.argv) < 2:
         print("Usage: filter_commit_message.py <commit-msg-file>", file=sys.stderr)
@@ -31,6 +36,8 @@ def main() -> int:
     # Find the first line containing "Generated with" and truncate there
     filtered_lines = []
     for line in lines:
+        if "Co-authored-by:" in line and any(x in line for x in bot_names):
+            continue
         if "Generated with" in line:
             break
         filtered_lines.append(line)
