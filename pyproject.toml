@@ -80,7 +80,8 @@ dependencies = [
 
     # VLA
     "openpi-client",
-    "xArm-python-sdk"
+    "xArm-python-sdk",
+    "pyrealsense2"
 ]
 
 

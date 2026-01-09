@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+""" 
+Given a policy server tuned for a particular robot, this script will get observations from camera and joint positions, 
+query the policy server for actions, and send the actions to the robot.
+"""
+
 import os
 import threading
 import time
@@ -24,12 +29,21 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import Image, JointCommand, JointState
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 from dimos.msgs.sensor_msgs import JointCommand
-from dimos.protocol.rpc import LCMRPC
 
 ACTION_HORIZON = 15
 ACTION_CHUNK = None
 GRIPPER_CHUNK = None
-RPC_TIMEOUT_SEC = 5.0
+
+# xArm7 joint limits in degrees (lower, upper)
+XARM7_JOINT_LIMITS_DEG = [
+    (-360.0, 360.0),
+    (-118.0, 118.0),
+    (-360.0, 360.0),
+    (-233.0, 11.0),
+    (-360.0, 360.0),
+    (-97.0, 180.0),
+    (-360.0, 360.0),
+]
 
 
 def get_camera_image(timeout: float = 5.0, topic: str = "/camera/color") -> np.ndarray:
@@ -78,20 +92,10 @@ def get_observation():
     return {
         "observation/exterior_image_1_left": get_camera_image(),  # ADD SECOND CAMERA IN BLUEPRINT DEFINED WITH SERIAL NUMBER
         "observation/wrist_image_left": get_camera_image(),
-        "observation/joint_position": xarm_to_franka(get_xarm_joint_positions()),
+        "observation/joint_position": get_xarm_joint_positions(),
         "observation/gripper_position": 0.0,
         "prompt": "move the arm slightly to the left",
     }
-
-
-def franka_to_xarm(franka_joint_positions):
-    offsets = np.array([0, 0, 0, 180, 0, 180, 0])
-    return offsets - franka_joint_positions
-
-
-def xarm_to_franka(xarm_joint_positions):
-    offsets = np.array([0, 0, 0, 180, 0, 180, 0])
-    return offsets + xarm_joint_positions
 
 
 def run_inference():
@@ -99,11 +103,7 @@ def run_inference():
     Run inference loop until user interrupts
     """
     actions_from_chunk_completed = 0
-    rpc = LCMRPC()
-    rpc.start()
-    # joint_cmd_pub = LCMTransport("/xarm/joint_position_command", JointCommand)
-    rpc.call_sync("XArmDriver/set_velocity_scale", ([0.2], {}), rpc_timeout=RPC_TIMEOUT_SEC)
-    rpc.call_sync("XArmDriver/set_acceleration_scale", ([0.2], {}), rpc_timeout=RPC_TIMEOUT_SEC)
+    joint_cmd_pub = LCMTransport("/xarm/joint_position_command", JointCommand)
 
     while True:
         if actions_from_chunk_completed == 0 or actions_from_chunk_completed >= ACTION_HORIZON:
@@ -122,20 +122,21 @@ def run_inference():
             current_joint_positions = np.array(get_xarm_joint_positions())
             action_chunk[:, :-1] += current_joint_positions
             action_chunk[:, :-1] *= 360 / (2 * np.pi)  # convert to degrees
-            ACTION_CHUNK = franka_to_xarm(action_chunk[:, :-1])
+            ACTION_CHUNK = action_chunk[:, :-1]
             GRIPPER_CHUNK = action_chunk[:, 7]
             GRIPPER_CHUNK = np.where(GRIPPER_CHUNK > 0.5, 0.0, GRIPPER_CHUNK)
 
         action = ACTION_CHUNK[actions_from_chunk_completed]
+        limits = np.array(XARM7_JOINT_LIMITS_DEG[: len(action)])
+        lower = limits[:, 0]
+        upper = limits[:, 1]
+        action = np.clip(action, lower, upper)
         gripper_xarm = (1.0 - GRIPPER_CHUNK[actions_from_chunk_completed]) * 850
         actions_from_chunk_completed += 1
 
-        print(f"Setting joint positions: {action[:-1]} and gripper position: {gripper_xarm}")
-        joint_positions_rad = np.deg2rad(action[:-1]).tolist()
-        # joint_cmd_pub.broadcast(None, JointCommand(positions=joint_positions_rad))
-        rpc.call_sync("XArmDriver/move_joint", ([joint_positions_rad], {}), rpc_timeout=RPC_TIMEOUT_SEC)
-
-        # IT'S NOT SENDING COMMANDS TO THE ROBOT :((
+        print(f"Setting joint positions: {action} and gripper position: {gripper_xarm}")
+        joint_positions_rad = np.deg2rad(action).tolist()
+        joint_cmd_pub.broadcast(None, JointCommand(positions=joint_positions_rad))
 
         time.sleep(0.2)
 
@@ -151,10 +152,11 @@ if __name__ == "__main__":
     arm = XArmAPI("192.168.2.235")
     arm.clean_error()
     arm.motion_enable(enable=True)
-    arm.set_mode(0)
+    arm.set_mode(1)
     arm.set_state(state=0)
     arm.move_gohome(wait=True)
 
+    print("Starting inference loop...")
     run_inference()
 
     arm.disconnect()

@@ -90,8 +90,8 @@ def xarm_driver(**config: Any) -> Any:
 # =============================================================================
 
 xarm_servo = xarm_driver(
-    ip="192.168.1.210",
-    dof=6,  # XArm6
+    ip="192.168.2.235",
+    dof=7,  # XArm6
     has_gripper=False,
     has_force_torque=False,
     control_rate=100,
@@ -188,6 +188,10 @@ xarm_trajectory = autoconnect(
         ("joint_position_command", JointCommand): LCMTransport(
             "/xarm/joint_position_command", JointCommand
         ),
+        # Velocity commands input
+        ("joint_velocity_command", JointCommand): LCMTransport(
+            "/xarm/joint_velocity_command", JointCommand
+        ),
         # Trajectory input topic
         ("trajectory", JointTrajectory): LCMTransport("/trajectory", JointTrajectory),
     }
@@ -258,11 +262,12 @@ xarm_cartesian = autoconnect(
     }
 )
 
+
 # =============================================================================
-# xArm Servo Control with Camera Blueprint
+# xArm Dual Camera Blueprint
 # =============================================================================
 
-xarm_camera = (
+xarm_dual_camera = (
     autoconnect(
         xarm_driver(
             ip="192.168.2.235",
@@ -273,50 +278,37 @@ xarm_camera = (
             monitor_rate=10,
         ),
         RealSenseWrist.blueprint(
-            serial_number="254343060929",  # come from realsenses
+            serial_number="348522074826",
             camera_name="wrist_camera",
             base_frame_id="wrist_link",
-            enable_depth=False,
+            enable_depth=True,
             enable_pointcloud=False,
         ),
         RealSenseExterior.blueprint(
-            serial_number="2",
+            serial_number="147122072697",
             camera_name="exterior_camera",
             base_frame_id="base_link",
-            enable_depth=False,
+            enable_depth=True,
             enable_pointcloud=False,
         ),
     )
     .remappings(
         [
-            # remap wrist cam connections to unique names
             (RealSenseWrist, "color_image", "wrist_color_image"),
             (RealSenseWrist, "camera_info", "wrist_camera_info"),
-            # remap exterior cam connections to unique names
             (RealSenseExterior, "color_image", "exterior_color_image"),
             (RealSenseExterior, "camera_info", "exterior_camera_info"),
         ]
     )
     .transports(
         {
-            # Shared topics between driver and controller
             ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
             ("robot_state", RobotState): LCMTransport("/xarm/robot_state", RobotState),
-            ("joint_position_command", JointCommand): LCMTransport(
-                "/xarm/joint_position_command", JointCommand
-            ),
-            # Trajectory input topic
-            ("trajectory", JointTrajectory): LCMTransport("/trajectory", JointTrajectory),
-            # Remapped wrist cam connections
-            ("wrist_color_image", Image): LCMTransport("/wrist_camera/color_image", Image),
-            ("wrist_camera_info", CameraInfo): LCMTransport(
-                "/wrist_camera/camera_info", CameraInfo
-            ),
-            # Remapped exterior cam connections
-            ("exterior_color_image", Image): LCMTransport("/exterior_camera/color_image", Image),
-            ("exterior_camera_info", CameraInfo): LCMTransport(
-                "/exterior_camera/camera_info", CameraInfo
-            ),
+            ("joint_position_command", JointCommand): LCMTransport("/xarm/joint_position_command", JointCommand),
+            ("wrist_color_image", Image): LCMTransport("/wrist/color_image", Image),
+            ("wrist_camera_info", CameraInfo): LCMTransport("/wrist/camera_info", CameraInfo),
+            ("exterior_color_image", Image): LCMTransport("/exterior/color_image", Image),
+            ("exterior_camera_info", CameraInfo): LCMTransport("/exterior/camera_info", CameraInfo),
         }
     )
 )
@@ -326,6 +318,7 @@ __all__ = [
     "xarm7_servo",
     "xarm7_trajectory",
     "xarm_camera",
+    "xarm_dual_camera",
     "xarm_cartesian",
     "xarm_servo",
     "xarm_trajectory",
