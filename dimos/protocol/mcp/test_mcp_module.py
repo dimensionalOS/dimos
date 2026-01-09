@@ -21,7 +21,6 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
-import threading
 
 import pytest
 
