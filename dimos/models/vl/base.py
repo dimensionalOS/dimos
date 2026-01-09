@@ -2,11 +2,16 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import json
 import logging
+from typing import Any
 import warnings
 
 from dimos.core.resource import Resource
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
+from dimos.perception.detection.type import (
+    Detection2DBBox,
+    Detection2DPoint,
+    ImageDetections2D,
+)
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 from dimos.utils.data import get_data
 from dimos.utils.decorators import retry
@@ -82,7 +87,9 @@ def vlm_detection_to_detection2d(
     try:
         coords = [float(vlm_detection[i]) for i in range(1, 5)]
     except (ValueError, TypeError) as e:
-        logger.debug(f"Invalid VLM detection coordinates: {vlm_detection[1:]}. Error: {e}")
+        logger.debug(
+            f"Invalid VLM detection coordinates: {vlm_detection[1:]}. Error: {e}"
+        )
         return None
 
     bbox = (coords[0], coords[1], coords[2], coords[3])
@@ -125,7 +132,9 @@ def vlm_point_to_detection2d_point(
         return None
 
     if len(vlm_point) != 3:
-        logger.debug(f"Invalid VLM point length: {len(vlm_point)}, expected 3. Got: {vlm_point}")
+        logger.debug(
+            f"Invalid VLM point length: {len(vlm_point)}, expected 3. Got: {vlm_point}"
+        )
         return None
 
     # Extract label
@@ -169,6 +178,15 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
     default_config = VlModelConfig
     config: VlModelConfig
 
+    @abstractmethod
+    def is_set_up(self) -> None:
+        """Verify that the VLM is properly configured (e.g., API key is set).
+
+        Raises:
+            ValueError: If the VLM is not properly configured
+        """
+        ...
+
     def _prepare_image(self, image: Image) -> tuple[Image, float]:
         """Prepare image for inference, applying any configured transformations.
 
@@ -180,8 +198,49 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
             return image.resize_to_fit(max_w, max_h)
         return image, 1.0
 
+    def __getstate__(self) -> dict[str, Any]:
+        """Exclude unpicklable attributes when serializing.
+
+        Subclasses should override to handle their own unpicklable attributes
+        (e.g., API clients, cached properties).
+        """
+        state = self.__dict__.copy()
+        # Remove common unpicklable attributes (may not exist in all subclasses)
+        state.pop("_client", None)
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore object from pickled state.
+
+        Subclasses should override to reinitialize their own unpicklable attributes
+        and reload any necessary configuration (e.g., API keys from environment).
+        """
+        self.__dict__.update(state)
+        # Clear cached properties that may have been removed
+        if "_client" in self.__dict__:
+            del self.__dict__["_client"]
+
     @abstractmethod
     def query(self, image: Image, query: str, **kwargs) -> str: ...  # type: ignore[no-untyped-def]
+
+    def query_multi_images(self, images: list[Image], query: str, **kwargs) -> str:  # type: ignore[no-untyped-def]
+        """Query VLM with multiple images in a single request.
+
+        This is useful for temporal reasoning across multiple frames or
+        multi-view analysis. The VLM can see all images together and reason
+        about relationships between them.
+
+        Subclasses must override this method for models that support multi-image input
+        (e.g., GPT-4V, Qwen).
+
+        Args:
+            images: List of input images (e.g., frames from a video window)
+            query: Question to ask about all images together
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support multi-image queries. "
+            "Subclasses must override query_multi_images() to provide this functionality."
+        )
 
     def query_batch(self, images: list[Image], query: str, **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
         """Query multiple images with the same question.
@@ -329,7 +388,11 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
 
         for track_id, point_tuple in enumerate(point_tuples):
             # Scale coordinates back to original image size if resized
-            if scale != 1.0 and isinstance(point_tuple, (list, tuple)) and len(point_tuple) == 3:
+            if (
+                scale != 1.0
+                and isinstance(point_tuple, (list, tuple))
+                and len(point_tuple) == 3
+            ):
                 point_tuple = [
                     point_tuple[0],  # label
                     point_tuple[1] / scale,  # x

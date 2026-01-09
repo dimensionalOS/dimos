@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from langchain_core.messages import AIMessage, HumanMessage
+from typing import Any
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from dimos.agents.llm_init import build_llm, build_system_message
 from dimos.agents.spec import AgentSpec, AnyMessage
@@ -71,15 +73,20 @@ class VLMAgent(AgentSpec):
                     return str(part.get("text", ""))
         return str(content)
 
-    def _invoke(self, msg: HumanMessage) -> AIMessage:
+    def _invoke(self, msg: HumanMessage, **kwargs: Any) -> AIMessage:
         messages = [self._system_message, msg]
-        response = self._llm.invoke(messages)
+        response = self._llm.invoke(messages, **kwargs)
         self.append_history([msg, response])  # type: ignore[arg-type]
         return response  # type: ignore[return-value]
 
-    def _invoke_image(self, image: Image, query: str) -> AIMessage:
+    def _invoke_image(
+        self, image: Image, query: str, response_format: dict | None = None
+    ) -> AIMessage:
         content = [{"type": "text", "text": query}, *image.agent_encode()]
-        return self._invoke(HumanMessage(content=content))
+        kwargs: dict[str, Any] = {}
+        if response_format:
+            kwargs["response_format"] = response_format
+        return self._invoke(HumanMessage(content=content), **kwargs)
 
     @rpc
     def clear_history(self):  # type: ignore[no-untyped-def]
@@ -110,8 +117,8 @@ class VLMAgent(AgentSpec):
         return response.content
 
     @rpc
-    def query_image(self, image: Image, query: str):  # type: ignore[no-untyped-def]
-        response = self._invoke_image(image, query)
+    def query_image(self, image: Image, query: str, response_format: dict | None = None):  # type: ignore[no-untyped-def]
+        response = self._invoke_image(image, query, response_format=response_format)
         return response.content
 
 

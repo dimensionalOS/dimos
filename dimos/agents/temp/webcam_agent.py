@@ -115,7 +115,7 @@ def main() -> None:
         ),
         hardware=lambda: Webcam(
             camera_index=0,
-            fps=15,
+            frequency=15,
             stereo_slice="left",
             camera_info=zed.CameraInfo.SingleWebcam,
         ),
