@@ -166,87 +166,11 @@ class TemporalMemory(SkillModule):
             logger.info("Created OpenAIVlModel from OPENAI_API_KEY environment variable")
         return self._vlm
 
-    @rpc
-    def set_AgentSpec_register_skills(self, callable) -> None:  # type: ignore[no-untyped-def]
-        """Override SkillModule to pass self directly instead of RPCClient.
-
-        This avoids pickle issues with RPCClient's WeakSet. Since we've implemented
-        proper __getstate__/__setstate__, self can be safely pickled and sent across workers.
-        """
-        from dimos.core.rpc_client import RpcCall
-
-        if isinstance(callable, RpcCall):
-            callable.set_rpc(self.rpc)  # type: ignore[arg-type]
-        callable(self)
-
-    @rpc
-    def set_MCPModule_register_skills(self, callable) -> None:  # type: ignore[no-untyped-def]
-        """Override SkillModule to pass self directly instead of RPCClient.
-
-        This avoids pickle issues with RPCClient's WeakSet. The instance is pickled
-        with minimal state for skill introspection, but actual skill execution
-        happens via RPC back to this original instance with full state.
-        """
-        from dimos.core.rpc_client import RpcCall
-
-        if isinstance(callable, RpcCall):
-            callable.set_rpc(self.rpc)  # type: ignore[arg-type]
-        callable(self)
-
-    def __getstate__(self) -> dict[str, Any]:
-        """Pickle with minimal state needed for skill introspection.
-
-        The agent needs to introspect @skill() methods, which may access properties.
-        We preserve simple attributes but set unpicklable objects to None.
-        """
-        # Start with parent's state (which properly handles ModuleBase attributes)
-        state = super().__getstate__()
-        if state is None:
-            state = {}
-
-        # Override with our minimal state
-        state.update(
-            {
-                "__class__": self.__class__,
-                "config": self.config,
-                # Preserve simple state attributes (set to safe defaults)
-                "_vlm": None,  # VLM instance - unpicklable, set to None
-                "_state": default_state(),  # Simple dict - can pickle
-                "_frame_buffer": None,  # Deque - set to None to avoid issues
-                "_recent_windows": None,  # Deque - set to None
-                "_frame_count": 0,
-                "_last_analysis_time": 0.0,
-                "_video_start_wall_time": None,
-                "_clip_filter": None,  # CLIPFrameFilter - unpicklable
-                # Output paths (simple strings/Paths - can pickle)
-                "_output_path": getattr(self, "_output_path", None),
-                "_evidence_file": getattr(self, "_evidence_file", None),
-                "_state_file": getattr(self, "_state_file", None),
-                "_entities_file": getattr(self, "_entities_file", None),
-                "_frames_index_file": getattr(self, "_frames_index_file", None),
-            }
-        )
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore minimal state after unpickling.
-
-        This creates a minimal shell for skill introspection. The actual skill
-        execution happens via RPC back to the original instance with full state.
-        """
-        # First let parent restore its critical attributes (_disposables, _loop, _rpc, etc.)
-        super().__setstate__(state)
-
-        # Then restore our specific attributes
-        self.__dict__.update(state)
-
-        # Recreate critical attributes that need special handling
-        if not hasattr(self, "_state_lock") or self._state_lock is None:
-            self._state_lock = threading.Lock()
-        if not hasattr(self, "_frame_buffer") or self._frame_buffer is None:
-            self._frame_buffer = deque(maxlen=self.config.frame_buffer_size if self.config else 300)
-        if not hasattr(self, "_recent_windows") or self._recent_windows is None:
-            self._recent_windows = deque(maxlen=50)
+    # Use default SkillModule behavior:
+    # - set_AgentSpec_register_skills passes RPCClient(self) to agent
+    # - RPCClient.__reduce__ handles pickle by not serializing LCMRPC/WeakSet
+    # - SkillModule.__getstate__ returns None (empty shell for routing)
+    # - Skills execute on original instance via RPC, not on pickled shell
 
     @rpc
     def start(self) -> None:
@@ -351,7 +275,7 @@ class TemporalMemory(SkillModule):
             try:
                 middle_frame = window_frames[len(window_frames) // 2]
                 response_format = get_structured_output_format()
-                response_text = self._vlm.query(
+                response_text = self.vlm.query(
                     middle_frame.image, query, response_format=response_format
                 )
             except Exception as e:
@@ -418,7 +342,7 @@ class TemporalMemory(SkillModule):
 
             # query vlm (slow, outside lock)
             try:
-                summary_text = self._vlm.query(latest_frame, prompt)
+                summary_text = self.vlm.query(latest_frame, prompt)
                 if summary_text and summary_text.strip():
                     with self._state_lock:
                         apply_summary_update(
