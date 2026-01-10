@@ -60,9 +60,9 @@ def check_multicast() -> list[str]:
                 ["ip", "link", "show", loopback_interface], capture_output=True, text=True
             )
             if "MULTICAST" not in result.stdout:
-                commands_needed.append(f"{sudo}ifconfig {loopback_interface} multicast")
+                commands_needed.append(f"{sudo}ip l set {loopback_interface} multicast on")
         except Exception:
-            commands_needed.append(f"{sudo}ifconfig {loopback_interface} multicast")
+            commands_needed.append(f"{sudo}ip l set {loopback_interface} multicast on")
 
         # Check if multicast route exists
         try:
