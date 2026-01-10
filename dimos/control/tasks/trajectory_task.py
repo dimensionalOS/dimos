@@ -85,6 +85,8 @@ class JointTrajectoryTask:
             name: Unique task name
             config: Task configuration
         """
+        if not config.joint_names:
+            raise ValueError(f"JointTrajectoryTask '{name}' requires at least one joint")
         self._name = name
         self._config = config
         self._joint_names = frozenset(config.joint_names)

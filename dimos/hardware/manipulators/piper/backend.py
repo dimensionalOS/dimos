@@ -45,6 +45,8 @@ class PiperBackend:
     """
 
     def __init__(self, can_port: str = "can0", dof: int = 6) -> None:
+        if dof != 6:
+            raise ValueError(f"PiperBackend only supports 6 DOF (got {dof})")
         self._can_port = can_port
         self._dof = dof
         self._sdk: Any = None
@@ -355,9 +357,9 @@ class PiperBackend:
 
         try:
             if enable:
-                # Enable with retries
+                # Enable with retries (500ms max)
                 attempts = 0
-                max_attempts = 100
+                max_attempts = 50
                 success = False
                 while attempts < max_attempts:
                     if self._sdk.EnablePiper():

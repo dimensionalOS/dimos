@@ -179,38 +179,51 @@ class ControlOrchestrator(Module[ControlOrchestratorConfig]):
 
     def _setup_from_config(self) -> None:
         """Create hardware and tasks from config (called on start)."""
-        for hw_cfg in self.config.hardware:
-            backend = None
-            try:
-                backend = self._create_backend_from_config(hw_cfg)
-                if not backend.connect():
-                    raise RuntimeError(f"Failed to connect to {hw_cfg.type} backend")
+        hardware_added: list[str] = []
 
-                if hw_cfg.auto_enable and hasattr(backend, "write_enable"):
-                    backend.write_enable(True)
+        try:
+            for hw_cfg in self.config.hardware:
+                backend = None
+                try:
+                    backend = self._create_backend_from_config(hw_cfg)
+                    if not backend.connect():
+                        raise RuntimeError(f"Failed to connect to {hw_cfg.type} backend")
 
-                self.add_hardware(
-                    hw_cfg.id,
-                    backend,
-                    joint_prefix=hw_cfg.joint_prefix or hw_cfg.id,
-                )
-            except Exception as e:
-                logger.error(f"Failed to setup hardware {hw_cfg.id}: {e}")
-                # Clean up connected backend on failure
-                if backend is not None and hasattr(backend, "disconnect"):
-                    try:
-                        backend.disconnect()
-                    except Exception:
-                        pass  # Best effort cleanup
-                raise
+                    if hw_cfg.auto_enable and hasattr(backend, "write_enable"):
+                        backend.write_enable(True)
 
-        for task_cfg in self.config.tasks:
-            try:
-                task = self._create_task_from_config(task_cfg)
-                self.add_task(task)
-            except Exception as e:
-                logger.error(f"Failed to setup task {task_cfg.name}: {e}")
-                raise
+                    self.add_hardware(
+                        hw_cfg.id,
+                        backend,
+                        joint_prefix=hw_cfg.joint_prefix or hw_cfg.id,
+                    )
+                    hardware_added.append(hw_cfg.id)
+                except Exception as e:
+                    logger.error(f"Failed to setup hardware {hw_cfg.id}: {e}")
+                    # Clean up connected backend on failure
+                    if backend is not None and hasattr(backend, "disconnect"):
+                        try:
+                            backend.disconnect()
+                        except Exception:
+                            pass  # Best effort cleanup
+                    raise
+
+            for task_cfg in self.config.tasks:
+                try:
+                    task = self._create_task_from_config(task_cfg)
+                    self.add_task(task)
+                except Exception as e:
+                    logger.error(f"Failed to setup task {task_cfg.name}: {e}")
+                    raise
+
+        except Exception:
+            # Rollback: clean up all successfully added hardware
+            for hw_id in hardware_added:
+                try:
+                    self.remove_hardware(hw_id)
+                except Exception:
+                    pass  # Best effort cleanup
+            raise
 
     def _create_backend_from_config(self, cfg: HardwareConfig) -> ManipulatorBackend:
         """Create a manipulator backend from config."""
@@ -432,8 +445,6 @@ class ControlOrchestrator(Module[ControlOrchestratorConfig]):
     @rpc
     def start(self) -> None:
         """Start the orchestrator control loop."""
-        super().start()
-
         if self._tick_loop and self._tick_loop.tick_count > 0:
             logger.warning("Orchestrator already running")
             return
@@ -457,6 +468,8 @@ class ControlOrchestrator(Module[ControlOrchestratorConfig]):
         )
         self._tick_loop.start()
 
+        # Only mark as started after everything succeeds
+        super().start()
         logger.info(f"ControlOrchestrator started at {self.config.tick_rate}Hz")
 
     @rpc
@@ -466,6 +479,15 @@ class ControlOrchestrator(Module[ControlOrchestratorConfig]):
 
         if self._tick_loop:
             self._tick_loop.stop()
+
+        # Disconnect all hardware backends
+        with self._hardware_lock:
+            for hw_id, interface in list(self._hardware.items()):
+                try:
+                    interface.disconnect()
+                    logger.info(f"Disconnected hardware {hw_id}")
+                except Exception as e:
+                    logger.error(f"Error disconnecting hardware {hw_id}: {e}")
 
         super().stop()
         logger.info("ControlOrchestrator stopped")

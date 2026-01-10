@@ -22,9 +22,12 @@ Wraps ManipulatorBackend with orchestrator-specific features:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.hardware.manipulators.spec import ControlMode
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dimos.hardware.manipulators.spec import ManipulatorBackend
@@ -72,6 +75,10 @@ class HardwareInterface(Protocol):
         """
         ...
 
+    def disconnect(self) -> None:
+        """Disconnect the underlying hardware."""
+        ...
+
 
 class BackendHardwareInterface:
     """Concrete implementation wrapping a ManipulatorBackend.
@@ -106,6 +113,7 @@ class BackendHardwareInterface:
         # Track last commanded values for hold-last behavior
         self._last_commanded: dict[str, float] = {}
         self._initialized = False
+        self._warned_unknown_joints: set[str] = set()
 
     @property
     def hardware_id(self) -> str:
@@ -121,6 +129,11 @@ class BackendHardwareInterface:
     def dof(self) -> int:
         """Degrees of freedom."""
         return self._dof
+
+    def disconnect(self) -> None:
+        """Disconnect the underlying backend."""
+        if hasattr(self._backend, "disconnect"):
+            self._backend.disconnect()
 
     def read_state(self) -> dict[str, tuple[float, float, float]]:
         """Read state as {joint_name: (position, velocity, effort)}.
@@ -152,7 +165,7 @@ class BackendHardwareInterface:
         Returns:
             True if command was sent successfully
         """
-        # Initialize on first write if needed (with simple lock to prevent race)
+        # Initialize on first write if needed
         if not self._initialized:
             self._initialize_last_commanded()
 
@@ -160,6 +173,12 @@ class BackendHardwareInterface:
         for joint_name, value in commands.items():
             if joint_name in self._joint_names:
                 self._last_commanded[joint_name] = value
+            elif joint_name not in self._warned_unknown_joints:
+                logger.warning(
+                    f"Hardware {self._hardware_id} received command for unknown joint "
+                    f"{joint_name}. Valid joints: {self._joint_names}"
+                )
+                self._warned_unknown_joints.add(joint_name)
 
         # Build ordered list for backend
         ordered = self._build_ordered_command()

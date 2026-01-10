@@ -334,26 +334,27 @@ class TickLoop:
         """
         hw_commands: dict[str, tuple[dict[str, float], ControlMode]] = {}
 
-        for joint_name, (value, mode, _) in joint_commands.items():
-            hw_id = self._joint_to_hardware.get(joint_name)
-            if hw_id is None:
-                logger.warning(f"Unknown joint {joint_name}, cannot route")
-                continue
-
-            if hw_id not in hw_commands:
-                hw_commands[hw_id] = ({}, mode)
-            else:
-                # Check for mode conflict across joints on same hardware
-                existing_mode = hw_commands[hw_id][1]
-                if mode != existing_mode:
-                    logger.error(
-                        f"Mode conflict for hardware {hw_id}: joint {joint_name} wants "
-                        f"{mode.name} but hardware already has {existing_mode.name}. "
-                        f"Dropping command for {joint_name}."
-                    )
+        with self._hardware_lock:
+            for joint_name, (value, mode, _) in joint_commands.items():
+                hw_id = self._joint_to_hardware.get(joint_name)
+                if hw_id is None:
+                    logger.warning(f"Unknown joint {joint_name}, cannot route")
                     continue
 
-            hw_commands[hw_id][0][joint_name] = value
+                if hw_id not in hw_commands:
+                    hw_commands[hw_id] = ({}, mode)
+                else:
+                    # Check for mode conflict across joints on same hardware
+                    existing_mode = hw_commands[hw_id][1]
+                    if mode != existing_mode:
+                        logger.error(
+                            f"Mode conflict for hardware {hw_id}: joint {joint_name} wants "
+                            f"{mode.name} but hardware already has {existing_mode.name}. "
+                            f"Dropping command for {joint_name}."
+                        )
+                        continue
+
+                hw_commands[hw_id][0][joint_name] = value
 
         return hw_commands
 
