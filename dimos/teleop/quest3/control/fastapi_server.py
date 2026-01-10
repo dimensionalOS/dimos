@@ -57,9 +57,7 @@ class ConnectionManager:
     def __init__(self) -> None:
         self.active_connections: list[WebSocket] = []
         self.active_connections_lock = threading.Lock()
-        self.data_callback: (
-            Callable[[list[NDArray[np.float32]], list[float]], None] | None
-        ) = None
+        self.data_callback: Callable[[list[NDArray[np.float32]], list[float]], None] | None = None
         self.command_callback: Callable[[str, WebSocket], Awaitable[dict[str, Any]]] | None = None
 
     async def connect(self, websocket: WebSocket) -> None:
@@ -328,9 +326,7 @@ class TeleopFastAPIServer:
 
                         # Send to callback (teleop module)
                         if self.manager.data_callback is not None:
-                            self.manager.data_callback(
-                                controller_poses, controller_gripper_values
-                            )
+                            self.manager.data_callback(controller_poses, controller_gripper_values)
 
                         # Log periodically
                         if message_count % 100 == 0:
@@ -449,8 +445,12 @@ if __name__ == "__main__":
     def test_callback(controller_poses: Any, controller_gripper_values: Any) -> None:
         """Test callback for tracking data."""
         if len(controller_poses) >= 2 and len(controller_gripper_values) >= 2:
-            print(f"Left pose: {controller_poses[0][:3, 3]}, gripper: {controller_gripper_values[0]}")
-            print(f"Right pose: {controller_poses[1][:3, 3]}, gripper: {controller_gripper_values[1]}")
+            print(
+                f"Left pose: {controller_poses[0][:3, 3]}, gripper: {controller_gripper_values[0]}"
+            )
+            print(
+                f"Right pose: {controller_poses[1][:3, 3]}, gripper: {controller_gripper_values[1]}"
+            )
 
     server = TeleopFastAPIServer()
     server.set_callback(test_callback)

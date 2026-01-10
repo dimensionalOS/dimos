@@ -239,8 +239,14 @@ class TeleopRobotController(Module):
                 pose_data = result.get("pose", {})
 
                 # Store robot initial state
-                position = Vector3(pose_data.get("x", 0.0), pose_data.get("y", 0.0), pose_data.get("z", 0.0))
-                rpy = Vector3(pose_data.get("roll", 0.0), pose_data.get("pitch", 0.0), pose_data.get("yaw", 0.0))
+                position = Vector3(
+                    pose_data.get("x", 0.0), pose_data.get("y", 0.0), pose_data.get("z", 0.0)
+                )
+                rpy = Vector3(
+                    pose_data.get("roll", 0.0),
+                    pose_data.get("pitch", 0.0),
+                    pose_data.get("yaw", 0.0),
+                )
                 self._robot_initial_pose = Pose(
                     position=position,
                     orientation=Quaternion.from_euler(rpy),
@@ -332,7 +338,7 @@ class TeleopRobotController(Module):
                             self.gripper_command.publish(Bool(data=gripper_val > 0.5))
                         except Exception as e:
                             logger.debug(f"Failed to publish gripper command: {e}")
-                
+
                 # Log state periodically
                 if loop_count <= 10 or loop_count % 100 == 0:
                     logger.debug(
@@ -355,6 +361,7 @@ class TeleopRobotController(Module):
                 next_time = time.perf_counter() + period
 
         logger.info("Control loop stopped")
+
 
 # Expose blueprint for declarative composition
 teleop_robot_controller = TeleopRobotController.blueprint

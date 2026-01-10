@@ -32,7 +32,7 @@ from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Sequence
 
 from dimos.core import Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
@@ -50,7 +50,9 @@ logger = setup_logger()
 
 try:
     import rerun as rr
+
     from dimos.dashboard.rerun_init import connect_rerun
+
     RERUN_AVAILABLE = True
 except ImportError:
     RERUN_AVAILABLE = False
@@ -91,6 +93,7 @@ class TeleopStatusKey(str, Enum):
     CONTROLLER_HAS_DATA = "controller_{index}_has_data"
     CONTROLLER_GRIPPER_VALUE = "controller_{index}_gripper_value"
     CONTROLLER_LABEL = "controller_{index}_label"
+
 
 class BaseTeleopModule(Module, ABC):
     """Base class for teleoperation modules.
@@ -149,9 +152,13 @@ class BaseTeleopModule(Module, ABC):
 
         # check for mismatches between num_inputs and enable_inputs or input_labels
         if len(self.config.enable_inputs) != self.config.num_inputs:
-            raise ValueError(f"Number of enable_inputs ({len(self.config.enable_inputs)}) does not match num_inputs ({self.config.num_inputs})")
+            raise ValueError(
+                f"Number of enable_inputs ({len(self.config.enable_inputs)}) does not match num_inputs ({self.config.num_inputs})"
+            )
         if len(self.config.input_labels) != self.config.num_inputs:
-            raise ValueError(f"Number of input_labels ({len(self.config.input_labels)}) does not match num_inputs ({self.config.num_inputs})")
+            raise ValueError(
+                f"Number of input_labels ({len(self.config.input_labels)}) does not match num_inputs ({self.config.num_inputs})"
+            )
 
         logger.info(f"{self.__class__.__name__} base initialized")
 
@@ -208,8 +215,9 @@ class BaseTeleopModule(Module, ABC):
 
             # Capture controller initial poses
             for i in enabled_indices:
-                if self._all_poses[i] is not None:
-                    pose_obj = matrix_to_pose(self._all_poses[i])
+                pose_matrix = self._all_poses[i]
+                if pose_matrix is not None:
+                    pose_obj = matrix_to_pose(pose_matrix)
                     self._initial_poses[i] = pose_obj
                     logger.info(
                         f"Captured controller initial: "
@@ -264,10 +272,18 @@ class BaseTeleopModule(Module, ABC):
             TeleopStatusKey.IS_CALIBRATED.value: self._is_calibrated,
         }
         for i in range(self.config.num_inputs):
-            status[TeleopStatusKey.CONTROLLER_ENABLED.value.format(index=i)] = self.config.enable_inputs[i]
-            status[TeleopStatusKey.CONTROLLER_HAS_DATA.value.format(index=i)] = self._all_poses[i] is not None
-            status[TeleopStatusKey.CONTROLLER_GRIPPER_VALUE.value.format(index=i)] = self._all_gripper_values[i]
-            status[TeleopStatusKey.CONTROLLER_LABEL.value.format(index=i)] = self.config.input_labels[i]
+            status[TeleopStatusKey.CONTROLLER_ENABLED.value.format(index=i)] = (
+                self.config.enable_inputs[i]
+            )
+            status[TeleopStatusKey.CONTROLLER_HAS_DATA.value.format(index=i)] = (
+                self._all_poses[i] is not None
+            )
+            status[TeleopStatusKey.CONTROLLER_GRIPPER_VALUE.value.format(index=i)] = (
+                self._all_gripper_values[i]
+            )
+            status[TeleopStatusKey.CONTROLLER_LABEL.value.format(index=i)] = (
+                self.config.input_labels[i]
+            )
 
         return status
 
@@ -277,8 +293,8 @@ class BaseTeleopModule(Module, ABC):
 
     def update_controller_poses(
         self,
-        controller_poses: list[NDArray[np.float32]],
-        controller_gripper_values: list[float],
+        controller_poses: Sequence[NDArray[np.float32] | None],
+        controller_gripper_values: Sequence[float],
     ) -> None:
         """Update controller poses and publish deltas if calibrated.
 
@@ -297,8 +313,8 @@ class BaseTeleopModule(Module, ABC):
             logger.info(f"Received tracking data #{self._tracking_msg_count}")
 
         # Store absolute poses
-        self._all_poses = controller_poses
-        self._all_gripper_values = controller_gripper_values
+        self._all_poses = list(controller_poses)
+        self._all_gripper_values = list(controller_gripper_values)
 
         # Only stream deltas if calibrated
         if not self._is_calibrated:
@@ -310,22 +326,24 @@ class BaseTeleopModule(Module, ABC):
         # Compute and publish deltas
         self._compute_and_publish_deltas()
 
-        
     def _compute_and_publish_deltas(self) -> None:
         """Compute and publish delta poses (current - initial)."""
         # Track publish count for logging
         self._publish_count += 1
 
         try:
-
             for i in range(self.config.num_inputs):
                 if not self.config.enable_inputs[i]:
                     continue
 
                 current_time = time.time()
-                pose_obj = matrix_to_pose(self._all_poses[i])
+                pose_matrix = self._all_poses[i]
+                if pose_matrix is None:
+                    continue
+                initial_pose = self._initial_poses[i]
+                pose_obj = matrix_to_pose(pose_matrix)
                 input_label = self.config.input_labels[i]
-                delta_pose = pose_obj - self._initial_poses[i]
+                delta_pose = pose_obj - initial_pose
                 delta_pose_stamped = PoseStamped(
                     ts=current_time,
                     frame_id=f"{self.__class__.__name__.lower()}_{input_label}_controller_delta",
@@ -349,7 +367,6 @@ class BaseTeleopModule(Module, ABC):
                     except Exception as e:
                         logger.debug(f"Failed to publish {input_label} gripper: {e}")
 
-
                 if self.config.log_input_data and (
                     self._publish_count <= 5
                     or self._publish_count % self.config.log_input_data_interval == 0
@@ -368,9 +385,7 @@ class BaseTeleopModule(Module, ABC):
     # Rerun Visualization
     # =========================================================================
 
-    def _visualize_controller_in_rerun(
-        self, controller_pose: Pose, controller_label: str
-    ) -> None:
+    def _visualize_controller_in_rerun(self, controller_pose: Pose, controller_label: str) -> None:
         """Visualize controller absolute pose in Rerun.
 
         Args:

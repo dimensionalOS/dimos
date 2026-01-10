@@ -77,35 +77,39 @@ from dimos.teleop.teleop_robot_controller import TeleopRobotController, teleop_r
 #   TeleopRobotController.gripper_command -- Robot Driver (via LCM)
 # =============================================================================
 
-quest3_teleop = autoconnect(
-    quest3_teleop_module(
-        signaling_host="0.0.0.0",
-        signaling_port=8443,  # HTTPS port (required for WebXR)
-        use_https=True,  # Enable HTTPS for Quest 3 WebXR
-        num_inputs=2,
-        enable_inputs=[True, False],
-        input_labels=["left_vr", "right_vr"],
-        visualize_in_rerun=True,
-        safety_limits=True,
-    ),
-    teleop_robot_controller(
-        driver_module_name="DummyDriver",
-        dummy_driver=True,  # Skip RPC calls, use zeros for initial pose
-        control_frequency=50.0,  # Hz - control loop frequency
-    ),
-).remappings(
-    [
-        (TeleopRobotController, "controller_delta", "controller_delta_0"),
-        (TeleopRobotController, "trigger_value", "trigger_value_0"),
-    ]
-).transports(
-    {
-        # Delta poses from Quest3TeleopModule to TeleopRobotController
-        ("controller_delta_0", PoseStamped): LCMTransport(
-            "/quest3/controller_delta_0", PoseStamped
+quest3_teleop = (
+    autoconnect(
+        quest3_teleop_module(
+            signaling_host="0.0.0.0",
+            signaling_port=8443,  # HTTPS port (required for WebXR)
+            use_https=True,  # Enable HTTPS for Quest 3 WebXR
+            num_inputs=2,
+            enable_inputs=[True, False],
+            input_labels=["left_vr", "right_vr"],
+            visualize_in_rerun=True,
+            safety_limits=True,
         ),
-        ("trigger_value_0", Float32): LCMTransport("/quest3/trigger_value_0", Float32),
-    }
+        teleop_robot_controller(
+            driver_module_name="DummyDriver",
+            dummy_driver=True,  # Skip RPC calls, use zeros for initial pose
+            control_frequency=50.0,  # Hz - control loop frequency
+        ),
+    )
+    .remappings(
+        [
+            (TeleopRobotController, "controller_delta", "controller_delta_0"),
+            (TeleopRobotController, "trigger_value", "trigger_value_0"),
+        ]
+    )
+    .transports(
+        {
+            # Delta poses from Quest3TeleopModule to TeleopRobotController
+            ("controller_delta_0", PoseStamped): LCMTransport(
+                "/quest3/controller_delta_0", PoseStamped
+            ),
+            ("trigger_value_0", Float32): LCMTransport("/quest3/trigger_value_0", Float32),
+        }
+    )
 )
 
 __all__ = [

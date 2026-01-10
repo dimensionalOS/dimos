@@ -42,8 +42,6 @@ from typing import TYPE_CHECKING, Any
 from dimos.core import Out, rpc
 from dimos.teleop.base import BaseTeleopConfig, BaseTeleopModule
 from dimos.teleop.quest3.control.fastapi_server import TeleopFastAPIServer
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.std_msgs import Float32
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -51,6 +49,8 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from dimos.core.global_config import GlobalConfig
+    from dimos.msgs.geometry_msgs import PoseStamped
+    from dimos.msgs.std_msgs import Float32
 
 logger = setup_logger()
 
@@ -286,8 +286,6 @@ class Quest3TeleopModule(BaseTeleopModule):
         """
         # Call base class method to handle everything
         self.update_controller_poses(controller_poses, controller_gripper_values)
-
-
 
 
 # Expose blueprint for declarative composition
