@@ -32,7 +32,7 @@ from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
 import time
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any
 
 from dimos.core import Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
@@ -43,6 +43,8 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import numpy as np
     from numpy.typing import NDArray
 
