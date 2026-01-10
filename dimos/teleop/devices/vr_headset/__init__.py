@@ -12,4 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Teleoperation module for dimos."""
+"""VR headset teleoperation exports."""
+
+from dimos.teleop.devices.vr_headset.vr_teleop_module import (
+    VRTeleopModule,
+    vr_teleop_module,
+)
+
+__all__ = [
+    "VRTeleopModule",
+    "vr_teleop_module",
+]

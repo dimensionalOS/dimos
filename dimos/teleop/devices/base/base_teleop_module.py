@@ -100,16 +100,6 @@ class TeleopStatusKey(str, Enum):
 class BaseTeleopModule(Module, ABC):
     """Base class for teleoperation modules.
 
-    Provides common functionality for multi-controller teleoperation:
-    - Calibration: capture initial controller poses
-    - Delta computation: current - initial
-    - Publishing: delta poses and trigger states to LCM
-    - Visualization: Rerun integration
-    - RPC interface: standard methods for all devices
-
-    Subclasses implement device-specific connection logic and call
-    `update_controller_poses()` when new tracking data arrives.
-
     ## LCM Topics (Output):
     - controller_delta_{i}: Out[PoseStamped] - Controller i delta pose
     - trigger_value_{i}: Out[Float32] - Controller i trigger/gripper value (0.0-1.0)
@@ -243,11 +233,7 @@ class BaseTeleopModule(Module, ABC):
 
     @rpc
     def reset_calibration(self) -> dict[str, Any]:
-        """Reset calibration. Stops streaming until recalibrated.
-
-        Returns:
-            Dict with 'success' and 'message'
-        """
+        """Reset calibration. Stops streaming until recalibrated"""
         self._is_calibrated = False
         self._initial_poses = [None] * self.config.num_inputs
 
@@ -256,20 +242,12 @@ class BaseTeleopModule(Module, ABC):
 
     @rpc
     def is_calibrated(self) -> bool:
-        """Check if calibrated.
-
-        Returns:
-            True if calibrated and streaming deltas
-        """
+        """Check if calibrated"""
         return self._is_calibrated
 
     @rpc
     def get_status(self) -> dict[str, Any]:
-        """Get current teleoperation status.
-
-        Returns:
-            Dictionary with status information keyed by TeleopStatusKey templates.
-        """
+        """Get current teleoperation status"""
         status: dict[str, Any] = {
             TeleopStatusKey.IS_CALIBRATED.value: self._is_calibrated,
         }
@@ -298,29 +276,14 @@ class BaseTeleopModule(Module, ABC):
         controller_poses: Sequence[NDArray[np.float32] | None],
         controller_gripper_values: Sequence[float],
     ) -> None:
-        """Update controller poses and publish deltas if calibrated.
-
-        This method should be called by subclasses when new tracking data arrives
-        from the device-specific connection.
-
-        Args:
-            controller_poses: List of 4x4 transformation matrices for all controllers
-            controller_gripper_values: List of gripper values (0.0-1.0) for all controllers
-        """
+        """Update controller poses and publish deltas if calibrated"""
         # Track how many tracking messages we've received
         self._tracking_msg_count += 1
-
-        # Log first few tracking messages to confirm data is arriving
-        if self._tracking_msg_count <= 3:
-            logger.info(f"Received tracking data #{self._tracking_msg_count}")
-
-        # Store absolute poses
         self._all_poses = list(controller_poses)
         self._all_gripper_values = list(controller_gripper_values)
 
         # Only stream deltas if calibrated
         if not self._is_calibrated:
-            # Only log this warning once every 100 messages to avoid spam
             if self._tracking_msg_count <= 1 or self._tracking_msg_count % 100 == 0:
                 logger.warning("Not calibrated. Calibrate to start teleoperation.")
             return
@@ -345,6 +308,7 @@ class BaseTeleopModule(Module, ABC):
                 initial_pose = self._initial_poses[i]
                 pose_obj = matrix_to_pose(pose_matrix)
                 input_label = self.config.input_labels[i]
+
                 delta_pose = pose_obj - initial_pose
                 delta_pose_stamped = PoseStamped(
                     ts=current_time,
@@ -369,17 +333,6 @@ class BaseTeleopModule(Module, ABC):
                     except Exception as e:
                         logger.debug(f"Failed to publish {input_label} gripper: {e}")
 
-                if self.config.log_input_data and (
-                    self._publish_count <= 5
-                    or self._publish_count % self.config.log_input_data_interval == 0
-                ):
-                    logger.info(
-                        f"Published {input_label} delta #{self._publish_count}: "
-                        f"pos=[{delta_pose_stamped.position.x:.3f}, {delta_pose_stamped.position.y:.3f}, {delta_pose_stamped.position.z:.3f}], "
-                        f"rpy=[{delta_pose_stamped.roll:.3f}, {delta_pose_stamped.pitch:.3f}, {delta_pose_stamped.yaw:.3f}], "
-                        f"frame_id={delta_pose_stamped.frame_id}, "
-                        f"trigger_value={self._all_gripper_values[i]:.3f}"
-                    )
         except Exception as e:
             logger.error(f"Error computing/publishing delta poses: {e}")
 
@@ -388,12 +341,7 @@ class BaseTeleopModule(Module, ABC):
     # =========================================================================
 
     def _visualize_controller_in_rerun(self, controller_pose: Pose, controller_label: str) -> None:
-        """Visualize controller absolute pose in Rerun.
-
-        Args:
-            controller_pose: Absolute controller pose in robot space
-            controller_label: Controller label from input_labels
-        """
+        """Visualize controller absolute pose in Rerun"""
         if not (
             self.config.visualize_in_rerun
             and RERUN_AVAILABLE
@@ -402,37 +350,25 @@ class BaseTeleopModule(Module, ABC):
             return
 
         try:
-            # Convert to PoseStamped for Rerun visualization
             controller_pose_stamped = PoseStamped(
                 ts=time.time(),
                 frame_id=f"world/teleop/{controller_label}_controller",
                 position=controller_pose.position,
                 orientation=controller_pose.orientation,
             )
-            # Log absolute controller pose transform
             rr.log(
                 f"world/teleop/{controller_label}_controller",
                 controller_pose_stamped.to_rerun(),  # type: ignore[no-untyped-call]
             )
-            # Log coordinate frame axes to visualize the transform
             rr.log(
-                f"world/teleop/{controller_label}_controller",
-                rr.Arrows3D(  # type: ignore[attr-defined]
-                    vectors=[[0.30, 0, 0], [0, 0.30, 0], [0, 0, 0.30]],
-                    origins=[[0, 0, 0], [0, 0, 0], [0, 0, 0]],
-                    colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
-                ),
+                f"world/teleop/{controller_label}_controller/forward",
+                controller_pose_stamped.to_rerun_arrow(),  # type: ignore[no-untyped-call]
             )
         except Exception as e:
             logger.debug(f"Failed to log {controller_label} controller to Rerun: {e}")
 
     def _visualize_trigger_in_rerun(self, trigger_value: float, controller_label: str) -> None:
-        """Visualize trigger value in Rerun as a scalar time series.
-
-        Args:
-            trigger_value: Trigger value (0.0-1.0) from controller
-            controller_label: Controller label from input_labels
-        """
+        """Visualize trigger value in Rerun as a scalar time series."""
         if not (
             self.config.visualize_in_rerun
             and RERUN_AVAILABLE
@@ -441,7 +377,6 @@ class BaseTeleopModule(Module, ABC):
             return
 
         try:
-            # Log trigger value as scalar time series
             rr.log(
                 f"world/teleop/{controller_label}_controller/trigger",
                 rr.Scalars(trigger_value),  # type: ignore[attr-defined]

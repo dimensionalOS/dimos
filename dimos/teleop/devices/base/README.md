@@ -17,14 +17,14 @@ Abstract base class for all teleoperation devices in dimos.
 BaseTeleopModule (base class)
 ├── Calibration logic
 ├── Delta pose computation
-├── LCM publishing
+├── LCM publishing (per-controller topics)
 ├── Rerun visualization
 └── update_controller_poses() ← Device-specific code calls this
 
-Device-Specific Module (e.g., Quest3TeleopModule)
+Device-Specific Module (e.g., VRTeleopModule)
 ├── Connection logic (WebSocket, USB, etc.)
 ├── Data parsing
-└── Calls: update_controller_poses(left_pose, right_pose, left_gripper, right_gripper)
+└── Calls: update_controller_poses(controller_poses, controller_gripper_values)
 ```
 
 ## Creating a New Teleoperation Module
@@ -34,10 +34,12 @@ Device-Specific Module (e.g., Quest3TeleopModule)
 3. **Implement connection logic** in `start()` method
 4. **Call `update_controller_poses()`** when new tracking data arrives
 
+The module also exposes a blueprint helper as `base_teleop_module`.
+
 ### Example: SpaceMouse Device
 
 ```python
-from dimos.teleop.base import BaseTeleopConfig, BaseTeleopModule
+from dimos.teleop.devices.base import BaseTeleopConfig, BaseTeleopModule
 
 @dataclass
 class SpaceMouseTeleopConfig(BaseTeleopConfig):
@@ -57,12 +59,12 @@ class SpaceMouseTeleopModule(BaseTeleopModule):
     def _read_usb_loop(self):
         while self._running:
             # Parse USB data to 4x4 transformation matrices
-            left_pose, right_pose = parse_spacemouse_data(...)
+            controller_poses = parse_spacemouse_data(...)
 
             # Base class handles everything else!
             self.update_controller_poses(
-                left_pose, right_pose,
-                left_gripper=0.0, right_gripper=0.0
+                controller_poses,
+                controller_gripper_values=[0.0] * len(controller_poses),
             )
 ```
 
@@ -73,10 +75,13 @@ class SpaceMouseTeleopModule(BaseTeleopModule):
 ```python
 @dataclass
 class BaseTeleopConfig(ModuleConfig):
+    num_inputs: int = 1                      # Number of controllers
+    enable_inputs: list[bool] = []           # Defaults to all enabled
+    input_labels: list[str] = []             # Defaults to controller_{i}
     position_scale: float = 1.0              # Scale factor for positions
-    enable_left_arm: bool = True             # Enable left arm
-    enable_right_arm: bool = True            # Enable right arm
     visualize_in_rerun: bool = True          # Visualize in Rerun
+    log_input_data: bool = False             # Log input pose/gripper data
+    log_input_data_interval: int = 100       # Log every N publishes when enabled
     safety_limits: bool = True               # Enable safety limits
     max_velocity: float = 0.5                # m/s
     workspace_limits: dict[str, tuple[float, float]]  # x, y, z limits
@@ -86,19 +91,27 @@ class BaseTeleopConfig(ModuleConfig):
 
 All devices get these methods automatically:
 
-- `calibrate_vr()` → Capture initial controller poses
+- `calibrate()` → Capture initial controller poses
 - `reset_calibration()` → Reset calibration state
-- `is_vr_calibrated()` → Check if calibrated
+- `is_calibrated()` → Check if calibrated
 - `get_status()` → Get teleoperation status
 
 ## LCM Topics (Inherited)
 
 All devices publish these topics:
 
-- `left_controller_delta: Out[PoseStamped]` - Left controller delta pose
-- `right_controller_delta: Out[PoseStamped]` - Right controller delta pose
-- `left_trigger: Out[Bool]` - Left trigger state
-- `right_trigger: Out[Bool]` - Right trigger state
+- `controller_delta_{i}: Out[PoseStamped]` - Controller i delta pose
+- `trigger_value_{i}: Out[Float32]` - Controller i trigger/gripper value (0.0-1.0)
+
+## Status Keys
+
+`get_status()` returns a flat dict keyed by `TeleopStatusKey` templates:
+
+- `is_calibrated`
+- `controller_{index}_enabled`
+- `controller_{index}_has_data`
+- `controller_{index}_gripper_value`
+- `controller_{index}_label`
 
 ## Benefits
 
@@ -108,4 +121,4 @@ All devices publish these topics:
 
 ## Existing Implementations
 
-- **Quest3TeleopModule** (`dimos/teleop/quest3/`) - Meta Quest 3 VR headset via WebXR
+- **VRTeleopModule** (`dimos/teleop/devices/vr_headset/`) - VR headset via WebXR (Quest 3 tested)

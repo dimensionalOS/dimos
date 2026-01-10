@@ -13,14 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-FastAPI WebSocket server for Quest3 VR teleoperation.
-
-Handles WebSocket connections and processes VR controller tracking data
-using FastAPI for better performance and features.
-
-Now includes HTTPS support and serves the standalone HTML VR client.
-"""
 
 from __future__ import annotations
 
@@ -36,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import uvicorn
 
-from dimos.teleop.quest3.control.tracking_processor import TrackingProcessor
+from dimos.teleop.devices.vr_headset.control.tracking_processor import TrackingProcessor
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

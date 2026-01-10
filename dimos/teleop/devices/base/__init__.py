@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Quest3 VR Teleoperation."""
+"""Base teleoperation module exports."""
 
-from dimos.teleop.quest3.quest3_teleop_module import Quest3TeleopConfig, Quest3TeleopModule
+from dimos.teleop.devices.base.base_teleop_module import (
+    BaseTeleopConfig,
+    BaseTeleopModule,
+)
 
 __all__ = [
-    "Quest3TeleopConfig",
-    "Quest3TeleopModule",
+    "BaseTeleopConfig",
+    "BaseTeleopModule",
 ]

@@ -14,9 +14,9 @@
 # limitations under the License.
 
 """
-Quest3 Teleoperation Module
+VR Teleoperation Module
 
-A dimos Module that runs the WebSocket signaling server for Quest3 VR teleoperation,
+A dimos Module that runs the WebSocket signaling server for VR teleoperation,
 receives controller tracking data, and streams DELTA poses to TeleopRobotController.
 
 This module inherits from BaseTeleopModule which handles:
@@ -26,8 +26,8 @@ This module inherits from BaseTeleopModule which handles:
 - Rerun visualization
 - Standard RPC interface
 
-This module implements Quest3-specific:
-- FastAPI/WebSocket server for Quest3 VR headset
+This module implements VR-specific:
+- FastAPI/WebSocket server for VR headset
 - X button handler for calibration trigger
 """
 
@@ -40,8 +40,8 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.core import Out, rpc
-from dimos.teleop.base import BaseTeleopConfig, BaseTeleopModule
-from dimos.teleop.quest3.control.fastapi_server import TeleopFastAPIServer
+from dimos.teleop.devices.base import BaseTeleopConfig, BaseTeleopModule
+from dimos.teleop.devices.vr_headset.control.fastapi_server import TeleopFastAPIServer
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -56,10 +56,10 @@ logger = setup_logger()
 
 
 @dataclass
-class Quest3TeleopConfig(BaseTeleopConfig):
-    """Configuration for Quest3 Teleoperation Module."""
+class VRTeleopConfig(BaseTeleopConfig):
+    """Configuration for VR Teleoperation Module."""
 
-    # Quest3-specific WebSocket server settings
+    # VR-specific WebSocket server settings
     signaling_host: str = "0.0.0.0"
     signaling_port: int = 8443  # HTTPS port for WebXR
     use_https: bool = True  # Enable HTTPS for WebXR (required by Quest 3)
@@ -74,41 +74,21 @@ class Quest3TeleopConfig(BaseTeleopConfig):
     log_input_data: bool = False  # Log input pose/gripper data periodically
     log_input_data_interval: int = 100  # Log every N publishes when enabled
 
-    # Other inherited from BaseTeleopConfig (with defaults):
-    # safety_limits: bool = True  # Enable safety limits
-    # - position_scale: float = 1.0
-    # - max_velocity: float = 0.5
-    # - workspace_limits: dict[str, tuple[float, float]]
 
-
-class Quest3TeleopModule(BaseTeleopModule):
-    """Quest3 VR Teleoperation Module.
-
-    Inherits calibration, delta computation, and visualization from BaseTeleopModule.
-    Implements Quest3-specific WebSocket server and VR connection logic.
-
-    ## Device-Specific Features:
-    - FastAPI/WebSocket server for Quest3 VR headset communication
-    - HTTPS support for WebXR (required by Quest 3)
-    - X button handler for calibration trigger
+class VRTeleopModule(BaseTeleopModule):
+    """VR Teleoperation Module.
 
     ## LCM Topics (inherited from base):
     - controller_delta_0: Out[PoseStamped] - Controller 0 delta pose
-    - controller_delta_1: Out[PoseStamped] - Controller 1 delta pose
     - trigger_value_0: Out[Float32] - Controller 0 trigger/gripper value (0.0-1.0)
-    - trigger_value_1: Out[Float32] - Controller 1 trigger/gripper value (0.0-1.0)
 
-    ## RPC Methods (inherited from base):
-    - start() -> None: Start the module and signaling server
-    - stop() -> None: Stop the module and signaling server
-    - calibrate() -> dict: Calibrate (capture initial controller poses)
-    - reset_calibration() -> dict: Reset calibration
-    - is_calibrated() -> bool: Check if calibrated
-    - get_status() -> dict: Get current teleoperation status
+    ## Additional LCM Topics:
+    - controller_delta_1: Out[PoseStamped] - Controller 1 delta pose
+    - trigger_value_1: Out[Float32] - Controller 1 trigger/gripper value (0.0-1.0)
     """
 
-    default_config = Quest3TeleopConfig
-    config: Quest3TeleopConfig
+    default_config = VRTeleopConfig
+    config: VRTeleopConfig
 
     # LCM output topics for VR (controller_0 is inherited from base)
     controller_delta_1: Out[PoseStamped] = None  # type: ignore[assignment]
@@ -122,41 +102,34 @@ class Quest3TeleopModule(BaseTeleopModule):
         # Pass global_config as positional argument to match base class signature
         super().__init__(global_config, *args, **kwargs)
 
-        # Quest3-specific: FastAPI WebSocket server
+        # VR-specific: FastAPI WebSocket server
         self._fastapi_server: TeleopFastAPIServer | None = None
         self._server_thread: threading.Thread | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
 
-        logger.info("Quest3TeleopModule initialized")
+        logger.info("VRTeleopModule initialized")
 
     # =========================================================================
-    # Module Lifecycle (Quest3-specific)
+    # Module Lifecycle (VR-specific)
     # =========================================================================
 
     @rpc
     def start(self) -> None:
-        """Start the Quest3 teleoperation module and signaling server."""
-        logger.info("Starting Quest3 Teleoperation Module...")
-
-        # Call base class start (handles Rerun connection, etc.)
+        """Start the VR teleoperation module and signaling server."""
         super().start()
 
-        # Start Quest3-specific signaling server
+        # Start VR-specific signaling server
         self._start_signaling_server()
 
         protocol = "https" if self.config.use_https else "http"
         logger.info(
-            f"Quest3 Teleoperation Module started on {protocol}://{self.config.signaling_host}:{self.config.signaling_port}"
+            f"VR Teleoperation Module started: Open this URL on Quest 3: {protocol}://<your-ip>:{self.config.signaling_port}/"
         )
-        logger.info(
-            f"Open this URL on Quest 3: {protocol}://<your-ip>:{self.config.signaling_port}/"
-        )
-        logger.info("Press X button in VR to calibrate and start teleoperation")
 
     @rpc
     def stop(self) -> None:
-        """Stop the Quest3 teleoperation module and signaling server."""
-        logger.info("Stopping Quest3 Teleoperation Module...")
+        """Stop the VR teleoperation module and signaling server."""
+        logger.info("Stopping VR Teleoperation Module...")
 
         # Stop signaling server
         self._stop_signaling_server()
@@ -214,28 +187,16 @@ class Quest3TeleopModule(BaseTeleopModule):
         logger.info("FastAPI server stopped")
 
     # =========================================================================
-    # Quest3-Specific: X Button Handler
+    # VR-Specific: X Button Handler
     # =========================================================================
 
     async def _handle_x_button(self, command_type: str, websocket: Any) -> dict[str, Any]:
         """Handle X button press from VR client.
-
-        X button toggles calibration:
-        - If not calibrated: calibrate VR
-        - If calibrated: reset calibration (stop streaming)
-
-        Args:
-            command_type: 'start_teleop' or 'stop_teleop'
-            websocket: WebSocket connection to send responses
-
-        Returns:
-            Response dictionary to send back to client
+        X button toggles calibration and Starts/stops teleoperation
         """
         try:
             if command_type == "start_teleop":
                 logger.info("X button pressed - calibrating VR...")
-                pose_states = [pose is not None for pose in self._all_poses]
-                logger.info(f"Current state: controller_poses={pose_states}")
                 result = self.calibrate()
                 logger.info(f"Calibration result: {result}")
 
@@ -266,7 +227,7 @@ class Quest3TeleopModule(BaseTeleopModule):
         return {"type": "error", "error": f"Unknown command: {command_type}"}
 
     # =========================================================================
-    # Quest3-Specific: Controller Data Processing
+    # Data Processing
     # =========================================================================
 
     def _on_tracking_data(
@@ -274,9 +235,9 @@ class Quest3TeleopModule(BaseTeleopModule):
         controller_poses: list[NDArray[np.float32]],
         controller_gripper_values: list[float],
     ) -> None:
-        """Receive tracking data from Quest3 VR.
+        """Receive tracking data from VR.
 
-        Called by the FastAPI server when new tracking data arrives from Quest3.
+        Called by the FastAPI server when new tracking data arrives from VR.
         Delegates to base class method which handles calibration, delta computation,
         and publishing.
 
@@ -289,4 +250,4 @@ class Quest3TeleopModule(BaseTeleopModule):
 
 
 # Expose blueprint for declarative composition
-quest3_teleop_module = Quest3TeleopModule.blueprint
+vr_teleop_module = VRTeleopModule.blueprint

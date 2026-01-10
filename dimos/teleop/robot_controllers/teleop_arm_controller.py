@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Teleop Robot Controller
+Teleop Arm Controller
 
 Receives controller delta poses from Quest3TeleopModule and applies them to the robot.
 Auto-calibrates robot on first delta received.
@@ -46,11 +46,11 @@ logger = setup_logger()
 
 
 @dataclass
-class TeleopRobotControllerConfig(ModuleConfig):
-    """Configuration for Teleop Robot Controller."""
+class TeleopArmControllerConfig(ModuleConfig):
+    """Configuration for Teleop Arm Controller."""
 
     # Driver settings
-    driver_module_name: str = "RobotDriver"  # Name of the driver module to get robot pose from
+    driver_module_name: str = "ArmDriver"  # Name of the driver module to get robot pose from
     driver_method_name: str = "get_state"
     dummy_driver: bool = False  # If True, skip RPC calls and use zeros for initial pose
 
@@ -61,8 +61,8 @@ class TeleopRobotControllerConfig(ModuleConfig):
     delta_timeout: float = 1  # Seconds - stop publishing if no new delta received
 
 
-class TeleopRobotController(Module):
-    """Teleop Robot Controller - applies delta poses to robot.
+class TeleopArmController(Module):
+    """Teleop Arm Controller - applies delta poses to robot.
 
     This controller:
     1. Receives DELTA poses (PoseStamped) from Quest3TeleopModule for a single controller
@@ -76,8 +76,8 @@ class TeleopRobotController(Module):
     - cartesian_command input topic (Pose)
     """
 
-    default_config = TeleopRobotControllerConfig
-    config: TeleopRobotControllerConfig
+    default_config = TeleopArmControllerConfig
+    config: TeleopArmControllerConfig
 
     # Input topics - receiving DELTA poses as PoseStamped
     controller_delta: In[PoseStamped] = None  # type: ignore[assignment]
@@ -106,7 +106,7 @@ class TeleopRobotController(Module):
         # Timestamps for delta timeout detection
         self._delta_timestamp: float | None = None
 
-        # Robot initial state (auto-calibrated on first delta)
+        # Arm initial state (auto-calibrated on first delta)
         self._robot_initial_pose: Pose | None = None
         self._robot_calibrated = False
 
@@ -117,7 +117,7 @@ class TeleopRobotController(Module):
         # State lock
         self._state_lock = threading.Lock()
 
-        logger.info("TeleopRobotController initialized - waiting for delta poses")
+        logger.info("TeleopArmController initialized - waiting for delta poses")
 
     # =========================================================================
     # Module Lifecycle
@@ -126,7 +126,7 @@ class TeleopRobotController(Module):
     @rpc
     def start(self) -> None:
         """Start the teleop robot controller."""
-        logger.info("Starting TeleopRobotController...")
+        logger.info("Starting TeleopArmController...")
         super().start()
 
         # Subscribe to input topics (delta poses)
@@ -145,16 +145,16 @@ class TeleopRobotController(Module):
         # Start control loop
         self._stop_event.clear()
         self._control_thread = threading.Thread(
-            target=self._control_loop, daemon=True, name="TeleopRobotController"
+            target=self._control_loop, daemon=True, name="TeleopArmController"
         )
         self._control_thread.start()
 
-        logger.info("TeleopRobotController started - waiting for delta poses to auto-calibrate")
+        logger.info("TeleopArmController started - waiting for delta poses to auto-calibrate")
 
     @rpc
     def stop(self) -> None:
-        """Stop the teleop Robot controller."""
-        logger.info("Stopping TeleopRobotController")
+        """Stop the teleop Arm controller."""
+        logger.info("Stopping TeleopArmController")
 
         # Stop control loop
         self._stop_event.set()
@@ -162,7 +162,7 @@ class TeleopRobotController(Module):
             self._control_thread.join(timeout=2.0)
 
         super().stop()
-        logger.info("TeleopRobotController stopped")
+        logger.info("TeleopArmController stopped")
 
     # =========================================================================
     # Input Callbacks
@@ -198,7 +198,7 @@ class TeleopRobotController(Module):
             self._gripper_value = float(gripper.data)
 
     # =========================================================================
-    # Robot Calibration (Auto-triggered on first delta)
+    # Arm Calibration (Auto-triggered on first delta)
     # =========================================================================
 
     def _calibrate_robot(self) -> bool:
@@ -222,7 +222,7 @@ class TeleopRobotController(Module):
             logger.info("Initial pose: pos=[0, 0, 0], rpy=[0, 0, 0]")
 
             self._robot_calibrated = True
-            logger.info("Robot calibration complete (dummy mode) - control active!")
+            logger.info("Arm calibration complete (dummy mode) - control active!")
             return True
 
         try:
@@ -251,9 +251,9 @@ class TeleopRobotController(Module):
                     position=position,
                     orientation=Quaternion.from_euler(rpy),
                 )
-                logger.info(f"Robot initial pose: {pose_data}")
+                logger.info(f"Arm initial pose: {pose_data}")
                 self._robot_calibrated = True
-                logger.info("Robot calibration complete - control active!")
+                logger.info("Arm calibration complete - control active!")
                 return True
 
             error_msg = f"Failed to get robot cartesian state: {result}"
@@ -261,7 +261,7 @@ class TeleopRobotController(Module):
             return False
 
         except Exception as e:
-            logger.error(f"Robot calibration failed: {e}", exc_info=True)
+            logger.error(f"Arm calibration failed: {e}", exc_info=True)
             traceback.print_exc()
             return False
 
@@ -276,7 +276,7 @@ class TeleopRobotController(Module):
         success = self._calibrate_robot()
 
         if success:
-            return {"success": True, "message": "Robot recalibrated"}
+            return {"success": True, "message": "Arm recalibrated"}
         else:
             return {"success": False, "error": "Recalibration failed"}
 
@@ -364,4 +364,4 @@ class TeleopRobotController(Module):
 
 
 # Expose blueprint for declarative composition
-teleop_robot_controller = TeleopRobotController.blueprint
+teleop_arm_controller = TeleopArmController.blueprint

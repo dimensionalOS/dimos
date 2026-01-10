@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Base teleoperation module exports."""
+"""Teleoperation robot controllers."""
 
-from dimos.teleop.base.base_teleop_module import (
-    BaseTeleopConfig,
-    BaseTeleopModule,
+from dimos.teleop.robot_controllers.teleop_arm_controller import (
+    TeleopArmController,
+    teleop_arm_controller,
 )
 
-__all__ = ["BaseTeleopConfig", "BaseTeleopModule"]
+__all__ = [
+    "TeleopArmController",
+    "teleop_arm_controller",
+]

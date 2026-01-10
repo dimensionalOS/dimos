@@ -1,20 +1,20 @@
-# Quest3 VR Teleoperation
+# VR Headset Teleoperation
 
-VR teleoperation for Quest 3 headset with robot manipulation.
+VR teleoperation for headsets (Quest 3 tested).
 
 ## Quick Start
 
 ### 1. Start Teleoperation
 
 ```python
-from dimos.teleop.quest3 import Quest3TeleopModule
+from dimos.teleop.devices.vr_headset import VRTeleopModule
 
 # Create and start
-teleop = Quest3TeleopModule()
+teleop = VRTeleopModule()
 teleop.start()
 
 # Output:
-# Quest3 Teleoperation Module started on https://0.0.0.0:8443
+# VR Teleoperation Module started on https://0.0.0.0:8443
 # Open this URL on Quest 3: https://<your-ip>:8443/
 ```
 
@@ -37,24 +37,24 @@ teleop.start()
 
 5. **Press X button** on controller to start teleoperation
    - First press: Calibrates (captures initial poses) and starts control
-   - Press again: Stops control (calibration preserved)
-   - Press again: Resumes control
+   - Press again: Stops control and resets calibration
+   - Press again: Calibrates again and resumes control
 
 ## Architecture
 
 ```
 Quest 3 Browser
     ↓ Opens https://your-ip:8443/ (WebXR)
-    ↓ X button → calibrate_vr() via WebSocket
+    ↓ X button → start_teleop/stop_teleop via WebSocket
     ↓
 FastAPI Server
     ↓ Receives tracking data (controller poses)
     ↓
-Quest3TeleopModule (inherits BaseTeleopModule)
+VRTeleopModule (inherits BaseTeleopModule)
     ↓ Computes delta poses (current - initial)
     ↓ Publishes delta poses (PoseStamped)
     ↓
-TeleopRobotController
+TeleopArmController
     ↓ Auto-calibrates robot on first delta
     ↓ Applies: target = initial_robot + delta
     ↓ Publishes cartesian commands (Pose)
@@ -66,26 +66,31 @@ Robot Driver
 
 ## Key Features
 
-Press X to start/stop teleoperation
-Captures initial poses on first X press
-Robot follows controller movement relative to initial pose
-AR mode
+- Press X to start/stop teleoperation (start = calibrate, stop = reset calibration)
+- Captures initial poses on start
+- Robot follows controller movement relative to initial pose
+- AR mode
+
+The module exposes a blueprint helper as `vr_teleop_module`.
 
 ## Configuration
 
 ```python
-from dimos.teleop.quest3 import Quest3TeleopModule, Quest3TeleopConfig
+from dimos.teleop.devices.vr_headset import VRTeleopModule, VRTeleopConfig
 
-config = Quest3TeleopConfig(
-    # Quest3-specific settings
+config = VRTeleopConfig(
+    # VR headset settings
     signaling_host="0.0.0.0",
     signaling_port=8443,           # HTTPS port (required for WebXR)
     use_https=True,                # Required for Quest 3 WebXR
 
     # Inherited from BaseTeleopConfig
-    enable_left_arm=True,
-    enable_right_arm=True,
+    num_inputs=2,
+    enable_inputs=[True, True],
+    input_labels=["left_vr", "right_vr"],
     visualize_in_rerun=True,       # Visualize controllers in Rerun
+    log_input_data=False,          # Log input pose/gripper data
+    log_input_data_interval=100,   # Log every N publishes when enabled
     position_scale=1.0,
     max_velocity=0.5,
     workspace_limits={
@@ -95,7 +100,7 @@ config = Quest3TeleopConfig(
     },
 )
 
-module = Quest3TeleopModule(config=config)
+module = VRTeleopModule(config=config)
 module.start()
 ```
 
@@ -135,19 +140,19 @@ module.start()
 
 Inherited from `BaseTeleopModule`:
 
-- `left_controller_delta` (PoseStamped) - Left controller **delta** pose (current - initial)
-- `right_controller_delta` (PoseStamped) - Right controller **delta** pose (current - initial)
-- `left_trigger` (Bool) - Left trigger button state
-- `right_trigger` (Bool) - Right trigger button state
+- `controller_delta_0` (PoseStamped) - Controller 0 **delta** pose (current - initial)
+- `controller_delta_1` (PoseStamped) - Controller 1 **delta** pose (current - initial)
+- `trigger_value_0` (Float32) - Controller 0 trigger value (0.0-1.0)
+- `trigger_value_1` (Float32) - Controller 1 trigger value (0.0-1.0)
 
-**Note**: These are **delta poses**, not absolute poses. TeleopRobotController applies these deltas to the robot's initial pose.
+**Note**: These are **delta poses**, not absolute poses. TeleopArmController applies these deltas to the robot's initial pose. `input_labels` are used in frame IDs and logging.
 
 
 ## Development
 
 ### Standalone Server Testing
 ```bash
-cd dimos/teleop/quest3/control
+cd dimos/teleop/devices/vr_headset/control
 python fastapi_server.py
 
 # Server starts on https://0.0.0.0:8443
@@ -158,20 +163,18 @@ python fastapi_server.py
 
 ```python
 from dimos.core.blueprints import autoconnect
-from dimos.teleop.quest3 import quest3_teleop_module
-from dimos.teleop import teleop_robot_controller
+from dimos.teleop.devices.vr_headset import VRTeleopModule
+from dimos.teleop.robot_controllers import teleop_arm_controller
 from your_robot import your_robot_blueprint
 
 custom_stack = autoconnect(
-    quest3_teleop_module(
+    VRTeleopModule(
         signaling_port=8443,
-        enable_left_arm=True,
-        enable_right_arm=False,
+        enable_inputs=[True, False],
+        input_labels=["left_vr", "right_vr"],
     ),
-    teleop_robot_controller(
+    teleop_arm_controller(
         driver_module_name="YourDriver",
-        enable_left_arm=True,
-        enable_right_arm=False,
     ),
     your_robot_blueprint,
 )
@@ -183,4 +186,4 @@ coordinator.loop()
 ## Related
 
 - [`BaseTeleopModule`](../base/) - Base class for all teleoperation devices
-- [`TeleopRobotController`](../teleop_robot_controller.py) - Applies deltas to robot
+- [`TeleopArmController`](../../robot_controllers/teleop_arm_controller.py) - Applies deltas to robot
