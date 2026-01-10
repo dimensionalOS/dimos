@@ -58,7 +58,7 @@ class ConnectionManager:
         self.active_connections: list[WebSocket] = []
         self.active_connections_lock = threading.Lock()
         self.data_callback: (
-            Callable[[NDArray[np.float32], NDArray[np.float32], float, float], None] | None
+            Callable[[list[NDArray[np.float32]], list[float]], None] | None
         ) = None
         self.command_callback: Callable[[str, WebSocket], Awaitable[dict[str, Any]]] | None = None
 
@@ -86,12 +86,12 @@ class ConnectionManager:
 
     def set_callback(
         self,
-        callback: Callable[[NDArray[np.float32], NDArray[np.float32], float, float], None],
+        callback: Callable[[list[NDArray[np.float32]], list[float]], None],
     ) -> None:
         """Set callback function to send controller data to teleop module.
 
         Args:
-            callback: Function that takes (left_pose, right_pose, left_gripper, right_gripper)
+            callback: Function that takes (controller_poses, controller_gripper_values)
         """
         self.data_callback = callback
         logger.info("Controller data callback registered")
@@ -229,7 +229,7 @@ class TeleopFastAPIServer:
     def _setup_routes(self) -> None:
         """Setup FastAPI routes and WebSocket endpoints."""
 
-        @self.app.get("/")
+        @self.app.get("/", response_model=None)
         async def root() -> FileResponse | dict[str, Any]:
             """Serve the VR client HTML page."""
             html_file = self.static_dir / "index.html"
@@ -324,12 +324,12 @@ class TeleopFastAPIServer:
                     result = processor.process_tracking_message(message)
 
                     if result is not None:
-                        left_pose, right_pose, left_gripper, right_gripper = result
+                        controller_poses, controller_gripper_values = result
 
                         # Send to callback (teleop module)
                         if self.manager.data_callback is not None:
                             self.manager.data_callback(
-                                left_pose, right_pose, left_gripper, right_gripper
+                                controller_poses, controller_gripper_values
                             )
 
                         # Log periodically
@@ -346,12 +346,12 @@ class TeleopFastAPIServer:
 
     def set_callback(
         self,
-        callback: Callable[[NDArray[np.float32], NDArray[np.float32], float, float], None],
+        callback: Callable[[list[NDArray[np.float32]], list[float]], None],
     ) -> None:
         """Set callback function for controller data.
 
         Args:
-            callback: Function that takes (left_pose, right_pose, left_gripper, right_gripper)
+            callback: Function that takes (controller_poses, controller_gripper_values)
         """
         self.manager.set_callback(callback)
 
@@ -446,12 +446,11 @@ if __name__ == "__main__":
         level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
-    def test_callback(
-        left_pose: Any, right_pose: Any, left_gripper: float, right_gripper: float
-    ) -> None:
+    def test_callback(controller_poses: Any, controller_gripper_values: Any) -> None:
         """Test callback for tracking data."""
-        print(f"Left pose: {left_pose[:3, 3]}, gripper: {left_gripper}")
-        print(f"Right pose: {right_pose[:3, 3]}, gripper: {right_gripper}")
+        if len(controller_poses) >= 2 and len(controller_gripper_values) >= 2:
+            print(f"Left pose: {controller_poses[0][:3, 3]}, gripper: {controller_gripper_values[0]}")
+            print(f"Right pose: {controller_poses[1][:3, 3]}, gripper: {controller_gripper_values[1]}")
 
     server = TeleopFastAPIServer()
     server.set_callback(test_callback)

@@ -17,7 +17,7 @@
 VR controller tracking processor for Quest3 teleoperation.
 
 Processes VR controller tracking data, applies coordinate transformations,
-and returns robot-space poses and gripper values.
+and returns robot-space poses and gripper values per controller.
 """
 
 from __future__ import annotations
@@ -67,52 +67,43 @@ class TrackingProcessor:
 
     def process_tracking_message(
         self, event: dict[str, Any]
-    ) -> tuple[NDArray[np.float32], NDArray[np.float32], float, float] | None:
+    ) -> tuple[list[NDArray[np.float32]], list[float]] | None:
         """Process VR tracking message and return robot-space poses.
 
         Args:
             event: Dictionary with 'type', 'left', and 'right' controller data
 
         Returns:
-            Tuple of (left_pose, right_pose, left_gripper, right_gripper) or None if invalid
+            Tuple of (controller_poses, controller_gripper_values) or None if invalid
         """
         tracking_type = event.get("type")
-        if tracking_type != "controller":  # TODO: handle hand tracking type
+        if tracking_type != "controller":
             logger.debug("Ignoring non-controller tracking type: %s", tracking_type)
             return None
 
         # Process both controllers
         for side in ["left", "right"]:
             tracking_data = event.get(side)
-            if tracking_data is not None:
-                if not isinstance(tracking_data, dict):
-                    logger.warning("Invalid tracking data format for %s", side)
-                    continue
+            if tracking_data is None:
+                continue
+            if not isinstance(tracking_data, dict):
+                logger.debug("Invalid %s tracking payload: %s", side, type(tracking_data))
+                continue
 
-                self._process_controller(tracking_data, side)
+            # Process target location (pose)
+            if "targetLocation" in tracking_data:
+                self._process_target_location(tracking_data["targetLocation"], side)
 
-        # Get controller poses
-        left_pose = self.left_wrist_pose.copy()
-        right_pose = self.right_wrist_pose.copy()
+            # Process gripper (trigger)
+            if side == "left":
+                self.left_gripper_value = self._extract_gripper_value(tracking_data)
+            else:
+                self.right_gripper_value = self._extract_gripper_value(tracking_data)
 
-        return left_pose, right_pose, self.left_gripper_value, self.right_gripper_value
-
-    def _process_controller(self, tracking_data: dict[str, Any], side: str) -> None:
-        """Process single controller's tracking data.
-
-        Args:
-            tracking_data: Controller data with 'targetLocation' and 'trigger'
-            side: 'left' or 'right'
-        """
-        # Process target location (pose)
-        if "targetLocation" in tracking_data:
-            self._process_target_location(tracking_data["targetLocation"], side)
-
-        # Process gripper (trigger)
-        if side == "left":
-            self.left_gripper_value = self._extract_gripper_value(tracking_data)
-        else:
-            self.right_gripper_value = self._extract_gripper_value(tracking_data)
+        return (
+            [self.left_wrist_pose, self.right_wrist_pose],
+            [self.left_gripper_value, self.right_gripper_value],
+        )
 
     def _process_target_location(self, target_location: list[float], side: str) -> None:
         """Process controller pose from VR space to robot space.
