@@ -222,6 +222,21 @@ class Pose(LCMPose):  # type: ignore[misc]
 
         return Pose(new_position, new_orientation)
 
+    def __sub__(self, other: Pose | PoseConvertable) -> Pose:
+        """Compute the delta pose: self - other.
+
+        For position: simple subtraction.
+        For orientation: delta_quat = self.orientation * inverse(other.orientation)
+        """
+        if isinstance(other, Pose):
+            other_pose = other
+        else:
+            other_pose = Pose(other)
+
+        delta_position = self.position - other_pose.position
+        delta_orientation = self.orientation * other_pose.orientation.inverse()
+        return Pose(delta_position, delta_orientation)
+
     @classmethod
     def from_ros_msg(cls, ros_msg: ROSPose) -> Pose:
         """Create a Pose from a ROS geometry_msgs/Pose message.
