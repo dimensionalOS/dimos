@@ -166,12 +166,6 @@ class TemporalMemory(SkillModule):
             logger.info("Created OpenAIVlModel from OPENAI_API_KEY environment variable")
         return self._vlm
 
-    # Use default SkillModule behavior:
-    # - set_AgentSpec_register_skills passes RPCClient(self) to agent
-    # - RPCClient.__reduce__ handles pickle by not serializing LCMRPC/WeakSet
-    # - SkillModule.__getstate__ returns None (empty shell for routing)
-    # - Skills execute on original instance via RPC, not on pickled shell
-
     @rpc
     def start(self) -> None:
         super().start()
