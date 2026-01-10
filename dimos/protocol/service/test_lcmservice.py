@@ -78,7 +78,7 @@ def test_check_multicast_missing_multicast_flag() -> None:
 
             result = check_multicast()
             sudo = get_sudo_prefix()
-            assert result == [f"{sudo}ifconfig lo multicast"]
+            assert result == [f"{sudo}ip l set lo multicast on"]
 
 
 def test_check_multicast_missing_route() -> None:
@@ -127,7 +127,7 @@ def test_check_multicast_all_missing() -> None:
             result = check_multicast()
             sudo = get_sudo_prefix()
             expected = [
-                f"{sudo}ifconfig lo multicast",
+                f"{sudo}ip l set lo multicast on",
                 f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
             ]
             assert result == expected
@@ -143,7 +143,7 @@ def test_check_multicast_subprocess_exception() -> None:
             result = check_multicast()
             sudo = get_sudo_prefix()
             expected = [
-                f"{sudo}ifconfig lo multicast",
+                f"{sudo}ip l set lo multicast on",
                 f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
             ]
             assert result == expected
@@ -466,7 +466,7 @@ def test_autoconf_with_config_needed_success() -> None:
                     # Command execution calls
                     type(
                         "MockResult", (), {"stdout": "success", "returncode": 0}
-                    )(),  # ifconfig lo multicast
+                    )(),  # ip l set lo multicast on
                     type(
                         "MockResult", (), {"stdout": "success", "returncode": 0}
                     )(),  # route add...
@@ -487,7 +487,7 @@ def test_autoconf_with_config_needed_success() -> None:
                     # Verify the expected log calls
                     expected_info_calls = [
                         call("System configuration required. Executing commands..."),
-                        call(f"  Running: {sudo}ifconfig lo multicast"),
+                        call(f"  Running: {sudo}ip l set lo multicast on"),
                         call("  ✓ Success"),
                         call(f"  Running: {sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"),
                         call("  ✓ Success"),
@@ -532,7 +532,7 @@ def test_autoconf_with_command_failures() -> None:
                     # Command execution calls - first succeeds, second fails
                     type(
                         "MockResult", (), {"stdout": "success", "returncode": 0}
-                    )(),  # ifconfig lo multicast
+                    )(),  # ip l set lo multicast on
                     subprocess.CalledProcessError(
                         1,
                         [
