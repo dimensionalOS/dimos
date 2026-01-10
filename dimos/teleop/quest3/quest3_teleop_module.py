@@ -34,13 +34,16 @@ This module implements Quest3-specific:
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import threading
+import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.core import rpc
+from dimos.core import Out, rpc
 from dimos.teleop.base import BaseTeleopConfig, BaseTeleopModule
 from dimos.teleop.quest3.control.fastapi_server import TeleopFastAPIServer
+from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.std_msgs import Float32
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -60,13 +63,19 @@ class Quest3TeleopConfig(BaseTeleopConfig):
     signaling_host: str = "0.0.0.0"
     signaling_port: int = 8443  # HTTPS port for WebXR
     use_https: bool = True  # Enable HTTPS for WebXR (required by Quest 3)
-    # Exposed from BaseTeleopConfig for blueprint configuration
-    enable_left_arm: bool = True  # Enable left arm teleoperation
-    enable_right_arm: bool = True  # Enable right arm teleoperation
-    visualize_in_rerun: bool = True  # Visualize VR controller poses in Rerun
-    safety_limits: bool = True  # Enable safety limits
+
+    # Control settings
+    num_inputs: int = 2  # Number of inputs (controllers)
+    enable_inputs: list[bool] = field(default_factory=lambda: [True, True])
+    input_labels: list[str] = field(default_factory=lambda: ["left_vr", "right_vr"])
+
+    # Visualization settings
+    visualize_in_rerun: bool = True  # Visualize controller poses in Rerun
+    log_input_data: bool = False  # Log input pose/gripper data periodically
+    log_input_data_interval: int = 100  # Log every N publishes when enabled
 
     # Other inherited from BaseTeleopConfig (with defaults):
+    # safety_limits: bool = True  # Enable safety limits
     # - position_scale: float = 1.0
     # - max_velocity: float = 0.5
     # - workspace_limits: dict[str, tuple[float, float]]
@@ -84,22 +93,26 @@ class Quest3TeleopModule(BaseTeleopModule):
     - X button handler for calibration trigger
 
     ## LCM Topics (inherited from base):
-    - left_controller_delta: Out[PoseStamped] - Left controller delta pose
-    - right_controller_delta: Out[PoseStamped] - Right controller delta pose
-    - left_trigger: Out[Bool] - Left trigger button state
-    - right_trigger: Out[Bool] - Right trigger button state
+    - controller_delta_0: Out[PoseStamped] - Controller 0 delta pose
+    - controller_delta_1: Out[PoseStamped] - Controller 1 delta pose
+    - trigger_value_0: Out[Float32] - Controller 0 trigger/gripper value (0.0-1.0)
+    - trigger_value_1: Out[Float32] - Controller 1 trigger/gripper value (0.0-1.0)
 
     ## RPC Methods (inherited from base):
     - start() -> None: Start the module and signaling server
     - stop() -> None: Stop the module and signaling server
-    - calibrate_vr() -> dict: Calibrate VR (capture initial controller poses)
+    - calibrate() -> dict: Calibrate (capture initial controller poses)
     - reset_calibration() -> dict: Reset calibration
-    - is_vr_calibrated() -> bool: Check if VR is calibrated
+    - is_calibrated() -> bool: Check if calibrated
     - get_status() -> dict: Get current teleoperation status
     """
 
     default_config = Quest3TeleopConfig
     config: Quest3TeleopConfig
+
+    # LCM output topics for VR (controller_0 is inherited from base)
+    controller_delta_1: Out[PoseStamped] = None  # type: ignore[assignment]
+    trigger_value_1: Out[Float32] = None  # type: ignore[assignment]
 
     def __init__(
         self, global_config: GlobalConfig | None = None, *args: Any, **kwargs: Any
@@ -221,10 +234,9 @@ class Quest3TeleopModule(BaseTeleopModule):
         try:
             if command_type == "start_teleop":
                 logger.info("X button pressed - calibrating VR...")
-                logger.info(
-                    f"Current state: left_pose={self._left_pose is not None}, right_pose={self._right_pose is not None}"
-                )
-                result = self.calibrate_vr()
+                pose_states = [pose is not None for pose in self._all_poses]
+                logger.info(f"Current state: controller_poses={pose_states}")
+                result = self.calibrate()
                 logger.info(f"Calibration result: {result}")
 
                 if result.get("success"):
@@ -259,10 +271,8 @@ class Quest3TeleopModule(BaseTeleopModule):
 
     def _on_tracking_data(
         self,
-        left_pose: NDArray[np.float32],
-        right_pose: NDArray[np.float32],
-        left_gripper: float,
-        right_gripper: float,
+        controller_poses: list[NDArray[np.float32]],
+        controller_gripper_values: list[float],
     ) -> None:
         """Receive tracking data from Quest3 VR.
 
@@ -271,13 +281,13 @@ class Quest3TeleopModule(BaseTeleopModule):
         and publishing.
 
         Args:
-            left_pose: 4x4 transformation matrix for left controller
-            right_pose: 4x4 transformation matrix for right controller
-            left_gripper: Left gripper value (0.0-1.0)
-            right_gripper: Right gripper value (0.0-1.0)
+            controller_poses: List of 4x4 transformation matrices for controllers
+            controller_gripper_values: List of gripper values (0.0-1.0)
         """
         # Call base class method to handle everything
-        self.update_controller_poses(left_pose, right_pose, left_gripper, right_gripper)
+        self.update_controller_poses(controller_poses, controller_gripper_values)
+
+
 
 
 # Expose blueprint for declarative composition
