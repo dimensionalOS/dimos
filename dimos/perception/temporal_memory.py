@@ -71,7 +71,7 @@ class TemporalMemoryConfig(ModuleConfig):
     window_s: float = 2.0
     stride_s: float = 2.0
     summary_interval_s: float = 10.0
-    max_frames_per_window: int = 3
+    max_frames_per_window: int = 50
     frame_buffer_size: int = 200
     output_dir: str | Path | None = None
     max_tokens: int = 900
@@ -286,6 +286,8 @@ class TemporalMemory(SkillModule):
                     response_text = responses[0] if responses else ""
 
                     # TODO: clear image data from analyzed frames & only keep metadata if the frame_buffer is still too big
+                    for frame in window_frames:
+                        frame.image = None
                 else:
                     # Single frame - use regular query
                     response_text = self.vlm.query(
