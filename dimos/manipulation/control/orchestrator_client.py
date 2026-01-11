@@ -570,7 +570,7 @@ def interactive_mode(client: OrchestratorClient, initial_task: str) -> None:
     print("\nType help() for available commands")
     print("=" * 60 + "\n")
 
-    IPython.start_ipython(
+    IPython.start_ipython(  # type: ignore[no-untyped-call]
         argv=[],
         user_ns={
             "help": shell.help,
