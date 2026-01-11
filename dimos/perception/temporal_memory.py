@@ -370,8 +370,23 @@ class TemporalMemory(SkillModule):
 
     @skill()
     def query(self, question: str) -> str:
-        """
-        Answer a question about the video stream using temporal memory.
+        """Answer a question about the video stream using temporal memory.
+
+        This skill analyzes the current video stream and temporal memory state
+        to answer questions about what is happening, what entities are present,
+        and recent events.
+
+        Example:
+            query("What entities are currently visible?")
+            query("Do you see a wall in the video stream?")
+
+        Args:
+            question (str): The question to ask about the video stream.
+                Examples: "What entities are visible?", "What happened recently?",
+                "Is there a person in the scene?"
+
+        Returns:
+            str: Answer to the question based on temporal memory and current video frame.
         """
         # read state
         with self._state_lock:
