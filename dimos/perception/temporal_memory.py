@@ -72,7 +72,7 @@ class TemporalMemoryConfig(ModuleConfig):
     stride_s: float = 2.0
     summary_interval_s: float = 10.0
     max_frames_per_window: int = 3
-    frame_buffer_size: int = 300
+    frame_buffer_size: int = 200
     output_dir: str | Path | None = None
     max_tokens: int = 900
     temperature: float = 0.2
@@ -209,13 +209,20 @@ class TemporalMemory(SkillModule):
             self._clip_filter.close()
             self._clip_filter = None
 
+        # Clear buffers to release image references
+        with self._state_lock:
+            self._frame_buffer.clear()
+            self._recent_windows.clear()
+            self._state = default_state()
+
+        super().stop()
+
         # Stop all stream transports to clean up LCM/shared memory threads
         for stream in list(self.inputs.values()) + list(self.outputs.values()):
             if stream.transport is not None and hasattr(stream.transport, "stop"):
                 stream.transport.stop()
                 stream._transport = None
 
-        super().stop()
         logger.info("temporalmemory stopped")
 
     def _format_timestamp(self, seconds: float) -> str:
@@ -265,15 +272,27 @@ class TemporalMemory(SkillModule):
             )
 
             # query vlm (slow, outside lock)
-            # use middle frame for window analysis
+            # use query_batch for multiple frames to send all filtered frames in one API call
             try:
-                middle_frame = window_frames[len(window_frames) // 2]
                 response_format = get_structured_output_format()
-                response_text = self.vlm.query(
-                    middle_frame.image, query, response_format=response_format
-                )
+                if len(window_frames) > 1:
+                    # Use query_batch to send all filtered frames in one API call
+                    # This gives the model more temporal context
+                    frame_images = [frame.image for frame in window_frames]
+                    responses = self.vlm.query_batch(
+                        frame_images, query, response_format=response_format
+                    )
+                    # query_batch returns list[str] with one response for all images
+                    response_text = responses[0] if responses else ""
+
+                    # TODO: clear image data from analyzed frames & only keep metadata if the frame_buffer is still too big
+                else:
+                    # Single frame - use regular query
+                    response_text = self.vlm.query(
+                        window_frames[0].image, query, response_format=response_format
+                    )
             except Exception as e:
-                logger.error(f"vlm agent query failed [{w_start:.1f}-{w_end:.1f}s]: {e}")
+                logger.error(f"vlm query failed [{w_start:.1f}-{w_end:.1f}s]: {e}")
                 with self._state_lock:
                     self._last_analysis_time = w_end
                 return
@@ -353,12 +372,6 @@ class TemporalMemory(SkillModule):
     def query(self, question: str) -> str:
         """
         Answer a question about the video stream using temporal memory.
-
-        Args:
-            question: Question to ask about the video stream
-
-        Returns:
-            Answer based on temporal memory state and video context
         """
         # read state
         with self._state_lock:
@@ -500,15 +513,6 @@ def deploy(
 ) -> TemporalMemory:
     """
     Deploy TemporalMemory with a camera.
-
-    Args:
-        dimos: DimosCluster instance
-        camera: Camera module
-        vlm: Optional VlModel instance (will create OpenAIVlModel if None)
-        config: Optional TemporalMemoryConfig
-
-    Returns:
-        Deployed TemporalMemory module
     """
     if vlm is None:
         from dimos.models.vl.openai import OpenAIVlModel

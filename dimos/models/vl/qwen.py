@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from functools import cached_property
 import os
+from typing import Any
 
 import numpy as np
 from openai import OpenAI
@@ -79,51 +80,29 @@ class QwenVlModel(VlModel):
 
         return response.choices[0].message.content  # type: ignore[return-value]
 
-    def query_multi_images(self, images: list[Image], query: str, response_format: dict | None = None) -> str:  # type: ignore[no-untyped-def, override]
-        """Query VLM with multiple images (for temporal/multi-view reasoning).
-
-        Args:
-            images: List of images to analyze together
-            query: Question about all images
-            response_format: Optional response format for structured output
-                - {"type": "json_object"} for JSON mode
-                - {"type": "json_schema", "json_schema": {...}} for schema enforcement
-
-        Returns:
-            Response from the model
-        """
+    def query_batch(
+        self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs: Any
+    ) -> list[str]:  # type: ignore[override]
+        """Query VLM with multiple images using a single API call."""
         if not images:
-            raise ValueError("Must provide at least one image")
+            return []
 
-        # Build content with multiple images
-        content: list[dict] = []  # type: ignore[type-arg]
-
-        # Add all images first
-        for img in images:
-            # Apply auto_resize if configured
-            prepared_img, _ = self._prepare_image(img)
-            img_base64 = prepared_img.to_base64()
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{img_base64}"},
-                }
-            )
-
-        # Add query text last
+        content: list[dict[str, Any]] = [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"},
+            }
+            for img in images
+        ]
         content.append({"type": "text", "text": query})
 
-        # Build messages
         messages = [{"role": "user", "content": content}]
-
-        # Call API with optional response_format
-        api_kwargs = {"model": self.config.model_name, "messages": messages}
+        api_kwargs: dict[str, Any] = {"model": self.config.model_name, "messages": messages}
         if response_format:
             api_kwargs["response_format"] = response_format
 
         response = self._client.chat.completions.create(**api_kwargs)
-
-        return response.choices[0].message.content  # type: ignore[return-value]
+        return [response.choices[0].message.content]  # type: ignore[list-item]
 
     def stop(self) -> None:
         """Release the OpenAI client."""

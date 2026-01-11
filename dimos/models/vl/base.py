@@ -87,9 +87,7 @@ def vlm_detection_to_detection2d(
     try:
         coords = [float(vlm_detection[i]) for i in range(1, 5)]
     except (ValueError, TypeError) as e:
-        logger.debug(
-            f"Invalid VLM detection coordinates: {vlm_detection[1:]}. Error: {e}"
-        )
+        logger.debug(f"Invalid VLM detection coordinates: {vlm_detection[1:]}. Error: {e}")
         return None
 
     bbox = (coords[0], coords[1], coords[2], coords[3])
@@ -132,9 +130,7 @@ def vlm_point_to_detection2d_point(
         return None
 
     if len(vlm_point) != 3:
-        logger.debug(
-            f"Invalid VLM point length: {len(vlm_point)}, expected 3. Got: {vlm_point}"
-        )
+        logger.debug(f"Invalid VLM point length: {len(vlm_point)}, expected 3. Got: {vlm_point}")
         return None
 
     # Extract label
@@ -198,69 +194,37 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
             return image.resize_to_fit(max_w, max_h)
         return image, 1.0
 
-    def __getstate__(self) -> dict[str, Any]:
-        """Exclude unpicklable attributes when serializing.
-
-        Subclasses should override to handle their own unpicklable attributes
-        (e.g., API clients, cached properties).
-        """
-        state = self.__dict__.copy()
-        # Remove common unpicklable attributes (may not exist in all subclasses)
-        state.pop("_client", None)
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore object from pickled state.
-
-        Subclasses should override to reinitialize their own unpicklable attributes
-        and reload any necessary configuration (e.g., API keys from environment).
-        """
-        self.__dict__.update(state)
-        # Clear cached properties that may have been removed
-        if "_client" in self.__dict__:
-            del self.__dict__["_client"]
+    # Note: No custom pickle methods needed. In practice, VlModel instances
+    # are only stored in SkillModules, which use empty-shell pickling
+    # (SkillModule.__getstate__ returns None). Therefore VlModel is never
+    # actually pickled and doesn't need to handle unpicklable _client attributes.
 
     @abstractmethod
     def query(self, image: Image, query: str, **kwargs) -> str: ...  # type: ignore[no-untyped-def]
 
-    def query_multi_images(self, images: list[Image], query: str, **kwargs) -> str:  # type: ignore[no-untyped-def]
-        """Query VLM with multiple images in a single request.
-
-        This is useful for temporal reasoning across multiple frames or
-        multi-view analysis. The VLM can see all images together and reason
-        about relationships between them.
-
-        Subclasses must override this method for models that support multi-image input
-        (e.g., GPT-4V, Qwen).
-
-        Args:
-            images: List of input images (e.g., frames from a video window)
-            query: Question to ask about all images together
-        """
-        raise NotImplementedError(
-            f"{self.__class__.__name__} does not support multi-image queries. "
-            "Subclasses must override query_multi_images() to provide this functionality."
-        )
-
-    def query_batch(self, images: list[Image], query: str, **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
+    def query_batch(
+        self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs: Any
+    ) -> list[str]:  # type: ignore[no-untyped-def]
         """Query multiple images with the same question.
 
         Default implementation calls query() for each image sequentially.
-        Subclasses may override for more efficient batched inference.
+        Subclasses may override for efficient batched inference.
 
         Args:
             images: List of input images
-            query: Question to ask about each image
+            query: Question to ask about all images
+            response_format: Optional response format for structured output
+            **kwargs: Additional arguments
 
         Returns:
             List of responses, one per image
         """
         warnings.warn(
-            f"{self.__class__.__name__}.query_batch() is using default sequential implementation. "
+            f"{self.__class__.__name__}.query_batch() using sequential implementation. "
             "Override for efficient batched inference.",
             stacklevel=2,
         )
-        return [self.query(image, query, **kwargs) for image in images]
+        return [self.query(image, query, response_format=response_format, **kwargs) for image in images]
 
     def query_multi(self, image: Image, queries: list[str], **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
         """Query a single image with multiple different questions.
