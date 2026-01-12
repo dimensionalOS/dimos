@@ -64,6 +64,10 @@ dependencies = [
     # Used for calculating the occupancy map.
     "numba>=0.60.0",    # First version supporting Python 3.12
     "llvmlite>=0.42.0", # Required by numba 0.60+
+
+    # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
+    # remove this once rerun is optional in core
+    "rerun-sdk>=0.20.0",
 ]
 
 
