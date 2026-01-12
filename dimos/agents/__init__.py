@@ -1,3 +1,12 @@
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    MessageLikeRepresentation,
+    SystemMessage,
+    ToolCall,
+    ToolMessage,
+)
+
 from dimos.agents.agent import Agent, deploy
 from dimos.agents.spec import AgentSpec
 from dimos.agents.vlm_agent import VLMAgent
