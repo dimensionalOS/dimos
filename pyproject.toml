@@ -162,7 +162,7 @@ perception = [
 ]
 
 unitree = [
-    "dimos[agents,web,perception,visualization]",
+    "dimos[main]",
     "unitree-webrtc-connect-leshy>=2.0.7"
 ]
 
@@ -269,6 +269,10 @@ sim = [
 
 drone = [
     "pymavlink"
+]
+
+main = [
+    "dimos[agents,web,perception,visualization]",
 ]
 
 [tool.ruff]
