@@ -20,18 +20,9 @@ from typing import Any
 import reactivex as rx
 from reactivex import operators as ops
 
-try:
-    from dimos.agents import Output, Reducer, Stream, skill
-except ImportError:
-    def skill(*args):
-        def decorator(func):
-            def actual_function():
-                raise Exception(f'''dimos.agents is not installed. Please install dimos[agents] to use skills.''')
-            return func
-        return decorator
-
-from dimos.core.blueprints import autoconnect
+from dimos.agents import Output, Reducer, Stream, skill
 from dimos.core import Module, ModuleConfig, Out, rpc
+from dimos.core.blueprints import autoconnect
 from dimos.hardware.sensors.camera.spec import CameraHardware
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
