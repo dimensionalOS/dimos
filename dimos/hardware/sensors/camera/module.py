@@ -20,7 +20,17 @@ from typing import Any
 import reactivex as rx
 from reactivex import operators as ops
 
-from dimos.agents import Output, Reducer, Stream, skill
+try:
+    from dimos.agents import Output, Reducer, Stream, skill
+except ImportError:
+    def skill(*args):
+        def decorator(func):
+            def actual_function():
+                raise Exception(f'''dimos.agents is not installed. Please install dimos[agents] to use skills.''')
+            return func
+        return decorator
+
+from dimos.core.blueprints import autoconnect
 from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.hardware.sensors.camera.spec import CameraHardware
 from dimos.hardware.sensors.camera.webcam import Webcam
@@ -113,5 +123,10 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
 
 
 camera_module = CameraModule.blueprint
+
+demo_camera = autoconnect(
+    camera_module(),
+)
+
 
 __all__ = ["CameraModule", "camera_module"]
