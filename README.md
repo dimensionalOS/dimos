@@ -26,12 +26,6 @@ Dimensional is an open-source framework for adding customized general intelligen
 
 ## Installation
 
-#### TLDR:
-- install [uv for python](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- install a few system dependencies: `sudo apt-get install -y curl g++ portaudio19-dev git-lfs libjpegturbo`
-- `uv pip install 'dimos[base]'`
-- run `dimos run camera-demo` (assuming you have a webcam)
-
 #### Details / Requirements
 
 - Linux (MacOS support is in beta, you're welcome to roughly follow these steps, which will run on MacOS)
@@ -40,9 +34,7 @@ Dimensional is an open-source framework for adding customized general intelligen
 sudo apt-get update
 sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev
 # install uv for python
-curl -LsSf https://astral.sh/uv/install.sh | sh
-# get access to the uv command
-export PATH="$HOME/.local/bin:$PATH"
+curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
 # create & activate a virtualenv (needed for dimos)
 uv venv && . .venv/bin/activate
 # install dimos
