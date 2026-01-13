@@ -220,11 +220,9 @@ class SpatialMemory(SkillModule):
         tf = self.tf.get("world", "base_link")
 
         if tf is None:
-            logger.warning("No TF transform (world -> base_link) available")
             return
 
         if self._latest_video_frame is None:
-            logger.warning(" No video frame available")
             return
 
         # Create Pose object with position and orientation
