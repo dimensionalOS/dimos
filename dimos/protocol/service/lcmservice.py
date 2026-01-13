@@ -71,11 +71,11 @@ def check_multicast() -> list[str]:
             )
             if not result.stdout.strip():
                 commands_needed.append(
-                    f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev {loopback_interface}"
+                    f"{sudo}ip route add -net 224.0.0.0 netmask 240.0.0.0 dev {loopback_interface}"
                 )
         except Exception:
             commands_needed.append(
-                f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev {loopback_interface}"
+                f"{sudo}ip route add -net 224.0.0.0 netmask 240.0.0.0 dev {loopback_interface}"
             )
 
     elif system == "Darwin":  # macOS
@@ -86,11 +86,11 @@ def check_multicast() -> list[str]:
             route_exists = "224.0.0.0/4" in result.stdout or "224.0.0/4" in result.stdout
             if not route_exists:
                 commands_needed.append(
-                    f"{sudo}route add -net 224.0.0.0/4 -interface {loopback_interface}"
+                    f"{sudo}ip route add -net 224.0.0.0/4 -interface {loopback_interface}"
                 )
         except Exception:
             commands_needed.append(
-                f"{sudo}route add -net 224.0.0.0/4 -interface {loopback_interface}"
+                f"{sudo}ip route add -net 224.0.0.0/4 -interface {loopback_interface}"
             )
 
     else:

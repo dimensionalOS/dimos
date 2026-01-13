@@ -102,7 +102,7 @@ def test_check_multicast_missing_route() -> None:
 
             result = check_multicast()
             sudo = get_sudo_prefix()
-            assert result == [f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"]
+            assert result == [f"{sudo}ip route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"]
 
 
 def test_check_multicast_all_missing() -> None:
@@ -128,7 +128,7 @@ def test_check_multicast_all_missing() -> None:
             sudo = get_sudo_prefix()
             expected = [
                 f"{sudo}ip l set lo multicast on",
-                f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
+                f"{sudo}ip route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
             ]
             assert result == expected
 
@@ -144,7 +144,7 @@ def test_check_multicast_subprocess_exception() -> None:
             sudo = get_sudo_prefix()
             expected = [
                 f"{sudo}ip l set lo multicast on",
-                f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
+                f"{sudo}ip route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
             ]
             assert result == expected
 
@@ -167,7 +167,7 @@ def test_check_multicast_macos() -> None:
 
             result = check_multicast()
             sudo = get_sudo_prefix()
-            expected = [f"{sudo}route add -net 224.0.0.0/4 -interface lo0"]
+            expected = [f"{sudo}ip route add -net 224.0.0.0/4 -interface lo0"]
             assert result == expected
 
 
@@ -489,7 +489,9 @@ def test_autoconf_with_config_needed_success() -> None:
                         call("System configuration required. Executing commands..."),
                         call(f"  Running: {sudo}ip l set lo multicast on"),
                         call("  ✓ Success"),
-                        call(f"  Running: {sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"),
+                        call(
+                            f"  Running: {sudo}ip route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"
+                        ),
                         call("  ✓ Success"),
                         call(f"  Running: {sudo}sysctl -w net.core.rmem_max={TARGET_RMEM_SIZE}"),
                         call("  ✓ Success"),
@@ -537,6 +539,7 @@ def test_autoconf_with_command_failures() -> None:
                         1,
                         [
                             *get_sudo_prefix().split(),
+                            "ip",
                             "route",
                             "add",
                             "-net",
