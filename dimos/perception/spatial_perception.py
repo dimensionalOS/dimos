@@ -227,7 +227,8 @@ class SpatialMemory(SkillModule):
             return
 
         if tf is None:
-            logger.warning("No TF transform (map -> base_link) available")
+            logger.warning("No TF transform (world -> base_link) available")
+            return
 
         # Create Pose object with position and orientation
         current_pose = tf.to_pose()
