@@ -47,6 +47,7 @@ all_blueprints = {
     "piper-cartesian": "dimos.hardware.manipulators.piper.piper_blueprints:piper_cartesian",
     "piper-trajectory": "dimos.hardware.manipulators.piper.piper_blueprints:piper_trajectory",
     # Demo blueprints
+    "demo-camera": "dimos.hardware.sensors.camera.module:demo_camera",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
     "demo-skill": "dimos.agents.skills.demo_skill:demo_skill",
     "demo-gps-nav": "dimos.agents.skills.demo_gps_nav:demo_gps_nav_skill",
