@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Manipulation Client - IPython interface for ManipulationModule
+
+Usage:
+    # Start orchestrator and planner first:
+    dimos run orchestrator-mock
+    dimos run xarm7-planner-orchestrator
+
+    # Run interactive client:
+    python -m dimos.manipulation.planning.examples.manipulation_client
+
+IPython Commands (client is available as 'c'):
+    c.joints()              # Get current joint positions
+    c.ee()                  # Get end-effector pose
+    c.state()               # Get manipulation state
+    c.url()                 # Get Meshcat visualization URL
+
+    c.plan([0.1, ...])      # Plan to joint config
+    c.plan_pose(x, y, z)    # Plan to cartesian pose
+    c.preview()             # Preview path in Meshcat
+    c.execute()             # Execute via orchestrator
+
+    c.box("table", ...)     # Add box obstacle
+    c.sphere("ball", ...)   # Add sphere obstacle
+    c.remove("obstacle_id") # Remove obstacle
+"""
+
+from __future__ import annotations
+
+from typing import Any, cast
+
+import numpy as np
+
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.protocol.rpc import LCMRPC
+
+
+class ManipulationClient:
+    """RPC client for ManipulationModule with IPython-friendly API."""
+
+    def __init__(self) -> None:
+        self._rpc = LCMRPC()
+        self._rpc.start()
+        self._module = "ManipulationModule"
+        print("Connected to ManipulationModule via LCM RPC")
+
+    def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        """Call RPC method."""
+        try:
+            result, _ = self._rpc.call_sync(
+                f"{self._module}/{method}", (list(args), kwargs), rpc_timeout=30.0
+            )
+            return result
+        except TimeoutError:
+            print(f"Timeout: {method}")
+            return None
+        except Exception as e:
+            print(f"Error: {e}")
+            return None
+
+    # =========================================================================
+    # Query Methods
+    # =========================================================================
+
+    def state(self) -> str:
+        """Get manipulation state."""
+        return cast("str", self._call("get_state"))
+
+    def joints(self) -> list[float] | None:
+        """Get current joint positions."""
+        return cast("list[float] | None", self._call("get_current_joints"))
+
+    def ee(self) -> Pose | None:
+        """Get end-effector pose."""
+        return cast("Pose | None", self._call("get_ee_pose"))
+
+    def url(self) -> str | None:
+        """Get Meshcat visualization URL."""
+        return cast("str | None", self._call("get_visualization_url"))
+
+    def robots(self) -> list[str]:
+        """List configured robots."""
+        return cast("list[str]", self._call("list_robots"))
+
+    def info(self, robot_name: str | None = None) -> dict[str, Any] | None:
+        """Get robot info."""
+        return cast("dict[str, Any] | None", self._call("get_robot_info", robot_name))
+
+    # =========================================================================
+    # Planning Methods
+    # =========================================================================
+
+    def plan(self, joints: list[float]) -> bool:
+        """Plan to joint configuration."""
+        print(f"Planning to: {[f'{j:.3f}' for j in joints]}")
+        return cast("bool", self._call("plan_to_joints", joints))
+
+    def plan_pose(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        roll: float | None = None,
+        pitch: float | None = None,
+        yaw: float | None = None,
+    ) -> bool:
+        """Plan to cartesian pose. Uses current orientation if not specified."""
+        # Get current orientation if not provided
+        if roll is None or pitch is None or yaw is None:
+            ee = self.ee()
+            if ee is None:
+                print("Cannot get current orientation")
+                return False
+            roll = roll if roll is not None else ee.roll
+            pitch = pitch if pitch is not None else ee.pitch
+            yaw = yaw if yaw is not None else ee.yaw
+
+        print(f"Planning to: ({x:.3f}, {y:.3f}, {z:.3f}) rpy=({roll:.2f}, {pitch:.2f}, {yaw:.2f})")
+        pose = Pose(
+            position=Vector3(x, y, z),
+            orientation=Quaternion.from_euler(Vector3(roll, pitch, yaw)),
+        )
+        return cast("bool", self._call("plan_to_pose", pose))
+
+    def preview(self, duration: float = 3.0) -> bool:
+        """Preview planned path in Meshcat."""
+        return cast("bool", self._call("preview_path", duration))
+
+    def execute(self, robot_name: str | None = None) -> bool:
+        """Execute planned trajectory via orchestrator."""
+        return cast("bool", self._call("execute", robot_name))
+
+    def has_plan(self) -> bool:
+        """Check if path is planned."""
+        return cast("bool", self._call("has_planned_path"))
+
+    def clear_plan(self) -> bool:
+        """Clear planned path."""
+        return cast("bool", self._call("clear_planned_path"))
+
+    # =========================================================================
+    # Obstacle Methods
+    # =========================================================================
+
+    def box(
+        self,
+        name: str,
+        x: float,
+        y: float,
+        z: float,
+        w: float,
+        h: float,
+        d: float,
+        roll: float = 0.0,
+        pitch: float = 0.0,
+        yaw: float = 0.0,
+    ) -> str:
+        """Add box obstacle."""
+        pose = Pose(
+            position=Vector3(x, y, z),
+            orientation=Quaternion.from_euler(Vector3(roll, pitch, yaw)),
+        )
+        return cast("str", self._call("add_obstacle", name, pose, "box", [w, h, d]))
+
+    def sphere(self, name: str, x: float, y: float, z: float, radius: float) -> str:
+        """Add sphere obstacle."""
+        pose = Pose(position=Vector3(x, y, z))
+        return cast("str", self._call("add_obstacle", name, pose, "sphere", [radius]))
+
+    def cylinder(
+        self, name: str, x: float, y: float, z: float, radius: float, length: float
+    ) -> str:
+        """Add cylinder obstacle."""
+        pose = Pose(position=Vector3(x, y, z))
+        return cast("str", self._call("add_obstacle", name, pose, "cylinder", [radius, length]))
+
+    def remove(self, obstacle_id: str) -> bool:
+        """Remove obstacle."""
+        return cast("bool", self._call("remove_obstacle", obstacle_id))
+
+    # =========================================================================
+    # Utility Methods
+    # =========================================================================
+
+    def collision(self, joints: list[float]) -> bool:
+        """Check if joint config is collision-free."""
+        return cast("bool", self._call("is_collision_free", joints))
+
+    def reset(self) -> bool:
+        """Reset to IDLE state."""
+        return cast("bool", self._call("reset"))
+
+    def cancel(self) -> bool:
+        """Cancel current motion."""
+        return cast("bool", self._call("cancel"))
+
+    def status(self, robot_name: str | None = None) -> dict[str, object] | None:
+        """Get trajectory execution status."""
+        return cast("dict[str, object] | None", self._call("get_trajectory_status", robot_name))
+
+    def stop(self) -> None:
+        """Stop RPC client."""
+        self._rpc.stop()
+
+    def __repr__(self) -> str:
+        return f"ManipulationClient(state={self.state()})"
+
+
+def main() -> None:
+    """Start IPython shell with ManipulationClient."""
+    try:
+        from IPython import embed
+    except ImportError:
+        print("IPython not installed. Run: pip install ipython")
+        return
+
+    c = ManipulationClient()
+
+    banner = """
+Manipulation Client - IPython Interface
+========================================
+
+Client available as 'c'. Examples:
+  c.joints()              # Get joint positions
+  c.ee()                  # Get end-effector pose
+  c.url()                 # Get Meshcat URL
+
+  c.plan([0.1, 0.2, ...]) # Plan to joints
+  c.plan_pose(0.4, 0, 0.3)# Plan to pose
+  c.preview()             # Preview in Meshcat
+  c.execute()             # Execute trajectory
+
+  c.box("table", 0.5, 0, 0, 0.6, 0.4, 0.02)  # Add obstacle
+  c.remove("obstacle_id")                     # Remove obstacle
+
+Type c.<TAB> for all methods, or help(c.method) for details.
+"""
+    print(banner)
+
+    try:
+        embed(colors="neutral")
+    finally:
+        c.stop()
+
+
+if __name__ == "__main__":
+    main()
