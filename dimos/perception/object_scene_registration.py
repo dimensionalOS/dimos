@@ -20,6 +20,7 @@ from numpy.typing import NDArray
 
 from dimos.core import In, Out, rpc
 from dimos.core.skill_module import SkillModule
+from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
@@ -48,7 +49,7 @@ class ObjectSceneRegistrationModule(SkillModule):
 
     detections_2d: Out[Detection2DArray]
     detections_3d: Out[Detection3DArray]
-    overlay: Out[Image]
+    overlay: Out[ImageAnnotations]
     pointcloud: Out[PointCloud2]
 
     _detector: Yoloe2DDetector | None = None
@@ -190,8 +191,8 @@ class ObjectSceneRegistrationModule(SkillModule):
         )
         self.detections_2d.publish(detections_2d_msg)
 
-        overlay_image = detections_2d.overlay()
-        self.overlay.publish(overlay_image)
+        overlay_annotations = detections_2d.to_foxglove_annotations()
+        self.overlay.publish(overlay_annotations)
 
         # Process 3D detections
         self._process_3d_detections(detections_2d, color_image, depth_image)

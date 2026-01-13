@@ -192,8 +192,8 @@ class Detection2DSeg(Detection2DBBox):
             annotations.append(
                 PointsAnnotation(
                     timestamp=to_ros_stamp(self.ts),
-                    outline_color=Color.from_string(self.name, alpha=1.0, brightness=1.25),
-                    fill_color=Color.from_string(self.name, alpha=0.4),
+                    outline_color=Color.from_string(str(self.class_id), alpha=1.0, brightness=1.25),
+                    fill_color=Color.from_string(str(self.track_id), alpha=0.4),
                     thickness=1.0,
                     points_length=len(points),
                     points=points,
