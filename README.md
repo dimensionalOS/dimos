@@ -68,8 +68,6 @@ dimos run unitree-go2
 #### Get it working in an interactive simulation!
 
 ```bash
-uv pip install 'dimos[sim]'
-uv pip install pygame
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
 # ignore the warp warnings
 dimos --simulation run unitree-go2 --extra-module keyboard_teleop
