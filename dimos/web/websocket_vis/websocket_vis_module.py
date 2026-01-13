@@ -220,7 +220,7 @@ class WebsocketVisModule(Module):
 
         async def serve_command_center(request):  # type: ignore[no-untyped-def]
             """Serve the command center 2D visualization (built React app)."""
-            index_file = get_data(_COMMAND_CENTER_DIR / "index.html")
+            index_file = get_data("command_center.html")
             if index_file.exists():
                 return FileResponse(index_file, media_type="text/html")
             else:
