@@ -19,7 +19,7 @@ import time
 from typing import TYPE_CHECKING, Any
 import uuid
 
-import cv2  # type: ignore[import-untyped]
+import cv2
 from dimos_lcm.geometry_msgs import Pose
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
