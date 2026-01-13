@@ -187,10 +187,6 @@ class SpatialMemory(SkillModule):
     @rpc
     def start(self) -> None:
         super().start()
-        _ = self.tf
-        import time
-
-        time.sleep(1.0)
 
         # Subscribe to LCM streams
         def set_video(image_msg: Image) -> None:
@@ -222,12 +218,13 @@ class SpatialMemory(SkillModule):
     def _process_frame(self) -> None:
         """Process the latest frame with pose data if available."""
         tf = self.tf.get("world", "base_link")
-        if self._latest_video_frame is None:
-            logger.warning(" No video frame available")
-            return
 
         if tf is None:
             logger.warning("No TF transform (world -> base_link) available")
+            return
+
+        if self._latest_video_frame is None:
+            logger.warning(" No video frame available")
             return
 
         # Create Pose object with position and orientation
