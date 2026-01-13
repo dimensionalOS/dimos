@@ -105,6 +105,22 @@ def example_usage():
         for entity in entities:
             print(f"  {entity['id']}: {entity['descriptor']}")
 
+        # Check graph database stats
+        graph_stats = temporal_memory.get_graph_db_stats()
+        print("\n=== Graph Database Stats ===")
+        if "error" in graph_stats:
+            print(f"Error: {graph_stats['error']}")
+        else:
+            print(f"Stats: {graph_stats['stats']}")
+            print(f"\nEntities in DB ({len(graph_stats['entities'])}):")
+            for entity in graph_stats["entities"]:
+                print(f"  {entity['entity_id']} ({entity['entity_type']}): {entity['descriptor']}")
+            print(f"\nRecent relations ({len(graph_stats['recent_relations'])}):")
+            for rel in graph_stats["recent_relations"]:
+                print(
+                    f"  {rel['subject_id']} --{rel['relation_type']}--> {rel['object_id']} (confidence: {rel['confidence']:.2f})"
+                )
+
         # Stop when done
         temporal_memory.stop()
         camera.stop()

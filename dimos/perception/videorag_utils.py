@@ -20,9 +20,26 @@ with dimos's VlModel abstraction instead of OpenAI API directly.
 """
 
 import json
+import re
 from typing import Any
 
+from dimos.models.vl.base import VlModel
+from dimos.msgs.sensor_msgs import Image
 from dimos.utils.llm_utils import extract_json
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
+
+def default_state() -> dict[str, Any]:
+    """Create default temporal memory state dictionary."""
+    return {
+        "entity_roster": [],
+        "rolling_summary": "",
+        "chunk_buffer": [],
+        "next_summary_at_s": 0.0,
+        "last_present": [],
+    }
 
 
 def next_entity_id_hint(roster: Any) -> str:
@@ -46,6 +63,13 @@ def clamp_text(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[:max_chars] + "..."
+
+
+def format_timestamp(seconds: float) -> str:
+    """Format seconds as MM:SS.mmm timestamp string."""
+    m = int(seconds // 60)
+    s = seconds - 60 * m
+    return f"{m:02d}:{s:06.3f}"
 
 
 def build_window_prompt(
@@ -249,6 +273,13 @@ def build_query_prompt(
     Returns:
         Formatted prompt string
     """
+    currently_present = context.get("currently_present_entities", [])
+    currently_present_str = (
+        f"Entities recently detected in recent windows: {currently_present}"
+        if currently_present
+        else "No entities were detected in recent windows (list is empty)"
+    )
+
     prompt = f"""Answer the following question about the video stream using the provided context.
 
 **Question:** {question}
@@ -256,16 +287,250 @@ def build_query_prompt(
 **Context:**
 {json.dumps(context, indent=2, ensure_ascii=False)}
 
-**Instructions:**
+**Important Notes:**
 - Entities have stable IDs like E1, E2, etc.
-- The 'currently_present_entities' list shows which entities are visible now
-- If an entity is NOT in 'currently_present_entities', it is no longer visible
-- Answer based ONLY on the provided context
-- If information isn't available, say so clearly
+- The 'currently_present_entities' list contains entity IDs that were detected in recent video windows (not necessarily in the current frame you're viewing)
+- {currently_present_str}
+- The 'entity_roster' contains all known entities with their descriptions
+- The 'rolling_summary' describes what has happened over time
+- If 'currently_present_entities' is empty, it means no entities were detected in recent windows, but entities may still exist in the roster from earlier
+- Answer based on the provided context (entity_roster, rolling_summary, currently_present_entities) AND what you see in the current frame
+- If the context says entities were present but you don't see them in the current frame, mention both: what was recently detected AND what you currently see
 
 Provide a concise answer.
 """
     return prompt
+
+
+def extract_time_window(
+    question: str,
+    vlm: VlModel,
+    latest_frame: Image | None = None,
+) -> float | None:
+    """Extract time window from question using VLM with example-based learning.
+
+    Uses a few example keywords as patterns, then asks VLM to extrapolate
+    similar time references and return seconds.
+
+    Args:
+        question: User's question
+        vlm: VLM instance to use for extraction
+        latest_frame: Optional frame (required for VLM call, but image is ignored)
+
+    Returns:
+        Time window in seconds, or None if no time reference found
+    """
+    question_lower = question.lower()
+
+    # Quick check for common patterns (fast path)
+    if "last week" in question_lower or "past week" in question_lower:
+        return 7 * 24 * 3600
+    if "today" in question_lower or "last hour" in question_lower:
+        return 3600
+    if "recently" in question_lower or "recent" in question_lower:
+        return 600
+
+    # Use VLM to extract time reference from question
+    # Provide examples and let VLM extrapolate similar patterns
+    # Note: latest_frame is required by VLM interface but image content is ignored
+    if not latest_frame:
+        return None
+
+    extraction_prompt = f"""Extract any time reference from this question and convert it to seconds.
+
+Question: {question}
+
+Examples of time references and their conversions:
+- "last week" or "past week" -> 604800 seconds (7 days)
+- "yesterday" -> 86400 seconds (1 day)
+- "today" or "last hour" -> 3600 seconds (1 hour)
+- "recently" or "recent" -> 600 seconds (10 minutes)
+- "few minutes ago" -> 300 seconds (5 minutes)
+- "just now" -> 60 seconds (1 minute)
+
+Extrapolate similar patterns (e.g., "2 days ago", "this morning", "last month", etc.)
+and convert to seconds. If no time reference is found, return "none".
+
+Return ONLY a number (seconds) or the word "none". Do not include any explanation."""
+
+    try:
+        response = vlm.query(latest_frame, extraction_prompt)
+        response = response.strip().lower()
+
+        if "none" in response or not response:
+            return None
+
+        # Extract number from response
+        numbers = re.findall(r"\d+(?:\.\d+)?", response)
+        if numbers:
+            seconds = float(numbers[0])
+            # Sanity check: reasonable time windows (1 second to 1 year)
+            if 1 <= seconds <= 365 * 24 * 3600:
+                return seconds
+    except Exception as e:
+        logger.debug(f"Time extraction failed: {e}")
+
+    return None
+
+
+def build_distance_estimation_prompt(
+    *,
+    entity_a_descriptor: str,
+    entity_a_id: str,
+    entity_b_descriptor: str,
+    entity_b_id: str,
+) -> str:
+    """
+    Build prompt for estimating distance between two entities.
+
+    Args:
+        entity_a_descriptor: Description of first entity
+        entity_a_id: ID of first entity
+        entity_b_descriptor: Description of second entity
+        entity_b_id: ID of second entity
+
+    Returns:
+        Formatted prompt string for distance estimation
+    """
+    prompt = f"""Look at this image and estimate the distance between these two entities:
+
+Entity A: {entity_a_descriptor} (ID: {entity_a_id})
+Entity B: {entity_b_descriptor} (ID: {entity_b_id})
+
+Provide:
+1. Distance category: "near" (< 1m), "medium" (1-3m), or "far" (> 3m)
+2. Approximate distance in meters (best guess)
+3. Confidence: 0.0-1.0 (how certain are you?)
+
+Respond in this format:
+category: [near/medium/far]
+distance_m: [number]
+confidence: [0.0-1.0]
+reasoning: [brief explanation]"""
+    return prompt
+
+
+def build_batch_distance_estimation_prompt(
+    entity_pairs: list[tuple[dict[str, Any], dict[str, Any]]],
+) -> str:
+    """
+    Build prompt for estimating distances between multiple entity pairs in one call.
+
+    Args:
+        entity_pairs: List of (entity_a, entity_b) tuples, each entity is a dict with 'id' and 'descriptor'
+
+    Returns:
+        Formatted prompt string for batched distance estimation
+    """
+    pairs_text = []
+    for i, (entity_a, entity_b) in enumerate(entity_pairs, 1):
+        pairs_text.append(
+            f"Pair {i}:\n"
+            f"  Entity A: {entity_a['descriptor']} (ID: {entity_a['id']})\n"
+            f"  Entity B: {entity_b['descriptor']} (ID: {entity_b['id']})"
+        )
+
+    prompt = f"""Look at this image and estimate the distances between the following entity pairs:
+
+{chr(10).join(pairs_text)}
+
+For each pair, provide:
+1. Distance category: "near" (< 1m), "medium" (1-3m), or "far" (> 3m)
+2. Approximate distance in meters (best guess)
+3. Confidence: 0.0-1.0 (how certain are you?)
+
+Respond in this format (one block per pair):
+Pair 1:
+category: [near/medium/far]
+distance_m: [number]
+confidence: [0.0-1.0]
+
+Pair 2:
+category: [near/medium/far]
+distance_m: [number]
+confidence: [0.0-1.0]
+
+(etc.)"""
+    return prompt
+
+
+def parse_batch_distance_response(
+    response: str, entity_pairs: list[tuple[dict[str, Any], dict[str, Any]]]
+) -> list[dict[str, Any]]:
+    """
+    Parse batched distance estimation response.
+
+    Args:
+        response: VLM response text
+        entity_pairs: Original entity pairs used in the prompt
+
+    Returns:
+        List of dicts with keys: entity_a_id, entity_b_id, category, distance_m, confidence
+    """
+    results = []
+    lines = response.strip().split("\n")
+
+    current_pair_idx = None
+    category = None
+    distance_m = None
+    confidence = 0.5
+
+    for line in lines:
+        line = line.strip()
+
+        # Check for pair marker
+        if line.startswith("Pair "):
+            # Save previous pair if exists
+            if current_pair_idx is not None and category:
+                entity_a, entity_b = entity_pairs[current_pair_idx]
+                results.append(
+                    {
+                        "entity_a_id": entity_a["id"],
+                        "entity_b_id": entity_b["id"],
+                        "category": category,
+                        "distance_m": distance_m,
+                        "confidence": confidence,
+                    }
+                )
+
+            # Start new pair
+            try:
+                pair_num = int(line.split()[1].rstrip(":"))
+                current_pair_idx = pair_num - 1  # Convert to 0-indexed
+                category = None
+                distance_m = None
+                confidence = 0.5
+            except (IndexError, ValueError):
+                continue
+
+        # Parse distance fields
+        elif line.startswith("category:"):
+            category = line.split(":", 1)[1].strip().lower()
+        elif line.startswith("distance_m:"):
+            try:
+                distance_m = float(line.split(":", 1)[1].strip())
+            except (ValueError, IndexError):
+                pass
+        elif line.startswith("confidence:"):
+            try:
+                confidence = float(line.split(":", 1)[1].strip())
+            except (ValueError, IndexError):
+                pass
+
+    # Save last pair
+    if current_pair_idx is not None and category and current_pair_idx < len(entity_pairs):
+        entity_a, entity_b = entity_pairs[current_pair_idx]
+        results.append(
+            {
+                "entity_a_id": entity_a["id"],
+                "entity_b_id": entity_b["id"],
+                "category": category,
+                "distance_m": distance_m,
+                "confidence": confidence,
+            }
+        )
+
+    return results
 
 
 def parse_window_response(
@@ -446,10 +711,14 @@ def get_structured_output_format() -> dict[str, Any]:
 __all__ = [
     "WINDOW_RESPONSE_SCHEMA",
     "apply_summary_update",
+    "build_distance_estimation_prompt",
     "build_query_prompt",
     "build_summary_prompt",
     "build_window_prompt",
     "clamp_text",
+    "default_state",
+    "extract_time_window",
+    "format_timestamp",
     "get_structured_output_format",
     "next_entity_id_hint",
     "parse_window_response",
