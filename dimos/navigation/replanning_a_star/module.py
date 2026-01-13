@@ -16,7 +16,6 @@ import os
 
 from dimos_lcm.std_msgs import Bool, String
 from reactivex.disposable import Disposable
-import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
@@ -26,6 +25,7 @@ from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.navigation.replanning_a_star.global_planner import GlobalPlanner
+import rerun as rr
 
 
 class ReplanningAStarPlanner(Module, NavigationInterface):

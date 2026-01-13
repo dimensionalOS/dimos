@@ -27,13 +27,13 @@ try:
 except ImportError:
     ROSPoseStamped = None  # type: ignore[assignment, misc]
 from plum import dispatch
-import rerun as rr
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
 from dimos.types.timestamped import Timestamped
+import rerun as rr
 
 # Types that can be converted to/from Pose
 PoseConvertable: TypeAlias = (
