@@ -1,0 +1,106 @@
+<mujoco model="xarm7 nohand">
+  <compiler angle="radian" autolimits="true" meshdir="assets"/>
+
+  <option integrator="implicitfast"/>
+
+  <asset>
+    <material name="white" rgba="1 1 1 1"/>
+    <material name="gray" rgba="0.753 0.753 0.753 1"/>
+
+    <mesh file="link_base.stl"/>
+    <mesh file="link1.stl"/>
+    <mesh file="link2.stl"/>
+    <mesh file="link3.stl"/>
+    <mesh file="link4.stl"/>
+    <mesh file="link5.stl"/>
+    <mesh file="link6.stl"/>
+    <mesh file="link7.stl"/>
+    <mesh file="end_tool.stl"/>
+  </asset>
+
+  <default>
+    <default class="xarm7">
+      <geom type="mesh" material="white"/>
+      <joint axis="0 0 1" armature="0.1" range="-6.28319 6.28319" frictionloss="1"/>
+      <general biastype="affine" ctrlrange="-6.28319 6.28319"/>
+      <default class="size1">
+        <joint damping="10"/>
+        <general gainprm="1500" biasprm="0 -1500 -150" forcerange="-50 50"/>
+      </default>
+      <default class="size2">
+        <joint damping="5"/>
+        <general gainprm="1000" biasprm="0 -1000 -100" forcerange="-30 30"/>
+      </default>
+      <default class="size3">
+        <joint damping="2"/>
+        <general gainprm="800" biasprm="0 -800 -80" forcerange="-20 20"/>
+      </default>
+      <site size="0.001" rgba="1 0 0 1" group="4"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="link_base" pos="0 0 .12" childclass="xarm7">
+      <inertial pos="-0.021131 -0.0016302 0.056488" quat="0.696843 0.20176 0.10388 0.680376" mass="0.88556"
+        diaginertia="0.00382023 0.00335282 0.00167725"/>
+      <geom mesh="link_base"/>
+      <body name="link1" pos="0 0 0.267">
+        <inertial pos="-0.0002 0.02905 -0.01233" quat="0.978953 -0.202769 -0.00441617 -0.0227264" mass="2.382"
+          diaginertia="0.00569127 0.00533384 0.00293865"/>
+        <joint name="joint1" class="size1"/>
+        <geom mesh="link1"/>
+        <body name="link2" quat="1 -1 0 0">
+          <inertial pos="0.00022 -0.12856 0.01735" quat="0.50198 0.86483 -0.00778841 0.00483285" mass="1.869"
+            diaginertia="0.00959898 0.00937717 0.00201315"/>
+          <joint name="joint2" range="-2.059 2.0944" class="size1"/>
+          <geom mesh="link2"/>
+          <body name="link3" pos="0 -0.293 0" quat="1 1 0 0">
+            <inertial pos="0.0466 -0.02463 -0.00768" quat="0.913819 0.289775 0.281481 -0.0416455" mass="1.6383"
+              diaginertia="0.00351721 0.00294089 0.00195868"/>
+            <joint name="joint3" class="size2"/>
+            <geom mesh="link3"/>
+            <body name="link4" pos="0.0525 0 0" quat="1 1 0 0">
+              <inertial pos="0.07047 -0.11575 0.012" quat="0.422108 0.852026 -0.126025 0.282832" mass="1.7269"
+                diaginertia="0.00657137 0.00647948 0.00186763"/>
+              <joint name="joint4" range="-0.19198 3.927" class="size2"/>
+              <geom mesh="link4"/>
+              <body name="link5" pos="0.0775 -0.3425 0" quat="1 1 0 0">
+                <inertial pos="-0.00032 0.01604 -0.026" quat="0.999311 -0.0304457 0.000577067 0.0212082" mass="1.3203"
+                  diaginertia="0.00534729 0.00499076 0.0013489"/>
+                <joint name="joint5" class="size2"/>
+                <geom mesh="link5"/>
+                <body name="link6" quat="1 1 0 0">
+                  <inertial pos="0.06469 0.03278 0.02141" quat="-0.217672 0.772419 0.16258 0.574069" mass="1.325"
+                    diaginertia="0.00245421 0.00221646 0.00107273"/>
+                  <joint name="joint6" range="-1.69297 3.14159" class="size3"/>
+                  <geom mesh="link6"/>
+                  <body name="link7" pos="0.076 0.097 0" quat="1 -1 0 0">
+                    <inertial pos="0 -0.00677 -0.01098" quat="0.487612 0.512088 -0.512088 0.487612" mass="0.17"
+                      diaginertia="0.000132176 9.3e-05 5.85236e-05"/>
+                    <joint name="joint7" class="size3"/>
+                    <geom material="gray" mesh="end_tool"/>
+                    <site name="attachment_site"/>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <general name="act1" joint="joint1" class="size1"/>
+    <general name="act2" joint="joint2" class="size1" ctrlrange="-2.059 2.0944"/>
+    <general name="act3" joint="joint3" class="size2"/>
+    <general name="act4" joint="joint4" class="size2" ctrlrange="-0.19198 3.927"/>
+    <general name="act5" joint="joint5" class="size2"/>
+    <general name="act6" joint="joint6" class="size3" ctrlrange="-1.69297 3.14159"/>
+    <general name="act7" joint="joint7" class="size3"/>
+  </actuator>
+
+  <keyframe>
+    <key name="home" qpos="0 -.247 0 .909 0 1.15644 0" ctrl="0 -.247 0 .909 0 1.15644 0"/>
+  </keyframe>
+</mujoco>
