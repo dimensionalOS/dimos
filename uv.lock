@@ -1499,6 +1499,34 @@ agents = [
     { name = "openai-whisper" },
     { name = "sounddevice" },
 ]
+base = [
+    { name = "anthropic" },
+    { name = "bitsandbytes", marker = "sys_platform == 'linux'" },
+    { name = "fastapi" },
+    { name = "ffmpeg-python" },
+    { name = "filterpy" },
+    { name = "langchain" },
+    { name = "langchain-chroma" },
+    { name = "langchain-core" },
+    { name = "langchain-huggingface" },
+    { name = "langchain-ollama" },
+    { name = "langchain-openai" },
+    { name = "langchain-text-splitters" },
+    { name = "lap" },
+    { name = "mcp" },
+    { name = "moondream" },
+    { name = "ollama" },
+    { name = "openai" },
+    { name = "openai-whisper" },
+    { name = "pillow" },
+    { name = "rerun-sdk" },
+    { name = "sounddevice" },
+    { name = "soundfile" },
+    { name = "sse-starlette" },
+    { name = "transformers", extra = ["torch"] },
+    { name = "ultralytics" },
+    { name = "uvicorn" },
+]
 cpu = [
     { name = "ctransformers" },
     { name = "onnxruntime" },
@@ -1555,34 +1583,6 @@ dev = [
 ]
 drone = [
     { name = "pymavlink" },
-]
-main = [
-    { name = "anthropic" },
-    { name = "bitsandbytes", marker = "sys_platform == 'linux'" },
-    { name = "fastapi" },
-    { name = "ffmpeg-python" },
-    { name = "filterpy" },
-    { name = "langchain" },
-    { name = "langchain-chroma" },
-    { name = "langchain-core" },
-    { name = "langchain-huggingface" },
-    { name = "langchain-ollama" },
-    { name = "langchain-openai" },
-    { name = "langchain-text-splitters" },
-    { name = "lap" },
-    { name = "mcp" },
-    { name = "moondream" },
-    { name = "ollama" },
-    { name = "openai" },
-    { name = "openai-whisper" },
-    { name = "pillow" },
-    { name = "rerun-sdk" },
-    { name = "sounddevice" },
-    { name = "soundfile" },
-    { name = "sse-starlette" },
-    { name = "transformers", extra = ["torch"] },
-    { name = "ultralytics" },
-    { name = "uvicorn" },
 ]
 manipulation = [
     { name = "contact-graspnet-pytorch" },
@@ -1697,8 +1697,8 @@ requires-dist = [
     { name = "dask", extras = ["complete"], specifier = "==2025.5.1" },
     { name = "dataclasses", marker = "extra == 'cuda'" },
     { name = "detectron2", marker = "extra == 'cuda'", git = "https://github.com/facebookresearch/detectron2.git?tag=v0.6" },
-    { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'main'" },
-    { name = "dimos", extras = ["main"], marker = "extra == 'unitree'" },
+    { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
+    { name = "dimos", extras = ["base"], marker = "extra == 'unitree'" },
     { name = "dimos-lcm" },
     { name = "einops", marker = "extra == 'misc'", specifier = "==0.8.1" },
     { name = "empy", marker = "extra == 'misc'", specifier = "==3.3.4" },
@@ -1823,7 +1823,7 @@ requires-dist = [
     { name = "xformers", marker = "extra == 'cuda'", specifier = ">=0.0.20" },
     { name = "yapf", marker = "extra == 'misc'", specifier = "==0.40.2" },
 ]
-provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "manipulation", "cpu", "cuda", "dev", "sim", "drone", "main"]
+provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "manipulation", "cpu", "cuda", "dev", "sim", "drone", "base"]
 
 [[package]]
 name = "dimos-lcm"

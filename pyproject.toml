@@ -166,7 +166,7 @@ perception = [
 ]
 
 unitree = [
-    "dimos[main]",
+    "dimos[base]",
     "unitree-webrtc-connect-leshy>=2.0.7"
 ]
 
@@ -275,7 +275,7 @@ drone = [
     "pymavlink"
 ]
 
-main = [
+base = [
     "dimos[agents,web,perception,visualization]",
 ]
 
