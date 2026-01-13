@@ -57,7 +57,7 @@ class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):
         cls,
         image: Image,
         results: list[Results],
-    ) -> ImageDetections2D[Detection2DBBox]:
+    ) -> ImageDetections2D[Detection2D]:
         """Create ImageDetections2D from ultralytics Results.
 
         Dispatches to appropriate Detection2D subclass based on result type:
@@ -73,7 +73,7 @@ class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):
             ImageDetections2D containing appropriate detection types
         """
 
-        detections: list[Detection2DBBox] = []
+        detections: list[Detection2D] = []
         for result in results:
             if result.boxes is None:
                 continue
@@ -93,7 +93,7 @@ class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):
                 if detection.is_valid():
                     detections.append(detection)
 
-        return ImageDetections2D(image=image, detections=detections)  # type: ignore[return-value]
+        return ImageDetections2D(image=image, detections=detections)
 
     def overlay(self, alpha: float = 0.4) -> Image:
         """Overlay detection bboxes and masks onto the image.

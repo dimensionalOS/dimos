@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from dimos.perception.detection.type.detection2d import ImageDetections2D
 
 
-@dataclass
+@dataclass(kw_only=True)
 class Object(Detection3D):
     """3D object detection combining bounding box and pointcloud representations.
 
@@ -46,11 +46,11 @@ class Object(Detection3D):
     """
 
     object_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
-    pointcloud: PointCloud2 | None = None
+    center: Vector3
+    size: Vector3
+    pose: PoseStamped
+    pointcloud: PointCloud2
     camera_transform: Transform | None = None
-    center: Vector3 | None = None
-    size: Vector3 | None = None
-    pose: PoseStamped | None = None
     mask: np.ndarray[Any, np.dtype[np.uint8]] | None = None
     detections_count: int = 1
 
@@ -64,12 +64,8 @@ class Object(Detection3D):
         Args:
             other: Another Object instance with newer detection data.
         """
-        # Accumulate pointclouds if both exist and transforms are available
-        if (
-            self.pointcloud is not None
-            and other.pointcloud is not None
-            and other.camera_transform is not None
-        ):
+        # Accumulate pointclouds if transforms are available
+        if other.camera_transform is not None:
             # Transform new pointcloud to world frame and add to existing
             # transformed_pc = other.pointcloud.transform(other.camera_transform)
             # self.pointcloud = self.pointcloud + transformed_pc
@@ -84,6 +80,8 @@ class Object(Detection3D):
             self.center = other.center
 
         self.camera_transform = other.camera_transform
+        self.size = other.size
+        self.pose = other.pose
         self.track_id = other.track_id
         self.mask = other.mask
         self.name = other.name
@@ -97,8 +95,6 @@ class Object(Detection3D):
 
     def get_oriented_bounding_box(self) -> Any:
         """Get oriented bounding box of the pointcloud."""
-        if self.pointcloud is None:
-            raise ValueError("No pointcloud available")
         return self.pointcloud.get_oriented_bounding_box()
 
     def scene_entity_label(self) -> str:
@@ -140,12 +136,12 @@ class Object(Detection3D):
             "class_id": self.class_id,
             "name": self.name,
             "mask": self.mask,
-            "pointcloud": self.pointcloud.as_numpy() if self.pointcloud else None,
+            "pointcloud": self.pointcloud.as_numpy(),
             "image": self.image.as_numpy() if self.image else None,
         }
 
     @classmethod
-    def from_2d(  # type: ignore[override]
+    def from_2d_to_list(
         cls,
         detections_2d: ImageDetections2D[Detection2DSeg],
         color_image: Image,
@@ -229,21 +225,13 @@ class Object(Detection3D):
             )
             pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic_o3d)
 
-            if len(pcd.points) < 20:
-                continue
+            pc0 = PointCloud2(
+                pcd,
+                frame_id=depth_image.frame_id,
+                ts=depth_image.ts,
+            ).voxel_downsample(voxel_downsample)
 
-            if voxel_downsample > 0:
-                pcd = (
-                    PointCloud2(
-                        pcd,
-                        frame_id=depth_image.frame_id,
-                        ts=depth_image.ts,
-                    )
-                    .voxel_downsample(voxel_downsample)
-                    .pointcloud
-                )
-
-            pcd_filtered, _ = pcd.remove_statistical_outlier(
+            pcd_filtered, _ = pc0.pointcloud.remove_statistical_outlier(
                 nb_neighbors=statistical_nb_neighbors,
                 std_ratio=statistical_std_ratio,
             )
@@ -265,8 +253,16 @@ class Object(Detection3D):
                 frame_id = depth_image.frame_id
 
             # Compute center from pointcloud
-            pc_center = pc.center
-            center = Vector3(pc_center.x, pc_center.y, pc_center.z)
+            obb = pc.pointcloud.get_oriented_bounding_box()
+            center = Vector3(obb.center[0], obb.center[1], obb.center[2])
+            size = Vector3(obb.extent[0], obb.extent[1], obb.extent[2])
+            orientation = Quaternion.from_rotation_matrix(obb.R)
+            pose = PoseStamped(
+                ts=det.ts,
+                frame_id=frame_id,
+                position=center,
+                orientation=orientation,
+            )
 
             objects.append(
                 cls(
@@ -280,6 +276,8 @@ class Object(Detection3D):
                     frame_id=frame_id,
                     pointcloud=pc,
                     center=center,
+                    size=size,
+                    pose=pose,
                     camera_transform=camera_transform,
                     mask=store_mask,
                 )
@@ -288,7 +286,7 @@ class Object(Detection3D):
         return objects
 
 
-def aggregate_pointclouds(objects: list[Object]) -> PointCloud2 | None:
+def aggregate_pointclouds(objects: list[Object]) -> PointCloud2:
     """Aggregate all object pointclouds into a single colored pointcloud.
 
     Each object's points are colored based on its track_id.
@@ -297,18 +295,15 @@ def aggregate_pointclouds(objects: list[Object]) -> PointCloud2 | None:
         objects: List of Object instances with pointclouds
 
     Returns:
-        Combined PointCloud2 with all points colored by object, or None if empty.
+        Combined PointCloud2 with all points colored by object (empty if no points).
     """
     if not objects:
-        return None
+        return PointCloud2(pointcloud=o3d.geometry.PointCloud(), frame_id="", ts=0.0)
 
     all_points = []
     all_colors = []
 
     for _i, obj in enumerate(objects):
-        if obj.pointcloud is None:
-            continue
-
         points, colors = obj.pointcloud.as_numpy()
         if len(points) == 0:
             continue
@@ -329,7 +324,9 @@ def aggregate_pointclouds(objects: list[Object]) -> PointCloud2 | None:
         all_colors.append(blended)
 
     if not all_points:
-        return None
+        return PointCloud2(
+            pointcloud=o3d.geometry.PointCloud(), frame_id=objects[0].frame_id, ts=objects[0].ts
+        )
 
     combined_points = np.vstack(all_points)
     combined_colors = np.vstack(all_colors)

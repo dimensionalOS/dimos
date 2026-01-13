@@ -63,11 +63,11 @@ class ObjectSceneRegistrationModule(SkillModule):
         super().__init__()
         self._target_frame = target_frame
         self._prompt_mode = prompt_mode
+        self._object_db = ObjectDB()
 
     @rpc
     def start(self) -> None:
         super().start()
-        self._object_db = ObjectDB()
 
         if self._prompt_mode == YoloePromptMode.LRPC:
             model_name = "yoloe-11l-seg-pf.pt"
@@ -97,17 +97,11 @@ class ObjectSceneRegistrationModule(SkillModule):
             self._detector.stop()
             self._detector = None
 
-        if self._object_db:
-            self._object_db.clear()
-            self._object_db = None
+        self._object_db.clear()
+        self._object_db = None
 
         logger.info("ObjectSceneRegistrationModule stopped")
         super().stop()
-
-    @property
-    def object_db(self) -> ObjectDB | None:
-        """Access the ObjectDB for querying detected objects."""
-        return self._object_db
 
     @rpc
     def set_prompts(
@@ -133,8 +127,6 @@ class ObjectSceneRegistrationModule(SkillModule):
     @rpc
     def get_object_track_ids(self) -> list[int]:
         """Get track_ids of all permanent objects."""
-        if self._object_db is None:
-            return []
         return [obj.track_id for obj in self._object_db.get_all_objects()]
 
     @skill()
@@ -230,7 +222,7 @@ class ObjectSceneRegistrationModule(SkillModule):
                 logger.warning("Failed to lookup transform from camera frame to target frame")
                 return
 
-        objects = Object.from_2d(
+        objects = Object.from_2d_to_list(
             detections_2d=detections_2d,
             color_image=color_image,
             depth_image=depth_image,
@@ -241,16 +233,14 @@ class ObjectSceneRegistrationModule(SkillModule):
             return
 
         # Add objects to spatial memory database
-        if self._object_db is not None:
-            objects = self._object_db.add_objects(objects)
+        objects = self._object_db.add_objects(objects)
 
         detections_3d = to_detection3d_array(objects)
         self.detections_3d.publish(detections_3d)
 
-        objects_for_pc = self._object_db.get_objects() if self._object_db else objects
+        objects_for_pc = self._object_db.get_objects()
         aggregated_pc = aggregate_pointclouds(objects_for_pc)
-        if aggregated_pc is not None:
-            self.pointcloud.publish(aggregated_pc)
+        self.pointcloud.publish(aggregated_pc)
         return
 
 

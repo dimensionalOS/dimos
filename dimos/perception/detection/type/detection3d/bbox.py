@@ -33,10 +33,10 @@ class Detection3DBBox(Detection2DBBox):
     Represents a 3D detection as an oriented bounding box in world space.
     """
 
+    center: Vector3  # Center point in world frame
+    size: Vector3  # Width, height, depth
     transform: Transform | None = None  # Camera to world transform
     frame_id: str = ""  # Frame ID (e.g., "world", "map")
-    center: Vector3 | None = None  # Center point in world frame
-    size: Vector3 | None = None  # Width, height, depth
     orientation: Quaternion = field(default_factory=lambda: Quaternion(0.0, 0.0, 0.0, 1.0))
 
     @functools.cached_property
@@ -78,7 +78,7 @@ class Detection3DBBox(Detection2DBBox):
 
     def to_repr_dict(self) -> dict[str, Any]:
         # Calculate distance from camera
-        if self.transform is None or self.center is None or self.size is None:
+        if self.transform is None:
             return super().to_repr_dict()
         camera_pos = self.transform.translation
         distance = (self.center - camera_pos).magnitude()
