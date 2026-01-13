@@ -77,7 +77,10 @@ dimos --simulation run unitree-go2
 ```bash
 export OPENAI_API_KEY=<your private key>
 dimos run unitree-go2-agentic
-# open the following in a different terminal tab
+# open the following in a different terminal tab to tell it where to go
+# Warning!: make sure to watch the bot, this is a pre-release it will run into stuff
+#           and get tangled/trapped
+# ex: tell it to explore the room, then tell it to go to where it can see a door
 humancli
 ```
 <!-- TODO pre-launch: figure out libav.h264:no frame! -->
