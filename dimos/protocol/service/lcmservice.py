@@ -70,13 +70,9 @@ def check_multicast() -> list[str]:
                 ["ip", "route", "show", "224.0.0.0/4"], capture_output=True, text=True
             )
             if not result.stdout.strip():
-                commands_needed.append(
-                    f"{sudo}ip route add -net 224.0.0.0 netmask 240.0.0.0 dev {loopback_interface}"
-                )
+                commands_needed.append(f"{sudo}ip route add 224.0.0.0/4 dev {loopback_interface}")
         except Exception:
-            commands_needed.append(
-                f"{sudo}ip route add -net 224.0.0.0 netmask 240.0.0.0 dev {loopback_interface}"
-            )
+            commands_needed.append(f"{sudo}ip route add 224.0.0.0/4 dev {loopback_interface}")
 
     elif system == "Darwin":  # macOS
         loopback_interface = "lo0"
@@ -85,13 +81,9 @@ def check_multicast() -> list[str]:
             result = subprocess.run(["netstat", "-nr"], capture_output=True, text=True)
             route_exists = "224.0.0.0/4" in result.stdout or "224.0.0/4" in result.stdout
             if not route_exists:
-                commands_needed.append(
-                    f"{sudo}ip route add -net 224.0.0.0/4 -interface {loopback_interface}"
-                )
+                commands_needed.append(f"{sudo}ip route add 224.0.0.0/4 dev {loopback_interface}")
         except Exception:
-            commands_needed.append(
-                f"{sudo}ip route add -net 224.0.0.0/4 -interface {loopback_interface}"
-            )
+            commands_needed.append(f"{sudo}ip route add 224.0.0.0/4 dev {loopback_interface}")
 
     else:
         # For other systems, skip multicast configuration
