@@ -28,6 +28,7 @@ from pathlib import Path
 import threading
 import time
 from typing import Any
+import numpy as np
 
 from reactivex import interval
 from reactivex.disposable import Disposable
@@ -44,6 +45,8 @@ from dimos.perception.clip_filter import (
     CLIPFrameFilter,
     select_diverse_frames_simple,
 )
+from dimos.msgs.sensor_msgs.Image import sharpness_barrier
+from reactivex import Subject
 from dimos.perception.videorag_utils import (
     apply_summary_update,
     build_query_prompt,
@@ -71,8 +74,8 @@ class TemporalMemoryConfig(ModuleConfig):
     window_s: float = 2.0
     stride_s: float = 2.0
     summary_interval_s: float = 10.0
-    max_frames_per_window: int = 50
-    frame_buffer_size: int = 200
+    max_frames_per_window: int = 3
+    frame_buffer_size: int = 50
     output_dir: str | Path | None = None
     max_tokens: int = 900
     temperature: float = 0.2
@@ -143,6 +146,12 @@ class TemporalMemory(SkillModule):
             self._entities_file = self._output_path / "entities.json"
             self._frames_index_file = self._output_path / "frames_index.jsonl"
             logger.info(f"artifacts save to: {self._output_path}")
+        # else:
+        #     self._output_path = None
+        
+        # # frames directory for saving images
+        # self._frames_dir = Path("temporal_memory_frames")
+        # self._frames_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info(
             f"temporalmemory init: fps={self.config.fps}, "
@@ -188,9 +197,26 @@ class TemporalMemory(SkillModule):
                     image=image,
                 )
                 self._frame_buffer.append(frame)
+                
+                # Save image to frames directory
+                # frame_filename = f"frame_{self._frame_count:06d}_{image.frame_id or 'unknown'}.jpg"
+                # frame_path = self._frames_dir / frame_filename
+                # try:
+                #     image.save(str(frame_path))
+                # except Exception as e:
+                #     logger.warning(f"Failed to save frame {self._frame_count}: {e}")
+                
                 self._frame_count += 1
 
-        unsub_image = self.color_image.subscribe(on_frame)
+        # pipe through sharpness filter before buffering
+        frame_subject = Subject()
+        self._disposables.add(
+            frame_subject.pipe(
+                sharpness_barrier(self.config.fps)
+            ).subscribe(on_frame)
+        )
+
+        unsub_image = self.color_image.subscribe(frame_subject.on_next)
         self._disposables.add(Disposable(unsub_image))
 
         self._disposables.add(
@@ -230,6 +256,17 @@ class TemporalMemory(SkillModule):
         s = seconds - 60 * m
         return f"{m:02d}:{s:06.3f}"
 
+    def _is_scene_stale(self, frames: list[Frame]) -> bool:
+        """skip if scene hasn't changed meaningfully"""
+        if len(frames) < 2:
+            return False
+        first_img = frames[0].image
+        last_img = frames[-1].image
+        if first_img is None or last_img is None:
+            return False
+        diff = np.abs(first_img.data.astype(float) - last_img.data.astype(float))
+        return diff.mean() < 5.0  # tune this threshold
+
     def _analyze_window(self) -> None:
         try:
             # get snapshot
@@ -247,19 +284,27 @@ class TemporalMemory(SkillModule):
                 window_frames = list(self._frame_buffer)[-frames_needed:]
                 state_snapshot = self._state.copy()
 
+            # add this check early, before any filtering or VLM calls
+            if self._is_scene_stale(window_frames):
+                logger.debug(f"skipping stale window [{w_start:.1f}-{w_end:.1f}s]")
+                with self._state_lock:
+                    self._last_analysis_time = w_end
+                return
+
             w_start = window_frames[0].timestamp_s
             w_end = window_frames[-1].timestamp_s
 
             # filter frames
-            if len(window_frames) > self.config.max_frames_per_window:
-                if self._clip_filter:
-                    window_frames = self._clip_filter.select_diverse_frames(
-                        window_frames, max_frames=self.config.max_frames_per_window
-                    )
-                else:
-                    window_frames = select_diverse_frames_simple(
-                        window_frames, max_frames=self.config.max_frames_per_window
-                    )
+            # NOTE: no longer using clip filter for now (alternative: sharpness barrier and stale scene check)
+            # if len(window_frames) > self.config.max_frames_per_window:
+            #     if self._clip_filter:
+            #         window_frames = self._clip_filter.select_diverse_frames(
+            #             window_frames, max_frames=self.config.max_frames_per_window
+            #         )
+            #     else:
+            window_frames = select_diverse_frames_simple(
+                window_frames, max_frames=self.config.max_frames_per_window
+            )
 
             logger.info(f"analyzing [{w_start:.1f}-{w_end:.1f}s] with {len(window_frames)} frames")
 
