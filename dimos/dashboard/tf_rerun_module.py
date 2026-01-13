@@ -31,13 +31,14 @@ Usage:
 
 from typing import Any
 
+import rerun as rr
+
 from dimos.core import Module, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.dashboard.rerun_init import connect_rerun
 from dimos.msgs.tf2_msgs import TFMessage
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.utils.logging_config import setup_logger
-import rerun as rr
 
 logger = setup_logger()
 

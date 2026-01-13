@@ -20,6 +20,7 @@ import time
 from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo
 from dimos_lcm.std_msgs.Header import Header
 import numpy as np
+import rerun as rr
 
 # Import ROS types
 try:
