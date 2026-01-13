@@ -92,19 +92,13 @@ quest3_teleop = (
     .transports(
         {
             # VRTeleopModule inputs (from external LCM - Deno bridge)
-            ("vr_left_transform", LCMTransform): LCMTransport(
-                "/vr_left_transform", LCMTransform
-            ),
-            ("vr_right_transform", LCMTransform): LCMTransport(
-                "/vr_right_transform", LCMTransform
-            ),
+            ("vr_left_transform", LCMTransform): LCMTransport("/vr_left_transform", LCMTransform),
+            ("vr_right_transform", LCMTransform): LCMTransport("/vr_right_transform", LCMTransform),
             ("vr_trigger_0", Float32): LCMTransport("/vr_trigger_0", Float32),
             ("vr_trigger_1", Float32): LCMTransport("/vr_trigger_1", Float32),
             ("teleop_enable", Bool): LCMTransport("/vr_teleop_enable", Bool),
             # VRTeleopModule outputs
-            ("controller_delta_0", PoseStamped): LCMTransport(
-                "/controller_delta_0", PoseStamped
-            ),
+            ("controller_delta_0", PoseStamped): LCMTransport("/controller_delta_0", PoseStamped),
             ("trigger_value_0", Float32): LCMTransport("/trigger_value_0", Float32),
         }
     )

@@ -38,20 +38,19 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from dimos_lcm.geometry_msgs import Transform as LCMTransform
 from scipy.spatial.transform import Rotation as R
 
 from dimos.core import In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.std_msgs import Bool, Float32
 from dimos.teleop.devices.base import BaseTeleopConfig, BaseTeleopModule
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    import numpy as np
+    from dimos_lcm.geometry_msgs import Transform as LCMTransform
     from numpy.typing import NDArray
 
     from dimos.core.global_config import GlobalConfig
+    from dimos.msgs.geometry_msgs import PoseStamped
+    from dimos.msgs.std_msgs import Bool, Float32
 
 logger = setup_logger()
 

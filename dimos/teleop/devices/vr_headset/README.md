@@ -1,4 +1,4 @@
-# VR Headset Teleoperation
+# VR Headset Teleoperation [TODO: Update]
 
 VR teleoperation for headsets (Quest 3 tested).
 
