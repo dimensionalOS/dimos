@@ -117,8 +117,6 @@ misc = [
     "onnx",
     "einops==0.8.1",
 
-    # Teleop
-    "pygame>=2.6.1",
     # Hardware SDKs
     "xarm-python-sdk>=1.17.0",
 ]
@@ -259,6 +257,7 @@ sim = [
     # Simulation
     "mujoco>=3.3.4",
     "playground>=0.0.5",
+    "pygame>=2.6.1",
 ]
 
 # NOTE: jetson-jp6-cuda126 extra is disabled due to 404 errors from wheel URLs
@@ -276,7 +275,7 @@ drone = [
 ]
 
 base = [
-    "dimos[agents,web,perception,visualization]",
+    "dimos[agents,web,perception,visualization,sim]",
 ]
 
 [tool.ruff]
