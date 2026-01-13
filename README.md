@@ -1,4 +1,5 @@
-![Screenshot 2025-02-18 at 16-31-22 DimOS Terminal](/assets/dimos_terminal.png)
+<!-- COMMENTED OUT IMAGES CAUSE THEY DON'T RENDER ON PYPI (fix in 24hrs) -->
+<!-- ![Screenshot 2025-02-18 at 16-31-22 DimOS Terminal](/assets/dimos_terminal.png)
 
 <div align="center">
   <table>
@@ -13,12 +14,14 @@
       </td>
     </tr>
   </table>
-</div>
+</div> -->
 
 # The Dimensional Framework
 *The universal framework for AI-native generalist robotics*
 
 ## What is Dimensional?
+
+#### NOTE: This is a pre-release
 
 Dimensional is an open-source framework for adding customized general intelligence to robots. DimOS allows AI agents to call tools/functions (skills), read sensor/state data directly, and use them to produce robust emergent behavior. DimOS is both specification based (use any programming language) and a python-first library that works well with (and without) [ROS](https://www.ros.org/). The python library comes with a rich set of integrations; spatial reasoners, planners, simulators (mujoco, Isaac Sim, etc.), robot state/action primitives, and more.
 
