@@ -57,7 +57,7 @@ class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):
         cls,
         image: Image,
         results: list[Results],
-    ) -> ImageDetections2D[Detection2D]:
+    ) -> ImageDetections2D[Detection2DBBox]:
         """Create ImageDetections2D from ultralytics Results.
 
         Dispatches to appropriate Detection2D subclass based on result type:
@@ -73,14 +73,14 @@ class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):
             ImageDetections2D containing appropriate detection types
         """
 
-        detections: list[Detection2D] = []
+        detections: list[Detection2DBBox] = []
         for result in results:
             if result.boxes is None:
                 continue
 
             num_detections = len(result.boxes.xyxy)
             for i in range(num_detections):
-                detection: Detection2D
+                detection: Detection2DBBox
                 if result.masks is not None:
                     # Segmentation detection with mask
                     detection = Detection2DSeg.from_ultralytics_result(result, i, image)

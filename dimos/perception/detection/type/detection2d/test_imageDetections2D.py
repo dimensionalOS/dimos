@@ -11,14 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any
-
 import pytest
 
 from dimos.perception.detection.type import ImageDetections2D
 
 
-def test_from_ros_detection2d_array(get_moment_2d: Any) -> None:
+def test_from_ros_detection2d_array(get_moment_2d) -> None:
     moment = get_moment_2d()
 
     detections2d = moment["detections2d"]

@@ -18,9 +18,9 @@ from typing import Any
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
-from reactivex import operators as ops
-from reactivex.observable import Observable
-from reactivex.subject import Subject
+from reactivex import operators as ops  # type: ignore[import-not-found]
+from reactivex.observable import Observable  # type: ignore[import-not-found]
+from reactivex.subject import Subject  # type: ignore[import-not-found]
 
 from dimos import spec
 from dimos.core import DimosCluster, In, Module, Out, rpc
