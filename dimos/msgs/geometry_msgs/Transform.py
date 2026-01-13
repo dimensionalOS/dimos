@@ -34,11 +34,12 @@ except ImportError:
     ROSTransform = None  # type: ignore[assignment, misc]
     ROSVector3 = None  # type: ignore[assignment, misc]
     ROSQuaternion = None  # type: ignore[assignment, misc]
+import rerun as rr
+
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs import Header
 from dimos.types.timestamped import Timestamped
-import rerun as rr
 
 
 class Transform(Timestamped):

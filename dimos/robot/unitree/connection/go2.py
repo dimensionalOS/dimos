@@ -20,6 +20,7 @@ from typing import Any, Protocol
 
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
+import rerun as rr
 import rerun.blueprint as rrb
 
 from dimos import spec
@@ -40,7 +41,6 @@ from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
-import rerun as rr
 
 logger = setup_logger(level=logging.INFO)
 

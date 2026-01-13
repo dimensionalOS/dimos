@@ -47,9 +47,10 @@ Usage:
 import atexit
 import threading
 
+import rerun as rr
+
 from dimos.core.global_config import GlobalConfig
 from dimos.utils.logging_config import setup_logger
-import rerun as rr
 
 logger = setup_logger()
 

@@ -27,9 +27,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
+import rerun as rr
 
 from dimos.msgs.geometry_msgs import Transform, Vector3
-import rerun as rr
 
 # Import ROS types
 try:

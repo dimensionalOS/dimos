@@ -18,6 +18,7 @@ import threading
 import time
 
 from reactivex import operators as ops
+import rerun as rr
 import rerun.blueprint as rrb
 
 from dimos.core import In, Module, Out, rpc
@@ -32,7 +33,6 @@ from dimos.mapping.pointclouds.occupancy import (
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.utils.logging_config import setup_logger
-import rerun as rr
 
 logger = setup_logger()
 
