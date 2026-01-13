@@ -28,9 +28,9 @@ from pathlib import Path
 import threading
 import time
 from typing import Any
-import numpy as np
 
-from reactivex import interval
+import numpy as np
+from reactivex import Subject, interval
 from reactivex.disposable import Disposable
 
 from dimos import spec
@@ -40,13 +40,12 @@ from dimos.core.module import ModuleConfig
 from dimos.core.skill_module import SkillModule
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.perception.clip_filter import (
     CLIP_AVAILABLE,
     CLIPFrameFilter,
     select_diverse_frames_simple,
 )
-from dimos.msgs.sensor_msgs.Image import sharpness_barrier
-from reactivex import Subject
 from dimos.perception.videorag_utils import (
     apply_summary_update,
     build_query_prompt,
@@ -148,7 +147,7 @@ class TemporalMemory(SkillModule):
             logger.info(f"artifacts save to: {self._output_path}")
         # else:
         #     self._output_path = None
-        
+
         # # frames directory for saving images
         # self._frames_dir = Path("temporal_memory_frames")
         # self._frames_dir.mkdir(parents=True, exist_ok=True)
@@ -197,7 +196,7 @@ class TemporalMemory(SkillModule):
                     image=image,
                 )
                 self._frame_buffer.append(frame)
-                
+
                 # Save image to frames directory
                 # frame_filename = f"frame_{self._frame_count:06d}_{image.frame_id or 'unknown'}.jpg"
                 # frame_path = self._frames_dir / frame_filename
@@ -205,15 +204,13 @@ class TemporalMemory(SkillModule):
                 #     image.save(str(frame_path))
                 # except Exception as e:
                 #     logger.warning(f"Failed to save frame {self._frame_count}: {e}")
-                
+
                 self._frame_count += 1
 
         # pipe through sharpness filter before buffering
         frame_subject = Subject()
         self._disposables.add(
-            frame_subject.pipe(
-                sharpness_barrier(self.config.fps)
-            ).subscribe(on_frame)
+            frame_subject.pipe(sharpness_barrier(self.config.fps)).subscribe(on_frame)
         )
 
         unsub_image = self.color_image.subscribe(frame_subject.on_next)
