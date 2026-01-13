@@ -930,6 +930,31 @@ class DrakeWorld:
                 self._diagram.GetSubsystemContext(self._meshcat_visualizer, ctx)
             )
 
+    def animate_path(
+        self,
+        robot_id: str,
+        path: list[NDArray[np.float64]],
+        duration: float = 3.0,
+    ) -> None:
+        """Animate a path in Meshcat visualization.
+
+        Args:
+            robot_id: Robot to animate
+            path: List of joint configurations
+            duration: Total animation duration in seconds
+        """
+        import time
+
+        if self._meshcat is None or len(path) < 2:
+            return
+
+        dt = duration / (len(path) - 1)
+        for q in path:
+            with self.scratch_context() as ctx:
+                self.set_positions(ctx, robot_id, q)
+                self.publish_to_meshcat(ctx)
+            time.sleep(dt)
+
     # ============= Direct Access (use with caution) =============
 
     @property

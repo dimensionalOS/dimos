@@ -542,6 +542,24 @@ class WorldSpec(Protocol):
         """
         ...
 
+    # =========================================================================
+    # Visualization (optional)
+    # =========================================================================
+
+    def get_meshcat_url(self) -> str | None:
+        """Get Meshcat visualization URL if enabled."""
+        ...
+
+    def publish_to_meshcat(self, ctx: Any | None = None) -> None:
+        """Publish current state to Meshcat visualization."""
+        ...
+
+    def animate_path(
+        self, robot_id: str, path: list[NDArray[np.float64]], duration: float = 3.0
+    ) -> None:
+        """Animate a path in visualization."""
+        ...
+
 
 @runtime_checkable
 class KinematicsSpec(Protocol):
