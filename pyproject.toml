@@ -100,7 +100,6 @@ misc = [
 
     # Perception Dependencies
     "scikit-learn",
-    "clip",
     "timm>=1.0.15",
     "opencv-contrib-python==4.10.0.84",
 
@@ -205,17 +204,6 @@ cuda = [
     "mmengine>=0.10.3",
     "mmcv>=2.1.0",
     "xformers>=0.0.20",
-
-    # Detic GPU stack
-    "mss",
-    "dataclasses",
-    "ftfy",
-    "regex",
-    "fasttext",
-    "lvis",
-    "nltk",
-    "clip",
-    "detectron2",
 ]
 
 dev = [
@@ -381,11 +369,9 @@ ignore = [
 
 [tool.uv]
 # Build dependencies for packages that don't declare them properly
-extra-build-dependencies = { detectron2 = ["torch"], contact-graspnet-pytorch = ["numpy"] }
+extra-build-dependencies = { contact-graspnet-pytorch = ["numpy"] }
 
 default-groups = []
 
 [tool.uv.sources]
-clip = { git = "https://github.com/openai/CLIP.git" }
 contact-graspnet-pytorch = { git = "https://github.com/dimensionalOS/contact_graspnet_pytorch.git" }
-detectron2 = { git = "https://github.com/facebookresearch/detectron2.git", tag = "v0.6" }

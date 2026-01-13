@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
 import textwrap
 import threading
 from typing import TYPE_CHECKING
@@ -140,7 +141,9 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
                 )
             elif isinstance(msg, AIMessage):
                 content = msg.content or ""
-                tool_calls = msg.additional_kwargs.get("tool_calls", [])
+                tool_calls = getattr(msg, "tool_calls", None) or msg.additional_kwargs.get(
+                    "tool_calls", []
+                )
 
                 # Display the main content first
                 if content:
@@ -172,11 +175,18 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
 
         self.agent_transport.subscribe(receive_msg)
 
-    def _format_tool_call(self, tool_call: ToolCall) -> str:
+    def _format_tool_call(self, tool_call: ToolCall | dict) -> str:
         """Format a tool call for display."""
-        f = tool_call.get("function", {})
-        name = f.get("name", "unknown")  # type: ignore[attr-defined]
-        return f"▶ {name}({f.get('arguments', '')})"  # type: ignore[attr-defined]
+        if isinstance(tool_call, dict) and "function" in tool_call:
+            f = tool_call.get("function", {})
+            name = f.get("name", "unknown")  # type: ignore[attr-defined]
+            args = f.get("arguments", "")  # type: ignore[attr-defined]
+        else:
+            name = tool_call.get("name", "unknown")
+            args = tool_call.get("args", "")
+        if not isinstance(args, str):
+            args = json.dumps(args, separators=(",", ":"))
+        return f"▶ {name}({args})"
 
     def _add_message(self, timestamp: str, sender: str, content: str, color: str) -> None:
         """Add a message to the chat log."""
