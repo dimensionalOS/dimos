@@ -18,11 +18,12 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from ultralytics import YOLOE  # type: ignore[attr-defined]
+from ultralytics import YOLOE  # type: ignore[attr-defined, import-not-found]
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.detectors.types import Detector
 from dimos.perception.detection.type import ImageDetections2D
+from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 
@@ -107,7 +108,7 @@ class Yoloe2DDetector(Detector):
                 cls = np.arange(len(bboxes), dtype=np.int16)  # type: ignore[arg-type]
                 self._visual_prompts = {"bboxes": bboxes, "cls": cls}  # type: ignore[dict-item]
 
-    def process_image(self, image: Image) -> "ImageDetections2D[Any]":  # type: ignore[override]
+    def process_image(self, image: Image) -> ImageDetections2D[Detection2D]:
         """
         Process an image and return detection results.
 
