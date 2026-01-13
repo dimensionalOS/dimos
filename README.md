@@ -62,8 +62,8 @@ dimos run unitree-go2
 ```bash
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
 # ignore the warp warnings
-dimos --simulation run unitree-go2 --extra-module keyboard_teleop
-# open http://localhost:7779/command-center in your browser
+dimos --simulation run unitree-go2
+# open http://localhost:7779/command-center in your browser to control the robot movement
 ```
 <!-- FIXME switch to pygame -->
 <!-- TODO: figure out why there is a Max retreis exceeded with url: /offer -->
