@@ -30,10 +30,9 @@ try:
     from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined]
 except ImportError:
     ROSPath = None  # type: ignore[assignment, misc]
-import rerun as rr
-
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.types.timestamped import Timestamped
+import rerun as rr
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

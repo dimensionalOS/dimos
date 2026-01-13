@@ -18,9 +18,9 @@ import time
 from typing import Any, TypeVar, cast
 
 from dimos_lcm.std_msgs import Float32
-import rerun as rr
 
 from dimos.core import LCMTransport, Transport
+import rerun as rr
 
 F = TypeVar("F", bound=Callable[..., Any])
 

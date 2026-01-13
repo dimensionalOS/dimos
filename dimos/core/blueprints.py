@@ -23,7 +23,6 @@ import sys
 from types import MappingProxyType
 from typing import Any, Literal, get_args, get_origin, get_type_hints
 
-import rerun as rr
 import rerun.blueprint as rrb
 
 from dimos.core.global_config import GlobalConfig
@@ -33,6 +32,7 @@ from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
+import rerun as rr
 
 logger = setup_logger()
 

@@ -27,10 +27,10 @@ from dimos_lcm.std_msgs import Time as LCMTime  # type: ignore[import-untyped]
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
-import rerun as rr
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
 from dimos.types.timestamped import Timestamped
+import rerun as rr
 
 
 @lru_cache(maxsize=16)

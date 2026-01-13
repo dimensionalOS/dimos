@@ -23,7 +23,6 @@ import open3d.core as o3c  # type: ignore[import-untyped]
 from reactivex import interval, operators as ops
 from reactivex.disposable import Disposable
 from reactivex.subject import Subject
-import rerun as rr
 import rerun.blueprint as rrb
 
 from dimos.core import In, Module, Out, rpc
@@ -35,6 +34,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
+import rerun as rr
 
 logger = setup_logger()
 
