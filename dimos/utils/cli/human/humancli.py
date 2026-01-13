@@ -175,18 +175,12 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
 
         self.agent_transport.subscribe(receive_msg)
 
-    def _format_tool_call(self, tool_call: ToolCall | dict) -> str:
+    def _format_tool_call(self, tool_call: ToolCall) -> str:
         """Format a tool call for display."""
-        if isinstance(tool_call, dict) and "function" in tool_call:
-            f = tool_call.get("function", {})
-            name = f.get("name", "unknown")  # type: ignore[attr-defined]
-            args = f.get("arguments", "")  # type: ignore[attr-defined]
-        else:
-            name = tool_call.get("name", "unknown")
-            args = tool_call.get("args", "")
-        if not isinstance(args, str):
-            args = json.dumps(args, separators=(",", ":"))
-        return f"▶ {name}({args})"
+        name = tool_call.get("name", "unknown")
+        args = tool_call.get("args", {})
+        args_str = json.dumps(args, separators=(",", ":"))
+        return f"▶ {name}({args_str})"
 
     def _add_message(self, timestamp: str, sender: str, content: str, color: str) -> None:
         """Add a message to the chat log."""
