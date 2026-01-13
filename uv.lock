@@ -1452,7 +1452,7 @@ dependencies = [
 
 [[package]]
 name = "dimos"
-version = "0.0.4"
+version = "0.0.7"
 source = { editable = "." }
 dependencies = [
     { name = "asyncio" },
