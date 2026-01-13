@@ -157,7 +157,7 @@ if __name__ == "__main__":
     ).build().loop()
 ```
 
-### Note: Many More Examples in the [Examples Folder](https://github.com/dimensionalOS/dimos/examples)
+### Note: Many More Examples in the [Examples Folder](https://github.com/dimensionalOS/dimos/tree/main/examples)
 
 
 # How does DimOS work conceptually?
