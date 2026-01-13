@@ -360,9 +360,10 @@ class BaseTeleopModule(Module, ABC):
                 f"world/teleop/{controller_label}_controller",
                 controller_pose_stamped.to_rerun(),  # type: ignore[no-untyped-call]
             )
+            # Log 3D axes to visualize controller orientation (X=red, Y=green, Z=blue)
             rr.log(
-                f"world/teleop/{controller_label}_controller/forward",
-                controller_pose_stamped.to_rerun_arrow(),  # type: ignore[no-untyped-call]
+                f"world/teleop/{controller_label}_controller/axes",
+                rr.Axes3D(length=0.15),  # type: ignore[attr-defined]
             )
         except Exception as e:
             logger.debug(f"Failed to log {controller_label} controller to Rerun: {e}")

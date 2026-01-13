@@ -28,7 +28,6 @@ Architecture:
         ↓ First delta → auto-calibrate robot
         ↓ Computes: target = initial_robot + delta
         ↓ Publishes: cartesian commands (Pose)
-        ↓
     Robot Driver (any manipulator driver)
 
 Usage:
@@ -56,10 +55,12 @@ Usage:
     )
 """
 
+from dimos_lcm.geometry_msgs import Transform as LCMTransform
+
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.std_msgs import Float32
+from dimos.msgs.std_msgs import Bool, Float32
 from dimos.teleop.devices.vr_headset.vr_teleop_module import vr_teleop_module
 from dimos.teleop.robot_controllers import TeleopArmController, teleop_arm_controller
 
@@ -70,9 +71,6 @@ from dimos.teleop.robot_controllers import TeleopArmController, teleop_arm_contr
 quest3_teleop = (
     autoconnect(
         vr_teleop_module(
-            signaling_host="0.0.0.0",
-            signaling_port=8443,  # HTTPS port (required for WebXR)
-            use_https=True,  # Enable HTTPS for Quest 3 WebXR
             num_inputs=2,
             enable_inputs=[True, True],
             input_labels=["left_vr", "right_vr"],
@@ -93,10 +91,21 @@ quest3_teleop = (
     )
     .transports(
         {
-            ("controller_delta_0", PoseStamped): LCMTransport(
-                "devices/vr_headset/controller_delta", PoseStamped
+            # VRTeleopModule inputs (from external LCM - Deno bridge)
+            ("vr_left_transform", LCMTransform): LCMTransport(
+                "/vr_left_transform", LCMTransform
             ),
-            ("trigger_value_0", Float32): LCMTransport("devices/vr_headset/trigger_value", Float32),
+            ("vr_right_transform", LCMTransform): LCMTransport(
+                "/vr_right_transform", LCMTransform
+            ),
+            ("vr_trigger_0", Float32): LCMTransport("/vr_trigger_0", Float32),
+            ("vr_trigger_1", Float32): LCMTransport("/vr_trigger_1", Float32),
+            ("teleop_enable", Bool): LCMTransport("/vr_teleop_enable", Bool),
+            # VRTeleopModule outputs
+            ("controller_delta_0", PoseStamped): LCMTransport(
+                "/controller_delta_0", PoseStamped
+            ),
+            ("trigger_value_0", Float32): LCMTransport("/trigger_value_0", Float32),
         }
     )
 )

@@ -110,14 +110,21 @@
     <canvas id="canvas"></canvas>
 
     <script type="module">
+        // Global error handler
+        window.onerror = (msg, url, line, col, error) => {
+            console.error(`[ERROR] ${msg} at ${url}:${line}:${col}`, error);
+            document.getElementById('status').textContent = `Error: ${msg}`;
+        };
+
+        import { encodePacket, geometry_msgs, std_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
+
         // WebSocket and VR state
         let ws = null;
         let xrSession = null;
         let xrRefSpace = null;
         let gl = null;
         let lastSendTime = 0;
-        // const sendInterval = 0; // ~90Hz -- running at full speed/
-        const sendInterval = 1000 / 80; //target to achieve
+        const sendInterval = 1000 / 80; // ~80Hz target
 
         // Teleop state
         let teleopActive = false;
@@ -130,26 +137,20 @@
         const canvas = document.getElementById('canvas');
 
         function setStatus(msg) {
-            console.log('[Status]', msg);
             statusEl.textContent = msg;
         }
 
-        // WebSocket setup
+        // WebSocket setup (LCM bridge)
         function setupWebSocket() {
             return new Promise((resolve, reject) => {
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.host}/ws`;
+                const wsUrl = `${protocol}//${window.location.host}`;
 
                 setStatus('Connecting to server...');
                 ws = new WebSocket(wsUrl);
 
                 ws.onopen = () => {
                     setStatus('Server connected');
-                    // Send handshake
-                    ws.send(JSON.stringify({
-                        role: "teleop",
-                        robot_ip: ""
-                    }));
                     resolve();
                 };
 
@@ -161,31 +162,9 @@
 
                 ws.onclose = () => {
                     setStatus('WebSocket closed');
-                    console.log('WebSocket closed');
                 };
 
-                ws.onmessage = (event) => {
-                    try {
-                        const data = JSON.parse(event.data);
-                        console.log('Received:', data);
-
-                        // Handle teleop state responses
-                        if (data.type === 'teleop_started') {
-                            teleopActive = true;
-                            setStatus('Teleop ACTIVE - Move controllers');
-                        } else if (data.type === 'teleop_stopped') {
-                            teleopActive = false;
-                            setStatus('Teleop STOPPED - Press X to start');
-                        } else if (data.type === 'calibration_success') {
-                            console.log('✓ Calibration successful');
-                        } else if (data.type === 'calibration_failed') {
-                            console.error('✗ Calibration failed:', data.error);
-                            setStatus('Calibration failed - Try again');
-                        }
-                    } catch (e) {
-                        console.error('Failed to parse message:', e);
-                    }
-                };
+                ws.onmessage = () => {};
             });
         }
 
@@ -203,30 +182,18 @@
             gl.clearColor(0, 0, 0, 0); // Transparent background for passthrough
         }
 
-        // Matrix helper - shift position along forward direction
-        function shiftMatrixAlongForward(matrix, offset) {
-            const result = [...matrix];
-            result[12] = matrix[12] - matrix[8] * offset;
-            result[13] = matrix[13] - matrix[9] * offset;
-            result[14] = matrix[14] - matrix[10] * offset;
-            return result;
-        }
-
-        // Check for X button press to toggle teleop
+        // Check for X button press (calibration toggle)
         function checkButtonPresses(frame) {
             for (const inputSource of frame.session.inputSources) {
                 if (inputSource.gamepad && inputSource.handedness) {
                     const handedness = inputSource.handedness;
                     const gamepad = inputSource.gamepad;
 
-                    // X button is typically button[4] on Quest controllers (left controller)
-                    // A button is typically button[4] on right controller
-                    // We'll use button[4] for toggle on either controller
+                    // X button is button[4] on Quest controllers
                     const xButtonPressed = gamepad.buttons[4]?.pressed || false;
 
                     // Detect button press (rising edge)
                     if (xButtonPressed && !lastXButtonState[handedness]) {
-                        console.log(`${handedness} X/A button pressed`);
                         toggleTeleop();
                     }
 
@@ -235,26 +202,18 @@
             }
         }
 
-        // Toggle teleop on/off
         function toggleTeleop() {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-            if (teleopActive) {
-                // Stop teleop
-                console.log('Stopping teleop...');
-                ws.send(JSON.stringify({ type: 'stop_teleop' }));
-                setStatus('Stopping teleop...');
-            } else {
-                // Start teleop (triggers calibration)
-                console.log('Starting teleop and calibration...');
-                ws.send(JSON.stringify({ type: 'start_teleop' }));
-                setStatus('Starting teleop & calibration...');
-            }
+            teleopActive = !teleopActive;
+            const msg = new std_msgs.Bool({ data: teleopActive });
+            const packet = encodePacket("/vr_teleop_enable#std_msgs.Bool", msg);
+            ws.send(packet);
+            setStatus(teleopActive ? 'Teleop ACTIVE - Move controllers' : 'Teleop STOPPED');
         }
 
-        // Extract and send controller tracking data
+        // Send raw controller tracking data (no processing - done in Python)
         function processTracking(frame) {
-            // Always check for button presses
             checkButtonPresses(frame);
 
             // Rate limit tracking data
@@ -264,44 +223,49 @@
             }
             lastSendTime = now;
 
-            const trackingData = {
-                type: "controller",
-                left: null,
-                right: null
-            };
-
             // Process input sources (controllers)
             for (const inputSource of frame.session.inputSources) {
-                if (inputSource.targetRayMode === 'tracked-pointer' && inputSource.gripSpace) {
-                    const handedness = inputSource.handedness;
-                    if (handedness !== 'left' && handedness !== 'right') continue;
+                const trackingSpace = inputSource.gripSpace || inputSource.targetRaySpace;
+                if (!trackingSpace) continue;
 
-                    const pose = frame.getPose(inputSource.gripSpace, xrRefSpace);
-                    if (!pose) continue;
+                const handedness = inputSource.handedness;
+                if (handedness !== 'left' && handedness !== 'right') continue;
 
-                    const gamepad = inputSource.gamepad;
-                    const matrix = Array.from(pose.transform.matrix);
+                const pose = frame.getPose(trackingSpace, xrRefSpace);
+                if (!pose) continue;
 
-                    // Shift position for gripper alignment
-                    const shiftedMatrix = shiftMatrixAlongForward(matrix, -0.09);
+                // Send raw transform directly from WebXR - no processing
+                const pos = pose.transform.position;
+                const rot = pose.transform.orientation;
 
-                    trackingData[handedness] = {
-                        targetLocation: shiftedMatrix,
-                        trigger: gamepad?.buttons[0]?.value || 0,
-                        grip: gamepad?.buttons[1]?.value || 0,
-                        joystickX: (gamepad?.axes[2] || 0) * 0.1,
-                        joystickY: -(gamepad?.axes[3] || 0) * 0.1,
-                        buttons: gamepad?.buttons.map(b => b.pressed) || []
-                    };
+                const transform = new geometry_msgs.Transform({
+                    translation: new geometry_msgs.Vector3({ x: pos.x, y: pos.y, z: pos.z }),
+                    rotation: new geometry_msgs.Quaternion({ x: rot.x, y: rot.y, z: rot.z, w: rot.w })
+                });
+
+                const channel = handedness === 'left'
+                    ? "/vr_left_transform#geometry_msgs.Transform"
+                    : "/vr_right_transform#geometry_msgs.Transform";
+
+                const packet = encodePacket(channel, transform);
+
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(packet);
                 }
-            }
 
-            // Send to backend
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                try {
-                    ws.send(JSON.stringify(trackingData));
-                } catch (error) {
-                    console.error('Failed to send tracking:', error);
+                // Send trigger value (0.0 = open, 1.0 = closed)
+                const gamepad = inputSource.gamepad;
+                if (gamepad) {
+                    const triggerValue = gamepad.buttons[0]?.value ?? 0.0;
+                    const triggerMsg = new std_msgs.Float32({ data: triggerValue });
+                    const triggerChannel = handedness === 'left'
+                        ? "/vr_trigger_0#std_msgs.Float32"
+                        : "/vr_trigger_1#std_msgs.Float32";
+                    const triggerPacket = encodePacket(triggerChannel, triggerMsg);
+
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(triggerPacket);
+                    }
                 }
             }
         }
@@ -319,7 +283,7 @@
             gl.clear(gl.COLOR_BUFFER_BIT);
         }
 
-        // Start VR session
+        // Start VR session with passthrough
         async function startVR() {
             try {
                 setStatus('Initializing WebGL...');
@@ -327,19 +291,21 @@
 
                 setStatus('Requesting VR session...');
 
-                // Try AR mode first (for passthrough), fallback to VR
+                // Try immersive-ar first (true passthrough), fall back to immersive-vr
                 let session = null;
                 try {
                     session = await navigator.xr.requestSession('immersive-ar', {
                         requiredFeatures: ['local-floor'],
-                        optionalFeatures: ['hand-tracking', 'local']
+                        optionalFeatures: ['hand-tracking']
                     });
+                    console.log('Started immersive-ar session (passthrough)');
                 } catch (arError) {
-                    console.log('AR mode not available, trying VR mode');
+                    console.log('immersive-ar not available, trying immersive-vr');
                     session = await navigator.xr.requestSession('immersive-vr', {
                         requiredFeatures: ['local-floor'],
-                        optionalFeatures: ['hand-tracking', 'local']
+                        optionalFeatures: ['hand-tracking']
                     });
+                    console.log('Started immersive-vr session');
                 }
 
                 xrSession = session;
@@ -353,7 +319,7 @@
                 // Get reference space
                 xrRefSpace = await session.requestReferenceSpace('local-floor');
 
-                setStatus('VR active - Press X to start teleop');
+                setStatus('VR active - Press X to calibrate');
 
                 // Session event handlers
                 session.addEventListener('end', () => {
@@ -429,9 +395,12 @@
             }
 
             try {
-                const supported = await navigator.xr.isSessionSupported('immersive-vr');
-                if (!supported) {
-                    setStatus('VR not supported');
+                // Check for AR (passthrough) or VR support
+                const arSupported = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+                const vrSupported = await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
+
+                if (!arSupported && !vrSupported) {
+                    setStatus('VR/AR not supported');
                     connectBtn.disabled = true;
                 }
             } catch (error) {
