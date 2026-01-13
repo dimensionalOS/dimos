@@ -53,7 +53,7 @@ class ObjectSceneRegistrationModule(SkillModule):
 
     _detector: Yoloe2DDetector | None = None
     _camera_info: CameraInfo | None = None
-    _object_db: ObjectDB | None = None
+    _object_db: ObjectDB
 
     def __init__(
         self,
@@ -98,7 +98,6 @@ class ObjectSceneRegistrationModule(SkillModule):
             self._detector = None
 
         self._object_db.clear()
-        self._object_db = None
 
         logger.info("ObjectSceneRegistrationModule stopped")
         super().stop()
@@ -116,8 +115,6 @@ class ObjectSceneRegistrationModule(SkillModule):
     @rpc
     def select_object(self, track_id: int) -> dict[str, Any] | None:
         """Get object data by track_id and promote to permanent."""
-        if self._object_db is None:
-            return None
         for obj in self._object_db.get_all_objects():
             if obj.track_id == track_id:
                 self._object_db.promote(obj.object_id)

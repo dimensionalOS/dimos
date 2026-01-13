@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Generic
 
-import cv2
+import cv2  # type: ignore[import-untyped]
 import numpy as np
 from typing_extensions import TypeVar
 

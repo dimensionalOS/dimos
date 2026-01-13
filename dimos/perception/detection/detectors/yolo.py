@@ -17,6 +17,7 @@ from ultralytics import YOLO  # type: ignore[attr-defined, import-not-found]
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.detectors.types import Detector
 from dimos.perception.detection.type import ImageDetections2D
+from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
@@ -47,7 +48,7 @@ class Yolo2DDetector(Detector):
             self.device = "cpu"
             logger.debug("Using CPU for YOLO 2d detector")
 
-    def process_image(self, image: Image) -> ImageDetections2D:
+    def process_image(self, image: Image) -> ImageDetections2D[Detection2D]:
         """
         Process an image and return detection results.
 
