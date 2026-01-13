@@ -31,7 +31,8 @@ Dimensional is an open-source framework for adding customized general intelligen
 
 #### Details / Requirements
 
-- Linux (MacOS support is in beta, you're welcome to roughly follow these steps, which will run on MacOS)
+- Linux, tested on Ubuntu 22.04, 24.04
+- MacOS support is in beta, you're welcome to roughly follow these steps, which will run on MacOS
 
 ```sh
 sudo apt-get update
