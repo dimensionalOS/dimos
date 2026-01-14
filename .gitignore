@@ -63,3 +63,6 @@ yolo11n.pt
 /.mypy_cache*
 
 *mobileclip*
+
+# Teleop SSL certificates
+dimos/teleop/web/certs/
