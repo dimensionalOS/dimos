@@ -238,7 +238,8 @@ class ManipulationModule(Module):
     def get_current_joints(self) -> list[float] | None:
         """Get current joint positions."""
         if (robot := self._get_robot()) and self._world_monitor:
-            if pos := self._world_monitor.get_current_positions(robot[1]):
+            pos = self._world_monitor.get_current_positions(robot[1])
+            if pos is not None:
                 return list(pos)
         return None
 
