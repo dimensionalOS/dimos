@@ -24,9 +24,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from dimos.msgs.geometry_msgs import Pose
+if TYPE_CHECKING:
+    from dimos.msgs.geometry_msgs import Pose
 
 
 @dataclass

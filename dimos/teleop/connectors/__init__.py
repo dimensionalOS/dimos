@@ -39,10 +39,10 @@ from dimos.teleop.connectors.quadruped_connector import (
 )
 
 __all__ = [
-    "BaseTeleopConnector",
-    "ConnectorConfig",
     "ArmConnector",
     "ArmConnectorConfig",
+    "BaseTeleopConnector",
+    "ConnectorConfig",
     "QuadrupedConnector",
     "QuadrupedConnectorConfig",
 ]

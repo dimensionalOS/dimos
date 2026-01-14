@@ -50,7 +50,12 @@ from dimos_lcm.geometry_msgs import Transform as LCMTransform
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.std_msgs import Bool, Float32
-from dimos.teleop.connectors import ArmConnector, ArmConnectorConfig, QuadrupedConnector, QuadrupedConnectorConfig
+from dimos.teleop.connectors import (
+    ArmConnector,
+    ArmConnectorConfig,
+    QuadrupedConnector,
+    QuadrupedConnectorConfig,
+)
 from dimos.teleop.devices.vr_teleop_module import vr_teleop_module
 
 # =============================================================================

@@ -42,15 +42,15 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from dimos.core import In, rpc
-from dimos.msgs.std_msgs import Bool, Float32
 from dimos.teleop.devices.base_teleop_module import BaseTeleopConfig, BaseTeleopModule
 from dimos.utils.logging_config import setup_logger
-from dimos_lcm.geometry_msgs import Transform as LCMTransform
 
 if TYPE_CHECKING:
+    from dimos_lcm.geometry_msgs import Transform as LCMTransform
     from numpy.typing import NDArray
 
     from dimos.core.global_config import GlobalConfig
+    from dimos.msgs.std_msgs import Bool, Float32
 
 logger = setup_logger()
 
@@ -157,14 +157,20 @@ class VRTeleopModule(BaseTeleopModule):
         left_index = enabled_indices[0] if len(enabled_indices) > 0 else 0
         right_index = enabled_indices[1] if len(enabled_indices) > 1 else 1
 
-        logger.info(f"VR controller mapping: left→index {left_index} {self.config.input_labels[left_index]}, right→index {right_index} {self.config.input_labels[right_index]}")
+        logger.info(
+            f"VR controller mapping: left→index {left_index} {self.config.input_labels[left_index]}, right→index {right_index} {self.config.input_labels[right_index]}"
+        )
 
         # Subscribe to LCM inputs with dynamically determined indices
         if self.vr_left_transform and self.vr_left_transform.transport:
-            self.vr_left_transform.subscribe(lambda msg, idx=left_index: self._on_lcm_transform(idx, msg))
+            self.vr_left_transform.subscribe(
+                lambda msg, idx=left_index: self._on_lcm_transform(idx, msg)
+            )
 
         if self.vr_right_transform and self.vr_right_transform.transport:
-            self.vr_right_transform.subscribe(lambda msg, idx=right_index: self._on_lcm_transform(idx, msg))
+            self.vr_right_transform.subscribe(
+                lambda msg, idx=right_index: self._on_lcm_transform(idx, msg)
+            )
 
         if self.vr_trigger_0 and self.vr_trigger_0.transport:
             self.vr_trigger_0.subscribe(lambda msg, idx=left_index: self._on_lcm_trigger(idx, msg))
@@ -217,7 +223,9 @@ class VRTeleopModule(BaseTeleopModule):
             # Get state via RPC if connector has a real driver
             result = None
             if not connector.config.dummy_driver:
-                rpc_method_name = f"{connector.config.driver_module_name}.{connector.config.driver_method_name}"
+                rpc_method_name = (
+                    f"{connector.config.driver_module_name}.{connector.config.driver_method_name}"
+                )
                 if rpc_method_name in self.rpc_calls:
                     try:
                         get_state = self.get_rpc_calls(rpc_method_name)

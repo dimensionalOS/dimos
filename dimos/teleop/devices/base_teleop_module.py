@@ -38,7 +38,6 @@ from dimos.core import Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Twist
-from dimos.msgs.std_msgs import Bool
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose
 
@@ -47,6 +46,8 @@ if TYPE_CHECKING:
 
     import numpy as np
     from numpy.typing import NDArray
+
+    from dimos.msgs.std_msgs import Bool
 
 logger = setup_logger()
 
