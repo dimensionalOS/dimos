@@ -12,41 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Drake World Implementation
-
-Implements WorldSpec using Drake's MultibodyPlant and SceneGraph.
-
-## Architecture
-
-Uses Drake's DiagramBuilder pattern:
-```
-DiagramBuilder
-├── MultibodyPlant (kinematics, dynamics)
-├── SceneGraph (collision geometry)
-└── MeshcatVisualizer (optional)
-```
-
-## Context Management
-
-- Live context: Mirrors current robot state (synced from driver)
-- Scratch contexts: Thread-safe clones for planning/IK operations
-
-Example:
-    world = DrakeWorld(enable_viz=True)
-    robot_id = world.add_robot(config)
-    world.add_obstacle(table)
-    world.finalize()
-
-    # Sync live state from driver
-    world.sync_from_joint_state(robot_id, joint_positions)
-
-    # Planning uses scratch contexts
-    with world.scratch_context() as ctx:
-        world.set_positions(ctx, robot_id, q_test)
-        if world.is_collision_free(ctx, robot_id):
-            ee_pose = world.get_ee_pose(ctx, robot_id)
-"""
+"""Drake World Implementation - WorldSpec using Drake's MultibodyPlant and SceneGraph."""
 
 from __future__ import annotations
 
@@ -131,36 +97,9 @@ class _ObstacleData:
 
 
 class DrakeWorld:
-    """Drake implementation of WorldSpec.
+    """Drake implementation of WorldSpec with MultibodyPlant, SceneGraph, optional Meshcat."""
 
-    Owns a single Drake Diagram containing:
-    - MultibodyPlant (kinematics, dynamics)
-    - SceneGraph (collision geometry)
-    - Optional MeshcatVisualizer
-
-    ## Context Management
-
-    - _live_context: Mirrors current robot state (synced from driver)
-    - scratch_context(): Returns cloned context for planning/IK
-
-    ## Thread Safety
-
-    - Live context writes are protected by RLock
-    - scratch_context() returns independent clones
-    - All public methods that modify state are thread-safe
-    """
-
-    def __init__(
-        self,
-        time_step: float = 0.0,
-        enable_viz: bool = False,
-    ):
-        """Create a Drake world.
-
-        Args:
-            time_step: Simulation time step (0 for kinematics-only)
-            enable_viz: If True, enable Meshcat visualization
-        """
+    def __init__(self, time_step: float = 0.0, enable_viz: bool = False):
         if not DRAKE_AVAILABLE:
             raise ImportError("Drake is not installed. Install with: pip install drake")
 
@@ -205,117 +144,93 @@ class DrakeWorld:
         # Obstacle source for dynamic obstacles
         self._obstacle_source_id: Any = None
 
-    # ============= Robot Management =============
-
     def add_robot(self, config: RobotModelConfig) -> str:
-        """Add a robot to the world.
-
-        Args:
-            config: Robot configuration including URDF path and joint names
-
-        Returns:
-            robot_id: Unique identifier for the robot
-
-        Raises:
-            RuntimeError: If world is already finalized
-        """
+        """Add a robot to the world. Returns robot_id."""
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
 
         with self._lock:
-            # Generate unique robot ID
             self._robot_counter += 1
             robot_id = f"robot_{self._robot_counter}"
 
-            # Prepare URDF: process xacro and convert STL meshes if needed
-            original_path = Path(config.urdf_path).resolve()
-            if not original_path.exists():
-                raise FileNotFoundError(f"URDF/xacro not found: {original_path}")
+            model_instance = self._load_urdf(config)
+            self._weld_base_if_needed(config, model_instance)
+            self._validate_joints(config, model_instance)
 
-            urdf_path = prepare_urdf_for_drake(
-                urdf_path=original_path,
-                package_paths=config.package_paths,
-                xacro_args=config.xacro_args,
-                # Always convert meshes when requested - Drake needs OBJ for collision
-                convert_meshes=config.auto_convert_meshes,
-            )
+            ee_frame = self._plant.GetBodyByName(
+                config.end_effector_link, model_instance
+            ).body_frame()
+            base_frame = self._plant.GetBodyByName(config.base_link, model_instance).body_frame()
 
-            urdf_path_obj = Path(urdf_path)
-            logger.info(f"Using prepared URDF: {urdf_path_obj}")
-
-            # Register package paths for mesh resolution
-            if config.package_paths:
-                for pkg_name, pkg_path in config.package_paths.items():
-                    self._parser.package_map().Add(pkg_name, Path(pkg_path))
-            else:
-                # Fallback: register URDF directory as package
-                package_dir = urdf_path_obj.parent
-                self._parser.package_map().Add(
-                    package_name=f"{config.name}_description",
-                    package_path=package_dir,
-                )
-
-            # Parse the URDF
-            model_instances = self._parser.AddModels(urdf_path_obj)
-            if not model_instances:
-                raise ValueError(f"Failed to parse URDF: {urdf_path}")
-
-            model_instance = model_instances[0]
-
-            # Get base body
-            base_body = self._plant.GetBodyByName(config.base_link, model_instance)
-
-            # Check if URDF already welded base to world
-            base_already_welded = False
-            try:
-                world_joint = self._plant.GetJointByName("world_joint", model_instance)
-                if (
-                    world_joint.parent_body().name() == "world"
-                    and world_joint.child_body().name() == config.base_link
-                ):
-                    base_already_welded = True
-                    logger.info("URDF has 'world_joint', skipping weld")
-            except RuntimeError:
-                pass
-
-            # Weld base to world if needed
-            if not base_already_welded:
-                world_frame = self._plant.world_frame()
-                base_transform = RigidTransform(config.base_pose)
-                self._plant.WeldFrames(
-                    world_frame,
-                    base_body.body_frame(),
-                    base_transform,
-                )
-
-            # Verify joints exist
-            for joint_name in config.joint_names:
-                try:
-                    self._plant.GetJointByName(joint_name, model_instance)
-                except RuntimeError:
-                    raise ValueError(f"Joint '{joint_name}' not found in URDF")
-
-            # Get end-effector frame
-            try:
-                ee_body = self._plant.GetBodyByName(config.end_effector_link, model_instance)
-                ee_frame = ee_body.body_frame()
-            except RuntimeError:
-                raise ValueError(
-                    f"End-effector link '{config.end_effector_link}' not found in URDF"
-                )
-
-            # Store robot data (joint_indices computed after finalize)
             self._robots[robot_id] = _RobotData(
                 robot_id=robot_id,
                 config=config,
                 model_instance=model_instance,
                 joint_indices=[],
                 ee_frame=ee_frame,
-                base_frame=base_body.body_frame(),
+                base_frame=base_frame,
             )
 
             logger.info(f"Added robot '{robot_id}' ({config.name})")
             return robot_id
+
+    def _load_urdf(self, config: RobotModelConfig) -> Any:
+        """Load URDF/xacro and return model instance."""
+        original_path = Path(config.urdf_path).resolve()
+        if not original_path.exists():
+            raise FileNotFoundError(f"URDF/xacro not found: {original_path}")
+
+        urdf_path = prepare_urdf_for_drake(
+            urdf_path=original_path,
+            package_paths=config.package_paths,
+            xacro_args=config.xacro_args,
+            convert_meshes=config.auto_convert_meshes,
+        )
+        urdf_path_obj = Path(urdf_path)
+        logger.info(f"Using prepared URDF: {urdf_path_obj}")
+
+        # Register package paths
+        if config.package_paths:
+            for pkg_name, pkg_path in config.package_paths.items():
+                self._parser.package_map().Add(pkg_name, Path(pkg_path))
+        else:
+            self._parser.package_map().Add(f"{config.name}_description", urdf_path_obj.parent)
+
+        model_instances = self._parser.AddModels(urdf_path_obj)
+        if not model_instances:
+            raise ValueError(f"Failed to parse URDF: {urdf_path}")
+        return model_instances[0]
+
+    def _weld_base_if_needed(self, config: RobotModelConfig, model_instance: Any) -> None:
+        """Weld robot base to world if not already welded in URDF."""
+        base_body = self._plant.GetBodyByName(config.base_link, model_instance)
+
+        # Check if URDF already has world_joint
+        try:
+            world_joint = self._plant.GetJointByName("world_joint", model_instance)
+            if (
+                world_joint.parent_body().name() == "world"
+                and world_joint.child_body().name() == config.base_link
+            ):
+                logger.info("URDF has 'world_joint', skipping weld")
+                return
+        except RuntimeError:
+            pass
+
+        # Weld base to world
+        self._plant.WeldFrames(
+            self._plant.world_frame(),
+            base_body.body_frame(),
+            RigidTransform(config.base_pose),
+        )
+
+    def _validate_joints(self, config: RobotModelConfig, model_instance: Any) -> None:
+        """Validate that all configured joints exist in URDF."""
+        for joint_name in config.joint_names:
+            try:
+                self._plant.GetJointByName(joint_name, model_instance)
+            except RuntimeError:
+                raise ValueError(f"Joint '{joint_name}' not found in URDF")
 
     def get_robot_ids(self) -> list[str]:
         """Get all robot IDs in the world."""
@@ -622,97 +537,36 @@ class DrakeWorld:
         return self._finalized
 
     def _setup_collision_filters(self) -> None:
-        """Filter out collisions between adjacent links in kinematic chain."""
-        scene_graph = self._scene_graph
-
-        for _robot_id, robot_data in self._robots.items():
-            model_instance = robot_data.model_instance
-            body_indices = self._plant.GetBodyIndices(model_instance)
-            bodies = [self._plant.get_body(bi) for bi in body_indices]
-
-            # Build parent-child relationships
-            parent_map: dict[str, str] = {}
-            for joint_idx in self._plant.GetJointIndices(model_instance):
+        """Filter collisions between adjacent links and user-specified pairs."""
+        for robot_data in self._robots.values():
+            # Filter parent-child pairs (adjacent links always "collide")
+            for joint_idx in self._plant.GetJointIndices(robot_data.model_instance):
                 joint = self._plant.get_joint(joint_idx)
-                parent_body = joint.parent_body()
-                child_body = joint.child_body()
-                if parent_body.index() != self._plant.world_body().index():
-                    parent_map[child_body.name()] = parent_body.name()
+                parent, child = joint.parent_body(), joint.child_body()
+                if parent.index() != self._plant.world_body().index():
+                    self._exclude_body_pair(parent, child)
 
-            # Compute kinematic distance
-            def get_chain_distance(name1: str, name2: str) -> int:
-                def path_to_root(name: str) -> list[str]:
-                    path = [name]
-                    while name in parent_map:
-                        name = parent_map[name]
-                        path.append(name)
-                    return path
-
-                path1 = path_to_root(name1)
-                path2 = path_to_root(name2)
-
-                set1 = set(path1)
-                for i, node in enumerate(path2):
-                    if node in set1:
-                        idx1 = path1.index(node)
-                        return idx1 + i
-
-                return len(path1) + len(path2)
-
-            # Filter collisions within 2 joints
-            filter_distance = 2
-            filtered_pairs: set[tuple[str, str]] = set()
-
-            for i, body1 in enumerate(bodies):
-                for body2 in bodies[i + 1 :]:
-                    name1, name2 = body1.name(), body2.name()
-                    dist = get_chain_distance(name1, name2)
-
-                    if dist <= filter_distance:
-                        pair = (min(name1, name2), max(name1, name2))
-                        if pair not in filtered_pairs:
-                            filtered_pairs.add(pair)
-
-                            try:
-                                geoms1 = self._plant.GetCollisionGeometriesForBody(body1)
-                                geoms2 = self._plant.GetCollisionGeometriesForBody(body2)
-
-                                if geoms1 and geoms2:
-                                    scene_graph.collision_filter_manager().Apply(
-                                        CollisionFilterDeclaration().ExcludeBetween(
-                                            GeometrySet(geoms1), GeometrySet(geoms2)
-                                        )
-                                    )
-                            except Exception as e:
-                                logger.warning(f"Could not filter {name1}<->{name2}: {e}")
-
-            # Add user-specified collision exclusions from config
-            # Useful for parallel linkage mechanisms (grippers) where non-adjacent
-            # links may legitimately overlap due to mimic joints
-            exclusion_pairs = robot_data.config.collision_exclusion_pairs
-            if exclusion_pairs:
-                body_name_map = {body.name(): body for body in bodies}
-                for name1, name2 in exclusion_pairs:
-                    if name1 in body_name_map and name2 in body_name_map:
-                        body1 = body_name_map[name1]
-                        body2 = body_name_map[name2]
-                        try:
-                            geoms1 = self._plant.GetCollisionGeometriesForBody(body1)
-                            geoms2 = self._plant.GetCollisionGeometriesForBody(body2)
-                            if geoms1 and geoms2:
-                                scene_graph.collision_filter_manager().Apply(
-                                    CollisionFilterDeclaration().ExcludeBetween(
-                                        GeometrySet(geoms1), GeometrySet(geoms2)
-                                    )
-                                )
-                                logger.debug(f"Excluded collision pair: {name1}<->{name2}")
-                        except Exception as e:
-                            logger.warning(f"Could not filter pair {name1}<->{name2}: {e}")
-                    else:
-                        missing = [n for n in (name1, name2) if n not in body_name_map]
-                        logger.warning(f"Collision exclusion: links not found: {missing}")
+            # Filter user-specified pairs (e.g., parallel linkage grippers)
+            for name1, name2 in robot_data.config.collision_exclusion_pairs:
+                try:
+                    body1 = self._plant.GetBodyByName(name1, robot_data.model_instance)
+                    body2 = self._plant.GetBodyByName(name2, robot_data.model_instance)
+                    self._exclude_body_pair(body1, body2)
+                except RuntimeError:
+                    logger.warning(f"Collision exclusion: link not found: {name1} or {name2}")
 
         logger.info("Collision filters applied")
+
+    def _exclude_body_pair(self, body1: Any, body2: Any) -> None:
+        """Exclude collision between two bodies."""
+        geoms1 = self._plant.GetCollisionGeometriesForBody(body1)
+        geoms2 = self._plant.GetCollisionGeometriesForBody(body2)
+        if geoms1 and geoms2:
+            self._scene_graph.collision_filter_manager().Apply(
+                CollisionFilterDeclaration().ExcludeBetween(
+                    GeometrySet(geoms1), GeometrySet(geoms2)
+                )
+            )
 
     # ============= Context Management =============
 
@@ -728,49 +582,26 @@ class DrakeWorld:
 
     @contextmanager
     def scratch_context(self) -> Generator[Context, None, None]:
-        """Get a scratch context for planning (thread-safe).
-
-        Uses CreateDefaultContext() instead of Clone() so that dynamically
-        added obstacles are visible to collision queries.
-
-        IMPORTANT: This copies the current live state of ALL robots into the
-        scratch context so that collision checking properly accounts for
-        inter-robot collisions (robot A planning considers robot B's position).
-
-        Usage:
-            with world.scratch_context() as ctx:
-                world.set_positions(ctx, robot_id, q)
-                if world.is_collision_free(ctx, robot_id):
-                    ...
-        """
+        """Thread-safe context for planning. Copies current robot states for inter-robot collision checking."""
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
 
-        # Create fresh context - this sees all geometries including dynamic obstacles
-        # (Clone() doesn't see geometries added after the original context was created)
         ctx = self._diagram.CreateDefaultContext()
 
-        # Copy current live state of ALL robots into scratch context
-        # This ensures inter-robot collision checking works correctly
+        # Copy live robot states so inter-robot collision checking works
         with self._lock:
             if self._plant_context is not None:
                 plant_ctx = self._diagram.GetMutableSubsystemContext(self._plant, ctx)
-                for _robot_id, robot_data in self._robots.items():
+                for robot_data in self._robots.values():
                     try:
-                        # Get positions from live context
-                        live_positions = self._plant.GetPositions(
+                        positions = self._plant.GetPositions(
                             self._plant_context, robot_data.model_instance
                         )
-                        # Set in scratch context
-                        self._plant.SetPositions(
-                            plant_ctx, robot_data.model_instance, live_positions
-                        )
+                        self._plant.SetPositions(plant_ctx, robot_data.model_instance, positions)
                     except Exception:
-                        # Robot not yet synced - leave at default position
-                        pass
+                        pass  # Robot not yet synced
 
         yield ctx
-        # Context automatically cleaned up when exiting
 
     def sync_from_joint_state(self, robot_id: str, positions: NDArray[np.float64]) -> None:
         """Sync live context from driver's joint state.

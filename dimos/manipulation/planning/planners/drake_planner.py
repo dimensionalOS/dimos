@@ -12,23 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Drake Planner Module
-
-Implements PlannerSpec using RRT-Connect algorithm with WorldSpec for collision checking.
-
-## Key Design
-
-- Uses WorldSpec.scratch_context() for thread-safe collision checking
-- Joint-space planning only (use KinematicsSpec.solve() for pose goals first)
-- Stateless except for configuration
-
-Example:
-    planner = DrakePlanner(step_size=0.1)
-    result = planner.plan_joint_path(world, robot_id, q_start, q_goal)
-    if result.is_success():
-        waypoints = result.path
-"""
+"""RRT-Connect and RRT* motion planners implementing PlannerSpec."""
 
 from __future__ import annotations
 
@@ -41,7 +25,6 @@ import numpy as np
 from dimos.manipulation.planning.spec import PlanningResult, PlanningStatus, WorldSpec
 from dimos.manipulation.planning.utils.path_utils import (
     compute_path_length,
-    interpolate_path,
     interpolate_segment,
 )
 from dimos.utils.logging_config import setup_logger
@@ -54,11 +37,12 @@ logger = setup_logger()
 
 @dataclass
 class TreeNode:
-    """Node in the RRT tree."""
+    """Node in RRT tree with optional cost tracking (for RRT*)."""
 
     config: NDArray[np.float64]
     parent: TreeNode | None = None
     children: list[TreeNode] = field(default_factory=list)
+    cost: float = 0.0
 
     def path_to_root(self) -> list[NDArray[np.float64]]:
         """Get path from this node to root."""
@@ -71,23 +55,7 @@ class TreeNode:
 
 
 class DrakePlanner:
-    """RRT-Connect planner implementing PlannerSpec.
-
-    Uses bi-directional RRT (RRT-Connect) for joint-space path planning
-    with collision checking via WorldSpec.scratch_context().
-
-    ## Algorithm
-
-    1. Initialize start tree and goal tree
-    2. Extend start tree toward random sample
-    3. Try to connect goal tree to new node
-    4. Swap trees and repeat
-    5. If connected, extract path
-
-    ## Thread Safety
-
-    All collision checking uses world.scratch_context() for thread safety.
-    """
+    """Bi-directional RRT-Connect planner."""
 
     def __init__(
         self,
@@ -96,14 +64,6 @@ class DrakePlanner:
         goal_tolerance: float = 0.1,
         collision_step_size: float = 0.02,
     ):
-        """Create RRT-Connect planner.
-
-        Args:
-            step_size: Extension step size in joint space (radians)
-            connect_step_size: Step size for connect attempts
-            goal_tolerance: Distance to goal to consider success
-            collision_step_size: Step size for collision checking along edges
-        """
         self._step_size = step_size
         self._connect_step_size = connect_step_size
         self._goal_tolerance = goal_tolerance
@@ -118,83 +78,49 @@ class DrakePlanner:
         timeout: float = 10.0,
         max_iterations: int = 5000,
     ) -> PlanningResult:
-        """Plan collision-free joint-space path using RRT-Connect.
-
-        Args:
-            world: World for collision checking
-            robot_id: Which robot
-            q_start: Start joint configuration (radians)
-            q_goal: Goal joint configuration (radians)
-            timeout: Maximum planning time (seconds)
-            max_iterations: Maximum iterations
-
-        Returns:
-            PlanningResult with path (list of waypoints) or failure info
-        """
+        """Plan collision-free path using bi-directional RRT."""
         start_time = time.time()
 
-        # Validate inputs
         error = self._validate_inputs(world, robot_id, q_start, q_goal)
         if error is not None:
             return error
 
-        # Get joint limits
-        lower_limits, upper_limits = world.get_joint_limits(robot_id)
-
-        # Initialize trees
+        lower, upper = world.get_joint_limits(robot_id)
         start_tree = [TreeNode(config=q_start.copy())]
         goal_tree = [TreeNode(config=q_goal.copy())]
-
-        trees_swapped = False  # Track if trees have been swapped an odd number of times
+        trees_swapped = False
 
         for iteration in range(max_iterations):
-            # Check timeout
             if time.time() - start_time > timeout:
                 return _create_failure_result(
                     PlanningStatus.TIMEOUT,
                     f"Timeout after {iteration} iterations",
-                    planning_time=time.time() - start_time,
-                    iterations=iteration,
+                    time.time() - start_time,
+                    iteration,
                 )
 
-            # Sample random configuration
-            sample = np.random.uniform(lower_limits, upper_limits)
+            sample = np.random.uniform(lower, upper)
+            extended = self._extend_tree(world, robot_id, start_tree, sample, self._step_size)
 
-            # Extend start tree toward sample
-            extended_node = self._extend_tree(world, robot_id, start_tree, sample, self._step_size)
-
-            if extended_node is not None:
-                # Try to connect goal tree to extended node
-                connected_node = self._connect_tree(
-                    world, robot_id, goal_tree, extended_node.config, self._connect_step_size
+            if extended is not None:
+                connected = self._connect_tree(
+                    world, robot_id, goal_tree, extended.config, self._connect_step_size
                 )
-
-                if connected_node is not None:
-                    # Trees connected! Extract path
-                    path = self._extract_path(extended_node, connected_node)
-
-                    # If trees were swapped, path is from goal to start - reverse it
+                if connected is not None:
+                    path = self._extract_path(extended, connected)
                     if trees_swapped:
                         path = list(reversed(path))
-
-                    # Simplify path
                     path = self._simplify_path(world, robot_id, path)
+                    return _create_success_result(path, time.time() - start_time, iteration + 1)
 
-                    return _create_success_result(
-                        path=path,
-                        planning_time=time.time() - start_time,
-                        iterations=iteration + 1,
-                    )
-
-            # Swap trees
             start_tree, goal_tree = goal_tree, start_tree
             trees_swapped = not trees_swapped
 
         return _create_failure_result(
             PlanningStatus.NO_SOLUTION,
             f"No path found after {max_iterations} iterations",
-            planning_time=time.time() - start_time,
-            iterations=max_iterations,
+            time.time() - start_time,
+            max_iterations,
         )
 
     def get_name(self) -> str:
@@ -409,120 +335,86 @@ class DrakeRRTStarPlanner:
         timeout: float = 10.0,
         max_iterations: int = 5000,
     ) -> PlanningResult:
-        """Plan optimal collision-free joint-space path using RRT*."""
+        """Plan optimal path using RRT* with rewiring."""
         start_time = time.time()
-
-        # Get joint limits
-        lower_limits, upper_limits = world.get_joint_limits(robot_id)
+        lower, upper = world.get_joint_limits(robot_id)
 
         # Validate start/goal
         with world.scratch_context() as ctx:
             world.set_positions(ctx, robot_id, q_start)
             if not world.is_collision_free(ctx, robot_id):
                 return _create_failure_result(
-                    PlanningStatus.COLLISION_AT_START,
-                    "Start configuration is in collision",
+                    PlanningStatus.COLLISION_AT_START, "Start in collision"
                 )
-
             world.set_positions(ctx, robot_id, q_goal)
             if not world.is_collision_free(ctx, robot_id):
-                return _create_failure_result(
-                    PlanningStatus.COLLISION_AT_GOAL,
-                    "Goal configuration is in collision",
-                )
+                return _create_failure_result(PlanningStatus.COLLISION_AT_GOAL, "Goal in collision")
 
-        # Initialize tree with costs
-        root = _RRTStarNode(config=q_start.copy(), cost=0.0)
-        nodes = [root]
-        goal_node: _RRTStarNode | None = None
+        nodes = [TreeNode(config=q_start.copy(), cost=0.0)]
+        goal_node: TreeNode | None = None
         best_cost = float("inf")
+        iterations_run = 0
 
-        for iteration in range(max_iterations):  # noqa: B007
+        for _ in range(max_iterations):
+            iterations_run += 1
             if time.time() - start_time > timeout:
-                break  # Return best path found so far
+                break
 
-            # Sample
-            sample = np.random.uniform(lower_limits, upper_limits)
-
-            # Find nearest
+            # Sample and find nearest
+            sample = np.random.uniform(lower, upper)
             nearest = min(nodes, key=lambda n: float(np.linalg.norm(n.config - sample)))
 
-            # Extend
+            # Extend toward sample
             diff = sample - nearest.config
             dist = float(np.linalg.norm(diff))
-            if dist > self._step_size:
-                new_config = nearest.config + self._step_size * (diff / dist)
-            else:
-                new_config = sample.copy()
+            new_config = (
+                nearest.config + min(dist, self._step_size) * (diff / dist)
+                if dist > 0
+                else sample.copy()
+            )
 
             if not self._is_edge_valid(world, robot_id, nearest.config, new_config):
                 continue
 
-            # Find neighbors within rewire radius
+            # Find best parent among neighbors
             neighbors = [
                 n
                 for n in nodes
                 if float(np.linalg.norm(n.config - new_config)) < self._rewire_radius
             ]
-
-            # Find best parent
-            best_parent = nearest
-            best_new_cost = nearest.cost + float(np.linalg.norm(new_config - nearest.config))
-
-            for neighbor in neighbors:
-                new_cost = neighbor.cost + float(np.linalg.norm(new_config - neighbor.config))
-                if new_cost < best_new_cost:
-                    if self._is_edge_valid(world, robot_id, neighbor.config, new_config):
-                        best_parent = neighbor
-                        best_new_cost = new_cost
-
-            # Add new node
-            new_node = _RRTStarNode(
-                config=new_config,
-                parent=best_parent,
-                cost=best_new_cost,
+            best_parent, best_cost_to_new = (
+                nearest,
+                nearest.cost + float(np.linalg.norm(new_config - nearest.config)),
             )
+            for n in neighbors:
+                cost = n.cost + float(np.linalg.norm(new_config - n.config))
+                if cost < best_cost_to_new and self._is_edge_valid(
+                    world, robot_id, n.config, new_config
+                ):
+                    best_parent, best_cost_to_new = n, cost
+
+            # Add node and rewire neighbors
+            new_node = TreeNode(config=new_config, parent=best_parent, cost=best_cost_to_new)
             best_parent.children.append(new_node)
             nodes.append(new_node)
-
-            # Rewire neighbors through new node
-            for neighbor in neighbors:
-                if neighbor == best_parent:
-                    continue
-                potential_cost = new_node.cost + float(
-                    np.linalg.norm(neighbor.config - new_node.config)
-                )
-                if potential_cost < neighbor.cost:
-                    if self._is_edge_valid(world, robot_id, new_node.config, neighbor.config):
-                        # Rewire
-                        if neighbor.parent is not None:
-                            neighbor.parent.children.remove(neighbor)
-                        neighbor.parent = new_node
-                        neighbor.cost = potential_cost
-                        new_node.children.append(neighbor)
-                        self._update_costs(neighbor)
+            self._rewire_neighbors(world, robot_id, new_node, neighbors)
 
             # Check goal
-            if float(np.linalg.norm(new_node.config - q_goal)) < self._goal_tolerance:
-                if new_node.cost < best_cost:
-                    goal_node = new_node
-                    best_cost = new_node.cost
+            if (
+                float(np.linalg.norm(new_node.config - q_goal)) < self._goal_tolerance
+                and new_node.cost < best_cost
+            ):
+                goal_node, best_cost = new_node, new_node.cost
 
         if goal_node is not None:
-            path = goal_node.path_to_root()
-            path.append(q_goal)
-
-            return _create_success_result(
-                path=path,
-                planning_time=time.time() - start_time,
-                iterations=iteration + 1,
-            )
+            path = [*goal_node.path_to_root(), q_goal]
+            return _create_success_result(path, time.time() - start_time, iterations_run)
 
         return _create_failure_result(
             PlanningStatus.NO_SOLUTION,
-            f"No path found after {max_iterations} iterations",
-            planning_time=time.time() - start_time,
-            iterations=max_iterations,
+            f"No path after {max_iterations} iterations",
+            time.time() - start_time,
+            max_iterations,
         )
 
     def get_name(self) -> str:
@@ -546,30 +438,35 @@ class DrakeRRTStarPlanner:
 
         return True
 
-    def _update_costs(self, node: _RRTStarNode) -> None:
+    def _rewire_neighbors(
+        self,
+        world: WorldSpec,
+        robot_id: str,
+        new_node: TreeNode,
+        neighbors: list[TreeNode],
+    ) -> None:
+        """Rewire neighbors through new node if it provides a shorter path."""
+        for neighbor in neighbors:
+            if neighbor == new_node.parent:
+                continue
+            potential_cost = new_node.cost + float(
+                np.linalg.norm(neighbor.config - new_node.config)
+            )
+            if potential_cost < neighbor.cost and self._is_edge_valid(
+                world, robot_id, new_node.config, neighbor.config
+            ):
+                if neighbor.parent is not None:
+                    neighbor.parent.children.remove(neighbor)
+                neighbor.parent = new_node
+                neighbor.cost = potential_cost
+                new_node.children.append(neighbor)
+                self._update_costs(neighbor)
+
+    def _update_costs(self, node: TreeNode) -> None:
         """Recursively update costs after rewiring."""
         for child in node.children:
             child.cost = node.cost + float(np.linalg.norm(child.config - node.config))
             self._update_costs(child)
-
-
-@dataclass
-class _RRTStarNode:
-    """Node for RRT* with cost tracking."""
-
-    config: NDArray[np.float64]
-    cost: float = 0.0
-    parent: _RRTStarNode | None = None
-    children: list[_RRTStarNode] = field(default_factory=list)
-
-    def path_to_root(self) -> list[NDArray[np.float64]]:
-        """Get path from this node to root."""
-        path = []
-        node: _RRTStarNode | None = self
-        while node is not None:
-            path.append(node.config)
-            node = node.parent
-        return list(reversed(path))
 
 
 # ============= Result Helpers =============

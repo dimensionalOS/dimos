@@ -12,37 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-World Monitor
-
-MoveIt-like monitor that keeps a WorldSpec synchronized with the real world.
-This is the WorldSpec-based replacement for PlanningSceneMonitor.
-
-Uses factory functions to create WorldSpec, so all code uses Protocol types.
-
-Example:
-    # Create monitor
-    monitor = WorldMonitor(enable_viz=True)
-
-    # Add robot
-    robot_id = monitor.add_robot(robot_config)
-
-    # Finalize
-    monitor.finalize()
-
-    # Start monitoring
-    monitor.start_state_monitor("piper", ["joint1", "joint2", ...])
-    monitor.start_obstacle_monitor()
-
-    # Use thread-safe accessors
-    positions = monitor.get_current_positions(robot_id)
-    is_valid = monitor.is_state_valid(robot_id, target_joints)
-
-    # Get scratch context for planning
-    with monitor.scratch_context() as ctx:
-        # Do planning operations
-        pass
-"""
+"""World Monitor - keeps WorldSpec synchronized with real robot state and obstacles."""
 
 from __future__ import annotations
 
@@ -55,13 +25,6 @@ import numpy as np
 from dimos.manipulation.planning.factory import create_world
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.manipulation.planning.monitor.world_state_monitor import WorldStateMonitor
-from dimos.manipulation.planning.spec import (
-    CollisionObjectMessage,
-    Detection3D,
-    Obstacle,
-    ObstacleType,
-    RobotModelConfig,
-)
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -69,62 +32,20 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from dimos.manipulation.planning.spec import WorldSpec
+    from dimos.manipulation.planning.spec import (
+        CollisionObjectMessage,
+        Detection3D,
+        Obstacle,
+        RobotModelConfig,
+        WorldSpec,
+    )
     from dimos.msgs.sensor_msgs import JointState
 
 logger = setup_logger()
 
 
 class WorldMonitor:
-    """MoveIt-like monitor for keeping a WorldSpec synchronized.
-
-    This class manages:
-    - WorldSpec instance (created via factory)
-    - WorldStateMonitor: Subscribes to joint states, syncs robot configurations
-    - WorldObstacleMonitor: Subscribes to collision objects, syncs obstacles
-
-    ## Key Differences from PlanningSceneMonitor
-
-    1. Uses factory pattern - no concrete type references
-    2. Uses scratch_context() for thread-safe operations
-    3. State is synced via sync_from_joint_state() instead of set_robot_state()
-
-    ## Usage Pattern
-
-    ```python
-    # 1. Create monitor
-    monitor = WorldMonitor(enable_viz=True)
-
-    # 2. Add robots
-    robot_id = monitor.add_robot(robot_config)
-
-    # 3. Add static obstacles (optional)
-    monitor.add_obstacle(table_obstacle)
-
-    # 4. Finalize (locks topology)
-    monitor.finalize()
-
-    # 5. Start monitoring
-    monitor.start_state_monitor(robot_id, joint_names)
-    monitor.start_obstacle_monitor()
-
-    # 6. Use thread-safe accessors
-    positions = monitor.get_current_positions(robot_id)
-    is_valid = monitor.is_state_valid(robot_id, target_joints)
-
-    # 7. Get scratch context for planning
-    with monitor.scratch_context() as ctx:
-        world.set_positions(ctx, robot_id, target_joints)
-        if world.is_collision_free(ctx, robot_id):
-            # Valid configuration
-            pass
-    ```
-
-    ## Thread Safety
-
-    All public methods are thread-safe via an internal RLock.
-    For planning operations, use scratch_context() to get an independent context.
-    """
+    """Manages WorldSpec with state/obstacle monitors. Thread-safe via RLock."""
 
     def __init__(
         self,
@@ -132,51 +53,20 @@ class WorldMonitor:
         enable_viz: bool = False,
         **kwargs: Any,
     ):
-        """Create a world monitor.
-
-        Args:
-            backend: Backend to use ("drake")
-            enable_viz: Enable visualization (Meshcat for Drake)
-            **kwargs: Additional arguments passed to create_world()
-        """
         self._backend = backend
-
-        # Create world via factory (Protocol type)
-        self._world: WorldSpec = create_world(
-            backend=backend,
-            enable_viz=enable_viz,
-            **kwargs,
-        )
-
-        # Thread safety
+        self._world: WorldSpec = create_world(backend=backend, enable_viz=enable_viz, **kwargs)
         self._lock = threading.RLock()
-
-        # Robot tracking: robot_id -> joint_names
         self._robot_joints: dict[str, list[str]] = {}
-
-        # Sub-monitors
         self._state_monitors: dict[str, WorldStateMonitor] = {}
         self._obstacle_monitor: WorldObstacleMonitor | None = None
-
-        # Visualization thread (publishes to Meshcat at a fixed rate)
         self._viz_thread: threading.Thread | None = None
         self._viz_stop_event = threading.Event()
-        self._viz_rate_hz: float = 10.0  # Default 10Hz
+        self._viz_rate_hz: float = 10.0
 
     # ============= Robot Management =============
 
-    def add_robot(
-        self,
-        config: RobotModelConfig,
-    ) -> str:
-        """Add a robot to the monitored world.
-
-        Args:
-            config: Robot configuration
-
-        Returns:
-            robot_id: Unique identifier for the robot
-        """
+    def add_robot(self, config: RobotModelConfig) -> str:
+        """Add a robot. Returns robot_id."""
         with self._lock:
             robot_id = self._world.add_robot(config)
             self._robot_joints[robot_id] = config.joint_names
@@ -201,78 +91,9 @@ class WorldMonitor:
     # ============= Obstacle Management =============
 
     def add_obstacle(self, obstacle: Obstacle) -> str:
-        """Add an obstacle to the world.
-
-        Args:
-            obstacle: Obstacle specification
-
-        Returns:
-            obstacle_id: Unique identifier for the obstacle
-        """
+        """Add an obstacle. Returns obstacle_id."""
         with self._lock:
             return self._world.add_obstacle(obstacle)
-
-    def add_box_obstacle(
-        self,
-        name: str,
-        pose: NDArray[np.float64],
-        dimensions: tuple[float, float, float],
-        color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8),
-    ) -> str:
-        """Add a box obstacle.
-
-        Args:
-            name: Obstacle name
-            pose: 4x4 homogeneous transform
-            dimensions: (width, height, depth) in meters
-            color: RGBA color
-
-        Returns:
-            obstacle_id
-        """
-        obstacle = Obstacle(
-            name=name,
-            obstacle_type=ObstacleType.BOX,
-            pose=pose,
-            dimensions=dimensions,
-            color=color,
-        )
-        return self.add_obstacle(obstacle)
-
-    def add_sphere_obstacle(
-        self,
-        name: str,
-        pose: NDArray[np.float64],
-        radius: float,
-        color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8),
-    ) -> str:
-        """Add a sphere obstacle."""
-        obstacle = Obstacle(
-            name=name,
-            obstacle_type=ObstacleType.SPHERE,
-            pose=pose,
-            dimensions=(radius,),
-            color=color,
-        )
-        return self.add_obstacle(obstacle)
-
-    def add_cylinder_obstacle(
-        self,
-        name: str,
-        pose: NDArray[np.float64],
-        radius: float,
-        height: float,
-        color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8),
-    ) -> str:
-        """Add a cylinder obstacle."""
-        obstacle = Obstacle(
-            name=name,
-            obstacle_type=ObstacleType.CYLINDER,
-            pose=pose,
-            dimensions=(radius, height),
-            color=color,
-        )
-        return self.add_obstacle(obstacle)
 
     def remove_obstacle(self, obstacle_id: str) -> bool:
         """Remove an obstacle."""
@@ -292,19 +113,7 @@ class WorldMonitor:
         joint_names: list[str] | None = None,
         joint_name_mapping: dict[str, str] | None = None,
     ) -> None:
-        """Start monitoring joint states for a robot.
-
-        Creates a WorldStateMonitor that will sync joint state messages
-        to the world's live context.
-
-        Args:
-            robot_id: ID of the robot to monitor
-            joint_names: Joint names in URDF namespace (uses config joint_names if None)
-            joint_name_mapping: Maps orchestrator joint names to URDF joint names.
-                Example: {"left_joint1": "joint1"} means messages with "left_joint1"
-                will be mapped to URDF "joint1". If None, uses config mapping if available,
-                otherwise names must match exactly.
-        """
+        """Start monitoring joint states. Uses config defaults if args are None."""
         with self._lock:
             if robot_id in self._state_monitors:
                 logger.warning(f"State monitor for '{robot_id}' already started")
@@ -336,11 +145,7 @@ class WorldMonitor:
             logger.info(f"State monitor started for '{robot_id}'")
 
     def start_obstacle_monitor(self) -> None:
-        """Start monitoring obstacle updates.
-
-        Creates a WorldObstacleMonitor that will sync obstacle messages
-        to the world.
-        """
+        """Start monitoring obstacle updates."""
         with self._lock:
             if self._obstacle_monitor is not None:
                 logger.warning("Obstacle monitor already started")
@@ -372,12 +177,7 @@ class WorldMonitor:
     # ============= Message Handlers =============
 
     def on_joint_state(self, msg: JointState, robot_id: str | None = None) -> None:
-        """Handle joint state message.
-
-        Args:
-            msg: JointState message
-            robot_id: Specific robot to update (broadcasts to all if None)
-        """
+        """Handle joint state message. Broadcasts to all monitors if robot_id is None."""
         try:
             if robot_id is not None:
                 if robot_id in self._state_monitors:
@@ -407,14 +207,7 @@ class WorldMonitor:
     # ============= State Access =============
 
     def get_current_positions(self, robot_id: str) -> NDArray[np.float64] | None:
-        """Get current joint positions (thread-safe).
-
-        Args:
-            robot_id: ID of the robot
-
-        Returns:
-            Current positions or None if not yet received
-        """
+        """Get current joint positions. Returns None if not yet received."""
         # Try state monitor first
         if robot_id in self._state_monitors:
             positions = self._state_monitors[robot_id].get_current_positions()
@@ -427,28 +220,13 @@ class WorldMonitor:
             return self._world.get_positions(ctx, robot_id)
 
     def get_current_velocities(self, robot_id: str) -> NDArray[np.float64] | None:
-        """Get current joint velocities (thread-safe).
-
-        Args:
-            robot_id: ID of the robot
-
-        Returns:
-            Current velocities or None if not available
-        """
+        """Get current joint velocities. Returns None if not available."""
         if robot_id in self._state_monitors:
             return self._state_monitors[robot_id].get_current_velocities()
         return None
 
     def wait_for_state(self, robot_id: str, timeout: float = 1.0) -> bool:
-        """Wait until a state is received for the robot.
-
-        Args:
-            robot_id: ID of the robot
-            timeout: Maximum time to wait
-
-        Returns:
-            True if state was received, False if timeout
-        """
+        """Wait until state is received. Returns False on timeout."""
         if robot_id in self._state_monitors:
             return self._state_monitors[robot_id].wait_for_state(timeout)
         return False
@@ -463,73 +241,26 @@ class WorldMonitor:
 
     @contextmanager
     def scratch_context(self) -> Generator[Any, None, None]:
-        """Get a scratch context for planning (thread-safe).
-
-        The scratch context is a clone of the live context that can be
-        modified without affecting the live state.
-
-        Example:
-            with monitor.scratch_context() as ctx:
-                world.set_positions(ctx, robot_id, q_test)
-                if world.is_collision_free(ctx, robot_id):
-                    # Valid configuration
-                    pass
-
-        Yields:
-            Context that can be used with world operations
-        """
+        """Thread-safe scratch context for planning."""
         with self._world.scratch_context() as ctx:
             yield ctx
 
     def get_live_context(self) -> Any:
-        """Get the live context (use with caution).
-
-        The live context is synced with real robot state. Modifications
-        will affect collision checking for all users.
-
-        For planning, prefer scratch_context() instead.
-
-        Returns:
-            Live context
-        """
+        """Get live context. Prefer scratch_context() for planning."""
         return self._world.get_live_context()
 
     # ============= Collision Checking =============
 
-    def is_state_valid(
-        self,
-        robot_id: str,
-        joint_positions: NDArray[np.float64],
-    ) -> bool:
-        """Check if configuration is collision-free (thread-safe).
-
-        Args:
-            robot_id: ID of the robot
-            joint_positions: Joint configuration to check
-
-        Returns:
-            True if collision-free
-        """
+    def is_state_valid(self, robot_id: str, joint_positions: NDArray[np.float64]) -> bool:
+        """Check if configuration is collision-free."""
         with self._world.scratch_context() as ctx:
             self._world.set_positions(ctx, robot_id, joint_positions)
             return self._world.is_collision_free(ctx, robot_id)
 
     def is_path_valid(
-        self,
-        robot_id: str,
-        path: list[NDArray[np.float64]],
-        step_size: float = 0.05,
+        self, robot_id: str, path: list[NDArray[np.float64]], step_size: float = 0.05
     ) -> bool:
-        """Check if path is collision-free (thread-safe).
-
-        Args:
-            robot_id: ID of the robot
-            path: List of joint configurations
-            step_size: Interpolation resolution
-
-        Returns:
-            True if path is collision-free
-        """
+        """Check if path is collision-free with interpolation."""
         with self._world.scratch_context() as ctx:
             for i in range(len(path) - 1):
                 q_start = path[i]
@@ -557,19 +288,9 @@ class WorldMonitor:
     # ============= Kinematics =============
 
     def get_ee_pose(
-        self,
-        robot_id: str,
-        joint_positions: NDArray[np.float64] | None = None,
+        self, robot_id: str, joint_positions: NDArray[np.float64] | None = None
     ) -> NDArray[np.float64]:
-        """Get end-effector pose (thread-safe).
-
-        Args:
-            robot_id: ID of the robot
-            joint_positions: Joint configuration (uses current if None)
-
-        Returns:
-            4x4 homogeneous transform
-        """
+        """Get end-effector pose as 4x4 transform. Uses current state if positions is None."""
         with self._world.scratch_context() as ctx:
             # If no positions provided, fetch current from state monitor
             if joint_positions is None:
@@ -581,19 +302,9 @@ class WorldMonitor:
             return self._world.get_ee_pose(ctx, robot_id)
 
     def get_jacobian(
-        self,
-        robot_id: str,
-        joint_positions: NDArray[np.float64],
+        self, robot_id: str, joint_positions: NDArray[np.float64]
     ) -> NDArray[np.float64]:
-        """Get Jacobian (thread-safe).
-
-        Args:
-            robot_id: ID of the robot
-            joint_positions: Joint configuration
-
-        Returns:
-            6 x n_joints Jacobian matrix
-        """
+        """Get 6xN Jacobian matrix."""
         with self._world.scratch_context() as ctx:
             self._world.set_positions(ctx, robot_id, joint_positions)
             return self._world.get_jacobian(ctx, robot_id)
@@ -601,11 +312,7 @@ class WorldMonitor:
     # ============= Lifecycle =============
 
     def finalize(self) -> None:
-        """Finalize world for collision checking.
-
-        Must be called after adding all robots and before starting monitors
-        or performing collision checking.
-        """
+        """Finalize world. Must be called before collision checking."""
         with self._lock:
             self._world.finalize()
             logger.info("World finalized")
@@ -618,11 +325,7 @@ class WorldMonitor:
     # ============= Visualization =============
 
     def get_meshcat_url(self) -> str | None:
-        """Get Meshcat visualization URL (Drake only).
-
-        Returns:
-            URL string or None if visualization not enabled
-        """
+        """Get Meshcat URL or None if not enabled."""
         if hasattr(self._world, "get_meshcat_url"):
             url = self._world.get_meshcat_url()
             return str(url) if url else None
@@ -634,14 +337,7 @@ class WorldMonitor:
             self._world.publish_to_meshcat()
 
     def start_visualization_thread(self, rate_hz: float = 10.0) -> None:
-        """Start background thread that updates Meshcat visualization.
-
-        This allows live visualization without blocking the LCM callback thread.
-        The thread publishes the current robot state to Meshcat at the specified rate.
-
-        Args:
-            rate_hz: Visualization update rate in Hz (default: 10Hz)
-        """
+        """Start background thread for Meshcat updates at given rate."""
         if self._viz_thread is not None and self._viz_thread.is_alive():
             logger.warning("Visualization thread already running")
             return
@@ -689,11 +385,7 @@ class WorldMonitor:
 
     @property
     def world(self) -> WorldSpec:
-        """Get underlying WorldSpec instance.
-
-        Direct access to the world is NOT thread-safe for state modifications.
-        Prefer using scratch_context() for planning operations.
-        """
+        """Get underlying WorldSpec. Not thread-safe for modifications."""
         return self._world
 
     def get_state_monitor(self, robot_id: str) -> WorldStateMonitor | None:

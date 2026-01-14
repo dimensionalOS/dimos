@@ -12,28 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Drake Kinematics Module
-
-Implements KinematicsSpec using Drake's optimization-based IK.
-
-## IK Methods
-
-- solve(): Full nonlinear IK via Drake's InverseKinematics + SNOPT/IPOPT
-- solve_iterative(): Iterative differential IK loop
-- solve_differential(): Single Jacobian step for velocity control
-
-## Key Design
-
-This module is stateless (except for configuration) and uses WorldSpec
-for all FK/collision operations via scratch_context().
-
-Example:
-    kinematics = DrakeKinematics(damping=0.01)
-    result = kinematics.solve(world, robot_id, target_pose, seed=q_current)
-    if result.is_success():
-        q_goal = result.joint_positions
-"""
+"""Drake Kinematics - optimization-based and differential IK using Drake."""
 
 from __future__ import annotations
 
@@ -66,20 +45,7 @@ logger = setup_logger()
 
 
 class DrakeKinematics:
-    """Drake implementation of KinematicsSpec.
-
-    Uses Drake's InverseKinematics class for optimization-based IK
-    and Jacobian-based methods for differential IK.
-
-    This class is stateless except for configuration - it uses WorldSpec's
-    scratch_context() for all operations, making it thread-safe.
-
-    ## Methods
-
-    - solve(): Full optimization-based IK
-    - solve_iterative(): Iterative differential IK loop
-    - solve_differential(): Single Jacobian step for velocity control
-    """
+    """Drake IK solver - optimization-based and Jacobian-based methods."""
 
     def __init__(
         self,
@@ -87,19 +53,23 @@ class DrakeKinematics:
         max_iterations: int = 100,
         singularity_threshold: float = 0.001,
     ):
-        """Create Drake kinematics solver.
-
-        Args:
-            damping: Damping factor for differential IK (higher = more stable near singularities)
-            max_iterations: Default max iterations for iterative IK
-            singularity_threshold: Manipulability threshold for singularity detection
-        """
         if not DRAKE_AVAILABLE:
             raise ImportError("Drake is not installed. Install with: pip install drake")
-
         self._damping = damping
         self._max_iterations = max_iterations
         self._singularity_threshold = singularity_threshold
+
+    def _validate_world(self, world: WorldSpec) -> IKResult | None:
+        """Validate world is DrakeWorld and finalized. Returns error or None."""
+        from dimos.manipulation.planning.world.drake_world import DrakeWorld
+
+        if not isinstance(world, DrakeWorld):
+            return _create_failure_result(
+                IKStatus.NO_SOLUTION, "DrakeKinematics requires DrakeWorld"
+            )
+        if not world.is_finalized:
+            return _create_failure_result(IKStatus.NO_SOLUTION, "World must be finalized before IK")
+        return None
 
     def solve(
         self,
@@ -112,39 +82,10 @@ class DrakeKinematics:
         check_collision: bool = True,
         max_attempts: int = 10,
     ) -> IKResult:
-        """Full nonlinear IK via Drake's InverseKinematics.
-
-        Uses Drake's optimization-based IK with multiple random restarts
-        for robustness.
-
-        Args:
-            world: World for FK/collision checking
-            robot_id: Which robot
-            target_pose: 4x4 target transform
-            seed: Initial guess (uses current state if None)
-            position_tolerance: Position tolerance (meters)
-            orientation_tolerance: Orientation tolerance (radians)
-            check_collision: Verify solution is collision-free
-            max_attempts: Random restarts for robustness
-
-        Returns:
-            IKResult with status, joint positions, and error metrics
-        """
-        # Access Drake internals via world
-        # (DrakeWorld exposes plant/diagram for this purpose)
-        from dimos.manipulation.planning.world.drake_world import DrakeWorld
-
-        if not isinstance(world, DrakeWorld):
-            return _create_failure_result(
-                IKStatus.NO_SOLUTION,
-                "DrakeKinematics requires DrakeWorld",
-            )
-
-        if not world.is_finalized:
-            return _create_failure_result(
-                IKStatus.NO_SOLUTION,
-                "World must be finalized before IK",
-            )
+        """Full nonlinear IK with multiple random restarts."""
+        error = self._validate_world(world)
+        if error is not None:
+            return error
 
         # Get joint limits
         lower_limits, upper_limits = world.get_joint_limits(robot_id)
@@ -302,23 +243,7 @@ class DrakeKinematics:
         position_tolerance: float = 0.001,
         orientation_tolerance: float = 0.01,
     ) -> IKResult:
-        """Iterative differential IK loop.
-
-        Uses repeated Jacobian steps until convergence. Slower but more
-        predictable behavior near singularities.
-
-        Args:
-            world: World for FK/Jacobian computation
-            robot_id: Which robot
-            target_pose: 4x4 target transform
-            seed: Initial joint configuration
-            max_iterations: Maximum iterations
-            position_tolerance: Position convergence tolerance (meters)
-            orientation_tolerance: Orientation convergence tolerance (radians)
-
-        Returns:
-            IKResult with solution or failure info
-        """
+        """Iterative Jacobian-based IK until convergence."""
         max_iterations = max_iterations or self._max_iterations
         current_joints = seed.copy()
 
@@ -389,21 +314,7 @@ class DrakeKinematics:
         twist: NDArray[np.float64],
         dt: float,
     ) -> NDArray[np.float64] | None:
-        """Single Jacobian step for velocity control.
-
-        Computes joint velocities to achieve a desired end-effector twist.
-        Uses damped pseudoinverse for singularity robustness.
-
-        Args:
-            world: World for Jacobian computation
-            robot_id: Which robot
-            current_joints: Current joint positions (radians)
-            twist: Desired end-effector twist [vx, vy, vz, wx, wy, wz]
-            dt: Time step (seconds) - used for velocity scaling
-
-        Returns:
-            Joint velocities (rad/s) or None if near singularity
-        """
+        """Single Jacobian step for velocity control. Returns None if near singularity."""
         with world.scratch_context() as ctx:
             world.set_positions(ctx, robot_id, current_joints)
             J = world.get_jacobian(ctx, robot_id)
@@ -435,19 +346,7 @@ class DrakeKinematics:
         current_joints: NDArray[np.float64],
         linear_velocity: NDArray[np.float64],
     ) -> NDArray[np.float64] | None:
-        """Solve differential IK for position-only control.
-
-        Uses only the linear part of the Jacobian (first 3 rows).
-
-        Args:
-            world: World for Jacobian computation
-            robot_id: Which robot
-            current_joints: Current joint positions
-            linear_velocity: Desired linear velocity [vx, vy, vz]
-
-        Returns:
-            Joint velocities or None if near singularity
-        """
+        """Position-only differential IK using linear Jacobian. Returns None if singular."""
         with world.scratch_context() as ctx:
             world.set_positions(ctx, robot_id, current_joints)
             J = world.get_jacobian(ctx, robot_id)
