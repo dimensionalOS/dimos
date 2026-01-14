@@ -59,12 +59,12 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.manipulation.planning.mesh_utils import prepare_urdf_for_drake
 from dimos.manipulation.planning.spec import (
     Obstacle,
     ObstacleType,
     RobotModelConfig,
 )
+from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -176,6 +176,9 @@ class DrakeWorld:
             self._builder, time_step=time_step
         )
         self._parser = Parser(self._plant)
+        # Enable auto-renaming to avoid conflicts when adding multiple robots
+        # with the same URDF (e.g., 4 XArm6 arms all have model name "UF_ROBOT")
+        self._parser.SetAutoRenaming(True)
 
         # Visualization
         self._meshcat: Meshcat | None = None
@@ -730,6 +733,10 @@ class DrakeWorld:
         Uses CreateDefaultContext() instead of Clone() so that dynamically
         added obstacles are visible to collision queries.
 
+        IMPORTANT: This copies the current live state of ALL robots into the
+        scratch context so that collision checking properly accounts for
+        inter-robot collisions (robot A planning considers robot B's position).
+
         Usage:
             with world.scratch_context() as ctx:
                 world.set_positions(ctx, robot_id, q)
@@ -742,6 +749,25 @@ class DrakeWorld:
         # Create fresh context - this sees all geometries including dynamic obstacles
         # (Clone() doesn't see geometries added after the original context was created)
         ctx = self._diagram.CreateDefaultContext()
+
+        # Copy current live state of ALL robots into scratch context
+        # This ensures inter-robot collision checking works correctly
+        with self._lock:
+            if self._plant_context is not None:
+                plant_ctx = self._diagram.GetMutableSubsystemContext(self._plant, ctx)
+                for _robot_id, robot_data in self._robots.items():
+                    try:
+                        # Get positions from live context
+                        live_positions = self._plant.GetPositions(
+                            self._plant_context, robot_data.model_instance
+                        )
+                        # Set in scratch context
+                        self._plant.SetPositions(
+                            plant_ctx, robot_data.model_instance, live_positions
+                        )
+                    except Exception:
+                        # Robot not yet synced - leave at default position
+                        pass
 
         yield ctx
         # Context automatically cleaned up when exiting
@@ -948,9 +974,21 @@ class DrakeWorld:
         if self._meshcat is None or len(path) < 2:
             return
 
+        # Capture current positions of all OTHER robots so they don't snap to zero
+        other_robot_positions: dict[str, NDArray[np.float64]] = {}
+        for rid, _robot_data in self._robots.items():
+            if rid != robot_id:
+                pos = self.get_positions(self.get_live_context(), rid)
+                if pos is not None:
+                    other_robot_positions[rid] = pos
+
         dt = duration / (len(path) - 1)
         for q in path:
             with self.scratch_context() as ctx:
+                # Restore other robots to their current positions
+                for rid, pos in other_robot_positions.items():
+                    self.set_positions(ctx, rid, pos)
+                # Set animated robot's position
                 self.set_positions(ctx, robot_id, q)
                 self.publish_to_meshcat(ctx)
             time.sleep(dt)
