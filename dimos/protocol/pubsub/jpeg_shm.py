@@ -12,8 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.protocol.pubsub.lcmpubsub import JpegSharedMemoryEncoderMixin
+from typing import Any
+
+from turbojpeg import TurboJPEG  # type: ignore[import-untyped]
+
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 from dimos.protocol.pubsub.shmpubsub import SharedMemoryPubSubBase
+from dimos.protocol.pubsub.spec import PubSubEncoderMixin
+
+
+class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image]):
+    def __init__(self, quality: int = 75, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(**kwargs)
+        self.jpeg = TurboJPEG()
+        self.quality = quality
+
+    def encode(self, msg: Any, _topic: str) -> bytes:
+        if not isinstance(msg, Image):
+            raise ValueError("Can only encode images.")
+
+        bgr_image = msg.to_bgr().to_opencv()
+        return self.jpeg.encode(bgr_image, quality=self.quality)  # type: ignore[no-any-return]
+
+    def decode(self, msg: bytes, _topic: str) -> Image:
+        bgr_array = self.jpeg.decode(msg)
+        return Image(data=bgr_array, format=ImageFormat.BGR)
 
 
 class JpegSharedMemory(JpegSharedMemoryEncoderMixin, SharedMemoryPubSubBase):  # type: ignore[misc]

@@ -14,11 +14,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 import platform
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
-    ImageAnnotations,
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
+    ImageAnnotations,  # type: ignore[import-untyped]
 )
+from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate  # type: ignore[import-untyped]
 
 from dimos.agents.agent import llm_agent
 from dimos.agents.cli.human import human_input
@@ -43,15 +45,18 @@ from dimos.navigation.frontier_exploration import (
 from dimos.navigation.replanning_a_star.module import (
     replanning_a_star_planner,
 )
-from dimos.perception.detection.moduleDB import ObjectDBModule, detectionDB_module
+from dimos.perception.detection.module3D import Detection3DModule, detection3d_module
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.perception.temporal_memory import temporal_memory
 from dimos.protocol.mcp.mcp import MCPModule
 from dimos.robot.foxglove_bridge import foxglove_bridge
+import dimos.robot.unitree.connection.go2 as _go2_mod
 from dimos.robot.unitree.connection.go2 import GO2Connection, go2_connection
 from dimos.robot.unitree_webrtc.unitree_skill_container import unitree_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
+
+_GO2_URDF = Path(_go2_mod.__file__).parent.parent / "go2" / "go2.urdf"
 
 # Mac has some issue with high bandwidth UDP
 #
@@ -78,7 +83,12 @@ basic = autoconnect(
     go2_connection(),
     linux if platform.system() == "Linux" else mac,
     websocket_vis(),
-    tf_rerun(),  # Auto-visualize all TF transforms in Rerun
+    tf_rerun(
+        urdf_path=str(_GO2_URDF),
+        cameras=[
+            ("world/robot/camera", "camera_optical", GO2Connection.camera_info_static),
+        ],
+    ),
 ).global_config(n_dask_workers=4, robot_model="unitree_go2")
 
 nav = autoconnect(
@@ -92,39 +102,39 @@ nav = autoconnect(
 detection = (
     autoconnect(
         nav,
-        detectionDB_module(
+        detection3d_module(
             camera_info=GO2Connection.camera_info_static,
         ),
     )
     .remappings(
         [
-            (ObjectDBModule, "pointcloud", "global_map"),
+            (Detection3DModule, "pointcloud", "global_map"),
         ]
     )
     .transports(
         {
             # Detection 3D module outputs
-            ("detections", ObjectDBModule): LCMTransport(
+            ("detections", Detection3DModule): LCMTransport(
                 "/detector3d/detections", Detection2DArray
             ),
-            ("annotations", ObjectDBModule): LCMTransport(
+            ("annotations", Detection3DModule): LCMTransport(
                 "/detector3d/annotations", ImageAnnotations
             ),
-            #            ("scene_update", ObjectDBModule): LCMTransport(
-            #                "/detector3d/scene_update", SceneUpdate
-            #            ),
-            ("detected_pointcloud_0", ObjectDBModule): LCMTransport(
+            ("scene_update", Detection3DModule): LCMTransport(
+                "/detector3d/scene_update", SceneUpdate
+            ),
+            ("detected_pointcloud_0", Detection3DModule): LCMTransport(
                 "/detector3d/pointcloud/0", PointCloud2
             ),
-            ("detected_pointcloud_1", ObjectDBModule): LCMTransport(
+            ("detected_pointcloud_1", Detection3DModule): LCMTransport(
                 "/detector3d/pointcloud/1", PointCloud2
             ),
-            ("detected_pointcloud_2", ObjectDBModule): LCMTransport(
+            ("detected_pointcloud_2", Detection3DModule): LCMTransport(
                 "/detector3d/pointcloud/2", PointCloud2
             ),
-            ("detected_image_0", ObjectDBModule): LCMTransport("/detector3d/image/0", Image),
-            ("detected_image_1", ObjectDBModule): LCMTransport("/detector3d/image/1", Image),
-            ("detected_image_2", ObjectDBModule): LCMTransport("/detector3d/image/2", Image),
+            ("detected_image_0", Detection3DModule): LCMTransport("/detector3d/image/0", Image),
+            ("detected_image_1", Detection3DModule): LCMTransport("/detector3d/image/1", Image),
+            ("detected_image_2", Detection3DModule): LCMTransport("/detector3d/image/2", Image),
         }
     )
 )

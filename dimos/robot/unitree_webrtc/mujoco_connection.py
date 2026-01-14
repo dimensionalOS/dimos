@@ -34,7 +34,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs import Quaternion, Twist, Vector3
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.simulation.mujoco.constants import LAUNCHER_PATH, LIDAR_FPS, VIDEO_FPS
@@ -274,7 +274,8 @@ class MujocoConnection:
     def video_stream(self) -> Observable[Image]:
         def get_video_as_image() -> Image | None:
             frame = self.get_video_frame()
-            return Image.from_numpy(frame) if frame is not None else None
+            # MuJoCo renderer returns RGB uint8 frames; Image.from_numpy defaults to BGR.
+            return Image.from_numpy(frame, format=ImageFormat.RGB) if frame is not None else None
 
         return self._create_stream(get_video_as_image, VIDEO_FPS, "Video")
 

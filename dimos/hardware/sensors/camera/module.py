@@ -22,6 +22,7 @@ from reactivex import operators as ops
 
 from dimos.agents import Output, Reducer, Stream, skill
 from dimos.core import Module, ModuleConfig, Out, rpc
+from dimos.core.blueprints import autoconnect
 from dimos.hardware.sensors.camera.spec import CameraHardware
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
@@ -113,5 +114,10 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
 
 
 camera_module = CameraModule.blueprint
+
+demo_camera = autoconnect(
+    camera_module(),
+)
+
 
 __all__ = ["CameraModule", "camera_module"]
