@@ -22,6 +22,8 @@ visually diverse frames from a window, reducing VLM costs while maintaining cove
 import logging
 from typing import Any
 
+import numpy as np
+
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.logging_config import setup_logger
 
@@ -175,4 +177,65 @@ def select_diverse_frames_simple(frames: list[Any], max_frames: int = 3) -> list
     return [frames[i] for i in indices]
 
 
-__all__ = ["CLIP_AVAILABLE", "CLIPFrameFilter", "select_diverse_frames_simple"]
+def adaptive_keyframes(
+    frames: list,
+    min_frames: int = 3,
+    max_frames: int = 5,
+    change_threshold: float = 15.0,
+) -> list:
+    """select frames based on visual change, adaptive count."""
+    if len(frames) <= min_frames:
+        return frames
+
+    # compute frame-to-frame differences
+    diffs = []
+    for i in range(1, len(frames)):
+        prev = frames[i - 1].image.data.astype(float)
+        curr = frames[i].image.data.astype(float)
+        diffs.append(np.abs(curr - prev).mean())
+
+    total_motion = sum(diffs)
+
+    # adaptive N: more motion → more frames
+    n_frames = int(np.clip(total_motion / change_threshold, min_frames, max_frames))
+
+    # pick frames at change peaks (local maxima)
+    # always include first and last
+    keyframe_indices = [0, len(frames) - 1]  # always
+
+    # find peaks in diff signal
+    for i in range(1, len(diffs) - 1):
+        if (
+            diffs[i] > diffs[i - 1]
+            and diffs[i] > diffs[i + 1]
+            and diffs[i] > change_threshold * 0.5
+        ):
+            keyframe_indices.append(i + 1)  # +1 bc diff[i] is between frame i and i+1
+
+    # if too many peaks, subsample; if too few, add uniform samples
+    if len(keyframe_indices) > n_frames:
+        # keep first, last, and highest-diff peaks
+        middle_indices = [i for i in keyframe_indices if i not in (0, len(frames) - 1)]
+        middle_diffs = [diffs[i - 1] for i in middle_indices]
+        sorted_by_diff = sorted(zip(middle_diffs, middle_indices, strict=False), reverse=True)
+        keep = [idx for _, idx in sorted_by_diff[: n_frames - 2]]
+        keyframe_indices = sorted([0, *keep, len(frames) - 1])
+    elif len(keyframe_indices) < n_frames:
+        # fill in uniformly from remaining candidates
+        needed = n_frames - len(keyframe_indices)
+        candidates = sorted(set(range(len(frames))) - set(keyframe_indices))
+        if candidates:
+            # Calculate step, ensuring it's at least 1
+            step = max(1, len(candidates) // (needed + 1))
+            uniform_fill = candidates[::step][:needed]
+            keyframe_indices = sorted(set(keyframe_indices) | set(uniform_fill))
+
+    return [frames[i] for i in keyframe_indices]
+
+
+__all__ = [
+    "CLIP_AVAILABLE",
+    "CLIPFrameFilter",
+    "adaptive_keyframes",
+    "select_diverse_frames_simple",
+]

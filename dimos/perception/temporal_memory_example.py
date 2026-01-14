@@ -30,10 +30,8 @@ from dotenv import load_dotenv
 from dimos import core
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
-from dimos.perception.temporal_memory import (
-    TemporalMemoryConfig,
-    deploy,
-)
+from dimos.perception.temporal_memory import TemporalMemoryConfig
+from dimos.perception.temporal_memory_deploy import deploy
 
 # Load environment variables
 load_dotenv()
@@ -76,14 +74,14 @@ def example_usage():
         print("Building temporal context... (wait ~15 seconds)")
         import time
 
-        time.sleep(15)
+        time.sleep(20)
 
         # Query the temporal memory
         questions = [
-            "What entities are currently visible?",
-            "What has happened in the last few seconds?",
             "Are there any people in the scene?",
             "Describe the main activity happening now",
+            "What has happened in the last few seconds?",
+            "What entities are currently visible?",
         ]
 
         for question in questions:

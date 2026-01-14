@@ -27,9 +27,13 @@ import json
 from pathlib import Path
 import sqlite3
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.models.vl.base import VlModel
+    from dimos.msgs.sensor_msgs import Image
 
 logger = setup_logger()
 
@@ -83,6 +87,12 @@ class EntityGraphDB:
                 metadata TEXT
             )
         """)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entities_first_seen ON entities(first_seen_ts)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entities_last_seen ON entities(last_seen_ts)"
+        )
 
         # Relations table (Graph 1: Interactions)
         cursor.execute("""
@@ -218,9 +228,7 @@ class EntityGraphDB:
         }
 
     def get_all_entities(self, entity_type: str | None = None) -> list[dict[str, Any]]:
-        """
-        Get all entities, optionally filtered by type.
-        """
+        """Get all entities, optionally filtered by type."""
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -231,6 +239,42 @@ class EntityGraphDB:
             )
         else:
             cursor.execute("SELECT * FROM entities ORDER BY last_seen_ts DESC")
+
+        rows = cursor.fetchall()
+        return [
+            {
+                "entity_id": row["entity_id"],
+                "entity_type": row["entity_type"],
+                "descriptor": row["descriptor"],
+                "first_seen_ts": row["first_seen_ts"],
+                "last_seen_ts": row["last_seen_ts"],
+                "metadata": json.loads(row["metadata"]) if row["metadata"] else None,
+            }
+            for row in rows
+        ]
+
+    def get_entities_by_time(
+        self,
+        time_window: tuple[float, float],
+        first_seen: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Get entities first/last seen within a time window.
+
+        Args:
+            time_window: (start_ts, end_ts) tuple in seconds
+            first_seen: If True, filter by first_seen_ts. If False, filter by last_seen_ts.
+
+        Returns:
+            List of entities seen within the time window
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        ts_field = "first_seen_ts" if first_seen else "last_seen_ts"
+        cursor.execute(
+            f"SELECT * FROM entities WHERE {ts_field} BETWEEN ? AND ? ORDER BY {ts_field} DESC",
+            time_window,
+        )
 
         rows = cursor.fetchall()
         return [
@@ -422,15 +466,12 @@ class EntityGraphDB:
         self,
         entity_a_id: str,
         entity_b_id: str,
-        latest_only: bool = True,
     ) -> dict[str, Any] | None:
-        """
-        Get distance between two entities.
+        """Get most recent distance between two entities.
 
         Args:
             entity_a_id: First entity ID
             entity_b_id: Second entity ID
-            latest_only: If True, return only the most recent measurement
 
         Returns:
             Distance dict or None
@@ -442,25 +483,15 @@ class EntityGraphDB:
         if entity_a_id > entity_b_id:
             entity_a_id, entity_b_id = entity_b_id, entity_a_id
 
-        if latest_only:
-            cursor.execute(
-                """
-                SELECT * FROM distances
-                WHERE entity_a_id = ? AND entity_b_id = ?
-                ORDER BY timestamp_s DESC
-                LIMIT 1
-            """,
-                (entity_a_id, entity_b_id),
-            )
-        else:
-            cursor.execute(
-                """
-                SELECT * FROM distances
-                WHERE entity_a_id = ? AND entity_b_id = ?
-                ORDER BY timestamp_s DESC
-            """,
-                (entity_a_id, entity_b_id),
-            )
+        cursor.execute(
+            """
+            SELECT * FROM distances
+            WHERE entity_a_id = ? AND entity_b_id = ?
+            ORDER BY timestamp_s DESC
+            LIMIT 1
+        """,
+            (entity_a_id, entity_b_id),
+        )
 
         row = cursor.fetchone()
         if row is None:
@@ -475,6 +506,49 @@ class EntityGraphDB:
             "timestamp_s": row["timestamp_s"],
             "method": row["method"],
         }
+
+    def get_distance_history(
+        self,
+        entity_a_id: str,
+        entity_b_id: str,
+    ) -> list[dict[str, Any]]:
+        """Get all distance measurements between two entities.
+
+        Args:
+            entity_a_id: First entity ID
+            entity_b_id: Second entity ID
+
+        Returns:
+            List of distance dicts, most recent first
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # Normalize order
+        if entity_a_id > entity_b_id:
+            entity_a_id, entity_b_id = entity_b_id, entity_a_id
+
+        cursor.execute(
+            """
+            SELECT * FROM distances
+            WHERE entity_a_id = ? AND entity_b_id = ?
+            ORDER BY timestamp_s DESC
+        """,
+            (entity_a_id, entity_b_id),
+        )
+
+        return [
+            {
+                "entity_a_id": row["entity_a_id"],
+                "entity_b_id": row["entity_b_id"],
+                "distance_meters": row["distance_meters"],
+                "distance_category": row["distance_category"],
+                "confidence": row["confidence"],
+                "timestamp_s": row["timestamp_s"],
+                "method": row["method"],
+            }
+            for row in cursor.fetchall()
+        ]
 
     def get_nearby_entities(
         self,
@@ -785,6 +859,157 @@ class EntityGraphDB:
             "distances": distance_count,
             "semantic_relations": semantic_count,
         }
+
+    def get_summary(self, recent_relations_limit: int = 5) -> dict[str, Any]:
+        """Get stats, all entities, and recent relations."""
+        return {
+            "stats": self.get_stats(),
+            "entities": self.get_all_entities(),
+            "recent_relations": self.get_recent_relations(limit=recent_relations_limit),
+        }
+
+    def save_window_data(self, parsed: dict[str, Any], timestamp_s: float) -> None:
+        """Save parsed window data (entities and relations) to the graph database."""
+        try:
+            # Save new entities
+            for entity in parsed.get("new_entities", []):
+                self.upsert_entity(
+                    entity_id=entity["id"],
+                    entity_type=entity["type"],
+                    descriptor=entity.get("descriptor", "unknown"),
+                    timestamp_s=timestamp_s,
+                )
+
+            # Save existing entities (update last_seen)
+            for entity in parsed.get("entities_present", []):
+                if isinstance(entity, dict) and "id" in entity:
+                    descriptor = entity.get("descriptor")
+                    if descriptor:
+                        self.upsert_entity(
+                            entity_id=entity["id"],
+                            entity_type=entity.get("type", "unknown"),
+                            descriptor=descriptor,
+                            timestamp_s=timestamp_s,
+                        )
+                    else:
+                        existing = self.get_entity(entity["id"])
+                        if existing:
+                            self.upsert_entity(
+                                entity_id=entity["id"],
+                                entity_type=existing["entity_type"],
+                                descriptor=existing["descriptor"],
+                                timestamp_s=timestamp_s,
+                            )
+
+            # Save relations
+            for relation in parsed.get("relations", []):
+                subject_id = (
+                    relation["subject"].split("|")[0]
+                    if "|" in relation["subject"]
+                    else relation["subject"]
+                )
+                object_id = (
+                    relation["object"].split("|")[0]
+                    if "|" in relation["object"]
+                    else relation["object"]
+                )
+
+                self.add_relation(
+                    relation_type=relation["type"],
+                    subject_id=subject_id,
+                    object_id=object_id,
+                    confidence=relation.get("confidence", 1.0),
+                    timestamp_s=timestamp_s,
+                    evidence=relation.get("evidence"),
+                    notes=relation.get("notes"),
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to save window data to graph DB: {e}", exc_info=True)
+
+    def estimate_and_save_distances(
+        self,
+        parsed: dict[str, Any],
+        frame_image: "Image",
+        vlm: "VlModel",
+        timestamp_s: float,
+        max_distance_pairs: int = 5,
+    ) -> None:
+        """Estimate distances between entities using VLM and save to database.
+
+        Args:
+            parsed: Parsed window data containing entities
+            frame_image: Frame image to analyze
+            vlm: VLM instance for distance estimation
+            timestamp_s: Timestamp for the distance measurements
+            max_distance_pairs: Maximum number of entity pairs to estimate
+        """
+        if not frame_image:
+            return
+
+        # Import here to avoid circular dependency
+        from dimos.perception import temporal_utils as tu
+
+        # Collect entities with descriptors
+        # new_entities have descriptors from VLM
+        enriched_entities = []
+        for entity in parsed.get("new_entities", []):
+            if isinstance(entity, dict) and "id" in entity:
+                enriched_entities.append(
+                    {"id": entity["id"], "descriptor": entity.get("descriptor", "unknown")}
+                )
+
+        # entities_present only have IDs - need to fetch descriptors from DB
+        for entity in parsed.get("entities_present", []):
+            if isinstance(entity, dict) and "id" in entity:
+                entity_id = entity["id"]
+                # Fetch descriptor from DB
+                db_entity = self.get_entity(entity_id)
+                if db_entity:
+                    enriched_entities.append(
+                        {"id": entity_id, "descriptor": db_entity.get("descriptor", "unknown")}
+                    )
+
+        if len(enriched_entities) < 2:
+            return
+
+        # Generate pairs without existing distances
+        pairs = [
+            (enriched_entities[i], enriched_entities[j])
+            for i in range(len(enriched_entities))
+            for j in range(i + 1, len(enriched_entities))
+            if not self.get_distance(enriched_entities[i]["id"], enriched_entities[j]["id"])
+        ][:max_distance_pairs]
+
+        if not pairs:
+            return
+
+        try:
+            response = vlm.query(frame_image, tu.build_batch_distance_estimation_prompt(pairs))
+            for r in tu.parse_batch_distance_response(response, pairs):
+                if r["category"] in ("near", "medium", "far"):
+                    self.add_distance(
+                        entity_a_id=r["entity_a_id"],
+                        entity_b_id=r["entity_b_id"],
+                        distance_meters=r.get("distance_m"),
+                        distance_category=r["category"],
+                        confidence=r.get("confidence", 0.5),
+                        timestamp_s=timestamp_s,
+                        method="vlm",
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to estimate distances: {e}", exc_info=True)
+
+    def commit(self) -> None:
+        """Commit all pending transactions and ensure data is flushed to disk."""
+        if hasattr(self._local, "conn"):
+            conn = self._local.conn
+            conn.commit()
+            # Force checkpoint to ensure WAL data is written to main database file
+            try:
+                conn.execute("PRAGMA wal_checkpoint(FULL)")
+            except Exception:
+                pass  # Ignore if WAL is not enabled
 
     def close(self) -> None:
         """Close database connection."""

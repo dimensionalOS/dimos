@@ -88,10 +88,10 @@ class QwenVlModel(VlModel):
             return []
 
         content: list[dict[str, Any]] = [
-            {
-                "type": "image_url",
+                {
+                    "type": "image_url",
                 "image_url": {"url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"},
-            }
+                }
             for img in images
         ]
         content.append({"type": "text", "text": query})
