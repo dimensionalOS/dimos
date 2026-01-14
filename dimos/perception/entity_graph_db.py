@@ -69,7 +69,7 @@ class EntityGraphDB:
         if not hasattr(self._local, "conn"):
             self._local.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self._local.conn.row_factory = sqlite3.Row
-        return self._local.conn
+        return self._local.conn  # type: ignore
 
     def _init_schema(self) -> None:
         """Initialize database schema."""

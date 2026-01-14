@@ -56,4 +56,4 @@ def deploy(
 
     temporal_memory.color_image.connect(camera.color_image)
     temporal_memory.start()
-    return temporal_memory
+    return temporal_memory  # type: ignore[return-value,no-any-return]

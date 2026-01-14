@@ -37,7 +37,7 @@ from dimos.perception.temporal_memory_deploy import deploy
 load_dotenv()
 
 
-def example_usage():
+def example_usage() -> None:
     """Example of how to use TemporalMemory."""
     # Initialize variables to None for cleanup
     temporal_memory = None
@@ -48,7 +48,7 @@ def example_usage():
         # Create Dimos cluster
         dimos = core.start(1)
         # Deploy camera module
-        camera = dimos.deploy(CameraModule, hardware=lambda: Webcam(camera_index=0))
+        camera = dimos.deploy(CameraModule, hardware=lambda: Webcam(camera_index=0))  # type: ignore[attr-defined]
         camera.start()
 
         # Deploy temporal memory using the deploy function
@@ -130,7 +130,7 @@ def example_usage():
         if camera is not None:
             camera.stop()
         if dimos is not None:
-            dimos.close_all()
+            dimos.close_all()  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":

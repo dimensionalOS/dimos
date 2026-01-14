@@ -42,10 +42,14 @@ from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.perception import temporal_utils as tu
 from dimos.perception.clip_filter import (
     CLIP_AVAILABLE,
-    CLIPFrameFilter,
     adaptive_keyframes,
     select_diverse_frames_simple,
 )
+
+try:
+    from dimos.perception.clip_filter import CLIPFrameFilter
+except ImportError:
+    CLIPFrameFilter = type(None)  # type: ignore[misc,assignment]
 from dimos.perception.entity_graph_db import EntityGraphDB
 from dimos.utils.logging_config import setup_logger
 
@@ -112,7 +116,7 @@ class TemporalMemory(SkillModule):
         super().__init__()
 
         self._vlm = vlm  # Can be None for blueprint usage
-        self.config = config or TemporalMemoryConfig()
+        self.config: TemporalMemoryConfig = config or TemporalMemoryConfig()
 
         # single lock protects all state
         self._state_lock = threading.Lock()
@@ -267,7 +271,7 @@ class TemporalMemory(SkillModule):
         for stream in list(self.inputs.values()) + list(self.outputs.values()):
             if stream.transport is not None and hasattr(stream.transport, "stop"):
                 stream.transport.stop()
-                stream._transport = None
+                stream._transport = None  # type: ignore[attr-defined,assignment]
 
         logger.info("temporalmemory stopped")
 

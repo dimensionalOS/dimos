@@ -31,129 +31,135 @@ logger = setup_logger()
 
 # Optional CLIP imports
 try:
-    import clip
-    from PIL import Image as PILImage
-    import torch
+    import clip  # type: ignore[import-untyped]
+    from PIL import Image as PILImage  # type: ignore[import-untyped]
+    import torch  # type: ignore[import-untyped]
 
     CLIP_AVAILABLE = True
-except ImportError:
+except (ImportError, RuntimeError) as e:
     CLIP_AVAILABLE = False
     logger.warning(
-        "CLIP not available. Install with: pip install torch torchvision openai-clip. "
+        f"CLIP not available: {e}. Install with: pip install torch torchvision openai-clip. "
         "Frame filtering will fall back to simple sampling."
     )
 
+    # Define stub for type annotations when PIL is not available
+    class PILImage:
+        Image = None
 
-class CLIPFrameFilter:
-    """Filter video frames using CLIP embeddings to select diverse frames."""
 
-    def __init__(self, model_name: str = "ViT-B/32", device: str | None = None):
-        """
-        Initialize CLIP frame filter.
+if CLIP_AVAILABLE:
 
-        Args:
-            model_name: CLIP model name (e.g., "ViT-B/32", "ViT-L/14")
-            device: Device to use ("cuda", "cpu", or None for auto-detect)
-        """
-        if not CLIP_AVAILABLE:
-            raise ImportError(
-                "CLIP is not available. Install with: pip install torch torchvision openai-clip"
-            )
+    class CLIPFrameFilter:
+        """Filter video frames using CLIP embeddings to select diverse frames."""
 
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        logger.info(f"Loading CLIP model {model_name} on {self.device}")
-        self.model, self.preprocess = clip.load(model_name, device=self.device)
-        logger.info("CLIP model loaded successfully")
+        def __init__(self, model_name: str = "ViT-B/32", device: str | None = None):
+            """
+            Initialize CLIP frame filter.
 
-    def _image_to_pil(self, image: Image) -> PILImage.Image:
-        """Convert dimos Image to PIL Image."""
-        # Get numpy array from dimos Image
-        img_array = image.data  # Assumes Image has .data attribute with numpy array
+            Args:
+                model_name: CLIP model name (e.g., "ViT-B/32", "ViT-L/14")
+                device: Device to use ("cuda", "cpu", or None for auto-detect)
+            """
+            if not CLIP_AVAILABLE:
+                raise ImportError(
+                    "CLIP is not available. Install with: pip install torch torchvision openai-clip"
+                )
 
-        # Convert to PIL
-        return PILImage.fromarray(img_array)
+            self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+            logger.info(f"Loading CLIP model {model_name} on {self.device}")
+            self.model, self.preprocess = clip.load(model_name, device=self.device)
+            logger.info("CLIP model loaded successfully")
 
-    def _encode_images(self, images: list[Image]) -> torch.Tensor:
-        """Encode images using CLIP.
+        def _image_to_pil(self, image: Image) -> "PILImage.Image":
+            """Convert dimos Image to PIL Image."""
+            # Get numpy array from dimos Image
+            img_array = image.data  # Assumes Image has .data attribute with numpy array
 
-        Args:
-            images: List of dimos Images
+            # Convert to PIL
+            return PILImage.fromarray(img_array)
 
-        Returns:
-            Tensor of normalized CLIP embeddings, shape (N, embedding_dim)
-        """
-        # Convert to PIL and preprocess
-        pil_images = [self._image_to_pil(img) for img in images]
-        preprocessed = [self.preprocess(img) for img in pil_images]
+        def _encode_images(self, images: list[Image]) -> "torch.Tensor":
+            """Encode images using CLIP.
 
-        # Stack and encode
-        image_tensor = torch.stack(preprocessed).to(self.device)
-        with torch.no_grad():
-            embeddings = self.model.encode_image(image_tensor)
-            # Normalize embeddings
-            embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)
+            Args:
+                images: List of dimos Images
 
-        return embeddings
+            Returns:
+                Tensor of normalized CLIP embeddings, shape (N, embedding_dim)
+            """
+            # Convert to PIL and preprocess
+            pil_images = [self._image_to_pil(img) for img in images]
+            preprocessed = [self.preprocess(img) for img in pil_images]
 
-    def select_diverse_frames(self, frames: list[Any], max_frames: int = 3) -> list[Any]:
-        """
-        Select diverse frames using greedy farthest-point sampling.
+            # Stack and encode
+            image_tensor = torch.stack(preprocessed).to(self.device)
+            with torch.no_grad():
+                embeddings = self.model.encode_image(image_tensor)
+                # Normalize embeddings
+                embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)
 
-        This selects frames that are maximally different from each other in CLIP
-        embedding space, ensuring good visual coverage of the window.
+            return embeddings
 
-        Algorithm:
-        1. Always include first frame (temporal anchor)
-        2. Iteratively select frame most different from already-selected frames
-        3. Continue until we have max_frames frames
+        def select_diverse_frames(self, frames: list[Any], max_frames: int = 3) -> list[Any]:
+            """
+            Select diverse frames using greedy farthest-point sampling.
 
-        Args:
-            frames: List of Frame objects with .image attribute
-            max_frames: Maximum number of frames to select
+            This selects frames that are maximally different from each other in CLIP
+            embedding space, ensuring good visual coverage of the window.
 
-        Returns:
-            List of selected Frame objects (subset of input frames)
-        """
-        if len(frames) <= max_frames:
-            return frames
+            Algorithm:
+            1. Always include first frame (temporal anchor)
+            2. Iteratively select frame most different from already-selected frames
+            3. Continue until we have max_frames frames
 
-        # Extract images from frames
-        images = [f.image for f in frames]
+            Args:
+                frames: List of Frame objects with .image attribute
+                max_frames: Maximum number of frames to select
 
-        # Encode all images
-        embeddings = self._encode_images(images)
+            Returns:
+                List of selected Frame objects (subset of input frames)
+            """
+            if len(frames) <= max_frames:
+                return frames
 
-        # Greedy farthest-point sampling
-        selected_indices = [0]  # Always include first frame
-        remaining_indices = list(range(1, len(frames)))
+            # Extract images from frames
+            images = [f.image for f in frames]
 
-        while len(selected_indices) < max_frames and remaining_indices:
-            selected_embs = embeddings[selected_indices]
-            remaining_embs = embeddings[remaining_indices]
+            # Encode all images
+            embeddings = self._encode_images(images)
 
-            # Compute similarities between remaining and selected
-            # Shape: (num_remaining, num_selected)
-            similarities = remaining_embs @ selected_embs.T
+            # Greedy farthest-point sampling
+            selected_indices = [0]  # Always include first frame
+            remaining_indices = list(range(1, len(frames)))
 
-            # For each remaining frame, find its max similarity to any selected frame
-            # Shape: (num_remaining,)
-            max_similarities = similarities.max(dim=1)[0]
+            while len(selected_indices) < max_frames and remaining_indices:
+                selected_embs = embeddings[selected_indices]
+                remaining_embs = embeddings[remaining_indices]
+
+                # Compute similarities between remaining and selected
+                # Shape: (num_remaining, num_selected)
+                similarities = remaining_embs @ selected_embs.T
+
+                # For each remaining frame, find its max similarity to any selected frame
+                # Shape: (num_remaining,)
+                max_similarities = similarities.max(dim=1)[0]
 
             # Select frame with minimum max similarity (most different from all selected)
-            best_idx = max_similarities.argmin().item()
+            best_idx = int(max_similarities.argmin().item())
 
             selected_indices.append(remaining_indices[best_idx])
             remaining_indices.pop(best_idx)
 
-        # Return frames in temporal order (sorted by index)
-        return [frames[i] for i in sorted(selected_indices)]
+            # Return frames in temporal order (sorted by index)
+            return [frames[i] for i in sorted(selected_indices)]
 
-    def close(self) -> None:
-        """Clean up CLIP model."""
-        if hasattr(self, "model"):
-            del self.model
-        if hasattr(self, "preprocess"):
-            del self.preprocess
+        def close(self) -> None:
+            """Clean up CLIP model."""
+            if hasattr(self, "model"):
+                del self.model
+            if hasattr(self, "preprocess"):
+                del self.preprocess
 
 
 def select_diverse_frames_simple(frames: list[Any], max_frames: int = 3) -> list[Any]:
@@ -178,11 +184,11 @@ def select_diverse_frames_simple(frames: list[Any], max_frames: int = 3) -> list
 
 
 def adaptive_keyframes(
-    frames: list,
+    frames: list[Any],
     min_frames: int = 3,
     max_frames: int = 5,
     change_threshold: float = 15.0,
-) -> list:
+) -> list[Any]:
     """select frames based on visual change, adaptive count."""
     if len(frames) <= min_frames:
         return frames
@@ -235,7 +241,10 @@ def adaptive_keyframes(
 
 __all__ = [
     "CLIP_AVAILABLE",
-    "CLIPFrameFilter",
+    "CLIPFrameFilter" if CLIP_AVAILABLE else None,
     "adaptive_keyframes",
     "select_diverse_frames_simple",
 ]
+
+# Filter out None values
+__all__ = [item for item in __all__ if item is not None]
