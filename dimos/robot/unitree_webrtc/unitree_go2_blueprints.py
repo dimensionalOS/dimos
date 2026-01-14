@@ -92,7 +92,7 @@ basic = autoconnect(
 
 nav = autoconnect(
     basic,
-    voxel_mapper(voxel_size=0.1),
+    voxel_mapper(voxel_size=0.05),
     cost_mapper(),
     replanning_a_star_planner(),
     wavefront_frontier_explorer(),
