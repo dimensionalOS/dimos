@@ -184,13 +184,11 @@ class ManipulationModule(Module):
     def _on_joint_state(self, msg: JointState) -> None:
         """Callback when joint state received from driver."""
         try:
-            # Forward to world monitor for state synchronization
-            # For single robot, use default; for multi-robot, monitor routes by joint names
+            # Forward to world monitor for state synchronization.
+            # Pass robot_id=None to broadcast to all monitors - each monitor
+            # extracts only its robot's joints based on joint_name_mapping.
             if self._world_monitor is not None:
-                robot = self._get_robot()
-                if robot is not None:
-                    _, robot_id, _, _ = robot
-                    self._world_monitor.on_joint_state(msg, robot_id)
+                self._world_monitor.on_joint_state(msg, robot_id=None)
 
         except Exception as e:
             logger.error(f"Exception in _on_joint_state: {e}")
@@ -235,25 +233,38 @@ class ManipulationModule(Module):
         return True
 
     @rpc
-    def get_current_joints(self) -> list[float] | None:
-        """Get current joint positions."""
-        if (robot := self._get_robot()) and self._world_monitor:
+    def get_current_joints(self, robot_name: str | None = None) -> list[float] | None:
+        """Get current joint positions.
+
+        Args:
+            robot_name: Robot to query (required if multiple robots configured)
+        """
+        if (robot := self._get_robot(robot_name)) and self._world_monitor:
             pos = self._world_monitor.get_current_positions(robot[1])
             if pos is not None:
                 return list(pos)
         return None
 
     @rpc
-    def get_ee_pose(self) -> Pose | None:
-        """Get current end-effector pose."""
-        if (robot := self._get_robot()) and self._world_monitor:
+    def get_ee_pose(self, robot_name: str | None = None) -> Pose | None:
+        """Get current end-effector pose.
+
+        Args:
+            robot_name: Robot to query (required if multiple robots configured)
+        """
+        if (robot := self._get_robot(robot_name)) and self._world_monitor:
             return matrix_to_pose(self._world_monitor.get_ee_pose(robot[1]))
         return None
 
     @rpc
-    def is_collision_free(self, joints: list[float]) -> bool:
-        """Check if joint configuration is collision-free."""
-        if (robot := self._get_robot()) and self._world_monitor:
+    def is_collision_free(self, joints: list[float], robot_name: str | None = None) -> bool:
+        """Check if joint configuration is collision-free.
+
+        Args:
+            joints: Joint configuration to check
+            robot_name: Robot to check (required if multiple robots configured)
+        """
+        if (robot := self._get_robot(robot_name)) and self._world_monitor:
             return self._world_monitor.is_state_valid(
                 robot[1], np.array(joints)
             )  # robot[1] is the robot_id.
@@ -263,12 +274,16 @@ class ManipulationModule(Module):
     # Plan/Preview/Execute Workflow RPC Methods
     # =========================================================================
 
-    def _begin_planning(self) -> tuple[str, str] | None:
-        """Check state and begin planning. Returns (robot_name, robot_id) or None."""
+    def _begin_planning(self, robot_name: str | None = None) -> tuple[str, str] | None:
+        """Check state and begin planning. Returns (robot_name, robot_id) or None.
+
+        Args:
+            robot_name: Robot to plan for (required if multiple robots configured)
+        """
         if self._world_monitor is None:
             logger.error("Planning not initialized")
             return None
-        if (robot := self._get_robot()) is None:
+        if (robot := self._get_robot(robot_name)) is None:
             return None
         with self._lock:
             if self._state not in (ManipulationState.IDLE, ManipulationState.COMPLETED):
@@ -285,9 +300,14 @@ class ManipulationModule(Module):
         return False
 
     @rpc
-    def plan_to_pose(self, pose: Pose) -> bool:
-        """Plan motion to pose. Use preview_path() then execute()."""
-        if self._kinematics is None or (r := self._begin_planning()) is None:
+    def plan_to_pose(self, pose: Pose, robot_name: str | None = None) -> bool:
+        """Plan motion to pose. Use preview_path() then execute().
+
+        Args:
+            pose: Target end-effector pose
+            robot_name: Robot to plan for (required if multiple robots configured)
+        """
+        if self._kinematics is None or (r := self._begin_planning(robot_name)) is None:
             return False
         robot_name, robot_id = r
         assert self._world_monitor  # guaranteed by _begin_planning
@@ -310,12 +330,17 @@ class ManipulationModule(Module):
         return self._plan_path_only(robot_name, robot_id, ik.joint_positions)
 
     @rpc
-    def plan_to_joints(self, joints: list[float]) -> bool:
-        """Plan motion to joint config. Use preview_path() then execute()."""
-        if (r := self._begin_planning()) is None:
+    def plan_to_joints(self, joints: list[float], robot_name: str | None = None) -> bool:
+        """Plan motion to joint config. Use preview_path() then execute().
+
+        Args:
+            joints: Target joint configuration
+            robot_name: Robot to plan for (required if multiple robots configured)
+        """
+        if (r := self._begin_planning(robot_name)) is None:
             return False
         robot_name, robot_id = r
-        logger.info(f"Planning to joints: {[f'{j:.3f}' for j in joints]}")
+        logger.info(f"Planning to joints for {robot_name}: {[f'{j:.3f}' for j in joints]}")
         return self._plan_path_only(robot_name, robot_id, np.array(joints))
 
     def _plan_path_only(self, robot_name: str, robot_id: str, goal: NDArray[np.float64]) -> bool:
@@ -347,25 +372,26 @@ class ManipulationModule(Module):
         return True
 
     @rpc
-    def preview_path(self, duration: float = 3.0) -> bool:
+    def preview_path(self, duration: float = 3.0, robot_name: str | None = None) -> bool:
         """Preview the planned path in the visualizer.
 
         Args:
             duration: Total animation duration in seconds
+            robot_name: Robot to preview (required if multiple robots configured)
         """
         from dimos.manipulation.planning.utils.path_utils import interpolate_path
 
         if self._world_monitor is None:
             return False
 
-        robot = self._get_robot()
+        robot = self._get_robot(robot_name)
         if robot is None:
             return False
         robot_name, robot_id, _, _ = robot
 
         planned_path = self._planned_paths.get(robot_name)
         if planned_path is None or len(planned_path) == 0:
-            logger.warning("No planned path to preview")
+            logger.warning(f"No planned path to preview for {robot_name}")
             return False
 
         # Interpolate and animate

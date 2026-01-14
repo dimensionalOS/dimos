@@ -81,13 +81,21 @@ class ManipulationClient:
         """Get manipulation state."""
         return cast("str", self._call("get_state"))
 
-    def joints(self) -> list[float] | None:
-        """Get current joint positions."""
-        return cast("list[float] | None", self._call("get_current_joints"))
+    def joints(self, robot_name: str | None = None) -> list[float] | None:
+        """Get current joint positions.
 
-    def ee(self) -> Pose | None:
-        """Get end-effector pose."""
-        return cast("Pose | None", self._call("get_ee_pose"))
+        Args:
+            robot_name: Robot to query (required if multiple robots configured)
+        """
+        return cast("list[float] | None", self._call("get_current_joints", robot_name))
+
+    def ee(self, robot_name: str | None = None) -> Pose | None:
+        """Get end-effector pose.
+
+        Args:
+            robot_name: Robot to query (required if multiple robots configured)
+        """
+        return cast("Pose | None", self._call("get_ee_pose", robot_name))
 
     def url(self) -> str | None:
         """Get Meshcat visualization URL."""
@@ -105,10 +113,18 @@ class ManipulationClient:
     # Planning Methods
     # =========================================================================
 
-    def plan(self, joints: list[float]) -> bool:
-        """Plan to joint configuration."""
-        print(f"Planning to: {[f'{j:.3f}' for j in joints]}")
-        return cast("bool", self._call("plan_to_joints", joints))
+    def plan(self, joints: list[float], robot_name: str | None = None) -> bool:
+        """Plan to joint configuration.
+
+        Args:
+            joints: Target joint configuration
+            robot_name: Robot to plan for (required if multiple robots configured)
+        """
+        print(
+            f"Planning to: {[f'{j:.3f}' for j in joints]}"
+            + (f" for {robot_name}" if robot_name else "")
+        )
+        return cast("bool", self._call("plan_to_joints", joints, robot_name=robot_name))
 
     def plan_pose(
         self,
@@ -118,28 +134,43 @@ class ManipulationClient:
         roll: float | None = None,
         pitch: float | None = None,
         yaw: float | None = None,
+        robot_name: str | None = None,
     ) -> bool:
-        """Plan to cartesian pose. Uses current orientation if not specified."""
+        """Plan to cartesian pose. Uses current orientation if not specified.
+
+        Args:
+            x, y, z: Target position
+            roll, pitch, yaw: Target orientation (uses current if not specified)
+            robot_name: Robot to plan for (required if multiple robots configured)
+        """
         # Get current orientation if not provided
         if roll is None or pitch is None or yaw is None:
-            ee = self.ee()
+            ee = self.ee(robot_name)
             if ee is None:
-                print("Cannot get current orientation")
+                print("Cannot get current orientation - specify roll, pitch, yaw explicitly")
                 return False
             roll = roll if roll is not None else ee.roll
             pitch = pitch if pitch is not None else ee.pitch
             yaw = yaw if yaw is not None else ee.yaw
 
-        print(f"Planning to: ({x:.3f}, {y:.3f}, {z:.3f}) rpy=({roll:.2f}, {pitch:.2f}, {yaw:.2f})")
+        print(
+            f"Planning to: ({x:.3f}, {y:.3f}, {z:.3f}) rpy=({roll:.2f}, {pitch:.2f}, {yaw:.2f})"
+            + (f" for {robot_name}" if robot_name else "")
+        )
         pose = Pose(
             position=Vector3(x, y, z),
             orientation=Quaternion.from_euler(Vector3(roll, pitch, yaw)),
         )
-        return cast("bool", self._call("plan_to_pose", pose))
+        return cast("bool", self._call("plan_to_pose", pose, robot_name=robot_name))
 
-    def preview(self, duration: float = 3.0) -> bool:
-        """Preview planned path in Meshcat."""
-        return cast("bool", self._call("preview_path", duration))
+    def preview(self, duration: float = 3.0, robot_name: str | None = None) -> bool:
+        """Preview planned path in Meshcat.
+
+        Args:
+            duration: Animation duration in seconds
+            robot_name: Robot to preview (required if multiple robots configured)
+        """
+        return cast("bool", self._call("preview_path", duration, robot_name=robot_name))
 
     def execute(self, robot_name: str | None = None) -> bool:
         """Execute planned trajectory via orchestrator."""
@@ -197,9 +228,14 @@ class ManipulationClient:
     # Utility Methods
     # =========================================================================
 
-    def collision(self, joints: list[float]) -> bool:
-        """Check if joint config is collision-free."""
-        return cast("bool", self._call("is_collision_free", joints))
+    def collision(self, joints: list[float], robot_name: str | None = None) -> bool:
+        """Check if joint config is collision-free.
+
+        Args:
+            joints: Joint configuration to check
+            robot_name: Robot to check (required if multiple robots configured)
+        """
+        return cast("bool", self._call("is_collision_free", joints, robot_name))
 
     def reset(self) -> bool:
         """Reset to IDLE state."""
