@@ -32,7 +32,8 @@ Dimensional is an open-source framework for adding customized general intelligen
 #### Details / Requirements
 
 - Linux, tested on Ubuntu 22.04, 24.04
-- MacOS support is in beta, you're welcome to roughly follow these steps, which will run on MacOS
+- MacOS support is in beta, you're welcome to try it *but expect inconsistent/flakey behavior (rather than errors/crashing)*
+    - instead of the apt-get command below run: `xcode-select --install && brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python`
 
 ```sh
 sudo apt-get update
@@ -173,3 +174,64 @@ There are several tools:
 - RPC: how one module can call a method on another module (arguments get serialized to JSON-like binary data)
 - Skills: Pretty much an RPC, call but it can be called by an AI agent (they're tools for an AI).
 - Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools
+
+# How do I Contribute / Hack on DimOS?
+
+## Typical Installation
+
+Very similar to a normal installation, here are the steps to get the repo and get it running for development.
+
+```bash
+git clone -b main --single-branch git@github.com:dimensionalOS/dimos.git
+cd dimos
+sudo apt-get update
+sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev
+# install uv for python
+curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+# create & activate a virtualenv (needed for dimos)
+uv venv && . .venv/bin/activate
+# install dimos
+uv pip install -e '.[base,dev,misc,unitree,drone]'
+# test the install (takes about 3 minutes)
+uv run pytest dimos
+```
+
+<!-- ## Optional: Containerized Installation
+
+DimOS supports Dev Containers (Docker based) and Nix development environments (with optional `direnv` and dev container integration) for keeping the dev environment isolated and/or reproducible.
+
+### Nix
+
+```sh
+git clone -b main --single-branch git@github.com:dimensionalOS/dimos.git
+cd dimos
+# Install Nix
+curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
+# make sure flakes are enabled
+mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
+
+# enter the nix shell
+# alternatively setup direnv with the default nix shell so that it loads it automatically into your current shell
+nix develop '.#isolated'
+
+# once inside the nix develop shell:
+# create & activate a virtualenv (needed for dimos)
+uv venv && . .venv/bin/activate
+# install dimos python package
+uv pip install -e '.[base,dev,misc,unitree,drone]'
+# test the install (takes about 3 minutes)
+uv run pytest dimos
+``` -->
+
+Note, a few dependencies do not have PyPI packages and need to be installed from their Git repositories. These are only required for specific features:
+
+- **CLIP** and **detectron2**: Required for the Detic open-vocabulary object detector
+- **contact_graspnet_pytorch**: Required for robotic grasp prediction
+
+You can install them with:
+
+```bash
+uv add git+https://github.com/openai/CLIP.git
+uv add git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git
+uv add git+https://github.com/facebookresearch/detectron2.git
+```
