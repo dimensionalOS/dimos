@@ -174,15 +174,6 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
     default_config = VlModelConfig
     config: VlModelConfig
 
-    @abstractmethod
-    def is_set_up(self) -> None:
-        """Verify that the VLM is properly configured (e.g., API key is set).
-
-        Raises:
-            ValueError: If the VLM is not properly configured
-        """
-        ...
-
     def _prepare_image(self, image: Image) -> tuple[Image, float]:
         """Prepare image for inference, applying any configured transformations.
 

@@ -22,16 +22,6 @@ class QwenVlModel(VlModel):
     default_config = QwenVlModelConfig
     config: QwenVlModelConfig
 
-    def is_set_up(self) -> None:
-        """
-        Verify that Alibaba API key is configured.
-        """
-        api_key = self.config.api_key or os.getenv("ALIBABA_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "Alibaba API key must be provided or set in ALIBABA_API_KEY environment variable"
-            )
-
     @cached_property
     def _client(self) -> OpenAI:
         api_key = self.config.api_key or os.getenv("ALIBABA_API_KEY")
@@ -102,7 +92,9 @@ class QwenVlModel(VlModel):
             api_kwargs["response_format"] = response_format
 
         response = self._client.chat.completions.create(**api_kwargs)
-        return [response.choices[0].message.content]  # type: ignore[list-item]
+        content = response.choices[0].message.content or ""
+        # Return one response per image (same response since API analyzes all images together)
+        return [content] * len(images)
 
     def stop(self) -> None:
         """Release the OpenAI client."""

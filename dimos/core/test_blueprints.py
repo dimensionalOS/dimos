@@ -27,12 +27,18 @@ from dimos.core.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.protocol import pubsub
+
+# Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
+_BUILD_WITHOUT_RERUN = {
+    "global_config": GlobalConfig(rerun_enabled=False, viewer_backend="foxglove"),
+}
 
 
 class Scratch:
@@ -161,7 +167,7 @@ def test_build_happy_path() -> None:
 
     blueprint_set = autoconnect(module_a(), module_b(), module_c())
 
-    coordinator = blueprint_set.build()
+    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
 
     try:
         assert isinstance(coordinator, ModuleCoordinator)
@@ -297,7 +303,7 @@ def test_remapping() -> None:
     assert ("color_image", Data1) not in blueprint_set._all_name_types
 
     # Build and verify connections work
-    coordinator = blueprint_set.build()
+    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
 
     try:
         source_instance = coordinator.get_instance(SourceModule)
@@ -350,7 +356,7 @@ def test_future_annotations_autoconnect() -> None:
 
     blueprint_set = autoconnect(FutureModuleOut.blueprint(), FutureModuleIn.blueprint())
 
-    coordinator = blueprint_set.build()
+    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
 
     try:
         out_instance = coordinator.get_instance(FutureModuleOut)

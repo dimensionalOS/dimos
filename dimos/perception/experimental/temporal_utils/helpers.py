@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 if TYPE_CHECKING:
-    from dimos.perception.temporal_memory import Frame
+    from dimos.perception.experimental.temporal_memory import Frame
 
 
 def next_entity_id_hint(roster: Any) -> str:
@@ -67,6 +67,8 @@ def is_scene_stale(frames: list["Frame"], stale_threshold: float = 5.0) -> bool:
     first_img = frames[0].image
     last_img = frames[-1].image
     if first_img is None or last_img is None:
+        return False
+    if not hasattr(first_img, "data") or not hasattr(last_img, "data"):
         return False
     diff = np.abs(first_img.data.astype(float) - last_img.data.astype(float))
     return bool(diff.mean() < stale_threshold)

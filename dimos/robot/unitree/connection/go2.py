@@ -77,8 +77,7 @@ def _camera_info_static() -> CameraInfo:
 
 
 class ReplayConnection(UnitreeWebRTCConnection):
-    # dir_name = "unitree_go2_bigoffice"
-    dir_name = "unitree_go2_office_walk2"
+    dir_name = "unitree_go2_bigoffice"
 
     # we don't want UnitreeWebRTCConnection to init
     def __init__(  # type: ignore[no-untyped-def]

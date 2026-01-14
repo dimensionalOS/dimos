@@ -46,8 +46,8 @@ from dimos.navigation.replanning_a_star.module import (
     replanning_a_star_planner,
 )
 from dimos.perception.detection.module3D import Detection3DModule, detection3d_module
+from dimos.perception.experimental.temporal_memory import temporal_memory
 from dimos.perception.spatial_perception import spatial_memory
-from dimos.perception.temporal_memory import temporal_memory
 from dimos.protocol.mcp.mcp import MCPModule
 from dimos.robot.foxglove_bridge import foxglove_bridge
 import dimos.robot.unitree.connection.go2 as _go2_mod

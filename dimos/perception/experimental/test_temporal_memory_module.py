@@ -26,7 +26,7 @@ from dimos import core
 from dimos.core import Module, Out, rpc
 from dimos.models.vl.openai import OpenAIVlModel
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.temporal_memory import TemporalMemory, TemporalMemoryConfig
+from dimos.perception.experimental.temporal_memory import TemporalMemory, TemporalMemoryConfig
 from dimos.protocol import pubsub
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger

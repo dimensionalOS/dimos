@@ -23,16 +23,6 @@ class OpenAIVlModel(VlModel):
     default_config = OpenAIVlModelConfig
     config: OpenAIVlModelConfig
 
-    def is_set_up(self) -> None:
-        """
-        Verify that OpenAI API key is configured.
-        """
-        api_key = self.config.api_key or os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "OpenAI API key must be provided or set in OPENAI_API_KEY environment variable"
-            )
-
     @cached_property
     def _client(self) -> OpenAI:
         api_key = self.config.api_key or os.getenv("OPENAI_API_KEY")
@@ -81,7 +71,7 @@ class OpenAIVlModel(VlModel):
 
         response = self._client.chat.completions.create(**api_kwargs)
 
-        return response.choices[0].message.content  # type: ignore[return-value]
+        return response.choices[0].message.content  # type: ignore[return-value,no-any-return]
 
     def query_batch(
         self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs: Any
@@ -105,7 +95,9 @@ class OpenAIVlModel(VlModel):
             api_kwargs["response_format"] = response_format
 
         response = self._client.chat.completions.create(**api_kwargs)
-        return [response.choices[0].message.content]  # type: ignore[list-item]
+        content = response.choices[0].message.content or ""
+        # Return one response per image (same response since API analyzes all images together)
+        return [content] * len(images)
 
     def stop(self) -> None:
         """Release the OpenAI client."""

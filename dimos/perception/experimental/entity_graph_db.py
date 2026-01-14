@@ -67,7 +67,7 @@ class EntityGraphDB:
     def _get_connection(self) -> sqlite3.Connection:
         """Get thread-local database connection."""
         if not hasattr(self._local, "conn"):
-            self._local.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+            self._local.conn = sqlite3.connect(str(self.db_path))
             self._local.conn.row_factory = sqlite3.Row
         return self._local.conn  # type: ignore
 
@@ -948,7 +948,7 @@ class EntityGraphDB:
             return
 
         # Import here to avoid circular dependency
-        from dimos.perception import temporal_utils as tu
+        from dimos.perception.experimental import temporal_utils as tu
 
         # Collect entities with descriptors
         # new_entities have descriptors from VLM
