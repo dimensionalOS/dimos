@@ -13,3 +13,22 @@
 # limitations under the License.
 
 """Teleoperation devices."""
+
+from dimos.teleop.devices.base_teleop_module import (
+    BaseTeleopConfig,
+    BaseTeleopModule,
+)
+from dimos.teleop.devices.vr_teleop_module import (
+    VRTeleopConfig,
+    VRTeleopModule,
+    vr_teleop_module,
+)
+
+__all__ = [
+    "BaseTeleopConfig",
+    "BaseTeleopModule",
+    "TeleopStatusKey",
+    "VRTeleopConfig",
+    "VRTeleopModule",
+    "vr_teleop_module",
+]

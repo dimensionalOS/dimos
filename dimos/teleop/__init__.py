@@ -13,3 +13,9 @@
 # limitations under the License.
 
 """Teleoperation module for dimos."""
+
+from dimos.teleop.teleop_blueprints import quest3_teleop
+
+__all__ = [
+    "quest3_teleop",
+]
