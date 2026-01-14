@@ -235,3 +235,7 @@ uv add git+https://github.com/openai/CLIP.git
 uv add git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git
 uv add git+https://github.com/facebookresearch/detectron2.git
 ```
+
+# License
+
+DimOS is licensed under the Apache License, Version 2.0. And will always be free and open source.
