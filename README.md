@@ -37,8 +37,6 @@ The python library comes with a rich set of integrations; visualizers, spatial r
 
 ### Installation
 
-#### Details / Requirements
-
 - Linux, tested on Ubuntu 22.04, 24.04
 - MacOS support is in beta, you're welcome to try it *but expect inconsistent/flakey behavior (rather than errors/crashing)*
     - instead of the apt-get command below run: `brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python`
@@ -65,7 +63,9 @@ dimos --replay run unitree-go2
 
 <!-- command for testing pre launch: `GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" uv pip install 'dimos[unitree] @ git+ssh://git@github.com/dimensionalOS/dimos.git@dev'` -->
 
-#### Get it working on a real physical robot!
+### Usage
+
+#### Get it working on a physical robot!
 
 ```sh
 export ROBOT_IP=PUT_YOUR_IP_ADDR_HERE
