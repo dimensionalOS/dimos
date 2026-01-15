@@ -105,7 +105,6 @@ class BaseTeleopModule(Module[TeleopConfigT]):
                 f"input_labels length ({len(self.config.input_labels)}) must match "
                 f"output_types length ({len(self.config.output_types)})"
             )
-        
 
         self._active_indices = compute_active_indices(self.config.output_types)
 
