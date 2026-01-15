@@ -29,7 +29,7 @@
 
 # What is Dimensional?
 
-DimOS is both a specification-based, language-agnostic framework and a Python-first library for robot control. It works with or without ROS and is designed to let AI agents invoke tools (skills), directly access sensor and state data, and generate complex emergent behaviors.
+DimOS is both a specification-based language-agnostic framework and a Python-first library for robot control. It works with or without ROS and is designed to let AI agents invoke tools (skills), directly access sensor and state data, and generate complex emergent behaviors.
 
 The python library comes with a rich set of integrations; visualizers, spatial reasoners, planners, simulators (mujoco, Isaac Sim, etc.), robot state/action primitives, and more.
 
