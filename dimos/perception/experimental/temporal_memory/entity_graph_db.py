@@ -948,7 +948,7 @@ class EntityGraphDB:
             return
 
         # Import here to avoid circular dependency
-        from dimos.perception.experimental import temporal_utils as tu
+        from . import temporal_utils as tu
 
         # Collect entities with descriptors
         # new_entities have descriptors from VLM

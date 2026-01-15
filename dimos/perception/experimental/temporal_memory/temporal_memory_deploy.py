@@ -21,7 +21,8 @@ import os
 from dimos import spec
 from dimos.core import DimosCluster
 from dimos.models.vl.base import VlModel
-from dimos.perception.experimental.temporal_memory import TemporalMemory, TemporalMemoryConfig
+
+from .temporal_memory import TemporalMemory, TemporalMemoryConfig
 
 
 def deploy(

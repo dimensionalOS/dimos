@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 if TYPE_CHECKING:
-    from dimos.perception.experimental.temporal_memory import Frame
+    from ..temporal_memory import Frame
 
 
 def next_entity_id_hint(roster: Any) -> str:

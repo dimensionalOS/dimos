@@ -30,8 +30,9 @@ from dotenv import load_dotenv
 from dimos import core
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
-from dimos.perception.experimental.temporal_memory import TemporalMemoryConfig
-from dimos.perception.experimental.temporal_memory_deploy import deploy
+
+from .temporal_memory import TemporalMemoryConfig
+from .temporal_memory_deploy import deploy
 
 # Load environment variables
 load_dotenv()

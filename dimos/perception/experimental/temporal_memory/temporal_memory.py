@@ -39,19 +39,21 @@ from dimos.core.skill_module import SkillModule
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
-from dimos.perception.experimental import temporal_utils as tu
-from dimos.perception.experimental.clip_filter import (
+
+from . import temporal_utils as tu
+from .clip_filter import (
     CLIP_AVAILABLE,
     adaptive_keyframes,
     select_diverse_frames_simple,
 )
 
 try:
-    from dimos.perception.experimental.clip_filter import CLIPFrameFilter
+    from .clip_filter import CLIPFrameFilter
 except ImportError:
     CLIPFrameFilter = type(None)  # type: ignore[misc,assignment]
-from dimos.perception.experimental.entity_graph_db import EntityGraphDB
 from dimos.utils.logging_config import setup_logger
+
+from .entity_graph_db import EntityGraphDB
 
 logger = setup_logger()
 

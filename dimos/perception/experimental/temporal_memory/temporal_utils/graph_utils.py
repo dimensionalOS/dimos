@@ -23,7 +23,8 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel
     from dimos.msgs.sensor_msgs import Image
-    from dimos.perception.experimental.entity_graph_db import EntityGraphDB
+
+    from ..entity_graph_db import EntityGraphDB
 
 logger = setup_logger()
 
