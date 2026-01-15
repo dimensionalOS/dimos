@@ -104,8 +104,9 @@ humancli
 
 # How do I use it as a library?
 
+### Simple Camera Activation
 
-Simple camera activation (save this as a python file and run it):
+Assuming you have a webcam, save the following as a python file and run it:
 
 ```py
 from dimos.core.blueprints import autoconnect
@@ -117,12 +118,13 @@ if __name__ == "__main__":
     ).build().loop()
 ```
 
-Write your own custom module:
+### Write A Custom Module
+
+Lets convert the camera's image to grayscale.
 
 ```py
 from dimos.core.blueprints import autoconnect
-from dimos.core import In, Out, Module
-from dimos.core.core import rpc
+from dimos.core import In, Out, Module, rpc
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.msgs.sensor_msgs import Image
 
@@ -130,9 +132,8 @@ from reactivex.disposable import Disposable
 
 class Listener(Module):
     # the CameraModule has an Out[Image] named "color_image"
-    # this module will only receive those messages if
-    # the names ("color_image") match, otherwise autoconnect
-    # will not be able to connect one module to another
+    # How do we know this? Just print(CameraModule.module_info().outputs)
+    # the name ("color_image") must match the CameraModule's output
     color_image: In[Image] = None
     grayscale_image: Out[Image] = None
 
@@ -168,12 +169,11 @@ if __name__ == "__main__":
 
 #### Note: Many More Examples in the [Examples Folder](./examples)
 
+### How do custom modules work?
 
-
-### How does that example work?
-
-- Every module represents one process: all modules run in parallel (python multiprocessing). Because of this **modules should only save/modify data on themselves** Don't mutate or share global vars inside a module.
-- At the top of this module definition, the In/Out **streams** are defining a pub-sub system. This module expects someone somewhere to give it a color image. The module is going to publish a grayscale image.
+- Every module represents one process: modules run in parallel (python multiprocessing). Because of this **modules should only save/modify data on themselves**. Do not mutate or share global vars inside a module.
+- At the top of this module definition, the In/Out **streams** are defining a pub-sub system. This module expects *someone somewhere* to give it a color image. And, the module is going to publish a grayscale image (that any other module to subscribe to).
+    - Note: if you are a power user thinking "so streams must be statically declared?" the answer is no, there are ways to perform dynamic connections, but for type-checking and human sanity the creation of dynamic stream connections are under an advanced API and should be used as a last resort.
 - The `autoconnect` ties everything together:
   - The CameraModule has an output of `color_image`
   - The Listener has an input of `color_image`
@@ -189,15 +189,22 @@ if __name__ == "__main__":
    - The start/stop methods always need to be an rpc because they are called externally.
 
 
+
+
 # How does DimOS work conceptually?
 
-There are several tools:
+There are several conceptual tools:
 - [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are defined in python as classes.
 - [Streams](/docs/api/sensor_streams/index.md): How modules communicate, a Pub / Sub system.
 - [Blueprints](/dimos/core/README_BLUEPRINTS.md): a way to group modules together and define their connections to each other.
 - [RPC](/dimos/core/README_BLUEPRINTS.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
 - [Skills](/dimos/core/README_BLUEPRINTS.md#defining-skills): Pretty much an RPC, call but it can be called by an AI agent (they're tools for an AI).
 - Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools.
+
+There are also many monitoring tools:
+- Run `lcmspy` to see how fast messages are being published on streams
+- Run `skillspy` to see how skills are being called, how long they are running, which are active, etc
+- Run `agentspy` to see the agent's status over time
 
 ## Contributing / Building From Source
 
