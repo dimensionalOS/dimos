@@ -24,9 +24,9 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 try:
-    import clip  # type: ignore
-    from PIL import Image as PILImage  # type: ignore
     import torch  # type: ignore
+
+    from dimos.models.embedding.clip import CLIPModel  # type: ignore
 
     CLIP_AVAILABLE = True
 except ImportError as e:
@@ -48,24 +48,24 @@ if CLIP_AVAILABLE:
 
         def __init__(self, model_name: str = "ViT-B/32", device: str | None = None):
             if not CLIP_AVAILABLE:
-                raise ImportError(
-                    "CLIP not available. Install: pip install torch torchvision openai-clip"
-                )
+                raise ImportError("CLIP not available. Install transformers[torch].")
 
-            self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-            logger.info(f"Loading CLIP {model_name} on {self.device}")
-            self.model, self.preprocess = clip.load(model_name, device=self.device)
+            resolved_name = (
+                "openai/clip-vit-base-patch32" if model_name == "ViT-B/32" else model_name
+            )
+            if device is None:
+                self._model = CLIPModel(model_name=resolved_name)
+            else:
+                self._model = CLIPModel(model_name=resolved_name, device=device)
+            logger.info(f"Loading CLIP {resolved_name} on {self._model.device}")
 
         def _encode_images(self, images: list[Image]) -> "torch.Tensor":
             """Encode images using CLIP."""
-            pil_images = [PILImage.fromarray(_get_image_data(img)) for img in images]
-            preprocessed = torch.stack([self.preprocess(img) for img in pil_images]).to(self.device)
-
-            with torch.no_grad():
-                embeddings = self.model.encode_image(preprocessed)
-                embeddings = embeddings / embeddings.norm(dim=-1, keepdim=True)
-
-            return embeddings  # type: ignore
+            embeddings = self._model.embed(*images)
+            if not isinstance(embeddings, list):
+                embeddings = [embeddings]
+            vectors = [e.to_torch(self._model.device) for e in embeddings]
+            return torch.stack(vectors)
 
         def select_diverse_frames(self, frames: list[Any], max_frames: int = 3) -> list[Any]:
             """Select diverse frames using greedy farthest-point sampling in CLIP space."""
@@ -93,10 +93,9 @@ if CLIP_AVAILABLE:
 
         def close(self) -> None:
             """Clean up CLIP model."""
-            if hasattr(self, "model"):
-                del self.model
-            if hasattr(self, "preprocess"):
-                del self.preprocess
+            if hasattr(self, "_model"):
+                self._model.stop()
+                del self._model
 
 
 def select_diverse_frames_simple(frames: list[Any], max_frames: int = 3) -> list[Any]:
