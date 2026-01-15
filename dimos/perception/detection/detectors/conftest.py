@@ -17,6 +17,7 @@ import pytest
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
+from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
 from dimos.utils.data import get_data
 
 
@@ -36,3 +37,9 @@ def person_detector():
 def bbox_detector():
     """Create a Yolo2DDetector instance for general object detection."""
     return Yolo2DDetector()
+
+
+@pytest.fixture(scope="session")
+def yoloe_detector():
+    """Create a Yoloe2DDetector instance for general object detection."""
+    return Yoloe2DDetector(prompt_mode=YoloePromptMode.LRPC)

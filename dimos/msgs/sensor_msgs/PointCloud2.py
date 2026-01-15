@@ -354,6 +354,8 @@ class PointCloud2(Timestamped):
 
     def voxel_downsample(self, voxel_size: float = 0.025) -> PointCloud2:
         """Downsample the pointcloud with a voxel grid."""
+        if voxel_size <= 0:
+            return self
         if len(self.pointcloud.points) < 20:
             return self
         downsampled = self._pcd_tensor.voxel_down_sample(voxel_size)

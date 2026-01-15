@@ -132,6 +132,12 @@ lcm.stop()
 Received velocity: x=1.0, y=0.0, z=0.5
 ```
 
+### Inspecting LCM traffic (CLI)
+
+- `dimos lcmspy` shows topic frequency/bandwidth stats.
+- `dimos topic echo /topic` listens on typed channels like `/topic#pkg.Msg` and decodes automatically.
+- `dimos topic echo /topic TypeName` is the explicit legacy form.
+
 ## Encoder Mixins
 
 Transports can use encoder mixins to serialize messages. The `PubSubEncoderMixin` pattern wraps publish/subscribe to encode/decode automatically:

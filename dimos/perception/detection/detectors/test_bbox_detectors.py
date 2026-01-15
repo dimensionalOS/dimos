@@ -17,7 +17,7 @@ import pytest
 from dimos.perception.detection.type import Detection2D, ImageDetections2D
 
 
-@pytest.fixture(params=["bbox_detector", "person_detector"], scope="session")
+@pytest.fixture(params=["bbox_detector", "person_detector", "yoloe_detector"], scope="session")
 def detector(request):
     """Parametrized fixture that provides both bbox and person detectors."""
     return request.getfixturevalue(request.param)

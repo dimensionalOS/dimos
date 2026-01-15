@@ -14,11 +14,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import functools
 from typing import Any
 
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
+from dimos_lcm.vision_msgs import ObjectHypothesis, ObjectHypothesisWithPose
+
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Transform, Vector3
+from dimos.msgs.std_msgs import Header
+from dimos.msgs.vision_msgs import Detection3D
 from dimos.perception.detection.type.detection2d import Detection2DBBox
 
 
@@ -29,11 +33,11 @@ class Detection3DBBox(Detection2DBBox):
     Represents a 3D detection as an oriented bounding box in world space.
     """
 
-    transform: Transform  # Camera to world transform
-    frame_id: str  # Frame ID (e.g., "world", "map")
     center: Vector3  # Center point in world frame
     size: Vector3  # Width, height, depth
-    orientation: tuple[float, float, float, float]  # Quaternion (x, y, z, w)
+    transform: Transform | None = None  # Camera to world transform
+    frame_id: str = ""  # Frame ID (e.g., "world", "map")
+    orientation: Quaternion = field(default_factory=lambda: Quaternion(0.0, 0.0, 0.0, 1.0))
 
     @functools.cached_property
     def pose(self) -> PoseStamped:
@@ -48,8 +52,34 @@ class Detection3DBBox(Detection2DBBox):
             orientation=self.orientation,
         )
 
+    def to_detection3d_msg(self) -> Detection3D:
+        """Convert to ROS Detection3D message."""
+        msg = Detection3D()
+        msg.header = Header(self.ts, self.frame_id)
+
+        # Results
+        msg.results = [
+            ObjectHypothesisWithPose(
+                hypothesis=ObjectHypothesis(
+                    class_id=str(self.class_id),
+                    score=self.confidence,
+                )
+            )
+        ]
+
+        # Bounding Box
+        msg.bbox.center = Pose(
+            position=self.center,
+            orientation=self.orientation,
+        )
+        msg.bbox.size = self.size
+
+        return msg
+
     def to_repr_dict(self) -> dict[str, Any]:
         # Calculate distance from camera
+        if self.transform is None:
+            return super().to_repr_dict()
         camera_pos = self.transform.translation
         distance = (self.center - camera_pos).magnitude()
 
