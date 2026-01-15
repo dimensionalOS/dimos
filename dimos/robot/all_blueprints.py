@@ -86,7 +86,6 @@ all_modules = {
     "web_input": "dimos.agents.cli.web",
     # Control orchestrator module
     "control_orchestrator": "dimos.control.orchestrator",
-    
 }
 
 
