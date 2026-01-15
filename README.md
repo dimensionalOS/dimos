@@ -167,7 +167,21 @@ if __name__ == "__main__":
     ).build().loop()
 ```
 
-### Note: Many More Examples in the [Examples Folder](./examples)
+#### Note: Many More Examples in the [Examples Folder](./examples)
+
+
+
+### How does that example work?
+
+- Every module represents one process: all modules run in parallel (python multiprocessing). Because of this **modules should only save/modify data on themselves** Don't mutate or share global vars inside a module. 
+- At the top of this module definition, the In/Out **streams** are defining a pub-sub system. This module expects someone somewhere to give it a color image. The module is going to publish a grayscale image.
+- The `autoconnect` ties everything together:
+  - The CameraModule has an output of `color_image`
+  - The Listener has an input of `color_image`
+  - Autoconnect puts them together, and checks that their types are compatible (both are of type `Image`)
+- What about `@rpc`?
+   - If you want a method to be called by another module (not just an internal method) then add the `@rpc` decorator AND make sure BOTH the arguments and return value of the method are json-serializable.
+   - The start/stop methods always need to be an rpc because they are called externally.
 
 
 # How does DimOS work conceptually?
@@ -175,10 +189,10 @@ if __name__ == "__main__":
 There are several tools:
 - [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are defined in python as classes.
 - [Streams](/docs/api/sensor_streams/index.md): How modules communicate, a Pub / Sub system.
-- [Blueprints](/dimos/core/README_BLUEPRINTS.md): a way to group modules together and define their connections to each other
-- [RPC](/dimos/core/README_BLUEPRINTS.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data)
+- [Blueprints](/dimos/core/README_BLUEPRINTS.md): a way to group modules together and define their connections to each other.
+- [RPC](/dimos/core/README_BLUEPRINTS.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
 - [Skills](/dimos/core/README_BLUEPRINTS.md#defining-skills): Pretty much an RPC, call but it can be called by an AI agent (they're tools for an AI).
-- Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools
+- Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools.
 
 ## Contributing / Building From Source
 
