@@ -1,6 +1,7 @@
 <div align="center">
-    <img width="900" height="205" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/e7220790-eed9-44c2-8fab-d61a4c034828" /> </a>
+   <img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/15283d94-ad95-42c9-abd5-6565a222a837" /> </a>
     <h4 align="center">The Open-Source Framework for Robotic Intelligence</h4>
+
 
 <br>
 
@@ -8,6 +9,11 @@
 [![Stars](https://img.shields.io/github/stars/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/stargazers)
 [![Forks](https://img.shields.io/github/forks/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/fork)
 [![Contributors](https://img.shields.io/github/contributors/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/graphs/contributors)
+<br>
+![Nix](https://img.shields.io/badge/Nix-flakes-5277C3?style=flat-square&logo=NixOS&logoColor=white)
+![NixOS](https://img.shields.io/badge/NixOS-supported-5277C3?style=flat-square&logo=NixOS&logoColor=white)
+![CUDA](https://img.shields.io/badge/CUDA-12.x-76B900?style=flat-square&logo=nvidia&logoColor=white)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 
 <p align="center">
   <a href="#how-does-dimos-work-conceptually">Key Features</a> •
@@ -19,10 +25,11 @@
 
 </div>
 
-# What is Dimensional?
 > \[!NOTE]
 >
 > **Active Beta: Expect Breaking Changes**
+
+# What is Dimensional?
 
 DimOS is both a specification based (any programming language) framework and a python-first library for controlling robots. DimOS works with (and without) [ROS](https://www.ros.org/), with design that enables AI agents to call tools/functions (skills), read sensor/state data directly, and generate complex emergent behaviors. 
 
