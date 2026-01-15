@@ -156,11 +156,11 @@ if __name__ == "__main__":
 # How does DimOS work conceptually?
 
 There are several tools:
-- [Modules](): The building blocks of DimOS, modules run in parallel and are defined in python as classes. Note: it is possible to use C++, Rust, Typescript, etc to write a module.
-- Streams: How modules communicate, a Pub / Sub system.
-- Blueprints: a way to group modules together and define their connections to each other
-- RPC: how one module can call a method on another module (arguments get serialized to JSON-like binary data)
-- Skills: Pretty much an RPC, call but it can be called by an AI agent (they're tools for an AI).
+- [Modules](docs/api/modules.md): The building blocks of DimOS, modules run in parallel and are defined in python as classes.
+- [Streams](docs/api/sensor_streams/index.md): How modules communicate, a Pub / Sub system.
+- [Blueprints](docs/concepts/blueprints.md): a way to group modules together and define their connections to each other
+- [RPC](docs/concepts/rpc.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data)
+- [Skills](docs/concepts/skills.md#defining-skills): Pretty much an RPC, call but it can be called by an AI agent (they're tools for an AI).
 - Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools
 
 # Contributing / Building From Source
