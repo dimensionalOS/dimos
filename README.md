@@ -178,6 +178,12 @@ if __name__ == "__main__":
   - The CameraModule has an output of `color_image`
   - The Listener has an input of `color_image`
   - Autoconnect puts them together, and checks that their types are compatible (both are of type `Image`)
+- How can we see what In/Out streams are provided by a module?
+  - Open a python repl (e.g. `python`)
+  - Import the module, ex: `from dimos.hardware.sensors.camera.module import CameraModule`
+  - Print the module outputs: `print(CameraModule.module_info().outputs)`
+  - Print the module inputs: `print(CameraModule.module_info().inputs)`
+  - Print all the information (rpcs, skills, etc): `print(CameraModule.module_info())`
 - What about `@rpc`?
    - If you want a method to be called by another module (not just an internal method) then add the `@rpc` decorator AND make sure BOTH the arguments and return value of the method are json-serializable.
    - The start/stop methods always need to be an rpc because they are called externally.
