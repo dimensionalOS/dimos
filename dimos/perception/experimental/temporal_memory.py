@@ -77,7 +77,7 @@ class TemporalMemoryConfig(ModuleConfig):
     frame_buffer_size: int = 50
 
     # Output
-    output_dir: str | Path | None = None
+    output_dir: str | Path | None = "assets/temporal_memory"
 
     # VLM parameters
     max_tokens: int = 900
