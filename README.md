@@ -64,8 +64,6 @@ export ROBOT_IP=PUT_YOUR_IP_ADDR_HERE
 dimos run unitree-go2
 ```
 
-<!-- TOOD: get it working with keyboard controls -->
-
 #### Get it working in an interactive simulation!
 
 ```bash
@@ -74,9 +72,6 @@ export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
 dimos --simulation run unitree-go2
 # open http://localhost:7779/command-center in your browser to control the robot movement
 ```
-<!-- FIXME switch to pygame -->
-<!-- TODO: figure out why there is a Max retreis exceeded with url: /offer -->
-
 
 #### Have it controlled by AI!
 
@@ -89,17 +84,6 @@ dimos run unitree-go2-agentic
 # ex: tell it to explore the room, then tell it to go to where it can see a door
 humancli
 ```
-<!-- TODO pre-launch: figure out libav.h264:no frame! -->
-<!-- TODO pre-launch: figure out libav.h264:non-existing PPS 0 referenced -->
-
-<!-- TODO: figure out (warning) ERROR:root:An error occurred: HTTPConnectionPool(host='10.0.0.152', port=8081): Max retries exceeded with url: /offer (Caused by NewConnectionError("HTTPConnection(host='10.0.0.152', port=8081): Failed to establish a new connection: [Errno 111] Connection refused"))
-ERROR:root:An error occurred with the old method: Failed to receive SDP Answer: No response
--->
-
-<!-- TODO: cuda install -->
-<!-- TODO: issac sim -->
-<!-- LATER: ROS -->
-
 
 # How do I use it as a library?
 
@@ -172,7 +156,7 @@ if __name__ == "__main__":
 # How does DimOS work conceptually?
 
 There are several tools:
-- Modules: parallel processing, several modules run. Modules are usually python classes but its possible to use C++, Rust, Typescript, etc to write a module.
+- [Modules](): The building blocks of DimOS, modules run in parallel and are defined in python as classes. Note: it is possible to use C++, Rust, Typescript, etc to write a module.
 - Streams: How modules communicate, a Pub / Sub system.
 - Blueprints: a way to group modules together and define their connections to each other
 - RPC: how one module can call a method on another module (arguments get serialized to JSON-like binary data)
