@@ -68,7 +68,7 @@ class MoondreamVlModel(HuggingFaceModel, VlModel):
 
         return str(result)
 
-    def query_batch(self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs) -> list[str]:  # type: ignore[no-untyped-def,override]
+    def query_batch(self, images: list[Image], query: str, **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
         """Query multiple images with the same question.
 
         Note: moondream2's batch_answer is not truly batched - it processes
