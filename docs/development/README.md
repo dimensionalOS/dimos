@@ -1,7 +1,7 @@
 # Development Environment Guide
 
-1. Pick your setup (system install, dev container, docker, nix)
-2. How to test/hack dimos (overview and our practices)
+1. How to setup your system (pick one: system install, nix flake + direnv, pure nix flake)
+2. How to hack on DimOS
 3. How to make a PR
 
 # 1. Setup
@@ -213,7 +213,7 @@ uv run pytest dimos
 <br>
 <br>
 
-# 2. How to Test and Modify DimOS
+# 2. How to Hack on DimOS
 
 ## Debugging
 
@@ -228,6 +228,7 @@ This will save the rerun data to `rerun.json` in the current directory.
 ## Where is `<thing>` located? (Architecture)
 
 * If you want to add a `dimos run <your_thing>` command see [dimos_run.md](/docs/development/dimos_run.md)
+* If you want to add a camera driver see [depth_camera_integration.md](/docs/development/depth_camera_integration.md)
 * For edits to manipulation see [manipulation.md](/docs/development/manipulation.md) and [manipulation base](/dimos/hardware/manipulators/base/component_based_architecture.md)
 * `dimos/core/`: Is where stuff like `Module`, `In`, `Out`, and `RPC` live.
 * `dimos/robot/`: Robot-specific modules live here.

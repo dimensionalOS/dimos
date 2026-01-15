@@ -32,8 +32,7 @@ from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
 from starlette.responses import FileResponse, RedirectResponse, Response
-from starlette.routing import Mount, Route
-from starlette.staticfiles import StaticFiles
+from starlette.routing import Route
 import uvicorn
 
 from dimos.utils.data import get_data
