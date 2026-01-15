@@ -14,16 +14,10 @@
 # limitations under the License.
 
 """
-Base Teleoperation Module
+Base Teleoperation Module.
 
-Abstract base class for all teleoperation devices that provides:
-- Multi-controller calibration
-- Delta pose computation (current - initial)
-- LCM topic publishing (delta poses + trigger states)
-- Rerun visualization
-- Standard RPC interface
-
-Device-specific modules inherit from this and implement their connection logic.
+Provides calibration, delta computation, and command publishing.
+Subclasses implement device-specific input handling.
 """
 
 from __future__ import annotations
@@ -31,19 +25,21 @@ from __future__ import annotations
 from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
-import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.core import Module, Out, rpc
-from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Twist
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.teleop_transforms import compute_active_indices, parse_pose_from_dict
+from dimos.utils.teleop_visualization import (
+    init_rerun_visualization,
+    visualize_controller_pose,
+    visualize_trigger_value,
+)
 from dimos.utils.transform_utils import matrix_to_pose
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     import numpy as np
     from numpy.typing import NDArray
 
@@ -51,41 +47,31 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-try:
-    import rerun as rr
-
-    from dimos.dashboard.rerun_init import connect_rerun
-
-    RERUN_AVAILABLE = True
-except ImportError:
-    RERUN_AVAILABLE = False
-
 
 @dataclass
 class BaseTeleopConfig(ModuleConfig):
-    """Base configuration for teleoperation modules."""
+    """Base configuration for teleoperation modules.
 
-    # Control settings
-    num_inputs: int = 1  # Number of inputs (controllers)
-    enable_inputs: list[bool] = field(default_factory=list)
-    input_labels: list[str] = field(default_factory=list)
+    output_types determines active indices: PoseStamped→0,1, Twist→2,3
+    """
 
-    # Visualization settings
-    visualize_in_rerun: bool = True  # Visualize controller poses in Rerun
-    log_input_data: bool = False  # Log input pose/gripper data periodically
-    log_input_data_interval: int = 100  # Log every N publishes when enabled
+    output_types: list[type] = field(default_factory=lambda: [PoseStamped, PoseStamped])
+    input_labels: list[str] = field(default_factory=lambda: ["left", "right"])
+    robot_pose_rpc_methods: list[str | None] = field(default_factory=list)
 
-    # Safety limits
-    safety_limits: bool = True
-    position_scale: float = 1.0  # Scale factor for positions TODO: Implement proportional scaling
-    max_velocity: float = 0.5  # m/s
+    visualize_in_rerun: bool = True
+
+    linear_scale: float = 1.0
+    angular_scale: float = 1.0
+    max_linear_velocity: float = 0.5
+    max_angular_velocity: float = 1.0
+    gripper_threshold: float = 0.5
 
 
 class TeleopStatusKey(str, Enum):
     """Status dictionary keys (controller_* entries are indexed by controller number)."""
 
     IS_CALIBRATED = "is_calibrated"
-    CONTROLLER_ENABLED = "controller_{index}_enabled"
     CONTROLLER_HAS_DATA = "controller_{index}_has_data"
     CONTROLLER_TRIGGER_VALUE = "controller_{index}_trigger_value"
     CONTROLLER_LABEL = "controller_{index}_label"
@@ -94,248 +80,200 @@ class TeleopStatusKey(str, Enum):
 class BaseTeleopModule(Module, ABC):
     """Base class for teleoperation modules.
 
-    ## LCM Topics (Output):
-    - controller_delta_{i}: Out[PoseStamped] - Controller i delta pose
-    - trigger_value_{i}: Out[Float32] - Controller i trigger/gripper value (0.0-1.0)
-
-    ## RPC Methods:
-    - calibrate() -> dict: Calibrate by capturing initial poses
-    - reset_calibration() -> dict: Reset calibration
-    - is_calibrated() -> bool: Check if calibrated
-    - get_status() -> dict: Get teleoperation status
+    Handles calibration, delta computation, and command publishing.
+    Subclasses implement device-specific input handling.
     """
 
     default_config = BaseTeleopConfig
     config: BaseTeleopConfig
 
-    # LCM Output topics
+    # Output topics: PoseStamped for arms (0,1), Twist for locomotion (2,3)
     controller_delta_0: Out[PoseStamped] = None  # type: ignore
     trigger_value_0: Out[Bool] = None  # type: ignore
-
     controller_delta_1: Out[PoseStamped] = None  # type: ignore
     trigger_value_1: Out[Bool] = None  # type: ignore
-
     controller_delta_2: Out[Twist] = None  # type: ignore
     trigger_value_2: Out[Bool] = None  # type: ignore
-
     controller_delta_3: Out[Twist] = None  # type: ignore
     trigger_value_3: Out[Bool] = None  # type: ignore
 
-    def __init__(
-        self, global_config: GlobalConfig | None = None, *args: Any, **kwargs: Any
-    ) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
-        # Get global config for Rerun connection
-        self._global_config = global_config or GlobalConfig()
-
-        # Calibration state
         self._is_calibrated = False
-        self._initial_poses: list[Pose | None] = [None] * self.config.num_inputs
-
-        # Latest controller data (absolute poses)
-        self._all_poses: list[NDArray[np.float32] | None] = [None] * self.config.num_inputs
-        self._all_trigger_values: list[float] = [0.0] * self.config.num_inputs
         self._tracking_msg_count = 0
         self._publish_count = 0
 
-        # Set default values for enable_inputs and input_labels if not provided
-        if not self.config.enable_inputs:
-            self.config.enable_inputs = [True] * self.config.num_inputs
-        if not self.config.input_labels:
-            self.config.input_labels = [f"controller_{i}" for i in range(self.config.num_inputs)]
-
-        # check for mismatches between num_inputs and enable_inputs or input_labels
-        if len(self.config.enable_inputs) != self.config.num_inputs:
+        if len(self.config.input_labels) != len(self.config.output_types):
             raise ValueError(
-                f"Number of enable_inputs ({len(self.config.enable_inputs)}) does not match num_inputs ({self.config.num_inputs})"
-            )
-        if len(self.config.input_labels) != self.config.num_inputs:
-            raise ValueError(
-                f"Number of input_labels ({len(self.config.input_labels)}) does not match num_inputs ({self.config.num_inputs})"
+                f"input_labels length ({len(self.config.input_labels)}) must match "
+                f"output_types length ({len(self.config.output_types)})"
             )
 
-        logger.info(f"{self.__class__.__name__} base initialized")
+        self._active_indices = compute_active_indices(self.config.output_types)
+        self._output_types = {
+            idx: self.config.output_types[i] for i, idx in enumerate(self._active_indices)
+        }
 
-    # =========================================================================
-    # Module Lifecycle
-    # =========================================================================
+        self._initial_poses: dict[int, Pose | None] = {i: None for i in self._active_indices}
+        self._initial_robot_poses: dict[int, Pose | None] = {i: None for i in self._active_indices}
+        self._all_poses: dict[int, NDArray[np.float32] | None] = {
+            i: None for i in self._active_indices
+        }
+        self._all_trigger_values: dict[int, float] = {i: 0.0 for i in self._active_indices}
+
+        logger.info(
+            f"{self.__class__.__name__} initialized: indices={self._active_indices}, "
+            f"types={[t.__name__ for t in self.config.output_types]}"
+        )
+
+    def _get_label(self, index: int) -> str:
+        """Get label for an active index."""
+        try:
+            i = self._active_indices.index(index)
+            return self.config.input_labels[i]
+        except (ValueError, IndexError):
+            return f"controller_{index}"
 
     @rpc
     def start(self) -> None:
-        """Start the teleoperation module."""
-        logger.info(f"Starting {self.__class__.__name__}...")
         super().start()
-
-        # Connect to Rerun for visualization if enabled
-        if (
-            self.config.visualize_in_rerun
-            and RERUN_AVAILABLE
-            and self._global_config.viewer_backend.startswith("rerun")
-        ):
-            connect_rerun(global_config=self._global_config)
-            logger.info("Connected to Rerun for controller visualization")
+        logger.info(f"Starting {self.__class__.__name__}...")
+        if self.config.visualize_in_rerun:
+            init_rerun_visualization()
 
     @rpc
     def stop(self) -> None:
-        """Stop the teleoperation module."""
         logger.info(f"Stopping {self.__class__.__name__}...")
         super().stop()
 
-    # =========================================================================
-    # Calibration
-    # =========================================================================
-
     @rpc
     def calibrate(self) -> dict[str, Any]:
-        """Calibrate by capturing initial controller poses.
-
-        This is typically called when a calibration button is pressed.
-        Captures the current controller poses as the "zero" reference.
-        After calibration, delta poses are published.
-
-        Returns:
-            Dict with 'success' and optional 'message' or 'error'
-        """
+        """Capture current controller poses as the zero reference."""
         logger.info("Calibrating controllers...")
 
         try:
-            # Check if we have controller data for enabled inputs
-            enabled_indices = [i for i, enabled in enumerate(self.config.enable_inputs) if enabled]
-            if not enabled_indices:
-                return {
-                    "success": False,
-                    "error": "No controllers are enabled. Enable at least one controller and try again.",
-                }
+            if not self._active_indices:
+                return {"success": False, "error": "No controllers are enabled"}
 
-            # Capture controller initial poses
-            for i in enabled_indices:
-                pose_matrix = self._all_poses[i]
+            for i, idx in enumerate(self._active_indices):
+                pose_matrix = self._all_poses.get(idx)
                 if pose_matrix is not None:
                     pose_obj = matrix_to_pose(pose_matrix)
-                    self._initial_poses[i] = pose_obj
-                    logger.info(
-                        f"Captured controller initial: "
-                        f"pos=[{pose_obj.x:.3f}, {pose_obj.y:.3f}, {pose_obj.z:.3f}], "
-                        f"rpy=[{pose_obj.roll:.3f}, {pose_obj.pitch:.3f}, {pose_obj.yaw:.3f}]"
-                    )
+                    self._initial_poses[idx] = pose_obj
+                    logger.info(f"Captured controller {self._get_label(idx)} initial: {pose_obj}")
                 else:
-                    logger.error(
-                        f"Controller {self.config.input_labels[i]} data is None during calibration"
-                    )
                     return {
                         "success": False,
-                        "error": f"Controller {self.config.input_labels[i]} data is None. Move controller and try again.",
+                        "error": f"Controller {self._get_label(idx)} data is None",
                     }
 
-            self._is_calibrated = True
+                # Get initial robot pose via RPC if configured
+                output_type = self._output_types.get(idx)
+                if i < len(self.config.robot_pose_rpc_methods):
+                    rpc_method = self.config.robot_pose_rpc_methods[i]
+                    if rpc_method is not None:
+                        self._initial_robot_poses[idx] = self._get_robot_initial_pose(
+                            output_type, rpc_method
+                        )
+                    else:
+                        self._initial_robot_poses[idx] = parse_pose_from_dict(output_type)
+                else:
+                    self._initial_robot_poses[idx] = parse_pose_from_dict(output_type)
 
+            self._is_calibrated = True
             logger.info("Calibration complete. Now streaming delta poses...")
-            return {"success": True, "message": "Calibrated - move controllers to control robot"}
+            return {"success": True, "message": "Calibrated"}
 
         except Exception as e:
             logger.error(f"Calibration failed: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
+    def _get_robot_initial_pose(self, output_type: type, rpc_method: str) -> Pose | None:
+        """Get initial robot pose via RPC call."""
+        try:
+            rpc_call = self.get_rpc_calls(rpc_method)
+            rpc_result = rpc_call()
+            pose = parse_pose_from_dict(output_type, rpc_result)
+            logger.info(f"Got robot initial pose via {rpc_method}: {pose}")
+            return pose
+        except Exception as e:
+            logger.warning(f"RPC call {rpc_method} failed: {e}, using zero pose")
+            return parse_pose_from_dict(output_type)
+
     @rpc
     def reset_calibration(self) -> dict[str, Any]:
-        """Reset calibration. Stops streaming until recalibrated"""
+        """Reset calibration. Stops streaming until recalibrated."""
         self._is_calibrated = False
-        self._initial_poses = [None] * self.config.num_inputs
-
-        logger.info("Calibration reset. Recalibrate to resume teleoperation...")
-        return {"success": True, "message": "Calibration reset - recalibrate to resume"}
+        self._initial_poses = {i: None for i in self._active_indices}
+        self._initial_robot_poses = {i: None for i in self._active_indices}
+        logger.info("Calibration reset.")
+        return {"success": True, "message": "Calibration reset"}
 
     @rpc
     def is_calibrated(self) -> bool:
-        """Check if calibrated"""
         return self._is_calibrated
 
     @rpc
     def get_status(self) -> dict[str, Any]:
-        """Get current teleoperation status"""
+        """Get current teleoperation status."""
         status: dict[str, Any] = {
             TeleopStatusKey.IS_CALIBRATED.value: self._is_calibrated,
+            "active_indices": self._active_indices,
         }
-        for i in range(self.config.num_inputs):
-            status[TeleopStatusKey.CONTROLLER_ENABLED.value.format(index=i)] = (
-                self.config.enable_inputs[i]
-            )
+        for i in self._active_indices:
             status[TeleopStatusKey.CONTROLLER_HAS_DATA.value.format(index=i)] = (
-                self._all_poses[i] is not None
+                self._all_poses.get(i) is not None
             )
             status[TeleopStatusKey.CONTROLLER_TRIGGER_VALUE.value.format(index=i)] = (
-                self._all_trigger_values[i]
+                self._all_trigger_values.get(i, 0.0)
             )
-            status[TeleopStatusKey.CONTROLLER_LABEL.value.format(index=i)] = (
-                self.config.input_labels[i]
-            )
-
+            status[TeleopStatusKey.CONTROLLER_LABEL.value.format(index=i)] = self._get_label(i)
         return status
-
-    # =========================================================================
-    # Controller Data Processing (called by subclasses)
-    # =========================================================================
 
     def compute_deltas(
         self,
-        controller_poses: Sequence[NDArray[np.float32] | None],
-        controller_trigger_values: Sequence[float],
-    ) -> list[Pose | None]:
-        """Compute delta poses from controller input.
-
-        Args:
-            controller_poses: List of 4x4 transform matrices for each controller.
-            controller_trigger_values: List of trigger values (0.0-1.0).
-
-        Returns:
-            List of delta poses (current - initial) for each input, or None if not available.
-        """
+        controller_poses: dict[int, NDArray[np.float32] | None],
+        controller_trigger_values: dict[int, float],
+    ) -> dict[int, Pose | None]:
+        """Compute delta = current_pose - initial_pose for each controller."""
         self._tracking_msg_count += 1
-        self._all_poses = list(controller_poses)
-        self._all_trigger_values = list(controller_trigger_values)
+        self._all_poses = controller_poses
+        self._all_trigger_values = controller_trigger_values
 
         if not self._is_calibrated:
             if self._tracking_msg_count <= 1 or self._tracking_msg_count % 100 == 0:
                 logger.warning("Not calibrated. Calibrate to start teleoperation.")
-            return [None] * self.config.num_inputs
+            return {i: None for i in self._active_indices}
 
         self._publish_count += 1
+        deltas: dict[int, Pose | None] = {}
 
-        # Compute deltas for each input
-        deltas: list[Pose | None] = []
-        for i in range(self.config.num_inputs):
-            if not self.config.enable_inputs[i]:
-                deltas.append(None)
-                continue
-
-            pose_matrix = self._all_poses[i]
+        for i in self._active_indices:
+            pose_matrix = self._all_poses.get(i)
             if pose_matrix is None:
-                deltas.append(None)
+                deltas[i] = None
                 continue
 
-            initial_pose = self._initial_poses[i]
+            initial_pose = self._initial_poses.get(i)
+            if initial_pose is None:
+                deltas[i] = None
+                continue
+
             pose_obj = matrix_to_pose(pose_matrix)
             delta_pose = pose_obj - initial_pose
 
-            # Visualize
-            self._visualize_controller_in_rerun(pose_obj, self.config.input_labels[i])
-            self._visualize_trigger_in_rerun(
-                self._all_trigger_values[i], self.config.input_labels[i]
-            )
+            if self.config.visualize_in_rerun:
+                label = self._get_label(i)
+                visualize_controller_pose(pose_obj, label)
+                visualize_trigger_value(self._all_trigger_values.get(i, 0.0), label)
 
-            deltas.append(delta_pose)
+            deltas[i] = delta_pose
 
         return deltas
 
     def publish_command(self, index: int, command: Any, aux_command: Any = None) -> None:
-        """Publish a command to the output topics for a given input index.
-
-        Args:
-            index: Input index (0, 1, 2, 3...).
-            command: The main command (PoseStamped, Twist, etc.) to publish.
-            aux_command: Optional auxiliary command (Bool for gripper, etc.).
-        """
+        """Publish command to controller_delta_{index} and trigger_value_{index}."""
         if command is not None:
             controller_output = getattr(self, f"controller_delta_{index}", None)
             if controller_output and hasattr(controller_output, "publish"):
@@ -351,52 +289,3 @@ class BaseTeleopModule(Module, ABC):
                     trigger_output.publish(aux_command)
                 except Exception as e:
                     logger.debug(f"Failed to publish aux command for index {index}: {e}")
-
-    # =========================================================================
-    # Rerun Visualization
-    # =========================================================================
-
-    def _visualize_controller_in_rerun(self, controller_pose: Pose, controller_label: str) -> None:
-        """Visualize controller absolute pose in Rerun"""
-        if not (
-            self.config.visualize_in_rerun
-            and RERUN_AVAILABLE
-            and self._global_config.viewer_backend.startswith("rerun")
-        ):
-            return
-
-        try:
-            controller_pose_stamped = PoseStamped(
-                ts=time.time(),
-                frame_id=f"world/teleop/{controller_label}_controller",
-                position=controller_pose.position,
-                orientation=controller_pose.orientation,
-            )
-            rr.log(
-                f"world/teleop/{controller_label}_controller",
-                controller_pose_stamped.to_rerun(),  # type: ignore[no-untyped-call]
-            )
-            # Log 3D axes to visualize controller orientation (X=red, Y=green, Z=blue)
-            rr.log(
-                f"world/teleop/{controller_label}_controller/axes",
-                rr.Axes3D(length=0.15),  # type: ignore[attr-defined]
-            )
-        except Exception as e:
-            logger.debug(f"Failed to log {controller_label} controller to Rerun: {e}")
-
-    def _visualize_trigger_in_rerun(self, trigger_value: float, controller_label: str) -> None:
-        """Visualize trigger value in Rerun as a scalar time series."""
-        if not (
-            self.config.visualize_in_rerun
-            and RERUN_AVAILABLE
-            and self._global_config.viewer_backend.startswith("rerun")
-        ):
-            return
-
-        try:
-            rr.log(
-                f"world/teleop/{controller_label}_controller/trigger",
-                rr.Scalars(trigger_value),  # type: ignore[attr-defined]
-            )
-        except Exception as e:
-            logger.debug(f"Failed to log {controller_label} trigger to Rerun: {e}")
