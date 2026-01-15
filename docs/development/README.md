@@ -1,4 +1,4 @@
-# Development Environment Guide
+# Development Guide
 
 1. [How to setup your system](#1-setup) (pick one: system install, nix flake + direnv, pure nix flake)
 2. [How to hack on DimOS](#2-how-to-hack-on-dimos)
