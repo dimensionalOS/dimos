@@ -90,8 +90,7 @@ all_modules = {
     "cartesian_motion_controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller",
     "joint_trajectory_controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller",
     # Teleop modules
-    "quest3_teleop_module": "dimos.teleop.quest3.quest3_teleop_module",
-    "teleop_robot_controller": "dimos.teleop.teleop_robot_controller",
+    "vr_teleop_module": "dimos.teleop.devices.vr_teleop_module",
 }
 
 
