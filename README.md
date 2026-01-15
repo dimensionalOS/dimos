@@ -189,23 +189,24 @@ if __name__ == "__main__":
    - Rpc methods get called using threads, meaning two rpc methods can be running at the same time. For this reason, python thread locking is often necessary for data that is being written/read during rpc calls.
    - The start/stop methods always need to be an rpc because they are called externally.
 
+### Monitoring & Debugging
+
+In addition to rerun logging, DimOS comes with a number of monitoring tools:
+- Run `lcmspy` to see how fast messages are being published on streams.
+- Run `skillspy` to see how skills are being called, how long they are running, which are active, etc.
+- Run `agentspy` to see the agent's status over time.
+- If you suspect there is a bug within DimOS itself, you can enable extreme logging by prefixing the dimos command with `DIMOS_LOG_LEVEL=DEBUG RERUN_SAVE=1 `. Ex: `DIMOS_LOG_LEVEL=DEBUG RERUN_SAVE=1 dimos --replay run unitree-go2`
 
 
-
-# How does DimOS work?
+# How does Dimensional work?
 
 Concepts:
 - [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are singleton python classes.
 - [Streams](/docs/api/sensor_streams/index.md): How modules communicate, a Pub / Sub system.
 - [Blueprints](/dimos/core/README_BLUEPRINTS.md): a way to group modules together and define their connections to each other.
 - [RPC](/dimos/core/README_BLUEPRINTS.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
-- [Skills](/dimos/core/README_BLUEPRINTS.md#defining-skills): Pretty much an RPC, call but it can be called by an AI agent (they're tools for an AI).
+- [Skills](/dimos/core/README_BLUEPRINTS.md#defining-skills): An RPC function, except it can be called by an AI agent (a tool for an AI).
 - Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools.
-
-There are also many monitoring tools:
-- Run `lcmspy` to see how fast messages are being published on streams
-- Run `skillspy` to see how skills are being called, how long they are running, which are active, etc
-- Run `agentspy` to see the agent's status over time
 
 ## Contributing / Building From Source
 
