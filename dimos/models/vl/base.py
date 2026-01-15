@@ -2,16 +2,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import json
 import logging
-from typing import Any
 import warnings
 
 from dimos.core.resource import Resource
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.type import (
-    Detection2DBBox,
-    Detection2DPoint,
-    ImageDetections2D,
-)
+from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 from dimos.utils.data import get_data
 from dimos.utils.decorators import retry
@@ -185,37 +180,28 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
             return image.resize_to_fit(max_w, max_h)
         return image, 1.0
 
-    # Note: No custom pickle methods needed. In practice, VlModel instances
-    # are only stored in SkillModules, which use empty-shell pickling
-    # (SkillModule.__getstate__ returns None). Therefore VlModel is never
-    # actually pickled and doesn't need to handle unpicklable _client attributes.
-
     @abstractmethod
     def query(self, image: Image, query: str, **kwargs) -> str: ...  # type: ignore[no-untyped-def]
 
-    def query_batch(
-        self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs: Any
-    ) -> list[str]:  # type: ignore[no-untyped-def]
+    def query_batch(self, images: list[Image], query: str, **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
         """Query multiple images with the same question.
 
         Default implementation calls query() for each image sequentially.
-        Subclasses may override for efficient batched inference.
+        Subclasses may override for more efficient batched inference.
 
         Args:
             images: List of input images
-            query: Question to ask about all images
-            response_format: Optional response format for structured output
-            **kwargs: Additional arguments
+            query: Question to ask about each image
 
         Returns:
             List of responses, one per image
         """
         warnings.warn(
-            f"{self.__class__.__name__}.query_batch() using sequential implementation. "
+            f"{self.__class__.__name__}.query_batch() is using default sequential implementation. "
             "Override for efficient batched inference.",
             stacklevel=2,
         )
-        return [self.query(image, query, response_format=response_format, **kwargs) for image in images]
+        return [self.query(image, query, **kwargs) for image in images]
 
     def query_multi(self, image: Image, queries: list[str], **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
         """Query a single image with multiple different questions.
@@ -343,11 +329,7 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
 
         for track_id, point_tuple in enumerate(point_tuples):
             # Scale coordinates back to original image size if resized
-            if (
-                scale != 1.0
-                and isinstance(point_tuple, (list, tuple))
-                and len(point_tuple) == 3
-            ):
+            if scale != 1.0 and isinstance(point_tuple, (list, tuple)) and len(point_tuple) == 3:
                 point_tuple = [
                     point_tuple[0],  # label
                     point_tuple[1] / scale,  # x

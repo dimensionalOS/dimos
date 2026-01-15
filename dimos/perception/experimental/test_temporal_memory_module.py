@@ -79,9 +79,7 @@ class VideoReplayModule(Module):
         logger.info("VideoReplayModule stopped")
 
 
-@pytest.mark.lcm
-@pytest.mark.gpu
-@pytest.mark.module
+@pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM replay + dataset not CI-safe.")
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
 class TestTemporalMemoryModule:
     @pytest.fixture(scope="function")
