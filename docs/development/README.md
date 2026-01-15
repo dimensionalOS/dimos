@@ -220,8 +220,8 @@ uv run pytest dimos
 
 ## Where is `<thing>` located? (Architecture)
 
-* If you want to add a `dimos run <your_thing>` command see [dimos_run.md](docs/development/dimos_run.md)
-* For edits to manipulation see [manipulation.md](docs/development/manipulation.md) and [manipulation base](dimos/hardware/manipulators/base/component_based_architecture.md)
+* If you want to add a `dimos run <your_thing>` command see [dimos_run.md](/docs/development/dimos_run.md)
+* For edits to manipulation see [manipulation.md](/docs/development/manipulation.md) and [manipulation base](dimos/hardware/manipulators/base/component_based_architecture.md)
 * `dimos/core/`: Is where stuff like `Module`, `In`, `Out`, and `RPC` live.
 * `dimos/robot/`: Robot-specific modules live here.
 * `dimos/msgs/`: If you're trying to find a type to send a type over a stream, look here.
