@@ -95,9 +95,9 @@ class OpenAIVlModel(VlModel):
             api_kwargs["response_format"] = response_format
 
         response = self._client.chat.completions.create(**api_kwargs)
-        content = response.choices[0].message.content or ""
+        response_text = response.choices[0].message.content or ""
         # Return one response per image (same response since API analyzes all images together)
-        return [content] * len(images)
+        return [response_text] * len(images)
 
     def stop(self) -> None:
         """Release the OpenAI client."""

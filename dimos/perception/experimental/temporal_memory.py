@@ -128,21 +128,26 @@ class TemporalMemory(SkillModule):
         self._frame_buffer: deque[Frame] = deque(maxlen=self.config.frame_buffer_size)
         self._recent_windows: deque[dict[str, Any]] = deque(maxlen=MAX_RECENT_WINDOWS)
         self._frame_count = 0
-        self._last_analysis_time = -float("inf")  # Allow first analysis immediately
+        # Start at -inf so first analysis passes stride_s check regardless of elapsed time
+        self._last_analysis_time = -float("inf")
         self._video_start_wall_time: float | None = None
 
-        # clip filter
+        # Track background distance estimation threads
+        self._distance_threads: list[threading.Thread] = []
+
+        # clip filter - use instance state to avoid mutating shared config
         self._clip_filter: CLIPFrameFilter | None = None
-        if self.config.use_clip_filtering and CLIP_AVAILABLE:
+        self._use_clip_filtering = self.config.use_clip_filtering
+        if self._use_clip_filtering and CLIP_AVAILABLE:
             try:
                 self._clip_filter = CLIPFrameFilter(model_name=self.config.clip_model)
                 logger.info("clip filtering enabled")
             except Exception as e:
                 logger.warning(f"clip init failed: {e}")
-                self.config.use_clip_filtering = False
-        elif self.config.use_clip_filtering:
+                self._use_clip_filtering = False
+        elif self._use_clip_filtering:
             logger.warning("clip not available")
-            self.config.use_clip_filtering = False
+            self._use_clip_filtering = False
 
         # output directory
         self._graph_db: EntityGraphDB | None
@@ -154,8 +159,18 @@ class TemporalMemory(SkillModule):
             self._entities_file = self._output_path / "entities.json"
             self._frames_index_file = self._output_path / "frames_index.jsonl"
 
-            # Initialize entity graph database
-            self._graph_db = EntityGraphDB(db_path=self._output_path / "entity_graph.db")
+            db_path = self._output_path / "entity_graph.db"
+            if not self.config.persistent_memory or self.config.clear_memory_on_start:
+                if db_path.exists():
+                    db_path.unlink()
+                    reason = (
+                        "non-persistent mode"
+                        if not self.config.persistent_memory
+                        else "clear_memory_on_start=True"
+                    )
+                    logger.info(f"Deleted existing database: {reason}")
+
+            self._graph_db = EntityGraphDB(db_path=db_path)
 
             logger.info(f"artifacts save to: {self._output_path}")
         else:
@@ -172,7 +187,6 @@ class TemporalMemory(SkillModule):
         if self._vlm is None:
             from dimos.models.vl.openai import OpenAIVlModel
 
-            # Load API key from environment
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
                 raise ValueError(
@@ -210,7 +224,6 @@ class TemporalMemory(SkillModule):
                 self._frame_buffer.append(frame)
                 self._frame_count += 1
 
-        # pipe through sharpness filter before buffering
         frame_subject: Subject[Image] = Subject()
         self._disposables.add(
             frame_subject.pipe(sharpness_barrier(self.config.fps)).subscribe(on_frame)
@@ -244,22 +257,30 @@ class TemporalMemory(SkillModule):
                 logger.error(f"save failed during stop: {e}", exc_info=True)
 
         self.save_frames_index()
-
-        # Set stopped flag and clear state
         with self._state_lock:
             self._stopped = True
 
-        # Save and close graph database
+        # Wait for background distance estimation threads to complete before closing DB
+        if self._distance_threads:
+            logger.info(f"Waiting for {len(self._distance_threads)} distance estimation threads...")
+            for thread in self._distance_threads:
+                thread.join(timeout=10.0)  # Wait max 10s per thread
+            self._distance_threads.clear()
+
         if self._graph_db:
+            db_path = self._graph_db.db_path
             self._graph_db.commit()  # save all pending transactions
             self._graph_db.close()
             self._graph_db = None
+
+            if not self.config.persistent_memory and db_path.exists():
+                db_path.unlink()
+                logger.info("Deleted non-persistent database")
 
         if self._clip_filter:
             self._clip_filter.close()
             self._clip_filter = None
 
-        # Clear buffers to release image references
         with self._state_lock:
             self._frame_buffer.clear()
             self._recent_windows.clear()
@@ -268,6 +289,7 @@ class TemporalMemory(SkillModule):
         super().stop()
 
         # Stop all stream transports to clean up LCM/shared memory threads
+        # Note: We use public stream.transport API and rely on transport.stop() to clean up
         for stream in list(self.inputs.values()) + list(self.outputs.values()):
             if stream.transport is not None and hasattr(stream.transport, "stop"):
                 try:
@@ -356,18 +378,21 @@ class TemporalMemory(SkillModule):
         parsed = tu.parse_window_response(response_text, w_start, w_end, len(window_frames))
         if "_error" in parsed:
             logger.error(f"parse error: {parsed['_error']}")
-        else:
-            logger.info(f"parsed. caption: {parsed.get('caption', '')[:100]}")
+        # else:
+        #     logger.info(f"parsed. caption: {parsed.get('caption', '')[:100]}")
 
         # Start distance estimation in background
         if self._graph_db and window_frames and self.config.enable_distance_estimation:
             mid_frame = window_frames[len(window_frames) // 2]
             if mid_frame.image:
-                threading.Thread(
+                thread = threading.Thread(
                     target=self._graph_db.estimate_and_save_distances,
                     args=(parsed, mid_frame.image, self.vlm, w_end, self.config.max_distance_pairs),
                     daemon=True,
-                ).start()
+                )
+                thread.start()
+                self._distance_threads = [t for t in self._distance_threads if t.is_alive()]
+                self._distance_threads.append(thread)
 
         # Update temporal state
         with self._state_lock:
@@ -488,19 +513,24 @@ class TemporalMemory(SkillModule):
         }
 
         # enhance context with graph database knowledge
-        if self._graph_db and currently_present:
+        if self._graph_db:
             # Extract time window from question using VLM
             time_window_s = tu.extract_time_window(question, self.vlm, latest_frame)
 
-            graph_context = tu.build_graph_context(
-                graph_db=self._graph_db,
-                entity_ids=list(currently_present),
-                time_window_s=time_window_s,
-                max_relations_per_entity=self.config.max_relations_per_entity,
-                nearby_distance_meters=self.config.nearby_distance_meters,
-                current_video_time_s=current_video_time_s,
-            )
-            context["graph_knowledge"] = graph_context
+            # Query graph for ALL entities in roster (not just currently present)
+            # This allows queries about entities that disappeared or were seen in the past
+            all_entity_ids = [e["id"] for e in entity_roster if isinstance(e, dict) and "id" in e]
+
+            if all_entity_ids:
+                graph_context = tu.build_graph_context(
+                    graph_db=self._graph_db,
+                    entity_ids=all_entity_ids,
+                    time_window_s=time_window_s,
+                    max_relations_per_entity=self.config.max_relations_per_entity,
+                    nearby_distance_meters=self.config.nearby_distance_meters,
+                    current_video_time_s=current_video_time_s,
+                )
+                context["graph_knowledge"] = graph_context
 
         # build query prompt using temporal utils
         prompt = tu.build_query_prompt(question=question, context=context)
@@ -552,7 +582,10 @@ class TemporalMemory(SkillModule):
 
     @rpc
     def get_graph_db_stats(self) -> dict[str, Any]:
-        """Get statistics and sample data from the graph database."""
+        """Get statistics and sample data from the graph database.
+
+        Returns empty structures when no database is available (no-error pattern).
+        """
         if not self._graph_db:
             return {"stats": {}, "entities": [], "recent_relations": []}
         return self._graph_db.get_summary()
@@ -619,7 +652,7 @@ class TemporalMemory(SkillModule):
                 with open(self._frames_index_file, "w", encoding="utf-8") as f:
                     for rec in frames_index:
                         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                logger.info(f"saved {len(frames_index)} frames")
+            logger.info(f"saved {len(frames_index)} frames")
             return True
         except Exception as e:
             logger.error(f"save frames failed: {e}", exc_info=True)

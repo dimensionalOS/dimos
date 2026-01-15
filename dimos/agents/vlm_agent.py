@@ -112,14 +112,16 @@ class VLMAgent(AgentSpec):
     @rpc
     def query(self, query: str) -> str:
         response = self._invoke(HumanMessage(query))
-        return response.content
+        content = response.content
+        return content if isinstance(content, str) else str(content)
 
     @rpc
     def query_image(
         self, image: Image, query: str, response_format: dict[str, Any] | None = None
     ) -> str:
         response = self._invoke_image(image, query, response_format=response_format)
-        return response.content
+        content = response.content
+        return content if isinstance(content, str) else str(content)
 
 
 vlm_agent = VLMAgent.blueprint
