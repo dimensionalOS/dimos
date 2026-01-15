@@ -217,6 +217,16 @@ uv run pytest dimos
 
 # 2. How to Test and Modify DimOS
 
+## Debugging
+
+Enable maximum logging: by adding `DIMOS_LOG_LEVEL=DEBUG RERUN_SAVE=1` as a prefix to the command. For example:
+
+```bash
+DIMOS_LOG_LEVEL=DEBUG RERUN_SAVE=1 dimos run unitree-go2
+```
+
+This will save the rerun data to `rerun.json` in the current directory.
+
 ## Where is `<thing>` located? (Architecture)
 
 * If you want to add a `dimos run <your_thing>` command see [dimos_run.md](/docs/development/dimos_run.md)
