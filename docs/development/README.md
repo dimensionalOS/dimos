@@ -73,7 +73,8 @@ uv add git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git
 uv add git+https://github.com/facebookresearch/detectron2.git
 ```
 
-## Setup Option B: Dev Containers (Recommended)
+<!-- Enable this option once the dockerfile (ghcr.io/dimensionalos/ros-python:dev) is public and debugged! -->
+<!-- ## Setup Option B: Dev Containers (Recommended)
 
 ### Why pick this setup? (pros/cons/when-to-use)
 
@@ -129,9 +130,9 @@ The script will:
 
 You’ll land in the workspace as **root** with all project tooling available.
 
-</details>
+</details> -->
 
-## Setup Option C: Nix Flake + direnv
+## Setup Option B: Nix Flake + direnv
 
 ### Why pick this setup? (pros/cons/when-to-use)
 
@@ -171,7 +172,7 @@ uv pip install -e '.[base,dev,manipulation,misc,unitree,drone]'
 uv run pytest dimos
 ```
 
-## Setup Option D: Nix Flake - Isolated/Reliable
+## Setup Option C: Nix Flake - Isolated/Reliable
 
 ### Why pick this setup? (pros/cons/when-to-use)
 
