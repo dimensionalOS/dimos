@@ -167,7 +167,7 @@ There are several tools:
 
 For development, we optimize for flexibility—whether you love Docker, Nix, or have nothing but **notepad.exe** and a dream, you’re good to go.
 
-If you want to make a proper PR or do containerized development (recommended), please read the full [docs/development.md](docs/development/main.md).
+If you want to make a proper PR or do containerized development (recommended), please read the full [docs/development.md](docs/development/README.md).
 
 ## Quickstart Development (For Hacking, not Proper Development)
 
