@@ -33,7 +33,7 @@ Dimensional is an open-source framework for adding customized general intelligen
 
 - Linux, tested on Ubuntu 22.04, 24.04
 - MacOS support is in beta, you're welcome to try it *but expect inconsistent/flakey behavior (rather than errors/crashing)*
-    - instead of the apt-get command below run: `xcode-select --install && brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python`
+    - instead of the apt-get command below run: `brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python`
 
 ```sh
 sudo apt-get update
@@ -179,53 +179,45 @@ There are several tools:
 - Skills: Pretty much an RPC, call but it can be called by an AI agent (they're tools for an AI).
 - Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools
 
-# How do I Contribute / Hack on DimOS?
+# Contributing / Building From Source
 
-## Typical Installation
+For development, we optimize for flexibility—whether you love Docker, Nix, or have nothing but **notepad.exe** and a dream, you’re good to go.
 
-Very similar to a normal installation, here are the steps to get the repo and get it running for development.
+If you want to make a proper PR or do containerized development (recommended), please read the full [docs/development.md](https://github.com/dimensionalOS/dimos/tree/main/docs/development.md).
+
+## Quickstart Development (For Hacking, not Proper Development)
 
 ```bash
+
+# On Ubuntu 22.04 or 24.04
+if [ "$OSTYPE" = "linux-gnu" ]; then
+    sudo apt-get update
+    sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev
+# On macOS (12.6 or newer)
+elif [ "$(uname)" = "Darwin" ]; then
+    # install homebrew
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # install dependencies
+    brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python
+fi
+
+# this allows getting large files on-demand
+export GIT_LFS_SKIP_SMUDGE=1
 git clone -b main --single-branch git@github.com:dimensionalOS/dimos.git
 cd dimos
-sudo apt-get update
-sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev
+
 # install uv for python
 curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+
 # create & activate a virtualenv (needed for dimos)
 uv venv && . .venv/bin/activate
-# install dimos
-uv pip install -e '.[base,dev,misc,unitree,drone]'
+
+# install everything
+uv pip install -e '.[base,dev,manipulation,misc,unitree,drone]'
+
 # test the install (takes about 3 minutes)
 uv run pytest dimos
 ```
-
-<!-- ## Optional: Containerized Installation
-
-DimOS supports Dev Containers (Docker based) and Nix development environments (with optional `direnv` and dev container integration) for keeping the dev environment isolated and/or reproducible.
-
-### Nix
-
-```sh
-git clone -b main --single-branch git@github.com:dimensionalOS/dimos.git
-cd dimos
-# Install Nix
-curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
-# make sure flakes are enabled
-mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
-
-# enter the nix shell
-# alternatively setup direnv with the default nix shell so that it loads it automatically into your current shell
-nix develop '.#isolated'
-
-# once inside the nix develop shell:
-# create & activate a virtualenv (needed for dimos)
-uv venv && . .venv/bin/activate
-# install dimos python package
-uv pip install -e '.[base,dev,misc,unitree,drone]'
-# test the install (takes about 3 minutes)
-uv run pytest dimos
-``` -->
 
 Note, a few dependencies do not have PyPI packages and need to be installed from their Git repositories. These are only required for specific features:
 

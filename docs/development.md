@@ -1,29 +1,102 @@
 # Development Environment Guide
 
-## Approach
+1. Pick your setup (system install, dev container, docker, nix)
+2. Best How to test/hack dimos (overview and our practices)
+3. How to make a PR
 
-We optimise for flexibility—if your favourite editor is **notepad.exe**, you’re good to go. Everything below is tooling for convenience.
+<!-- TODO: add links to the headers ^ here -->
+
+# 1. Setup
+
+All the tools below are optional and for your convenience. If you can get the code running on temple OS with a package manager you wrote yourself, all the power to you.
 
 ---
 
-## Dev Containers
+## Setup Option A: System Install
 
-Dev containers give us a reproducible, container-based workspace identical to CI.
+### Why pick this setup? (pros/cons/when-to-use)
 
-### Why use them?
+* Downside: not reliable, mutates your global system, causing (and receiving) side effects
+* Upside: Often good for a quick hack or exploring
+* Upside: Sometimes easier for CUDA/GPU acceleration
+* Use when: you understand system package management (arch linux user) or you don't care about making changes to your system
 
-* Consistent toolchain across all OSs.
-* Unified formatting, linting and type-checking.
-* Zero host-level dependencies (apart from Docker).
+### How to setup DimOS
 
-### IDE quick start
+```bash
+# System dependencies
 
-Install the *Dev Containers* plug-in for VS Code, Cursor, or your IDE of choice (you’ll likely be prompted automatically when you open our repo).
+# On Ubuntu 22.04 or 24.04
+if [ "$OSTYPE" = "linux-gnu" ]; then
+    sudo apt-get update
+    sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev pre-commit
+# On macOS (12.6 or newer)
+elif [ "$(uname)" = "Darwin" ]; then
+    # install homebrew
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    # install dependencies
+    brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python pre-commit
+fi
 
-### Shell only quick start
+# install uv for python
+curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+
+# this allows getting large files on-demand
+export GIT_LFS_SKIP_SMUDGE=1
+git clone -b main --single-branch git@github.com:dimensionalOS/dimos.git
+cd dimos
+
+
+# create & activate a virtualenv (needed for dimos)
+uv venv && . .venv/bin/activate
+
+# install dimos's python package with everything enabled
+uv pip install -e '.[base,dev,manipulation,misc,unitree,drone]'
+
+# setup pre-commit
+pre-commit install
+
+# test the install (takes about 3 minutes)
+uv run pytest dimos
+```
+
+Note, a few dependencies do not have PyPI packages and need to be installed from their Git repositories. These are only required for specific features:
+
+- **CLIP** and **detectron2**: Required for the Detic open-vocabulary object detector
+- **contact_graspnet_pytorch**: Required for robotic grasp prediction
+
+You can install them with:
+
+```bash
+uv add git+https://github.com/openai/CLIP.git
+uv add git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git
+uv add git+https://github.com/facebookresearch/detectron2.git
+```
+
+## Setup Option B: Dev Containers (Recommended)
+
+### Why pick this setup? (pros/cons/when-to-use)
+
+* Upside: Reliable and consistent across OS's
+* Upside: Unified formatting, linting and type-checking.
+* Upside: Other than Docker, it won't touch your operating system (no side effects)
+* Downside: It runs in a VM: slower, issues with GPU/CUDA, issues with hardware access like Webcam access, Networking, etc
+* Upside: Your IDE-integrated vibe coding agent will "just work"
+* Use when: You're not sure what option to pick
+
+### Quickstart
+
+First [install Docker](https://docs.docker.com/get-started/get-docker/) if you haven't already.
+
+Install the *Dev Containers* plug-in for VS Code, Cursor, or your IDE of choice. Clone the repo, open it in your IDE, and the IDE should prompt you to open in using a Dev Container.
+
+### Don't like IDE's? Use devcontainer CLI directly
 
 Terminal within your IDE should use devcontainer transparently given you installed the plugin, but in case you want to run our shell without an IDE, you can use `./bin/dev`
 (it depends on npm/node being installed)
+
+<details>
+<summary>Click to see how to use it in the command line</summary>
 
 ```sh
 ./bin/dev
@@ -56,125 +129,137 @@ The script will:
 
 You’ll land in the workspace as **root** with all project tooling available.
 
-## Pre-Commit Hooks
+</details>
 
-We use [pre-commit](https://pre-commit.com) (config in `.pre-commit-config.yaml`) to enforce formatting, licence headers, EOLs, LFS checks, etc. Hooks run in **milliseconds**.
-Hooks also run in CI; any auto-fixes are committed back to your PR, so local installation is optional — but gives faster feedback.
+## Setup Option C: Nix Flake + direnv
 
-```sh
-CRLF end-lines checker...................................................Passed
-CRLF end-lines remover...................................................Passed
-Insert license in comments...............................................Passed
-ruff format..............................................................Passed
-check for case conflicts.................................................Passed
-check json...............................................................Passed
-check toml...............................................................Passed
-check yaml...............................................................Passed
-format json..............................................................Passed
-LFS data.................................................................Passed
+### Why pick this setup? (pros/cons/when-to-use)
 
-```
-Given your editor uses ruff via devcontainers (which it should) actual auto-commit hook won't ever reformat your code - IDE will have already done this.
+* Upside: Faster and more reliable than Dev Containers (no emulation)
+* Upside: Nearly as isolated as Docker, but has full hardware access (CUDA, Webcam, networking)
+* Downside: Not hard, but you need to install/understand [direnv](https://direnv.net/) (which you probably should do anyway)
+* Downside: Nix is not user-friendly (IDE integration is not as good as Dev Containers)
+* Use when: you need reliability and don't mind a one-time startup delay
 
-### Running hooks manually
+### Quickstart
 
-Given your editor uses git via devcontainers (which it should) auto-commit hooks will run automatically, this is in case you want to run them manually.
-
-Inside the dev container (Your IDE will likely run this transparently for each commit if using devcontainer plugin):
+Install and activate [direnv](https://direnv.net/).
 
 ```sh
-pre-commit run --all-files
+# Install Nix
+curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
+# make sure flakes are enabled
+mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
+
+# this allows getting large files on-demand
+export GIT_LFS_SKIP_SMUDGE=1
+git clone -b main --single-branch git@github.com:dimensionalOS/dimos.git
+cd dimos
+
+# activate the nix .envrc
+cp .envrc.nix .envrc
+# this is going to take a while
+direnv allow
+direnv reload
+direnv status
+
+# create virtualenv (needed for dimos)
+uv venv && . .venv/bin/activate
+# install dimos's python package with everything enabled
+uv pip install -e '.[base,dev,manipulation,misc,unitree,drone]'
+# test the install (takes about 3 minutes)
+uv run pytest dimos
 ```
 
-### Installing pre-commit on your host
+## Setup Option D: Nix Flake - Isolated/Reliable
+
+### Why pick this setup? (pros/cons/when-to-use)
+
+* Use when: you need absolute reliability (use this if you want it to work first try) and don't mind a startup delay
+* Upside: Doesn't need direnv, and has most of the other benefits of Nix
+* Downside: Have to manually enter the environment (like `./venv/bin/activate` but slower)
+* Upside: If you're you're using a basic shell, you'll get a nicely customized shell
+* Downside: If you have hyper-customized your shell (fish, riced zsh, etc), you'll have to deal with someone else's preferences
+* Downside: Your vibe coding agent will basically be unable to run tests for you (they don't understand how to enter the environment)
+
+### Quickstart
+
+Install and activate [direnv](https://direnv.net/).
 
 ```sh
-apt install pre-commit      # or brew install pre-commit
-pre-commit install          # install git hook
-pre-commit run --all-files
+# Install Nix
+curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
+# make sure flakes are enabled
+mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
+
+# this allows getting large files on-demand
+export GIT_LFS_SKIP_SMUDGE=1
+git clone -b main --single-branch git@github.com:dimensionalOS/dimos.git
+cd dimos
+
+# activate the nix development shell
+nix develop '.#isolated'
 ```
 
+Once inside the shell, run:
 
----
+```sh
+# create virtualenv (needed for dimos)
+uv venv && . .venv/bin/activate
+# install dimos's python package with everything enabled
+uv pip install -e '.[base,dev,manipulation,misc,unitree,drone]'
+# test the install (takes about 3 minutes)
+uv run pytest dimos
+```
+
+<br>
+<br>
+
+# 2. How to Test and Modify DimOS
+
+## Where is `<thing>` located?
+
+* `dimos/core/`: Is where stuff like `Module`, `In`, `Out`, and `RPC` live.
+* `dimos/robot/`: Robot-specific modules live here.
+* `dimos/msgs/`: If you're trying to find a type to send a type over a stream, look here.
+* `dimos/dashboard/`: Contains code related to visualization.
+* `dimos/protocol/`: Defines low level stuff for communication between modules.
 
 ## Testing
 
-All tests run with **pytest** inside the dev container, ensuring local results match CI.
-
-### Basic usage
+We use both pytest and manual testing.
 
 ```sh
-./bin/dev          # start container
-pytest             # run all tests beneath the current directory
+pytest # run all tests at or below the current directory
 ```
 
-Depending on which dir you are in, only tests from that dir will run, which is convinient when developing - you can frequently validate your feature tree.
+### Testing Cheatsheet
 
-Your vibe coding agent will know to use these tests via the devcontainer so it can validate it's work.
-
-
-#### Useful options
-
-| Purpose                    | Command                 |
-| -------------------------- | ----------------------- |
-| Show `print()` output      | `pytest -s`             |
-| Filter by name substring   | `pytest -k "<pattern>"` |
-| Run tests with a given tag | `pytest -m <tag>`       |
-
+| Action                      | Command                      |
+| --------------------------- | ---------------------------- |
+| Run tests in current path   | `pytest`                     |
+| Filter tests by name        | `pytest -k "<pattern>"`      |
+| Enable stdout in tests      | `pytest -s`                  |
+| Run tagged tests            | `pytest -m <tag>`            |
+| Run all pre-commit hooks    | `pre-commit run --all-files` |
 
 We use tags for special tests, like `vis` or `tool` for things that aren't meant to be ran in CI and when casually developing, something that requires hardware or visual inspection (pointcloud merging vis etc)
 
 You can enable a tag by selecting -m <tag_name> - these are configured in `./pyproject.toml`
 
-```sh
-root@dimos:/workspaces/dimos/dimos # pytest -sm vis -k my_visualization
-...
-```
 
-Classic development run within a subtree:
-
-```sh
-./bin/dev
-
-... container init ...
-
-root@dimos:/workspaces/dimos # cd dimos/robot/unitree_webrtc/
-root@dimos:/workspaces/dimos/dimos/robot/unitree_webrtc # pytest
-collected 27 items / 22 deselected / 5 selected
-
-type/test_map.py::test_robot_mapping PASSED
-type/test_timeseries.py::test_repr PASSED
-type/test_timeseries.py::test_equals PASSED
-type/test_timeseries.py::test_range PASSED
-type/test_timeseries.py::test_duration PASSED
-
-```
-
-Showing prints:
-
-```sh
-root@dimos:/workspaces/dimos/dimos/robot/unitree_webrtc/type # pytest -s test_odometry.py
-test_odometry.py::test_odometry_conversion_and_count Odom ts(2025-05-30 13:52:03) pos(→ Vector Vector([0.432199 0.108042 0.316589])), rot(↑ Vector Vector([ 7.7200000e-04 -9.1280000e-03  3.006
-8621e+00])) yaw(172.3°)
-Odom ts(2025-05-30 13:52:03) pos(→ Vector Vector([0.433629 0.105965 0.316143])), rot(↑ Vector Vector([ 0.003814   -0.006436    2.99591235])) yaw(171.7°)
-Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.434459 0.104739 0.314794])), rot(↗ Vector Vector([ 0.005558   -0.004183    3.00068456])) yaw(171.9°)
-Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.435621 0.101699 0.315852])), rot(↑ Vector Vector([ 0.005391   -0.006002    3.00246893])) yaw(172.0°)
-Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.436457 0.09857  0.315254])), rot(↑ Vector Vector([ 0.003358   -0.006916    3.00347172])) yaw(172.1°)
-Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.435535 0.097022 0.314399])), rot(↑ Vector Vector([ 1.88300000e-03 -8.17800000e-03  3.00573432e+00])) yaw(172.2°)
-Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.433739 0.097553 0.313479])), rot(↑ Vector Vector([ 8.10000000e-05 -8.71700000e-03  3.00729616e+00])) yaw(172.3°)
-Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.430924 0.09859  0.31322 ])), rot(↑ Vector Vector([ 1.84000000e-04 -9.68700000e-03  3.00945623e+00])) yaw(172.4°)
-... etc
-```
----
-
-## Cheatsheet
-
-| Action                      | Command                      |
-| --------------------------- | ---------------------------- |
-| Enter dev container         | `./bin/dev`                  |
-| Run all pre-commit hooks    | `pre-commit run --all-files` |
-| Install hooks in local repo | `pre-commit install`         |
-| Run tests in current path   | `pytest`                     |
-| Filter tests by name        | `pytest -k "<pattern>"`      |
-| Enable stdout in tests      | `pytest -s`                  |
-| Run tagged tests            | `pytest -m <tag>`            |
+# 3. How to Make a PR
+- Open the PR against the `dev` branch (not `main`)
+- **No matter what, provide a one or few-lines that, when run, let a reviewer run the main path of the code you modified** (assuming you changed functional python code)
+- Less changed files = better
+- If you know one of your code changes will "look weird" or be up for debate, open the github UI and add a graphical comment on that code. In that comment justify youraq choice and explaining downsides of alternatives.
+- We don't require 100% test coverage, but if you're making a PR of notable python changes you should probably have unit tests or good reason why not (ex: visualization stuff is hard to unit test so we don't).
+- Have the name of your PR start with `WIP:` if its not ready to merge but you want to show someone the changes.
+- So long as you don't disable pre-commit hooks the formatting, license headers, EOLs, LFS checks, etc will be handled automatically by [pre-commit](https://pre-commit.com). If something goes wrong with the hooks you can run the step manually with `pre-commit run --all-files`.
+- Don't commit large (>500kb) files, instead, use git lfs to store them (see `git/config` for how to set this up)
+- If you're a new hire at DimOS:
+    - Smaller PR's are better.
+    - Only open a PR when you're okay with us spending AI tokens reviewing it (don't just open a trash PR and then fix it, wait till the code is mostly done)
+    - If there are 3 highly-intertwined bugs, make 3 PRs, not 1 PR. Yes it is more dev work, but review time is the bottleneck (not dev time). One line PR's are the easiest thing to review.
+    - When the AI (currently Greptile) comments on the code, respond. Sometimes Greptile is dumb as rocks but, as a reviewer, it's nice to see a finished conversation.
+    - Did we mention smaller PR's are better?
