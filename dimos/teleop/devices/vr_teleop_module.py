@@ -130,17 +130,18 @@ class VRTeleopModule(BaseTeleopModule):
     def start_teleop(self) -> dict[str, Any]:
         """Calibrate and start teleoperation (called via X button)."""
         logger.info("Starting teleop - calibrating VR...")
-        res = self.calibrate()
-        if not res.get("success"):
-            logger.error(f"Calibration failed: {res.get('error')}")
-        return res
+        result: dict[str, Any] = self.calibrate()
+        if not result.get("success"):
+            logger.error(f"Calibration failed: {result.get('error')}")
+        return result
 
     @rpc
     def stop_teleop(self) -> dict[str, Any]:
         """Stop teleoperation and reset calibration."""
         logger.info("Stopping teleop - resetting calibration...")
         self._stop_control_loop()
-        return self.reset_calibration()
+        result: dict[str, Any] = self.reset_calibration()
+        return result
 
     def _on_lcm_teleop_enable(self, msg: Bool) -> None:
         """Handle teleop enable/disable from X button."""
