@@ -12,30 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Blueprints for xArm manipulator control using component-based architecture.
-
-This module provides declarative blueprints for configuring xArm with the new
-generalized component-based driver architecture.
-
-Usage:
-    # Run via CLI:
-    dimos run xarm-servo           # Driver only
-    dimos run xarm-trajectory      # Driver + Joint trajectory controller
-    dimos run xarm-cartesian       # Driver + Cartesian motion controller
-
-    # Or programmatically:
-    from dimos.hardware.manipulators.xarm.xarm_blueprints import xarm_trajectory
-    coordinator = xarm_trajectory.build()
-    coordinator.loop()
-"""
-
-from typing import Any
-
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.manipulation.control import cartesian_motion_controller, joint_trajectory_controller
-from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import (  # type: ignore[attr-defined]
     JointCommand,
     JointState,

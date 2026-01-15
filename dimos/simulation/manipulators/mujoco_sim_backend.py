@@ -31,15 +31,6 @@ logger = setup_logger()
 class MujocoSimBackend:
     """
     Base class for MuJoCo simulation backend.
-
-    This class handles:
-    - MuJoCo model loading
-    - Threading infrastructure for simulation loop
-    - Basic state management (joint positions, velocities, efforts)
-    - Simulation stepping and viewer integration
-    - Connection management
-
-    Subclasses should implement robot-specific SDK interface methods.
     """
 
     def __init__(
@@ -52,7 +43,7 @@ class MujocoSimBackend:
         Initialize the MuJoCo simulation backend.
 
         Args:
-            robot: Robot description name (e.g., "piper", "xarm7_mj_description").
+            robot: Robot description (from robot_descriptions library) name (e.g., "piper", "xarm7_mj_description").
             config_path: Path to a MuJoCo XML or a folder containing scene.xml.
             headless: Run without launching the MuJoCo GUI viewer.
         """
@@ -159,34 +150,28 @@ class MujocoSimBackend:
         logger.info(f"{self.__class__.__name__}: sim loop started")
         dt = 1.0 / self._control_frequency
 
+        def _step_once(sync_viewer: bool) -> None:
+            loop_start = time.time()
+            self._apply_control()
+            mujoco.mj_step(self._model, self._data)
+            if sync_viewer:
+                m_viewer.sync()
+            self._update_joint_state()
+
+            elapsed = time.time() - loop_start
+            sleep_time = dt - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
         if self._headless:
             while not self._stop_event.is_set():
-                loop_start = time.time()
-
-                self._apply_control()
-                mujoco.mj_step(self._model, self._data)
-                self._update_joint_state()
-
-                elapsed = time.time() - loop_start
-                sleep_time = dt - elapsed
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
+                _step_once(sync_viewer=False)
         else:
             with viewer.launch_passive(
                 self._model, self._data, show_left_ui=False, show_right_ui=False
             ) as m_viewer:
                 while m_viewer.is_running() and not self._stop_event.is_set():
-                    loop_start = time.time()
-
-                    self._apply_control()
-                    mujoco.mj_step(self._model, self._data)
-                    m_viewer.sync()
-                    self._update_joint_state()
-
-                    elapsed = time.time() - loop_start
-                    sleep_time = dt - elapsed
-                    if sleep_time > 0:
-                        time.sleep(sleep_time)
+                    _step_once(sync_viewer=True)
 
         logger.info(f"{self.__class__.__name__}: sim loop stopped")
 

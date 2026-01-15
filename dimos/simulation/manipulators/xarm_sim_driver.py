@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class XArmSimSDKWrapper(BaseManipulatorSDK):
-    """SDK wrapper for xArm simulation using the MuJoCo bridge."""
+    """SDK wrapper for xArm simulation using the MuJoCo simulation backend."""
 
     def __init__(self) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -43,7 +43,7 @@ class XArmSimSDKWrapper(BaseManipulatorSDK):
         self._state = 0
 
     def connect(self, config: dict[str, Any]) -> bool:
-        """Connect to the MuJoCo xArm simulation backend."""
+        """Connect to the MuJoCo simulation backend."""
         try:
             robot = config.get("robot")
             if not robot:
