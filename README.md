@@ -18,9 +18,7 @@
 <p align="center">
   <a href="#how-does-dimos-work-conceptually">Key Features</a> •
   <a href="#how-do-i-get-started">How To Use</a> •
-  <a href="#contributing--building-from-source">Contributing</a> •
-
-  <a href="#license">License</a>
+  <a href="#contributing--building-from-source">Contributing</a> • <a href="#license">License</a>
 </p>
 
 </div>
