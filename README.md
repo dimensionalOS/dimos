@@ -5,7 +5,7 @@
 
 <br>
 
-[![Discord](https://img.shields.io/discord/1341146487186391173?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/8m6HMArf) 
+[![Discord](https://img.shields.io/discord/1341146487186391173?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/8m6HMArf)
 [![Stars](https://img.shields.io/github/stars/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/stargazers)
 [![Forks](https://img.shields.io/github/forks/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/fork)
 [![Contributors](https://img.shields.io/github/contributors/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/graphs/contributors)
@@ -31,7 +31,7 @@
 
 # What is Dimensional?
 
-DimOS is both a specification based (any programming language) framework and a python-first library for controlling robots. DimOS works with (and without) [ROS](https://www.ros.org/), with design that enables AI agents to call tools/functions (skills), read sensor/state data directly, and generate complex emergent behaviors. 
+DimOS is both a specification based (any programming language) framework and a python-first library for controlling robots. DimOS works with (and without) [ROS](https://www.ros.org/), with design that enables AI agents to call tools/functions (skills), read sensor/state data directly, and generate complex emergent behaviors.
 
 The python library comes with a rich set of integrations; visualization, spatial reasoners, planners, simulators (mujoco, Isaac Sim, etc.), robot state/action primitives, and more.
 
@@ -102,7 +102,7 @@ Simple camera activation (save this as a python file and run it):
 
 ```py
 from dimos.core.blueprints import autoconnect
-from dimos.hardware.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import CameraModule
 
 if __name__ == "__main__":
     autoconnect(
@@ -115,9 +115,9 @@ Write your own custom module:
 
 ```py
 from dimos.core.blueprints import autoconnect
-from dimos.core import In, Module, pSHMTransport
+from dimos.core import In, Out, Module
 from dimos.core.core import rpc
-from dimos.hardware.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.msgs.sensor_msgs import Image
 
 from reactivex.disposable import Disposable
