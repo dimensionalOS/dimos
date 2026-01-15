@@ -12,9 +12,9 @@ All the tools below are optional and for your convenience. If you can get the co
 
 ## Setup Option A: System Install
 
-### Why pick this setup? (pros/cons/when-to-use)
+### Why pick this option? (pros/cons/when-to-use)
 
-* Downside: not reliable, mutates your global system, causing (and receiving) side effects
+* Downside: mutates your global system, causing (and receiving) side effects causes it to be unreliable
 * Upside: Often good for a quick hack or exploring
 * Upside: Sometimes easier for CUDA/GPU acceleration
 * Use when: you understand system package management (arch linux user) or you don't care about making changes to your system
@@ -74,7 +74,7 @@ uv add git+https://github.com/facebookresearch/detectron2.git
 <!-- Enable this option once the dockerfile (ghcr.io/dimensionalos/ros-python:dev) is public and debugged! -->
 <!-- ## Setup Option B: Dev Containers (Recommended)
 
-### Why pick this setup? (pros/cons/when-to-use)
+### Why pick this option? (pros/cons/when-to-use)
 
 * Upside: Reliable and consistent across OS's
 * Upside: Unified formatting, linting and type-checking.
@@ -132,7 +132,7 @@ You’ll land in the workspace as **root** with all project tooling available.
 
 ## Setup Option B: Nix Flake + direnv
 
-### Why pick this setup? (pros/cons/when-to-use)
+### Why pick this option? (pros/cons/when-to-use)
 
 * Upside: Faster and more reliable than Dev Containers (no emulation)
 * Upside: Nearly as isolated as Docker, but has full hardware access (CUDA, Webcam, networking)
@@ -173,7 +173,7 @@ uv run pytest dimos
 
 ## Setup Option C: Nix Flake - Isolated/Reliable
 
-### Why pick this setup? (pros/cons/when-to-use)
+### Why pick this option? (pros/cons/when-to-use)
 
 * Use when: you need absolute reliability (use this if you want it to work first try) and don't mind a startup delay
 * Upside: Doesn't need direnv, and has most of the other benefits of Nix
