@@ -228,7 +228,7 @@ This will save the rerun data to `rerun.json` in the current directory.
 ## Where is `<thing>` located? (Architecture)
 
 * If you want to add a `dimos run <your_thing>` command see [dimos_run.md](/docs/development/dimos_run.md)
-* If you want to add a camera driver see [depth_camera_integration.md](/docs/development/depth_camera_integration.md)
+* If you want to add a camera driver see [depth_camera_integration.md](/docs/depth_camera_integration.md)
 * For edits to manipulation see [manipulation.md](/docs/development/manipulation.md) and [manipulation base](/dimos/hardware/manipulators/base/component_based_architecture.md)
 * `dimos/core/`: Is where stuff like `Module`, `In`, `Out`, and `RPC` live.
 * `dimos/robot/`: Robot-specific modules live here.
@@ -264,12 +264,13 @@ You can enable a tag by selecting -m <tag_name> - these are configured in `./pyp
 # 3. How to Make a PR
 - Open the PR against the `dev` branch (not `main`)
 - **No matter what, provide a one or few-lines that, when run, let a reviewer run the main path of the code you modified** (assuming you changed functional python code)
-- If you're writing documentation, see [writing_docs.md](/docs/development/writing_docs.md) for how to write code blocks.
+- If you're writing documentation, see [writing docs](/docs/agents/docs/index.md) for how to write code blocks.
+<!-- - If you're writing documentation, see [writing docs](/docs/development/writing_docs.md) -->
 - Less changed files = better
 - If you know one of your code changes will "look weird" or be up for debate, open the github UI and add a graphical comment on that code. In that comment justify youraq choice and explaining downsides of alternatives.
 - We don't require 100% test coverage, but if you're making a PR of notable python changes you should probably have unit tests or good reason why not (ex: visualization stuff is hard to unit test so we don't).
 - Have the name of your PR start with `WIP:` if its not ready to merge but you want to show someone the changes.
-- If you have large (>500kb) files, see [large_files.md](/docs/development/large_files.md) for how to store and load them (don't just commit them).
+- If you have large (>500kb) files, see [large file management](/docs/development/large_file_management.md) for how to store and load them (don't just commit them).
 - So long as you don't disable pre-commit hooks the formatting, license headers, EOLs, LFS checks, etc will be handled automatically by [pre-commit](https://pre-commit.com). If something goes wrong with the hooks you can run the step manually with `pre-commit run --all-files`.
 - If you're a new hire at DimOS:
     - Smaller PR's are better.

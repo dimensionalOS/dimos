@@ -1,33 +1,43 @@
-<!-- COMMENTED OUT IMAGES CAUSE THEY DON'T RENDER ON PYPI (fix in 24hrs) -->
-<!-- ![Screenshot 2025-02-18 at 16-31-22 DimOS Terminal](/assets/dimos_terminal.png)
-
 <div align="center">
-  <table>
-    <tr>
-      <td width="80%">
-        <img src="./assets/dimos_interface.gif" alt="dimOS interface" width="100%">
-        <p align="center"><em>A simple two-shot PlanningAgent</em></p>
-      </td>
-      <td width="20%">
-        <img src="./assets/simple_demo_small.gif" alt="3rd person POV" width="100%">
-        <p align="center"><em>3rd person POV</em></p>
-      </td>
-    </tr>
-  </table>
-</div> -->
+   <img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/15283d94-ad95-42c9-abd5-6565a222a837" /> </a>
+    <h4 align="center">The Open-Source Framework for Robotic Intelligence</h4>
 
-# The Dimensional Framework
-*The universal framework for AI-native generalist robotics*
 
-## What is Dimensional?
+<br>
 
-#### Warning: This is a pre-release version
+[![Discord](https://img.shields.io/discord/1341146487186391173?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/8m6HMArf)
+[![Stars](https://img.shields.io/github/stars/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/stargazers)
+[![Forks](https://img.shields.io/github/forks/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/fork)
+[![Contributors](https://img.shields.io/github/contributors/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/graphs/contributors)
+<br>
+![Nix](https://img.shields.io/badge/Nix-flakes-5277C3?style=flat-square&logo=NixOS&logoColor=white)
+![NixOS](https://img.shields.io/badge/NixOS-supported-5277C3?style=flat-square&logo=NixOS&logoColor=white)
+![CUDA](https://img.shields.io/badge/CUDA-12.x-76B900?style=flat-square&logo=nvidia&logoColor=white)
+[![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 
-Dimensional is an open-source framework for adding customized general intelligence to robots. DimOS allows AI agents to call tools/functions (skills), read sensor/state data directly, and use them to produce robust emergent behavior. DimOS is both specification based (use any programming language) and a python-first library that works well with (and without) [ROS](https://www.ros.org/). The python library comes with a rich set of integrations; spatial reasoners, planners, simulators (mujoco, Isaac Sim, etc.), robot state/action primitives, and more.
+<p align="center">
+  <a href="#how-does-dimos-work-conceptually">Key Features</a> •
+  <a href="#how-do-i-get-started">How To Use</a> •
+  <a href="#contributing--building-from-source">Contributing</a> •
+  <a href="#acknowledgments">Credits</a> •
+  <a href="#license">License</a>
+</p>
+
+</div>
+
+> \[!NOTE]
+>
+> **Active Beta: Expect Breaking Changes**
+
+# What is Dimensional?
+
+DimOS is both a specification based (any programming language) framework and a python-first library for controlling robots. DimOS works with (and without) [ROS](https://www.ros.org/), with design that enables AI agents to call tools/functions (skills), read sensor/state data directly, and generate complex emergent behaviors.
+
+The python library comes with a rich set of integrations; visualization, spatial reasoners, planners, simulators (mujoco, Isaac Sim, etc.), robot state/action primitives, and more.
 
 # How do I get started?
 
-## Installation
+### Installation
 
 #### Details / Requirements
 
@@ -92,7 +102,7 @@ Simple camera activation (save this as a python file and run it):
 
 ```py
 from dimos.core.blueprints import autoconnect
-from dimos.hardware.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import CameraModule
 
 if __name__ == "__main__":
     autoconnect(
@@ -105,9 +115,9 @@ Write your own custom module:
 
 ```py
 from dimos.core.blueprints import autoconnect
-from dimos.core import In, Module, pSHMTransport
+from dimos.core import In, Out, Module
 from dimos.core.core import rpc
-from dimos.hardware.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.msgs.sensor_msgs import Image
 
 from reactivex.disposable import Disposable
@@ -156,16 +166,26 @@ if __name__ == "__main__":
 # How does DimOS work conceptually?
 
 There are several tools:
-- [Modules](docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are defined in python as classes.
-- [Streams](docs/api/sensor_streams/index.md): How modules communicate, a Pub / Sub system.
-- [Blueprints](docs/concepts/blueprints.md): a way to group modules together and define their connections to each other
-- [RPC](docs/concepts/blueprints.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data)
-- [Skills](docs/concepts/blueprints.md#defining-skills): Pretty much an RPC, call but it can be called by an AI agent (they're tools for an AI).
+- [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are defined in python as classes.
+- [Streams](/docs/api/sensor_streams/index.md): How modules communicate, a Pub / Sub system.
+- [Blueprints](/docs/concepts/blueprints.md): a way to group modules together and define their connections to each other
+- [RPC](/docs/concepts/blueprints.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data)
+- [Skills](/docs/concepts/blueprints.md#defining-skills): Pretty much an RPC, call but it can be called by an AI agent (they're tools for an AI).
 - Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools
 
-# Contributing / Building From Source
+## Contributing / Building From Source
 
-For development, we optimize for flexibility—whether you love Docker, Nix, or have nothing but **notepad.exe** and a dream, you’re good to go. Open up the [Development Guide](docs/development/README.md) to see the extra steps for setting up development environments.
+For development, we optimize for flexibility—whether you love Docker, Nix, or have nothing but **notepad.exe** and a dream, you’re good to go. Open up the [Development Guide](/docs/development/README.md) to see the extra steps for setting up development environments.
+
+We welcome contributions! See our [Bounty List](https://docs.google.com/spreadsheets/d/1tzYTPvhO7Lou21cU6avSWTQOhACl5H8trSvhtYtsk8U/edit?usp=sharing) for open requests for contributions. If you would like to suggest a feature or sponsor a bounty, open an issue.
+
+# Acknowledgments
+
+Huge thanks to!
+- The Roboverse Community and their unitree-specific help. Check out their [Discord](https://discord.gg/HEXNMCNhEh).
+- @abizovnuralem for his work on the [Unitree Go2 ROS2 SDK](https://github.com/abizovnuralem/go2_ros2_sdk) we integrate with for DimOS.
+- @legion1581 for his work on the [Unitree Go2 WebRTC Connect](https://github.com/legion1581/go2_webrtc_connect) from which we've pulled the ```Go2WebRTCConnection``` class and other types for seamless WebRTC-only integration with DimOS.
+- @tfoldi for the webrtc_req integration via Unitree Go2 ROS2 SDK, which allows for seamless usage of Unitree WebRTC control primitives with DimOS.
 
 # License
 
