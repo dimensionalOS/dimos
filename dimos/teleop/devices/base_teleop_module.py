@@ -20,8 +20,6 @@ Provides calibration, delta computation, and command publishing.
 Subclasses implement device-specific input handling.
 """
 
-from __future__ import annotations
-
 from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
@@ -30,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.core import Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Twist
+from dimos.msgs.std_msgs import Bool
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.teleop_transforms import compute_active_indices, parse_pose_from_dict
 from dimos.utils.teleop_visualization import (
@@ -42,8 +41,6 @@ from dimos.utils.transform_utils import matrix_to_pose
 if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
-
-    from dimos.msgs.std_msgs import Bool
 
 
 logger = setup_logger()
@@ -231,7 +228,7 @@ class BaseTeleopModule(Module, ABC):
 
     def compute_deltas(
         self,
-        controller_poses: dict[int, NDArray[np.float64] | None],
+        controller_poses: "dict[int, NDArray[np.float64] | None]",
         controller_trigger_values: dict[int, float],
     ) -> dict[int, Pose | None]:
         """Compute delta = current_pose - initial_pose for each controller."""

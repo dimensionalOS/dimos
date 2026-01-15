@@ -20,25 +20,23 @@ Receives VR controller tracking data via LCM from Deno bridge,
 transforms from WebXR to robot frame, computes deltas, and publishes commands.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos_lcm.geometry_msgs import Transform as LCMTransform
+
 from dimos.core import In, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.std_msgs import Bool, Float32
 from dimos.teleop.devices.base_teleop_module import BaseTeleopConfig, BaseTeleopModule
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.teleop_transforms import transform_delta, transform_vr_to_robot
 
 if TYPE_CHECKING:
-    from dimos_lcm.geometry_msgs import Transform as LCMTransform
     import numpy as np
     from numpy.typing import NDArray
-
-    from dimos.msgs.std_msgs import Bool, Float32
 
 
 logger = setup_logger()
