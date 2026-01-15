@@ -186,6 +186,7 @@ if __name__ == "__main__":
   - Print all the information (rpcs, skills, etc): `print(CameraModule.module_info())`
 - What about `@rpc`?
    - If you want a method to be called by another module (not just an internal method) then add the `@rpc` decorator AND make sure BOTH the arguments and return value of the method are json-serializable.
+   - Rpc methods get called using threads, meaning two rpc methods can be running at the same time. For this reason, python thread locking is often necessary for data that is being written/read during rpc calls.
    - The start/stop methods always need to be an rpc because they are called externally.
 
 
@@ -194,7 +195,7 @@ if __name__ == "__main__":
 # How does DimOS work?
 
 Concepts:
-- [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are defined in python as classes.
+- [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are singleton python classes.
 - [Streams](/docs/api/sensor_streams/index.md): How modules communicate, a Pub / Sub system.
 - [Blueprints](/dimos/core/README_BLUEPRINTS.md): a way to group modules together and define their connections to each other.
 - [RPC](/dimos/core/README_BLUEPRINTS.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
