@@ -10,7 +10,7 @@ You create a `ModuleBlueprintSet` from a single module (say `ConnectionModule`) 
 blueprint = create_module_blueprint(ConnectionModule, 'arg1', 'arg2', kwarg='value')
 ```
 
-But the same thing can be acomplished more succinctly as:
+But the same thing can be accomplished more succinctly as:
 
 ```python
 connection = ConnectionModule.blueprint
