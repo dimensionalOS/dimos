@@ -90,7 +90,7 @@ export OPENAI_API_KEY=<your private key>
 dimos run unitree-go2-agentic
 ```
 
-After running that, open a new terminal and run the following command to start a conversation with the agent that controls the robot.
+After running that, open a new terminal and run the following to start giving instructions to the agent.
 ```sh
 # activate the venv in this new terminal
 source .venv/bin/activate
