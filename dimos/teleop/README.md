@@ -1,4 +1,4 @@
-# Teleoperation [TO BE UPDATED]
+# Teleoperation
 
 VR teleoperation system for controlling robots with Meta Quest controllers.
 
@@ -8,12 +8,8 @@ VR teleoperation system for controlling robots with Meta Quest controllers.
 teleop/
 ├── __init__.py              # Exports quest3_teleop blueprint
 ├── teleop_blueprints.py     # Pre-built system configurations
-├── connectors/              # Robot command transformers
-│   ├── base_connector.py    # BaseTeleopConnector (abstract)
-│   ├── arm_connector.py     # ArmConnector → PoseStamped
-│   └── quadruped_connector.py # QuadrupedConnector → Twist
 ├── devices/                 # Teleop input modules
-│   ├── base_teleop_module.py # BaseTeleopModule (calibration, deltas)
+│   ├── base_teleop_module.py # BaseTeleopModule (calibration, deltas, transforms)
 │   └── vr_teleop_module.py  # VRTeleopModule (LCM inputs)
 └── web/                     # Quest WebXR interface
     ├── teleop_server.ts     # Deno WebSocket-LCM bridge
@@ -41,22 +37,16 @@ teleop/
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        VRTeleopModule                               │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐          │
-│  │  Calibrate   │ →  │ Compute Delta│ →  │ Route to     │          │
-│  │  (X button)  │    │ curr - init  │    │ Connectors   │          │
+│  │  Calibrate   │ →  │ Compute Delta│ →  │  Transform   │          │
+│  │  (X button)  │    │ curr - init  │    │  & Publish   │          │
 │  └──────────────┘    └──────────────┘    └──────────────┘          │
 └───────────────────────────────────────────────────────│─────────────┘
                                                         │
                     ┌───────────────────────────────────┴───────────┐
                     ▼                                               ▼
-        ┌───────────────────┐                         ┌───────────────────┐
-        │   ArmConnector    │                         │QuadrupedConnector │
-        │ delta → PoseStamped                         │ delta → Twist     │
-        │ target = init + Δ │                         │ vel = scale(Δ)    │
-        └─────────┬─────────┘                         └─────────┬─────────┘
-                  │                                             │
-                  ▼                                             ▼
            controller_delta_0/1                          controller_delta_2/3
            (PoseStamped)                                 (Twist)
+           target = init + Δ                             vel = scale(Δ)
 ```
 
 ## Quick Start
@@ -70,53 +60,54 @@ coordinator.loop()
 
 Then on Quest 3: Open `https://<your-ip>:8443`, press X to calibrate and start.
 
-## Modular Connector System
+## Output Types Configuration
 
-Each VR controller can be assigned any connector type. The connector determines how deltas are transformed into robot commands.
+The `output_types` parameter determines how each controller input is mapped:
 
-| Connector | Output | Use Case |
-|-----------|--------|----------|
-| `ArmConnector` | PoseStamped | Manipulators, end-effector control |
-| `QuadrupedConnector` | Twist | Locomotion, velocity control |
+| Output Type | Indices | Use Case |
+|-------------|---------|----------|
+| `PoseStamped` | 0, 1 | Manipulators, end-effector control |
+| `Twist` | 2, 3 | Locomotion, velocity control |
 
-Output indices determine the message type:
-- Index 0, 1 → PoseStamped
-- Index 2, 3 → Twist
+The system auto-computes active indices from output types:
+- `[PoseStamped, PoseStamped]` → indices `[0, 1]` (dual arm)
+- `[Twist, Twist]` → indices `[2, 3]` (dual locomotion)
+- `[PoseStamped, Twist]` → indices `[0, 2]` (arm + quadruped)
 
 ## Custom Setup
 
 ```python
-from dimos.teleop.connectors import ArmConnector, ArmConnectorConfig, QuadrupedConnector, QuadrupedConnectorConfig
 from dimos.teleop.devices import vr_teleop_module
+from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.core.blueprints import autoconnect
 
-# Two arms
-left = ArmConnector(ArmConnectorConfig(driver_module_name="LeftArm"))
-right = ArmConnector(ArmConnectorConfig(driver_module_name="RightArm"))
-
+# Dual arm setup (both controllers → PoseStamped)
 dual_arm = autoconnect(
     vr_teleop_module(
-        num_inputs=2,
-        enable_inputs=[True, True],
-        connectors=[left, right],
+        output_types=[PoseStamped, PoseStamped],
+        input_labels=["left_arm", "right_arm"],
     ),
 )
 
-# Or: arm + quadruped (use index 0 and 2)
-arm = ArmConnector(ArmConnectorConfig(driver_module_name="Arm"))
-quad = QuadrupedConnector(QuadrupedConnectorConfig(driver_module_name="Go2"))
-
+# Arm + Quadruped (left → PoseStamped index 0, right → Twist index 2)
 arm_and_quad = autoconnect(
     vr_teleop_module(
-        num_inputs=3,
-        enable_inputs=[True, False, True],  # index 0 and 2 enabled
-        connectors=[arm, None, quad],
+        output_types=[PoseStamped, Twist],
+        input_labels=["left_arm", "right_quad"],
+    ),
+)
+
+# With RPC for initial robot pose (arm calibration)
+arm_with_rpc = autoconnect(
+    vr_teleop_module(
+        output_types=[PoseStamped, PoseStamped],
+        input_labels=["left_arm", "right_arm"],
+        robot_pose_rpc_methods=["LeftArm.get_ee_pose", "RightArm.get_ee_pose"],
     ),
 )
 ```
 
 ## Submodules
 
-- [connectors/](connectors/) - Robot command transformers
 - [devices/](devices/) - Teleop input modules
 - [web/](web/) - Quest WebXR client and Deno server
