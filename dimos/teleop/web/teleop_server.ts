@@ -8,8 +8,39 @@ import { decodePacket, geometry_msgs } from "jsr:@dimos/msgs";
 
 const PORT = 8443;
 const clients = new Set<WebSocket>();
-const cert = await Deno.readTextFile("./certs/cert.pem");
-const key = await Deno.readTextFile("./certs/key.pem");
+
+// Auto-generate self-signed certificates if they don't exist
+async function ensureCerts(): Promise<{ cert: string; key: string }> {
+  const certPath = "./certs/cert.pem";
+  const keyPath = "./certs/key.pem";
+
+  try {
+    const cert = await Deno.readTextFile(certPath);
+    const key = await Deno.readTextFile(keyPath);
+    return { cert, key };
+  } catch {
+    console.log("Generating self-signed certificates...");
+    await Deno.mkdir("./certs", { recursive: true });
+    const cmd = new Deno.Command("openssl", {
+      args: [
+        "req", "-x509", "-newkey", "rsa:2048",
+        "-keyout", keyPath, "-out", certPath,
+        "-days", "365", "-nodes", "-subj", "/CN=localhost"
+      ],
+    });
+    const { code } = await cmd.output();
+    if (code !== 0) {
+      throw new Error("Failed to generate certificates. Is openssl installed?");
+    }
+    console.log("Certificates generated in ./certs/");
+    return {
+      cert: await Deno.readTextFile(certPath),
+      key: await Deno.readTextFile(keyPath),
+    };
+  }
+}
+
+const { cert, key } = await ensureCerts();
 
 Deno.serve({ port: PORT, cert, key }, async (req) => {
   const url = new URL(req.url);

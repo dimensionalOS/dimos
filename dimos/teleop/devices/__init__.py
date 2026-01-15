@@ -17,6 +17,7 @@
 from dimos.teleop.devices.base_teleop_module import (
     BaseTeleopConfig,
     BaseTeleopModule,
+    TeleopStatusKey,
 )
 from dimos.teleop.devices.vr_teleop_module import (
     VRTeleopConfig,
