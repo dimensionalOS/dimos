@@ -47,7 +47,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin
 # the command needs to download the replay file (2.4gb), which takes a bit
 
 # OPTION 1: use without installing dimos
-uvx --from 'dimos[base,unitree]' dimos --replay run unitree-g2
+uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
 
 # OPTION 2: install dimos in a virtualenv
 uv venv && . .venv/bin/activate
@@ -165,56 +165,7 @@ There are several tools:
 
 # Contributing / Building From Source
 
-For development, we optimize for flexibility—whether you love Docker, Nix, or have nothing but **notepad.exe** and a dream, you’re good to go.
-
-If you want to make a proper PR or do containerized development (recommended), please read the full [Development Guide](docs/development/README.md).
-
-## Quickstart Development (For Hacking, not Proper Development)
-
-```bash
-
-# On Ubuntu 22.04 or 24.04
-if [ "$OSTYPE" = "linux-gnu" ]; then
-    sudo apt-get update
-    sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev
-# On macOS (12.6 or newer)
-elif [ "$(uname)" = "Darwin" ]; then
-    # install homebrew
-    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    # install dependencies
-    brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python
-fi
-
-# this allows getting large files on-demand
-export GIT_LFS_SKIP_SMUDGE=1
-git clone -b main --single-branch git@github.com:dimensionalOS/dimos.git
-cd dimos
-
-# install uv for python
-curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
-
-# create & activate a virtualenv (needed for dimos)
-uv venv && . .venv/bin/activate
-
-# install everything
-uv pip install -e '.[base,dev,manipulation,misc,unitree,drone]'
-
-# test the install (takes about 3 minutes)
-uv run pytest dimos
-```
-
-Note, a few dependencies do not have PyPI packages and need to be installed from their Git repositories. These are only required for specific features:
-
-- **CLIP** and **detectron2**: Required for the Detic open-vocabulary object detector
-- **contact_graspnet_pytorch**: Required for robotic grasp prediction
-
-You can install them with:
-
-```bash
-uv add git+https://github.com/openai/CLIP.git
-uv add git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git
-uv add git+https://github.com/facebookresearch/detectron2.git
-```
+For development, we optimize for flexibility—whether you love Docker, Nix, or have nothing but **notepad.exe** and a dream, you’re good to go. Open up the [Development Guide](docs/development/README.md) to see the extra steps for setting up development environments.
 
 # License
 
