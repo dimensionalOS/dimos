@@ -90,10 +90,10 @@ export OPENAI_API_KEY=<your private key>
 dimos run unitree-go2-agentic
 ```
 
-Then open this chat in a separate terminal (don't forget to activate the venv)
+After running that, open a new terminal (activate the venv again `source .venv/bin/activate`) and run the following command to start controlling the agent.
 ```sh
 # ex: tell it to explore the room
-# then tell it to go to something such as "go to the door" 
+# then tell it to go to somethingn it saw such as "go to the door" 
 humancli
 ```
 
