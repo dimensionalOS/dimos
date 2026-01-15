@@ -1,8 +1,8 @@
 # Development Environment Guide
 
-1. How to setup your system (pick one: system install, nix flake + direnv, pure nix flake)
-2. How to hack on DimOS
-3. How to make a PR
+1. [How to setup your system](#1-setup) (pick one: system install, nix flake + direnv, pure nix flake)
+2. [How to hack on DimOS](#how-to-hack-on-dimos)
+3. [How to make a PR](#3-how-to-make-a-pr)
 
 # 1. Setup
 
