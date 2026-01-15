@@ -267,7 +267,7 @@ You can enable a tag by selecting -m <tag_name> - these are configured in `./pyp
 
 # 3. How to Make a PR
 - Open the PR against the `dev` branch (not `main`).
-- **No matter what, provide a few-lines that, when run, let a reviewer test the main feature of the code you modified** (assuming you changed functional python code).
+- **No matter what, provide a few-lines that, when run, let a reviewer test the feature you added** (assuming you changed functional python code).
 - Less changed files = better.
 - If you're writing documentation, see [writing docs](/docs/agents/docs/index.md) for how to write code blocks. <!-- THIS IS FOR THE (already finish) NEXT DOC PR: If you're writing documentation, see [writing docs](/docs/development/writing_docs.md) -->
 - If you made a change that is likely going to involve a debate, open the github UI and add a graphical comment on that code. Justify your choice and explain downsides of alternatives.
