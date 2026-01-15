@@ -93,7 +93,7 @@ class NavigationSkillContainer(SkillModule):
 
         if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
-        tf = self.tf.get("map", "base_link", time_tolerance=2.0)
+        tf = self.tf.get("world", "base_link", time_tolerance=2.0)
         if not tf:
             return "Could not get the robot's current transform."
 
