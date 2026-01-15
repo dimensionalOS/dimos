@@ -1,33 +1,36 @@
-<!-- COMMENTED OUT IMAGES CAUSE THEY DON'T RENDER ON PYPI (fix in 24hrs) -->
-<!-- ![Screenshot 2025-02-18 at 16-31-22 DimOS Terminal](/assets/dimos_terminal.png)
-
 <div align="center">
-  <table>
-    <tr>
-      <td width="80%">
-        <img src="./assets/dimos_interface.gif" alt="dimOS interface" width="100%">
-        <p align="center"><em>A simple two-shot PlanningAgent</em></p>
-      </td>
-      <td width="20%">
-        <img src="./assets/simple_demo_small.gif" alt="3rd person POV" width="100%">
-        <p align="center"><em>3rd person POV</em></p>
-      </td>
-    </tr>
-  </table>
-</div> -->
+    <img width="900" height="205" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/e7220790-eed9-44c2-8fab-d61a4c034828" /> </a>
+    <h4 align="center">The Open-Source Framework for Robotic Intelligence</h4>
 
-# The Dimensional Framework
-*The universal framework for AI-native generalist robotics*
+<br>
 
-## What is Dimensional?
+[![Discord](https://img.shields.io/discord/1341146487186391173?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/8m6HMArf) 
+[![Stars](https://img.shields.io/github/stars/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/stargazers)
+[![Forks](https://img.shields.io/github/forks/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/fork)
+[![Contributors](https://img.shields.io/github/contributors/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/graphs/contributors)
 
-#### Warning: This is a pre-release version
+<p align="center">
+  <a href="#how-does-dimos-work-conceptually">Key Features</a> •
+  <a href="#how-do-i-get-started">How To Use</a> •
+  <a href="#contributing--building-from-source">Contributing</a> •
+  <a href="#acknowledgments">Credits</a> •
+  <a href="#license">License</a>
+</p>
 
-Dimensional is an open-source framework for adding customized general intelligence to robots. DimOS allows AI agents to call tools/functions (skills), read sensor/state data directly, and use them to produce robust emergent behavior. DimOS is both specification based (use any programming language) and a python-first library that works well with (and without) [ROS](https://www.ros.org/). The python library comes with a rich set of integrations; spatial reasoners, planners, simulators (mujoco, Isaac Sim, etc.), robot state/action primitives, and more.
+</div>
+
+# What is Dimensional?
+> \[!NOTE]
+>
+> **Active Beta: Expect Breaking Changes**
+
+DimOS is both specification based (any programming language) and a python-first library for controlling robots. Works with (and without) [ROS](https://www.ros.org/), with design that enables AI agents to call tools/functions (skills), read sensor/state data directly, and generate complex emergent behaviors. 
+
+The python library comes with a rich set of integrations; visualization, spatial reasoners, planners, simulators (mujoco, Isaac Sim, etc.), robot state/action primitives, and more.
 
 # How do I get started?
 
-## Installation
+### Installation
 
 #### Details / Requirements
 
@@ -163,13 +166,13 @@ There are several tools:
 - [Skills](/docs/concepts/blueprints.md#defining-skills): Pretty much an RPC, call but it can be called by an AI agent (they're tools for an AI).
 - Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools
 
-# Contributing / Building From Source
+## Contributing / Building From Source
 
 For development, we optimize for flexibility—whether you love Docker, Nix, or have nothing but **notepad.exe** and a dream, you’re good to go. Open up the [Development Guide](/docs/development/README.md) to see the extra steps for setting up development environments.
 
 We welcome contributions! See our [Bounty List](https://docs.google.com/spreadsheets/d/1tzYTPvhO7Lou21cU6avSWTQOhACl5H8trSvhtYtsk8U/edit?usp=sharing) for open requests for contributions. If you would like to suggest a feature or sponsor a bounty, open an issue.
 
-## Acknowledgments
+# Acknowledgments
 
 Huge thanks to!
 - The Roboverse Community and their unitree-specific help. Check out their [Discord](https://discord.gg/HEXNMCNhEh).
@@ -180,8 +183,3 @@ Huge thanks to!
 # License
 
 DimOS is licensed under the Apache License, Version 2.0. And will always be free and open source.
-
-## Contact
-
-- GitHub Issues: For bug reports and feature requests
-- Email: [build@dimensionalOS.com](mailto:build@dimensionalOS.com)
