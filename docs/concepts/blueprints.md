@@ -7,6 +7,18 @@ You don't typically want to run a single module, so multiple blueprints are hand
 You create a `ModuleBlueprintSet` from a single module (say `ConnectionModule`) with:
 
 ```python
+from dimos.core.blueprints import create_module_blueprint
+from dimos.core import Module, rpc
+
+class ConnectionModule(Module):
+    @rpc
+    def start():
+        pass
+
+    @rpc
+    def stop():
+        pass
+
 blueprint = create_module_blueprint(ConnectionModule, 'arg1', 'arg2', kwarg='value')
 ```
 
@@ -27,6 +39,8 @@ blueprint = connection('arg1', 'arg2', kwarg='value')
 You can link multiple blueprints together with `autoconnect`:
 
 ```python
+from dimos.core.blueprints import autoconnect
+
 blueprint = autoconnect(
     module1(),
     module2(),
@@ -65,6 +79,11 @@ This is so you can "inherit" from one blueprint but override something you need 
 Imagine you have this code:
 
 ```python
+from functools import partial
+
+from dimos.core.blueprints import create_module_blueprint, autoconnect
+from dimos.core import Module, rpc
+
 class ModuleA(Module):
     image: Out[Image]
     start_explore: Out[Bool]
@@ -113,6 +132,9 @@ Note: `expanded_blueprint` does not get the transport overrides because it's cre
 Sometimes you need to rename a connection to match what other modules expect. You can use `remappings` to rename module connections:
 
 ```python
+from dimos.core.blueprints import autoconnect
+from dimos.core import Module, rpc
+
 class ConnectionModule(Module):
     color_image: Out[Image]  # Outputs on 'color_image'
 
@@ -154,6 +176,8 @@ blueprint
 Each module can optionally take a `global_config` option in `__init__`. E.g.:
 
 ```python
+from dimos.core import Module, rpc
+
 class ModuleA(Module):
 
     def __init__(self, global_config: GlobalConfig | None = None):
@@ -171,6 +195,8 @@ blueprint = blueprint.global_config(n_dask_workers=8)
 Imagine you have this code:
 
 ```python
+from dimos.core import Module, rpc
+
 class ModuleA(Module):
 
     @rpc
@@ -187,6 +213,8 @@ And you want to call `ModuleA.get_time` in `ModuleB.request_the_time`.
 To do this, you can request a link to the method you want to call in `rpc_calls`. Calling `get_time_rcp` will call the original `ModuleA.get_time`.
 
 ```python
+from dimos.core import Module, rpc
+
 class ModuleB(Module):
     rpc_calls: list[str] = [
         "ModuleA.get_time",
@@ -210,6 +238,8 @@ There is an alternative way of receiving RPC methods. It is useful when you want
 You can use it by defining a method like `set_<class_name>_<method_name>`:
 
 ```python
+from dimos.core import Module, rpc
+
 class ModuleB(Module):
     @rpc # Note that it has to be an rpc method.
     def set_ModuleA_get_time(self, rpc_call: RpcCall) -> None:
@@ -229,6 +259,10 @@ In the previous examples, you can only call methods in a module called `ModuleA`
 You can do so by extracting the common interface as an `ABC` (abstract base class) and linking to the `ABC` instead one particular class.
 
 ```python
+from abc import ABC, abstractmethod
+
+from dimos.core import Module, rpc
+
 class TimeInterface(ABC):
     @abstractmethod
     def get_time(self): ...
@@ -269,6 +303,10 @@ If both are deployed, the blueprint will throw an error because it's ambiguous.
 Skills have to be registered with `AgentSpec.register_skills(self)`.
 
 ```python
+from dimos.core import Module, rpc
+from dimos.core.skill_module import SkillModule
+from dimos.protocol.skill.skill import skill
+
 class SomeSkill(Module):
 
     @skill
@@ -291,6 +329,9 @@ class SomeSkill(Module):
 Or, you can avoid all of this by inheriting from `SkillModule` which does the above automatically:
 
 ```python
+from dimos.core.skill_module import SkillModule
+from dimos.protocol.skill.skill import skill
+
 class SomeSkill(SkillModule):
 
     @skill
