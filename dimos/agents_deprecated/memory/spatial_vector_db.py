@@ -225,8 +225,8 @@ class SpatialVectorDB:
                 )
 
             # Get the image from visual memory
-            image = self.visual_memory.get(lookup_id)
-            result["image"] = image
+            #image = self.visual_memory.get(lookup_id)
+            #result["image"] = image
 
             processed_results.append(result)
 

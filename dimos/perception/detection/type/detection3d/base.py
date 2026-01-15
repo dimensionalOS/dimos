@@ -15,23 +15,22 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from dimos.msgs.geometry_msgs import Transform
 from dimos.perception.detection.type.detection2d import Detection2DBBox
 
 if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
-
-    from dimos.msgs.geometry_msgs import Transform
 
 
 @dataclass
 class Detection3D(Detection2DBBox):
     """Abstract base class for 3D detections."""
 
-    transform: Transform
-    frame_id: str
+    frame_id: str = ""
+    transform: Transform = field(default_factory=Transform.identity)
 
     @classmethod
     @abstractmethod

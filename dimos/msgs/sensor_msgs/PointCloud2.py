@@ -23,11 +23,9 @@ from dimos_lcm.sensor_msgs.PointCloud2 import (
 )
 from dimos_lcm.sensor_msgs.PointField import PointField  # type: ignore[import-untyped]
 from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
-import matplotlib.pyplot as plt
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
-import rerun as rr
 
 from dimos.msgs.geometry_msgs import Transform, Vector3
 
@@ -55,6 +53,8 @@ if TYPE_CHECKING:
 @functools.lru_cache(maxsize=16)
 def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
     """Get a matplotlib colormap by name (cached for performance)."""
+    import matplotlib.pyplot as plt
+
     return plt.get_cmap(name)
 
 
@@ -354,6 +354,8 @@ class PointCloud2(Timestamped):
 
     def voxel_downsample(self, voxel_size: float = 0.025) -> PointCloud2:
         """Downsample the pointcloud with a voxel grid."""
+        if voxel_size <= 0:
+            return self
         if len(self.pointcloud.points) < 20:
             return self
         downsampled = self._pcd_tensor.voxel_down_sample(voxel_size)
@@ -626,6 +628,8 @@ class PointCloud2(Timestamped):
         fill_mode: str = "solid",
         **kwargs,  # type: ignore[no-untyped-def]
     ):  # type: ignore[no-untyped-def]
+        import rerun as rr
+
         """Convert to Rerun Points3D or Boxes3D archetype.
 
         Args:

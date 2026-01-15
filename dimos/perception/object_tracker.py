@@ -28,7 +28,6 @@ import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, ModuleConfig, Out, rpc
-from dimos.manipulation.visual_servoing.utils import visualize_detections_3d
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import (
     CameraInfo,
@@ -540,10 +539,13 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
                     y2 = det_2d.bbox.center.position.y + det_2d.bbox.size_y / 2
                     bbox_2d = [[x1, y1, x2, y2]]
 
-                # Create visualization
-                viz_image = visualize_detections_3d(
-                    frame, detections_3d, show_coordinates=True, bboxes_2d=bbox_2d
-                )
+                # Use frame directly for visualization
+                viz_image = frame.copy()
+
+                # Draw bounding boxes
+                for bbox in bbox_2d:
+                    x1, y1, x2, y2 = map(int, bbox)
+                    cv2.rectangle(viz_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
                 # Overlay REID feature matches if available
                 if self.last_good_matches and self.last_roi_kps and self.last_roi_bbox:

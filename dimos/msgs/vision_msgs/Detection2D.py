@@ -11,16 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from dimos_lcm.vision_msgs.Detection3DArray import Detection3DArray as LCMDetection3DArray
+from dimos_lcm.vision_msgs.Detection2D import Detection2D as LCMDetection2D
 
 from dimos.types.timestamped import to_timestamp
 
 
-class Detection3DArray(LCMDetection3DArray):  # type: ignore[misc]
-    msg_name = "vision_msgs.Detection3DArray"
+class Detection2D(LCMDetection2D):  # type: ignore[misc]
+    msg_name = "vision_msgs.Detection2D"
 
     # for _get_field_type() to work when decoding in _decode_one()
-    __annotations__ = LCMDetection3DArray.__annotations__
+    __annotations__ = LCMDetection2D.__annotations__
 
     @property
     def ts(self) -> float:

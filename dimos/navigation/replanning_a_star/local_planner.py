@@ -29,7 +29,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs import Path
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.base import NavigationState
-from dimos.navigation.replanning_a_star.controllers import Controller, PController, PdController
+from dimos.navigation.replanning_a_star.controllers import Controller, PController
 from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
 from dimos.navigation.replanning_a_star.path_clearance import PathClearance
 from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
@@ -87,9 +87,7 @@ class LocalPlanner(Resource):
         self._navigation_map = navigation_map
         self._goal_tolerance = goal_tolerance
 
-        controller = PController if global_config.simulation else PdController
-
-        self._controller = controller(
+        self._controller = PController(
             self._global_config,
             self._speed,
             self._control_frequency,

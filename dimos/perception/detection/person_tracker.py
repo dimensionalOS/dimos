@@ -84,9 +84,7 @@ class PersonTracker(Module):
                 buffer_size=2.0,
             ).pipe(
                 ops.map(
-                    lambda pair: ImageDetections2D.from_ros_detection2d_array(  # type: ignore[misc]
-                        *pair
-                    )
+                    lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)  # type: ignore[misc, arg-type]
                 )
             )
         )

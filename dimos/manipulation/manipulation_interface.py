@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING, Any
 from dimos.manipulation.manipulation_history import (
     ManipulationHistory,
 )
-from dimos.perception.object_detection_stream import ObjectDetectionStream
 from dimos.types.manipulation import (
     AbstractConstraint,
     ManipulationTask,
@@ -53,7 +52,7 @@ class ManipulationInterface:
         self,
         output_dir: str,
         new_memory: bool = False,
-        perception_stream: ObjectDetectionStream = None,  # type: ignore[assignment]
+        perception_stream: Any = None,
     ) -> None:
         """
         Initialize a new ManipulationInterface instance.

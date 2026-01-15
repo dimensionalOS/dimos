@@ -36,6 +36,8 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 import uvicorn
 
+from dimos.utils.data import get_data
+
 # Path to the frontend HTML templates and command-center build
 _TEMPLATES_DIR = FilePath(__file__).parent.parent / "templates"
 _DASHBOARD_HTML = _TEMPLATES_DIR / "rerun_dashboard.html"
@@ -218,7 +220,7 @@ class WebsocketVisModule(Module):
 
         async def serve_command_center(request):  # type: ignore[no-untyped-def]
             """Serve the command center 2D visualization (built React app)."""
-            index_file = _COMMAND_CENTER_DIR / "index.html"
+            index_file = get_data("command_center.html")
             if index_file.exists():
                 return FileResponse(index_file, media_type="text/html")
             else:
@@ -233,15 +235,6 @@ class WebsocketVisModule(Module):
             Route("/command-center", serve_command_center),
         ]
 
-        # Add static file serving for command-center assets if build exists
-        if _COMMAND_CENTER_DIR.exists():
-            routes.append(
-                Mount(  # type: ignore[arg-type]
-                    "/assets",
-                    app=StaticFiles(directory=_COMMAND_CENTER_DIR / "assets"),
-                    name="assets",
-                )
-            )
         starlette_app = Starlette(routes=routes)
 
         self.app = socketio.ASGIApp(self.sio, starlette_app)

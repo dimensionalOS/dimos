@@ -20,13 +20,8 @@ from dataclasses import dataclass
 import pickle
 from typing import Any, Generic, TypeVar
 
-from dimos.utils.logging_config import setup_logger
-
 MsgT = TypeVar("MsgT")
 TopicT = TypeVar("TopicT")
-
-
-logger = setup_logger()
 
 
 class PubSub(Generic[TopicT, MsgT], ABC):

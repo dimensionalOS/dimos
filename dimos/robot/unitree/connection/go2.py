@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-from pathlib import Path
 from threading import Thread
 import time
 from typing import Any, Protocol
@@ -35,17 +34,14 @@ from dimos.msgs.geometry_msgs import (
     Vector3,
 )
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
+from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
-from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
-logger = setup_logger(level=logging.INFO)
-
-# URDF path for Go2 robot
-_GO2_URDF = Path(__file__).parent.parent / "go2" / "go2.urdf"
+logger = logging.getLogger(__name__)
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -120,7 +116,22 @@ class ReplayConnection(UnitreeWebRTCConnection):
     # we don't have raw video stream in the data set
     @simple_mcache
     def video_stream(self):  # type: ignore[no-untyped-def]
-        video_store = TimedSensorReplay(f"{self.dir_name}/video")  # type: ignore[var-annotated]
+        # Legacy Unitree recordings can have RGB bytes that were tagged/assumed as BGR.
+        # Fix at replay-time by coercing everything to RGB before publishing/logging.
+        def _autocast_video(x):  # type: ignore[no-untyped-def]
+            # If the old recording tagged it as BGR, relabel to RGB (do NOT channel-swap again).
+            if isinstance(x, Image):
+                if x.format == ImageFormat.BGR:
+                    x.format = ImageFormat.RGB
+                if not x.frame_id:
+                    x.frame_id = "camera_optical"
+                return x
+
+            # Some recordings may store raw arrays or frame wrappers.
+            arr = x.to_ndarray(format="rgb24") if hasattr(x, "to_ndarray") else x
+            return Image.from_numpy(arr, format=ImageFormat.RGB, frame_id="camera_optical")
+
+        video_store = TimedSensorReplay(f"{self.dir_name}/video", autocast=_autocast_video)  # type: ignore[var-annotated]
         return video_store.stream(**self.replay_config)  # type: ignore[arg-type]
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -196,13 +207,14 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         self.connection.start()
 
-        # Initialize Rerun world frame and load URDF (only if Rerun backend)
+        # Connect this worker process to Rerun if it will log sensor data.
         if self._global_config.viewer_backend.startswith("rerun"):
-            self._init_rerun_world()
+            connect_rerun(global_config=self._global_config)
 
         def onimage(image: Image) -> None:
             self.color_image.publish(image)
-            rr.log("world/robot/camera/rgb", image.to_rerun())
+            if self._global_config.viewer_backend.startswith("rerun"):
+                rr.log("world/robot/camera/rgb", image.to_rerun())
 
         self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
         self._disposables.add(self.connection.odom_stream().subscribe(self._publish_tf))
@@ -217,45 +229,6 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         self.standup()
         # self.record("go2_bigoffice")
-
-    def _init_rerun_world(self) -> None:
-        """Set up Rerun world frame, load URDF, and static assets.
-
-        Does NOT compose blueprint - that's handled by ModuleBlueprintSet.build().
-        """
-        connect_rerun(global_config=self._global_config)
-
-        # Set up world coordinate system AND register it as a named frame
-        # This is KEY - it connects entity paths to the named frame system
-        rr.log(
-            "world",
-            rr.ViewCoordinates.RIGHT_HAND_Z_UP,
-            rr.CoordinateFrame("world"),  # type: ignore[attr-defined]
-            static=True,
-        )
-
-        # Bridge the named frame "world" to the implicit frame hierarchy "tf#/world"
-        # This connects TF named frames to entity path hierarchy
-        rr.log(
-            "world",
-            rr.Transform3D(
-                parent_frame="world",  # type: ignore[call-arg]
-                child_frame="tf#/world",  # type: ignore[call-arg]
-            ),
-            static=True,
-        )
-
-        # Load robot URDF
-        if _GO2_URDF.exists():
-            rr.log_file_from_path(
-                str(_GO2_URDF),
-                entity_path_prefix="world/robot",
-                static=True,
-            )
-            logger.info(f"Loaded URDF from {_GO2_URDF}")
-
-        # Log static camera pinhole (for frustum)
-        rr.log("world/robot/camera", _camera_info_static().to_rerun(), static=True)
 
     @rpc
     def stop(self) -> None:
@@ -298,42 +271,6 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         self.tf.publish(*transforms)
         if self.odom.transport:
             self.odom.publish(msg)
-
-        # Log to Rerun: robot pose (relative to parent entity "world")
-        rr.log(
-            "world/robot",
-            rr.Transform3D(
-                translation=[msg.x, msg.y, msg.z],
-                rotation=rr.Quaternion(
-                    xyzw=[
-                        msg.orientation.x,
-                        msg.orientation.y,
-                        msg.orientation.z,
-                        msg.orientation.w,
-                    ]
-                ),
-            ),
-        )
-        # Log axes as a child entity for visualization
-        rr.log("world/robot/axes", rr.TransformAxes3D(0.5))  # type: ignore[attr-defined]
-
-        # Log camera transform (compose base_link -> camera_link -> camera_optical)
-        # transforms[1] is camera_link, transforms[2] is camera_optical
-        cam_tf = transforms[1] + transforms[2]  # compose transforms
-        rr.log(
-            "world/robot/camera",
-            rr.Transform3D(
-                translation=[cam_tf.translation.x, cam_tf.translation.y, cam_tf.translation.z],
-                rotation=rr.Quaternion(
-                    xyzw=[
-                        cam_tf.rotation.x,
-                        cam_tf.rotation.y,
-                        cam_tf.rotation.z,
-                        cam_tf.rotation.w,
-                    ]
-                ),
-            ),
-        )
 
     def publish_camera_info(self) -> None:
         while True:

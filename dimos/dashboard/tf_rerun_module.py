@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TF Rerun Module - Automatically visualize all transforms in Rerun.
+"""TF Rerun Module - Snapshot TF visualization in Rerun.
 
-This module subscribes to the /tf LCM topic and logs ALL transforms
-to Rerun, providing automatic visualization of the robot's TF tree.
+This module polls the TF buffer at a configurable rate and logs the latest
+transform for each edge to Rerun. This provides stable, rate-limited TF
+visualization without subscribing to the /tf transport from here.
 
 Usage:
     # In blueprints:
@@ -29,35 +30,41 @@ Usage:
         )
 """
 
-from typing import Any
+from collections.abc import Sequence
+import threading
+import time
+from typing import Any, cast
 
 import rerun as rr
 
 from dimos.core import Module, rpc
+from dimos.core.blueprints import ModuleBlueprintSet, autoconnect
 from dimos.core.global_config import GlobalConfig
 from dimos.dashboard.rerun_init import connect_rerun
-from dimos.msgs.tf2_msgs import TFMessage
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.dashboard.rerun_scene_wiring import rerun_scene_wiring
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
 class TFRerunModule(Module):
-    """Subscribes to /tf LCM topic and logs all transforms to Rerun.
+    """Polls TF buffer and logs snapshot transforms to Rerun.
 
     This module automatically visualizes the TF tree in Rerun by:
-    - Subscribing to the /tf LCM topic (captures ALL transforms in the system)
-    - Logging each transform to its derived entity path (world/{child_frame_id})
+    - Using `self.tf` (the system TF service) to maintain the TF buffer
+    - Polling at a configurable rate and logging the latest transform per edge
     """
 
     _global_config: GlobalConfig
-    _lcm: LCM | None = None
-    _unsubscribe: Any = None
+    _poll_thread: threading.Thread | None = None
+    _stop_event: threading.Event | None = None
+    _poll_hz: float
+    _last_ts_by_edge: dict[tuple[str, str], float]
 
     def __init__(
         self,
         global_config: GlobalConfig | None = None,
+        poll_hz: float = 30.0,
         **kwargs: Any,
     ) -> None:
         """Initialize TFRerunModule.
@@ -68,6 +75,8 @@ class TFRerunModule(Module):
         """
         super().__init__(**kwargs)
         self._global_config = global_config or GlobalConfig()
+        self._poll_hz = poll_hz
+        self._last_ts_by_edge = {}
 
     @rpc
     def start(self) -> None:
@@ -78,35 +87,86 @@ class TFRerunModule(Module):
         if self._global_config.viewer_backend.startswith("rerun"):
             connect_rerun(global_config=self._global_config)
 
-            # Subscribe directly to LCM /tf topic (captures ALL transforms)
-            self._lcm = LCM()
-            self._lcm.start()
-            topic = Topic("/tf", TFMessage)
-            self._unsubscribe = self._lcm.subscribe(topic, self._on_tf_message)
-            logger.info("TFRerunModule: subscribed to /tf, logging all transforms to Rerun")
+            # Ensure TF transport is started so its internal subscription populates the buffer.
+            self.tf.start(sub=True)
 
-    def _on_tf_message(self, msg: TFMessage, topic: Topic) -> None:
-        """Log all transforms in TFMessage to Rerun.
+            self._stop_event = threading.Event()
+            self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True)
+            self._poll_thread.start()
+            logger.info("TFRerunModule: started TF snapshot polling", poll_hz=self._poll_hz)
 
-        Args:
-            msg: TFMessage containing transforms to visualize
-            topic: The LCM topic (unused but required by callback signature)
-        """
-        for entity_path, transform in msg.to_rerun():  # type: ignore[no-untyped-call]
-            rr.log(entity_path, transform)
+    def _poll_loop(self) -> None:
+        assert self._stop_event is not None
+        period_s = 1.0 / max(self._poll_hz, 0.1)
+
+        while not self._stop_event.is_set():
+            # Snapshot keys to avoid concurrent modification while TF buffer updates.
+            items = list(self.tf.buffers.items())  # type: ignore[attr-defined]
+            for (parent, child), buffer in items:
+                latest = buffer.get()
+                if latest is None:
+                    continue
+                last_ts = self._last_ts_by_edge.get((parent, child))
+                if last_ts is not None and latest.ts == last_ts:
+                    continue
+
+                # Log under `world/tf/...` so it is visible under the default 3D view origin.
+                rr.log(f"world/tf/{child}", latest.to_rerun())  # type: ignore[no-untyped-call]
+                self._last_ts_by_edge[(parent, child)] = latest.ts
+
+            time.sleep(period_s)
 
     @rpc
     def stop(self) -> None:
         """Stop the TF visualization module and cleanup LCM subscription."""
-        if self._unsubscribe:
-            self._unsubscribe()
-            self._unsubscribe = None
+        if self._stop_event is not None:
+            self._stop_event.set()
+            self._stop_event = None
 
-        if self._lcm:
-            self._lcm.stop()
-            self._lcm = None
+        if self._poll_thread is not None and self._poll_thread.is_alive():
+            self._poll_thread.join(timeout=1.0)
+        self._poll_thread = None
 
         super().stop()
 
 
-tf_rerun = TFRerunModule.blueprint
+def tf_rerun(
+    *,
+    poll_hz: float = 30.0,
+    scene: bool = True,
+    # Scene wiring kwargs (only used if scene=True)
+    world_entity: str = "world",
+    robot_entity: str = "world/robot",
+    robot_axes_entity: str = "world/robot/axes",
+    world_frame: str = "world",
+    robot_frame: str = "base_link",
+    urdf_path: str | None = None,
+    axes_size: float | None = 0.5,
+    cameras: Sequence[tuple[str, str, Any]] = (),
+    camera_rgb_suffix: str = "rgb",
+) -> ModuleBlueprintSet:
+    """Convenience blueprint: TF snapshot polling + (optional) static scene wiring.
+
+    - TF visualization stays in `TFRerunModule` (poll TF buffer, log to `world/tf/*`).
+    - Scene wiring is handled by `RerunSceneWiringModule` (view coords, attachments, URDF, pinholes).
+    """
+    tf_bp = cast("ModuleBlueprintSet", TFRerunModule.blueprint(poll_hz=poll_hz))
+    if not scene:
+        return tf_bp
+
+    scene_bp = cast(
+        "ModuleBlueprintSet",
+        rerun_scene_wiring(
+            world_entity=world_entity,
+            robot_entity=robot_entity,
+            robot_axes_entity=robot_axes_entity,
+            world_frame=world_frame,
+            robot_frame=robot_frame,
+            urdf_path=urdf_path,
+            axes_size=axes_size,
+            cameras=cameras,
+            camera_rgb_suffix=camera_rgb_suffix,
+        ),
+    )
+
+    return autoconnect(tf_bp, scene_bp)

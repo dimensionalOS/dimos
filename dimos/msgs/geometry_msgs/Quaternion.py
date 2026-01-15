@@ -138,6 +138,20 @@ class Quaternion(LCMQuaternion):  # type: ignore[misc]
 
         return cls(x, y, z, w)
 
+    @classmethod
+    def from_rotation_matrix(cls, matrix: np.ndarray) -> Quaternion:  # type: ignore[type-arg]
+        """Convert a 3x3 rotation matrix to quaternion.
+
+        Args:
+            matrix: 3x3 rotation matrix (numpy array)
+
+        Returns:
+            Quaternion representation
+        """
+        rotation = R.from_matrix(matrix)
+        quat = rotation.as_quat()  # Returns [x, y, z, w]
+        return cls(quat[0], quat[1], quat[2], quat[3])
+
     def to_euler(self) -> Vector3:
         """Convert quaternion to Euler angles (roll, pitch, yaw) in radians.
 

@@ -13,8 +13,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-import queue
-import threading
 import time
 
 import numpy as np
@@ -106,33 +104,6 @@ class VoxelGridMapper(Module):
         # Monotonic timestamp of last received frame (for accurate latency in replay)
         self._latest_frame_rx_monotonic: float | None = None
 
-        # Background Rerun logging (decouples viz from data pipeline)
-        self._rerun_queue: queue.Queue[PointCloud2 | None] = queue.Queue(maxsize=2)
-        self._rerun_thread: threading.Thread | None = None
-
-    def _rerun_worker(self) -> None:
-        """Background thread: pull from queue and log to Rerun (non-blocking)."""
-        while True:
-            try:
-                pc = self._rerun_queue.get(timeout=1.0)
-                if pc is None:  # Shutdown signal
-                    break
-
-                # Log to Rerun (blocks in background, doesn't affect data pipeline)
-                try:
-                    rr.log(
-                        "world/map",
-                        pc.to_rerun(
-                            mode="boxes",
-                            size=self.config.voxel_size,
-                            colormap="turbo",
-                        ),
-                    )
-                except Exception as e:
-                    logger.warning(f"Rerun logging error: {e}")
-            except queue.Empty:
-                continue
-
     @rpc
     def start(self) -> None:
         super().start()
@@ -140,11 +111,7 @@ class VoxelGridMapper(Module):
         # Only start Rerun logging if Rerun backend is selected
         if self._global_config.viewer_backend.startswith("rerun"):
             connect_rerun(global_config=self._global_config)
-
-            # Start background Rerun logging thread (decouples viz from data pipeline)
-            self._rerun_thread = threading.Thread(target=self._rerun_worker, daemon=True)
-            self._rerun_thread.start()
-            logger.info("VoxelGridMapper: started async Rerun logging thread")
+            logger.info("VoxelGridMapper: Rerun logging enabled (sync)")
 
         # Subject to trigger publishing, with backpressure to drop if busy
         self._publish_trigger: Subject[None] = Subject()
@@ -167,11 +134,6 @@ class VoxelGridMapper(Module):
 
     @rpc
     def stop(self) -> None:
-        # Shutdown background Rerun thread
-        if self._rerun_thread and self._rerun_thread.is_alive():
-            self._rerun_queue.put(None)  # Shutdown signal
-            self._rerun_thread.join(timeout=2.0)
-
         super().stop()
 
     def _on_frame(self, frame: LidarMessage) -> None:
@@ -196,12 +158,19 @@ class VoxelGridMapper(Module):
         t2 = time.perf_counter()
         self.global_map.publish(pc)
         publish_ms = (time.perf_counter() - t2) * 1000
-
-        # 3. Queue for async Rerun logging (non-blocking, drops if queue full)
-        try:
-            self._rerun_queue.put_nowait(pc)
-        except queue.Full:
-            pass  # Drop viz frame, data pipeline continues
+        # 3. Synchronous Rerun logging (no queues/threads).
+        if self._global_config.viewer_backend.startswith("rerun"):
+            try:
+                rr.log(
+                    "world/map",
+                    pc.to_rerun(
+                        mode="boxes",
+                        size=self.config.voxel_size,
+                        colormap="turbo",
+                    ),
+                )
+            except Exception as e:
+                logger.warning(f"Rerun logging error: {e}")
 
         # Log detailed timing breakdown to Rerun
         total_ms = (time.perf_counter() - start_total) * 1000

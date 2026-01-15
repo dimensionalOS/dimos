@@ -14,28 +14,32 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Generic
+from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import TypeVar
 
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.person import Detection2DPerson
+from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.detection.type.imageDetections import ImageDetections
 
 if TYPE_CHECKING:
-    from dimos_lcm.vision_msgs import Detection2DArray
-    from ultralytics.engine.results import Results  # type: ignore[import-not-found]
+    from ultralytics.engine.results import Results
 
     from dimos.msgs.sensor_msgs import Image
+    from dimos.msgs.vision_msgs import Detection2DArray
 
-# TypeVar with default - Detection2DBBox is the default when no type param given
 T2D = TypeVar("T2D", bound=Detection2D, default=Detection2DBBox)
 
 
 class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):
     @classmethod
-    def from_ros_detection2d_array(  # type: ignore[no-untyped-def]
-        cls, image: Image, ros_detections: Detection2DArray, **kwargs
+    def from_ros_detection2d_array(
+        cls,
+        image: Image,
+        ros_detections: Detection2DArray,
+        **kwargs: Any,
     ) -> ImageDetections2D[Detection2DBBox]:
         """Convert from ROS Detection2DArray message to ImageDetections2D object."""
         detections: list[Detection2DBBox] = []
@@ -47,24 +51,25 @@ class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):
         return ImageDetections2D(image=image, detections=detections)
 
     @classmethod
-    def from_ultralytics_result(  # type: ignore[no-untyped-def]
-        cls, image: Image, results: list[Results], **kwargs
+    def from_ultralytics_result(
+        cls,
+        image: Image,
+        results: list[Results],
     ) -> ImageDetections2D[Detection2DBBox]:
         """Create ImageDetections2D from ultralytics Results.
 
         Dispatches to appropriate Detection2D subclass based on result type:
+        - If masks present: creates Detection2DSeg
         - If keypoints present: creates Detection2DPerson
         - Otherwise: creates Detection2DBBox
 
         Args:
             image: Source image
             results: List of ultralytics Results objects
-            **kwargs: Additional arguments passed to detection constructors
 
         Returns:
             ImageDetections2D containing appropriate detection types
         """
-        from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 
         detections: list[Detection2DBBox] = []
         for result in results:
@@ -74,7 +79,10 @@ class ImageDetections2D(ImageDetections[T2D], Generic[T2D]):
             num_detections = len(result.boxes.xyxy)
             for i in range(num_detections):
                 detection: Detection2DBBox
-                if result.keypoints is not None:
+                if result.masks is not None:
+                    # Segmentation detection with mask
+                    detection = Detection2DSeg.from_ultralytics_result(result, i, image)
+                elif result.keypoints is not None:
                     # Pose detection with keypoints
                     detection = Detection2DPerson.from_ultralytics_result(result, i, image)
                 else:

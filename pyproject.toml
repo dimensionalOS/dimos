@@ -23,7 +23,7 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.4"
+version = "0.0.7"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
 readme = "README.md"
@@ -64,6 +64,10 @@ dependencies = [
     # Used for calculating the occupancy map.
     "numba>=0.60.0",    # First version supporting Python 3.12
     "llvmlite>=0.42.0", # Required by numba 0.60+
+
+    # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
+    # remove this once rerun is optional in core
+    "rerun-sdk>=0.20.0",
 ]
 
 
@@ -96,7 +100,6 @@ misc = [
 
     # Perception Dependencies
     "scikit-learn",
-    "clip",
     "timm>=1.0.15",
     "opencv-contrib-python==4.10.0.84",
 
@@ -113,8 +116,6 @@ misc = [
     "onnx",
     "einops==0.8.1",
 
-    # Teleop
-    "pygame>=2.6.1",
     # Hardware SDKs
     "xarm-python-sdk>=1.17.0",
 ]
@@ -162,7 +163,7 @@ perception = [
 ]
 
 unitree = [
-    "dimos[agents,web,perception,visualization]",
+    "dimos[base]",
     "unitree-webrtc-connect-leshy>=2.0.7"
 ]
 
@@ -203,17 +204,6 @@ cuda = [
     "mmengine>=0.10.3",
     "mmcv>=2.1.0",
     "xformers>=0.0.20",
-
-    # Detic GPU stack
-    "mss",
-    "dataclasses",
-    "ftfy",
-    "regex",
-    "fasttext",
-    "lvis",
-    "nltk",
-    "clip",
-    "detectron2",
 ]
 
 dev = [
@@ -255,6 +245,7 @@ sim = [
     # Simulation
     "mujoco>=3.3.4",
     "playground>=0.0.5",
+    "pygame>=2.6.1",
 ]
 
 # NOTE: jetson-jp6-cuda126 extra is disabled due to 404 errors from wheel URLs
@@ -269,6 +260,10 @@ sim = [
 
 drone = [
     "pymavlink"
+]
+
+base = [
+    "dimos[agents,web,perception,visualization,sim]",
 ]
 
 [tool.ruff]
@@ -374,11 +369,9 @@ ignore = [
 
 [tool.uv]
 # Build dependencies for packages that don't declare them properly
-extra-build-dependencies = { detectron2 = ["torch"], contact-graspnet-pytorch = ["numpy"] }
+extra-build-dependencies = { contact-graspnet-pytorch = ["numpy"] }
 
 default-groups = []
 
 [tool.uv.sources]
-clip = { git = "https://github.com/openai/CLIP.git" }
 contact-graspnet-pytorch = { git = "https://github.com/dimensionalOS/contact_graspnet_pytorch.git" }
-detectron2 = { git = "https://github.com/facebookresearch/detectron2.git", tag = "v0.6" }

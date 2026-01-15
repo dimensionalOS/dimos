@@ -164,7 +164,10 @@ class TFMessage:
         """Convert to a list of rerun Transform3D archetypes.
 
         Returns a list of tuples (entity_path, Transform3D) for each transform
-        in the message. The entity_path is derived from the child_frame_id.
+        in the message. The entity_path is derived from the child_frame_id and
+        logged under `world/tf/...` so it is visible under the default `world`
+        origin while keeping TF visualization isolated from semantic entities
+        like `world/robot/...`.
 
         Returns:
             List of (entity_path, rr.Transform3D) tuples
@@ -175,6 +178,6 @@ class TFMessage:
         """
         results = []
         for transform in self.transforms:
-            entity_path = f"world/{transform.child_frame_id}"
+            entity_path = f"world/tf/{transform.child_frame_id}"
             results.append((entity_path, transform.to_rerun()))  # type: ignore[no-untyped-call]
         return results

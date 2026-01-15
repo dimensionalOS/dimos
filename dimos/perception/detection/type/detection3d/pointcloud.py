@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import functools
 from typing import TYPE_CHECKING, Any
 
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class Detection3DPC(Detection3D):
-    pointcloud: PointCloud2
+    pointcloud: PointCloud2 = field(default_factory=PointCloud2)
 
     @functools.cached_property
     def center(self) -> Vector3:
