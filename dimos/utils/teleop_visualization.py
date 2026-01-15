@@ -17,10 +17,12 @@
 
 from __future__ import annotations
 
-import time
+from typing import TYPE_CHECKING
 
-from dimos.msgs.geometry_msgs import Pose, PoseStamped
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.msgs.geometry_msgs import ControllerPose
 
 logger = setup_logger()
 
@@ -38,7 +40,6 @@ def init_rerun_visualization() -> bool:
     """Initialize Rerun visualization connection."""
     if not RERUN_AVAILABLE:
         return False
-
     try:
         connect_rerun()
         logger.info("Connected to Rerun for teleop visualization")
@@ -48,7 +49,7 @@ def init_rerun_visualization() -> bool:
         return False
 
 
-def visualize_controller_pose(controller_pose: Pose, controller_label: str) -> None:
+def visualize_controller_pose(controller_pose: ControllerPose, controller_label: str) -> None:
     """Visualize controller absolute pose in Rerun.
 
     Args:
@@ -57,22 +58,18 @@ def visualize_controller_pose(controller_pose: Pose, controller_label: str) -> N
     """
     if not RERUN_AVAILABLE:
         return
-
     try:
-        controller_pose_stamped = PoseStamped(
-            ts=time.time(),
-            frame_id=f"world/teleop/{controller_label}_controller",
-            position=controller_pose.position,
-            orientation=controller_pose.orientation,
+        pose_stamped = controller_pose.to_pose_stamped(
+            frame_id=f"world/teleop/{controller_label}_controller"
         )
         rr.log(
             f"world/teleop/{controller_label}_controller",
-            controller_pose_stamped.to_rerun(),  # type: ignore[no-untyped-call]
+            pose_stamped.to_rerun(),  # type: ignore[no-untyped-call]
         )
         # Log 3D axes to visualize controller orientation (X=red, Y=green, Z=blue)
         rr.log(
             f"world/teleop/{controller_label}_controller/axes",
-            rr.TransformAxes3D(0.15),  # type: ignore[attr-defined]
+            rr.TransformAxes3D(0.10),  # type: ignore[attr-defined]
         )
     except Exception as e:
         logger.debug(f"Failed to log {controller_label} controller to Rerun: {e}")
@@ -87,7 +84,6 @@ def visualize_trigger_value(trigger_value: float, controller_label: str) -> None
     """
     if not RERUN_AVAILABLE:
         return
-
     try:
         rr.log(
             f"world/teleop/{controller_label}_controller/trigger",

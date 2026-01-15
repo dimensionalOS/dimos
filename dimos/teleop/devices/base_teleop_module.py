@@ -20,28 +20,21 @@ Provides calibration, delta computation, and command publishing.
 Subclasses implement device-specific input handling.
 """
 
-from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from dimos.core import Module, Out, rpc
 from dimos.core.module import ModuleConfig
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Twist
+from dimos.msgs.geometry_msgs import ControllerPose, Pose, PoseStamped, Twist
 from dimos.msgs.std_msgs import Bool
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.teleop_transforms import compute_active_indices, parse_pose_from_dict
+from dimos.utils.teleop_transforms import compute_active_indices
 from dimos.utils.teleop_visualization import (
     init_rerun_visualization,
     visualize_controller_pose,
     visualize_trigger_value,
 )
-from dimos.utils.transform_utils import matrix_to_pose
-
-if TYPE_CHECKING:
-    import numpy as np
-    from numpy.typing import NDArray
-
 
 logger = setup_logger()
 
@@ -75,15 +68,17 @@ class TeleopStatusKey(str, Enum):
     CONTROLLER_LABEL = "controller_{index}_label"
 
 
-class BaseTeleopModule(Module, ABC):
+TeleopConfigT = TypeVar("TeleopConfigT", bound=BaseTeleopConfig)
+
+
+class BaseTeleopModule(Module[TeleopConfigT]):
     """Base class for teleoperation modules.
 
     Handles calibration, delta computation, and command publishing.
     Subclasses implement device-specific input handling.
     """
 
-    default_config = BaseTeleopConfig
-    config: BaseTeleopConfig
+    default_config: type[BaseTeleopConfig] = BaseTeleopConfig
 
     # Output topics: PoseStamped for arms (0,1), Twist for locomotion (2,3)
     controller_delta_0: Out[PoseStamped] = None  # type: ignore
@@ -102,17 +97,23 @@ class BaseTeleopModule(Module, ABC):
         self._tracking_msg_count = 0
         self._publish_count = 0
 
+        if not self.config.output_types:
+            raise ValueError("output_types cannot be empty")
+
         if len(self.config.input_labels) != len(self.config.output_types):
             raise ValueError(
                 f"input_labels length ({len(self.config.input_labels)}) must match "
                 f"output_types length ({len(self.config.output_types)})"
             )
+        
 
         self._active_indices = compute_active_indices(self.config.output_types)
 
-        self._initial_poses: dict[int, Pose | None] = {i: None for i in self._active_indices}
+        self._initial_controller_poses: dict[int, ControllerPose | None] = {
+            i: None for i in self._active_indices
+        }
         self._initial_robot_poses: dict[int, Pose | None] = {i: None for i in self._active_indices}
-        self._all_poses: dict[int, NDArray[np.float64] | None] = {
+        self._current_controller_poses: dict[int, ControllerPose | None] = {
             i: None for i in self._active_indices
         }
         self._all_trigger_values: dict[int, float] = {i: 0.0 for i in self._active_indices}
@@ -143,67 +144,73 @@ class BaseTeleopModule(Module, ABC):
         super().stop()
 
     @rpc
-    def calibrate(self) -> dict[str, Any]:
+    def calibrate(self) -> bool:
         """Capture current controller poses as the zero reference."""
         logger.info("Calibrating controllers...")
 
         try:
             if not self._active_indices:
-                return {"success": False, "error": "No controllers are enabled"}
+                logger.error("Calibration failed: No controllers are enabled")
+                return False
 
             for i, idx in enumerate(self._active_indices):
-                pose_matrix = self._all_poses.get(idx)
-                if pose_matrix is not None:
-                    pose_obj = matrix_to_pose(pose_matrix)
-                    self._initial_poses[idx] = pose_obj
-                    logger.info(f"Captured controller {self._get_label(idx)} initial: {pose_obj}")
+                pose = self._current_controller_poses.get(idx)
+                if pose is not None:
+                    self._initial_controller_poses[idx] = pose
+                    logger.info(f"Captured controller {self._get_label(idx)} initial: {pose}")
                 else:
-                    return {
-                        "success": False,
-                        "error": f"Controller {self._get_label(idx)} data is None",
-                    }
+                    logger.error(
+                        f"Calibration failed: Controller {self._get_label(idx)} data is None"
+                    )
+                    return False
 
-                # Get initial robot pose via RPC if configured
+                # Get initial robot state via RPC if configured (only for PoseStamped)
                 output_type = self.config.output_types[i]
-                if i < len(self.config.robot_pose_rpc_methods):
-                    rpc_method = self.config.robot_pose_rpc_methods[i]
-                    if rpc_method is not None:
-                        self._initial_robot_poses[idx] = self._get_robot_initial_pose(
-                            output_type, rpc_method
-                        )
+                if output_type == PoseStamped:
+                    if i < len(self.config.robot_pose_rpc_methods):
+                        rpc_method = self.config.robot_pose_rpc_methods[i]
+                        if rpc_method is not None:
+                            self._initial_robot_poses[idx] = self._get_initial_robot_state(
+                                rpc_method
+                            )
+                        else:
+                            self._initial_robot_poses[idx] = None
                     else:
-                        self._initial_robot_poses[idx] = parse_pose_from_dict(output_type)
+                        self._initial_robot_poses[idx] = None
                 else:
-                    self._initial_robot_poses[idx] = parse_pose_from_dict(output_type)
+                    # Twist doesn't need initial robot pose
+                    self._initial_robot_poses[idx] = None
 
             self._is_calibrated = True
             logger.info("Calibration complete. Now streaming delta poses...")
-            return {"success": True, "message": "Calibrated"}
+            return True
 
         except Exception as e:
             logger.error(f"Calibration failed: {e}", exc_info=True)
-            return {"success": False, "error": str(e)}
+            return False
 
-    def _get_robot_initial_pose(self, output_type: type, rpc_method: str) -> Pose | None:
-        """Get initial robot pose via RPC call."""
+    def _get_initial_robot_state(self, rpc_method: str) -> Pose | None:
+        """Get initial robot state via RPC call.
+        Args:
+            rpc_method: RPC method name that returns the initial state.
+        Returns:
+            Robot state from RPC, or origin Pose() if RPC fails.
+        """
         try:
-            rpc_call = self.get_rpc_calls(rpc_method)
-            rpc_result = rpc_call()
-            pose = parse_pose_from_dict(output_type, rpc_result)
-            logger.info(f"Got robot initial pose via {rpc_method}: {pose}")
-            return pose
+            state = self.get_rpc_calls(rpc_method)()
+            logger.info(f"Got initial robot state via {rpc_method}: {state}")
+            return state
         except Exception as e:
-            logger.warning(f"RPC call {rpc_method} failed: {e}, using zero pose")
-            return parse_pose_from_dict(output_type)
+            logger.warning(f"RPC call {rpc_method} failed: {e}, using origin pose")
+            return None
 
     @rpc
-    def reset_calibration(self) -> dict[str, Any]:
+    def reset_calibration(self) -> None:
         """Reset calibration. Stops streaming until recalibrated."""
         self._is_calibrated = False
-        self._initial_poses = {i: None for i in self._active_indices}
+        self._initial_controller_poses = {i: None for i in self._active_indices}
         self._initial_robot_poses = {i: None for i in self._active_indices}
         logger.info("Calibration reset.")
-        return {"success": True, "message": "Calibration reset"}
 
     @rpc
     def is_calibrated(self) -> bool:
@@ -218,7 +225,7 @@ class BaseTeleopModule(Module, ABC):
         }
         for i in self._active_indices:
             status[TeleopStatusKey.CONTROLLER_HAS_DATA.value.format(index=i)] = (
-                self._all_poses.get(i) is not None
+                self._current_controller_poses.get(i) is not None
             )
             status[TeleopStatusKey.CONTROLLER_TRIGGER_VALUE.value.format(index=i)] = (
                 self._all_trigger_values.get(i, 0.0)
@@ -228,12 +235,12 @@ class BaseTeleopModule(Module, ABC):
 
     def compute_deltas(
         self,
-        controller_poses: "dict[int, NDArray[np.float64] | None]",
+        controller_poses: dict[int, ControllerPose | None],
         controller_trigger_values: dict[int, float],
-    ) -> dict[int, Pose | None]:
+    ) -> dict[int, ControllerPose | None]:
         """Compute delta = current_pose - initial_pose for each controller."""
         self._tracking_msg_count += 1
-        self._all_poses = controller_poses
+        self._current_controller_poses = controller_poses
         self._all_trigger_values = controller_trigger_values
 
         if not self._is_calibrated:
@@ -242,25 +249,23 @@ class BaseTeleopModule(Module, ABC):
             return {i: None for i in self._active_indices}
 
         self._publish_count += 1
-        deltas: dict[int, Pose | None] = {}
+        deltas: dict[int, ControllerPose | None] = {}
 
         for i in self._active_indices:
-            pose_matrix = self._all_poses.get(i)
-            if pose_matrix is None:
+            current_pose = self._current_controller_poses.get(i)
+            if current_pose is None:
                 deltas[i] = None
                 continue
 
-            initial_pose = self._initial_poses.get(i)
+            initial_pose = self._initial_controller_poses.get(i)
             if initial_pose is None:
                 deltas[i] = None
                 continue
 
-            pose_obj = matrix_to_pose(pose_matrix)
-            delta_pose = pose_obj - initial_pose
-
+            delta_pose = current_pose - initial_pose
             if self.config.visualize_in_rerun:
                 label = self._get_label(i)
-                visualize_controller_pose(pose_obj, label)
+                visualize_controller_pose(current_pose, label)
                 visualize_trigger_value(self._all_trigger_values.get(i, 0.0), label)
 
             deltas[i] = delta_pose

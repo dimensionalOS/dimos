@@ -23,21 +23,17 @@ transforms from WebXR to robot frame, computes deltas, and publishes commands.
 from dataclasses import dataclass, field
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from dimos_lcm.geometry_msgs import Transform as LCMTransform
 
 from dimos.core import In, rpc
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs import ControllerPose, PoseStamped, Twist
 from dimos.msgs.std_msgs import Bool, Float32
 from dimos.teleop.devices.base_teleop_module import BaseTeleopConfig, BaseTeleopModule
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.teleop_transforms import transform_delta, transform_vr_to_robot
-
-if TYPE_CHECKING:
-    import numpy as np
-    from numpy.typing import NDArray
-
+from dimos.utils.teleop_transforms import transform_vr_to_robot
+from dimos.utils.transform_utils import matrix_to_pose
 
 logger = setup_logger()
 
@@ -48,10 +44,11 @@ class VRTeleopConfig(BaseTeleopConfig):
 
     output_types: list[type] = field(default_factory=lambda: [PoseStamped, PoseStamped])
     input_labels: list[str] = field(default_factory=lambda: ["left_vr", "right_vr"])
+    robot_pose_rpc_methods: list[str | None] = field(default_factory=lambda: [None, None])
     control_loop_hz: float = 50.0
 
 
-class VRTeleopModule(BaseTeleopModule):
+class VRTeleopModule(BaseTeleopModule[VRTeleopConfig]):
     """VR Teleoperation Module for Quest 3 controllers.
 
     Subscribes to controller data from Deno bridge, transforms WebXR→robot frame,
@@ -59,7 +56,6 @@ class VRTeleopModule(BaseTeleopModule):
     """
 
     default_config = VRTeleopConfig
-    config: VRTeleopConfig
 
     # LCM inputs from Deno bridge
     vr_left_transform: In[LCMTransform] = None  # type: ignore[assignment]
@@ -72,7 +68,7 @@ class VRTeleopModule(BaseTeleopModule):
         super().__init__(*args, **kwargs)
 
         self._lcm_lock = threading.Lock()
-        self._lcm_controller_poses: dict[int, NDArray[np.float64] | None] = {
+        self._lcm_controller_poses: dict[int, ControllerPose | None] = {
             i: None for i in self._active_indices
         }
         self._lcm_gripper_values: dict[int, float] = {i: 0.0 for i in self._active_indices}
@@ -92,28 +88,20 @@ class VRTeleopModule(BaseTeleopModule):
             f"right→{self._get_label(right_index)}(idx {right_index})"
         )
 
-        if self.vr_left_transform and self.vr_left_transform.transport:
-            self.vr_left_transform.subscribe(
-                lambda msg, idx=left_index: self._on_lcm_transform(idx, msg)  # type: ignore[misc]
-            )
-
-        if self.vr_right_transform and self.vr_right_transform.transport:
-            self.vr_right_transform.subscribe(
-                lambda msg, idx=right_index: self._on_lcm_transform(idx, msg)  # type: ignore[misc]
-            )
-
-        if self.vr_trigger_0 and self.vr_trigger_0.transport:
-            self.vr_trigger_0.subscribe(
-                lambda msg, idx=left_index: self._on_lcm_trigger(idx, msg)  # type: ignore[misc]
-            )
-
-        if self.vr_trigger_1 and self.vr_trigger_1.transport:
-            self.vr_trigger_1.subscribe(
-                lambda msg, idx=right_index: self._on_lcm_trigger(idx, msg)  # type: ignore[misc]
-            )
-
-        if self.teleop_enable and self.teleop_enable.transport:
-            self.teleop_enable.subscribe(self._on_lcm_teleop_enable)
+        # Subscribe to LCM inputs
+        subscriptions = [
+            (self.vr_left_transform, lambda msg, idx=left_index: self._on_lcm_transform(idx, msg)),
+            (
+                self.vr_right_transform,
+                lambda msg, idx=right_index: self._on_lcm_transform(idx, msg),
+            ),
+            (self.vr_trigger_0, lambda msg, idx=left_index: self._on_lcm_trigger(idx, msg)),
+            (self.vr_trigger_1, lambda msg, idx=right_index: self._on_lcm_trigger(idx, msg)),
+            (self.teleop_enable, self._on_lcm_teleop_enable),
+        ]
+        for stream, handler in subscriptions:
+            if stream and stream.transport:
+                stream.subscribe(handler)  # type: ignore[misc]
 
         logger.info("VR Teleoperation Module started")
 
@@ -125,21 +113,17 @@ class VRTeleopModule(BaseTeleopModule):
         super().stop()
 
     @rpc
-    def start_teleop(self) -> dict[str, Any]:
+    def start_teleop(self) -> bool:
         """Calibrate and start teleoperation (called via X button)."""
         logger.info("Starting teleop - calibrating VR...")
-        result: dict[str, Any] = self.calibrate()
-        if not result.get("success"):
-            logger.error(f"Calibration failed: {result.get('error')}")
-        return result
+        return self.calibrate()
 
     @rpc
-    def stop_teleop(self) -> dict[str, Any]:
+    def stop_teleop(self) -> None:
         """Stop teleoperation and reset calibration."""
         logger.info("Stopping teleop - resetting calibration...")
         self._stop_control_loop()
-        result: dict[str, Any] = self.reset_calibration()
-        return result
+        self.reset_calibration()
 
     def _on_lcm_teleop_enable(self, msg: Bool) -> None:
         """Handle teleop enable/disable from X button."""
@@ -154,8 +138,9 @@ class VRTeleopModule(BaseTeleopModule):
         self._start_control_loop()
         is_left = index == self._active_indices[0]
         transform_matrix = transform_vr_to_robot(transform, is_left_controller=is_left)
+        pose = ControllerPose.from_pose(matrix_to_pose(transform_matrix))
         with self._lcm_lock:
-            self._lcm_controller_poses[index] = transform_matrix  # type: ignore[assignment]
+            self._lcm_controller_poses[index] = pose
 
     def _on_lcm_trigger(self, index: int, msg: Float32) -> None:
         """Handle trigger value for gripper control."""
@@ -202,19 +187,25 @@ class VRTeleopModule(BaseTeleopModule):
                 if delta is None:
                     continue
 
+                trigger_value = self._all_trigger_values.get(i, 0.0)
+                trigger_bool = Bool(data=trigger_value > self.config.gripper_threshold)
+
                 output_type = self.config.output_types[idx]
-                command, aux_command = transform_delta(
-                    delta_pose=delta,
-                    trigger_value=self._all_trigger_values.get(i, 0.0),
-                    output_type=output_type,
-                    initial_robot_pose=self._initial_robot_poses.get(i),
-                    linear_scale=self.config.linear_scale,
-                    angular_scale=self.config.angular_scale,
-                    max_linear_velocity=self.config.max_linear_velocity,
-                    max_angular_velocity=self.config.max_angular_velocity,
-                    gripper_threshold=self.config.gripper_threshold,
-                )
-                self.publish_command(i, command, aux_command)
+                if output_type == PoseStamped:
+                    command = delta.to_pose_stamped(
+                        initial_robot_pose=self._initial_robot_poses.get(i),
+                    )
+                elif output_type == Twist:
+                    command = delta.to_twist(
+                        linear_scale=self.config.linear_scale,
+                        angular_scale=self.config.angular_scale,
+                        max_linear=self.config.max_linear_velocity,
+                        max_angular=self.config.max_angular_velocity,
+                    )
+                else:
+                    continue
+
+                self.publish_command(i, command, trigger_bool)
 
             elapsed = time.perf_counter() - loop_start
             sleep_time = period - elapsed
