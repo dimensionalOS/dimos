@@ -95,10 +95,10 @@ After running that, open a new terminal and run the following to start giving in
 # activate the venv in this new terminal
 source .venv/bin/activate
 
-# Note: after running the next command, WAIT for the agent to connect before sending commands
-# this will take a while the first time
+# Note: after running the next command, WAIT for the agent to connect
+# (this will take a while the first time)
 # then tell the agent "explore the room"
-# then tell it to go to something it saw such as "go to the door"
+# then tell it to go to something, ex: "go to the door"
 humancli
 ```
 
