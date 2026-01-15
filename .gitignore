@@ -65,4 +65,4 @@ yolo11n.pt
 *mobileclip*
 
 # Teleop SSL certificates
-dimos/teleop/web/certs/
+assets/teleop_certs/

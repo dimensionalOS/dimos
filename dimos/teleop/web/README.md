@@ -14,27 +14,19 @@ Deno server that bridges WebSocket and LCM:
 ### static/index.html
 
 WebXR client running on Quest 3:
-- Captures controller poses at 72Hz
+- Captures controller poses at set frequency (Also Depends on Refresh rate)
 - Sends Transform messages via WebSocket
 - X button triggers calibration (teleop_enable)
 
 ## Running
 
 ```bash
-cd dimos/teleop/web
-deno run --allow-net --allow-read --unstable-net teleop_server.ts
+deno run --allow-net --allow-read --allow-run --allow-write --unstable-net dimos/teleop/web/teleop_server.ts
 ```
 
 Server starts at `https://localhost:8443`
 
-## SSL Certificates
-
-Generate self-signed certs (required for WebXR):
-
-```bash
-mkdir -p certs
-openssl req -x509 -newkey rsa:2048 -keyout certs/key.pem -out certs/cert.pem -days 365 -nodes -subj "/CN=localhost"
-```
+SSL certificates are generated automatically on first run in `assets/teleop_certs/`.
 
 ## Message Flow
 

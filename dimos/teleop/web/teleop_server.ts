@@ -1,26 +1,29 @@
-#!/usr/bin/env -S deno run --allow-net --allow-read --unstable-net
+#!/usr/bin/env -S deno run --allow-net --allow-read --allow-run --allow-write --unstable-net
 
 // LCM to WebSocket Bridge for Robot Control
 // Forwards robot pose to browser, receives twist commands from browser
 
 import { LCM } from "jsr:@dimos/lcm";
-import { decodePacket, geometry_msgs } from "jsr:@dimos/msgs";
+import { dirname, fromFileUrl, join } from "jsr:@std/path";
 
 const PORT = 8443;
 const clients = new Set<WebSocket>();
 
+// Resolve paths relative to script location
+const scriptDir = dirname(fromFileUrl(import.meta.url));
+const certsDir = join(scriptDir, "../../../assets/teleop_certs");
+const certPath = join(certsDir, "cert.pem");
+const keyPath = join(certsDir, "key.pem");
+
 // Auto-generate self-signed certificates if they don't exist
 async function ensureCerts(): Promise<{ cert: string; key: string }> {
-  const certPath = "./certs/cert.pem";
-  const keyPath = "./certs/key.pem";
-
   try {
     const cert = await Deno.readTextFile(certPath);
     const key = await Deno.readTextFile(keyPath);
     return { cert, key };
   } catch {
     console.log("Generating self-signed certificates...");
-    await Deno.mkdir("./certs", { recursive: true });
+    await Deno.mkdir(certsDir, { recursive: true });
     const cmd = new Deno.Command("openssl", {
       args: [
         "req", "-x509", "-newkey", "rsa:2048",
@@ -32,7 +35,7 @@ async function ensureCerts(): Promise<{ cert: string; key: string }> {
     if (code !== 0) {
       throw new Error("Failed to generate certificates. Is openssl installed?");
     }
-    console.log("Certificates generated in ./certs/");
+    console.log("Certificates generated in assets/teleop_certs/");
     return {
       cert: await Deno.readTextFile(certPath),
       key: await Deno.readTextFile(keyPath),
@@ -81,13 +84,6 @@ console.log(`Server: https://localhost:${PORT}`);
 
 const lcm = new LCM();
 await lcm.start();
-
-// Subscribe to pose and just log to show how server can decode messages for itself
-// lcm.subscribe("/odom", geometry_msgs.PoseStamped, (msg) => {
-//   const pos = msg.data.pose.position;
-//   const ori = msg.data.pose.orientation;
-//   console.log(`[pose] x=${pos.x.toFixed(2)} y=${pos.y.toFixed(2)} z=${pos.z.toFixed(2)}`);
-// });
 
 // Forward all raw packets to browser (we are decoding LCM directly in the browser)
 lcm.subscribePacket((packet) => {
