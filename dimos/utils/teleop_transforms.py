@@ -18,10 +18,10 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Twist, Vector3
 from dimos.msgs.std_msgs import Bool
@@ -190,7 +190,9 @@ def _to_twist(
     return Twist(linear=linear, angular=angular)
 
 
-def parse_pose_from_dict(output_type: type, data: dict | None = None) -> Pose | None:
+def parse_pose_from_dict(  # type: ignore[type-arg]
+    output_type: type, data: dict[str, Any] | None = None
+) -> Pose | None:
     """Parse a Pose from a dictionary based on output type.
 
     Args:

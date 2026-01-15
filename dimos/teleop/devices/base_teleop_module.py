@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.core import Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Twist
+from dimos.msgs.std_msgs import Bool
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.teleop_transforms import compute_active_indices, parse_pose_from_dict
 from dimos.utils.teleop_visualization import (
@@ -43,7 +44,6 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
-    from dimos.msgs.std_msgs import Bool
 
 logger = setup_logger()
 
@@ -111,13 +111,10 @@ class BaseTeleopModule(Module, ABC):
             )
 
         self._active_indices = compute_active_indices(self.config.output_types)
-        self._output_types = {
-            idx: self.config.output_types[i] for i, idx in enumerate(self._active_indices)
-        }
 
         self._initial_poses: dict[int, Pose | None] = {i: None for i in self._active_indices}
         self._initial_robot_poses: dict[int, Pose | None] = {i: None for i in self._active_indices}
-        self._all_poses: dict[int, NDArray[np.float32] | None] = {
+        self._all_poses: dict[int, NDArray[np.float64] | None] = {
             i: None for i in self._active_indices
         }
         self._all_trigger_values: dict[int, float] = {i: 0.0 for i in self._active_indices}
@@ -169,7 +166,7 @@ class BaseTeleopModule(Module, ABC):
                     }
 
                 # Get initial robot pose via RPC if configured
-                output_type = self._output_types.get(idx)
+                output_type = self.config.output_types[i]
                 if i < len(self.config.robot_pose_rpc_methods):
                     rpc_method = self.config.robot_pose_rpc_methods[i]
                     if rpc_method is not None:
@@ -233,7 +230,7 @@ class BaseTeleopModule(Module, ABC):
 
     def compute_deltas(
         self,
-        controller_poses: dict[int, NDArray[np.float32] | None],
+        controller_poses: dict[int, NDArray[np.float64] | None],
         controller_trigger_values: dict[int, float],
     ) -> dict[int, Pose | None]:
         """Compute delta = current_pose - initial_pose for each controller."""

@@ -29,16 +29,16 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.core import In, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.std_msgs import Bool, Float32
+from dimos_lcm.geometry_msgs import Transform as LCMTransform
 from dimos.teleop.devices.base_teleop_module import BaseTeleopConfig, BaseTeleopModule
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.teleop_transforms import transform_delta, transform_vr_to_robot
 
 if TYPE_CHECKING:
-    from dimos_lcm.geometry_msgs import Transform as LCMTransform
     import numpy as np
     from numpy.typing import NDArray
 
-    from dimos.msgs.std_msgs import Bool, Float32
 
 
 logger = setup_logger()
@@ -68,13 +68,13 @@ class VRTeleopModule(BaseTeleopModule):
     vr_right_transform: In[LCMTransform] = None  # type: ignore[assignment]
     vr_trigger_0: In[Float32] = None  # type: ignore[assignment]
     vr_trigger_1: In[Float32] = None  # type: ignore[assignment]
-    teleop_enable: In[Bool] = None  # X button calibration toggle
+    teleop_enable: In[Bool] = None  # type: ignore[assignment]  # X button calibration toggle
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
         self._lcm_lock = threading.Lock()
-        self._lcm_controller_poses: dict[int, NDArray[np.float32] | None] = {
+        self._lcm_controller_poses: dict[int, NDArray[np.float64] | None] = {
             i: None for i in self._active_indices
         }
         self._lcm_gripper_values: dict[int, float] = {i: 0.0 for i in self._active_indices}
@@ -96,19 +96,23 @@ class VRTeleopModule(BaseTeleopModule):
 
         if self.vr_left_transform and self.vr_left_transform.transport:
             self.vr_left_transform.subscribe(
-                lambda msg, idx=left_index: self._on_lcm_transform(idx, msg)
+                lambda msg, idx=left_index: self._on_lcm_transform(idx, msg)  # type: ignore[misc]
             )
 
         if self.vr_right_transform and self.vr_right_transform.transport:
             self.vr_right_transform.subscribe(
-                lambda msg, idx=right_index: self._on_lcm_transform(idx, msg)
+                lambda msg, idx=right_index: self._on_lcm_transform(idx, msg)  # type: ignore[misc]
             )
 
         if self.vr_trigger_0 and self.vr_trigger_0.transport:
-            self.vr_trigger_0.subscribe(lambda msg, idx=left_index: self._on_lcm_trigger(idx, msg))
+            self.vr_trigger_0.subscribe(
+                lambda msg, idx=left_index: self._on_lcm_trigger(idx, msg)  # type: ignore[misc]
+            )
 
         if self.vr_trigger_1 and self.vr_trigger_1.transport:
-            self.vr_trigger_1.subscribe(lambda msg, idx=right_index: self._on_lcm_trigger(idx, msg))
+            self.vr_trigger_1.subscribe(
+                lambda msg, idx=right_index: self._on_lcm_trigger(idx, msg)  # type: ignore[misc]
+            )
 
         if self.teleop_enable and self.teleop_enable.transport:
             self.teleop_enable.subscribe(self._on_lcm_teleop_enable)
@@ -152,7 +156,7 @@ class VRTeleopModule(BaseTeleopModule):
         is_left = index == self._active_indices[0]
         transform_matrix = transform_vr_to_robot(transform, is_left_controller=is_left)
         with self._lcm_lock:
-            self._lcm_controller_poses[index] = transform_matrix
+            self._lcm_controller_poses[index] = transform_matrix  # type: ignore[assignment]
 
     def _on_lcm_trigger(self, index: int, msg: Float32) -> None:
         """Handle trigger value for gripper control."""
@@ -194,15 +198,12 @@ class VRTeleopModule(BaseTeleopModule):
 
             deltas = self.compute_deltas(controller_poses, controller_trigger_values)
 
-            for i in self._active_indices:
+            for idx, i in enumerate(self._active_indices):
                 delta = deltas.get(i)
                 if delta is None:
                     continue
 
-                output_type = self._output_types.get(i)
-                if output_type is None:
-                    continue
-
+                output_type = self.config.output_types[idx]
                 command, aux_command = transform_delta(
                     delta_pose=delta,
                     trigger_value=self._all_trigger_values.get(i, 0.0),
