@@ -52,13 +52,13 @@ curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin
 #
 # the command needs to download the replay file (2.4gb), which takes a bit
 
-# OPTION 1: use without installing dimos
-uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
-
-# OPTION 2: install dimos in a virtualenv
+# OPTION 1: install dimos in a virtualenv
 uv venv && . .venv/bin/activate
 uv pip install 'dimos[base,unitree]'
 dimos --replay run unitree-go2
+
+# OPTION 2: if you want to test out dimos without installing run:
+uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
 ```
 
 <!-- command for testing pre launch: `GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" uv pip install 'dimos[unitree] @ git+ssh://git@github.com/dimensionalOS/dimos.git@dev'` -->
@@ -98,7 +98,7 @@ source .venv/bin/activate
 # Note: after running the next command, WAIT for the agent to connect before sending commands
 # this will take a while the first time
 # then tell the agent "explore the room"
-# then tell it to go to something it saw such as "go to the door" 
+# then tell it to go to something it saw such as "go to the door"
 humancli
 ```
 
@@ -115,7 +115,6 @@ if __name__ == "__main__":
     autoconnect(
         CameraModule.blueprint()
     ).build().loop()
-    print("Webcam pipeline running. Press Ctrl+C to stop.")
 ```
 
 Write your own custom module:
@@ -173,7 +172,7 @@ if __name__ == "__main__":
 
 ### How does that example work?
 
-- Every module represents one process: all modules run in parallel (python multiprocessing). Because of this **modules should only save/modify data on themselves** Don't mutate or share global vars inside a module. 
+- Every module represents one process: all modules run in parallel (python multiprocessing). Because of this **modules should only save/modify data on themselves** Don't mutate or share global vars inside a module.
 - At the top of this module definition, the In/Out **streams** are defining a pub-sub system. This module expects someone somewhere to give it a color image. The module is going to publish a grayscale image.
 - The `autoconnect` ties everything together:
   - The CameraModule has an output of `color_image`
