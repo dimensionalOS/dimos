@@ -40,18 +40,22 @@ sudo apt-get update
 sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev
 # install uv for python
 curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
-# create & activate a virtualenv (needed for dimos)
+
+#
+# NOTE!!! the first time, you're going to have an empty/black rerun window for a while
+#
+# the command needs to download the replay file (2.4gb), which takes a bit
+
+# OPTION 1: use without installing dimos
+uvx --from 'dimos[base,unitree]' dimos --replay run unitree-g2
+
+# OPTION 2: install dimos in a virtualenv
 uv venv && . .venv/bin/activate
-# install dimos
 uv pip install 'dimos[base,unitree]'
-#
-# NOTE!!! you're going to have an empty/black rerun window for a while the first time
-#
-# this needs to download the replay file (2.4gb), which will take a while the first time
 dimos --replay run unitree-go2
 ```
 
-<!-- command for testing pre launch: `GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" uv pip install 'dimos[unitree] @ git+ssh://git@github.com/dimensionalOS/dimos.git@jeff_readme_go2'` -->
+<!-- command for testing pre launch: `GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" uv pip install 'dimos[unitree] @ git+ssh://git@github.com/dimensionalOS/dimos.git@dev'` -->
 
 #### Get it working on a real physical robot!
 
