@@ -4,8 +4,6 @@
 2. How to test/hack dimos (overview and our practices)
 3. How to make a PR
 
-<!-- TODO: add links to the headers ^ here -->
-
 # 1. Setup
 
 All the tools below are optional and for your convenience. If you can get the code running on temple OS with a package manager you wrote yourself, all the power to you.
@@ -233,9 +231,11 @@ This will save the rerun data to `rerun.json` in the current directory.
 * For edits to manipulation see [manipulation.md](/docs/development/manipulation.md) and [manipulation base](/dimos/hardware/manipulators/base/component_based_architecture.md)
 * `dimos/core/`: Is where stuff like `Module`, `In`, `Out`, and `RPC` live.
 * `dimos/robot/`: Robot-specific modules live here.
+* `dimos/hardware/`: Are for sensors, end-effectors, and related individual hardware pieces.
 * `dimos/msgs/`: If you're trying to find a type to send a type over a stream, look here.
 * `dimos/dashboard/`: Contains code related to visualization.
 * `dimos/protocol/`: Defines low level stuff for communication between modules.
+* See `dimos/` for the remainder
 
 ## Testing
 
