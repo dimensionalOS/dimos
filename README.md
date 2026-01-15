@@ -94,8 +94,8 @@ After running that, open a new terminal and run the following to start giving in
 ```sh
 # activate the venv in this new terminal
 source .venv/bin/activate
-# ex: tell it to explore the room
-# then tell it to go to somethingn it saw such as "go to the door" 
+# after running the following,  tell the agent "explore the room"
+# then tell it to go to something it saw such as "go to the door" 
 humancli
 ```
 
