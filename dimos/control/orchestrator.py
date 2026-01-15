@@ -34,6 +34,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.control.hardware_interface import BackendHardwareInterface, HardwareInterface
+from dimos.control.task import ControlTask
 from dimos.control.tick_loop import TickLoop
 from dimos.core import Module, Out, rpc
 from dimos.core.module import ModuleConfig
@@ -44,7 +45,6 @@ from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.control.task import ControlTask
     from dimos.hardware.manipulators.spec import ManipulatorBackend
 
 logger = setup_logger()
@@ -351,6 +351,9 @@ class ControlOrchestrator(Module[ControlOrchestratorConfig]):
     @rpc
     def add_task(self, task: ControlTask) -> bool:
         """Register a task with the orchestrator."""
+        if not isinstance(task, ControlTask):
+            raise TypeError("task must implement ControlTask")
+
         with self._task_lock:
             if task.name in self._tasks:
                 logger.warning(f"Task {task.name} already registered")
