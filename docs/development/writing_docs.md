@@ -225,8 +225,8 @@ md-babel-py run document.md --dry-run
 ## Running
 
 ```sh skip
-md-babel-py run document.md          # edit in-place
-md-babel-py run document.md --stdout # preview to stdout
+md-babel-py run document.md           # edit in-place
+md-babel-py run document.md --stdout  # preview to stdout
 md-babel-py run document.md --dry-run # show what would run
 ```
 
