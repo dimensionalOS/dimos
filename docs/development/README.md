@@ -1,20 +1,22 @@
-# Development Environment Guide
+# Development Guide
 
-1. How to setup your system (pick one: system install, nix flake + direnv, pure nix flake)
-2. How to hack on DimOS
-3. How to make a PR
+1. [How to setup your system](#1-setup) (pick one: system install, nix flake + direnv, pure nix flake)
+2. [How to hack on DimOS](#2-how-to-hack-on-dimos) (which files to edit, debugging help, etc)
+4. [How to make a PR](#3-how-to-make-a-pr) (our expectations for a PR)
+
+<br>
 
 # 1. Setup
 
-All the tools below are optional and for your convenience. If you can get the code running on temple OS with a package manager you wrote yourself, all the power to you.
+All the setup options are for your convenience. If you can get DimOS running on temple OS with a package manager you wrote yourself, all the power to you.
 
 ---
 
 ## Setup Option A: System Install
 
-### Why pick this setup? (pros/cons/when-to-use)
+### Why pick this option? (pros/cons/when-to-use)
 
-* Downside: not reliable, mutates your global system, causing (and receiving) side effects
+* Downside: mutates your global system, causing (and receiving) side effects causes it to be unreliable
 * Upside: Often good for a quick hack or exploring
 * Upside: Sometimes easier for CUDA/GPU acceleration
 * Use when: you understand system package management (arch linux user) or you don't care about making changes to your system
@@ -41,7 +43,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin
 
 # this allows getting large files on-demand
 export GIT_LFS_SKIP_SMUDGE=1
-git clone -b main git@github.com:dimensionalOS/dimos.git
+git clone -b dev git@github.com:dimensionalOS/dimos.git
 cd dimos
 
 
@@ -74,7 +76,7 @@ uv add git+https://github.com/facebookresearch/detectron2.git
 <!-- Enable this option once the dockerfile (ghcr.io/dimensionalos/ros-python:dev) is public and debugged! -->
 <!-- ## Setup Option B: Dev Containers (Recommended)
 
-### Why pick this setup? (pros/cons/when-to-use)
+### Why pick this option? (pros/cons/when-to-use)
 
 * Upside: Reliable and consistent across OS's
 * Upside: Unified formatting, linting and type-checking.
@@ -132,7 +134,7 @@ You’ll land in the workspace as **root** with all project tooling available.
 
 ## Setup Option B: Nix Flake + direnv
 
-### Why pick this setup? (pros/cons/when-to-use)
+### Why pick this option? (pros/cons/when-to-use)
 
 * Upside: Faster and more reliable than Dev Containers (no emulation)
 * Upside: Nearly as isolated as Docker, but has full hardware access (CUDA, Webcam, networking)
@@ -153,7 +155,7 @@ mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" 
 
 # this allows getting large files on-demand
 export GIT_LFS_SKIP_SMUDGE=1
-git clone -b main git@github.com:dimensionalOS/dimos.git
+git clone -b dev git@github.com:dimensionalOS/dimos.git
 cd dimos
 
 # activate the nix .envrc
@@ -173,7 +175,7 @@ uv run pytest dimos
 
 ## Setup Option C: Nix Flake - Isolated/Reliable
 
-### Why pick this setup? (pros/cons/when-to-use)
+### Why pick this option? (pros/cons/when-to-use)
 
 * Use when: you need absolute reliability (use this if you want it to work first try) and don't mind a startup delay
 * Upside: Doesn't need direnv, and has most of the other benefits of Nix
@@ -192,7 +194,7 @@ mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" 
 
 # this allows getting large files on-demand
 export GIT_LFS_SKIP_SMUDGE=1
-git clone -b main git@github.com:dimensionalOS/dimos.git
+git clone -b dev git@github.com:dimensionalOS/dimos.git
 cd dimos
 
 # activate the nix development shell
@@ -210,7 +212,6 @@ uv pip install -e '.[base,dev,manipulation,misc,unitree,drone]'
 uv run pytest dimos
 ```
 
-<br>
 <br>
 
 # 2. How to Hack on DimOS
@@ -260,21 +261,20 @@ We use tags for special tests, like `vis` or `tool` for things that aren't meant
 
 You can enable a tag by selecting -m <tag_name> - these are configured in `./pyproject.toml`
 
+<br>
 
 # 3. How to Make a PR
-- Open the PR against the `dev` branch (not `main`)
-- **No matter what, provide a one or few-lines that, when run, let a reviewer run the main path of the code you modified** (assuming you changed functional python code)
-- If you're writing documentation, see [writing docs](/docs/agents/docs/index.md) for how to write code blocks.
-<!-- - If you're writing documentation, see [writing docs](/docs/development/writing_docs.md) -->
-- Less changed files = better
-- If you know one of your code changes will "look weird" or be up for debate, open the github UI and add a graphical comment on that code. In that comment justify youraq choice and explaining downsides of alternatives.
-- We don't require 100% test coverage, but if you're making a PR of notable python changes you should probably have unit tests or good reason why not (ex: visualization stuff is hard to unit test so we don't).
+- Open the PR against the `dev` branch (not `main`).
+- **No matter what, provide a few-lines that, when run, let a reviewer test the feature you added** (assuming you changed functional python code).
+- Less changed files = better.
+- If you're writing documentation, see [writing docs](/docs/agents/docs/index.md) for how to write code blocks. <!-- THIS IS FOR THE (already finish) NEXT DOC PR: If you're writing documentation, see [writing docs](/docs/development/writing_docs.md) -->
+- If you made a change that is likely going to involve a debate, open the github UI and add a graphical comment on that code. Justify your choice and explain downsides of alternatives.
+- We don't require 100% test coverage, but if you're making a PR of notable python changes you should probably either have unit tests or good reason why not (ex: visualization stuff is hard to test so we don't).
 - Have the name of your PR start with `WIP:` if its not ready to merge but you want to show someone the changes.
-- If you have large (>500kb) files, see [large file management](/docs/development/large_file_management.md) for how to store and load them (don't just commit them).
+- If you have large (>500kb) files, see [large file management](/docs/data.md) for how to store and load them (don't just commit them).
 - So long as you don't disable pre-commit hooks the formatting, license headers, EOLs, LFS checks, etc will be handled automatically by [pre-commit](https://pre-commit.com). If something goes wrong with the hooks you can run the step manually with `pre-commit run --all-files`.
 - If you're a new hire at DimOS:
-    - Smaller PR's are better.
-    - Only open a PR when you're okay with us spending AI tokens reviewing it (don't just open a trash PR and then fix it, wait till the code is mostly done)
+    - Did we mention smaller PR's are better? Smaller PR's are better.
+    - Only open a PR when you're okay with us spending AI tokens reviewing it (don't open a half-done PR and then fix it, wait till the code is mostly done).
     - If there are 3 highly-intertwined bugs, make 3 PRs, not 1 PR. Yes it is more dev work, but review time is the bottleneck (not dev time). One line PR's are the easiest thing to review.
     - When the AI (currently Greptile) comments on the code, respond. Sometimes Greptile is dumb as rocks but, as a reviewer, it's nice to see a finished conversation.
-    - Did we mention smaller PR's are better?

@@ -18,9 +18,7 @@
 <p align="center">
   <a href="#how-does-dimos-work-conceptually">Key Features</a> •
   <a href="#how-do-i-get-started">How To Use</a> •
-  <a href="#contributing--building-from-source">Contributing</a> •
-  <a href="#acknowledgments">Credits</a> •
-  <a href="#license">License</a>
+  <a href="#contributing--building-from-source">Contributing</a> • <a href="#license">License</a>
 </p>
 
 </div>
@@ -31,17 +29,15 @@
 
 # What is Dimensional?
 
-DimOS is both a specification based (any programming language) framework and a python-first library for controlling robots. DimOS works with (and without) [ROS](https://www.ros.org/), with design that enables AI agents to call tools/functions (skills), read sensor/state data directly, and generate complex emergent behaviors.
+DimOS is both a language-agnostic framework and a Python-first library for robot control. It has optional ROS integration and is designed to let AI agents invoke tools (skills), directly access sensor and state data, and generate complex emergent behaviors.
 
-The python library comes with a rich set of integrations; visualization, spatial reasoners, planners, simulators (mujoco, Isaac Sim, etc.), robot state/action primitives, and more.
+The python library comes with a rich set of integrations; visualizers, spatial reasoners, planners, simulators (mujoco, Isaac Sim, etc.), robot state/action primitives, and more.
 
 # How do I get started?
 
 ### Installation
 
-#### Details / Requirements
-
-- Linux, tested on Ubuntu 22.04, 24.04
+- Linux is supported, with tests being performed on Ubuntu 22.04 and 24.04
 - MacOS support is in beta, you're welcome to try it *but expect inconsistent/flakey behavior (rather than errors/crashing)*
     - instead of the apt-get command below run: `brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python`
 
@@ -56,25 +52,20 @@ curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin
 #
 # the command needs to download the replay file (2.4gb), which takes a bit
 
-# OPTION 1: use without installing dimos
-uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
-
-# OPTION 2: install dimos in a virtualenv
+# OPTION 1: install dimos in a virtualenv
 uv venv && . .venv/bin/activate
 uv pip install 'dimos[base,unitree]'
 dimos --replay run unitree-go2
+
+# OPTION 2: if you want to test out dimos without installing run:
+uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
 ```
 
 <!-- command for testing pre launch: `GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" uv pip install 'dimos[unitree] @ git+ssh://git@github.com/dimensionalOS/dimos.git@dev'` -->
 
-#### Get it working on a real physical robot!
+### Usage
 
-```sh
-export ROBOT_IP=PUT_YOUR_IP_ADDR_HERE
-dimos run unitree-go2
-```
-
-#### Get it working in an interactive simulation!
+#### Control a robot in a simulation (no robot required)
 
 ```bash
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
@@ -83,22 +74,39 @@ dimos --simulation run unitree-go2
 # open http://localhost:7779/command-center in your browser to control the robot movement
 ```
 
+#### Get it working on a physical robot!
+
+```sh
+export ROBOT_IP=PUT_YOUR_IP_ADDR_HERE
+dimos run unitree-go2
+```
+
 #### Have it controlled by AI!
 
-```bash
+WARNING: This is a demo showing the **connection** between AI and robotic control -- not a demo of a super-intelligent AI. Be ready to physically prevent your robot from taking dumb physical actions.
+
+```sh
 export OPENAI_API_KEY=<your private key>
 dimos run unitree-go2-agentic
-# open the following in a different terminal tab to tell it where to go
-# Warning!: make sure to watch the bot, this is a pre-release it will run into stuff
-#           and get tangled/trapped
-# ex: tell it to explore the room, then tell it to go to where it can see a door
+```
+
+After running that, open a new terminal and run the following to start giving instructions to the agent.
+```sh
+# activate the venv in this new terminal
+source .venv/bin/activate
+
+# Note: after running the next command, WAIT for the agent to connect
+# (this will take a while the first time)
+# then tell the agent "explore the room"
+# then tell it to go to something, ex: "go to the door"
 humancli
 ```
 
 # How do I use it as a library?
 
+### Simple Camera Activation
 
-Simple camera activation (save this as a python file and run it):
+Assuming you have a webcam, save the following as a python file and run it:
 
 ```py
 from dimos.core.blueprints import autoconnect
@@ -108,15 +116,15 @@ if __name__ == "__main__":
     autoconnect(
         CameraModule.blueprint()
     ).build().loop()
-    print("Webcam pipeline running. Press Ctrl+C to stop.")
 ```
 
-Write your own custom module:
+### Write A Custom Module
+
+Lets convert the camera's image to grayscale.
 
 ```py
 from dimos.core.blueprints import autoconnect
-from dimos.core import In, Out, Module
-from dimos.core.core import rpc
+from dimos.core import In, Out, Module, rpc
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.msgs.sensor_msgs import Image
 
@@ -124,9 +132,8 @@ from reactivex.disposable import Disposable
 
 class Listener(Module):
     # the CameraModule has an Out[Image] named "color_image"
-    # this module will only receive those messages if
-    # the names ("color_image") match, otherwise autoconnect
-    # will not be able to connect one module to another
+    # How do we know this? Just print(CameraModule.module_info().outputs)
+    # the name ("color_image") must match the CameraModule's output
     color_image: In[Image] = None
     grayscale_image: Out[Image] = None
 
@@ -160,32 +167,52 @@ if __name__ == "__main__":
     ).build().loop()
 ```
 
-### Note: Many More Examples in the [Examples Folder](./examples)
+#### Note: Many More Examples in the [Examples Folder](./examples)
+
+### How do custom modules work? (Example breakdown)
+
+- Every module represents one process: modules run in parallel (python multiprocessing). Because of this **modules should only save/modify data on themselves**. Do not mutate or share global vars inside a module.
+- At the top of this module definition, the In/Out **streams** are defining a pub-sub system. This module expects *someone somewhere* to give it a color image. And, the module is going to publish a grayscale image (that any other module to subscribe to).
+    - Note: if you are a power user thinking "so streams must be statically declared?" the answer is no, there are ways to perform dynamic connections, but for type-checking and human sanity the creation of dynamic stream connections are under an advanced API and should be used as a last resort.
+- The `autoconnect` ties everything together:
+  - The CameraModule has an output of `color_image`
+  - The Listener has an input of `color_image`
+  - Autoconnect puts them together, and checks that their types are compatible (both are of type `Image`)
+- How can we see what In/Out streams are provided by a module?
+  - Open a python repl (e.g. `python`)
+  - Import the module, ex: `from dimos.hardware.sensors.camera.module import CameraModule`
+  - Print the module outputs: `print(CameraModule.module_info().outputs)`
+  - Print the module inputs: `print(CameraModule.module_info().inputs)`
+  - Print all the information (rpcs, skills, etc): `print(CameraModule.module_info())`
+- What about `@rpc`?
+   - If you want a method to be called by another module (not just an internal method) then add the `@rpc` decorator AND make sure BOTH the arguments and return value of the method are json-serializable.
+   - Rpc methods get called using threads, meaning two rpc methods can be running at the same time. For this reason, python thread locking is often necessary for data that is being written/read during rpc calls.
+   - The start/stop methods always need to be an rpc because they are called externally.
+
+### Monitoring & Debugging
+
+In addition to rerun logging, DimOS comes with a number of monitoring tools:
+- Run `lcmspy` to see how fast messages are being published on streams.
+- Run `skillspy` to see how skills are being called, how long they are running, which are active, etc.
+- Run `agentspy` to see the agent's status over time.
+- If you suspect there is a bug within DimOS itself, you can enable extreme logging by prefixing the dimos command with `DIMOS_LOG_LEVEL=DEBUG RERUN_SAVE=1 `. Ex: `DIMOS_LOG_LEVEL=DEBUG RERUN_SAVE=1 dimos --replay run unitree-go2`
 
 
-# How does DimOS work conceptually?
+# How does Dimensional work?
 
-There are several tools:
-- [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are defined in python as classes.
+Concepts:
+- [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are singleton python classes.
 - [Streams](/docs/api/sensor_streams/index.md): How modules communicate, a Pub / Sub system.
-- [Blueprints](/docs/concepts/blueprints.md): a way to group modules together and define their connections to each other
-- [RPC](/docs/concepts/blueprints.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data)
-- [Skills](/docs/concepts/blueprints.md#defining-skills): Pretty much an RPC, call but it can be called by an AI agent (they're tools for an AI).
-- Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools
+- [Blueprints](/dimos/core/README_BLUEPRINTS.md): a way to group modules together and define their connections to each other.
+- [RPC](/dimos/core/README_BLUEPRINTS.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
+- [Skills](/dimos/core/README_BLUEPRINTS.md#defining-skills): An RPC function, except it can be called by an AI agent (a tool for an AI).
+- Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools.
 
 ## Contributing / Building From Source
 
 For development, we optimize for flexibility—whether you love Docker, Nix, or have nothing but **notepad.exe** and a dream, you’re good to go. Open up the [Development Guide](/docs/development/README.md) to see the extra steps for setting up development environments.
 
 We welcome contributions! See our [Bounty List](https://docs.google.com/spreadsheets/d/1tzYTPvhO7Lou21cU6avSWTQOhACl5H8trSvhtYtsk8U/edit?usp=sharing) for open requests for contributions. If you would like to suggest a feature or sponsor a bounty, open an issue.
-
-# Acknowledgments
-
-Huge thanks to!
-- The Roboverse Community and their unitree-specific help. Check out their [Discord](https://discord.gg/HEXNMCNhEh).
-- @abizovnuralem for his work on the [Unitree Go2 ROS2 SDK](https://github.com/abizovnuralem/go2_ros2_sdk) we integrate with for DimOS.
-- @legion1581 for his work on the [Unitree Go2 WebRTC Connect](https://github.com/legion1581/go2_webrtc_connect) from which we've pulled the ```Go2WebRTCConnection``` class and other types for seamless WebRTC-only integration with DimOS.
-- @tfoldi for the webrtc_req integration via Unitree Go2 ROS2 SDK, which allows for seamless usage of Unitree WebRTC control primitives with DimOS.
 
 # License
 
