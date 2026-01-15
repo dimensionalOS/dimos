@@ -37,7 +37,7 @@ The python library comes with a rich set of integrations; visualizers, spatial r
 
 ### Installation
 
-- Linux, tested on Ubuntu 22.04, 24.04
+- Linux is supported, with tests being performed on Ubuntu 22.04 and 24.04
 - MacOS support is in beta, you're welcome to try it *but expect inconsistent/flakey behavior (rather than errors/crashing)*
     - instead of the apt-get command below run: `brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python`
 
