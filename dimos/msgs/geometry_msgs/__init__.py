@@ -1,3 +1,4 @@
+from dimos.msgs.geometry_msgs.ControllerPose import ControllerPose
 from dimos.msgs.geometry_msgs.Pose import Pose, PoseLike, to_pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
@@ -13,6 +14,7 @@ from dimos.msgs.geometry_msgs.Wrench import Wrench
 from dimos.msgs.geometry_msgs.WrenchStamped import WrenchStamped
 
 __all__ = [
+    "ControllerPose",
     "Pose",
     "PoseLike",
     "PoseStamped",
