@@ -273,7 +273,7 @@ You can enable a tag by selecting -m <tag_name> - these are configured in `./pyp
 - If you made a change that is likely going to involve a debate, open the github UI and add a graphical comment on that code. Justify your choice and explain downsides of alternatives.
 - We don't require 100% test coverage, but if you're making a PR of notable python changes you should probably either have unit tests or good reason why not (ex: visualization stuff is hard to test so we don't).
 - Have the name of your PR start with `WIP:` if its not ready to merge but you want to show someone the changes.
-- If you have large (>500kb) files, see [large file management](/docs/development/large_file_management.md) for how to store and load them (don't just commit them).
+- If you have large (>500kb) files, see [large file management](/docs/data.md) for how to store and load them (don't just commit them).
 - So long as you don't disable pre-commit hooks the formatting, license headers, EOLs, LFS checks, etc will be handled automatically by [pre-commit](https://pre-commit.com). If something goes wrong with the hooks you can run the step manually with `pre-commit run --all-files`.
 - If you're a new hire at DimOS:
     - Did we mention smaller PR's are better? Smaller PR's are better.
