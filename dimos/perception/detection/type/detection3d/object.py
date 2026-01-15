@@ -103,7 +103,7 @@ class Object(Detection3D):
             return f"{self.name} ({self.detections_count})"
         return f"{self.track_id}/{self.name} ({self.confidence:.0%})"
 
-    def to_ros_detection3d(self) -> ROSDetection3D:
+    def to_detection3d_msg(self) -> ROSDetection3D:
         """Convert to ROS Detection3D message."""
         obb = self.get_oriented_bounding_box()  # type: ignore[no-untyped-call]
         orientation = Quaternion.from_rotation_matrix(obb.R)
@@ -358,6 +358,6 @@ def to_detection3d_array(objects: list[Object]) -> Detection3DArray:
         array.header = Header(objects[0].ts, objects[0].frame_id)
 
     for obj in objects:
-        array.detections.append(obj.to_ros_detection3d())
+        array.detections.append(obj.to_detection3d_msg())
 
     return array

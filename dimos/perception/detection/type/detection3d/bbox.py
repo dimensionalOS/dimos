@@ -52,7 +52,7 @@ class Detection3DBBox(Detection2DBBox):
             orientation=self.orientation,
         )
 
-    def to_ros_detection3d(self) -> Detection3D:
+    def to_detection3d_msg(self) -> Detection3D:
         """Convert to ROS Detection3D message."""
         msg = Detection3D()
         msg.header = Header(self.ts, self.frame_id)

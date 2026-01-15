@@ -252,15 +252,6 @@ class Image(Timestamped):
     def frame_id(self, value: str) -> None:
         self._impl.frame_id = str(value)
 
-    def from_ros_header(self, header) -> None:  # type: ignore[no-untyped-def]
-        """Set the image timestamp and frame_id from a ROS header.
-
-        Args:
-            header: ROS std_msgs/Header message with stamp and frame_id fields
-        """
-        self.ts = header.stamp.sec + (header.stamp.nanosec / 1_000_000_000)
-        self.frame_id = header.frame_id
-
     @property
     def ts(self) -> float:
         return self._impl.ts
