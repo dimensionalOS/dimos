@@ -51,7 +51,7 @@ class JointTrajectoryTaskConfig:
     priority: int = 10
 
 
-class JointTrajectoryTask:
+class JointTrajectoryTask(ControlTask):
     """Passive trajectory execution task.
 
     Unlike JointTrajectoryController which owns a thread, this task

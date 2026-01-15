@@ -96,6 +96,21 @@ class TaskConfig:
 
 
 @dataclass
+class TaskStatus:
+    """Status of a control task.
+
+    Attributes:
+        active: Whether the task is currently active
+        state: Task state name (e.g., "IDLE", "RUNNING", "DONE")
+        progress: Task progress from 0.0 to 1.0
+    """
+
+    active: bool
+    state: str | None = None
+    progress: float | None = None
+
+
+@dataclass
 class ControlOrchestratorConfig(ModuleConfig):
     """Configuration for the ControlOrchestrator.
 
@@ -414,24 +429,26 @@ class ControlOrchestrator(Module[ControlOrchestratorConfig]):
             return task.execute(trajectory)  # type: ignore[attr-defined,no-any-return]
 
     @rpc
-    def get_trajectory_status(self, task_name: str) -> dict[str, Any]:
+    def get_trajectory_status(self, task_name: str) -> TaskStatus | None:
         """Get the status of a trajectory task."""
         with self._task_lock:
             task = self._tasks.get(task_name)
             if task is None:
-                return {}
+                return None
 
-            result: dict[str, Any] = {"active": task.is_active()}
-
+            state: str | None = None
             if hasattr(task, "get_state"):
-                state: TrajectoryState = task.get_state()  # type: ignore[attr-defined]
-                result["state"] = state.name if isinstance(state, TrajectoryState) else str(state)
+                task_state: TrajectoryState = task.get_state()  # type: ignore[attr-defined]
+                state = (
+                    task_state.name if isinstance(task_state, TrajectoryState) else str(task_state)
+                )
 
+            progress: float | None = None
             if hasattr(task, "get_progress"):
                 t_now = time.perf_counter()
-                result["progress"] = task.get_progress(t_now)  # type: ignore[attr-defined]
+                progress = task.get_progress(t_now)  # type: ignore[attr-defined]
 
-            return result
+            return TaskStatus(active=task.is_active(), state=state, progress=progress)
 
     @rpc
     def cancel_trajectory(self, task_name: str) -> bool:
