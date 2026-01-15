@@ -85,13 +85,17 @@ dimos --simulation run unitree-go2
 
 #### Have it controlled by AI!
 
-```bash
+WARNING: This is a demo showing the **connection** between AI and robotic control -- not a demo of a super-intelligent AI. Be ready to physically prevent your robot from taking dumb physical actions.
+
+```sh
 export OPENAI_API_KEY=<your private key>
 dimos run unitree-go2-agentic
-# open the following in a different terminal tab to tell it where to go
-# Warning!: make sure to watch the bot, this is a pre-release it will run into stuff
-#           and get tangled/trapped
-# ex: tell it to explore the room, then tell it to go to where it can see a door
+```
+
+Then open this chat in a separate terminal (don't forget to activate the venv)
+```sh
+# ex: tell it to explore the room
+# then tell it to go to something such as "go to the door" 
 humancli
 ```
 
