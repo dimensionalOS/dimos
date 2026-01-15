@@ -65,20 +65,20 @@ uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
 
 ### Usage
 
-#### Get it working on a physical robot!
-
-```sh
-export ROBOT_IP=PUT_YOUR_IP_ADDR_HERE
-dimos run unitree-go2
-```
-
-#### Get it working in an interactive simulation!
+#### Control a robot in a simulation (no robot required)
 
 ```bash
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
 # ignore the warp warnings
 dimos --simulation run unitree-go2
 # open http://localhost:7779/command-center in your browser to control the robot movement
+```
+
+#### Get it working on a physical robot!
+
+```sh
+export ROBOT_IP=PUT_YOUR_IP_ADDR_HERE
+dimos run unitree-go2
 ```
 
 #### Have it controlled by AI!
