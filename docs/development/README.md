@@ -8,7 +8,7 @@
 
 # 1. Setup
 
-All the tools below are optional and for your convenience. If you can get the code running on temple OS with a package manager you wrote yourself, all the power to you.
+All the setup options are for your convenience. If you can get DimOS running on temple OS with a package manager you wrote yourself, all the power to you.
 
 ---
 
