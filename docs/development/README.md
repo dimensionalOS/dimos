@@ -213,7 +213,6 @@ uv run pytest dimos
 ```
 
 <br>
-<br>
 
 # 2. How to Hack on DimOS
 
