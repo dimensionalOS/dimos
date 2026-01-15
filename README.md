@@ -24,7 +24,7 @@
 >
 > **Active Beta: Expect Breaking Changes**
 
-DimOS is both specification based (any programming language) and a python-first library for controlling robots. Works with (and without) [ROS](https://www.ros.org/), with design that enables AI agents to call tools/functions (skills), read sensor/state data directly, and generate complex emergent behaviors. 
+DimOS is both a specification based (any programming language) framework and a python-first library for controlling robots. DimOS works with (and without) [ROS](https://www.ros.org/), with design that enables AI agents to call tools/functions (skills), read sensor/state data directly, and generate complex emergent behaviors. 
 
 The python library comes with a rich set of integrations; visualization, spatial reasoners, planners, simulators (mujoco, Isaac Sim, etc.), robot state/action primitives, and more.
 
