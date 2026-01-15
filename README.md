@@ -169,7 +169,7 @@ if __name__ == "__main__":
 
 #### Note: Many More Examples in the [Examples Folder](./examples)
 
-### How do custom modules work?
+### How does that custom module work?
 
 - Every module represents one process: modules run in parallel (python multiprocessing). Because of this **modules should only save/modify data on themselves**. Do not mutate or share global vars inside a module.
 - At the top of this module definition, the In/Out **streams** are defining a pub-sub system. This module expects *someone somewhere* to give it a color image. And, the module is going to publish a grayscale image (that any other module to subscribe to).
