@@ -34,7 +34,7 @@ RAD_TO_PIPER = 57295.7795  # radians to Piper units (0.001 degrees)
 PIPER_TO_RAD = 1.0 / RAD_TO_PIPER  # Piper units to radians
 
 
-class PiperBackend:
+class PiperBackend(ManipulatorBackend):
     """Piper-specific backend.
 
     Implements ManipulatorBackend protocol via duck typing.
@@ -501,8 +501,5 @@ class PiperBackend:
         """
         return None
 
-
-# Static type check: verify PiperBackend implements ManipulatorBackend protocol
-_: type[ManipulatorBackend] = PiperBackend
 
 __all__ = ["PiperBackend"]

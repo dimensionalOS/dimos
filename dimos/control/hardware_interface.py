@@ -26,12 +26,9 @@ import logging
 import time
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from dimos.hardware.manipulators.spec import ControlMode
+from dimos.hardware.manipulators.spec import ControlMode, ManipulatorBackend
 
 logger = logging.getLogger(__name__)
-
-if TYPE_CHECKING:
-    from dimos.hardware.manipulators.spec import ManipulatorBackend
 
 
 @runtime_checkable
@@ -103,6 +100,9 @@ class BackendHardwareInterface:
             hardware_id: Unique identifier for this hardware
             joint_prefix: Prefix for joint names (defaults to hardware_id)
         """
+        if not isinstance(backend, ManipulatorBackend):
+            raise TypeError("backend must implement ManipulatorBackend")
+
         self._backend = backend
         self._hardware_id = hardware_id
         self._prefix = joint_prefix or hardware_id

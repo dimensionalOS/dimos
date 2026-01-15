@@ -36,7 +36,7 @@ _XARM_MODE_CARTESIAN_VELOCITY = 5
 _XARM_MODE_JOINT_TORQUE = 6
 
 
-class XArmBackend:
+class XArmBackend(ManipulatorBackend):
     """XArm-specific backend.
 
     Implements ManipulatorBackend protocol via duck typing.
@@ -388,8 +388,5 @@ class XArmBackend:
             return list(ft)
         return None
 
-
-# Static type check: verify XArmBackend implements ManipulatorBackend protocol
-_: type[ManipulatorBackend] = XArmBackend
 
 __all__ = ["XArmBackend"]

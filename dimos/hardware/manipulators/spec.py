@@ -24,7 +24,7 @@ with full control over threading and logic.
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 
@@ -88,6 +88,7 @@ def default_base_transform() -> Transform:
 # ============================================================================
 
 
+@runtime_checkable
 class ManipulatorBackend(Protocol):
     """Protocol for hardware-specific IO.
 
@@ -97,12 +98,6 @@ class ManipulatorBackend(Protocol):
     - Torque: Nm
     - Position: meters
     - Force: Newtons
-
-    Benefits of Protocol over ABC:
-    - Structural typing (duck typing) - no inheritance required
-    - Backends just need matching methods, no base class
-    - Easy to create MockBackend for testing
-    - Type checkers validate compatibility
     """
 
     # --- Connection ---
