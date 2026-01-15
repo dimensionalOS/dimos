@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Piper manipulator hardware backend.
+"""Mock backend for testing manipulator drivers without hardware.
 
 Usage:
-    >>> from dimos.hardware.manipulators.piper import PiperBackend
-    >>> backend = PiperBackend(can_port="can0")
-    >>> backend.connect()
-    >>> positions = backend.read_joint_positions()
+    >>> from dimos.hardware.manipulators.xarm import XArm
+    >>> from dimos.hardware.manipulators.mock import MockBackend
+    >>> arm = XArm(backend=MockBackend())
+    >>> arm.start()  # No hardware needed!
+    >>> arm.move_joint([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+    >>> assert arm.backend.read_joint_positions() == [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
 """
 
-from dimos.hardware.manipulators.piper.backend import PiperBackend
+from dimos.hardware.manipulators.mock.backend import MockBackend
 
-__all__ = ["PiperBackend"]
+__all__ = ["MockBackend"]

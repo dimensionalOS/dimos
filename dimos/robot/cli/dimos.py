@@ -184,7 +184,10 @@ main.add_typer(topic_app, name="topic")
 @topic_app.command()
 def echo(
     topic: str = typer.Argument(..., help="Topic name to listen on (e.g., /goal_request)"),
-    type_name: str = typer.Argument(..., help="Message type (e.g., PoseStamped)"),
+    type_name: str | None = typer.Argument(
+        None,
+        help="Optional message type (e.g., PoseStamped). If omitted, infer from '/topic#pkg.Msg'.",
+    ),
 ) -> None:
     topic_echo(topic, type_name)
 

@@ -15,7 +15,6 @@
 
 from dimos.agents.agent import llm_agent
 from dimos.agents.cli.human import human_input
-from dimos.agents.spec import Provider
 from dimos.core.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense import realsense_camera
 from dimos.hardware.sensors.camera.zed import zed_camera

@@ -32,7 +32,7 @@ from dimos.agents_deprecated.memory.image_embedding import ImageEmbeddingProvide
 from dimos.agents_deprecated.memory.spatial_vector_db import SpatialVectorDB
 from dimos.agents_deprecated.memory.visual_memory import VisualMemory
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.core import DimosCluster, In, Module, rpc
+from dimos.core import DimosCluster, In, rpc
 from dimos.core.skill_module import SkillModule
 from dimos.msgs.sensor_msgs import Image
 from dimos.types.robot_location import RobotLocation

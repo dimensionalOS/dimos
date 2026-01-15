@@ -8,39 +8,37 @@ from openai import OpenAI
 
 from dimos.models.vl.base import VlModel, VlModelConfig
 from dimos.msgs.sensor_msgs import Image
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 @dataclass
-class QwenVlModelConfig(VlModelConfig):
-    """Configuration for Qwen VL model."""
-
-    model_name: str = "qwen2.5-vl-72b-instruct"
+class OpenAIVlModelConfig(VlModelConfig):
+    model_name: str = "gpt-4o-mini"
     api_key: str | None = None
 
 
-class QwenVlModel(VlModel):
-    default_config = QwenVlModelConfig
-    config: QwenVlModelConfig
+class OpenAIVlModel(VlModel):
+    default_config = OpenAIVlModelConfig
+    config: OpenAIVlModelConfig
 
     @cached_property
     def _client(self) -> OpenAI:
-        api_key = self.config.api_key or os.getenv("ALIBABA_API_KEY")
+        api_key = self.config.api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError(
-                "Alibaba API key must be provided or set in ALIBABA_API_KEY environment variable"
+                "OpenAI API key must be provided or set in OPENAI_API_KEY environment variable"
             )
 
-        return OpenAI(
-            base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-            api_key=api_key,
-        )
+        return OpenAI(api_key=api_key)
 
-    def query(self, image: Image | np.ndarray, query: str) -> str:  # type: ignore[override, type-arg]
+    def query(self, image: Image | np.ndarray, query: str, response_format: dict | None = None, **kwargs) -> str:  # type: ignore[override, type-arg, no-untyped-def]
         if isinstance(image, np.ndarray):
             import warnings
 
             warnings.warn(
-                "QwenVlModel.query should receive standard dimos Image type, not a numpy array",
+                "OpenAIVlModel.query should receive standard dimos Image type, not a numpy array",
                 DeprecationWarning,
                 stacklevel=2,
             )
@@ -52,9 +50,9 @@ class QwenVlModel(VlModel):
 
         img_base64 = image.to_base64()
 
-        response = self._client.chat.completions.create(
-            model=self.config.model_name,
-            messages=[
+        api_kwargs: dict[str, Any] = {
+            "model": self.config.model_name,
+            "messages": [
                 {
                     "role": "user",
                     "content": [
@@ -66,9 +64,14 @@ class QwenVlModel(VlModel):
                     ],
                 }
             ],
-        )
+        }
 
-        return response.choices[0].message.content  # type: ignore[return-value]
+        if response_format:
+            api_kwargs["response_format"] = response_format
+
+        response = self._client.chat.completions.create(**api_kwargs)
+
+        return response.choices[0].message.content  # type: ignore[return-value,no-any-return]
 
     def query_batch(
         self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs: Any
@@ -78,10 +81,10 @@ class QwenVlModel(VlModel):
             return []
 
         content: list[dict[str, Any]] = [
-                {
-                    "type": "image_url",
+            {
+                "type": "image_url",
                 "image_url": {"url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"},
-                }
+            }
             for img in images
         ]
         content.append({"type": "text", "text": query})
@@ -100,3 +103,4 @@ class QwenVlModel(VlModel):
         """Release the OpenAI client."""
         if "_client" in self.__dict__:
             del self.__dict__["_client"]
+

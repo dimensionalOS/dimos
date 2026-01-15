@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import importlib
+import re
 import time
 
 import typer
 
 from dimos.core.transport import LCMTransport, pLCMTransport
+from dimos.protocol.pubsub.lcmpubsub import LCMPubSubBase
 
 _modules_to_try = [
     "dimos.msgs.geometry_msgs",
@@ -42,24 +46,53 @@ def _resolve_type(type_name: str) -> type:
     raise ValueError(f"Could not find type '{type_name}' in any known message modules")
 
 
-def topic_echo(topic: str, type_name: str) -> None:
-    msg_type = _resolve_type(type_name)
-    use_pickled = getattr(msg_type, "lcm_encode", None) is None
-    transport: pLCMTransport[object] | LCMTransport[object] = (
-        pLCMTransport(topic) if use_pickled else LCMTransport(topic, msg_type)
+def topic_echo(topic: str, type_name: str | None) -> None:
+    # Explicit mode (legacy): unchanged.
+    if type_name is not None:
+        msg_type = _resolve_type(type_name)
+        use_pickled = getattr(msg_type, "lcm_encode", None) is None
+        transport: pLCMTransport[object] | LCMTransport[object] = (
+            pLCMTransport(topic) if use_pickled else LCMTransport(topic, msg_type)
+        )
+
+        def _on_message(msg: object) -> None:
+            print(msg)
+
+        transport.subscribe(_on_message)
+        typer.echo(f"Listening on {topic} for {type_name} messages... (Ctrl+C to stop)")
+        try:
+            while True:
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            typer.echo("\nStopped.")
+        return
+
+    # Inferred typed mode: listen on /topic#pkg.Msg and decode from the msg_name suffix.
+    bus = LCMPubSubBase(autoconf=True)
+    bus.start()  # starts threaded handle loop
+
+    typed_pattern = rf"^{re.escape(topic)}#.*"
+
+    def on_msg(channel: str, data: bytes) -> None:
+        _, msg_name = channel.split("#", 1)  # e.g. "nav_msgs.Odometry"
+        pkg, cls_name = msg_name.split(".", 1)  # "nav_msgs", "Odometry"
+        module = importlib.import_module(f"dimos.msgs.{pkg}")
+        cls = getattr(module, cls_name)
+        print(cls.lcm_decode(data))
+
+    assert bus.l is not None
+    bus.l.subscribe(typed_pattern, on_msg)
+
+    typer.echo(
+        f"Listening on {topic} (inferring from typed LCM channels like '{topic}#pkg.Msg')... "
+        "(Ctrl+C to stop)"
     )
-
-    def _on_message(msg: object) -> None:
-        print(msg)
-
-    transport.subscribe(_on_message)
-
-    typer.echo(f"Listening on {topic} for {type_name} messages... (Ctrl+C to stop)")
 
     try:
         while True:
             time.sleep(0.1)
     except KeyboardInterrupt:
+        bus.stop()
         typer.echo("\nStopped.")
 
 

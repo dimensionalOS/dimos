@@ -12,10 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Manipulator Hardware Drivers
+"""Manipulator drivers for robotic arms.
 
-Drivers for various robotic manipulator arms.
+Architecture: B-lite (Protocol-based backends with per-arm drivers)
+
+- spec.py: ManipulatorBackend Protocol and shared types
+- xarm/: XArm driver and backend
+- piper/: Piper driver and backend
+- mock/: Mock backend for testing
+
+Usage:
+    >>> from dimos.hardware.manipulators.xarm import XArm
+    >>> arm = XArm(ip="192.168.1.185")
+    >>> arm.start()
+    >>> arm.enable_servos()
+    >>> arm.move_joint([0, 0, 0, 0, 0, 0])
+
+Testing:
+    >>> from dimos.hardware.manipulators.xarm import XArm
+    >>> from dimos.hardware.manipulators.mock import MockBackend
+    >>> arm = XArm(backend=MockBackend())
+    >>> arm.start()  # No hardware needed!
 """
 
-__all__ = []
+from dimos.hardware.manipulators.spec import (
+    ControlMode,
+    DriverStatus,
+    JointLimits,
+    ManipulatorBackend,
+    ManipulatorInfo,
+)
+
+__all__ = [
+    "ControlMode",
+    "DriverStatus",
+    "JointLimits",
+    "ManipulatorBackend",
+    "ManipulatorInfo",
+]

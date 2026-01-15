@@ -46,6 +46,7 @@ from dimos.navigation.replanning_a_star.module import (
     replanning_a_star_planner,
 )
 from dimos.perception.detection.module3D import Detection3DModule, detection3d_module
+from dimos.perception.experimental.temporal_memory import temporal_memory
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.protocol.mcp.mcp import MCPModule
 from dimos.robot.foxglove_bridge import foxglove_bridge
@@ -207,4 +208,9 @@ vlm_stream_test = autoconnect(
     basic,
     vlm_agent(),
     vlm_stream_tester(),
+)
+
+temporal_memory = autoconnect(
+    agentic,
+    temporal_memory(),
 )

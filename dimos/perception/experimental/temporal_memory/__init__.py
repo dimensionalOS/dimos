@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Piper manipulator hardware backend.
+"""Temporal memory package."""
 
-Usage:
-    >>> from dimos.hardware.manipulators.piper import PiperBackend
-    >>> backend = PiperBackend(can_port="can0")
-    >>> backend.connect()
-    >>> positions = backend.read_joint_positions()
-"""
+from .temporal_memory import Frame, TemporalMemory, TemporalMemoryConfig, temporal_memory
 
-from dimos.hardware.manipulators.piper.backend import PiperBackend
-
-__all__ = ["PiperBackend"]
+__all__ = [
+    "Frame",
+    "TemporalMemory",
+    "TemporalMemoryConfig",
+    "temporal_memory",
+]
