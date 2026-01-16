@@ -11,6 +11,7 @@ NC='\033[0m'
 MODE="simulation"
 USE_ROUTE_PLANNER="false"
 USE_RVIZ="false"
+DEV_MODE="false"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --hardware)
@@ -29,6 +30,10 @@ while [[ $# -gt 0 ]]; do
             USE_RVIZ="true"
             shift
             ;;
+        --dev)
+            DEV_MODE="true"
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -37,6 +42,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --hardware        Start hardware container for real robot"
             echo "  --route-planner   Enable FAR route planner (for hardware mode)"
             echo "  --rviz            Launch RViz2 visualization"
+            echo "  --dev             Development mode (mount src for config editing)"
             echo "  --help, -h        Show this help message"
             echo ""
             echo "Examples:"
@@ -44,6 +50,7 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --hardware                         # Start hardware (base autonomy)"
             echo "  $0 --hardware --route-planner         # Hardware with route planner"
             echo "  $0 --hardware --route-planner --rviz  # Hardware with route planner + RViz"
+            echo "  $0 --hardware --dev                   # Hardware with src mounted for development"
             echo ""
             echo "Press Ctrl+C to stop the container"
             exit 0
@@ -266,6 +273,10 @@ if [ "$MODE" = "hardware" ]; then
     if [ "$USE_RVIZ" = "true" ]; then
         echo "  - RViz2 visualization"
     fi
+    if [ "$DEV_MODE" = "true" ]; then
+        echo ""
+        echo -e "  ${YELLOW}Development mode: src folder mounted for config editing${NC}"
+    fi
     echo ""
     echo "To enter the container from another terminal:"
     echo -e "    ${YELLOW}docker exec -it ${CONTAINER_NAME} bash${NC}"
@@ -283,8 +294,14 @@ fi
 # Note: DISPLAY is now passed directly via environment variable
 # No need to write RUNTIME_DISPLAY to .env for local host running
 
+# Build compose command with optional dev mode
+COMPOSE_CMD="docker compose -f docker-compose.yml"
+if [ "$DEV_MODE" = "true" ]; then
+    COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"
+fi
+
 if [ "$MODE" = "hardware" ]; then
-    docker compose -f docker-compose.yml --profile hardware up
+    $COMPOSE_CMD --profile hardware up
 else
-    docker compose -f docker-compose.yml up
+    $COMPOSE_CMD up
 fi

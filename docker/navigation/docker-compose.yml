@@ -41,9 +41,6 @@ services:
       # Mount Unity environment models (if available)
       - ./unity_models:/ros2_ws/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/mesh/unity:rw
 
-      # Mount the autonomy stack source for development
-      - ./ros-navigation-autonomy-stack:/ros2_ws/src/ros-navigation-autonomy-stack:rw
-
       # Mount entire dimos directory for live development
       - ../..:/workspace/dimos:rw
 
@@ -132,8 +129,6 @@ services:
       - ${HOME}/.Xauthority:/root/.Xauthority:rw
       # Mount Unity environment models (optional for hardware)
       - ./unity_models:/ros2_ws/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/mesh/unity:rw
-      # Mount the autonomy stack source
-      - ./ros-navigation-autonomy-stack:/ros2_ws/src/ros-navigation-autonomy-stack:rw
       # Mount entire dimos directory
       - ../..:/workspace/dimos:rw
       # Mount bagfiles directory
@@ -197,6 +192,9 @@ services:
             echo "Starting Unitree WebRTC control (IP: $UNITREE_IP, Method: $UNITREE_CONN)..."
             ros2 launch unitree_webrtc_ros unitree_control.launch.py robot_ip:=$UNITREE_IP connection_method:=$UNITREE_CONN &
         fi
+        # Start twist relay for Foxglove Teleop (converts Twist -> TwistStamped)
+        echo "Starting Twist relay for Foxglove Teleop..."
+        python3 /ros2_ws/src/ros-navigation-autonomy-stack/src/utilities/twist_relay/twist_relay.py &
         echo "Starting Foxglove Bridge on port 8765..."
         echo "Connect via Foxglove Studio: ws://$(hostname -I | awk '{print $1}'):8765"
         ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=8765

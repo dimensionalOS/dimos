@@ -134,7 +134,14 @@ RUN ldconfig
 
 # Copy built ROS workspace from builder
 COPY --from=builder ${WORKSPACE}/install ${WORKSPACE}/install
-COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack ${WORKSPACE}/src/ros-navigation-autonomy-stack
+
+# Copy only config/rviz files from src (not the large dependency folders)
+# These are needed if running without volume mount
+COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/rviz
+COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/route_planner/far_planner/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/route_planner/far_planner/rviz
+COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/exploration_planner/tare_planner/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/exploration_planner/tare_planner/rviz
+COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config
+COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config
 
 # Create directories
 RUN mkdir -p ${DIMOS_PATH} \
@@ -212,7 +219,8 @@ RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \
 # Copy helper scripts
 COPY docker/navigation/run_both.sh /usr/local/bin/run_both.sh
 COPY docker/navigation/ros_launch_wrapper.py /usr/local/bin/ros_launch_wrapper.py
-RUN chmod +x /usr/local/bin/run_both.sh /usr/local/bin/ros_launch_wrapper.py
+COPY docker/navigation/ros-navigation-autonomy-stack/src/utilities/twist_relay/twist_relay.py /usr/local/bin/twist_relay.py
+RUN chmod +x /usr/local/bin/run_both.sh /usr/local/bin/ros_launch_wrapper.py /usr/local/bin/twist_relay.py
 
 # Set up udev rules for motor controller
 RUN mkdir -p /etc/udev/rules.d && \

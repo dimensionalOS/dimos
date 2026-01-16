@@ -3,13 +3,13 @@
     "3D!main": {
       "cameraState": {
         "perspective": true,
-        "distance": 9.265824603193959,
-        "phi": 33.79912663755718,
-        "thetaOffset": -77.09606986899745,
+        "distance": 11.376001845526945,
+        "phi": 60.000000000004256,
+        "thetaOffset": -154.65065502183666,
         "targetOffset": [
-          -1.7933117489605865,
-          0.24901413852157717,
-          2.305722675118687e-16
+          -1.3664627921863377,
+          -0.4507491962036497,
+          2.2548288625522925e-16
         ],
         "target": [
           0,
@@ -26,7 +26,7 @@
         "near": 0.01,
         "far": 5000
       },
-      "followMode": "follow-pose",
+      "followMode": "follow-none",
       "followTf": "vehicle",
       "scene": {
         "backgroundColor": "#000000",
@@ -160,7 +160,8 @@
         "poseEstimateYDeviation": 0.5,
         "poseEstimateThetaDeviation": 0.26179939
       },
-      "imageMode": {}
+      "imageMode": {},
+      "fixedFrame": "map"
     },
     "Image!camera": {
       "cameraTopic": "/camera/image",
