@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Teleop transform utilities for VR coordinate transforms and index mapping."""
+"""Teleop transform utilities for VR coordinate transforms."""
 
 from __future__ import annotations
 
@@ -22,17 +22,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
 
-from dimos.msgs.geometry_msgs import PoseStamped, Twist
-
 if TYPE_CHECKING:
     from dimos_lcm.geometry_msgs import Transform as LCMTransform
     from numpy.typing import NDArray
-
-# Index mapping: output type → available indices
-OUTPUT_TYPE_INDICES: dict[type, list[int]] = {
-    PoseStamped: [0, 1],
-    Twist: [2, 3],
-}
 
 # Coordinate frame transformation from VR (WebXR) to robot frame
 # WebXR: X=right, Y=up, Z=back (towards user)
@@ -46,30 +38,6 @@ VR_TO_ROBOT_FRAME: NDArray[np.float64] = np.array(
     ],
     dtype=np.float64,
 )
-
-
-def compute_active_indices(output_types: list[type]) -> list[int]:
-    """Compute active indices from output types.
-    Example:
-        [PoseStamped, Twist] → [0, 2]
-        [Twist, PoseStamped] → [2, 0]
-        [PoseStamped, PoseStamped] → [0, 1]
-        [Twist, Twist] → [2, 3]
-    """
-    indices: list[int] = []
-    used_indices: set[int] = set()
-
-    for output_type in output_types:
-        available = OUTPUT_TYPE_INDICES.get(output_type, [])
-        for idx in available:
-            if idx not in used_indices:
-                indices.append(idx)
-                used_indices.add(idx)
-                break
-        else:
-            raise ValueError(f"No available index for output type {output_type.__name__}")
-
-    return indices
 
 
 def transform_vr_to_robot(

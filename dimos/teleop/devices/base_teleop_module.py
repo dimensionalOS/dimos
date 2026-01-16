@@ -29,7 +29,6 @@ from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import ControllerPose, Pose, PoseStamped, Twist
 from dimos.msgs.std_msgs import Bool
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.teleop_transforms import compute_active_indices
 from dimos.utils.teleop_visualization import (
     init_rerun_visualization,
     visualize_controller_pose,
@@ -81,14 +80,14 @@ class BaseTeleopModule(Module[TeleopConfigT]):
     default_config: type[TeleopConfigT] = BaseTeleopConfig  # type: ignore[assignment]
 
     # Output topics: PoseStamped for arms (0,1), Twist for locomotion (2,3)
-    controller_delta_0: Out[PoseStamped] = None  # type: ignore
-    trigger_value_0: Out[Bool] = None  # type: ignore
-    controller_delta_1: Out[PoseStamped] = None  # type: ignore
-    trigger_value_1: Out[Bool] = None  # type: ignore
-    controller_delta_2: Out[Twist] = None  # type: ignore
-    trigger_value_2: Out[Bool] = None  # type: ignore
-    controller_delta_3: Out[Twist] = None  # type: ignore
-    trigger_value_3: Out[Bool] = None  # type: ignore
+    controller_delta_0: Out[PoseStamped]
+    trigger_value_0: Out[Bool]
+    controller_delta_1: Out[PoseStamped]
+    trigger_value_1: Out[Bool]
+    controller_delta_2: Out[Twist]
+    trigger_value_2: Out[Bool]
+    controller_delta_3: Out[Twist]
+    trigger_value_3: Out[Bool]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -106,7 +105,13 @@ class BaseTeleopModule(Module[TeleopConfigT]):
                 f"output_types length ({len(self.config.output_types)})"
             )
 
-        self._active_indices = compute_active_indices(self.config.output_types)
+        # Index mapping: output type → available indices
+        self._output_type_indices: dict[type, list[int]] = {
+            PoseStamped: [0, 1],
+            Twist: [2, 3],
+        }
+
+        self._active_indices = self._compute_active_indices(self.config.output_types)
 
         self._initial_controller_poses: dict[int, ControllerPose | None] = {
             i: None for i in self._active_indices
@@ -129,6 +134,28 @@ class BaseTeleopModule(Module[TeleopConfigT]):
             return self.config.input_labels[i]
         except (ValueError, IndexError):
             return f"controller_{index}"
+
+    def _compute_active_indices(self, output_types: list[type]) -> list[int]:
+        """Compute active indices from output types.
+        Example:
+            [PoseStamped, Twist] → [0, 2]
+            [Twist, PoseStamped] → [2, 0]
+            [PoseStamped, PoseStamped] → [0, 1]
+            [Twist, Twist] → [2, 3]
+        """
+        indices: list[int] = []
+        used_indices: set[int] = set()
+
+        for output_type in output_types:
+            available = self._output_type_indices.get(output_type, [])
+            for idx in available:
+                if idx not in used_indices:
+                    indices.append(idx)
+                    used_indices.add(idx)
+                    break
+            else:
+                raise ValueError(f"No available index for output type {output_type.__name__}")
+        return indices
 
     @rpc
     def start(self) -> None:

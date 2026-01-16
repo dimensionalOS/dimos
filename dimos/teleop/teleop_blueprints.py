@@ -28,16 +28,7 @@ quest3_teleop = autoconnect(
         input_labels=["left_vr", "right_vr"],
         visualize_in_rerun=True,
     ),
-).transports(
-    {
-        ("vr_left_transform", LCMTransform): LCMTransport("/vr_left_transform", LCMTransform),
-        ("vr_right_transform", LCMTransform): LCMTransport("/vr_right_transform", LCMTransform),
-        ("vr_trigger_0", Float32): LCMTransport("/vr_trigger_0", Float32),
-        ("vr_trigger_1", Float32): LCMTransport("/vr_trigger_1", Float32),
-        ("teleop_enable", Bool): LCMTransport("/vr_teleop_enable", Bool),
-    }
 )
 
-__all__ = [
-    "quest3_teleop",
-]
+
+__all__ = ["quest3_teleop"]

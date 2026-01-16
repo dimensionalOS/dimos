@@ -26,6 +26,7 @@ import time
 from typing import Any
 
 from dimos_lcm.geometry_msgs import Transform as LCMTransform
+from reactivex.disposable import Disposable
 
 from dimos.core import In, rpc
 from dimos.msgs.geometry_msgs import ControllerPose, PoseStamped, Twist
@@ -58,11 +59,11 @@ class VRTeleopModule(BaseTeleopModule[VRTeleopConfig]):
     default_config = VRTeleopConfig
 
     # LCM inputs from Deno bridge
-    vr_left_transform: In[LCMTransform] = None  # type: ignore[assignment]
-    vr_right_transform: In[LCMTransform] = None  # type: ignore[assignment]
-    vr_trigger_0: In[Float32] = None  # type: ignore[assignment]
-    vr_trigger_1: In[Float32] = None  # type: ignore[assignment]
-    teleop_enable: In[Bool] = None  # type: ignore[assignment]  # X button calibration toggle
+    vr_left_transform: In[LCMTransform]
+    vr_right_transform: In[LCMTransform]
+    vr_trigger_0: In[Float32]
+    vr_trigger_1: In[Float32]
+    vr_teleop_enable: In[Bool]  # X button calibration toggle
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -97,11 +98,11 @@ class VRTeleopModule(BaseTeleopModule[VRTeleopConfig]):
             ),
             (self.vr_trigger_0, lambda msg, idx=left_index: self._on_lcm_trigger(idx, msg)),
             (self.vr_trigger_1, lambda msg, idx=right_index: self._on_lcm_trigger(idx, msg)),
-            (self.teleop_enable, self._on_lcm_teleop_enable),
+            (self.vr_teleop_enable, self._on_lcm_teleop_enable),
         ]
         for stream, handler in subscriptions:
             if stream and stream.transport:
-                stream.subscribe(handler)  # type: ignore[misc, arg-type]
+                self._disposables.add(Disposable(stream.subscribe(handler)))  # type: ignore[misc, arg-type]
 
         logger.info("VR Teleoperation Module started")
 
