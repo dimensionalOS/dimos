@@ -27,7 +27,7 @@
         "far": 5000
       },
       "followMode": "follow-none",
-      "followTf": "vehicle",
+      "followTf": "map",
       "scene": {
         "backgroundColor": "#000000",
         "enableStats": false,
@@ -126,6 +126,9 @@
           "colorMode": "colormap",
           "colorMap": "rainbow",
           "pointSize": 7
+        },
+        "/viz_graph_topic": {
+          "visible": true
         }
       },
       "layers": {
@@ -152,13 +155,14 @@
         }
       },
       "publish": {
-        "type": "point",
+        "type": "pose",
         "poseTopic": "/goal_pose",
         "pointTopic": "/way_point",
         "poseEstimateTopic": "/initialpose",
         "poseEstimateXDeviation": 0.5,
         "poseEstimateYDeviation": 0.5,
-        "poseEstimateThetaDeviation": 0.26179939
+        "poseEstimateThetaDeviation": 0.26179939,
+        "frameId": "map"
       },
       "imageMode": {},
       "fixedFrame": "map"
@@ -268,7 +272,7 @@
       "imageMode": {}
     },
     "Teleop!teleop": {
-      "topic": "/cmd_vel",
+      "topic": "/foxglove_teleop",
       "publishRate": 10,
       "upButton": {
         "field": "linear.x",
@@ -382,6 +386,27 @@
         }
       ],
       "fontSize": 36
+    },
+    "Indicator!autonomy": {
+      "path": "/joy.axes[2]",
+      "style": "background",
+      "fallbackColor": "#a0a0a0",
+      "fallbackLabel": "No Joystick",
+      "rules": [
+        {
+          "operator": "<",
+          "rawValue": "-0.1",
+          "color": "#68e24a",
+          "label": "Autonomy ON"
+        },
+        {
+          "operator": ">=",
+          "rawValue": "-0.1",
+          "color": "#eb4034",
+          "label": "Autonomy OFF"
+        }
+      ],
+      "fontSize": 36
     }
   },
   "globalVariables": {},
@@ -405,10 +430,15 @@
       "first": {
         "first": "Teleop!teleop",
         "second": {
-          "first": "Indicator!goalreached",
-          "second": "Indicator!stop",
+          "first": "Indicator!autonomy",
+          "second": {
+            "first": "Indicator!goalreached",
+            "second": "Indicator!stop",
+            "direction": "row",
+            "splitPercentage": 50
+          },
           "direction": "row",
-          "splitPercentage": 50
+          "splitPercentage": 33
         },
         "direction": "row",
         "splitPercentage": 40

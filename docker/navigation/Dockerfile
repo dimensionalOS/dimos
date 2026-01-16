@@ -220,7 +220,8 @@ RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \
 COPY docker/navigation/run_both.sh /usr/local/bin/run_both.sh
 COPY docker/navigation/ros_launch_wrapper.py /usr/local/bin/ros_launch_wrapper.py
 COPY docker/navigation/ros-navigation-autonomy-stack/src/utilities/twist_relay/twist_relay.py /usr/local/bin/twist_relay.py
-RUN chmod +x /usr/local/bin/run_both.sh /usr/local/bin/ros_launch_wrapper.py /usr/local/bin/twist_relay.py
+COPY docker/navigation/ros-navigation-autonomy-stack/src/utilities/twist_relay/goal_autonomy_relay.py /usr/local/bin/goal_autonomy_relay.py
+RUN chmod +x /usr/local/bin/run_both.sh /usr/local/bin/ros_launch_wrapper.py /usr/local/bin/twist_relay.py /usr/local/bin/goal_autonomy_relay.py
 
 # Set up udev rules for motor controller
 RUN mkdir -p /etc/udev/rules.d && \
