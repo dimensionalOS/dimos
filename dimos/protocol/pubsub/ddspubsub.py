@@ -18,7 +18,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from dimos.protocol.pubsub.spec import PubSub
+from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -100,7 +100,11 @@ class DDSPubSubBase(PubSub[DDSTopic, Any]):
             pass
 
 
+class PickleDDS(PickleEncoderMixin[DDSTopic, Any], DDSPubSubBase): ...
+
+
 __all__ = [
     "DDSPubSubBase",
     "DDSTopic",
+    "PickleDDS",
 ]
