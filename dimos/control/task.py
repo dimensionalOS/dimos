@@ -30,6 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
+from dimos.control.components import JointName
 from dimos.hardware.manipulators.spec import ControlMode
 
 # =============================================================================
@@ -52,7 +53,7 @@ class ResourceClaim:
         mode: Control mode (POSITION, VELOCITY, TORQUE)
     """
 
-    joints: frozenset[str]
+    joints: frozenset[JointName]
     priority: int = 0
     mode: ControlMode = ControlMode.POSITION
 
@@ -75,20 +76,20 @@ class JointStateSnapshot:
         timestamp: Unix timestamp when state was read
     """
 
-    joint_positions: dict[str, float] = field(default_factory=dict)
-    joint_velocities: dict[str, float] = field(default_factory=dict)
-    joint_efforts: dict[str, float] = field(default_factory=dict)
+    joint_positions: dict[JointName, float] = field(default_factory=dict)
+    joint_velocities: dict[JointName, float] = field(default_factory=dict)
+    joint_efforts: dict[JointName, float] = field(default_factory=dict)
     timestamp: float = 0.0
 
-    def get_position(self, joint_name: str) -> float | None:
+    def get_position(self, joint_name: JointName) -> float | None:
         """Get position for a specific joint."""
         return self.joint_positions.get(joint_name)
 
-    def get_velocity(self, joint_name: str) -> float | None:
+    def get_velocity(self, joint_name: JointName) -> float | None:
         """Get velocity for a specific joint."""
         return self.joint_velocities.get(joint_name)
 
-    def get_effort(self, joint_name: str) -> float | None:
+    def get_effort(self, joint_name: JointName) -> float | None:
         """Get effort for a specific joint."""
         return self.joint_efforts.get(joint_name)
 
@@ -133,7 +134,7 @@ class JointCommandOutput:
         mode: Control mode - must match which field is populated
     """
 
-    joint_names: list[str]
+    joint_names: list[JointName]
     positions: list[float] | None = None
     velocities: list[float] | None = None
     efforts: list[float] | None = None
@@ -271,7 +272,7 @@ class ControlTask(Protocol):
         """
         ...
 
-    def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
+    def on_preempted(self, by_task: str, joints: frozenset[JointName]) -> None:
         """Called ONCE per tick with ALL preempted joints aggregated.
 
         Called when a higher-priority task takes control of some of this
@@ -294,6 +295,7 @@ __all__ = [
     "ControlTask",
     "CoordinatorState",
     "JointCommandOutput",
+    "JointName",
     "JointStateSnapshot",
     "ResourceClaim",
 ]
