@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
 
 if TYPE_CHECKING:
-    from dimos.control.components import HardwareComponent, HardwareId, JointName, JointState
+    from dimos.control.components import HardwareComponent
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ class ConnectedHardware:
 
         self._adapter = adapter
         self._component = component
-        self._joint_names = component.joints
+        self._joint_names = [j.joint_name for j in component.joints]
 
         # Track last commanded values for hold-last behavior
         self._last_commanded: dict[str, float] = {}

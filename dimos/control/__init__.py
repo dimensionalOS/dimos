@@ -51,10 +51,9 @@ Example:
 
 from dimos.control.components import (
     HardwareComponent,
-    HardwareId,
     HardwareType,
-    JointName,
-    JointState,
+    JointConfig,
+    JointType,
     make_joints,
 )
 from dimos.control.coordinator import (
@@ -83,18 +82,18 @@ __all__ = [
     "ControlMode",
     # Task protocol and types
     "ControlTask",
-    "CoordinatorState",
     "HardwareComponent",
     "HardwareId",
     "HardwareType",
     "JointCommandOutput",
-    "JointName",
-    "JointState",
+    "JointConfig",
     "JointStateSnapshot",
+    "JointType",
+    "OrchestratorState",
     "ResourceClaim",
     "TaskConfig",
     # Tick loop
     "TickLoop",
-    "control_coordinator",
+    "control_orchestrator",
     "make_joints",
 ]
