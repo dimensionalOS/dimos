@@ -81,17 +81,17 @@ __all__ = [
     "ControlMode",
     # Task protocol and types
     "ControlTask",
+    "CoordinatorState",
     "HardwareComponent",
     "HardwareId",
     "HardwareType",
     "JointCommandOutput",
     "JointState",
     "JointStateSnapshot",
-    "OrchestratorState",
     "ResourceClaim",
     "TaskConfig",
     # Tick loop
     "TickLoop",
-    "control_orchestrator",
+    "control_coordinator",
     "make_joints",
 ]
