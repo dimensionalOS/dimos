@@ -11,6 +11,7 @@ ENV DIMOS_PATH=/workspace/dimos
 RUN apt-get update && apt-get install -y \
     # ROS packages
     ros-jazzy-pcl-ros \
+    ros-jazzy-foxglove-bridge \
     # Development tools
     git \
     git-lfs \
@@ -118,7 +119,7 @@ RUN echo "source /opt/dimos-venv/bin/activate" >> ~/.bashrc
 WORKDIR ${DIMOS_PATH}
 RUN /bin/bash -c "source /opt/dimos-venv/bin/activate && \
     pip install --upgrade pip setuptools wheel && \
-    pip install -e .[cpu,dev] 'mmengine>=0.10.3' 'mmcv>=2.1.0'"
+    pip install -e .[cpu,dev,agents] 'mmengine>=0.10.3' 'mmcv>=2.1.0' rerun-sdk"
 
 # Copy helper scripts
 COPY docker/navigation/run_both.sh /usr/local/bin/run_both.sh
@@ -157,9 +158,8 @@ if [ "${HARDWARE_MODE}" = "true" ]; then\n\
     if [ -n "${LIDAR_INTERFACE}" ] && [ -n "${LIDAR_COMPUTER_IP}" ]; then\n\
         ip addr add ${LIDAR_COMPUTER_IP}/24 dev ${LIDAR_INTERFACE} 2>/dev/null || true\n\
         ip link set ${LIDAR_INTERFACE} up 2>/dev/null || true\n\
-        if [ -n "${LIDAR_GATEWAY}" ]; then\n\
-            ip route add default via ${LIDAR_GATEWAY} dev ${LIDAR_INTERFACE} 2>/dev/null || true\n\
-        fi\n\
+        # Note: Do NOT add default route via LIDAR_GATEWAY as it would override internet access\n\
+        # The /24 subnet route is automatically added when we assign the IP address\n\
     fi\n\
     \n\
     # Generate MID360_config.json if LIDAR_COMPUTER_IP and LIDAR_IP are set\n\

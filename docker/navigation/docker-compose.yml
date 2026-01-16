@@ -70,6 +70,10 @@ services:
     container_name: dimos_hardware_container
     profiles: ["hardware"]
 
+    # Load environment from .env file
+    env_file:
+      - .env
+
     # Enable interactive terminal
     stdin_open: true
     tty: true
@@ -83,9 +87,14 @@ services:
     # Override runtime for GPU support
     runtime: ${DOCKER_RUNTIME:-runc}
 
+    # Add host groups for device access (input for joystick, dialout for serial)
+    group_add:
+      - ${INPUT_GID:-995}
+      - ${DIALOUT_GID:-20}
+
     # Hardware environment variables
     environment:
-      - DISPLAY=${DISPLAY}
+      - DISPLAY=${DISPLAY:-:0}
       - QT_X11_NO_MITSHM=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
@@ -120,6 +129,8 @@ services:
       - ./config:/ros2_ws/config:rw
       # Hardware-specific volumes
       - ./logs:/ros2_ws/logs:rw
+      # Foxglove layout
+      - ./foxglove_layout.json:/ros2_ws/foxglove_layout.json:ro
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
       - /dev/bus/usb:/dev/bus/usb:rw
@@ -127,8 +138,8 @@ services:
 
     # Device access for hardware
     devices:
-      # Joystick controllers
-      - /dev/input:/dev/input
+      # Joystick controller (specific device to avoid permission issues)
+      - /dev/input/js0:/dev/input/js0
       # GPU access
       - /dev/dri:/dev/dri
       # Motor controller serial ports
@@ -142,8 +153,21 @@ services:
     # Working directory
     working_dir: /workspace/dimos
 
-    # Command - for hardware, we run bash as the user will launch specific scripts
-    command: bash
+    # Command - launch the real robot system with foxglove_bridge
+    command:
+      - bash
+      - -c
+      - |
+        echo "Checking joystick..."
+        ls -la /dev/input/js0 2>/dev/null || echo "Warning: No joystick found at /dev/input/js0"
+        echo "Starting real robot system..."
+        cd /ros2_ws
+        source install/setup.bash
+        ros2 launch vehicle_simulator system_real_robot.launch &
+        sleep 2
+        echo "Starting Foxglove Bridge on port 8765..."
+        echo "Connect via Foxglove Studio: ws://$(hostname -I | awk '{print $1}'):8765"
+        ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=8765
 
     # Capabilities for hardware operations
     cap_add:

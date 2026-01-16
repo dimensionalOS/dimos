@@ -74,7 +74,16 @@ if [ "$MODE" = "hardware" ]; then
         set -a
         source .env
         set +a
+    fi
 
+    # Auto-detect group IDs for device permissions
+    echo -e "${GREEN}Detecting device group IDs...${NC}"
+    export INPUT_GID=$(getent group input | cut -d: -f3 || echo "995")
+    export DIALOUT_GID=$(getent group dialout | cut -d: -f3 || echo "20")
+    echo -e "  input group GID: ${INPUT_GID}"
+    echo -e "  dialout group GID: ${DIALOUT_GID}"
+
+    if [ -f ".env" ]; then
         # Check for required environment variables
         if [ -z "$LIDAR_IP" ] || [ "$LIDAR_IP" = "192.168.1.116" ]; then
             echo -e "${YELLOW}Warning: LIDAR_IP still using default value in .env${NC}"
@@ -175,11 +184,23 @@ fi
 if [ -z "$DISPLAY" ]; then
     echo -e "${YELLOW}Warning: DISPLAY not set. GUI applications may not work.${NC}"
     export DISPLAY=:0
+else
+    echo -e "${GREEN}Using DISPLAY: $DISPLAY${NC}"
 fi
+export DISPLAY
 
 # Allow X11 connections from Docker
 echo -e "${GREEN}Configuring X11 access...${NC}"
 xhost +local:docker 2>/dev/null || true
+
+# Setup X11 auth for remote/SSH connections
+XAUTH=/tmp/.docker.xauth
+touch $XAUTH 2>/dev/null || true
+if [ -n "$DISPLAY" ]; then
+    xauth nlist $DISPLAY 2>/dev/null | sed -e 's/^..../ffff/' | xauth -f $XAUTH nmerge - 2>/dev/null || true
+    chmod 644 $XAUTH 2>/dev/null || true
+    echo -e "${GREEN}X11 auth configured for display: $DISPLAY${NC}"
+fi
 
 cleanup() {
     xhost -local:docker 2>/dev/null || true
@@ -210,12 +231,14 @@ fi
 # Print helpful info before starting
 echo ""
 if [ "$MODE" = "hardware" ]; then
-    echo "Hardware mode - Interactive shell"
+    echo "Hardware mode - Auto-starting ROS real robot system"
     echo ""
-    echo -e "${GREEN}=================================================${NC}"
-    echo -e "${GREEN}The container is running. Exec in to run scripts:${NC}"
+    echo "The container will automatically run:"
+    echo "  - ROS navigation stack (system_real_robot.launch)"
+    echo "  - RViz visualization"
+    echo ""
+    echo "To enter the container from another terminal:"
     echo -e "    ${YELLOW}docker exec -it ${CONTAINER_NAME} bash${NC}"
-    echo -e "${GREEN}=================================================${NC}"
 else
     echo "Simulation mode - Auto-starting ROS simulation and DimOS"
     echo ""
@@ -226,6 +249,9 @@ else
     echo "To enter the container from another terminal:"
     echo "  docker exec -it ${CONTAINER_NAME} bash"
 fi
+
+# Note: DISPLAY is now passed directly via environment variable
+# No need to write RUNTIME_DISPLAY to .env for local host running
 
 if [ "$MODE" = "hardware" ]; then
     docker compose -f docker-compose.yml --profile hardware up
