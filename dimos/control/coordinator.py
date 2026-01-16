@@ -506,8 +506,8 @@ control_coordinator = ControlCoordinator.blueprint
 
 
 __all__ = [
-    "ControlOrchestrator",
-    "ControlOrchestratorConfig",
+    "ControlCoordinator",
+    "ControlCoordinatorConfig",
     "HardwareComponent",
     "TaskConfig",
     "control_coordinator",

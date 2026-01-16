@@ -55,15 +55,15 @@ from dimos.control.components import (
     JointState,
     make_joints,
 )
+from dimos.control.coordinator import (
+    ControlCoordinator,
+    ControlCoordinatorConfig,
+    TaskConfig,
+    control_coordinator,
+)
 from dimos.control.hardware_interface import (
     BackendHardwareInterface,
     HardwareInterface,
-)
-from dimos.control.orchestrator import (
-    ControlOrchestrator,
-    ControlOrchestratorConfig,
-    TaskConfig,
-    control_orchestrator,
 )
 from dimos.control.task import (
     ControlMode,
@@ -84,17 +84,17 @@ __all__ = [
     "ControlMode",
     # Task protocol and types
     "ControlTask",
+    "CoordinatorState",
     "HardwareComponent",
     "HardwareInterface",
     "HardwareType",
     "JointCommandOutput",
     "JointState",
     "JointStateSnapshot",
-    "OrchestratorState",
     "ResourceClaim",
     "TaskConfig",
     # Tick loop
     "TickLoop",
-    "control_orchestrator",
+    "control_coordinator",
     "make_joints",
 ]
