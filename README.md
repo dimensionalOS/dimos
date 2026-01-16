@@ -167,6 +167,116 @@ if __name__ == "__main__":
     ).build().loop()
 ```
 
+#### RPC calls between modules
+
+Call another module's `@rpc` method by listing it in `rpc_calls` and grabbing it with `get_rpc_calls`.
+
+```py
+from dimos.core import Module, rpc
+from dimos.core.blueprints import autoconnect
+
+
+class Counter(Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self._count = 0
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        print("Counter ready")
+
+    @rpc
+    def add(self, amount: int = 1) -> int:
+        """Add to the running total and return the new count."""
+        self._count += amount
+        print(f"Counter now {self._count}")
+        return self._count
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+
+class Client(Module):
+    # ask for the Counter.add RPC, then call it from start()
+    rpc_calls = ["Counter.add"]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        counter_add = self.get_rpc_calls("Counter.add")
+        counter_add(2)
+        final_value = counter_add(3)
+        print(f"Remote counter ended at {final_value}")
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+
+if __name__ == "__main__":
+    autoconnect(
+        Counter.blueprint(),
+        Client.blueprint(),
+    ).build().loop()
+```
+
+#### Skills in a module
+
+Define skills with `@skill`, register them with a `SkillCoordinator`, and retrieve the results as they stream back.
+
+```py
+import asyncio
+
+from dimos.core import Module, rpc
+from dimos.protocol.skill.coordinator import SkillCoordinator
+from dimos.protocol.skill.skill import skill
+from dimos.protocol.skill.type import Reducer, Stream
+
+
+class Calculator(Module):
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+    @skill()
+    def add(self, x: int, y: int) -> int:
+        return x + y
+
+    @skill(stream=Stream.passive, reducer=Reducer.latest)  # type: ignore[arg-type]
+    def count_to(self, n: int):
+        for i in range(1, n + 1):
+            yield i
+
+
+async def main() -> None:
+    skills = Calculator()
+    coordinator = SkillCoordinator()
+    coordinator.register_skills(skills)
+    coordinator.start()
+
+    coordinator.call_skill("add-1", "add", {"args": [2, 3]})
+    coordinator.call_skill("count-1", "count_to", {"args": [4]})
+
+    while await coordinator.wait_for_updates(timeout=1):
+        updates = coordinator.generate_snapshot(clear=True)
+        for call_id, state in updates.items():
+            print(f"{call_id} -> {state.content()}")
+        if not coordinator.has_passive_skills():
+            break
+
+    coordinator.stop()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
 #### Note: Many More Examples in the [Examples Folder](./examples)
 
 ### How do custom modules work? (Example breakdown)
