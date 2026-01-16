@@ -8,6 +8,12 @@
         body { background: #0a0a0f; font-family: -apple-system, system-ui, sans-serif; }
         :root { --command-center-width: max(30vw, 35rem); }
         .container { display: flex; width: 100%; height: 100%; }
+        .command-center {
+            width: var(--command-center-width);
+            min-width: 16rem;
+            border: none;
+            border-right: 1px solid #333;
+        }
         .rerun { flex: 1 1 auto; border: none; min-width: 0; }
         .divider {
             width: 6px;
@@ -18,20 +24,14 @@
         }
         .divider:hover { background: #2a3140; }
         .divider.dragging { background: #3a4458; }
-        .command-center {
-            width: var(--command-center-width);
-            min-width: 16rem;
-            border: none;
-            border-left: 1px solid #333;
-        }
         body.dragging { user-select: none; cursor: col-resize; }
     </style>
 </head>
 <body>
     <div class="container">
-        <iframe class="rerun" src="http://localhost:9090/?url=rerun%2Bhttp%3A%2F%2Flocalhost%3A9876%2Fproxy"></iframe>
-        <div class="divider" role="separator" aria-label="Resize panels"></div>
         <iframe class="command-center" src="http://localhost:7779/command-center"></iframe>
+        <div class="divider" role="separator" aria-label="Resize panels"></div>
+        <iframe class="rerun" src="http://localhost:9090/?url=rerun%2Bhttp%3A%2F%2Flocalhost%3A9876%2Fproxy"></iframe>
     </div>
     <script>
         (function () {
@@ -48,7 +48,7 @@
                 if (!isDragging) return;
                 const rect = container.getBoundingClientRect();
                 const dividerWidth = divider.getBoundingClientRect().width;
-                const available = rect.right - event.clientX - dividerWidth / 2;
+                const available = event.clientX - rect.left - dividerWidth / 2;
                 const nextWidth = Math.max(minWidth, Math.min(available, rect.width));
                 commandCenter.style.width = `${nextWidth}px`;
                 document.documentElement.style.setProperty('--command-center-width', `${nextWidth}px`);
