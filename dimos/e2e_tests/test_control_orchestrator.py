@@ -222,8 +222,8 @@ class TestControlOrchestratorE2E:
         try:
             # Verify both arms present
             joints = client.list_joints()
-            assert "left_joint1" in joints
-            assert "right_joint1" in joints
+            assert "left_arm_joint1" in joints
+            assert "right_arm_joint1" in joints
 
             tasks = client.list_tasks()
             assert "traj_left" in tasks
@@ -231,7 +231,7 @@ class TestControlOrchestratorE2E:
 
             # Create trajectories for both arms
             left_trajectory = JointTrajectory(
-                joint_names=[f"left_joint{i + 1}" for i in range(7)],
+                joint_names=[f"left_arm_joint{i + 1}" for i in range(7)],
                 points=[
                     TrajectoryPoint(time_from_start=0.0, positions=[0.0] * 7),
                     TrajectoryPoint(time_from_start=0.5, positions=[0.2] * 7),
@@ -239,7 +239,7 @@ class TestControlOrchestratorE2E:
             )
 
             right_trajectory = JointTrajectory(
-                joint_names=[f"right_joint{i + 1}" for i in range(6)],
+                joint_names=[f"right_arm_joint{i + 1}" for i in range(6)],
                 points=[
                     TrajectoryPoint(time_from_start=0.0, positions=[0.0] * 6),
                     TrajectoryPoint(time_from_start=0.5, positions=[0.3] * 6),

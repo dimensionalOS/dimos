@@ -37,23 +37,19 @@ Example with trajectory setter:
 
 from __future__ import annotations
 
+from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.orchestrator import (
     ControlOrchestrator,
-    HardwareConfig,
     TaskConfig,
     control_orchestrator,
 )
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import JointState
 
-# =============================================================================
-# Helper function to generate joint names
-# =============================================================================
 
-
-def _joint_names(prefix: str, dof: int) -> list[str]:
-    """Generate joint names with prefix."""
-    return [f"{prefix}_joint{i + 1}" for i in range(dof)]
+def _joint_names(hardware_id: str, dof: int) -> list[str]:
+    """Generate joint names for a hardware component."""
+    return [f"{hardware_id}_joint{i + 1}" for i in range(dof)]
 
 
 # =============================================================================
@@ -66,11 +62,11 @@ orchestrator_mock = control_orchestrator(
     publish_joint_state=True,
     joint_state_frame_id="orchestrator",
     hardware=[
-        HardwareConfig(
-            id="arm",
-            type="mock",
-            dof=7,
-            joint_prefix="arm",
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 7),
+            backend_type="mock",
         ),
     ],
     tasks=[
@@ -93,12 +89,12 @@ orchestrator_xarm7 = control_orchestrator(
     publish_joint_state=True,
     joint_state_frame_id="orchestrator",
     hardware=[
-        HardwareConfig(
-            id="arm",
-            type="xarm",
-            dof=7,
-            joint_prefix="arm",
-            ip="192.168.2.235",  # Default IP, override via env or config
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 7),
+            backend_type="xarm",
+            address="192.168.2.235",  # Default IP, override via env or config
             auto_enable=True,
         ),
     ],
@@ -122,12 +118,12 @@ orchestrator_xarm6 = control_orchestrator(
     publish_joint_state=True,
     joint_state_frame_id="orchestrator",
     hardware=[
-        HardwareConfig(
-            id="arm",
-            type="xarm",
-            dof=6,
-            joint_prefix="arm",
-            ip="192.168.1.210",
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            backend_type="xarm",
+            address="192.168.1.210",
             auto_enable=True,
         ),
     ],
@@ -151,12 +147,12 @@ orchestrator_piper = control_orchestrator(
     publish_joint_state=True,
     joint_state_frame_id="orchestrator",
     hardware=[
-        HardwareConfig(
-            id="arm",
-            type="piper",
-            dof=6,
-            joint_prefix="arm",
-            can_port="can0",
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            backend_type="piper",
+            address="can0",
             auto_enable=True,
         ),
     ],
@@ -184,30 +180,30 @@ orchestrator_dual_mock = control_orchestrator(
     publish_joint_state=True,
     joint_state_frame_id="orchestrator",
     hardware=[
-        HardwareConfig(
-            id="left_arm",
-            type="mock",
-            dof=7,
-            joint_prefix="left",
+        HardwareComponent(
+            hardware_id="left_arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("left_arm", 7),
+            backend_type="mock",
         ),
-        HardwareConfig(
-            id="right_arm",
-            type="mock",
-            dof=6,
-            joint_prefix="right",
+        HardwareComponent(
+            hardware_id="right_arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("right_arm", 6),
+            backend_type="mock",
         ),
     ],
     tasks=[
         TaskConfig(
             name="traj_left",
             type="trajectory",
-            joint_names=_joint_names("left", 7),
+            joint_names=_joint_names("left_arm", 7),
             priority=10,
         ),
         TaskConfig(
             name="traj_right",
             type="trajectory",
-            joint_names=_joint_names("right", 6),
+            joint_names=_joint_names("right_arm", 6),
             priority=10,
         ),
     ],
@@ -223,20 +219,20 @@ orchestrator_dual_xarm = control_orchestrator(
     publish_joint_state=True,
     joint_state_frame_id="orchestrator",
     hardware=[
-        HardwareConfig(
-            id="left_arm",
-            type="xarm",
-            dof=7,
-            joint_prefix="left",
-            ip="192.168.2.235",
+        HardwareComponent(
+            hardware_id="left_arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("left_arm", 7),
+            backend_type="xarm",
+            address="192.168.2.235",
             auto_enable=True,
         ),
-        HardwareConfig(
-            id="right_arm",
-            type="xarm",
-            dof=6,
-            joint_prefix="right",
-            ip="192.168.1.210",
+        HardwareComponent(
+            hardware_id="right_arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("right_arm", 6),
+            backend_type="xarm",
+            address="192.168.1.210",
             auto_enable=True,
         ),
     ],
@@ -244,13 +240,13 @@ orchestrator_dual_xarm = control_orchestrator(
         TaskConfig(
             name="traj_left",
             type="trajectory",
-            joint_names=_joint_names("left", 7),
+            joint_names=_joint_names("left_arm", 7),
             priority=10,
         ),
         TaskConfig(
             name="traj_right",
             type="trajectory",
-            joint_names=_joint_names("right", 6),
+            joint_names=_joint_names("right_arm", 6),
             priority=10,
         ),
     ],
@@ -266,20 +262,20 @@ orchestrator_piper_xarm = control_orchestrator(
     publish_joint_state=True,
     joint_state_frame_id="orchestrator",
     hardware=[
-        HardwareConfig(
-            id="xarm_arm",
-            type="xarm",
-            dof=6,
-            joint_prefix="xarm",
-            ip="192.168.1.210",
+        HardwareComponent(
+            hardware_id="xarm_arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("xarm_arm", 6),
+            backend_type="xarm",
+            address="192.168.1.210",
             auto_enable=True,
         ),
-        HardwareConfig(
-            id="piper_arm",
-            type="piper",
-            dof=6,
-            joint_prefix="piper",
-            can_port="can0",
+        HardwareComponent(
+            hardware_id="piper_arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("piper_arm", 6),
+            backend_type="piper",
+            address="can0",
             auto_enable=True,
         ),
     ],
@@ -287,13 +283,13 @@ orchestrator_piper_xarm = control_orchestrator(
         TaskConfig(
             name="traj_xarm",
             type="trajectory",
-            joint_names=_joint_names("xarm", 6),
+            joint_names=_joint_names("xarm_arm", 6),
             priority=10,
         ),
         TaskConfig(
             name="traj_piper",
             type="trajectory",
-            joint_names=_joint_names("piper", 6),
+            joint_names=_joint_names("piper_arm", 6),
             priority=10,
         ),
     ],
@@ -313,11 +309,11 @@ orchestrator_highfreq_mock = control_orchestrator(
     publish_joint_state=True,
     joint_state_frame_id="orchestrator",
     hardware=[
-        HardwareConfig(
-            id="arm",
-            type="mock",
-            dof=7,
-            joint_prefix="arm",
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 7),
+            backend_type="mock",
         ),
     ],
     tasks=[

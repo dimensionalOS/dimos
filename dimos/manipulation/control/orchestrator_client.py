@@ -155,14 +155,18 @@ class OrchestratorClient:
         self._current_task = task_name
 
         # Get joints for this task (infer from task name pattern)
-        # e.g., "traj_left" -> joints starting with "left_"
+        # e.g., "traj_left" -> joints starting with "left_arm_" (hardware_id based naming)
         # e.g., "traj_arm" -> joints starting with "arm_"
         all_joints = self.list_joints()
 
-        # Try to infer prefix from task name
+        # Try to infer hardware_id from task name
         if "_" in task_name:
-            prefix = task_name.split("_", 1)[1]  # "traj_left" -> "left"
-            task_joints = [j for j in all_joints if j.startswith(prefix + "_")]
+            suffix = task_name.split("_", 1)[1]  # "traj_left" -> "left"
+            # Try both patterns: exact suffix (e.g., "arm_") and with "_arm" suffix (e.g., "left_arm_")
+            task_joints = [j for j in all_joints if j.startswith(suffix + "_")]
+            if not task_joints:
+                # Try with "_arm" suffix for dual-arm setups (left -> left_arm)
+                task_joints = [j for j in all_joints if j.startswith(suffix + "_arm_")]
         else:
             task_joints = all_joints
 

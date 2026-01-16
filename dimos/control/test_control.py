@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.hardware_interface import BackendHardwareInterface
 from dimos.control.task import (
     ControlMode,
@@ -61,11 +62,12 @@ def mock_backend():
 @pytest.fixture
 def hardware_interface(mock_backend):
     """Create a BackendHardwareInterface with mock backend."""
-    return BackendHardwareInterface(
-        backend=mock_backend,
+    component = HardwareComponent(
         hardware_id="test_arm",
-        joint_prefix="arm",
+        hardware_type=HardwareType.MANIPULATOR,
+        joints=make_joints("arm", 6),
     )
+    return BackendHardwareInterface(backend=mock_backend, component=component)
 
 
 @pytest.fixture
@@ -429,7 +431,12 @@ class TestArbitration:
 
 class TestTickLoop:
     def test_tick_loop_starts_and_stops(self, mock_backend):
-        hw = BackendHardwareInterface(mock_backend, "arm", "arm")
+        component = HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+        )
+        hw = BackendHardwareInterface(mock_backend, component)
         hardware = {"arm": hw}
         tasks: dict = {}
         joint_to_hardware = {f"arm_joint{i + 1}": "arm" for i in range(6)}
@@ -453,7 +460,12 @@ class TestTickLoop:
         assert tick_loop.tick_count == final_count
 
     def test_tick_loop_calls_compute(self, mock_backend):
-        hw = BackendHardwareInterface(mock_backend, "arm", "arm")
+        component = HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+        )
+        hw = BackendHardwareInterface(mock_backend, component)
         hardware = {"arm": hw}
 
         mock_task = MagicMock()
@@ -495,7 +507,12 @@ class TestTickLoop:
 
 class TestIntegration:
     def test_full_trajectory_execution(self, mock_backend):
-        hw = BackendHardwareInterface(mock_backend, "arm", "arm")
+        component = HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+        )
+        hw = BackendHardwareInterface(mock_backend, component)
         hardware = {"arm": hw}
 
         config = JointTrajectoryTaskConfig(
