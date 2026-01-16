@@ -14,8 +14,10 @@
 
 """Hardware component schema for the ControlCoordinator."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
+
+from dimos.hardware.manipulators.spec import ControlMode
 
 HardwareId = str
 JointName = str
@@ -28,13 +30,20 @@ class HardwareType(Enum):
     GRIPPER = "gripper"
 
 
-@dataclass(frozen=True)
-class JointState:
-    """State of a single joint."""
+class JointType(Enum):
+    REVOLUTE = "revolute"  # Rotary with limits (radians)
+    PRISMATIC = "prismatic"  # Linear with limits (meters)
+    CONTINUOUS = "continuous"  # Rotary no limits (wheels)
+    VELOCITY = "velocity"  # Velocity-only (base vx/vy/wz)
 
-    position: float
-    velocity: float
-    effort: float
+
+@dataclass(frozen=True)
+class JointConfig:
+    joint_name: JointName
+    joint_type: JointType
+    supported_modes: tuple[ControlMode, ...]
+    limits: tuple[float, float] | None = None
+    default_on_timeout: float | None = None  # None=hold, 0.0=zero velocity
 
 
 @dataclass
@@ -42,7 +51,7 @@ class HardwareComponent:
     """Configuration for a hardware component.
 
     Attributes:
-        hardware_id: Unique identifier, also used as joint name prefix
+        hardware_id: Unique hardware identifier (e.g., "arm", "left_arm")
         hardware_type: Type of hardware (MANIPULATOR, BASE, GRIPPER)
         joints: List of joint names (e.g., ["arm_joint1", "arm_joint2", ...])
         adapter_type: Adapter type ("mock", "xarm", "piper")
@@ -56,25 +65,41 @@ class HardwareComponent:
     adapter_type: str = "mock"
     address: str | None = None
     auto_enable: bool = True
+    description: str = ""
 
 
-def make_joints(hardware_id: HardwareId, dof: int) -> list[JointName]:
-    """Create joint names for hardware.
+def make_joints(
+    hardware_id: HardwareId,
+    dof: int,
+    joint_type: JointType = JointType.REVOLUTE,
+    supported_modes: tuple[ControlMode, ...] = (ControlMode.POSITION, ControlMode.SERVO_POSITION),
+) -> list[JointConfig]:
+    """Create joint configs for hardware.
 
     Args:
         hardware_id: The hardware identifier (e.g., "left_arm")
         dof: Degrees of freedom
+        joint_type: Type of joints (default: REVOLUTE)
+        supported_modes: Control modes the joints support
 
     Returns:
-        List of joint names like ["left_arm_joint1", "left_arm_joint2", ...]
+        List of JointConfig with names like "left_arm_joint1", "left_arm_joint2", ...
     """
-    return [f"{hardware_id}_joint{i + 1}" for i in range(dof)]
+    return [
+        JointConfig(
+            joint_name=f"{hardware_id}_joint{i + 1}",
+            joint_type=joint_type,
+            supported_modes=supported_modes,
+        )
+        for i in range(dof)
+    ]
 
 
 __all__ = [
     "HardwareComponent",
     "HardwareId",
     "HardwareType",
+    "JointConfig",
     "JointName",
     "JointState",
     "TaskName",
