@@ -3,12 +3,25 @@
     "3D!main": {
       "cameraState": {
         "perspective": true,
-        "distance": 20,
-        "phi": 60,
-        "thetaOffset": 45,
-        "targetOffset": [0, 0, 0],
-        "target": [0, 0, 0],
-        "targetOrientation": [0, 0, 0, 1],
+        "distance": 9.265824603193959,
+        "phi": 33.79912663755718,
+        "thetaOffset": -77.09606986899745,
+        "targetOffset": [
+          -1.7933117489605865,
+          0.24901413852157717,
+          2.305722675118687e-16
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
         "fovy": 45,
         "near": 0.01,
         "far": 5000
@@ -31,11 +44,11 @@
       "topics": {
         "/registered_scan": {
           "visible": true,
-          "colorField": "intensity",
-          "colorMode": "flat",
+          "colorField": "z",
+          "colorMode": "colormap",
           "flatColor": "#ffffff",
           "pointSize": 2,
-          "decayTime": 5
+          "decayTime": 1
         },
         "/overall_map": {
           "visible": true,
@@ -121,8 +134,16 @@
           "visible": true,
           "frameLocked": true,
           "label": "Grid",
-          "position": [0, 0, 0],
-          "rotation": [0, 0, 0],
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
           "color": "#248f24",
           "size": 100,
           "divisions": 100,
@@ -138,7 +159,8 @@
         "poseEstimateXDeviation": 0.5,
         "poseEstimateYDeviation": 0.5,
         "poseEstimateThetaDeviation": 0.26179939
-      }
+      },
+      "imageMode": {}
     },
     "Image!camera": {
       "cameraTopic": "/camera/image",
@@ -150,7 +172,47 @@
       "flipVertical": false,
       "minValue": 0,
       "maxValue": 1,
-      "rotation": 0
+      "rotation": 0,
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {}
     },
     "Image!semantic": {
       "cameraTopic": "/camera/semantic_image",
@@ -162,15 +224,67 @@
       "flipVertical": false,
       "minValue": 0,
       "maxValue": 1,
-      "rotation": 0
+      "rotation": 0,
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {}
     },
     "Teleop!teleop": {
       "topic": "/cmd_vel",
       "publishRate": 10,
-      "upButton": { "field": "linear.x", "value": 0.5 },
-      "downButton": { "field": "linear.x", "value": -0.5 },
-      "leftButton": { "field": "angular.z", "value": 0.5 },
-      "rightButton": { "field": "angular.z", "value": -0.5 }
+      "upButton": {
+        "field": "linear.x",
+        "value": 0.5
+      },
+      "downButton": {
+        "field": "linear.x",
+        "value": -0.5
+      },
+      "leftButton": {
+        "field": "angular.z",
+        "value": 0.5
+      },
+      "rightButton": {
+        "field": "angular.z",
+        "value": -0.5
+      }
     },
     "RawMessages!odom": {
       "diffEnabled": false,
@@ -184,13 +298,29 @@
       "diffMethod": "custom",
       "diffTopicPath": "",
       "showFullMessageForDiff": false,
-      "topicPath": "/cmd_vel.twist"
+      "topicPath": "/cmd_vel.twist",
+      "fontSize": 12
     },
     "Plot!speed": {
       "paths": [
-        { "value": "/cmd_vel.twist.linear.x", "enabled": true, "timestampMethod": "receiveTime", "label": "Linear X" },
-        { "value": "/cmd_vel.twist.linear.y", "enabled": true, "timestampMethod": "receiveTime", "label": "Linear Y" },
-        { "value": "/cmd_vel.twist.angular.z", "enabled": true, "timestampMethod": "receiveTime", "label": "Angular Z" }
+        {
+          "value": "/cmd_vel.twist.linear.x",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "Linear X"
+        },
+        {
+          "value": "/cmd_vel.twist.linear.y",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "Linear Y"
+        },
+        {
+          "value": "/cmd_vel.twist.angular.z",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "Angular Z"
+        }
       ],
       "showXAxisLabels": true,
       "showYAxisLabels": true,
@@ -210,9 +340,20 @@
       "fallbackColor": "#a0a0a0",
       "fallbackLabel": "No Data",
       "rules": [
-        { "operator": "=", "rawValue": "true", "color": "#68e24a", "label": "Goal Reached" },
-        { "operator": "=", "rawValue": "false", "color": "#f5f5f5", "label": "Navigating" }
-      ]
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#68e24a",
+          "label": "Goal Reached"
+        },
+        {
+          "operator": "=",
+          "rawValue": "false",
+          "color": "#f5f5f5",
+          "label": "Navigating"
+        }
+      ],
+      "fontSize": 36
     },
     "Indicator!stop": {
       "path": "/stop.data",
@@ -220,10 +361,26 @@
       "fallbackColor": "#a0a0a0",
       "fallbackLabel": "No Data",
       "rules": [
-        { "operator": "=", "rawValue": "0", "color": "#68e24a", "label": "OK" },
-        { "operator": "=", "rawValue": "1", "color": "#f5ba42", "label": "Speed Stop" },
-        { "operator": "=", "rawValue": "2", "color": "#eb4034", "label": "Full Stop" }
-      ]
+        {
+          "operator": "=",
+          "rawValue": "0",
+          "color": "#68e24a",
+          "label": "OK"
+        },
+        {
+          "operator": "=",
+          "rawValue": "1",
+          "color": "#f5ba42",
+          "label": "Speed Stop"
+        },
+        {
+          "operator": "=",
+          "rawValue": "2",
+          "color": "#eb4034",
+          "label": "Full Stop"
+        }
+      ],
+      "fontSize": 36
     }
   },
   "globalVariables": {},

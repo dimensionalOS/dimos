@@ -9,6 +9,8 @@ NC='\033[0m'
 
 # Parse command line arguments
 MODE="simulation"
+USE_ROUTE_PLANNER="false"
+USE_RVIZ="false"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --hardware)
@@ -19,17 +21,29 @@ while [[ $# -gt 0 ]]; do
             MODE="simulation"
             shift
             ;;
+        --route-planner)
+            USE_ROUTE_PLANNER="true"
+            shift
+            ;;
+        --rviz)
+            USE_RVIZ="true"
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --simulation    Start simulation container (default)"
-            echo "  --hardware      Start hardware container for real robot"
-            echo "  --help, -h      Show this help message"
+            echo "  --simulation      Start simulation container (default)"
+            echo "  --hardware        Start hardware container for real robot"
+            echo "  --route-planner   Enable FAR route planner (for hardware mode)"
+            echo "  --rviz            Launch RViz2 visualization"
+            echo "  --help, -h        Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                # Start simulation container"
-            echo "  $0 --hardware     # Start hardware container"
+            echo "  $0                                    # Start simulation container"
+            echo "  $0 --hardware                         # Start hardware (base autonomy)"
+            echo "  $0 --hardware --route-planner         # Hardware with route planner"
+            echo "  $0 --hardware --route-planner --rviz  # Hardware with route planner + RViz"
             echo ""
             echo "Press Ctrl+C to stop the container"
             exit 0
@@ -228,14 +242,30 @@ else
     CONTAINER_NAME="dimos_simulation_container"
 fi
 
+# Export settings for docker-compose
+export USE_ROUTE_PLANNER
+export USE_RVIZ
+
 # Print helpful info before starting
 echo ""
 if [ "$MODE" = "hardware" ]; then
-    echo "Hardware mode - Auto-starting ROS real robot system"
-    echo ""
-    echo "The container will automatically run:"
-    echo "  - ROS navigation stack (system_real_robot.launch)"
-    echo "  - RViz visualization"
+    if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+        echo "Hardware mode - Auto-starting ROS real robot system WITH route planner"
+        echo ""
+        echo "The container will automatically run:"
+        echo "  - ROS navigation stack (system_real_robot_with_route_planner.launch)"
+        echo "  - FAR Planner for goal-based navigation"
+        echo "  - Foxglove Bridge"
+    else
+        echo "Hardware mode - Auto-starting ROS real robot system (base autonomy)"
+        echo ""
+        echo "The container will automatically run:"
+        echo "  - ROS navigation stack (system_real_robot.launch)"
+        echo "  - Foxglove Bridge"
+    fi
+    if [ "$USE_RVIZ" = "true" ]; then
+        echo "  - RViz2 visualization"
+    fi
     echo ""
     echo "To enter the container from another terminal:"
     echo -e "    ${YELLOW}docker exec -it ${CONTAINER_NAME} bash${NC}"
