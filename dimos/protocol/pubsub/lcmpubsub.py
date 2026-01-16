@@ -142,7 +142,6 @@ __all__ = [
     "JpegLCM",
     "LCMEncoderMixin",
     "LCMMsg",
-    "LCMMsg",
     "LCMPubSubBase",
     "PickleLCM",
     "autoconf",

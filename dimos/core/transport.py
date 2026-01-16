@@ -26,6 +26,7 @@ from typing import (
 )
 
 from dimos.core.stream import In, Out, Stream, Transport
+from dimos.protocol.pubsub.ddspubsub import DDS, Topic as DDSTopic
 from dimos.protocol.pubsub.jpeg_shm import JpegSharedMemory
 from dimos.protocol.pubsub.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory
@@ -109,6 +110,23 @@ class LCMTransport(PubSubTransport[T]):
             self.lcm.start()
             self._started = True
         return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
+
+
+class DDSTransport(PubSubTransport[T]):
+    _started: bool = False
+
+    def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(DDSTopic(topic, type))
+        if not hasattr(self, "dds"):
+            self.dds = DDS(**kwargs)
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None:
+        self.dds.stop()
+
+    def __reduce__(self):  # type: ignore[no-untyped-def]
+        return (DDSTransport, (self.topic.topic, self.topic.dds_type))
 
 
 class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
