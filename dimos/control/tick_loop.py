@@ -213,10 +213,10 @@ class TickLoop:
             for hw in self._hardware.values():
                 try:
                     state = hw.read_state()
-                    for joint_name, (pos, vel, eff) in state.items():
-                        joint_positions[joint_name] = pos
-                        joint_velocities[joint_name] = vel
-                        joint_efforts[joint_name] = eff
+                    for joint_name, joint_state in state.items():
+                        joint_positions[joint_name] = joint_state.position
+                        joint_velocities[joint_name] = joint_state.velocity
+                        joint_efforts[joint_name] = joint_state.effort
                 except Exception as e:
                     logger.error(f"Failed to read {hw.hardware_id}: {e}")
 

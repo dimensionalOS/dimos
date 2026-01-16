@@ -192,10 +192,10 @@ class TestBackendHardwareInterface:
         state = hardware_interface.read_state()
         assert "arm_joint1" in state
         assert len(state) == 6
-        pos, vel, eff = state["arm_joint1"]
-        assert pos == 0.0
-        assert vel == 0.0
-        assert eff == 0.0
+        joint_state = state["arm_joint1"]
+        assert joint_state.position == 0.0
+        assert joint_state.velocity == 0.0
+        assert joint_state.effort == 0.0
 
     def test_write_command(self, hardware_interface, mock_backend):
         commands = {

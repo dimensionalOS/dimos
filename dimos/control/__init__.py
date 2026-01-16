@@ -52,8 +52,7 @@ Example:
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
-    JointConfig,
-    JointType,
+    JointState,
     make_joints,
 )
 from dimos.control.hardware_interface import (
@@ -89,9 +88,8 @@ __all__ = [
     "HardwareInterface",
     "HardwareType",
     "JointCommandOutput",
-    "JointConfig",
+    "JointState",
     "JointStateSnapshot",
-    "JointType",
     "OrchestratorState",
     "ResourceClaim",
     "TaskConfig",

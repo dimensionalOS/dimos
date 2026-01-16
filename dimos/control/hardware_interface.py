@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorBackend
 
 if TYPE_CHECKING:
-    from dimos.control.components import HardwareComponent
+    from dimos.control.components import HardwareComponent, HardwareId, JointName, JointState
 
 logger = logging.getLogger(__name__)
 
@@ -45,24 +45,24 @@ class HardwareInterface(Protocol):
     """
 
     @property
-    def hardware_id(self) -> str:
+    def hardware_id(self) -> HardwareId:
         """Unique ID for this hardware (e.g., 'left_arm')."""
         ...
 
     @property
-    def joint_names(self) -> list[str]:
+    def joint_names(self) -> list[JointName]:
         """Ordered list of fully-qualified joint names this hardware controls."""
         ...
 
-    def read_state(self) -> dict[str, tuple[float, float, float]]:
+    def read_state(self) -> dict[JointName, JointState]:
         """Read current state.
 
         Returns:
-            Dict of joint_name -> (position, velocity, effort)
+            Dict of joint_name -> JointState(position, velocity, effort)
         """
         ...
 
-    def write_command(self, commands: dict[str, float], mode: ControlMode) -> bool:
+    def write_command(self, commands: dict[JointName, float], mode: ControlMode) -> bool:
         """Write commands to hardware.
 
         IMPORTANT: Accepts partial joint sets. Missing joints hold last value.
@@ -106,7 +106,7 @@ class BackendHardwareInterface:
 
         self._backend = backend
         self._component = component
-        self._joint_names = [j.joint_name for j in component.joints]
+        self._joint_names = component.joints
 
         # Track last commanded values for hold-last behavior
         self._last_commanded: dict[str, float] = {}
@@ -115,12 +115,12 @@ class BackendHardwareInterface:
         self._current_mode: ControlMode | None = None
 
     @property
-    def hardware_id(self) -> str:
+    def hardware_id(self) -> HardwareId:
         """Unique ID for this hardware."""
         return self._component.hardware_id
 
     @property
-    def joint_names(self) -> list[str]:
+    def joint_names(self) -> list[JointName]:
         """Ordered list of joint names."""
         return self._joint_names
 
@@ -138,18 +138,24 @@ class BackendHardwareInterface:
         """Disconnect the underlying backend."""
         self._backend.disconnect()
 
-    def read_state(self) -> dict[str, tuple[float, float, float]]:
-        """Read state as {joint_name: (position, velocity, effort)}.
+    def read_state(self) -> dict[JointName, JointState]:
+        """Read state as {joint_name: JointState}.
 
         Returns:
-            Dict mapping joint name to (position, velocity, effort) tuple
+            Dict mapping joint name to JointState with position, velocity, effort
         """
+        from dimos.control.components import JointState
+
         positions = self._backend.read_joint_positions()
         velocities = self._backend.read_joint_velocities()
         efforts = self._backend.read_joint_efforts()
 
         return {
-            name: (positions[i], velocities[i], efforts[i])
+            name: JointState(
+                position=positions[i],
+                velocity=velocities[i],
+                effort=efforts[i],
+            )
             for i, name in enumerate(self._joint_names)
         }
 
