@@ -18,11 +18,6 @@ from typing import ClassVar
 
 from dimos_lcm.std_msgs import Float32 as LCMFloat32
 
-try:
-    from std_msgs.msg import Float32 as ROSFloat32  # type: ignore[attr-defined]
-except ImportError:
-    ROSFloat32 = None  # type: ignore[assignment, misc]
-
 
 class Float32(LCMFloat32):  # type: ignore[misc]
     """ROS-compatible Float32 message."""
@@ -32,27 +27,3 @@ class Float32(LCMFloat32):  # type: ignore[misc]
     def __init__(self, data: float = 0.0) -> None:
         """Initialize Float32 with data value."""
         self.data = data
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSFloat32) -> "Float32":
-        """Create a Float32 from a ROS std_msgs/Float32 message.
-
-        Args:
-            ros_msg: ROS Float32 message
-
-        Returns:
-            Float32 instance
-        """
-        return cls(data=ros_msg.data)
-
-    def to_ros_msg(self) -> ROSFloat32:
-        """Convert to a ROS std_msgs/Float32 message.
-
-        Returns:
-            ROS Float32 message
-        """
-        if ROSFloat32 is None:
-            raise ImportError("ROS std_msgs not available")
-        ros_msg = ROSFloat32()  # type: ignore[no-untyped-call]
-        ros_msg.data = float(self.data)
-        return ros_msg
