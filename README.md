@@ -73,14 +73,14 @@ After running the commads below, open http://localhost:7779/command-center to co
 ```sh
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
 # ignore the warp warnings
-dimos --simulation run unitree-go2
+dimos --viewer-backend rerun-web --simulation run unitree-go2
 ```
 
 #### Get it working on a physical robot!
 
 ```sh
 export ROBOT_IP=PUT_YOUR_IP_ADDR_HERE
-dimos run unitree-go2
+dimos --viewer-backend rerun-web run unitree-go2
 ```
 
 #### Have it controlled by AI!
@@ -89,7 +89,7 @@ WARNING: This is a demo showing the **connection** between AI and robotic contro
 
 ```sh
 export OPENAI_API_KEY=<your private key>
-dimos run unitree-go2-agentic
+dimos --viewer-backend rerun-web run unitree-go2-agentic
 ```
 
 After running that, open a new terminal and run the following to start giving instructions to the agent.
