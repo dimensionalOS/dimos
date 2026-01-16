@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hardware component schema for the ControlOrchestrator."""
+"""Hardware component schema for the ControlCoordnator."""
 
 from dataclasses import dataclass, field
 from enum import Enum
