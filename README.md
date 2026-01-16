@@ -18,7 +18,8 @@
 <p align="center">
   <a href="#how-does-dimos-work-conceptually">Key Features</a> •
   <a href="#how-do-i-get-started">How To Use</a> •
-  <a href="#contributing--building-from-source">Contributing</a> • <a href="#license">License</a>
+  <a href="#contributing--building-from-source">Contributing</a> •
+  <a href="#license">License</a>
 </p>
 
 </div>
@@ -101,6 +102,10 @@ source .venv/bin/activate
 # then tell it to go to something, ex: "go to the door"
 humancli
 ```
+
+## Contributing / Building From Source
+
+We welcome contributions! Open up the [Development Guide](/docs/development/README.md) to see how to hack on DimOS and make PR's and  our [Bounty List](https://docs.google.com/spreadsheets/d/1tzYTPvhO7Lou21cU6avSWTQOhACl5H8trSvhtYtsk8U/edit?usp=sharing) for open requests for contributions. If you would like to suggest a feature or sponsor a bounty, open an issue.
 
 # How do I use it as a library?
 
@@ -321,23 +326,6 @@ In addition to rerun logging, DimOS comes with a number of monitoring tools:
 - Run `skillspy` to see how skills are being called, how long they are running, which are active, etc.
 - Run `agentspy` to see the agent's status over time.
 - If you suspect there is a bug within DimOS itself, you can enable extreme logging by prefixing the dimos command with `DIMOS_LOG_LEVEL=DEBUG RERUN_SAVE=1 `. Ex: `DIMOS_LOG_LEVEL=DEBUG RERUN_SAVE=1 dimos --replay run unitree-go2`
-
-
-# How does Dimensional work?
-
-Concepts:
-- [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are singleton python classes.
-- [Streams](/docs/api/sensor_streams/index.md): How modules communicate, a Pub / Sub system.
-- [Blueprints](/docs/concepts/blueprints.md): a way to group modules together and define their connections to each other.
-- [RPC](/docs/concepts/blueprints.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
-- [Skills](/docs/concepts/blueprints.md#defining-skills): An RPC function, except it can be called by an AI agent (a tool for an AI).
-- Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools.
-
-## Contributing / Building From Source
-
-For development, we optimize for flexibility—whether you love Docker, Nix, or have nothing but **notepad.exe** and a dream, you’re good to go. Open up the [Development Guide](/docs/development/README.md) to see the extra steps for setting up development environments.
-
-We welcome contributions! See our [Bounty List](https://docs.google.com/spreadsheets/d/1tzYTPvhO7Lou21cU6avSWTQOhACl5H8trSvhtYtsk8U/edit?usp=sharing) for open requests for contributions. If you would like to suggest a feature or sponsor a bounty, open an issue.
 
 # License
 
