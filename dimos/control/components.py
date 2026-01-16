@@ -14,10 +14,8 @@
 
 """Hardware component schema for the ControlOrchestrator."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-
-from dimos.hardware.manipulators.spec import ControlMode
 
 HardwareId = str
 JointName = str
@@ -29,20 +27,13 @@ class HardwareType(Enum):
     GRIPPER = "gripper"
 
 
-class JointType(Enum):
-    REVOLUTE = "revolute"  # Rotary with limits (radians)
-    PRISMATIC = "prismatic"  # Linear with limits (meters)
-    CONTINUOUS = "continuous"  # Rotary no limits (wheels)
-    VELOCITY = "velocity"  # Velocity-only (base vx/vy/wz)
-
-
 @dataclass(frozen=True)
-class JointConfig:
-    joint_name: JointName
-    joint_type: JointType
-    supported_modes: tuple[ControlMode, ...]
-    limits: tuple[float, float] | None = None
-    default_on_timeout: float | None = None  # None=hold, 0.0=zero velocity
+class JointState:
+    """State of a single joint."""
+
+    position: float
+    velocity: float
+    effort: float
 
 
 @dataclass
@@ -50,57 +41,40 @@ class HardwareComponent:
     """Configuration for a hardware component.
 
     Attributes:
-        hardware_id: Unique hardware identifier (e.g., "arm", "left_arm")
+        hardware_id: Unique identifier, also used as joint name prefix
         hardware_type: Type of hardware (MANIPULATOR, BASE, GRIPPER)
-        joints: List of joint configurations
+        joints: List of joint names (e.g., ["arm_joint1", "arm_joint2", ...])
         backend_type: Backend type ("mock", "xarm", "piper")
-        address: Connection address - IP for TCP backends, port name for CAN backends
-        auto_enable: Whether to auto-enable servos (default True)
-        description: Optional description
+        address: Connection address - IP for TCP, port for CAN
+        auto_enable: Whether to auto-enable servos
     """
 
     hardware_id: HardwareId
     hardware_type: HardwareType
-    joints: list[JointConfig]
+    joints: list[JointName] = field(default_factory=list)
     backend_type: str = "mock"
     address: str | None = None
     auto_enable: bool = True
-    description: str = ""
 
 
-def make_joints(
-    hardware_id: HardwareId,
-    dof: int,
-    joint_type: JointType = JointType.REVOLUTE,
-    supported_modes: tuple[ControlMode, ...] = (ControlMode.POSITION, ControlMode.SERVO_POSITION),
-) -> list[JointConfig]:
-    """Create joint configs for hardware.
+def make_joints(hardware_id: HardwareId, dof: int) -> list[JointName]:
+    """Create joint names for hardware.
 
     Args:
         hardware_id: The hardware identifier (e.g., "left_arm")
         dof: Degrees of freedom
-        joint_type: Type of joints (default: REVOLUTE)
-        supported_modes: Control modes the joints support
 
     Returns:
-        List of JointConfig with names like "left_arm_joint1", "left_arm_joint2", ...
+        List of joint names like ["left_arm_joint1", "left_arm_joint2", ...]
     """
-    return [
-        JointConfig(
-            joint_name=f"{hardware_id}_joint{i + 1}",
-            joint_type=joint_type,
-            supported_modes=supported_modes,
-        )
-        for i in range(dof)
-    ]
+    return [f"{hardware_id}_joint{i + 1}" for i in range(dof)]
 
 
 __all__ = [
     "HardwareComponent",
     "HardwareId",
     "HardwareType",
-    "JointConfig",
     "JointName",
-    "JointType",
+    "JointState",
     "make_joints",
 ]
