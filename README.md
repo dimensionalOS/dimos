@@ -296,8 +296,23 @@ if __name__ == "__main__":
   - Print all the information (rpcs, skills, etc): `print(CameraModule.module_info())`
 - What about `@rpc`?
    - If you want a method to be called by another module (not just an internal method) then add the `@rpc` decorator AND make sure BOTH the arguments and return value of the method are json-serializable.
-   - Rpc methods get called using threads, meaning two rpc methods can be running at the same time. For this reason, python thread locking is often necessary for data that is being written/read during rpc calls.
    - The start/stop methods always need to be an rpc because they are called externally.
+   - Under the hood rpc methods get called using threads. This means it is possible for two rpc methods to be running at the same time. For this reason, python thread locking is often necessary for data that is being written/read during rpc calls.
+   - To call another module's RPC, add its name to `rpc_calls` (ex: `["Counter.add"]`), then `self.get_rpc_calls("Counter.add")` returns a callable that forwards across transports. The method key is always `ClassName.method_name`. Note: this API will likely be replaced with a more convenient API.
+- What about skills?
+   - Skills are upgraded rpc methods designed to be called by an AI agent.
+   - Because skills can be dynamically added/removed, they are registered with a SkillCoordinator.
+
+### Documentation & Concepts
+
+If you you need more information on how DimOS works, check out the following links:
+
+- [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are singleton python classes.
+- [Streams](/docs/api/sensor_streams/index.md): How modules communicate, a Pub / Sub system.
+- [Blueprints](/docs/concepts/blueprints.md): a way to group modules together and define their connections to each other.
+- [RPC](/docs/concepts/blueprints.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
+- [Skills](/docs/concepts/blueprints.md#defining-skills): An RPC function, except it can be called by an AI agent (a tool for an AI).
+- Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools.
 
 ### Monitoring & Debugging
 
