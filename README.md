@@ -55,6 +55,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin
 # OPTION 1: install dimos in a virtualenv
 uv venv && . .venv/bin/activate
 uv pip install 'dimos[base,unitree]'
+# replay recorded data to test that the system is working
 dimos --replay run unitree-go2
 
 # OPTION 2: if you want to test out dimos without installing run:
@@ -67,11 +68,12 @@ uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
 
 #### Control a robot in a simulation (no robot required)
 
-```bash
+After running the commads below, open http://localhost:7779/command-center to control the robot movement.
+
+```sh
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
 # ignore the warp warnings
 dimos --simulation run unitree-go2
-# open http://localhost:7779/command-center in your browser to control the robot movement
 ```
 
 #### Get it working on a physical robot!
@@ -151,7 +153,7 @@ class Listener(Module):
             self.grayscale_image.publish(img.to_grayscale())
 
         unsubscribe_func = self.color_image.subscribe(callback_func)
-        # disposables will be called when the module is stopped
+        # the unsubscribe_func be called when the module is stopped
         self._disposables.add(Disposable(
             unsubscribe_func
         ))
