@@ -23,8 +23,6 @@ from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    pass
-
 
 @dataclass
 class DDSTopic:
@@ -39,12 +37,11 @@ class DDSTopic:
         return f"{self.topic}#{self.dds_type.__name__}"
 
     def __hash__(self) -> int:
-        return hash(self.topic)
+        return hash((self.topic, self.dds_type))
 
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, DDSTopic):
-            return self.topic == other.topic
-        return False
+            return self.topic == other.topic and self.dds_type == other.dds_type
 
 
 class DDSPubSubBase(PubSub[DDSTopic, Any]):
