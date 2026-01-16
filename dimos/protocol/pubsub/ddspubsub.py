@@ -32,7 +32,7 @@ class DDSMsg(Protocol):
 
     @classmethod
     def dds_decode(cls, data: bytes) -> DDSMsg:
-        """Decode bytes into an LCM message instance."""
+        """Decode bytes into a DDS message instance."""
         ...
 
     def dds_encode(self) -> bytes:
@@ -139,4 +139,5 @@ __all__ = [
     "DDSMsg",
     "DDSPubSubBase",
     "PickleDDS",
+    "Topic",
 ]

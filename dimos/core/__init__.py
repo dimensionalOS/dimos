@@ -13,6 +13,7 @@ from dimos.core.module import Module, ModuleBase, ModuleConfig, ModuleConfigT
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.core.transport import (
+    DDSTransport,
     LCMTransport,
     SHMTransport,
     ZenohTransport,
@@ -31,6 +32,7 @@ __all__ = [
     "LCMRPC",
     "LCMTF",
     "TF",
+    "DDSTransport",
     "DimosCluster",
     "In",
     "LCMTransport",
