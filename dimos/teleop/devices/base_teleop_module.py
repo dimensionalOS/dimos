@@ -78,7 +78,7 @@ class BaseTeleopModule(Module[TeleopConfigT]):
     Subclasses implement device-specific input handling.
     """
 
-    default_config: type[BaseTeleopConfig] = BaseTeleopConfig
+    default_config: type[TeleopConfigT] = BaseTeleopConfig  # type: ignore[assignment]
 
     # Output topics: PoseStamped for arms (0,1), Twist for locomotion (2,3)
     controller_delta_0: Out[PoseStamped] = None  # type: ignore
@@ -196,9 +196,9 @@ class BaseTeleopModule(Module[TeleopConfigT]):
             Robot state from RPC, or origin Pose() if RPC fails.
         """
         try:
-            state = self.get_rpc_calls(rpc_method)()
+            state: Pose = self.get_rpc_calls(rpc_method)()
             logger.info(f"Got initial robot state via {rpc_method}: {state}")
-            return state
+            return state  # type: ignore[no-any-return]
         except Exception as e:
             logger.warning(f"RPC call {rpc_method} failed: {e}, using origin pose")
             return None

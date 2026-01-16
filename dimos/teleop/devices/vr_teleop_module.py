@@ -101,7 +101,7 @@ class VRTeleopModule(BaseTeleopModule[VRTeleopConfig]):
         ]
         for stream, handler in subscriptions:
             if stream and stream.transport:
-                stream.subscribe(handler)  # type: ignore[misc]
+                stream.subscribe(handler)  # type: ignore[misc, arg-type]
 
         logger.info("VR Teleoperation Module started")
 
@@ -113,10 +113,10 @@ class VRTeleopModule(BaseTeleopModule[VRTeleopConfig]):
         super().stop()
 
     @rpc
-    def start_teleop(self) -> bool:
+    def start_teleop(self) -> None:
         """Calibrate and start teleoperation (called via X button)."""
         logger.info("Starting teleop - calibrating VR...")
-        return self.calibrate()
+        self.calibrate()
 
     @rpc
     def stop_teleop(self) -> None:

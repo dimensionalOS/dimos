@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import time
 
-from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Pose import Pose, PoseConvertable
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -106,7 +106,7 @@ class ControllerPose(Pose):
 
         return Twist(linear=linear, angular=angular)
 
-    def __sub__(self, other: Pose) -> ControllerPose:
+    def __sub__(self, other: Pose | PoseConvertable) -> ControllerPose:  # type: ignore[override]
         """Compute delta pose, returning ControllerPose instead of Pose."""
         result = super().__sub__(other)
         return ControllerPose.from_pose(result)
