@@ -33,6 +33,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos.control.components import HardwareComponent
 from dimos.control.hardware_interface import BackendHardwareInterface, HardwareInterface
 from dimos.control.task import ControlTask
 from dimos.control.tick_loop import TickLoop
@@ -53,29 +54,6 @@ logger = setup_logger()
 # =============================================================================
 # Configuration
 # =============================================================================
-
-
-@dataclass
-class HardwareConfig:
-    """Configuration for a hardware backend.
-
-    Attributes:
-        id: Unique hardware identifier (e.g., "arm", "left_arm")
-        type: Backend type ("mock", "xarm", "piper")
-        dof: Degrees of freedom
-        joint_prefix: Prefix for joint names (defaults to id)
-        ip: IP address (required for xarm)
-        can_port: CAN port (for piper, default "can0")
-        auto_enable: Whether to auto-enable servos (default True)
-    """
-
-    id: str
-    type: str = "mock"
-    dof: int = 7
-    joint_prefix: str | None = None
-    ip: str | None = None
-    can_port: str | None = None
-    auto_enable: bool = True
 
 
 @dataclass
@@ -127,7 +105,7 @@ class ControlOrchestratorConfig(ModuleConfig):
     publish_joint_state: bool = True
     joint_state_frame_id: str = "orchestrator"
     log_ticks: bool = False
-    hardware: list[HardwareConfig] = field(default_factory=lambda: [])
+    hardware: list[HardwareComponent] = field(default_factory=lambda: [])
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
 
 
@@ -198,9 +176,9 @@ class ControlOrchestrator(Module[ControlOrchestratorConfig]):
         hardware_added: list[str] = []
 
         try:
-            for hw_cfg in self.config.hardware:
-                self._setup_hardware(hw_cfg)
-                hardware_added.append(hw_cfg.id)
+            for component in self.config.hardware:
+                self._setup_hardware(component)
+                hardware_added.append(component.hardware_id)
 
             for task_cfg in self.config.tasks:
                 task = self._create_task_from_config(task_cfg)
@@ -215,44 +193,42 @@ class ControlOrchestrator(Module[ControlOrchestratorConfig]):
                     pass
             raise
 
-    def _setup_hardware(self, hw_cfg: HardwareConfig) -> None:
+    def _setup_hardware(self, component: HardwareComponent) -> None:
         """Connect and add a single hardware backend."""
-        backend = self._create_backend_from_config(hw_cfg)
+        backend = self._create_backend(component)
 
         if not backend.connect():
-            raise RuntimeError(f"Failed to connect to {hw_cfg.type} backend")
+            raise RuntimeError(f"Failed to connect to {component.backend_type} backend")
 
         try:
-            if hw_cfg.auto_enable and hasattr(backend, "write_enable"):
+            if component.auto_enable and hasattr(backend, "write_enable"):
                 backend.write_enable(True)
-            self.add_hardware(
-                hw_cfg.id,
-                backend,
-                joint_prefix=hw_cfg.joint_prefix or hw_cfg.id,
-            )
+
+            self.add_hardware(backend, component)
         except Exception:
             backend.disconnect()
             raise
 
-    def _create_backend_from_config(self, cfg: HardwareConfig) -> ManipulatorBackend:
-        """Create a manipulator backend from config."""
-        match cfg.type.lower():
+    def _create_backend(self, component: HardwareComponent) -> ManipulatorBackend:
+        """Create a manipulator backend from component config."""
+        dof = len(component.joints)
+        match component.backend_type.lower():
             case "mock":
                 from dimos.hardware.manipulators.mock import MockBackend
 
-                return MockBackend(dof=cfg.dof)
+                return MockBackend(dof=dof)
             case "xarm":
-                if cfg.ip is None:
-                    raise ValueError("ip is required for xarm backend")
+                if component.address is None:
+                    raise ValueError("address (IP) is required for xarm backend")
                 from dimos.hardware.manipulators.xarm import XArmBackend
 
-                return XArmBackend(ip=cfg.ip, dof=cfg.dof)
+                return XArmBackend(ip=component.address, dof=dof)
             case "piper":
                 from dimos.hardware.manipulators.piper import PiperBackend
 
-                return PiperBackend(can_port=cfg.can_port or "can0", dof=cfg.dof)
+                return PiperBackend(can_port=component.address or "can0", dof=dof)
             case _:
-                raise ValueError(f"Unknown backend type: {cfg.type}")
+                raise ValueError(f"Unknown backend type: {component.backend_type}")
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
         """Create a control task from config."""
@@ -279,27 +255,27 @@ class ControlOrchestrator(Module[ControlOrchestratorConfig]):
     @rpc
     def add_hardware(
         self,
-        hardware_id: str,
         backend: ManipulatorBackend,
-        joint_prefix: str | None = None,
+        component: HardwareComponent,
     ) -> bool:
         """Register a hardware backend with the orchestrator."""
         with self._hardware_lock:
-            if hardware_id in self._hardware:
-                logger.warning(f"Hardware {hardware_id} already registered")
+            if component.hardware_id in self._hardware:
+                logger.warning(f"Hardware {component.hardware_id} already registered")
                 return False
 
             interface = BackendHardwareInterface(
                 backend=backend,
-                hardware_id=hardware_id,
-                joint_prefix=joint_prefix,
+                component=component,
             )
-            self._hardware[hardware_id] = interface
+            self._hardware[component.hardware_id] = interface
 
             for joint_name in interface.joint_names:
-                self._joint_to_hardware[joint_name] = hardware_id
+                self._joint_to_hardware[joint_name] = component.hardware_id
 
-            logger.info(f"Added hardware {hardware_id} with joints: {interface.joint_names}")
+            logger.info(
+                f"Added hardware {component.hardware_id} with joints: {interface.joint_names}"
+            )
             return True
 
     @rpc
@@ -533,7 +509,7 @@ control_orchestrator = ControlOrchestrator.blueprint
 __all__ = [
     "ControlOrchestrator",
     "ControlOrchestratorConfig",
-    "HardwareConfig",
+    "HardwareComponent",
     "TaskConfig",
     "control_orchestrator",
 ]

@@ -49,6 +49,13 @@ Example:
     >>> orch.start()
 """
 
+from dimos.control.components import (
+    HardwareComponent,
+    HardwareType,
+    JointConfig,
+    JointType,
+    make_joints,
+)
 from dimos.control.hardware_interface import (
     BackendHardwareInterface,
     HardwareInterface,
@@ -56,7 +63,6 @@ from dimos.control.hardware_interface import (
 from dimos.control.orchestrator import (
     ControlOrchestrator,
     ControlOrchestratorConfig,
-    HardwareConfig,
     TaskConfig,
     control_orchestrator,
 )
@@ -79,14 +85,18 @@ __all__ = [
     "ControlOrchestratorConfig",
     # Task protocol and types
     "ControlTask",
-    "HardwareConfig",
+    "HardwareComponent",
     "HardwareInterface",
+    "HardwareType",
     "JointCommandOutput",
+    "JointConfig",
     "JointStateSnapshot",
+    "JointType",
     "OrchestratorState",
     "ResourceClaim",
     "TaskConfig",
     # Tick loop
     "TickLoop",
     "control_orchestrator",
+    "make_joints",
 ]

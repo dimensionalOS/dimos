@@ -28,6 +28,9 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorBackend
 
+if TYPE_CHECKING:
+    from dimos.control.components import HardwareComponent
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,7 +85,7 @@ class BackendHardwareInterface:
     """Concrete implementation wrapping a ManipulatorBackend.
 
     Features:
-    - Generates namespaced joint names (prefix_joint1, prefix_joint2, ...)
+    - Uses joint names from HardwareComponent
     - Holds last commanded value for partial commands
     - On first tick, reads current position from hardware for missing joints
     """
@@ -90,26 +93,20 @@ class BackendHardwareInterface:
     def __init__(
         self,
         backend: ManipulatorBackend,
-        hardware_id: str,
-        joint_prefix: str | None = None,
+        component: HardwareComponent,
     ) -> None:
         """Initialize hardware interface.
 
         Args:
             backend: ManipulatorBackend instance (XArmBackend, PiperBackend, etc.)
-            hardware_id: Unique identifier for this hardware
-            joint_prefix: Prefix for joint names (defaults to hardware_id)
+            component: Hardware component with joints config
         """
         if not isinstance(backend, ManipulatorBackend):
             raise TypeError("backend must implement ManipulatorBackend")
 
         self._backend = backend
-        self._hardware_id = hardware_id
-        self._prefix = joint_prefix or hardware_id
-        self._dof = backend.get_dof()
-
-        # Generate joint names: prefix_joint1, prefix_joint2, ...
-        self._joint_names = [f"{self._prefix}_joint{i + 1}" for i in range(self._dof)]
+        self._component = component
+        self._joint_names = [j.joint_name for j in component.joints]
 
         # Track last commanded values for hold-last behavior
         self._last_commanded: dict[str, float] = {}
@@ -120,7 +117,7 @@ class BackendHardwareInterface:
     @property
     def hardware_id(self) -> str:
         """Unique ID for this hardware."""
-        return self._hardware_id
+        return self._component.hardware_id
 
     @property
     def joint_names(self) -> list[str]:
@@ -128,9 +125,14 @@ class BackendHardwareInterface:
         return self._joint_names
 
     @property
+    def component(self) -> HardwareComponent:
+        """The hardware component config."""
+        return self._component
+
+    @property
     def dof(self) -> int:
         """Degrees of freedom."""
-        return self._dof
+        return len(self._joint_names)
 
     def disconnect(self) -> None:
         """Disconnect the underlying backend."""
