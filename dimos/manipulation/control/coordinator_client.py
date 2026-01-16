@@ -14,30 +14,30 @@
 # limitations under the License.
 
 """
-Interactive client for the ControlOrchestrator.
+Interactive client for the ControlCoordinator.
 
-Interfaces with a running ControlOrchestrator via RPC to:
+Interfaces with a running ControlCoordinator via RPC to:
 - Query hardware and task status
 - Plan and execute trajectories on single or multiple arms
 - Monitor execution progress
 
 Usage:
-    # Terminal 1: Start the orchestrator
-    dimos run orchestrator-mock          # Single arm
-    dimos run orchestrator-dual-mock     # Dual arm
+    # Terminal 1: Start the coordinator
+    dimos run coordinator-mock          # Single arm
+    dimos run coordinator-dual-mock     # Dual arm
 
     # Terminal 2: Run this client
-    python -m dimos.manipulation.control.orchestrator_client
-    python -m dimos.manipulation.control.orchestrator_client --task traj_left
-    python -m dimos.manipulation.control.orchestrator_client --task traj_right
+    python -m dimos.manipulation.control.coordinator_client
+    python -m dimos.manipulation.control.coordinator_client --task traj_left
+    python -m dimos.manipulation.control.coordinator_client --task traj_right
 
 How it works:
-    1. Connects to ControlOrchestrator via LCM RPC
+    1. Connects to ControlCoordinator via LCM RPC
     2. Queries available hardware/tasks/joints
     3. You add waypoints (joint positions)
     4. Generates trajectory with trapezoidal velocity profile
-    5. Sends trajectory to orchestrator via execute_trajectory() RPC
-    6. Orchestrator's tick loop executes it at 100Hz
+    5. Sends trajectory to coordinator via execute_trajectory() RPC
+    6. Coordinator's tick loop executes it at 100Hz
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.control.orchestrator import ControlOrchestrator
+from dimos.control.coordinator import ControlCoordinator
 from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.planning import JointTrajectoryGenerator
 
@@ -55,17 +55,17 @@ if TYPE_CHECKING:
     from dimos.msgs.trajectory_msgs import JointTrajectory
 
 
-class OrchestratorClient:
+class CoordinatorClient:
     """
-    RPC client for the ControlOrchestrator.
+    RPC client for the ControlCoordinator.
 
-    Connects to a running orchestrator and provides methods to:
+    Connects to a running coordinator and provides methods to:
     - Query state (joints, tasks, hardware)
     - Execute trajectories on any task
     - Monitor progress
 
     Example:
-        client = OrchestratorClient()
+        client = CoordinatorClient()
 
         # Query state
         print(client.list_hardware())  # ['left_arm', 'right_arm']
@@ -84,8 +84,8 @@ class OrchestratorClient:
     """
 
     def __init__(self) -> None:
-        """Initialize connection to orchestrator via RPC."""
-        self._rpc = RPCClient(None, ControlOrchestrator)
+        """Initialize connection to coordinator via RPC."""
+        self._rpc = RPCClient(None, ControlCoordinator)
 
         # Per-task state
         self._current_task: str | None = None
@@ -144,7 +144,7 @@ class OrchestratorClient:
         """
         Select a task and setup its trajectory generator.
 
-        This queries the orchestrator to find which joints the task controls,
+        This queries the coordinator to find which joints the task controls,
         then creates a trajectory generator for those joints.
         """
         tasks = self.list_tasks()
@@ -317,7 +317,7 @@ def preview_trajectory(trajectory: JointTrajectory, joint_names: list[str]) -> N
     print("=" * 70)
 
 
-def wait_for_completion(client: OrchestratorClient, task_name: str, timeout: float = 60.0) -> bool:
+def wait_for_completion(client: CoordinatorClient, task_name: str, timeout: float = 60.0) -> bool:
     """Wait for trajectory to complete with progress display."""
     start = time.time()
     last_progress = -1.0
@@ -343,10 +343,10 @@ def wait_for_completion(client: OrchestratorClient, task_name: str, timeout: flo
     return False
 
 
-class OrchestratorShell:
-    """IPython shell interface for orchestrator control."""
+class CoordinatorShell:
+    """IPython shell interface for coordinator control."""
 
-    def __init__(self, client: OrchestratorClient, initial_task: str) -> None:
+    def __init__(self, client: CoordinatorClient, initial_task: str) -> None:
         self._client = client
         self._current_task = initial_task
         self._waypoints: list[list[float]] = []
@@ -363,7 +363,7 @@ class OrchestratorShell:
 
     def help(self) -> None:
         """Show available commands."""
-        print("\nOrchestrator Client Commands:")
+        print("\nCoordinator Client Commands:")
         print("=" * 60)
         print("Waypoint Commands:")
         print("  here()                 - Add current position as waypoint")
@@ -561,14 +561,14 @@ class OrchestratorShell:
         print(f"Max acceleration: {value:.2f} rad/s^2")
 
 
-def interactive_mode(client: OrchestratorClient, initial_task: str) -> None:
+def interactive_mode(client: CoordinatorClient, initial_task: str) -> None:
     """Start IPython interactive mode."""
     import IPython
 
-    shell = OrchestratorShell(client, initial_task)
+    shell = CoordinatorShell(client, initial_task)
 
     print("\n" + "=" * 60)
-    print(f"Orchestrator Client (IPython) - Task: {initial_task}")
+    print(f"Coordinator Client (IPython) - Task: {initial_task}")
     print("=" * 60)
     print(f"Joints: {', '.join(shell._joints())}")
     print("\nType help() for available commands")
@@ -600,15 +600,15 @@ def interactive_mode(client: OrchestratorClient, initial_task: str) -> None:
     )
 
 
-def _run_client(client: OrchestratorClient, task: str, vel: float, accel: float) -> int:
+def _run_client(client: CoordinatorClient, task: str, vel: float, accel: float) -> int:
     """Run the client with the given configuration."""
     try:
         hardware = client.list_hardware()
         tasks = client.list_tasks()
 
         if not hardware:
-            print("\nWarning: No hardware found. Is the orchestrator running?")
-            print("Start with: dimos run orchestrator-mock")
+            print("\nWarning: No hardware found. Is the coordinator running?")
+            print("Start with: dimos run coordinator-mock")
             response = input("Continue anyway? [y/N]: ").strip().lower()
             if response != "y":
                 return 0
@@ -618,7 +618,7 @@ def _run_client(client: OrchestratorClient, task: str, vel: float, accel: float)
 
     except Exception as e:
         print(f"\nConnection error: {e}")
-        print("Make sure orchestrator is running: dimos run orchestrator-mock")
+        print("Make sure coordinator is running: dimos run coordinator-mock")
         return 1
 
     if task not in tasks and tasks:
@@ -640,18 +640,18 @@ def main() -> int:
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Interactive client for ControlOrchestrator",
+        description="Interactive client for ControlCoordinator",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Single arm (with orchestrator-mock running)
-  python -m dimos.manipulation.control.orchestrator_client
+  # Single arm (with coordinator-mock running)
+  python -m dimos.manipulation.control.coordinator_client
 
   # Dual arm - control left arm
-  python -m dimos.manipulation.control.orchestrator_client --task traj_left
+  python -m dimos.manipulation.control.coordinator_client --task traj_left
 
   # Dual arm - control right arm
-  python -m dimos.manipulation.control.orchestrator_client --task traj_right
+  python -m dimos.manipulation.control.coordinator_client --task traj_right
         """,
     )
     parser.add_argument(
@@ -675,11 +675,11 @@ Examples:
     args = parser.parse_args()
 
     print("\n" + "=" * 70)
-    print("Orchestrator Client")
+    print("Coordinator Client")
     print("=" * 70)
-    print("\nConnecting to ControlOrchestrator via RPC...")
+    print("\nConnecting to ControlCoordinator via RPC...")
 
-    client = OrchestratorClient()
+    client = CoordinatorClient()
     try:
         return _run_client(client, args.task, args.vel, args.accel)
     finally:

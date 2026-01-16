@@ -37,14 +37,14 @@ all_blueprints = {
     "unitree-g1-joystick": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:with_joystick",
     "unitree-g1-full": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:full_featured",
     "unitree-g1-detection": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:detection",
-    # Control orchestrator blueprints
-    "orchestrator-mock": "dimos.control.blueprints:orchestrator_mock",
-    "orchestrator-xarm7": "dimos.control.blueprints:orchestrator_xarm7",
-    "orchestrator-xarm6": "dimos.control.blueprints:orchestrator_xarm6",
-    "orchestrator-piper": "dimos.control.blueprints:orchestrator_piper",
-    "orchestrator-dual-mock": "dimos.control.blueprints:orchestrator_dual_mock",
-    "orchestrator-dual-xarm": "dimos.control.blueprints:orchestrator_dual_xarm",
-    "orchestrator-piper-xarm": "dimos.control.blueprints:orchestrator_piper_xarm",
+    # Control coordinator blueprints
+    "coordinator-mock": "dimos.control.blueprints:coordinator_mock",
+    "coordinator-xarm7": "dimos.control.blueprints:coordinator_xarm7",
+    "coordinator-xarm6": "dimos.control.blueprints:coordinator_xarm6",
+    "coordinator-piper": "dimos.control.blueprints:coordinator_piper",
+    "coordinator-dual-mock": "dimos.control.blueprints:coordinator_dual_mock",
+    "coordinator-dual-xarm": "dimos.control.blueprints:coordinator_dual_xarm",
+    "coordinator-piper-xarm": "dimos.control.blueprints:coordinator_piper_xarm",
     # Demo blueprints
     "demo-camera": "dimos.hardware.sensors.camera.module:demo_camera",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
@@ -82,8 +82,8 @@ all_modules = {
     "wavefront_frontier_explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector",
     "websocket_vis": "dimos.web.websocket_vis.websocket_vis_module",
     "web_input": "dimos.agents.cli.web",
-    # Control orchestrator module
-    "control_orchestrator": "dimos.control.orchestrator",
+    # Control coordinator module
+    "control_coordinator": "dimos.control.coordinator",
 }
 
 

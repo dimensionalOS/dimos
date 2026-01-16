@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Joint trajectory task for the ControlOrchestrator.
+"""Joint trajectory task for the ControlCoordinator.
 
-Passive trajectory execution - called by orchestrator each tick.
+Passive trajectory execution - called by coordinator each tick.
 Unlike JointTrajectoryController which owns a thread, this task
-is compute-only and relies on the orchestrator for timing.
+is compute-only and relies on the coordinator for timing.
 
-CRITICAL: Uses t_now from OrchestratorState, never calls time.time()
+CRITICAL: Uses t_now from CoordinatorState, never calls time.time()
 """
 
 from __future__ import annotations
@@ -28,8 +28,8 @@ from dataclasses import dataclass
 from dimos.control.task import (
     ControlMode,
     ControlTask,
+    CoordinatorState,
     JointCommandOutput,
-    OrchestratorState,
     ResourceClaim,
 )
 from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryState
@@ -55,9 +55,9 @@ class JointTrajectoryTask(ControlTask):
     """Passive trajectory execution task.
 
     Unlike JointTrajectoryController which owns a thread, this task
-    is called by the orchestrator at each tick.
+    is called by the coordinator at each tick.
 
-    CRITICAL: Uses t_now from OrchestratorState, never calls time.time()
+    CRITICAL: Uses t_now from CoordinatorState, never calls time.time()
 
     State Machine:
         IDLE ──execute()──► EXECUTING ──done──► COMPLETED
@@ -74,8 +74,8 @@ class JointTrajectoryTask(ControlTask):
         ...         priority=10,
         ...     ),
         ... )
-        >>> orchestrator.add_task(task)
-        >>> task.execute(my_trajectory, t_now=orchestrator_t_now)
+        >>> coordinator.add_task(task)
+        >>> task.execute(my_trajectory, t_now=coordinator_t_now)
     """
 
     def __init__(self, name: str, config: JointTrajectoryTaskConfig) -> None:
@@ -117,13 +117,13 @@ class JointTrajectoryTask(ControlTask):
         """Check if task should run this tick."""
         return self._state == TrajectoryState.EXECUTING
 
-    def compute(self, state: OrchestratorState) -> JointCommandOutput | None:
+    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         """Compute trajectory output for this tick.
 
         CRITICAL: Uses state.t_now for timing, NOT time.time()!
 
         Args:
-            state: Current orchestrator state
+            state: Current coordinator state
 
         Returns:
             JointCommandOutput with positions, or None if not executing
@@ -244,7 +244,7 @@ class JointTrajectoryTask(ControlTask):
         """Get execution progress (0.0 to 1.0).
 
         Args:
-            t_now: Current orchestrator time
+            t_now: Current coordinator time
 
         Returns:
             Progress as fraction, or 0.0 if not executing

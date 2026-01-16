@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""End-to-end tests for the ControlOrchestrator.
+"""End-to-end tests for the ControlCoordinator.
 
-These tests start a real orchestrator process and communicate via LCM/RPC.
+These tests start a real coordinator process and communicate via LCM/RPC.
 Unlike unit tests, these verify the full system integration.
 
 Run with:
-    pytest dimos/e2e_tests/test_control_orchestrator.py -v -s
+    pytest dimos/e2e_tests/test_control_coordinator.py -v -s
 """
 
 import os
@@ -26,26 +26,26 @@ import time
 
 import pytest
 
-from dimos.control.orchestrator import ControlOrchestrator
+from dimos.control.coordinator import ControlCoordinator
 from dimos.core.rpc_client import RPCClient
 from dimos.msgs.sensor_msgs import JointState
 from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint, TrajectoryState
 
 
 @pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM doesn't work in CI.")
-class TestControlOrchestratorE2E:
-    """End-to-end tests for ControlOrchestrator."""
+class TestControlCoordinatorE2E:
+    """End-to-end tests for ControlCoordinator."""
 
-    def test_orchestrator_starts_and_responds_to_rpc(self, lcm_spy, start_blueprint) -> None:
-        """Test that orchestrator starts and responds to RPC queries."""
+    def test_coordinator_starts_and_responds_to_rpc(self, lcm_spy, start_blueprint) -> None:
+        """Test that coordinator starts and responds to RPC queries."""
         # Save topics we care about (LCM topics include type suffix)
-        joint_state_topic = "/orchestrator/joint_state#sensor_msgs.JointState"
+        joint_state_topic = "/coordinator/joint_state#sensor_msgs.JointState"
         lcm_spy.save_topic(joint_state_topic)
-        lcm_spy.save_topic("/rpc/ControlOrchestrator/list_joints/res")
-        lcm_spy.save_topic("/rpc/ControlOrchestrator/list_tasks/res")
+        lcm_spy.save_topic("/rpc/ControlCoordinator/list_joints/res")
+        lcm_spy.save_topic("/rpc/ControlCoordinator/list_tasks/res")
 
-        # Start the mock orchestrator blueprint
-        start_blueprint("orchestrator-mock")
+        # Start the mock coordinator blueprint
+        start_blueprint("coordinator-mock")
 
         # Wait for joint state to be published (proves tick loop is running)
         lcm_spy.wait_for_saved_topic(
@@ -54,7 +54,7 @@ class TestControlOrchestratorE2E:
         )
 
         # Create RPC client and query
-        client = RPCClient(None, ControlOrchestrator)
+        client = RPCClient(None, ControlCoordinator)
         try:
             # Test list_joints RPC
             joints = client.list_joints()
@@ -74,23 +74,23 @@ class TestControlOrchestratorE2E:
         finally:
             client.stop_rpc_client()
 
-    def test_orchestrator_executes_trajectory(self, lcm_spy, start_blueprint) -> None:
-        """Test that orchestrator executes a trajectory via RPC."""
+    def test_coordinator_executes_trajectory(self, lcm_spy, start_blueprint) -> None:
+        """Test that coordinator executes a trajectory via RPC."""
         # Save topics
-        lcm_spy.save_topic("/orchestrator/joint_state#sensor_msgs.JointState")
-        lcm_spy.save_topic("/rpc/ControlOrchestrator/execute_trajectory/res")
-        lcm_spy.save_topic("/rpc/ControlOrchestrator/get_trajectory_status/res")
+        lcm_spy.save_topic("/coordinator/joint_state#sensor_msgs.JointState")
+        lcm_spy.save_topic("/rpc/ControlCoordinator/execute_trajectory/res")
+        lcm_spy.save_topic("/rpc/ControlCoordinator/get_trajectory_status/res")
 
-        # Start orchestrator
-        start_blueprint("orchestrator-mock")
+        # Start coordinator
+        start_blueprint("coordinator-mock")
 
         # Wait for it to be ready
         lcm_spy.wait_for_saved_topic(
-            "/orchestrator/joint_state#sensor_msgs.JointState", timeout=10.0
+            "/coordinator/joint_state#sensor_msgs.JointState", timeout=10.0
         )
 
         # Create RPC client
-        client = RPCClient(None, ControlOrchestrator)
+        client = RPCClient(None, ControlCoordinator)
         try:
             # Get initial joint positions
             initial_positions = client.get_joint_positions()
@@ -133,13 +133,13 @@ class TestControlOrchestratorE2E:
         finally:
             client.stop_rpc_client()
 
-    def test_orchestrator_joint_state_published(self, lcm_spy, start_blueprint) -> None:
+    def test_coordinator_joint_state_published(self, lcm_spy, start_blueprint) -> None:
         """Test that joint state messages are published at expected rate."""
-        joint_state_topic = "/orchestrator/joint_state#sensor_msgs.JointState"
+        joint_state_topic = "/coordinator/joint_state#sensor_msgs.JointState"
         lcm_spy.save_topic(joint_state_topic)
 
-        # Start orchestrator
-        start_blueprint("orchestrator-mock")
+        # Start coordinator
+        start_blueprint("coordinator-mock")
 
         # Wait for initial message
         lcm_spy.wait_for_saved_topic(joint_state_topic, timeout=10.0)
@@ -163,17 +163,17 @@ class TestControlOrchestratorE2E:
         assert len(joint_state.position) == 7
         assert "arm_joint1" in joint_state.name
 
-    def test_orchestrator_cancel_trajectory(self, lcm_spy, start_blueprint) -> None:
+    def test_coordinator_cancel_trajectory(self, lcm_spy, start_blueprint) -> None:
         """Test that a running trajectory can be cancelled."""
-        lcm_spy.save_topic("/orchestrator/joint_state#sensor_msgs.JointState")
+        lcm_spy.save_topic("/coordinator/joint_state#sensor_msgs.JointState")
 
-        # Start orchestrator
-        start_blueprint("orchestrator-mock")
+        # Start coordinator
+        start_blueprint("coordinator-mock")
         lcm_spy.wait_for_saved_topic(
-            "/orchestrator/joint_state#sensor_msgs.JointState", timeout=10.0
+            "/coordinator/joint_state#sensor_msgs.JointState", timeout=10.0
         )
 
-        client = RPCClient(None, ControlOrchestrator)
+        client = RPCClient(None, ControlCoordinator)
         try:
             # Create a long trajectory (5 seconds)
             trajectory = JointTrajectory(
@@ -208,17 +208,17 @@ class TestControlOrchestratorE2E:
         finally:
             client.stop_rpc_client()
 
-    def test_dual_arm_orchestrator(self, lcm_spy, start_blueprint) -> None:
-        """Test dual-arm orchestrator with independent trajectories."""
-        lcm_spy.save_topic("/orchestrator/joint_state#sensor_msgs.JointState")
+    def test_dual_arm_coordinator(self, lcm_spy, start_blueprint) -> None:
+        """Test dual-arm coordinator with independent trajectories."""
+        lcm_spy.save_topic("/coordinator/joint_state#sensor_msgs.JointState")
 
-        # Start dual-arm mock orchestrator
-        start_blueprint("orchestrator-dual-mock")
+        # Start dual-arm mock coordinator
+        start_blueprint("coordinator-dual-mock")
         lcm_spy.wait_for_saved_topic(
-            "/orchestrator/joint_state#sensor_msgs.JointState", timeout=10.0
+            "/coordinator/joint_state#sensor_msgs.JointState", timeout=10.0
         )
 
-        client = RPCClient(None, ControlOrchestrator)
+        client = RPCClient(None, ControlCoordinator)
         try:
             # Verify both arms present
             joints = client.list_joints()

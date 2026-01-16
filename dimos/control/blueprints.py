@@ -12,36 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pre-configured blueprints for the ControlOrchestrator.
+"""Pre-configured blueprints for the ControlCoordinator.
 
-This module provides ready-to-use orchestrator blueprints for common setups.
+This module provides ready-to-use coordinator blueprints for common setups.
 
 Usage:
     # Run via CLI:
-    dimos run orchestrator-mock           # Mock 7-DOF arm
-    dimos run orchestrator-xarm7          # XArm7 real hardware
-    dimos run orchestrator-dual-mock      # Dual mock arms
+    dimos run coordinator-mock           # Mock 7-DOF arm
+    dimos run coordinator-xarm7          # XArm7 real hardware
+    dimos run coordinator-dual-mock      # Dual mock arms
 
     # Or programmatically:
-    from dimos.control.blueprints import orchestrator_mock
-    coordinator = orchestrator_mock.build()
+    from dimos.control.blueprints import coordinator_mock
+    coordinator = coordinator_mock.build()
     coordinator.loop()
 
 Example with trajectory setter:
-    # Terminal 1: Run the orchestrator
-    dimos run orchestrator-mock
+    # Terminal 1: Run the coordinator
+    dimos run coordinator-mock
 
     # Terminal 2: Send trajectories via RPC
-    python -m dimos.control.examples.orchestrator_trajectory_setter --task traj_arm
+    python -m dimos.control.examples.coordinator_trajectory_setter --task traj_arm
 """
 
 from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.orchestrator import (
-    ControlOrchestrator,
+from dimos.control.coordinator import (
+    ControlCoordinator,
     TaskConfig,
-    control_orchestrator,
+    control_coordinator,
 )
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import JointState
@@ -57,10 +57,10 @@ def _joint_names(hardware_id: str, dof: int) -> list[str]:
 # =============================================================================
 
 # Mock 7-DOF arm (for testing)
-orchestrator_mock = control_orchestrator(
+coordinator_mock = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
-    joint_state_frame_id="orchestrator",
+    joint_state_frame_id="coordinator",
     hardware=[
         HardwareComponent(
             hardware_id="arm",
@@ -79,15 +79,15 @@ orchestrator_mock = control_orchestrator(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/orchestrator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
 
 # XArm7 real hardware (requires IP configuration)
-orchestrator_xarm7 = control_orchestrator(
+coordinator_xarm7 = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
-    joint_state_frame_id="orchestrator",
+    joint_state_frame_id="coordinator",
     hardware=[
         HardwareComponent(
             hardware_id="arm",
@@ -108,15 +108,15 @@ orchestrator_xarm7 = control_orchestrator(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/orchestrator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
 
 # XArm6 real hardware
-orchestrator_xarm6 = control_orchestrator(
+coordinator_xarm6 = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
-    joint_state_frame_id="orchestrator",
+    joint_state_frame_id="coordinator",
     hardware=[
         HardwareComponent(
             hardware_id="arm",
@@ -137,15 +137,15 @@ orchestrator_xarm6 = control_orchestrator(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/orchestrator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
 
 # Piper arm (6-DOF, CAN bus)
-orchestrator_piper = control_orchestrator(
+coordinator_piper = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
-    joint_state_frame_id="orchestrator",
+    joint_state_frame_id="coordinator",
     hardware=[
         HardwareComponent(
             hardware_id="arm",
@@ -166,7 +166,7 @@ orchestrator_piper = control_orchestrator(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/orchestrator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
 
@@ -175,10 +175,10 @@ orchestrator_piper = control_orchestrator(
 # =============================================================================
 
 # Dual mock arms (7-DOF left, 6-DOF right) for testing
-orchestrator_dual_mock = control_orchestrator(
+coordinator_dual_mock = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
-    joint_state_frame_id="orchestrator",
+    joint_state_frame_id="coordinator",
     hardware=[
         HardwareComponent(
             hardware_id="left_arm",
@@ -209,15 +209,15 @@ orchestrator_dual_mock = control_orchestrator(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/orchestrator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
 
 # Dual XArm setup (XArm7 left, XArm6 right)
-orchestrator_dual_xarm = control_orchestrator(
+coordinator_dual_xarm = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
-    joint_state_frame_id="orchestrator",
+    joint_state_frame_id="coordinator",
     hardware=[
         HardwareComponent(
             hardware_id="left_arm",
@@ -252,15 +252,15 @@ orchestrator_dual_xarm = control_orchestrator(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/orchestrator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
 
 # Dual Arm setup (XArm6 , Piper )
-orchestrator_piper_xarm = control_orchestrator(
+coordinator_piper_xarm = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
-    joint_state_frame_id="orchestrator",
+    joint_state_frame_id="coordinator",
     hardware=[
         HardwareComponent(
             hardware_id="xarm_arm",
@@ -295,7 +295,7 @@ orchestrator_piper_xarm = control_orchestrator(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/orchestrator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
 
@@ -304,10 +304,10 @@ orchestrator_piper_xarm = control_orchestrator(
 # =============================================================================
 
 # High-frequency mock for demanding applications
-orchestrator_highfreq_mock = control_orchestrator(
+coordinator_highfreq_mock = control_coordinator(
     tick_rate=200.0,
     publish_joint_state=True,
-    joint_state_frame_id="orchestrator",
+    joint_state_frame_id="coordinator",
     hardware=[
         HardwareComponent(
             hardware_id="arm",
@@ -326,7 +326,7 @@ orchestrator_highfreq_mock = control_orchestrator(
     ],
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/orchestrator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
 
@@ -334,30 +334,30 @@ orchestrator_highfreq_mock = control_orchestrator(
 # Raw Blueprints (no hardware/tasks configured - for programmatic setup)
 # =============================================================================
 
-# Basic orchestrator with transport only (add hardware/tasks programmatically)
-orchestrator_basic = control_orchestrator(
+# Basic coordinator with transport only (add hardware/tasks programmatically)
+coordinator_basic = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
-    joint_state_frame_id="orchestrator",
+    joint_state_frame_id="coordinator",
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/orchestrator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
 
 
 __all__ = [
     # Raw blueprints (for programmatic setup)
-    "orchestrator_basic",
+    "coordinator_basic",
     # Dual arm blueprints
-    "orchestrator_dual_mock",
-    "orchestrator_dual_xarm",
+    "coordinator_dual_mock",
+    "coordinator_dual_xarm",
     # High-frequency blueprints
-    "orchestrator_highfreq_mock",
+    "coordinator_highfreq_mock",
     # Single arm blueprints
-    "orchestrator_mock",
-    "orchestrator_piper",
-    "orchestrator_piper_xarm",
-    "orchestrator_xarm6",
-    "orchestrator_xarm7",
+    "coordinator_mock",
+    "coordinator_piper",
+    "coordinator_piper_xarm",
+    "coordinator_xarm6",
+    "coordinator_xarm7",
 ]

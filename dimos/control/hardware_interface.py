@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hardware interface for the ControlOrchestrator.
+"""Hardware interface for the ControlCoordinator.
 
-Wraps ManipulatorBackend with orchestrator-specific features:
+Wraps ManipulatorBackend with coordinator-specific features:
 - Namespaced joint names (e.g., "left_joint1")
 - Unified read/write interface
 - Hold-last-value for partial commands
@@ -36,9 +36,9 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class HardwareInterface(Protocol):
-    """Protocol for hardware that the orchestrator can control.
+    """Protocol for hardware that the coordinator can control.
 
-    This wraps ManipulatorBackend with orchestrator-specific features:
+    This wraps ManipulatorBackend with coordinator-specific features:
     - Namespaced joint names (e.g., "left_arm_joint1")
     - Unified read/write interface
     - State caching
@@ -184,7 +184,7 @@ class BackendHardwareInterface:
                 self._last_commanded[joint_name] = value
             elif joint_name not in self._warned_unknown_joints:
                 logger.warning(
-                    f"Hardware {self._hardware_id} received command for unknown joint "
+                    f"Hardware {self.hardware_id} received command for unknown joint "
                     f"{joint_name}. Valid joints: {self._joint_names}"
                 )
                 self._warned_unknown_joints.add(joint_name)
@@ -195,7 +195,7 @@ class BackendHardwareInterface:
         # Switch control mode if needed
         if mode != self._current_mode:
             if not self._backend.set_control_mode(mode):
-                logger.warning(f"Hardware {self._hardware_id} failed to switch to {mode.name}")
+                logger.warning(f"Hardware {self.hardware_id} failed to switch to {mode.name}")
                 return False
             self._current_mode = mode
 
@@ -206,7 +206,7 @@ class BackendHardwareInterface:
             case ControlMode.VELOCITY:
                 return self._backend.write_joint_velocities(ordered)
             case ControlMode.TORQUE:
-                logger.warning(f"Hardware {self._hardware_id} does not support torque mode")
+                logger.warning(f"Hardware {self.hardware_id} does not support torque mode")
                 return False
             case _:
                 return False
@@ -224,7 +224,7 @@ class BackendHardwareInterface:
                 time.sleep(0.01)
 
         raise RuntimeError(
-            f"Hardware {self._hardware_id} failed to read initial positions after retries"
+            f"Hardware {self.hardware_id} failed to read initial positions after retries"
         )
 
     def _build_ordered_command(self) -> list[float]:

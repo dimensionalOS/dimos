@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the Control Orchestrator module."""
+"""Tests for the Control Coordinator module."""
 
 from __future__ import annotations
 
@@ -26,9 +26,9 @@ from dimos.control.components import HardwareComponent, HardwareType, make_joint
 from dimos.control.hardware_interface import BackendHardwareInterface
 from dimos.control.task import (
     ControlMode,
+    CoordinatorState,
     JointCommandOutput,
     JointStateSnapshot,
-    OrchestratorState,
     ResourceClaim,
 )
 from dimos.control.tasks.trajectory_task import (
@@ -101,15 +101,15 @@ def simple_trajectory():
 
 
 @pytest.fixture
-def orchestrator_state():
-    """Create a sample OrchestratorState."""
+def coordinator_state():
+    """Create a sample CoordinatorState."""
     joints = JointStateSnapshot(
         joint_positions={"arm_joint1": 0.0, "arm_joint2": 0.0, "arm_joint3": 0.0},
         joint_velocities={"arm_joint1": 0.0, "arm_joint2": 0.0, "arm_joint3": 0.0},
         joint_efforts={"arm_joint1": 0.0, "arm_joint2": 0.0, "arm_joint3": 0.0},
         timestamp=time.perf_counter(),
     )
-    return OrchestratorState(joints=joints, t_now=time.perf_counter(), dt=0.01)
+    return CoordinatorState(joints=joints, t_now=time.perf_counter(), dt=0.01)
 
 
 # =============================================================================
@@ -231,23 +231,21 @@ class TestJointTrajectoryTask:
         assert trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.EXECUTING
 
-    def test_compute_during_trajectory(
-        self, trajectory_task, simple_trajectory, orchestrator_state
-    ):
+    def test_compute_during_trajectory(self, trajectory_task, simple_trajectory, coordinator_state):
         t_start = time.perf_counter()
         trajectory_task.execute(simple_trajectory)
 
         # First compute sets start time (deferred start)
-        state0 = OrchestratorState(
-            joints=orchestrator_state.joints,
+        state0 = CoordinatorState(
+            joints=coordinator_state.joints,
             t_now=t_start,
             dt=0.01,
         )
         trajectory_task.compute(state0)
 
         # Compute at 0.5s into trajectory
-        state = OrchestratorState(
-            joints=orchestrator_state.joints,
+        state = CoordinatorState(
+            joints=coordinator_state.joints,
             t_now=t_start + 0.5,
             dt=0.01,
         )
@@ -258,21 +256,21 @@ class TestJointTrajectoryTask:
         assert len(output.positions) == 3
         assert 0.4 < output.positions[0] < 0.6
 
-    def test_trajectory_completes(self, trajectory_task, simple_trajectory, orchestrator_state):
+    def test_trajectory_completes(self, trajectory_task, simple_trajectory, coordinator_state):
         t_start = time.perf_counter()
         trajectory_task.execute(simple_trajectory)
 
         # First compute sets start time (deferred start)
-        state0 = OrchestratorState(
-            joints=orchestrator_state.joints,
+        state0 = CoordinatorState(
+            joints=coordinator_state.joints,
             t_now=t_start,
             dt=0.01,
         )
         trajectory_task.compute(state0)
 
         # Compute past trajectory duration
-        state = OrchestratorState(
-            joints=orchestrator_state.joints,
+        state = CoordinatorState(
+            joints=coordinator_state.joints,
             t_now=t_start + 1.5,
             dt=0.01,
         )
@@ -299,13 +297,13 @@ class TestJointTrajectoryTask:
         assert trajectory_task.get_state() == TrajectoryState.ABORTED
         assert not trajectory_task.is_active()
 
-    def test_progress(self, trajectory_task, simple_trajectory, orchestrator_state):
+    def test_progress(self, trajectory_task, simple_trajectory, coordinator_state):
         t_start = time.perf_counter()
         trajectory_task.execute(simple_trajectory)
 
         # First compute sets start time (deferred start)
-        state0 = OrchestratorState(
-            joints=orchestrator_state.joints,
+        state0 = CoordinatorState(
+            joints=coordinator_state.joints,
             t_now=t_start,
             dt=0.01,
         )

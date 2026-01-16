@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ControlTask protocol and types for the ControlOrchestrator.
+"""ControlTask protocol and types for the ControlCoordinator.
 
 This module defines:
-- Data types used by tasks and the orchestrator (ResourceClaim, JointStateSnapshot, etc.)
+- Data types used by tasks and the coordinator (ResourceClaim, JointStateSnapshot, etc.)
 - ControlTask protocol that all tasks must implement
 
-Tasks are "passive" - they don't own threads. The orchestrator calls
+Tasks are "passive" - they don't own threads. The coordinator calls
 compute() at each tick, passing current state and time.
 
 CRITICAL: Tasks must NEVER call time.time() directly.
-Use the t_now passed in OrchestratorState.
+Use the t_now passed in CoordinatorState.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from dimos.hardware.manipulators.spec import ControlMode
 class ResourceClaim:
     """Declares which joints a task wants to control.
 
-    Used by the orchestrator to determine resource ownership and
+    Used by the coordinator to determine resource ownership and
     resolve conflicts between competing tasks.
 
     Attributes:
@@ -94,7 +94,7 @@ class JointStateSnapshot:
 
 
 @dataclass
-class OrchestratorState:
+class CoordinatorState:
     """Complete state snapshot for tasks to read.
 
     Passed to each task's compute() method every tick. Contains
@@ -109,7 +109,7 @@ class OrchestratorState:
     """
 
     joints: JointStateSnapshot
-    t_now: float  # Orchestrator time (perf_counter) - USE THIS, NOT time.time()!
+    t_now: float  # Coordinator time (perf_counter) - USE THIS, NOT time.time()!
     dt: float  # Time since last tick
 
 
@@ -118,7 +118,7 @@ class JointCommandOutput:
     """Joint-centric command output from a task.
 
     Commands are addressed by joint name, NOT by hardware ID.
-    The orchestrator routes commands to the appropriate hardware.
+    The coordinator routes commands to the appropriate hardware.
 
     This design enables:
     - WBC spanning multiple hardware interfaces
@@ -170,14 +170,14 @@ class JointCommandOutput:
 
 @runtime_checkable
 class ControlTask(Protocol):
-    """Protocol for passive tasks that run within the orchestrator.
+    """Protocol for passive tasks that run within the coordinator.
 
-    Tasks are "passive" - they don't own threads. The orchestrator
+    Tasks are "passive" - they don't own threads. The coordinator
     calls compute() at each tick, passing current state and time.
 
     Lifecycle:
-    1. Task is added to orchestrator via add_task()
-    2. Orchestrator calls claim() to understand resource needs
+    1. Task is added to coordinator via add_task()
+    2. Coordinator calls claim() to understand resource needs
     3. Each tick: is_active() → compute() → output merged via arbitration
     4. Task removed via remove_task() or transitions to inactive
 
@@ -199,7 +199,7 @@ class ControlTask(Protocol):
         ...     def is_active(self) -> bool:
         ...         return self._executing
         ...
-        ...     def compute(self, state: OrchestratorState) -> JointCommandOutput | None:
+        ...     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         ...         # Use state.t_now, NOT time.time()!
         ...         t_elapsed = state.t_now - self._start_time
         ...         positions = self._trajectory.sample(t_elapsed)
@@ -217,14 +217,14 @@ class ControlTask(Protocol):
         """Unique identifier for this task instance.
 
         Used for logging, debugging, and task management.
-        Must be unique across all tasks in the orchestrator.
+        Must be unique across all tasks in the coordinator.
         """
         ...
 
     def claim(self) -> ResourceClaim:
         """Declare resource requirements.
 
-        Called by orchestrator to determine:
+        Called by coordinator to determine:
         - Which joints this task wants to control
         - Priority for conflict resolution
         - Control mode (position/velocity/effort)
@@ -233,7 +233,7 @@ class ControlTask(Protocol):
             ResourceClaim with joints (frozenset) and priority (int)
 
         Note:
-            The claim can change dynamically - orchestrator calls this
+            The claim can change dynamically - coordinator calls this
             every tick for active tasks.
         """
         ...
@@ -251,16 +251,16 @@ class ControlTask(Protocol):
         """
         ...
 
-    def compute(self, state: OrchestratorState) -> JointCommandOutput | None:
+    def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         """Compute output command given current state.
 
-        Called by orchestrator for active tasks each tick.
+        Called by coordinator for active tasks each tick.
 
         CRITICAL: Use state.t_now for timing, NEVER time.time()!
         This ensures deterministic behavior and enables simulation.
 
         Args:
-            state: OrchestratorState containing:
+            state: CoordinatorState containing:
                    - joints: JointStateSnapshot with all joint states
                    - t_now: Current tick time (use this for all timing!)
                    - dt: Time since last tick
@@ -292,8 +292,8 @@ __all__ = [
     "ControlMode",
     # Protocol
     "ControlTask",
+    "CoordinatorState",
     "JointCommandOutput",
     "JointStateSnapshot",
-    "OrchestratorState",
     "ResourceClaim",
 ]

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tick loop for the ControlOrchestrator.
+"""Tick loop for the ControlCoordinator.
 
 This module contains the core control loop logic:
 - Read state from all hardware
@@ -21,7 +21,7 @@ This module contains the core control loop logic:
 - Route commands to hardware
 - Publish aggregated joint state
 
-Separated from orchestrator.py following the DimOS pattern of
+Separated from coordinator.py following the DimOS pattern of
 splitting coordination logic from module wrapper.
 """
 
@@ -33,9 +33,9 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from dimos.control.task import (
     ControlTask,
+    CoordinatorState,
     JointCommandOutput,
     JointStateSnapshot,
-    OrchestratorState,
     ResourceClaim,
 )
 from dimos.msgs.sensor_msgs import JointState
@@ -60,7 +60,7 @@ class JointWinner(NamedTuple):
 
 
 class TickLoop:
-    """Core tick loop for the control orchestrator.
+    """Core tick loop for the control coordinator.
 
     Runs the deterministic control cycle:
     1. READ: Collect joint state from all hardware
@@ -92,7 +92,7 @@ class TickLoop:
         task_lock: threading.Lock,
         joint_to_hardware: dict[str, str],
         publish_callback: Callable[[JointState], None] | None = None,
-        frame_id: str = "orchestrator",
+        frame_id: str = "coordinator",
         log_ticks: bool = False,
     ) -> None:
         self._tick_rate = tick_rate
@@ -133,7 +133,7 @@ class TickLoop:
 
         self._tick_thread = threading.Thread(
             target=self._loop,
-            name="ControlOrchestrator-Tick",
+            name="ControlCoordinator-Tick",
             daemon=True,
         )
         self._tick_thread.start()
@@ -173,7 +173,7 @@ class TickLoop:
 
         # === PHASE 1: READ ALL HARDWARE ===
         joint_states = self._read_all_hardware()
-        state = OrchestratorState(joints=joint_states, t_now=t_now, dt=dt)
+        state = CoordinatorState(joints=joint_states, t_now=t_now, dt=dt)
 
         # === PHASE 2: COMPUTE ALL ACTIVE TASKS ===
         commands = self._compute_all_tasks(state)
@@ -228,7 +228,7 @@ class TickLoop:
         )
 
     def _compute_all_tasks(
-        self, state: OrchestratorState
+        self, state: CoordinatorState
     ) -> list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]]:
         """Compute outputs from all active tasks."""
         results: list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]] = []
