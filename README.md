@@ -116,6 +116,7 @@ from dimos.hardware.sensors.camera.module import CameraModule
 
 if __name__ == "__main__":
     autoconnect(
+        # technically autoconnect is not needed because we only have 1 module
         CameraModule.blueprint()
     ).build().loop()
 ```
