@@ -12,6 +12,7 @@ MODE="simulation"
 USE_ROUTE_PLANNER="false"
 USE_RVIZ="false"
 DEV_MODE="false"
+ROS_DISTRO="humble"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --hardware)
@@ -34,6 +35,14 @@ while [[ $# -gt 0 ]]; do
             DEV_MODE="true"
             shift
             ;;
+        --humble)
+            ROS_DISTRO="humble"
+            shift
+            ;;
+        --jazzy)
+            ROS_DISTRO="jazzy"
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -43,11 +52,15 @@ while [[ $# -gt 0 ]]; do
             echo "  --route-planner   Enable FAR route planner (for hardware mode)"
             echo "  --rviz            Launch RViz2 visualization"
             echo "  --dev             Development mode (mount src for config editing)"
+            echo "  --humble          Use ROS 2 Humble image (default)"
+            echo "  --jazzy           Use ROS 2 Jazzy image"
             echo "  --help, -h        Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                                    # Start simulation container"
-            echo "  $0 --hardware                         # Start hardware (base autonomy)"
+            echo "  $0                                    # Start simulation (Humble)"
+            echo "  $0 --jazzy                            # Start simulation (Jazzy)"
+            echo "  $0 --hardware                         # Start hardware (base autonomy, Humble)"
+            echo "  $0 --hardware --jazzy                 # Start hardware (Jazzy)"
             echo "  $0 --hardware --route-planner         # Hardware with route planner"
             echo "  $0 --hardware --route-planner --rviz  # Hardware with route planner + RViz"
             echo "  $0 --hardware --dev                   # Hardware with src mounted for development"
@@ -63,12 +76,15 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+export ROS_DISTRO
+
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
 echo -e "${GREEN}================================================${NC}"
 echo -e "${GREEN}Starting DimOS Docker Container${NC}"
 echo -e "${GREEN}Mode: ${MODE}${NC}"
+echo -e "${GREEN}ROS Distribution: ${ROS_DISTRO}${NC}"
 echo -e "${GREEN}================================================${NC}"
 echo ""
 
@@ -195,10 +211,10 @@ if [ "$MODE" = "hardware" ]; then
 
 fi
 
-# Check if unified image exists
-if ! docker images | grep -q "dimos_autonomy_stack.*jazzy"; then
-    echo -e "${YELLOW}Docker image not found. Building...${NC}"
-    ./build.sh
+# Check if the correct ROS distro image exists
+if ! docker images | grep -q "dimos_autonomy_stack.*${ROS_DISTRO}"; then
+    echo -e "${YELLOW}Docker image for ROS ${ROS_DISTRO} not found. Building...${NC}"
+    ./build.sh --${ROS_DISTRO}
 fi
 
 # Check for X11 display

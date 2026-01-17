@@ -4,7 +4,9 @@ services:
     build:
       context: ../..
       dockerfile: docker/navigation/Dockerfile
-    image: dimos_autonomy_stack:jazzy
+      args:
+        ROS_DISTRO: ${ROS_DISTRO:-humble}
+    image: dimos_autonomy_stack:${ROS_DISTRO:-humble}
     container_name: dimos_simulation_container
     profiles: ["", "simulation"]  # Active by default (empty profile) AND with --profile simulation
 
@@ -66,7 +68,9 @@ services:
     build:
       context: ../..
       dockerfile: docker/navigation/Dockerfile
-    image: dimos_autonomy_stack:jazzy
+      args:
+        ROS_DISTRO: ${ROS_DISTRO:-humble}
+    image: dimos_autonomy_stack:${ROS_DISTRO:-humble}
     container_name: dimos_hardware_container
     profiles: ["hardware"]
 

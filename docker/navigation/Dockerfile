@@ -11,15 +11,22 @@
 # 6. Minimal apt packages with --no-install-recommends
 # 7. DDS configuration for optimized ROS 2 communication
 #
+# Supported ROS distributions: jazzy, humble
+# Build with: docker build --build-arg ROS_DISTRO=humble ...
+#
 # =============================================================================
+
+# Build argument for ROS distribution (default: humble)
+ARG ROS_DISTRO=humble
 
 # -----------------------------------------------------------------------------
 # STAGE 1: Build Stage - compile all C++ dependencies
 # -----------------------------------------------------------------------------
-FROM osrf/ros:jazzy-desktop-full AS builder
+FROM osrf/ros:${ROS_DISTRO}-desktop-full AS builder
 
+ARG ROS_DISTRO
 ENV DEBIAN_FRONTEND=noninteractive
-ENV ROS_DISTRO=jazzy
+ENV ROS_DISTRO=${ROS_DISTRO}
 ENV WORKSPACE=/ros2_ws
 
 # Install build dependencies only
@@ -37,7 +44,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libeigen3-dev \
     libsuitesparse-dev \
     # ROS packages needed for build
-    ros-jazzy-pcl-ros \
+    ros-${ROS_DISTRO}-pcl-ros \
+    ros-${ROS_DISTRO}-cv-bridge \
     && rm -rf /var/lib/apt/lists/*
 
 # Create workspace
@@ -45,6 +53,16 @@ RUN mkdir -p ${WORKSPACE}/src
 
 # Copy autonomy stack source
 COPY docker/navigation/ros-navigation-autonomy-stack ${WORKSPACE}/src/ros-navigation-autonomy-stack
+
+# Compatibility fix: In Humble, cv_bridge uses .h extension, but Jazzy uses .hpp
+# Create a symlink so code written for Jazzy works on Humble
+RUN if [ "${ROS_DISTRO}" = "humble" ]; then \
+        CV_BRIDGE_DIR=$(find /opt/ros/humble/include -name "cv_bridge.h" -printf "%h\n" 2>/dev/null | head -1) && \
+        if [ -n "$CV_BRIDGE_DIR" ]; then \
+            ln -sf "$CV_BRIDGE_DIR/cv_bridge.h" "$CV_BRIDGE_DIR/cv_bridge.hpp"; \
+            echo "Created cv_bridge.hpp symlink in $CV_BRIDGE_DIR"; \
+        fi; \
+    fi
 
 # Build Livox-SDK2
 RUN cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/Livox-SDK2 && \
@@ -79,10 +97,12 @@ RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
 # -----------------------------------------------------------------------------
 # STAGE 2: Runtime Stage - minimal image for running
 # -----------------------------------------------------------------------------
-FROM osrf/ros:jazzy-desktop-full AS runtime
+ARG ROS_DISTRO
+FROM osrf/ros:${ROS_DISTRO}-desktop-full AS runtime
 
+ARG ROS_DISTRO
 ENV DEBIAN_FRONTEND=noninteractive
-ENV ROS_DISTRO=jazzy
+ENV ROS_DISTRO=${ROS_DISTRO}
 ENV WORKSPACE=/ros2_ws
 ENV DIMOS_PATH=/workspace/dimos
 
@@ -93,12 +113,13 @@ ENV FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml
 # Install runtime dependencies only (no build tools)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # ROS packages
-    ros-jazzy-pcl-ros \
-    ros-jazzy-foxglove-bridge \
-    ros-jazzy-rviz2 \
-    ros-jazzy-rqt* \
+    ros-${ROS_DISTRO}-pcl-ros \
+    ros-${ROS_DISTRO}-cv-bridge \
+    ros-${ROS_DISTRO}-foxglove-bridge \
+    ros-${ROS_DISTRO}-rviz2 \
+    ros-${ROS_DISTRO}-rqt* \
     # DDS middleware (FastDDS is default, just ensure it's installed)
-    ros-jazzy-rmw-fastrtps-cpp \
+    ros-${ROS_DISTRO}-rmw-fastrtps-cpp \
     # Runtime libraries
     libpcl-dev \
     libgoogle-glog-dev \
