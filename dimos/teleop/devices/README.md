@@ -9,7 +9,7 @@ Input device modules that capture tracking data, compute deltas, and transform t
 Abstract base class providing:
 - Multi-controller calibration (capture initial poses)
 - Delta computation (current - initial)
-- Transform to robot commands (PoseStamped or Twist based on `output_types`)
+- Transform to robot commands (PoseStamped or TwistStamped based on `output_types`)
 - Publishing to `controller_delta_*` outputs
 - Optional RPC calls for initial robot pose
 - Rerun visualization
@@ -47,7 +47,7 @@ LCM Input (Transform)
        ▼
 ┌──────────────────┐
 │    Transform     │  PoseStamped: target = initial_robot + delta
-│                  │  Twist: velocity = scale(delta)
+│                  │  TwistStamped: velocity = scale(delta)
 └──────────────────┘
        │
        ▼
@@ -58,12 +58,12 @@ LCM Input (Transform)
 
 ```python
 from dimos.teleop.devices import VRTeleopConfig
-from dimos.msgs.geometry_msgs import PoseStamped, Twist
+from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
 
 config = VRTeleopConfig(
     # Output types determine active indices:
-    # PoseStamped → indices 0,1 | Twist → indices 2,3
-    output_types=[PoseStamped, Twist],
+    # PoseStamped → indices 0,1 | TwistStamped → indices 2,3
+    output_types=[PoseStamped, TwistStamped],
     input_labels=["left_vr", "right_vr"],
 
     # Optional RPC methods for initial robot pose (per output)
@@ -91,8 +91,8 @@ The `output_types` parameter auto-computes active indices:
 | Configuration | Active Indices | Outputs |
 |--------------|----------------|---------|
 | `[PoseStamped, PoseStamped]` | `[0, 1]` | Dual arm |
-| `[Twist, Twist]` | `[2, 3]` | Dual locomotion |
-| `[PoseStamped, Twist]` | `[0, 2]` | Arm + quadruped |
+| `[TwistStamped, TwistStamped]` | `[2, 3]` | Dual locomotion |
+| `[PoseStamped, TwistStamped]` | `[0, 2]` | Arm + quadruped |
 
 ## Adding New Devices
 

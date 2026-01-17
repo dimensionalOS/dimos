@@ -45,7 +45,7 @@ teleop/
                     ┌───────────────────────────────────┴───────────┐
                     ▼                                               ▼
            controller_delta_0/1                          controller_delta_2/3
-           (PoseStamped)                                 (Twist)
+           (PoseStamped)                                 (TwistStamped)
            target = init + Δ                             vel = scale(Δ)
 ```
 
@@ -67,18 +67,18 @@ The `output_types` parameter determines how each controller input is mapped:
 | Output Type | Indices | Use Case |
 |-------------|---------|----------|
 | `PoseStamped` | 0, 1 | Manipulators, end-effector control |
-| `Twist` | 2, 3 | Locomotion, velocity control |
+| `TwistStamped` | 2, 3 | Locomotion, velocity control |
 
 The system auto-computes active indices from output types:
 - `[PoseStamped, PoseStamped]` → indices `[0, 1]` (dual arm)
-- `[Twist, Twist]` → indices `[2, 3]` (dual locomotion)
-- `[PoseStamped, Twist]` → indices `[0, 2]` (arm + quadruped)
+- `[TwistStamped, TwistStamped]` → indices `[2, 3]` (dual locomotion)
+- `[PoseStamped, TwistStamped]` → indices `[0, 2]` (arm + quadruped)
 
 ## Custom Setup
 
 ```python
 from dimos.teleop.devices import vr_teleop_module
-from dimos.msgs.geometry_msgs import PoseStamped, Twist
+from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
 from dimos.core.blueprints import autoconnect
 
 # Dual arm setup (both controllers → PoseStamped)
@@ -89,10 +89,10 @@ dual_arm = autoconnect(
     ),
 )
 
-# Arm + Quadruped (left → PoseStamped index 0, right → Twist index 2)
+# Arm + Quadruped (left → PoseStamped index 0, right → TwistStamped index 2)
 arm_and_quad = autoconnect(
     vr_teleop_module(
-        output_types=[PoseStamped, Twist],
+        output_types=[PoseStamped, TwistStamped],
         input_labels=["left_arm", "right_quad"],
     ),
 )

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import ControllerPose
+    from dimos.msgs.geometry_msgs import Pose
 
 logger = setup_logger()
 
@@ -49,18 +49,20 @@ def init_rerun_visualization() -> bool:
         return False
 
 
-def visualize_controller_pose(controller_pose: ControllerPose, controller_label: str) -> None:
+def visualize_pose(pose: Pose, controller_label: str) -> None:
     """Visualize controller absolute pose in Rerun.
 
     Args:
-        controller_pose: The controller's current pose.
+        pose: The controller's current pose.
         controller_label: Label for the controller (e.g., "left_vr").
     """
     if not RERUN_AVAILABLE:
         return
     try:
-        pose_stamped = controller_pose.to_pose_stamped(
-            frame_id=f"world/teleop/{controller_label}_controller"
+        from dimos.utils.teleop_transforms import pose_to_pose_stamped
+
+        pose_stamped = pose_to_pose_stamped(
+            pose, frame_id=f"world/teleop/{controller_label}_controller"
         )
         rr.log(
             f"world/teleop/{controller_label}_controller",
