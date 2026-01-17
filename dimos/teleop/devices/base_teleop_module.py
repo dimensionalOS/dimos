@@ -26,12 +26,12 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from dimos.core import Module, Out, rpc
 from dimos.core.module import ModuleConfig
-from dimos.msgs.geometry_msgs import ControllerPose, Pose, PoseStamped, Twist
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, TwistStamped
 from dimos.msgs.std_msgs import Bool
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.teleop_visualization import (
     init_rerun_visualization,
-    visualize_controller_pose,
+    visualize_pose,
     visualize_trigger_value,
 )
 
@@ -42,7 +42,7 @@ logger = setup_logger()
 class BaseTeleopConfig(ModuleConfig):
     """Base configuration for teleoperation modules.
 
-    output_types determines active indices: PoseStamped→0,1, Twist→2,3
+    output_types determines active indices: PoseStamped→0,1, TwistStamped→2,3
     """
 
     output_types: list[type] = field(default_factory=lambda: [PoseStamped, PoseStamped])
@@ -79,14 +79,14 @@ class BaseTeleopModule(Module[TeleopConfigT]):
 
     default_config: type[TeleopConfigT] = BaseTeleopConfig  # type: ignore[assignment]
 
-    # Output topics: PoseStamped for arms (0,1), Twist for locomotion (2,3)
+    # Output topics: PoseStamped for arms (0,1), TwistStamped for locomotion (2,3)
     controller_delta_0: Out[PoseStamped]
     trigger_value_0: Out[Bool]
     controller_delta_1: Out[PoseStamped]
     trigger_value_1: Out[Bool]
-    controller_delta_2: Out[Twist]
+    controller_delta_2: Out[TwistStamped]
     trigger_value_2: Out[Bool]
-    controller_delta_3: Out[Twist]
+    controller_delta_3: Out[TwistStamped]
     trigger_value_3: Out[Bool]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -108,16 +108,16 @@ class BaseTeleopModule(Module[TeleopConfigT]):
         # Index mapping: output type → available indices
         self._output_type_indices: dict[type, list[int]] = {
             PoseStamped: [0, 1],
-            Twist: [2, 3],
+            TwistStamped: [2, 3],
         }
 
         self._active_indices = self._compute_active_indices(self.config.output_types)
 
-        self._initial_controller_poses: dict[int, ControllerPose | None] = {
+        self._initial_controller_poses: dict[int, Pose | None] = {
             i: None for i in self._active_indices
         }
         self._initial_robot_poses: dict[int, Pose | None] = {i: None for i in self._active_indices}
-        self._current_controller_poses: dict[int, ControllerPose | None] = {
+        self._current_controller_poses: dict[int, Pose | None] = {
             i: None for i in self._active_indices
         }
         self._all_trigger_values: dict[int, float] = {i: 0.0 for i in self._active_indices}
@@ -138,10 +138,10 @@ class BaseTeleopModule(Module[TeleopConfigT]):
     def _compute_active_indices(self, output_types: list[type]) -> list[int]:
         """Compute active indices from output types.
         Example:
-            [PoseStamped, Twist] → [0, 2]
-            [Twist, PoseStamped] → [2, 0]
+            [PoseStamped, TwistStamped] → [0, 2]
+            [TwistStamped, PoseStamped] → [2, 0]
             [PoseStamped, PoseStamped] → [0, 1]
-            [Twist, Twist] → [2, 3]
+            [TwistStamped, TwistStamped] → [2, 3]
         """
         indices: list[int] = []
         used_indices: set[int] = set()
@@ -261,9 +261,9 @@ class BaseTeleopModule(Module[TeleopConfigT]):
 
     def compute_deltas(
         self,
-        controller_poses: dict[int, ControllerPose | None],
+        controller_poses: dict[int, Pose | None],
         controller_trigger_values: dict[int, float],
-    ) -> dict[int, ControllerPose | None]:
+    ) -> dict[int, Pose | None]:
         """Compute delta = current_pose - initial_pose for each controller."""
         self._tracking_msg_count += 1
         self._current_controller_poses = controller_poses
@@ -275,7 +275,7 @@ class BaseTeleopModule(Module[TeleopConfigT]):
             return {i: None for i in self._active_indices}
 
         self._publish_count += 1
-        deltas: dict[int, ControllerPose | None] = {}
+        deltas: dict[int, Pose | None] = {}
 
         for i in self._active_indices:
             current_pose = self._current_controller_poses.get(i)
@@ -291,7 +291,7 @@ class BaseTeleopModule(Module[TeleopConfigT]):
             delta_pose = current_pose - initial_pose
             if self.config.visualize_in_rerun:
                 label = self._get_label(i)
-                visualize_controller_pose(current_pose, label)
+                visualize_pose(current_pose, label)
                 visualize_trigger_value(self._all_trigger_values.get(i, 0.0), label)
 
             deltas[i] = delta_pose

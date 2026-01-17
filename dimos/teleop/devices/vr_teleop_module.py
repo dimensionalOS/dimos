@@ -23,18 +23,25 @@ transforms from WebXR to robot frame, computes deltas, and publishes commands.
 from dataclasses import dataclass, field
 import threading
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos_lcm.geometry_msgs import Transform as LCMTransform
 from reactivex.disposable import Disposable
 
 from dimos.core import In, rpc
-from dimos.msgs.geometry_msgs import ControllerPose, PoseStamped, Twist
+from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
 from dimos.msgs.std_msgs import Bool, Float32
 from dimos.teleop.devices.base_teleop_module import BaseTeleopConfig, BaseTeleopModule
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.teleop_transforms import transform_vr_to_robot
+from dimos.utils.teleop_transforms import (
+    pose_to_pose_stamped,
+    pose_to_twist_stamped,
+    transform_vr_to_robot,
+)
 from dimos.utils.transform_utils import matrix_to_pose
+
+if TYPE_CHECKING:
+    from dimos.msgs.geometry_msgs.Pose import Pose
 
 logger = setup_logger()
 
@@ -69,9 +76,9 @@ class VRTeleopModule(BaseTeleopModule[VRTeleopConfig]):
         super().__init__(*args, **kwargs)
 
         self._lcm_lock = threading.Lock()
-        self._lcm_controller_poses: dict[int, ControllerPose | None] = {
-            i: None for i in self._active_indices
-        }
+        self._lcm_controller_poses: dict[int, Pose | None] = {i: None for i in self._active_indices}
+        self._lcm_receive_times: dict[int, float] = {i: 0.0 for i in self._active_indices}
+        self._lcm_frame_ids: dict[int, str] = {i: "" for i in self._active_indices}
         self._lcm_gripper_values: dict[int, float] = {i: 0.0 for i in self._active_indices}
         self._control_loop_thread: threading.Thread | None = None
         self._control_loop_running = False
@@ -136,12 +143,16 @@ class VRTeleopModule(BaseTeleopModule[VRTeleopConfig]):
 
     def _on_lcm_transform(self, index: int, transform: LCMTransform) -> None:
         """Handle controller transform, converting WebXR to robot frame."""
+        receive_time = time.time()
         self._start_control_loop()
         is_left = index == self._active_indices[0]
+        frame_id = "left_controller" if is_left else "right_controller"
         transform_matrix = transform_vr_to_robot(transform, is_left_controller=is_left)
-        pose = ControllerPose.from_pose(matrix_to_pose(transform_matrix))
+        pose = matrix_to_pose(transform_matrix)
         with self._lcm_lock:
             self._lcm_controller_poses[index] = pose
+            self._lcm_receive_times[index] = receive_time
+            self._lcm_frame_ids[index] = frame_id
 
     def _on_lcm_trigger(self, index: int, msg: Float32) -> None:
         """Handle trigger value for gripper control."""
@@ -180,6 +191,8 @@ class VRTeleopModule(BaseTeleopModule[VRTeleopConfig]):
             with self._lcm_lock:
                 controller_poses = dict(self._lcm_controller_poses)
                 controller_trigger_values = dict(self._lcm_gripper_values)
+                receive_times = dict(self._lcm_receive_times)
+                frame_ids = dict(self._lcm_frame_ids)
 
             deltas = self.compute_deltas(controller_poses, controller_trigger_values)
 
@@ -190,18 +203,26 @@ class VRTeleopModule(BaseTeleopModule[VRTeleopConfig]):
 
                 trigger_value = self._all_trigger_values.get(i, 0.0)
                 trigger_bool = Bool(data=trigger_value > self.config.gripper_threshold)
+                ts = receive_times.get(i, time.time())
+                frame_id = frame_ids.get(i, "")
 
                 output_type = self.config.output_types[idx]
                 if output_type == PoseStamped:
-                    command = delta.to_pose_stamped(
+                    command = pose_to_pose_stamped(
+                        delta,
                         initial_robot_pose=self._initial_robot_poses.get(i),
+                        ts=ts,
+                        frame_id=frame_id,
                     )
-                elif output_type == Twist:
-                    command = delta.to_twist(
+                elif output_type == TwistStamped:
+                    command = pose_to_twist_stamped(
+                        delta,
                         linear_scale=self.config.linear_scale,
                         angular_scale=self.config.angular_scale,
                         max_linear=self.config.max_linear_velocity,
                         max_angular=self.config.max_angular_velocity,
+                        ts=ts,
+                        frame_id=frame_id,
                     )
                 else:
                     continue
