@@ -151,6 +151,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy installed libraries from builder
 COPY --from=builder /usr/local/lib /usr/local/lib
 COPY --from=builder /usr/local/include /usr/local/include
+
 RUN ldconfig
 
 # Copy built ROS workspace from builder
@@ -163,6 +164,9 @@ COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/route_pla
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/exploration_planner/tare_planner/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/exploration_planner/tare_planner/rviz
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config
+
+# Copy simulation shell scripts (real robot mode uses volume mount)
+COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/system_simulation*.sh ${WORKSPACE}/src/ros-navigation-autonomy-stack/
 
 # Create directories
 RUN mkdir -p ${DIMOS_PATH} \
@@ -336,6 +340,9 @@ if [ "${HARDWARE_MODE}" = "true" ]; then\n\
   ]\n\
 }\n\
 EOF\n\
+        # Also copy to installed location where the driver actually reads from\n\
+        cp ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config/MID360_config.json \\\n\
+           ${WORKSPACE}/install/livox_ros_driver2/share/livox_ros_driver2/config/MID360_config.json 2>/dev/null || true\n\
         echo "Generated MID360_config.json with LIDAR_COMPUTER_IP=${LIDAR_COMPUTER_IP} and LIDAR_IP=${LIDAR_IP}"\n\
     fi\n\
     \n\

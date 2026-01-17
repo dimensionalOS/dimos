@@ -54,11 +54,27 @@ echo ""
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-# Clone ros-navigation-autonomy-stack (uses jazzy branch for both ROS distros)
+# Clone or checkout ros-navigation-autonomy-stack with dev branch
 if [ ! -d "ros-navigation-autonomy-stack" ]; then
-    echo -e "${YELLOW}Cloning ros-navigation-autonomy-stack repository...${NC}"
-    git clone -b jazzy git@github.com:dimensionalOS/ros-navigation-autonomy-stack.git
+    echo -e "${YELLOW}Cloning ros-navigation-autonomy-stack repository (dev branch)...${NC}"
+    git clone -b dev git@github.com:dimensionalOS/ros-navigation-autonomy-stack.git
     echo -e "${GREEN}Repository cloned successfully!${NC}"
+else
+    # Directory exists, ensure we're on the dev branch
+    cd ros-navigation-autonomy-stack
+    CURRENT_BRANCH=$(git branch --show-current)
+    if [ "$CURRENT_BRANCH" != "dev" ]; then
+        echo -e "${YELLOW}Switching from ${CURRENT_BRANCH} to dev branch...${NC}"
+        # Stash any local changes (e.g., auto-generated config files)
+        git stash --quiet 2>/dev/null || true
+        git fetch origin dev
+        git checkout dev
+        git pull origin dev
+        echo -e "${GREEN}Switched to dev branch${NC}"
+    else
+        echo -e "${GREEN}Already on dev branch${NC}"
+    fi
+    cd ..
 fi
 
 if [ ! -d "unity_models" ]; then

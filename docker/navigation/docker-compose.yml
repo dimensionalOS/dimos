@@ -4,11 +4,15 @@ services:
     build:
       context: ../..
       dockerfile: docker/navigation/Dockerfile
+      network: host
       args:
         ROS_DISTRO: ${ROS_DISTRO:-humble}
     image: dimos_autonomy_stack:${ROS_DISTRO:-humble}
     container_name: dimos_simulation_container
     profiles: ["", "simulation"]  # Active by default (empty profile) AND with --profile simulation
+
+    # Shared memory size for ROS 2 FastDDS
+    shm_size: '8gb'
 
     # Enable interactive terminal
     stdin_open: true
@@ -68,11 +72,15 @@ services:
     build:
       context: ../..
       dockerfile: docker/navigation/Dockerfile
+      network: host
       args:
         ROS_DISTRO: ${ROS_DISTRO:-humble}
     image: dimos_autonomy_stack:${ROS_DISTRO:-humble}
     container_name: dimos_hardware_container
     profiles: ["hardware"]
+
+    # Shared memory size for ROS 2 FastDDS
+    shm_size: '8gb'
 
     # Load environment from .env file
     env_file:
