@@ -151,7 +151,10 @@ from reactivex import operators as ops
 from dimos.utils.reactive import getter_hot
 
 source = rx.interval(0.1).pipe(ops.take(10))
-get_val = getter_hot(source, timeout=5.0)
+
+get_val = getter_hot(source, timeout=5.0) # blocks until first message, with 5s timeout
+# alternatively not to block (but get_val() might return None)
+# get_val = getter_hot(source, nonblocking = True)
 
 print("first call:", get_val())  # instant - value already there
 time.sleep(0.35)
