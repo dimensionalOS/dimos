@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
+from dimos.protocol.service.ddsservice import DDSConfig, DDSService, autoconf
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -63,13 +64,7 @@ class Topic:
         )
 
 
-class DDSPubSubBase(PubSub[Topic, Any]):
-    """Base DDS pub/sub implementation using in-memory transport.
-
-    This provides a transport-agnostic DDS pub/sub system that can later be
-    extended to use actual DDS implementations (e.g., cyclone-dds, rti-dds).
-    """
-
+class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._callbacks: dict[Topic, list[Callable[[Any, Topic], None]]] = {}
