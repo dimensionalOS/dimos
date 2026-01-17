@@ -255,7 +255,6 @@ pytest # run all tests at or below the current directory
 | Filter tests by name        | `pytest -k "<pattern>"`      |
 | Enable stdout in tests      | `pytest -s`                  |
 | Run tagged tests            | `pytest -m <tag>`            |
-| Run all pre-commit hooks    | `pre-commit run --all-files` |
 
 We use tags for special tests, like `vis` or `tool` for things that aren't meant to be ran in CI and when casually developing, something that requires hardware or visual inspection (pointcloud merging vis etc)
 
@@ -268,6 +267,7 @@ You can enable a tag by selecting -m <tag_name> - these are configured in `./pyp
 - **No matter what, provide a few-lines that, when run, let a reviewer test the feature you added** (assuming you changed functional python code).
 - Less changed files = better.
 - If you're writing documentation, see [writing docs](/docs/development/writing_docs.md)
+- If you get mypy errors, please fix them. Don't just add # type: ignore. Please first understand why mypy is complaining and try to fix it. It's only okay to ignore if the issue cannot be fixed.
 - If you made a change that is likely going to involve a debate, open the github UI and add a graphical comment on that code. Justify your choice and explain downsides of alternatives.
 - We don't require 100% test coverage, but if you're making a PR of notable python changes you should probably either have unit tests or good reason why not (ex: visualization stuff is hard to test so we don't).
 - Have the name of your PR start with `WIP:` if its not ready to merge but you want to show someone the changes.

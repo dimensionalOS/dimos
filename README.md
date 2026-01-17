@@ -16,7 +16,7 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 
 <p align="center">
-  <a href="#how-does-dimos-work-conceptually">Key Features</a> •
+  <a href="#how-does-dimos-work">Key Features</a> •
   <a href="#how-do-i-get-started">How To Use</a> •
   <a href="#contributing--building-from-source">Contributing</a> •
   <a href="#license">License</a>
@@ -56,6 +56,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin
 # OPTION 1: install dimos in a virtualenv
 uv venv && . .venv/bin/activate
 uv pip install 'dimos[base,unitree]'
+# replay recorded data to test that the system is working
 dimos --replay run unitree-go2
 
 # OPTION 2: if you want to test out dimos without installing run:
@@ -68,18 +69,19 @@ uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
 
 #### Control a robot in a simulation (no robot required)
 
-```bash
+After running the commads below, open http://localhost:7779/command-center to control the robot movement.
+
+```sh
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
 # ignore the warp warnings
-dimos --simulation run unitree-go2
-# open http://localhost:7779/command-center in your browser to control the robot movement
+dimos --viewer-backend rerun-web --simulation run unitree-go2
 ```
 
 #### Get it working on a physical robot!
 
 ```sh
 export ROBOT_IP=PUT_YOUR_IP_ADDR_HERE
-dimos run unitree-go2
+dimos --viewer-backend rerun-web run unitree-go2
 ```
 
 #### Have it controlled by AI!
@@ -88,7 +90,7 @@ WARNING: This is a demo showing the **connection** between AI and robotic contro
 
 ```sh
 export OPENAI_API_KEY=<your private key>
-dimos run unitree-go2-agentic
+dimos --viewer-backend rerun-web run unitree-go2-agentic
 ```
 
 After running that, open a new terminal and run the following to start giving instructions to the agent.
@@ -119,6 +121,7 @@ from dimos.hardware.sensors.camera.module import CameraModule
 
 if __name__ == "__main__":
     autoconnect(
+        # technically autoconnect is not needed because we only have 1 module
         CameraModule.blueprint()
     ).build().loop()
 ```
@@ -156,7 +159,7 @@ class Listener(Module):
             self.grayscale_image.publish(img.to_grayscale())
 
         unsubscribe_func = self.color_image.subscribe(callback_func)
-        # disposables will be called when the module is stopped
+        # the unsubscribe_func be called when the module is stopped
         self._disposables.add(Disposable(
             unsubscribe_func
         ))
