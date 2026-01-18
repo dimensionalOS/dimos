@@ -61,6 +61,8 @@ RUN if [ "${ROS_DISTRO}" = "humble" ]; then \
         if [ -n "$CV_BRIDGE_DIR" ]; then \
             ln -sf "$CV_BRIDGE_DIR/cv_bridge.h" "$CV_BRIDGE_DIR/cv_bridge.hpp"; \
             echo "Created cv_bridge.hpp symlink in $CV_BRIDGE_DIR"; \
+        else \
+            echo "Warning: cv_bridge.h not found, skipping symlink creation"; \
         fi; \
     fi
 
