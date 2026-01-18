@@ -87,11 +87,20 @@ cleanup() {
 # Set up trap to call cleanup on exit
 trap cleanup EXIT INT TERM
 
+# Source ROS environment
+echo "Sourcing ROS environment..."
+source /opt/ros/${ROS_DISTRO:-humble}/setup.bash
+source /ros2_ws/install/setup.bash
+
 # Start ROS route planner in background (in new process group)
 echo "Starting ROS route planner..."
 cd /ros2_ws/src/ros-navigation-autonomy-stack
-setsid bash -c './system_simulation_with_route_planner.sh' &
+# Run simulation directly instead of using the script (which has wrong install path)
+./src/base_autonomy/vehicle_simulator/mesh/unity/environment/Model.x86_64 &
+sleep 3
+setsid bash -c 'ros2 launch vehicle_simulator system_simulation_with_route_planner.launch' &
 ROS_PID=$!
+ros2 run rviz2 rviz2 -d src/route_planner/far_planner/rviz/default.rviz &
 
 # Wait a bit for ROS to initialize
 echo "Waiting for ROS to initialize..."
@@ -111,6 +120,16 @@ else
         source /opt/dimos-venv/bin/activate
         echo "Python path: $(which python)"
         echo "Python version: $(python --version)"
+
+        # Install dimos package if not already installed
+        if ! python -c "import dimos" 2>/dev/null; then
+            echo "Installing dimos package..."
+            if [ -f "/workspace/dimos/setup.py" ] || [ -f "/workspace/dimos/pyproject.toml" ]; then
+                pip install -e /workspace/dimos --quiet
+            else
+                echo "WARNING: dimos package not found at /workspace/dimos"
+            fi
+        fi
     else
         echo "WARNING: Virtual environment not found at /opt/dimos-venv, using system Python"
     fi
