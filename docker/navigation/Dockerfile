@@ -6,7 +6,7 @@
 # 1. Use ros:jazzy-ros-base instead of desktop-full (~2.5 GB saved)
 # 2. Multi-stage build to discard build artifacts
 # 3. No Python ML dependencies (~14 GB saved)
-# 4. Don't COPY dimos source - it's volume-mounted at runtime (~1.2 GB saved)
+# 4. COPY dimos source for editable pip install (volume-mounted at runtime overlays it)
 # 5. Clean up build directories after compile (~800 MB saved)
 # 6. Minimal apt packages with --no-install-recommends
 # 7. DDS configuration for optimized ROS 2 communication
@@ -234,7 +234,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m venv /opt/dimos-venv && \
     /opt/dimos-venv/bin/pip install --no-cache-dir \
     pyyaml \
-    unitree-webrtc-connect==2.0.4
+    unitree-webrtc-connect==2.0.4 \
+    langchain-core \
+    langchain
+
+# Copy dimos source and install as editable package
+# The volume mount at runtime will overlay /workspace/dimos, but the editable
+# install creates a link that will use the volume-mounted files
+COPY pyproject.toml setup.py /workspace/dimos/
+COPY dimos /workspace/dimos/dimos
+RUN /opt/dimos-venv/bin/pip install --no-cache-dir -e /workspace/dimos
 
 # Set up shell environment
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \
