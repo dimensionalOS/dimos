@@ -6,7 +6,7 @@ services:
       dockerfile: docker/navigation/Dockerfile
     image: dimos_autonomy_stack:jazzy
     container_name: dimos_simulation_container
-    profiles: ["", "simulation"]  # Active by default (empty profile) AND with --profile simulation
+    profiles: [ "", "simulation" ] # Active by default (empty profile) AND with --profile simulation
 
     # Enable interactive terminal
     stdin_open: true
@@ -61,6 +61,10 @@ services:
     # Command to run both ROS and DimOS
     command: /usr/local/bin/run_both.sh
 
+    # Enable multicast configuration for LCM
+    cap_add:
+      - NET_ADMIN
+
   # Hardware profile - for real robot
   dimos_hardware:
     build:
@@ -68,7 +72,7 @@ services:
       dockerfile: docker/navigation/Dockerfile
     image: dimos_autonomy_stack:jazzy
     container_name: dimos_hardware_container
-    profiles: ["hardware"]
+    profiles: [ "hardware" ]
 
     # Enable interactive terminal
     stdin_open: true
@@ -139,7 +143,7 @@ services:
       # Cameras (can be enabled via environment)
       # - /dev/video0:/dev/video0
 
-    # Working directory
+      # Working directory
     working_dir: /workspace/dimos
 
     # Command - for hardware, we run bash as the user will launch specific scripts
@@ -147,6 +151,6 @@ services:
 
     # Capabilities for hardware operations
     cap_add:
-      - NET_ADMIN  # Network interface configuration
-      - SYS_ADMIN  # System operations
-      - SYS_TIME   # Time synchronization
+      - NET_ADMIN # Network interface configuration
+      - SYS_ADMIN # System operations
+      - SYS_TIME # Time synchronization

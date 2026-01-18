@@ -16,12 +16,18 @@ cd "$SCRIPT_DIR"
 
 if [ ! -d "ros-navigation-autonomy-stack" ]; then
     echo -e "${YELLOW}Cloning ros-navigation-autonomy-stack repository...${NC}"
-    git clone -b jazzy git@github.com:dimensionalOS/ros-navigation-autonomy-stack.git
+    git clone -b jazzy https://github.com/dimensionalOS/ros-navigation-autonomy-stack.git
     echo -e "${GREEN}Repository cloned successfully!${NC}"
 fi
 
+# Ensure submodules are initialized (e.g., PCT_planner)
+echo -e "${YELLOW}Updating submodules...${NC}"
+(cd ros-navigation-autonomy-stack && git submodule update --init --recursive)
+
 if [ ! -d "unity_models" ]; then
     echo -e "${YELLOW}Using office_building_1 as the Unity environment...${NC}"
+    # Ensure LFS is initialized and files are pulled
+    (cd ../.. && git lfs install && git lfs pull)
     tar -xf ../../data/.lfs/office_building_1.tar.gz
     mv office_building_1 unity_models
 fi
