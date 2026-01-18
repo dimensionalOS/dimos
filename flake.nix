@@ -2,20 +2,27 @@
   description = "Project dev environment as Nix shell + DockerTools layered image";
 
   inputs = {
-    nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url      = "github:NixOS/nixpkgs/nixos-25.11";
     flake-utils.url  = "github:numtide/flake-utils";
     lib.url          = "github:jeff-hykin/quick-nix-toolkits";
     lib.inputs.flakeUtils.follows = "flake-utils";
+    # home-manager.url = "github:nix-community/home-manager";
+    home-manager.url = "github:nix-community/home-manager/release-25.11";
+    home-manager.inputs.nixpkgs.follows = "nixpkgs";
     xome.url         = "github:jeff-hykin/xome";
     xome.inputs.nixpkgs.follows    = "nixpkgs";
     xome.inputs.flake-utils.follows = "flake-utils";
+    xome.inputs.home-manager.follows = "home-manager";
     diagon.url       = "github:petertrotman/nixpkgs/Diagon";
+    # pre-commit on nixos-25.11 is broken, so we have to use an older version of nixpkgs just for pre-commit
+    nixpkgsSourceWithPreCommit.url = "https://github.com/NixOS/nixpkgs/archive/f665af0cdb70ed27e1bd8f9fdfecaf451260fc55.tar.gz";
   };
 
-  outputs = { self, nixpkgs, flake-utils, lib, xome, diagon, ... }:
+  outputs = { self, nixpkgs, flake-utils, lib, xome, diagon, nixpkgsSourceWithPreCommit, ... }@inputs:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        nixpkgsWithPreCommit = import nixpkgsSourceWithPreCommit { inherit system; };
 
         # ------------------------------------------------------------
         # 1. Shared package list (tool-chain + project deps)
@@ -76,7 +83,8 @@
           { vals.pkg=pkgs.python312Packages.pip;        flags={}; }
           { vals.pkg=pkgs.python312Packages.setuptools; flags={}; }
           { vals.pkg=pkgs.python312Packages.virtualenv; flags={}; }
-          { vals.pkg=pkgs.pre-commit;                   flags={}; }
+          { vals.pkg=pkgs.uv;                           flags={}; }
+          { vals.pkg=nixpkgsWithPreCommit.pre-commit;   flags={}; }
 
           ### Runtime deps
           { vals.pkg=pkgs.portaudio;                 flags={ldLibraryGroup=true; packageConfGroup=true;}; }
@@ -170,31 +178,33 @@
         # ------------------------------------------------------------
         # 2. group / aggregate our packages
         # ------------------------------------------------------------
-        devPackages = aggregation.getAll { attrPath=[ "pkg" ]; };
-        ldLibraryPackages = aggregation.getAll { hasAllFlags=[ "ldLibraryGroup" ]; attrPath=[ "pkg" ]; };
-        giTypelibPackagesString = aggregation.getAll {
-          hasAllFlags=[ "giTypelibGroup" ];
-          attrPath=[ "pkg" ];
-          strAppend="/lib/girepository-1.0";
-          strJoin=":";
-        };
-        packageConfPackagesString = (aggregation.getAll {
+        groups = {
+          devPackages = aggregation.getAll { attrPath=[ "pkg" ]; };
+          ldLibraryPackages = aggregation.getAll { hasAllFlags=[ "ldLibraryGroup" ]; attrPath=[ "pkg" ]; };
+          giTypelibPackagesString = aggregation.getAll {
+            hasAllFlags=[ "giTypelibGroup" ];
+            attrPath=[ "pkg" ];
+            strAppend="/lib/girepository-1.0";
+            strJoin=":";
+          };
+          packageConfPackagesString = (aggregation.getAll {
             hasAllFlags=[ "packageConfGroup" ];
             attrPath=[ "pkg" ];
             strAppend="/lib/pkgconfig";
             strJoin=":";
-        });
-        manualPythonPackages = (aggregation.getAll {
+          });
+          manualPythonPackages = (aggregation.getAll {
             hasAllFlags=[ "manualPythonPackages" ];
             attrPath=[ "pkg" ];
             strAppend="/lib/python3.${aggregation.mergedVals.pythonMinorVersion}/site-packages";
             strJoin=":";
-        });
+          });
+        };
 
         # ------------------------------------------------------------
         # 3. Host interactive shell  →  `nix develop`
         # ------------------------------------------------------------
-        shellHook = ''
+        envVarShellHook = ''
           shopt -s nullglob 2>/dev/null || setopt +o nomatch 2>/dev/null || true # allow globs to be empty without throwing an error
           if [ "$OSTYPE" = "linux-gnu" ]; then
             export CC="cc-no-usr-include" # basically patching for nix
@@ -205,15 +215,18 @@
               [ -e "$lib" ] && ln -sf "$lib" "$NVIDIA_LIBS_DIR/" 2>/dev/null
             done
           fi
-          export LD_LIBRARY_PATH="$NVIDIA_LIBS_DIR:${pkgs.lib.makeLibraryPath ldLibraryPackages}:$LD_LIBRARY_PATH"
+          export LD_LIBRARY_PATH="$NVIDIA_LIBS_DIR:${pkgs.lib.makeLibraryPath groups.ldLibraryPackages}:$LD_LIBRARY_PATH"
           export LIBRARY_PATH="$LD_LIBRARY_PATH" # fixes python find_library for pyaudio
           export DISPLAY=:0
-          export GI_TYPELIB_PATH="${giTypelibPackagesString}:$GI_TYPELIB_PATH"
-          export PKG_CONFIG_PATH=${lib.escapeShellArg packageConfPackagesString}
-          export PYTHONPATH="$PYTHONPATH:"${lib.escapeShellArg manualPythonPackages}
+          export GI_TYPELIB_PATH="${groups.giTypelibPackagesString}:$GI_TYPELIB_PATH"
+          export PKG_CONFIG_PATH=${lib.escapeShellArg groups.packageConfPackagesString}
+          export PYTHONPATH="$PYTHONPATH:"${lib.escapeShellArg groups.manualPythonPackages}
           # CC, CFLAGS, and LDFLAGS are bascially all for `pip install pyaudio`
           export CFLAGS="$(pkg-config --cflags portaudio-2.0) $CFLAGS"
           export LDFLAGS="-L$(pkg-config --variable=libdir portaudio-2.0) $LDFLAGS"
+        '';
+        shellHook = ''
+          ${envVarShellHook}
 
           # without this alias, the pytest uses the non-venv python and fails
           alias pytest="python -m pytest"
@@ -229,7 +242,7 @@
         devShells = {
           # basic shell (blends with your current environment)
           default = pkgs.mkShell {
-            buildInputs = devPackages;
+            buildInputs = groups.devPackages;
             shellHook = shellHook;
           };
           # strict shell (creates a fake home, only select exteral commands (e.g. sudo) from your system are available)
@@ -246,7 +259,9 @@
               # https://nix-community.github.io/home-manager/options.xhtml
               home.homeDirectory = "/tmp/virtual_homes/dimos";
               home.stateVersion = "25.11";
-              home.packages = devPackages;
+              home.packages = groups.devPackages;
+              # https://github.com/nix-community/home-manager/issues/8336
+              targets = if pkgs.stdenv.isLinux then {} else { darwin = {copyApps.enable = false; linkApps.enable = true;}; };
 
               programs = {
                 home-manager = {
@@ -288,11 +303,18 @@
         # ------------------------------------------------------------
         imageRoot = pkgs.buildEnv {
           name = "dimos-image-root";
-          paths = devPackages;
+          paths = groups.devPackages;
           pathsToLink = [ "/bin" ];
         };
 
       in {
+        # so that other people (and us debugging) can import this flake and use parts as needed
+        vars = {
+            inherit inputs pkgs groups aggregation devShells imageRoot;
+            devPackages = groups.devPackages;
+            shellHook = envVarShellHook;
+            fullShellHook = shellHook;
+        };
         ## Local dev shell
         devShells = devShells;
 
