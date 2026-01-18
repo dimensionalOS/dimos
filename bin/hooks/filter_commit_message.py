@@ -28,10 +28,16 @@ def main() -> int:
 
     lines = commit_msg_file.read_text().splitlines(keepends=True)
 
-    # Find the first line containing "Generated with" and truncate there
+    # Patterns that trigger truncation (everything from this line onwards is removed)
+    truncate_patterns = [
+        "Generated with",
+        "Co-Authored-By",
+    ]
+
+    # Find the first line containing any truncate pattern and truncate there
     filtered_lines = []
     for line in lines:
-        if "Generated with" in line:
+        if any(pattern in line for pattern in truncate_patterns):
             break
         filtered_lines.append(line)
 
