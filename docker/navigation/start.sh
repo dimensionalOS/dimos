@@ -117,6 +117,13 @@ if [ "$MODE" = "hardware" ]; then
     echo -e "${GREEN}Detecting device group IDs...${NC}"
     export INPUT_GID=$(getent group input | cut -d: -f3 || echo "995")
     export DIALOUT_GID=$(getent group dialout | cut -d: -f3 || echo "20")
+    # Warn if fallback values are being used
+    if ! getent group input > /dev/null 2>&1; then
+        echo -e "${YELLOW}Warning: input group not found, using fallback GID ${INPUT_GID}${NC}"
+    fi
+    if ! getent group dialout > /dev/null 2>&1; then
+        echo -e "${YELLOW}Warning: dialout group not found, using fallback GID ${DIALOUT_GID}${NC}"
+    fi
     echo -e "  input group GID: ${INPUT_GID}"
     echo -e "  dialout group GID: ${DIALOUT_GID}"
 
