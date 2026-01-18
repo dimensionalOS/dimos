@@ -16,12 +16,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cyclonedds.domain import DomainParticipant
 
 from dimos.protocol.service.spec import Service
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = setup_logger()
 
@@ -36,66 +39,29 @@ class DDSConfig:
 
 class DDSService(Service[DDSConfig]):
     default_config = DDSConfig
+    _participant: DomainParticipant | None = None
+    _participant_lock = threading.Lock()
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._participant_lock = threading.Lock()
-        self._started = False
-        # Support passing an existing DomainParticipant
-        self.participant: DomainParticipant | None = self.config.participant
-
-    def __getstate__(self) -> dict[str, Any]:
-        """Exclude unpicklable runtime attributes when serializing."""
-        state = self.__dict__.copy()
-        # Remove unpicklable attributes
-        state.pop("participant", None)
-        state.pop("_participant_lock", None)
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore object from pickled state."""
-        self.__dict__.update(state)
-        # Reinitialize runtime attributes
-        self.participant = None
-        self._participant_lock = threading.Lock()
-        self._started = False
 
     def start(self) -> None:
         """Start the DDS service."""
-        if self._started:
-            return
-
-        # Use provided participant or create new one
-        with self._participant_lock:
-            if self.participant is None:
-                self.participant = self.config.participant or DomainParticipant(
-                    self.config.domain_id
-                )
-                logger.info(f"DDS service started with Cyclone DDS domain {self.config.domain_id}")
-
-        self._started = True
+        pass
 
     def stop(self) -> None:
         """Stop the DDS service."""
-        if not self._started:
-            return
+        pass
 
-        with self._participant_lock:
-            # Clean up participant if we created it
-            if self.participant is not None and not self.config.participant:
-                try:
-                    self.participant.close()
-                    logger.info("DDS participant closed")
-                except Exception as e:
-                    logger.warning(f"Error closing DDS participant: {e}")
-                finally:
-                    self.participant = None
-
-        self._started = False
-
-    def get_participant(self) -> DomainParticipant | None:
+    def get_participant(self) -> DomainParticipant:
         """Get the DomainParticipant instance, or None if not yet initialized."""
-        return self.participant
+
+        # Lazy initialization of the participant
+        with self.__class__._participant_lock:
+            if self.__class__._participant is None:
+                self.__class__._participant = DomainParticipant(self.config.domain_id)
+                logger.info(f"DDS service started with Cyclone DDS domain {self.config.domain_id}")
+            return self.__class__._participant
 
 
 __all__ = ["DDSConfig", "DDSService"]
