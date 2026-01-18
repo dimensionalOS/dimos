@@ -21,6 +21,10 @@ services:
     # Network configuration - required for ROS communication
     network_mode: host
 
+    # Allow `ip link set ...` (needed by DimOS LCM autoconf) without requiring sudo
+    cap_add:
+      - NET_ADMIN
+
     # Use nvidia runtime for GPU acceleration (falls back to runc if not available)
     runtime: ${DOCKER_RUNTIME:-nvidia}
 
@@ -183,10 +187,10 @@ services:
         source /opt/dimos-venv/bin/activate
         if [ "$USE_ROUTE_PLANNER" = "true" ]; then
             echo "Starting real robot system WITH route planner..."
-            ros2 launch vehicle_simulator system_real_robot_with_route_planner.launch &
+            ros2 launch vehicle_simulator system_real_robot_with_route_planner.launch.py &
         else
             echo "Starting real robot system (base autonomy)..."
-            ros2 launch vehicle_simulator system_real_robot.launch &
+            ros2 launch vehicle_simulator system_real_robot.launch.py &
         fi
         sleep 2
         if [ "$USE_RVIZ" = "true" ]; then

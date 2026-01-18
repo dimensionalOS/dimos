@@ -233,17 +233,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create Python venv and install dependencies
 RUN python3 -m venv /opt/dimos-venv && \
     /opt/dimos-venv/bin/pip install --no-cache-dir \
-    pyyaml \
-    unitree-webrtc-connect==2.0.4 \
-    langchain-core \
-    langchain
+    pyyaml
 
 # Copy dimos source and install as editable package
 # The volume mount at runtime will overlay /workspace/dimos, but the editable
 # install creates a link that will use the volume-mounted files
 COPY pyproject.toml setup.py /workspace/dimos/
 COPY dimos /workspace/dimos/dimos
-RUN /opt/dimos-venv/bin/pip install --no-cache-dir -e /workspace/dimos
+RUN /opt/dimos-venv/bin/pip install --no-cache-dir -e "/workspace/dimos[unitree]"
 
 # Set up shell environment
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \

@@ -98,7 +98,7 @@ cd /ros2_ws/src/ros-navigation-autonomy-stack
 # Run simulation directly instead of using the script (which has wrong install path)
 ./src/base_autonomy/vehicle_simulator/mesh/unity/environment/Model.x86_64 &
 sleep 3
-setsid bash -c 'ros2 launch vehicle_simulator system_simulation_with_route_planner.launch' &
+setsid bash -c 'ros2 launch vehicle_simulator system_simulation_with_route_planner.launch.py' &
 ROS_PID=$!
 ros2 run rviz2 rviz2 -d src/route_planner/far_planner/rviz/default.rviz &
 
@@ -125,7 +125,8 @@ else
         if ! python -c "import dimos" 2>/dev/null; then
             echo "Installing dimos package..."
             if [ -f "/workspace/dimos/setup.py" ] || [ -f "/workspace/dimos/pyproject.toml" ]; then
-                pip install -e /workspace/dimos --quiet
+                # Install Unitree extra (includes agents stack + unitree deps used by demo)
+                pip install -e "/workspace/dimos[unitree]" --quiet
             else
                 echo "WARNING: dimos package not found at /workspace/dimos"
             fi
