@@ -2,7 +2,7 @@
 
 > **Prerequisite:** Read [ReactiveX Fundamentals](reactivex.md) first for Observable basics.
 
-## Backpressure and parallel subscribers to hardware
+## Backpressure and Parallel Subscribers to Hardware
 
 In robotics, we deal with hardware that produces data at its own pace - a camera outputs 30fps whether you're ready or not. We can't tell the camera to slow down. And we often have multiple consumers: one module wants every frame for recording, another runs slow ML inference and only needs the latest frame.
 
@@ -43,7 +43,7 @@ from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 from dimos.utils.reactive import backpressure
 
-# we need this scaffolding here, normally dimos handles this
+# We need this scaffolding here. Normally DimOS handles this.
 scheduler = ThreadPoolScheduler(max_workers=4)
 
 # Simulate fast source
@@ -103,7 +103,7 @@ The `LATEST` strategy means: when the slow subscriber finishes processing, it ge
 
 ### Usage in modules
 
-Most module streams offer backpressured observables
+Most module streams offer backpressured observables.
 
 ```python session=bp
 from dimos.core import Module, In
@@ -129,7 +129,7 @@ class MLModel(Module):
 
 ## Getting Values Synchronously
 
-Sometimes you don't want a stream - you just want to call a function and get the latest value. We provide two approaches:
+Sometimes you don't want a stream, you just want to call a function and get the latest value. We provide two approaches:
 
 |                  | `getter_hot()`                 | `getter_cold()`                  |
 |------------------|--------------------------------|----------------------------------|
@@ -154,7 +154,7 @@ source = rx.interval(0.1).pipe(ops.take(10))
 
 get_val = getter_hot(source, timeout=5.0) # blocks until first message, with 5s timeout
 # alternatively not to block (but get_val() might return None)
-# get_val = getter_hot(source, nonblocking = True)
+# get_val = getter_hot(source, nonblocking=True)
 
 print("first call:", get_val())  # instant - value already there
 time.sleep(0.35)
