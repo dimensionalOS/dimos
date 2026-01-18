@@ -66,7 +66,9 @@ else
     if [ "$CURRENT_BRANCH" != "dev" ]; then
         echo -e "${YELLOW}Switching from ${CURRENT_BRANCH} to dev branch...${NC}"
         # Stash any local changes (e.g., auto-generated config files)
-        git stash --quiet 2>/dev/null || true
+        if git stash --quiet 2>/dev/null; then
+            echo -e "${YELLOW}Stashed local changes${NC}"
+        fi
         git fetch origin dev
         git checkout dev
         git pull origin dev
