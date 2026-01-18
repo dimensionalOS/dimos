@@ -149,8 +149,6 @@ services:
       - ./config:/ros2_ws/config:rw
       # Hardware-specific volumes
       - ./logs:/ros2_ws/logs:rw
-      # Foxglove layout
-      - ./foxglove_layout.json:/ros2_ws/foxglove_layout.json:ro
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
       - /dev/bus/usb:/dev/bus/usb:rw
