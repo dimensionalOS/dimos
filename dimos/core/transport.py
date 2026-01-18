@@ -130,14 +130,12 @@ class DDSTransport(PubSubTransport[T]):
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
-            self.dds.start()
             self._started = True
 
         self.dds.publish(self.topic, msg)
 
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
         if not self._started:
-            self.dds.start()
             self._started = True
         return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
 
