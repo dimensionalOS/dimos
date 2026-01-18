@@ -31,7 +31,6 @@ class DDSConfig:
     """Configuration for DDS service."""
 
     domain_id: int = 0
-    autoconf: bool = True
     participant: DomainParticipant | None = None
 
 
@@ -93,6 +92,10 @@ class DDSService(Service[DDSConfig]):
                     self.participant = None
 
         self._started = False
+
+    def get_participant(self) -> DomainParticipant | None:
+        """Get the DomainParticipant instance, or None if not yet initialized."""
+        return self.participant
 
 
 __all__ = ["DDSConfig", "DDSService"]

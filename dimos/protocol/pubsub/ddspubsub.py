@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
-from dimos.protocol.service.ddsservice import DDSConfig, DDSService, autoconf
+from dimos.protocol.service.ddsservice import DDSConfig, DDSService
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
