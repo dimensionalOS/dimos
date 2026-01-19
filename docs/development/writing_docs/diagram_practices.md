@@ -3,7 +3,7 @@ We have many diagraming tools. View source code of this page to see examples.
 # How to make diagrams
 
 1. Use Pikchr (language) to define a diagram
-2. Use `md-babel-py` from [codeblocks.md](/docs/development/writing_docs/codeblocks.md) to execute the diagram and insert the result
+2. Use `md-babel-py` from [codeblocks.md](/docs/development/writing_docs/codeblocks.md) to execute the diagram and insert the result.
 
 # Pikchr
 
