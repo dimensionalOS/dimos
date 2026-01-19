@@ -178,17 +178,10 @@ class DDS(
 ): ...
 
 
-class PickleDDS(
-    PickleEncoderMixin,
-    DDSPubSubBase,
-): ...
-
-
 __all__ = [
     "DDS",
     "DDSEncoderMixin",
     "DDSMsg",
     "DDSPubSubBase",
-    "PickleDDS",
     "Topic",
 ]
