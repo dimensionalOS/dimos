@@ -1,6 +1,6 @@
 <div align="center">
    <img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/15283d94-ad95-42c9-abd5-6565a222a837" /> </a>
-    <h4 align="center">The Open-Source Framework for Robotic Intelligence</h4>
+    <h4 align="center">The Agentive Operating System for Generalist Robotics</h4>
 
 
 <br>
@@ -38,38 +38,45 @@ The python library comes with a rich set of integrations; visualizers, spatial r
 
 ### Installation
 
-- Linux is supported, with tests being performed on Ubuntu 22.04 and 24.04
-- MacOS support is in beta, you're welcome to try it *but expect inconsistent/flakey behavior (rather than errors/crashing)*
-    - instead of the apt-get command below run: `brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python`
+Supported/tested matrix:
+
+| Platform | Status | Tested | Required System deps |
+| --- | --- | --- | --- |
+| Linux | supported | Ubuntu 22.04, 24.04 | See below |
+| macOS | experimental beta | not CI-tested | `brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python` |
+
+Note: macOS is usable but expect inconsistent/flaky behavior (rather than hard errors/crashes).
 
 ```sh
 sudo apt-get update
 sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev
 # install uv for python
 curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+```
 
-#
-# NOTE!!! the first time, you're going to have an empty/black rerun window for a while
-#
-# the command needs to download the replay file (2.4gb), which takes a bit
+Option 1: Install in a virtualenv
 
-# OPTION 1: install dimos in a virtualenv
+```sh
+
 uv venv && . .venv/bin/activate
 uv pip install 'dimos[base,unitree]'
 # replay recorded data to test that the system is working
+# IMPORTANT: First replay run will show a black rerun window while 2.4 GB downloads from LFS
 dimos --replay run unitree-go2
+```
 
-# OPTION 2: if you want to test out dimos without installing run:
+Option 2: Run without installing
+
+```sh
 uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
 ```
 
 <!-- command for testing pre launch: `GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" uv pip install 'dimos[unitree] @ git+ssh://git@github.com/dimensionalOS/dimos.git@dev'` -->
 
-### Usage
+### Dimensional Usage
 
 #### Control a robot in a simulation (no robot required)
 
-After running the commads below, open http://localhost:7779/command-center to control the robot movement.
 
 ```sh
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
@@ -77,16 +84,20 @@ export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
 dimos --viewer-backend rerun-web --simulation run unitree-go2
 ```
 
-#### Get it working on a physical robot!
+#### Control a real robot (Unitree Go2 over WebRTC)
 
 ```sh
-export ROBOT_IP=PUT_YOUR_IP_ADDR_HERE
+export ROBOT_IP=<YOUR_ROBOT_IP>
 dimos --viewer-backend rerun-web run unitree-go2
 ```
 
-#### Have it controlled by AI!
+After running dimOS open http://localhost:7779 to control robot movement.
 
-WARNING: This is a demo showing the **connection** between AI and robotic control -- not a demo of a super-intelligent AI. Be ready to physically prevent your robot from taking dumb physical actions.
+#### Dimensional Agents
+
+> \[!NOTE]
+>
+> **Experimental Beta: Potential unstoppable robot sentience**
 
 ```sh
 export OPENAI_API_KEY=<your private key>
@@ -98,8 +109,6 @@ After running that, open a new terminal and run the following to start giving in
 # activate the venv in this new terminal
 source .venv/bin/activate
 
-# Note: after running the next command, WAIT for the agent to connect
-# (this will take a while the first time)
 # then tell the agent "explore the room"
 # then tell it to go to something, ex: "go to the door"
 humancli
