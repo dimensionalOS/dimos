@@ -72,11 +72,10 @@ uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
 
 <!-- command for testing pre launch: `GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" uv pip install 'dimos[unitree] @ git+ssh://git@github.com/dimensionalOS/dimos.git@dev'` -->
 
-### Usage
+### Dimensional Usage
 
 #### Control a robot in a simulation (no robot required)
 
-After running the commads below, open http://localhost:7779/command-center to control the robot movement.
 
 ```sh
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
@@ -84,16 +83,20 @@ export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
 dimos --viewer-backend rerun-web --simulation run unitree-go2
 ```
 
-#### Get it working on a physical robot!
+#### Control a real robot (Unitree Go2 over WebRTC)
 
 ```sh
-export ROBOT_IP=PUT_YOUR_IP_ADDR_HERE
+export ROBOT_IP=<YOUR_ROBOT_IP>
 dimos --viewer-backend rerun-web run unitree-go2
 ```
 
-#### Have it controlled by AI!
+After running dimOS open http://localhost:7779 to control robot movement.
 
-WARNING: This is a demo showing the **connection** between AI and robotic control -- not a demo of a super-intelligent AI. Be ready to physically prevent your robot from taking dumb physical actions.
+#### Dimensional Agents
+
+> \[!NOTE]
+>
+> **Experimental Beta: Potential unstoppable robot sentience**
 
 ```sh
 export OPENAI_API_KEY=<your private key>
@@ -105,8 +108,6 @@ After running that, open a new terminal and run the following to start giving in
 # activate the venv in this new terminal
 source .venv/bin/activate
 
-# Note: after running the next command, WAIT for the agent to connect
-# (this will take a while the first time)
 # then tell the agent "explore the room"
 # then tell it to go to something, ex: "go to the door"
 humancli
