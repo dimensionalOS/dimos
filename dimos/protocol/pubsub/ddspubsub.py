@@ -18,14 +18,12 @@ from dataclasses import dataclass
 import threading
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from cyclonedds.core import Listener
-from cyclonedds.idl import IdlStruct
 from cyclonedds.pub import DataWriter as DDSDataWriter
 from cyclonedds.sub import DataReader as DDSDataReader
 from cyclonedds.topic import Topic as CycloneDDSTopic
 
-from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
-from dimos.protocol.service.ddsservice import DDSConfig, DDSService
+from dimos.protocol.pubsub.spec import PubSub
+from dimos.protocol.service.ddsservice import DDSService
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -37,15 +35,6 @@ logger = setup_logger()
 @runtime_checkable
 class DDSMsg(Protocol):
     msg_name: str
-
-    @classmethod
-    def dds_decode(cls, data: bytes) -> DDSMsg:
-        """Decode bytes into a DDS message instance."""
-        ...
-
-    def dds_encode(self) -> bytes:
-        """Encode this message instance into bytes."""
-        ...
 
 
 @dataclass
@@ -127,7 +116,7 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
         with self._reader_lock:
             if topic not in self._readers:
                 dds_topic = self._get_cyclonedds_topic(topic)
-                reader = DDSDataReader[Any](self.get_participant(), dds_topic)
+                reader = DDSDataReader(self.get_participant(), dds_topic)
                 self._readers[topic] = reader
                 logger.debug(f"Created DataReader for topic: {topic.topic}")
             return self._readers[topic]
@@ -160,27 +149,11 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
             pass
 
 
-class DDSEncoderMixin(PubSubEncoderMixin[Topic, Any, IdlStruct]):
-    def encode(self, msg: DDSMsg, _: Topic) -> bytes:
-        return msg.dds_encode()
-
-    def decode(self, msg: bytes, topic: Topic) -> DDSMsg:
-        if topic.dds_type is None:
-            raise ValueError(
-                f"Cannot decode message for topic '{topic.topic}': no dds_type specified"
-            )
-        return topic.dds_type.dds_decode(msg)
-
-
-class DDS(
-    # DDSEncoderMixin, # TODO: Add back so encoding and decoding is handled by DDS
-    DDSPubSubBase,
-): ...
+class DDS(DDSPubSubBase): ...
 
 
 __all__ = [
     "DDS",
-    "DDSEncoderMixin",
     "DDSMsg",
     "DDSPubSubBase",
     "Topic",

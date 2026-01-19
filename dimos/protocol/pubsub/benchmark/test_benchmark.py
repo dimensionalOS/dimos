@@ -22,6 +22,7 @@ import time
 from typing import Any
 
 from cyclonedds.idl import IdlStruct
+from cyclonedds.idl.types import sequence, uint8
 import pytest
 
 from dimos.protocol.pubsub.benchmark.testdata import make_data, testdata
@@ -82,16 +83,7 @@ def pubsub_id(testcase: TestCase[Any, Any]) -> str:
 class Message(IdlStruct):
     """DDS message with binary data payload following IdlStruct format."""
 
-    payload: str
-
-    def dds_encode(self) -> bytes:
-        """Encode message to bytes for DDS transmission."""
-        return self.payload.encode("latin-1")
-
-    @classmethod
-    def dds_decode(cls, data: bytes) -> "Message":
-        """Decode bytes back to Message instance."""
-        return cls(payload=data.decode("latin-1"))
+    payload: sequence[uint8]
 
 
 @contextmanager
@@ -106,7 +98,7 @@ def dds_pubsub_channel() -> Generator[DDS, None, None]:
 def dds_msggen(size: int) -> tuple[DDSTopic, Message]:
     """Generate message for DDS pubsub benchmark."""
     topic = DDSTopic(topic="benchmark/dds", dds_type=Message)
-    msg = Message(payload=make_data(size).decode("latin-1"))
+    msg = Message(payload=make_data(size))
     return (topic, msg)
 
 
