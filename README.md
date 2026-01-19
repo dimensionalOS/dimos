@@ -139,4 +139,4 @@ In addition to rerun logging, DimOS comes with a number of monitoring tools:
 
 # License
 
-DimOS is licensed under the Apache License, Version 2.0. And will always be free and open source.
+DimOS is licensed under the Apache License, Version 2.0.
