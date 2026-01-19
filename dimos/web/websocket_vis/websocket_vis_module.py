@@ -26,6 +26,7 @@ from pathlib import Path as FilePath
 import threading
 import time
 from typing import Any
+import webbrowser
 
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
@@ -56,6 +57,9 @@ from dimos.utils.logging_config import setup_logger
 from .optimized_costmap import OptimizedCostmapEncoder
 
 logger = setup_logger()
+
+_browser_open_lock = threading.Lock()
+_browser_opened = False
 
 
 class WebsocketVisModule(Module):
@@ -149,11 +153,20 @@ class WebsocketVisModule(Module):
         self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
         self._uvicorn_server_thread.start()
 
-        # Show control center link in terminal
-        if self._global_config.viewer_backend == "rerun-web":
-            logger.info(f"Command Center: http://localhost:{self.port}")
-        else:
-            logger.info(f"Command Center: http://localhost:{self.port}/command-center")
+        # Auto-open the appropriate landing page:
+        # - rerun-web: "/" serves dashboard with Rerun iframe + command center iframe
+        # - rerun-native: "/" redirects to "/command-center"
+        url = f"http://localhost:{self.port}/"
+        logger.info(f"Dimensional Command Center: {url}")
+
+        global _browser_opened
+        with _browser_open_lock:
+            if not _browser_opened:
+                try:
+                    webbrowser.open_new_tab(url)
+                    _browser_opened = True
+                except Exception as e:
+                    logger.debug(f"Failed to open browser: {e}")
 
         try:
             unsub = self.odom.subscribe(self._on_robot_pose)
