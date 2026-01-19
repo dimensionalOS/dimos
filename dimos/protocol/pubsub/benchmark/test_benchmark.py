@@ -15,13 +15,16 @@
 # limitations under the License.
 
 from collections.abc import Generator
+from contextlib import contextmanager
+from dataclasses import dataclass
 import threading
 import time
 from typing import Any
 
+from cyclonedds.idl import IdlStruct
 import pytest
 
-from dimos.protocol.pubsub.benchmark.testdata import testdata
+from dimos.protocol.pubsub.benchmark.testdata import make_data, testdata
 from dimos.protocol.pubsub.benchmark.type import (
     BenchmarkResult,
     BenchmarkResults,
@@ -29,6 +32,7 @@ from dimos.protocol.pubsub.benchmark.type import (
     PubSubContext,
     TestCase,
 )
+from dimos.protocol.pubsub.ddspubsub import DDS, Topic as DDSTopic
 
 # Message sizes for throughput benchmarking (powers of 2 from 64B to 10MB)
 MSG_SIZES = [
@@ -71,6 +75,48 @@ def pubsub_id(testcase: TestCase[Any, Any]) -> str:
     # Convert e.g. "lcm_pubsub_channel" -> "LCM", "memory_pubsub_channel" -> "Memory"
     prefix = name.replace("_pubsub_channel", "").replace("_", " ")
     return prefix.upper() if len(prefix) <= 3 else prefix.title().replace(" ", "")
+
+
+# DDS Testing Implementation
+@dataclass
+class Message(IdlStruct):
+    """DDS message with binary data payload following IdlStruct format."""
+
+    payload: str
+
+    def dds_encode(self) -> bytes:
+        """Encode message to bytes for DDS transmission."""
+        return self.payload.encode("latin-1")
+
+    @classmethod
+    def dds_decode(cls, data: bytes) -> "Message":
+        """Decode bytes back to Message instance."""
+        return cls(payload=data.decode("latin-1"))
+
+
+@contextmanager
+def dds_pubsub_channel() -> Generator[DDS, None, None]:
+    """Context manager for DDS PubSub implementation."""
+    dds_pubsub = DDS()
+    dds_pubsub.start()
+    yield dds_pubsub
+    dds_pubsub.stop()
+
+
+def dds_msggen(size: int) -> tuple[DDSTopic, Message]:
+    """Generate message for DDS pubsub benchmark."""
+    topic = DDSTopic(topic="benchmark/dds", dds_type=Message)
+    msg = Message(payload=make_data(size).decode("latin-1"))
+    return (topic, msg)
+
+
+# Add DDS to benchmark testdata before test is defined
+testdata.append(
+    TestCase(
+        pubsub_context=dds_pubsub_channel,
+        msg_gen=dds_msggen,
+    )
+)
 
 
 @pytest.fixture(scope="module")

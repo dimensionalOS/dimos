@@ -22,6 +22,7 @@ from cyclonedds.core import Listener
 from cyclonedds.idl import IdlStruct
 from cyclonedds.pub import DataWriter as DDSDataWriter
 from cyclonedds.sub import DataReader as DDSDataReader
+from cyclonedds.topic import Topic as CycloneDDSTopic
 
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
 from dimos.protocol.service.ddsservice import DDSConfig, DDSService
@@ -29,8 +30,6 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from cyclonedds.topic import Topic as DDSTopic
 
 logger = setup_logger()
 
@@ -75,23 +74,34 @@ class Topic:
 class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._callbacks: dict[DDSTopic, list[Callable[[Any, DDSTopic], None]]] = {}
-        self._writers: dict[DDSTopic, DDSDataWriter] = {}
-        self._readers: dict[str, DDSDataReader] = {}
+        self._callbacks: dict[Topic, list[Callable[[Any, Topic], None]]] = {}
+        self._writers: dict[Topic, DDSDataWriter] = {}
+        self._readers: dict[Topic, DDSDataReader] = {}
+        self._cyclonedds_topics: dict[Topic, CycloneDDSTopic] = {}
         self._writer_lock = threading.Lock()
         self._reader_lock = threading.Lock()
 
-    def _get_writer(self, topic: DDSTopic) -> DDSDataWriter:
-        """Get a DataWriter for the given topic name, create if it does not exsist."""
+    def _get_cyclonedds_topic(self, topic: Topic) -> CycloneDDSTopic:
+        """Convert custom Topic to cyclonedds.topic.Topic, caching the result."""
+        if topic not in self._cyclonedds_topics:
+            if topic.dds_type is None:
+                raise ValueError(f"Cannot create DDS topic '{topic.topic}': no dds_type specified")
+            dds_topic = CycloneDDSTopic(self.get_participant(), topic.topic, topic.dds_type)
+            self._cyclonedds_topics[topic] = dds_topic
+        return self._cyclonedds_topics[topic]
+
+    def _get_writer(self, topic: Topic) -> DDSDataWriter:
+        """Get a DataWriter for the given topic name, create if it does not exist."""
 
         with self._writer_lock:
             if topic not in self._writers:
-                writer = DDSDataWriter(self.get_participant(), topic)
+                dds_topic = self._get_cyclonedds_topic(topic)
+                writer = DDSDataWriter(self.get_participant(), dds_topic)
                 self._writers[topic] = writer
                 logger.debug(f"Created DataWriter for topic: {topic.topic}")
             return self._writers[topic]
 
-    def publish(self, topic: DDSTopic, message: Any) -> None:
+    def publish(self, topic: Topic, message: Any) -> None:
         """Publish a message to a DDS topic."""
 
         writer = self._get_writer(topic)
@@ -111,12 +121,13 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
                     # Log but continue processing other callbacks
                     logger.error(f"Error in callback for topic {topic}: {e}")
 
-    def _get_reader(self, topic: DDSTopic) -> DDSDataReader:
+    def _get_reader(self, topic: Topic) -> DDSDataReader:
         """Get or create a DataReader for the given topic with listener."""
 
         with self._reader_lock:
             if topic not in self._readers:
-                reader = DDSDataReader[Any](self.get_participant(), topic)
+                dds_topic = self._get_cyclonedds_topic(topic)
+                reader = DDSDataReader[Any](self.get_participant(), dds_topic)
                 self._readers[topic] = reader
                 logger.debug(f"Created DataReader for topic: {topic.topic}")
             return self._readers[topic]
@@ -138,9 +149,7 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
 
         return unsubscribe
 
-    def unsubscribe_callback(
-        self, topic: DDSTopic, callback: Callable[[Any, DDSTopic], None]
-    ) -> None:
+    def unsubscribe_callback(self, topic: Topic, callback: Callable[[Any, Topic], None]) -> None:
         """Unsubscribe a callback from a topic."""
         try:
             if topic in self._callbacks:
@@ -164,7 +173,7 @@ class DDSEncoderMixin(PubSubEncoderMixin[Topic, Any, IdlStruct]):
 
 
 class DDS(
-    DDSEncoderMixin,
+    # DDSEncoderMixin, # TODO: Add back so encoding and decoding is handled by DDS
     DDSPubSubBase,
 ): ...
 
