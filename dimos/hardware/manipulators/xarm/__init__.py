@@ -12,18 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""XArm manipulator hardware backend.
+
+Usage:
+    >>> from dimos.hardware.manipulators.xarm import XArmBackend
+    >>> backend = XArmBackend(ip="192.168.1.185", dof=6)
+    >>> backend.connect()
+    >>> positions = backend.read_joint_positions()
 """
-xArm Manipulator Driver Module
 
-Real-time driver and components for xArm5/6/7 manipulators.
-"""
+from dimos.hardware.manipulators.xarm.backend import XArmBackend
 
-from dimos.hardware.manipulators.xarm.spec import ArmDriverSpec
-from dimos.hardware.manipulators.xarm.xarm_driver import XArmDriver
-from dimos.hardware.manipulators.xarm.xarm_wrapper import XArmSDKWrapper
-
-__all__ = [
-    "ArmDriverSpec",
-    "XArmDriver",
-    "XArmSDKWrapper",
-]
+__all__ = ["XArmBackend"]

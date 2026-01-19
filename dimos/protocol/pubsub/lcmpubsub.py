@@ -95,7 +95,7 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
         return unsubscribe
 
 
-class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
+class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any, bytes]):
     def encode(self, msg: LCMMsg, _: Topic) -> bytes:
         return msg.lcm_encode()
 
@@ -107,7 +107,7 @@ class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
         return topic.lcm_type.lcm_decode(msg)
 
 
-class JpegEncoderMixin(PubSubEncoderMixin[Topic, Any]):
+class JpegEncoderMixin(PubSubEncoderMixin[Topic, Any, bytes]):
     def encode(self, msg: LCMMsg, _: Topic) -> bytes:
         return msg.lcm_jpeg_encode()  # type: ignore[attr-defined, no-any-return]
 

@@ -150,7 +150,10 @@ class WebsocketVisModule(Module):
         self._uvicorn_server_thread.start()
 
         # Show control center link in terminal
-        logger.info(f"Command Center: http://localhost:{self.port}/command-center")
+        if self._global_config.viewer_backend == "rerun-web":
+            logger.info(f"Command Center: http://localhost:{self.port}")
+        else:
+            logger.info(f"Command Center: http://localhost:{self.port}/command-center")
 
         try:
             unsub = self.odom.subscribe(self._on_robot_pose)

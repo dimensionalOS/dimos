@@ -124,7 +124,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
     def start(self) -> None:
         pref = (self.config.prefer or "auto").lower()
         backend = os.getenv("DIMOS_IPC_BACKEND", pref).lower()
-        logger.info(f"SharedMemory PubSub starting (backend={backend})")
+        logger.debug(f"SharedMemory PubSub starting (backend={backend})")
         # No global thread needed; per-topic fanout starts on first subscribe.
 
     def stop(self) -> None:
@@ -145,7 +145,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
                     except Exception:
                         pass
             self._topics.clear()
-        logger.info("SharedMemory PubSub stopped.")
+        logger.debug("SharedMemory PubSub stopped.")
 
     # ----- PubSub API (bytes on the wire) ----------------------------------
 
@@ -295,7 +295,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 # --------------------------------------------------------------------------------------
 
 
-class SharedMemoryBytesEncoderMixin(PubSubEncoderMixin[str, bytes]):
+class SharedMemoryBytesEncoderMixin(PubSubEncoderMixin[str, bytes, bytes]):
     """Identity encoder for raw bytes."""
 
     def encode(self, msg: bytes, _: str) -> bytes:

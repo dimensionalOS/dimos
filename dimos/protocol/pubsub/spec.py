@@ -22,6 +22,7 @@ from typing import Any, Generic, TypeVar
 
 MsgT = TypeVar("MsgT")
 TopicT = TypeVar("TopicT")
+EncodingT = TypeVar("EncodingT")
 
 
 class PubSub(Generic[TopicT, MsgT], ABC):
@@ -91,7 +92,7 @@ class PubSub(Generic[TopicT, MsgT], ABC):
             unsubscribe_fn()
 
 
-class PubSubEncoderMixin(Generic[TopicT, MsgT], ABC):
+class PubSubEncoderMixin(Generic[TopicT, MsgT, EncodingT], ABC):
     """Mixin that encodes messages before publishing and decodes them after receiving.
 
     Usage: Just specify encoder and decoder as a subclass:
@@ -104,10 +105,10 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT], ABC):
     """
 
     @abstractmethod
-    def encode(self, msg: MsgT, topic: TopicT) -> bytes: ...
+    def encode(self, msg: MsgT, topic: TopicT) -> EncodingT: ...
 
     @abstractmethod
-    def decode(self, msg: bytes, topic: TopicT) -> MsgT: ...
+    def decode(self, msg: EncodingT, topic: TopicT) -> MsgT: ...
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
@@ -127,14 +128,14 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT], ABC):
     ) -> Callable[[], None]:
         """Subscribe with automatic decoding."""
 
-        def wrapper_cb(encoded_data: bytes, topic: TopicT) -> None:
+        def wrapper_cb(encoded_data: EncodingT, topic: TopicT) -> None:
             decoded_message = self.decode(encoded_data, topic)
             callback(decoded_message, topic)
 
         return super().subscribe(topic, wrapper_cb)  # type: ignore[misc, no-any-return]
 
 
-class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT]):
+class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT, bytes]):
     def encode(self, msg: MsgT, *_: TopicT) -> bytes:  # type: ignore[return]
         try:
             return pickle.dumps(msg)

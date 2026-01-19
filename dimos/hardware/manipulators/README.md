@@ -1,173 +1,163 @@
 # Manipulator Drivers
 
-Component-based framework for integrating robotic manipulators into DIMOS.
+This module provides manipulator arm drivers using the **B-lite architecture**: Protocol-only with injectable backends.
 
-## Quick Start: Adding a New Manipulator
+## Architecture Overview
 
-Adding support for a new robot arm requires **two files**:
-1. **SDK Wrapper** (~200-500 lines) - Translates vendor SDK to standard interface
-2. **Driver** (~30-50 lines) - Assembles components and configuration
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Driver (Module)                        │
+│  - Owns threading (control loop, monitor loop)              │
+│  - Publishes joint_state, robot_state                       │
+│  - Subscribes to joint_position_command, joint_velocity_cmd │
+│  - Exposes RPC methods (move_joint, enable_servos, etc.)    │
+└─────────────────────┬───────────────────────────────────────┘
+                      │ uses
+┌─────────────────────▼───────────────────────────────────────┐
+│              Backend (implements Protocol)                   │
+│  - Handles SDK communication                                 │
+│  - Unit conversions (radians ↔ vendor units)                │
+│  - Swappable: XArmBackend, PiperBackend, MockBackend        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Key Benefits
+
+- **Testable**: Inject `MockBackend` for unit tests without hardware
+- **Flexible**: Each arm controls its own threading/timing
+- **Simple**: No ABC inheritance required - just implement the Protocol
+- **Type-safe**: Full type checking via `ManipulatorBackend` Protocol
 
 ## Directory Structure
 
 ```
 manipulators/
-├── base/                      # Framework (don't modify)
-│   ├── sdk_interface.py       # BaseManipulatorSDK abstract class
-│   ├── driver.py              # BaseManipulatorDriver base class
-│   ├── spec.py                # ManipulatorCapabilities dataclass
-│   └── components/            # Reusable standard components
-├── xarm/                      # XArm implementation (reference)
-└── piper/                     # Piper implementation (reference)
+├── spec.py              # ManipulatorBackend Protocol + shared types
+├── mock/
+│   └── backend.py       # MockBackend for testing
+├── xarm/
+│   ├── backend.py       # XArmBackend (SDK wrapper)
+│   ├── arm.py           # XArm driver module
+│   └── blueprints.py    # Pre-configured blueprints
+└── piper/
+    ├── backend.py       # PiperBackend (SDK wrapper)
+    ├── arm.py           # Piper driver module
+    └── blueprints.py    # Pre-configured blueprints
 ```
 
-## Hardware Requirements
+## Quick Start
 
-Your manipulator **must** support:
-
-| Requirement | Description |
-|-------------|-------------|
-| Joint Position Feedback | Read current joint angles |
-| Joint Position Control | Command target joint positions |
-| Servo Enable/Disable | Enable and disable motor power |
-| Error Reporting | Report error codes/states |
-| Emergency Stop | Hardware or software e-stop |
-
-**Optional:** velocity control, torque control, cartesian control, F/T sensor, gripper
-
-## Step 1: Implement SDK Wrapper
-
-Create `your_arm/your_arm_wrapper.py` implementing `BaseManipulatorSDK`:
+### Using a Driver Directly
 
 ```python
-from dimos.hardware.manipulators.base.sdk_interface import BaseManipulatorSDK, ManipulatorInfo
+from dimos.hardware.manipulators.xarm import XArm
 
-class YourArmSDKWrapper(BaseManipulatorSDK):
-    def __init__(self):
-        self._sdk = None
-
-    def connect(self, config: dict) -> bool:
-        self._sdk = YourNativeSDK(config['ip'])
-        return self._sdk.connect()
-
-    def get_joint_positions(self) -> list[float]:
-        """Return positions in RADIANS."""
-        degrees = self._sdk.get_angles()
-        return [math.radians(d) for d in degrees]
-
-    def set_joint_positions(self, positions: list[float],
-                           velocity: float, acceleration: float) -> bool:
-        return self._sdk.move_joints(positions, velocity)
-
-    def enable_servos(self) -> bool:
-        return self._sdk.motor_on()
-
-    # ... implement remaining required methods (see sdk_interface.py)
+arm = XArm(ip="192.168.1.185", dof=6)
+arm.start()
+arm.enable_servos()
+arm.move_joint([0, 0, 0, 0, 0, 0])
+arm.stop()
 ```
 
-### Unit Conventions
+### Using Blueprints
 
-**All SDK wrappers must use these standard units:**
+```python
+from dimos.hardware.manipulators.xarm.blueprints import xarm_trajectory
+
+coordinator = xarm_trajectory.build()
+coordinator.loop()
+```
+
+### Testing Without Hardware
+
+```python
+from dimos.hardware.manipulators.mock import MockBackend
+from dimos.hardware.manipulators.xarm import XArm
+
+arm = XArm(backend=MockBackend(dof=6))
+arm.start()  # No hardware needed!
+arm.move_joint([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
+```
+
+## Adding a New Arm
+
+1. **Create the backend** (`backend.py`):
+
+```python
+class MyArmBackend:  # No inheritance needed - just match the Protocol
+    def __init__(self, ip: str = "192.168.1.100", dof: int = 6) -> None:
+        self._ip = ip
+        self._dof = dof
+
+    def connect(self) -> bool: ...
+    def disconnect(self) -> None: ...
+    def read_joint_positions(self) -> list[float]: ...
+    def write_joint_positions(self, positions: list[float], velocity: float = 1.0) -> bool: ...
+    # ... implement other Protocol methods
+```
+
+2. **Create the driver** (`arm.py`):
+
+```python
+from dimos.core import Module, ModuleConfig, In, Out, rpc
+from .backend import MyArmBackend
+
+class MyArm(Module[MyArmConfig]):
+    joint_state: Out[JointState]
+    robot_state: Out[RobotState]
+    joint_position_command: In[JointCommand]
+
+    def __init__(self, backend=None, **kwargs):
+        super().__init__(**kwargs)
+        self.backend = backend or MyArmBackend(
+            ip=self.config.ip,
+            dof=self.config.dof,
+        )
+        # ... setup control loops
+```
+
+3. **Create blueprints** (`blueprints.py`) for common configurations.
+
+## ManipulatorBackend Protocol
+
+All backends must implement these core methods:
+
+| Category | Methods |
+|----------|---------|
+| Connection | `connect()`, `disconnect()`, `is_connected()` |
+| Info | `get_info()`, `get_dof()`, `get_limits()` |
+| State | `read_joint_positions()`, `read_joint_velocities()`, `read_joint_efforts()` |
+| Motion | `write_joint_positions()`, `write_joint_velocities()`, `write_stop()` |
+| Servo | `write_enable()`, `read_enabled()`, `write_clear_errors()` |
+| Mode | `set_control_mode()`, `get_control_mode()` |
+
+Optional methods (return `None`/`False` if unsupported):
+- `read_cartesian_position()`, `write_cartesian_position()`
+- `read_gripper_position()`, `write_gripper_position()`
+- `read_force_torque()`
+
+## Unit Conventions
+
+All backends convert to/from SI units:
 
 | Quantity | Unit |
 |----------|------|
-| Joint positions | radians |
-| Joint velocities | rad/s |
-| Joint accelerations | rad/s^2 |
-| Joint torques | Nm |
-| Cartesian positions | meters |
-| Forces | N |
+| Angles | radians |
+| Angular velocity | rad/s |
+| Torque | Nm |
+| Position | meters |
+| Force | Newtons |
 
-## Step 2: Create Driver Assembly
+## Available Blueprints
 
-Create `your_arm/your_arm_driver.py`:
+### XArm
+- `xarm_servo` - Basic servo control (6-DOF)
+- `xarm5_servo`, `xarm7_servo` - 5/7-DOF variants
+- `xarm_trajectory` - Driver + trajectory controller
+- `xarm_cartesian` - Driver + cartesian controller
 
-```python
-from dimos.hardware.manipulators.base.driver import BaseManipulatorDriver
-from dimos.hardware.manipulators.base.spec import ManipulatorCapabilities
-from dimos.hardware.manipulators.base.components import (
-    StandardMotionComponent,
-    StandardServoComponent,
-    StandardStatusComponent,
-)
-from .your_arm_wrapper import YourArmSDKWrapper
-
-class YourArmDriver(BaseManipulatorDriver):
-    def __init__(self, config: dict):
-        sdk = YourArmSDKWrapper()
-
-        capabilities = ManipulatorCapabilities(
-            dof=6,
-            has_gripper=False,
-            has_force_torque=False,
-            joint_limits_lower=[-3.14, -2.09, -3.14, -3.14, -3.14, -3.14],
-            joint_limits_upper=[3.14, 2.09, 3.14, 3.14, 3.14, 3.14],
-            max_joint_velocity=[2.0] * 6,
-            max_joint_acceleration=[4.0] * 6,
-        )
-
-        components = [
-            StandardMotionComponent(),
-            StandardServoComponent(),
-            StandardStatusComponent(),
-        ]
-
-        super().__init__(sdk, components, config, capabilities)
-```
-
-## Component API Decorator
-
-Use `@component_api` to expose methods as RPC endpoints:
-
-```python
-from dimos.hardware.manipulators.base.components import component_api
-
-class StandardMotionComponent:
-    @component_api
-    def move_joint(self, positions: list[float], velocity: float = 1.0):
-        """Auto-exposed as driver.move_joint()"""
-        ...
-```
-
-## Threading Architecture
-
-The driver runs **2 threads**:
-1. **Control Loop (100Hz)** - Processes commands, reads joint state, publishes feedback
-2. **Monitor Loop (10Hz)** - Reads robot state, errors, optional sensors
-
-```
-RPC Call → Command Queue → Control Loop → SDK → Hardware
-                              ↓
-                         SharedState → LCM Publisher
-```
-
-## Testing Your Driver
-
-```python
-driver = YourArmDriver({"ip": "192.168.1.100"})
-driver.start()
-driver.enable_servo()
-driver.move_joint([0, 0, 0, 0, 0, 0], velocity=0.5)
-state = driver.get_joint_state()
-driver.stop()
-```
-
-## Common Issues
-
-| Issue | Solution |
-|-------|----------|
-| Unit mismatch | Verify wrapper converts to radians/meters |
-| Commands ignored | Ensure servos are enabled before commanding |
-| Velocity not working | Some arms need mode switch via `set_control_mode()` |
-
-## Architecture Details
-
-For complete architecture documentation including full SDK interface specification,
-component details, and testing strategies, see:
-
-**[component_based_architecture.md](base/component_based_architecture.md)**
-
-## Reference Implementations
-
-- **XArm**: [xarm/xarm_wrapper.py](xarm/xarm_wrapper.py) - Full-featured wrapper
-- **Piper**: [piper/piper_wrapper.py](piper/piper_wrapper.py) - Shows velocity workaround
+### Piper
+- `piper_servo` - Basic servo control
+- `piper_servo_gripper` - With gripper support
+- `piper_trajectory` - Driver + trajectory controller
+- `piper_left`, `piper_right` - Dual arm configurations
