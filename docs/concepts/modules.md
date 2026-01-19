@@ -174,3 +174,6 @@ to_svg(agentic, "assets/go2_agentic.svg")
 
 <!--Result:-->
 ![output](assets/go2_agentic.svg)
+
+
+To see more information on how to use Blueprints, see [Blueprints](/docs/concepts/blueprints.md).
