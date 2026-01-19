@@ -15,7 +15,7 @@
 # limitations under the License.
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 import time
 from typing import Any
@@ -28,7 +28,7 @@ from dimos.protocol.pubsub.memory import Memory
 
 
 @contextmanager
-def memory_context():
+def memory_context() -> Generator[Memory, None, None]:
     """Context manager for Memory PubSub implementation."""
     memory = Memory()
     try:
@@ -47,7 +47,7 @@ try:
     from dimos.protocol.pubsub.redispubsub import Redis
 
     @contextmanager
-    def redis_context():
+    def redis_context() -> Generator[Redis, None, None]:
         redis_pubsub = Redis()
         redis_pubsub.start()
         yield redis_pubsub
@@ -63,7 +63,7 @@ except (ConnectionError, ImportError):
 
 
 @contextmanager
-def lcm_context():
+def lcm_context() -> Generator[LCM, None, None]:
     lcm_pubsub = LCM(autoconf=True)
     lcm_pubsub.start()
     yield lcm_pubsub
@@ -83,7 +83,7 @@ from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
 
 
 @contextmanager
-def shared_memory_cpu_context():
+def shared_memory_cpu_context() -> Generator[PickleSharedMemory, None, None]:
     shared_mem_pubsub = PickleSharedMemory(prefer="cpu")
     shared_mem_pubsub.start()
     yield shared_mem_pubsub
@@ -100,13 +100,13 @@ testdata.append(
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
-def test_store(pubsub_context, topic, values) -> None:
+def test_store(pubsub_context: Callable[[], Any], topic: Any, values: list[Any]) -> None:
     with pubsub_context() as x:
         # Create a list to capture received messages
-        received_messages = []
+        received_messages: list[Any] = []
 
         # Define callback function that stores received messages
-        def callback(message, _) -> None:
+        def callback(message: Any, _: Any) -> None:
             received_messages.append(message)
 
         # Subscribe to the topic with our callback
@@ -125,18 +125,20 @@ def test_store(pubsub_context, topic, values) -> None:
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
-def test_multiple_subscribers(pubsub_context, topic, values) -> None:
+def test_multiple_subscribers(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
     """Test that multiple subscribers receive the same message."""
     with pubsub_context() as x:
         # Create lists to capture received messages for each subscriber
-        received_messages_1 = []
-        received_messages_2 = []
+        received_messages_1: list[Any] = []
+        received_messages_2: list[Any] = []
 
         # Define callback functions
-        def callback_1(message, topic) -> None:
+        def callback_1(message: Any, topic: Any) -> None:
             received_messages_1.append(message)
 
-        def callback_2(message, topic) -> None:
+        def callback_2(message: Any, topic: Any) -> None:
             received_messages_2.append(message)
 
         # Subscribe both callbacks to the same topic
@@ -157,14 +159,14 @@ def test_multiple_subscribers(pubsub_context, topic, values) -> None:
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
-def test_unsubscribe(pubsub_context, topic, values) -> None:
+def test_unsubscribe(pubsub_context: Callable[[], Any], topic: Any, values: list[Any]) -> None:
     """Test that unsubscribed callbacks don't receive messages."""
     with pubsub_context() as x:
         # Create a list to capture received messages
-        received_messages = []
+        received_messages: list[Any] = []
 
         # Define callback function
-        def callback(message, topic) -> None:
+        def callback(message: Any, topic: Any) -> None:
             received_messages.append(message)
 
         # Subscribe and get unsubscribe function
@@ -184,14 +186,16 @@ def test_unsubscribe(pubsub_context, topic, values) -> None:
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
-def test_multiple_messages(pubsub_context, topic, values) -> None:
+def test_multiple_messages(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
     """Test that subscribers receive multiple messages in order."""
     with pubsub_context() as x:
         # Create a list to capture received messages
-        received_messages = []
+        received_messages: list[Any] = []
 
         # Define callback function
-        def callback(message, topic) -> None:
+        def callback(message: Any, topic: Any) -> None:
             received_messages.append(message)
 
         # Subscribe to the topic
@@ -212,7 +216,9 @@ def test_multiple_messages(pubsub_context, topic, values) -> None:
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
 @pytest.mark.asyncio
-async def test_async_iterator(pubsub_context, topic, values) -> None:
+async def test_async_iterator(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
     """Test that async iterator receives messages correctly."""
     with pubsub_context() as x:
         # Get the messages to send (using the rest of the values)
@@ -261,15 +267,17 @@ async def test_async_iterator(pubsub_context, topic, values) -> None:
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
-def test_high_volume_messages(pubsub_context, topic, values) -> None:
+def test_high_volume_messages(
+    pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
+) -> None:
     """Test that all 5000 messages are received correctly."""
     with pubsub_context() as x:
         # Create a list to capture received messages
-        received_messages = []
+        received_messages: list[Any] = []
         last_message_time = [time.time()]  # Use list to allow modification in callback
 
         # Define callback function
-        def callback(message, topic) -> None:
+        def callback(message: Any, topic: Any) -> None:
             received_messages.append(message)
             last_message_time[0] = time.time()
 

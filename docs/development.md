@@ -22,8 +22,8 @@ Install the *Dev Containers* plug-in for VS Code, Cursor, or your IDE of choice 
 
 ### Shell only quick start
 
-Terminal within your IDE should use devcontainer transparently given you installed the plugin, but in case you want to run our shell without an IDE, you can use `./bin/dev`
-(it depends on npm/node being installed)
+The terminal within your IDE should use devcontainer transparently given you installed the plugin, but in case you want to run our shell without an IDE, you can use `./bin/dev`.
+(It depends on npm/node being installed.)
 
 ```sh
 ./bin/dev
@@ -59,7 +59,7 @@ You’ll land in the workspace as **root** with all project tooling available.
 ## Pre-Commit Hooks
 
 We use [pre-commit](https://pre-commit.com) (config in `.pre-commit-config.yaml`) to enforce formatting, licence headers, EOLs, LFS checks, etc. Hooks run in **milliseconds**.
-Hooks also run in CI; any auto-fixes are committed back to your PR, so local installation is optional — but gives faster feedback.
+Hooks also run in CI. Any auto-fixes are committed back to your PR, so local installation is optional — but gives faster feedback.
 
 ```sh
 CRLF end-lines checker...................................................Passed
@@ -74,11 +74,11 @@ format json..............................................................Passed
 LFS data.................................................................Passed
 
 ```
-Given your editor uses ruff via devcontainers (which it should) actual auto-commit hook won't ever reformat your code - IDE will have already done this.
+Given your editor uses ruff via devcontainers (which it should), the auto-commit hook won't ever reformat your code. Your IDE will have already done this.
 
 ### Running hooks manually
 
-Given your editor uses git via devcontainers (which it should) auto-commit hooks will run automatically, this is in case you want to run them manually.
+Given your editor uses git via devcontainers (which it should), auto-commit hooks will run automatically. This is in case you want to run them manually.
 
 Inside the dev container (Your IDE will likely run this transparently for each commit if using devcontainer plugin):
 
@@ -108,9 +108,9 @@ All tests run with **pytest** inside the dev container, ensuring local results m
 pytest             # run all tests beneath the current directory
 ```
 
-Depending on which dir you are in, only tests from that dir will run, which is convinient when developing - you can frequently validate your feature tree.
+Depending on which dir you are in, only tests from that directory will run, which is convenient when developing. You can frequently validate your feature tree.
 
-Your vibe coding agent will know to use these tests via the devcontainer so it can validate it's work.
+Your vibe coding agent will know to use these tests via the devcontainer so it can validate its work.
 
 
 #### Useful options
@@ -122,9 +122,9 @@ Your vibe coding agent will know to use these tests via the devcontainer so it c
 | Run tests with a given tag | `pytest -m <tag>`       |
 
 
-We use tags for special tests, like `vis` or `tool` for things that aren't meant to be ran in CI and when casually developing, something that requires hardware or visual inspection (pointcloud merging vis etc)
+We use tags for special tests, like `vis` or `tool` for things that aren't meant to be ran in CI and when casually developing, something that requires hardware or visual inspection (pointcloud merging vis etc).
 
-You can enable a tag by selecting -m <tag_name> - these are configured in `./pyproject.toml`
+You can enable a tag by selecting `-m <tag_name>`. These are configured in `./pyproject.toml`.
 
 ```sh
 root@dimos:/workspaces/dimos/dimos # pytest -sm vis -k my_visualization

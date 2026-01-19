@@ -157,7 +157,7 @@ class WebsocketVisModule(Module):
         # - rerun-web: "/" serves dashboard with Rerun iframe + command center iframe
         # - rerun-native: "/" redirects to "/command-center"
         url = f"http://localhost:{self.port}/"
-        logger.info(f"Dashboard: {url}")
+        logger.info(f"Dimensional Command Center: {url}")
 
         global _browser_opened
         with _browser_open_lock:

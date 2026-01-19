@@ -22,7 +22,7 @@ from dimos.protocol.pubsub.shmpubsub import SharedMemoryPubSubBase
 from dimos.protocol.pubsub.spec import PubSubEncoderMixin
 
 
-class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image]):
+class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image, bytes]):
     def __init__(self, quality: int = 75, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
         self.jpeg = TurboJPEG()

@@ -82,14 +82,14 @@ Recommended transform chain (publish every frame or at your preferred TF rate):
 
 Notes:
 - If you align depth to color, keep TFs the same but publish depth images in `_color_optical_frame`.
-- Ensure `color_image.frame_id` and `camera_info.frame_id` match; same for depth.
+- Ensure `color_image.frame_id` and `camera_info.frame_id` match. Same for depth.
 
 ## Required Streams / Topics
 
 Use these stream names in your module and attach transports as needed.
 Default LCM topics in `realsense` / `zed` demos are shown below.
 
-| Stream name        | Type         | Suggested topic         | Frame_id source |
+| Stream name        | Type         | Suggested topic         | Frame ID source |
 |-------------------|--------------|-------------------------|-----------------|
 | `color_image`     | `Image`      | `/camera/color`         | `_color_optical_frame` |
 | `depth_image`     | `Image`      | `/camera/depth`         | `_depth_optical_frame` or `_color_optical_frame` |
