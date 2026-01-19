@@ -183,7 +183,7 @@ def test_check_buffers_all_configured() -> None:
                 type(
                     "MockResult",
                     (),
-                    {"stdout": "net.core.rmem_default = 16777216", "returncode": 0},
+                    {"stdout": "net.core.rmem_default = 67108864", "returncode": 0},
                 )(),
             ]
 

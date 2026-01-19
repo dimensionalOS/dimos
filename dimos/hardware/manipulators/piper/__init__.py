@@ -12,21 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Piper manipulator hardware backend.
+
+Usage:
+    >>> from dimos.hardware.manipulators.piper import PiperBackend
+    >>> backend = PiperBackend(can_port="can0")
+    >>> backend.connect()
+    >>> positions = backend.read_joint_positions()
 """
-Piper Arm Driver
 
-Real-time driver for Piper manipulator with CAN bus communication.
-"""
+from dimos.hardware.manipulators.piper.backend import PiperBackend
 
-from .piper_blueprints import piper_cartesian, piper_servo, piper_trajectory
-from .piper_driver import PiperDriver, piper_driver
-from .piper_wrapper import PiperSDKWrapper
-
-__all__ = [
-    "PiperDriver",
-    "PiperSDKWrapper",
-    "piper_cartesian",
-    "piper_driver",
-    "piper_servo",
-    "piper_trajectory",
-]
+__all__ = ["PiperBackend"]

@@ -16,7 +16,7 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 
 <p align="center">
-  <a href="#how-does-dimos-work">Key Features</a> •
+  <a href="#how-does-dimensional-work">Key Features</a> •
   <a href="#how-do-i-get-started">How To Use</a> •
   <a href="#contributing--building-from-source">Contributing</a> •
   <a href="#license">License</a>

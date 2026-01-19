@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from functools import cached_property
 import os
+from typing import Any
 
 import numpy as np
 from openai import OpenAI
@@ -68,6 +69,32 @@ class QwenVlModel(VlModel):
         )
 
         return response.choices[0].message.content  # type: ignore[return-value]
+
+    def query_batch(
+        self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs: Any
+    ) -> list[str]:  # type: ignore[override]
+        """Query VLM with multiple images using a single API call."""
+        if not images:
+            return []
+
+        content: list[dict[str, Any]] = [
+                {
+                    "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"},
+                }
+            for img in images
+        ]
+        content.append({"type": "text", "text": query})
+
+        messages = [{"role": "user", "content": content}]
+        api_kwargs: dict[str, Any] = {"model": self.config.model_name, "messages": messages}
+        if response_format:
+            api_kwargs["response_format"] = response_format
+
+        response = self._client.chat.completions.create(**api_kwargs)
+        response_text = response.choices[0].message.content or ""
+        # Return one response per image (same response since API analyzes all images together)
+        return [response_text] * len(images)
 
     def stop(self) -> None:
         """Release the OpenAI client."""

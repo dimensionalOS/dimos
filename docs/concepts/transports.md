@@ -3,7 +3,7 @@
 
 Transports enable communication between [modules](modules.md) across process boundaries and networks. When modules run in different processes or on different machines, they need a transport layer to exchange messages.
 
-While the interface is called "PubSub", transports aren't limited to traditional pub/sub services. A topic can be anything that identifies a communication channel - an IP address and port, a shared memory segment name, a file path, or a Redis channel. The abstraction is flexible enough to support any communication pattern that can publish and subscribe to named channels.
+While the interface is called "PubSub", transports aren't limited to traditional pub-sub services. A topic can be anything that identifies a communication channel: an IP address and port, a shared memory segment name, a file path, or a Redis channel. The abstraction is flexible enough to support any communication pattern that can publish and subscribe to named channels.
 
 ## The PubSub Interface
 
@@ -64,7 +64,7 @@ Received 2 messages:
   {'temperature': 23.0}
 ```
 
-The full implementation is minimal - see [`memory.py`](/dimos/protocol/pubsub/memory.py) for the complete source.
+The full implementation is minimal. See [`memory.py`](/dimos/protocol/pubsub/memory.py) for the complete source.
 
 ## Available Transports
 

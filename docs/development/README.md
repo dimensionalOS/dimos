@@ -2,13 +2,13 @@
 
 1. [How to setup your system](#1-setup) (pick one: system install, nix flake + direnv, pure nix flake)
 2. [How to hack on DimOS](#2-how-to-hack-on-dimos) (which files to edit, debugging help, etc)
-4. [How to make a PR](#3-how-to-make-a-pr) (our expectations for a PR)
+3. [How to make a PR](#3-how-to-make-a-pr) (our expectations for a PR)
 
 <br>
 
 # 1. Setup
 
-All the setup options are for your convenience. If you can get DimOS running on temple OS with a package manager you wrote yourself, all the power to you.
+All the setup options are for your convenience. If you can get DimOS running on TempleOS with a package manager you wrote yourself, all the power to you.
 
 ---
 
@@ -180,7 +180,7 @@ uv run pytest dimos
 * Use when: you need absolute reliability (use this if you want it to work first try) and don't mind a startup delay
 * Upside: Doesn't need direnv, and has most of the other benefits of Nix
 * Downside: Have to manually enter the environment (like `./venv/bin/activate` but slower)
-* Upside: If you're you're using a basic shell, you'll get a nicely customized shell
+* Upside: If you're using a basic shell, you'll get a nicely customized shell
 * Downside: If you have hyper-customized your shell (fish, riced zsh, etc), you'll have to deal with someone else's preferences
 * Downside: Your vibe coding agent will basically be unable to run tests for you (they don't understand how to enter the environment)
 

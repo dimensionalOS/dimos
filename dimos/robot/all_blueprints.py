@@ -21,6 +21,7 @@ all_blueprints = {
     "unitree-go2-nav": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:nav",
     "unitree-go2-detection": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:detection",
     "unitree-go2-spatial": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:spatial",
+    "unitree-go2-temporal-memory": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:temporal_memory",
     "unitree-go2-agentic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic",
     "unitree-go2-agentic-mcp": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic_mcp",
     "unitree-go2-agentic-ollama": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic_ollama",
@@ -36,16 +37,14 @@ all_blueprints = {
     "unitree-g1-joystick": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:with_joystick",
     "unitree-g1-full": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:full_featured",
     "unitree-g1-detection": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:detection",
-    # xArm manipulator blueprints
-    "xarm-servo": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm_servo",
-    "xarm5-servo": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm5_servo",
-    "xarm7-servo": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm7_servo",
-    "xarm-cartesian": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm_cartesian",
-    "xarm-trajectory": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm_trajectory",
-    # Piper manipulator blueprints
-    "piper-servo": "dimos.hardware.manipulators.piper.piper_blueprints:piper_servo",
-    "piper-cartesian": "dimos.hardware.manipulators.piper.piper_blueprints:piper_cartesian",
-    "piper-trajectory": "dimos.hardware.manipulators.piper.piper_blueprints:piper_trajectory",
+    # Control orchestrator blueprints
+    "orchestrator-mock": "dimos.control.blueprints:orchestrator_mock",
+    "orchestrator-xarm7": "dimos.control.blueprints:orchestrator_xarm7",
+    "orchestrator-xarm6": "dimos.control.blueprints:orchestrator_xarm6",
+    "orchestrator-piper": "dimos.control.blueprints:orchestrator_piper",
+    "orchestrator-dual-mock": "dimos.control.blueprints:orchestrator_dual_mock",
+    "orchestrator-dual-xarm": "dimos.control.blueprints:orchestrator_dual_xarm",
+    "orchestrator-piper-xarm": "dimos.control.blueprints:orchestrator_piper_xarm",
     # Demo blueprints
     "demo-camera": "dimos.hardware.sensors.camera.module:demo_camera",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
@@ -83,10 +82,8 @@ all_modules = {
     "wavefront_frontier_explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector",
     "websocket_vis": "dimos.web.websocket_vis.websocket_vis_module",
     "web_input": "dimos.agents.cli.web",
-    # xArm manipulator modules
-    "xarm_driver": "dimos.hardware.manipulators.xarm.xarm_driver",
-    "cartesian_motion_controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller",
-    "joint_trajectory_controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller",
+    # Control orchestrator module
+    "control_orchestrator": "dimos.control.orchestrator",
 }
 
 

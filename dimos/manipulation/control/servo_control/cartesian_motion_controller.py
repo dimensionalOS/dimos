@@ -34,7 +34,6 @@ from typing import Any
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
-from dimos.hardware.manipulators.xarm.spec import ArmDriverSpec
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 from dimos.utils.logging_config import setup_logger
@@ -90,7 +89,7 @@ class CartesianMotionController(Module):
     5. Publishing joint commands to the driver
 
     The controller is hardware-agnostic: it works with any arm driver that
-    implements the ArmDriverSpec protocol (provides IK/FK RPC methods).
+    provides IK/FK RPC methods and JointState/RobotState outputs.
     """
 
     default_config = CartesianMotionControllerConfig
@@ -112,12 +111,12 @@ class CartesianMotionController(Module):
     cartesian_velocity: Out[Twist] = None  # type: ignore[assignment]
     current_pose: Out[PoseStamped] = None  # type: ignore[assignment]
 
-    def __init__(self, arm_driver: ArmDriverSpec | None = None, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, arm_driver: Any = None, *args: Any, **kwargs: Any) -> None:
         """
         Initialize the Cartesian motion controller.
 
         Args:
-            arm_driver: (Optional) Hardware driver implementing ArmDriverSpec protocol.
+            arm_driver: (Optional) Hardware driver reference (legacy mode).
                        When using blueprints, this is resolved automatically via rpc_calls.
         """
         super().__init__(*args, **kwargs)
