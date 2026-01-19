@@ -120,7 +120,7 @@ print(Detection2DModule.io())
  ├─ RPC stop() -> None
 ```
 
-TODO: add easy way to print config
+<!-- TODO: add easy way to print config -->
 
 Looks like the detector just needs an image input and outputs some sort of detection and annotation messages. Let's connect it to a camera.
 
