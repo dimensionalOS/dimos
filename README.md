@@ -1,6 +1,6 @@
 <div align="center">
    <img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/15283d94-ad95-42c9-abd5-6565a222a837" /> </a>
-    <h4 align="center">The Open-Source Framework for Robotic Intelligence</h4>
+    <h4 align="center">The Agentive Operating System for Generalist Robotics</h4>
 
 
 <br>
@@ -37,28 +37,36 @@ The python library comes with a rich set of integrations; visualizers, spatial r
 
 ### Installation
 
-- Linux is supported, with tests being performed on Ubuntu 22.04 and 24.04
-- MacOS support is in beta, you're welcome to try it *but expect inconsistent/flakey behavior (rather than errors/crashing)*
-    - instead of the apt-get command below run: `brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python`
+Supported/tested matrix:
+
+| Platform | Status | Tested | Required System deps |
+| --- | --- | --- | --- |
+| Linux | supported | Ubuntu 22.04, 24.04 | See below |
+| macOS | experimental beta | not CI-tested | `brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python` |
+
+Note: macOS is usable but expect inconsistent/flaky behavior (rather than hard errors/crashes).
 
 ```sh
 sudo apt-get update
 sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev
 # install uv for python
 curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+```
 
-#
-# NOTE!!! the first time, you're going to have an empty/black rerun window for a while
-#
-# the command needs to download the replay file (2.4gb), which takes a bit
+Option 1: Install in a virtualenv
 
-# OPTION 1: install dimos in a virtualenv
+```sh
+
 uv venv && . .venv/bin/activate
 uv pip install 'dimos[base,unitree]'
 # replay recorded data to test that the system is working
+# IMPORTANT: First replay run will show a black rerun window while 2.4 GB downloads from LFS
 dimos --replay run unitree-go2
+```
 
-# OPTION 2: if you want to test out dimos without installing run:
+Option 2: Run without installing
+
+```sh
 uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
 ```
 
