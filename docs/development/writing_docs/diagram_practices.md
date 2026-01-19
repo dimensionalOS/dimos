@@ -1,131 +1,132 @@
 We have many diagraming tools. View source code of this page to see examples.
 
-### Pikchr
+# Pikchr
 
-SQLite's diagram language:
+[Pikchr](https://pikchr.org/) is a diagram language from SQLite. Use it for flowcharts and architecture diagrams.
+
+**Important:** Always wrap pikchr blocks in `<details>` tags so the source is collapsed by default on GitHub. The rendered SVG stays visible outside the fold. Code blocks (Python, etc.) should NOT be folded—they're meant to be read.
+
+## Basic syntax
 
 <details>
 <summary>diagram source</summary>
 
-```pikchr fold output=assets/pikchr-demo.svg
+```pikchr fold output=assets/pikchr_basic.svg
 color = white
 fill = none
-linewid = 0.4in
 
-# Input file
-In: file "README.md" fit
-arrow
-
-# Processing
-Parse: box "Parse" rad 5px fit
-arrow
-Exec: box "Execute" rad 5px fit
-
-# Fan out to languages
-arrow from Exec.e right 0.3in then up 0.4in then right 0.3in
-Sh: oval "Shell" fit
-arrow from Exec.e right 0.3in then right 0.3in
-Node: oval "Node" fit
-arrow from Exec.e right 0.3in then down 0.4in then right 0.3in
-Py: oval "Python" fit
-
-# Merge back
-X: dot at (Py.e.x + 0.3in, Node.e.y) invisible
-line from Sh.e right until even with X then down to X
-line from Node.e to X
-line from Py.e right until even with X then up to X
-Out: file "README.md" fit with .w at (X.x + 0.3in, X.y)
-arrow from X to Out.w
+A: box "Step 1" rad 5px fit wid 170% ht 170%
+arrow right 0.3in
+B: box "Step 2" rad 5px fit wid 170% ht 170%
+arrow right 0.3in
+C: box "Step 3" rad 5px fit wid 170% ht 170%
 ```
 
 </details>
 
 <!--Result:-->
-![output](assets/pikchr-demo.svg)
+![output](assets/pikchr_basic.svg)
 
-### Asymptote
+## Box sizing
 
-Vector graphics:
+Use `fit` with percentage scaling to auto-size boxes with padding:
 
-```asymptote output=assets/histogram.svg
-import graph;
-import stats;
+<details>
+<summary>diagram source</summary>
 
-size(400,200,IgnoreAspect);
-defaultpen(white);
+```pikchr fold output=assets/pikchr_sizing.svg
+color = white
+fill = none
 
-int n=10000;
-real[] a=new real[n];
-for(int i=0; i < n; ++i) a[i]=Gaussrand();
-
-draw(graph(Gaussian,min(a),max(a)),orange);
-
-int N=bins(a);
-
-histogram(a,min(a),max(a),N,normalize=true,low=0,rgb(0.4,0.6,0.8),rgb(0.2,0.4,0.6),bars=true);
-
-xaxis("$x$",BottomTop,LeftTicks,p=white);
-yaxis("$dP/dx$",LeftRight,RightTicks(trailingzero),p=white);
+# fit wid 170% ht 170% = auto-size + padding
+A: box "short" rad 5px fit wid 170% ht 170%
+arrow right 0.3in
+B: box ".subscribe()" rad 5px fit wid 170% ht 170%
+arrow right 0.3in
+C: box "two lines" "of text" rad 5px fit wid 170% ht 170%
 ```
+
+</details>
 
 <!--Result:-->
-![output](assets/histogram.svg)
+![output](assets/pikchr_sizing.svg)
 
-### Graphviz
+The pattern `fit wid 170% ht 170%` means: auto-size to text, then scale width by 170% and height by 170%.
 
-```dot output=assets/graph.svg
-A -> B -> C
-A -> C
+For explicit sizing (when you need consistent box sizes):
+
+<details>
+<summary>diagram source</summary>
+
+```pikchr fold output=assets/pikchr_explicit.svg
+color = white
+fill = none
+
+A: box "Step 1" rad 5px fit wid 170% ht 170%
+arrow right 0.3in
+B: box "Step 2" rad 5px fit wid 170% ht 170%
 ```
+
+</details>
 
 <!--Result:-->
-![output](assets/graph.svg)
+![output](assets/pikchr_explicit.svg)
 
-### OpenSCAD
+## Common settings
 
-```openscad output=assets/cube-sphere.png
-cube([10, 10, 10]);
-sphere(r=7);
+Always start with:
+
 ```
+color = white    # text color
+fill = none      # transparent box fill
+```
+
+## Branching paths
+
+<details>
+<summary>diagram source</summary>
+
+```pikchr fold output=assets/pikchr_branch.svg
+color = white
+fill = none
+
+A: box "Input" rad 5px fit wid 170% ht 170%
+arrow
+B: box "Process" rad 5px fit wid 170% ht 170%
+
+# Branch up
+arrow from B.e right 0.3in then up 0.35in then right 0.3in
+C: box "Path A" rad 5px fit wid 170% ht 170%
+
+# Branch down
+arrow from B.e right 0.3in then down 0.35in then right 0.3in
+D: box "Path B" rad 5px fit wid 170% ht 170%
+```
+
+</details>
 
 <!--Result:-->
-![output](assets/cube-sphere.png)
+![output](assets/pikchr_branch.svg)
 
-### Diagon
+**Tip:** For tree/hierarchy diagrams, prefer left-to-right layout (root on left, children branching right). This reads more naturally and avoids awkward vertical stacking.
 
-ASCII art diagrams:
+## Adding labels
 
-```diagon mode=Math
-1 + 1/2 + sum(i,0,10)
+<details>
+<summary>diagram source</summary>
+
+```pikchr fold output=assets/pikchr_labels.svg
+color = white
+fill = none
+
+A: box "Box" rad 5px fit wid 170% ht 170%
+text "label below" at (A.x, A.y - 0.4in)
 ```
 
-<!--Result:-->
-```
-        10
-        ___
-    1   ╲
-1 + ─ + ╱   i
-    2   ‾‾‾
-         0
-```
-
-```diagon mode=GraphDAG
-A -> B -> C
-A -> C
-```
+</details>
 
 <!--Result:-->
-```
-┌───┐
-│A  │
-└┬─┬┘
- │┌▽┐
- ││B│
- │└┬┘
-┌▽─▽┐
-│C  │
-└───┘
-```
+![output](assets/pikchr_labels.svg)
 
 ## Reference
 
