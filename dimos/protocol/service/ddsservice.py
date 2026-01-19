@@ -54,14 +54,15 @@ class DDSService(Service[DDSConfig]):
         pass
 
     def get_participant(self) -> DomainParticipant:
-        """Get the DomainParticipant instance, or None if not yet initialized."""
-
-        # Lazy initialization of the participant
-        with self.__class__._participant_lock:
-            if self.__class__._participant is None:
-                self.__class__._participant = DomainParticipant(self.config.domain_id)
-                logger.info(f"DDS service started with Cyclone DDS domain {self.config.domain_id}")
-            return self.__class__._participant
+        """Get the DomainParticipant instance, or create if not yet initialized."""
+        if self.__class__._participant is None:
+            with self.__class__._participant_lock:
+                if self.__class__._participant is None:
+                    self.__class__._participant = DomainParticipant(self.config.domain_id)
+                    logger.info(
+                        f"DDS service started with Cyclone DDS domain {self.config.domain_id}"
+                    )
+        return self.__class__._participant
 
 
 __all__ = ["DDSConfig", "DDSService"]
