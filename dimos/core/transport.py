@@ -62,8 +62,7 @@ class pLCMTransport(PubSubTransport[T]):
 
     def broadcast(self, _: Out[T] | None, msg: T) -> None:
         if not self._started:
-            self.lcm.start()
-            self._started = True
+            self.start()
 
         self.lcm.publish(self.topic, msg)
 
@@ -71,14 +70,16 @@ class pLCMTransport(PubSubTransport[T]):
         self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
     ) -> Callable[[], None]:
         if not self._started:
-            self.lcm.start()
-            self._started = True
+            self.start()
         return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
 
-    def start(self) -> None: ...
+    def start(self) -> None:
+        self.lcm.start()
+        self._started = True
 
     def stop(self) -> None:
         self.lcm.stop()
+        self._started = False
 
 
 class LCMTransport(PubSubTransport[T]):
@@ -141,15 +142,13 @@ class pSHMTransport(PubSubTransport[T]):
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
-            self.shm.start()
-            self._started = True
+            self.start()
 
         self.shm.publish(self.topic, msg)
 
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
         if not self._started:
-            self.shm.start()
-            self._started = True
+            self.start()
         return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
 
     def start(self) -> None:
@@ -173,8 +172,7 @@ class SHMTransport(PubSubTransport[T]):
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
-            self.shm.start()
-            self._started = True
+            self.start()
 
         self.shm.publish(self.topic, msg)
 
@@ -205,8 +203,7 @@ class JpegShmTransport(PubSubTransport[T]):
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
-            self.shm.start()
-            self._started = True
+            self.start()
 
         self.shm.publish(self.topic, msg)
 
