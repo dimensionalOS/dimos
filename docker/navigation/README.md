@@ -28,7 +28,7 @@ This will:
 
 The resulting image will be named `dimos_autonomy_stack:humble` or `dimos_autonomy_stack:jazzy` depending on the option used.
 
-Note that the build will take a while and produce an image of approximately 10 GB.
+Note that the build will take a while and produce an image of approximately 24 GB.
 
 **Run the simulator to test it's working:**
 
