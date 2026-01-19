@@ -114,9 +114,7 @@ source .venv/bin/activate
 humancli
 ```
 
-## Contributing / Building From Source
-
-We welcome contributions! Open up the [Development Guide](/docs/development/README.md) to see how to hack on DimOS and make PR's and  our [Bounty List](https://docs.google.com/spreadsheets/d/1tzYTPvhO7Lou21cU6avSWTQOhACl5H8trSvhtYtsk8U/edit?usp=sharing) for open requests for contributions. If you would like to suggest a feature or sponsor a bounty, open an issue.
+## Using DimOS as a Library
 
 ### Documentation & Concepts
 
@@ -128,6 +126,118 @@ If you you need more information on how DimOS works, check out the following lin
 - [RPC](/docs/concepts/blueprints.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
 - [Skills](/docs/concepts/blueprints.md#defining-skills): An RPC function, except it can be called by an AI agent (a tool for an AI).
 - Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools.
+
+### Simple DimOS Application
+
+While `dimos run unitree-go2` is a good demo, we can recreate it with a few lines of code.
+
+Save and run the following to get behavior like `dimos run unitree-go2`:
+
+```python
+from dimos.robot.unitree_webrtc.unitree_go2_blueprints import autoconnect, basic, cost_mapper, voxel_mapper, replanning_a_star_planner, wavefront_frontier_explorer
+
+nav = autoconnect(
+    basic,
+    voxel_mapper(voxel_size=0.3),
+    cost_mapper(),
+).global_config(simulation=True)
+
+nav.build().loop()
+```
+
+
+#### Printing Module I/O
+
+If you're not sure how to use a module, start by printing its I/O:
+
+```python session=camera_module_demo ansi=false
+from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.perception.detection.module2D import Detection2DModule
+
+print("Camera:\n", CameraModule.io())
+print("Detection:\n", Detection2DModule.io())
+```
+
+<!--Result:-->
+```
+Camera:
+┌┴─────────────┐
+│ CameraModule │
+└┬─────────────┘
+ ├─ color_image: Image
+ ├─ camera_info: CameraInfo
+ │
+ ├─ RPC start()
+ ├─ RPC stop()
+ │
+ ├─ Skill video_stream (stream=passive, reducer=latest_reducer, output=image)
+
+ Detection:
+ ├─ image: Image
+┌┴──────────────────┐
+│ Detection2DModule │
+└┬──────────────────┘
+ ├─ detections: Detection2DArray
+ ├─ annotations: ImageAnnotations
+ ├─ detected_image_0: Image
+ ├─ detected_image_1: Image
+ ├─ detected_image_2: Image
+ │
+ ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
+ ├─ RPC start() -> None
+ ├─ RPC stop() -> None
+```
+
+We will talk about Skills and RPC calls later, the main thing above is that:
+1. The CameraModule provides an [Image](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html) output stream.
+2. The Detection2DModule provides an [Image](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html) input stream.
+
+
+#### Connecting Modules Manually
+
+Using a module basically always means connecting it in some way, so let's connect those two modules.
+
+```python session=camera_module_demo ansi=false
+import time
+camera = CameraModule()
+detector = Detection2DModule()
+
+detector.image.connect(camera.color_image)
+
+camera.start()
+detector.start()
+
+detector.detections.subscribe(print)
+time.sleep(3)
+detector.stop()
+camera.stop()
+```
+
+<!--Result:-->
+```
+Detection(Person(1))
+Detection(Person(1))
+Detection(Person(1))
+Detection(Person(1))
+```
+
+#### Connecting Modules Automatically
+
+While modules can be connected individually, it would be nice to pre-connect some parts while allowing others to override or extend those connections. For that we have **Blueprints**.
+
+```python ansi=false
+autoconnect(
+    CameraModule.blueprint(),
+    Detection2DModule.blueprint(),
+).build().loop()
+```
+
+
+
+## Contributing / Building From Source
+
+We welcome contributions! Open up the [Development Guide](/docs/development/README.md) to see how to hack on DimOS and make PR's and  our [Bounty List](https://docs.google.com/spreadsheets/d/1tzYTPvhO7Lou21cU6avSWTQOhACl5H8trSvhtYtsk8U/edit?usp=sharing) for open requests for contributions. If you would like to suggest a feature or sponsor a bounty, open an issue.
+
 
 ### Monitoring & Debugging
 
