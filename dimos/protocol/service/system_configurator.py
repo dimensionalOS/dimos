@@ -384,7 +384,7 @@ class MacOSUlimit(SystemConfigurator):
 
     def explanation(self) -> str | None:
         lines = []
-        if not self.can_fix_without_sudo:
+        if self.can_fix_without_sudo:
             lines.append(f"- Raise soft file count limit to {self.target} (no sudo required)")
         else:
             lines.append(f"- Raise soft file count limit to {min(self.target, self.current_hard)}")
