@@ -103,8 +103,7 @@ def configure_system(checks: list[SystemConfigurator], check_only: bool = False)
         return
 
     # ask for permission to modify system
-    explanations = [check.explanation() for check in failing]
-    explanations = [msg for msg in explanations if msg]
+    explanations: list[str] = [msg for check in failing if (msg := check.explanation()) is not None]
 
     if explanations:
         print("System configuration changes are recommended/required:\n")
@@ -291,7 +290,7 @@ class LinuxBuffer(SystemConfigurator):
 
     TARGET_RMEM_SIZE = IDEAL_RMEM_SIZE
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.needs: list[tuple[str, int]] = []  # (key, target_value)
 
     def check(self) -> bool:
@@ -327,7 +326,7 @@ class MacOSBuffer(SystemConfigurator):
     TARGET_RECVSPACE = MAX_POSSIBLE_RECVSPACE  # we want this to be IDEAL_RMEM_SIZE but MacOS 26 (and probably in general) doesn't support it
     TARGET_DGRAM_SIZE = MAX_POSSIBLE_DGRAM_SIZE
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.needs: list[tuple[str, int]] = []
 
     def check(self) -> bool:
