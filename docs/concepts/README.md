@@ -1,6 +1,6 @@
 # Concepts
 
-If you are trying to learn a new API or know what tools you should use, then you are in the right place. In contrast, if you already know the API you want to use and just need details on how to use it, see [the API reference](/docs/API/README.md).
+If you are trying to learn a new API or know what tools you should use, then you are in the right place. In contrast, if you already know the API you want to use and just need details on how to use it, see [the API reference](/docs/api/README.md).
 
 ## Table of Contents
 
