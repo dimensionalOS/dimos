@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""XArm backend - implements ManipulatorBackend protocol.
+"""XArm adapter - implements ManipulatorAdapter protocol.
 
 SDK Units: angles=degrees, distance=mm, velocity=deg/s
 DimOS Units: angles=radians, distance=meters, velocity=rad/s
@@ -26,12 +26,12 @@ from typing import TYPE_CHECKING
 from xarm.wrapper import XArmAPI
 
 if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import BackendRegistry
+    from dimos.hardware.manipulators.registry import AdapterRegistry
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
     JointLimits,
-    ManipulatorBackend,
+    ManipulatorAdapter,
     ManipulatorInfo,
 )
 
@@ -48,16 +48,16 @@ _XARM_MODE_CARTESIAN_VELOCITY = 5
 _XARM_MODE_JOINT_TORQUE = 6
 
 
-class XArmBackend(ManipulatorBackend):
-    """XArm-specific backend.
+class XArmAdapter(ManipulatorAdapter):
+    """XArm-specific adapter.
 
-    Implements ManipulatorBackend protocol via duck typing.
+    Implements ManipulatorAdapter protocol via duck typing.
     No inheritance required - just matching method signatures.
     """
 
     def __init__(self, address: str, dof: int = 6, **_: object) -> None:
         if not address:
-            raise ValueError("address (IP) is required for XArmBackend")
+            raise ValueError("address (IP) is required for XArmAdapter")
         self._ip = address
         self._dof = dof
         self._arm: XArmAPI | None = None
@@ -370,9 +370,9 @@ class XArmBackend(ManipulatorBackend):
         return None
 
 
-def register(registry: BackendRegistry) -> None:
-    """Register this backend with the registry."""
-    registry.register("xarm", XArmBackend)
+def register(registry: AdapterRegistry) -> None:
+    """Register this adapter with the registry."""
+    registry.register("xarm", XArmAdapter)
 
 
-__all__ = ["XArmBackend"]
+__all__ = ["XArmAdapter"]

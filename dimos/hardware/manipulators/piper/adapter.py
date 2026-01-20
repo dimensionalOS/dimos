@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Piper backend - implements ManipulatorBackend protocol.
+"""Piper adapter - implements ManipulatorAdapter protocol.
 
 SDK Units: angles=0.001 degrees (millidegrees), distance=mm
 DimOS Units: angles=radians, distance=meters
@@ -25,12 +25,12 @@ import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import BackendRegistry
+    from dimos.hardware.manipulators.registry import AdapterRegistry
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
     JointLimits,
-    ManipulatorBackend,
+    ManipulatorAdapter,
     ManipulatorInfo,
 )
 
@@ -47,10 +47,10 @@ GRIPPER_MAX_OPENING_M = 0.08  # Max gripper opening in meters
 DEFAULT_GRIPPER_SPEED = 1000
 
 
-class PiperBackend(ManipulatorBackend):
-    """Piper-specific backend.
+class PiperAdapter(ManipulatorAdapter):
+    """Piper-specific adapter.
 
-    Implements ManipulatorBackend protocol via duck typing.
+    Implements ManipulatorAdapter protocol via duck typing.
     No inheritance required - just matching method signatures.
 
     Unit conversions:
@@ -66,7 +66,7 @@ class PiperBackend(ManipulatorBackend):
         **_: object,
     ) -> None:
         if dof != 6:
-            raise ValueError(f"PiperBackend only supports 6 DOF (got {dof})")
+            raise ValueError(f"PiperAdapter only supports 6 DOF (got {dof})")
         self._can_port = address
         self._dof = dof
         self._gripper_speed = gripper_speed
@@ -520,9 +520,9 @@ class PiperBackend(ManipulatorBackend):
         return None
 
 
-def register(registry: BackendRegistry) -> None:
-    """Register this backend with the registry."""
-    registry.register("piper", PiperBackend)
+def register(registry: AdapterRegistry) -> None:
+    """Register this adapter with the registry."""
+    registry.register("piper", PiperAdapter)
 
 
-__all__ = ["PiperBackend"]
+__all__ = ["PiperAdapter"]

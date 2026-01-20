@@ -12,21 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Backend registry with auto-discovery.
+"""Adapter registry with auto-discovery.
 
-Automatically discovers and registers manipulator backends from subpackages.
-Each backend provides a `register()` function in its backend.py module.
+Automatically discovers and registers manipulator adapters from subpackages.
+Each adapter provides a `register()` function in its adapter.py module.
 
 Usage:
-    from dimos.hardware.manipulators.registry import backend_registry
+    from dimos.hardware.manipulators.registry import adapter_registry
 
-    # Create a backend by name
-    backend = backend_registry.create("xarm", ip="192.168.1.185", dof=6)
-    backend = backend_registry.create("piper", can_port="can0", dof=6)
-    backend = backend_registry.create("mock", dof=7)
+    # Create an adapter by name
+    adapter = adapter_registry.create("xarm", ip="192.168.1.185", dof=6)
+    adapter = adapter_registry.create("piper", can_port="can0", dof=6)
+    adapter = adapter_registry.create("mock", dof=7)
 
-    # List available backends
-    print(backend_registry.available())  # ["mock", "piper", "xarm"]
+    # List available adapters
+    print(adapter_registry.available())  # ["mock", "piper", "xarm"]
 """
 
 from __future__ import annotations
@@ -37,67 +37,67 @@ import pkgutil
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from dimos.hardware.manipulators.spec import ManipulatorBackend
+    from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
 logger = logging.getLogger(__name__)
 
 
-class BackendRegistry:
-    """Registry for manipulator backends with auto-discovery."""
+class AdapterRegistry:
+    """Registry for manipulator adapters with auto-discovery."""
 
     def __init__(self) -> None:
-        self._backends: dict[str, type[ManipulatorBackend]] = {}
+        self._adapters: dict[str, type[ManipulatorAdapter]] = {}
         self._discovered = False
 
-    def register(self, name: str, cls: type[ManipulatorBackend]) -> None:
-        """Register a backend class."""
-        self._backends[name.lower()] = cls
+    def register(self, name: str, cls: type[ManipulatorAdapter]) -> None:
+        """Register an adapter class."""
+        self._adapters[name.lower()] = cls
 
-    def create(self, name: str, **kwargs: Any) -> ManipulatorBackend:
-        """Create a backend instance by name.
+    def create(self, name: str, **kwargs: Any) -> ManipulatorAdapter:
+        """Create an adapter instance by name.
 
         Args:
-            name: Backend name (e.g., "xarm", "piper", "mock")
-            **kwargs: Arguments passed to backend constructor
+            name: Adapter name (e.g., "xarm", "piper", "mock")
+            **kwargs: Arguments passed to adapter constructor
 
         Returns:
-            Configured backend instance
+            Configured adapter instance
 
         Raises:
-            KeyError: If backend name is not found
+            KeyError: If adapter name is not found
         """
         if not self._discovered:
             self._discover()
 
         key = name.lower()
-        if key not in self._backends:
-            raise KeyError(f"Unknown backend: {name}. Available: {self.available()}")
+        if key not in self._adapters:
+            raise KeyError(f"Unknown adapter: {name}. Available: {self.available()}")
 
-        return self._backends[key](**kwargs)
+        return self._adapters[key](**kwargs)
 
     def available(self) -> list[str]:
-        """List available backend names."""
+        """List available adapter names."""
         if not self._discovered:
             self._discover()
-        return sorted(self._backends.keys())
+        return sorted(self._adapters.keys())
 
     def _discover(self) -> None:
-        """Auto-discover backends in subpackages."""
+        """Auto-discover adapters in subpackages."""
         import dimos.hardware.manipulators as pkg
 
         for _, name, ispkg in pkgutil.iter_modules(pkg.__path__):
             if not ispkg:
                 continue
             try:
-                module = importlib.import_module(f"dimos.hardware.manipulators.{name}.backend")
+                module = importlib.import_module(f"dimos.hardware.manipulators.{name}.adapter")
                 if hasattr(module, "register"):
                     module.register(self)
             except ImportError as e:
-                logger.info(f"Skipping backend {name}: {e}")
+                logger.info(f"Skipping adapter {name}: {e}")
 
         self._discovered = True
 
 
-backend_registry = BackendRegistry()
+adapter_registry = AdapterRegistry()
 
-__all__ = ["BackendRegistry", "backend_registry"]
+__all__ = ["AdapterRegistry", "adapter_registry"]

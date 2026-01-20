@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Mock backend for testing - no hardware required.
+"""Mock adapter for testing - no hardware required.
 
 Usage:
     >>> from dimos.hardware.manipulators.xarm import XArm
-    >>> from dimos.hardware.manipulators.mock import MockBackend
-    >>> arm = XArm(backend=MockBackend())
+    >>> from dimos.hardware.manipulators.mock import MockAdapter
+    >>> arm = XArm(adapter=MockAdapter())
     >>> arm.start()  # No hardware!
 """
 
@@ -27,7 +27,7 @@ import math
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dimos.hardware.manipulators.registry import BackendRegistry
+    from dimos.hardware.manipulators.registry import AdapterRegistry
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
@@ -36,10 +36,10 @@ from dimos.hardware.manipulators.spec import (
 )
 
 
-class MockBackend:
-    """Fake backend for unit tests.
+class MockAdapter:
+    """Fake adapter for unit tests.
 
-    Implements ManipulatorBackend protocol with in-memory state.
+    Implements ManipulatorAdapter protocol with in-memory state.
     Useful for:
     - Unit testing driver logic without hardware
     - Integration testing with predictable behavior
@@ -253,9 +253,9 @@ class MockBackend:
         self._efforts = list(efforts)
 
 
-def register(registry: BackendRegistry) -> None:
-    """Register this backend with the registry."""
-    registry.register("mock", MockBackend)
+def register(registry: AdapterRegistry) -> None:
+    """Register this adapter with the registry."""
+    registry.register("mock", MockAdapter)
 
 
-__all__ = ["MockBackend"]
+__all__ = ["MockAdapter"]

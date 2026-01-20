@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Piper manipulator hardware backend.
+"""Piper manipulator hardware adapter.
 
 Usage:
-    >>> from dimos.hardware.manipulators.piper import PiperBackend
-    >>> backend = PiperBackend(can_port="can0")
-    >>> backend.connect()
-    >>> positions = backend.read_joint_positions()
+    >>> from dimos.hardware.manipulators.piper import PiperAdapter
+    >>> adapter = PiperAdapter(can_port="can0")
+    >>> adapter.connect()
+    >>> positions = adapter.read_joint_positions()
 """
 
-from dimos.hardware.manipulators.piper.backend import PiperBackend
+from dimos.hardware.manipulators.piper.adapter import PiperAdapter
 
-__all__ = ["PiperBackend"]
+__all__ = ["PiperAdapter"]
