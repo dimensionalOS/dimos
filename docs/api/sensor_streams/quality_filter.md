@@ -50,7 +50,7 @@ Qualities: [0.9]
 
 For camera streams, we provide `sharpness_barrier` which uses the image's sharpness score.
 
-Let's use real camera data from the Unitree Go2 robot to demonstrate. We use the [Sensor Replay](/docs/old/testing_stream_reply.md) toolkit, which provides access to recorded robot data:
+Let's use real camera data from the Unitree Go2 robot to demonstrate. We use the [Sensor Storage & Replay](/docs/api/sensor_streams/storage_replay.md) toolkit, which provides access to recorded robot data:
 
 ```python session=qb
 from dimos.utils.testing import TimedSensorReplay

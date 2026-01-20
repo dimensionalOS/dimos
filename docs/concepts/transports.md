@@ -18,11 +18,17 @@ print(inspect.getsource(PubSub.publish))
 print(inspect.getsource(PubSub.subscribe))
 ```
 
-<!--Error:-->
 ```
-Session process exited unexpectedly:
-/home/lesh/coding/dimos/.venv/bin/python3: No module named md_babel_py.session_server
-
+@abstractmethod
+def publish(self, topic: TopicT, message: MsgT) -> None:
+    """Publish a message to a topic."""
+    ...
+@abstractmethod
+def subscribe(
+    self, topic: TopicT, callback: Callable[[MsgT, TopicT], None]
+) -> Callable[[], None]:
+    """Subscribe to a topic with a callback. returns unsubscribe function"""
+    ...
 ```
 
 Key points:

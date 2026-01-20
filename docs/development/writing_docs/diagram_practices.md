@@ -1,4 +1,4 @@
-We have many diagraming tools. View source code of this page to see examples.
+We have many diagramming tools. View source code of this page to see examples.
 
 # How to make diagrams
 

@@ -1,6 +1,6 @@
 # Development Guide
 
-1. [How to setup your system](#1-setup) (pick one: system install, nix flake + direnv, pure nix flake)
+1. [How to set up your system](#1-setup) (pick one: system install, nix flake + direnv, pure nix flake)
 2. [How to hack on DimOS](#2-how-to-hack-on-dimos) (which files to edit, debugging help, etc)
 3. [How to make a PR](#3-how-to-make-a-pr) (our expectations for a PR)
 
@@ -16,12 +16,12 @@ All the setup options are for your convenience. If you can get DimOS running on 
 
 ### Why pick this option? (pros/cons/when-to-use)
 
-* Downside: mutates your global system, causing (and receiving) side effects causes it to be unreliable
+* Downside: mutates your global system, which can create side effects and make it less reliable
 * Upside: Often good for a quick hack or exploring
 * Upside: Sometimes easier for CUDA/GPU acceleration
 * Use when: you understand system package management (arch linux user) or you don't care about making changes to your system
 
-### How to setup DimOS
+### How to set up DimOS
 
 ```bash
 # System dependencies
@@ -230,11 +230,11 @@ This will save the rerun data to `rerun.json` in the current directory.
 
 * If you want to add a `dimos run <your_thing>` command see [dimos_run.md](/docs/development/dimos_run.md)
 * If you want to add a camera driver see [depth_camera_integration.md](/docs/development/depth_camera_integration.md)
-* For edits to manipulation see [manipulation](/dimos/hardware/manipulators/REAME.md) and [manipulation base](/dimos/hardware/manipulators/base/component_based_architecture.md)
+* For edits to manipulation see [manipulation](/dimos/hardware/manipulators/README.md) and the related modules under `dimos/manipulation/`.
 * `dimos/core/`: Is where stuff like `Module`, `In`, `Out`, and `RPC` live.
 * `dimos/robot/`: Robot-specific modules live here.
 * `dimos/hardware/`: Are for sensors, end-effectors, and related individual hardware pieces.
-* `dimos/msgs/`: If you're trying to find a type to send a type over a stream, look here.
+* `dimos/msgs/`: If you're trying to find a message type to send over a stream, look here.
 * `dimos/dashboard/`: Contains code related to visualization.
 * `dimos/protocol/`: Defines low level stuff for communication between modules.
 * See `dimos/` for the remainder
@@ -256,7 +256,7 @@ pytest # run all tests at or below the current directory
 | Enable stdout in tests      | `pytest -s`                  |
 | Run tagged tests            | `pytest -m <tag>`            |
 
-We use tags for special tests, like `vis` or `tool` for things that aren't meant to be ran in CI and when casually developing, something that requires hardware or visual inspection (pointcloud merging vis etc)
+We use tags for special tests, like `vis` or `tool` for things that aren't meant to be run in CI and for cases that require hardware or visual inspection (pointcloud merging visualization, etc).
 
 You can enable a tag by selecting -m <tag_name> - these are configured in `./pyproject.toml`
 
