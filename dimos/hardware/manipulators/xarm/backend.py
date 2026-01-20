@@ -14,7 +14,8 @@
 
 """XArm backend - implements ManipulatorBackend protocol.
 
-Handles all XArm SDK communication and unit conversion.
+SDK Units: angles=degrees, distance=mm, velocity=deg/s
+DimOS Units: angles=radians, distance=meters, velocity=rad/s
 """
 
 import math
@@ -27,6 +28,11 @@ from dimos.hardware.manipulators.spec import (
     ManipulatorBackend,
     ManipulatorInfo,
 )
+
+# Unit conversion constants
+MM_TO_M = 0.001
+M_TO_MM = 1000.0
+MAX_CARTESIAN_SPEED_MM = 500.0  # Max cartesian speed in mm/s
 
 # XArm mode codes
 _XARM_MODE_POSITION = 0
@@ -41,40 +47,7 @@ class XArmBackend(ManipulatorBackend):
 
     Implements ManipulatorBackend protocol via duck typing.
     No inheritance required - just matching method signatures.
-
-    Unit conversions:
-    - Angles: XArm uses degrees, we use radians
-    - Positions: XArm uses mm, we use meters
-    - Velocities: XArm uses deg/s, we use rad/s
-
-    TODO: Consider creating XArmPose/XArmVelocity types to encapsulate
-    unit conversions instead of helper methods. See ManipulatorPose discussion.
     """
-
-    # =========================================================================
-    # Unit Conversions (SI <-> XArm units)
-    # =========================================================================
-
-    @staticmethod
-    def _m_to_mm(m: float) -> float:
-        return m * 1000.0
-
-    @staticmethod
-    def _mm_to_m(mm: float) -> float:
-        return mm / 1000.0
-
-    @staticmethod
-    def _rad_to_deg(rad: float) -> float:
-        return math.degrees(rad)
-
-    @staticmethod
-    def _deg_to_rad(deg: float) -> float:
-        return math.radians(deg)
-
-    @staticmethod
-    def _velocity_to_speed_mm(velocity: float) -> float:
-        """Convert 0-1 velocity fraction to mm/s (max ~500 mm/s)."""
-        return velocity * 500
 
     def __init__(self, ip: str, dof: int = 6) -> None:
         self._ip = ip
@@ -319,12 +292,12 @@ class XArmBackend(ManipulatorBackend):
         _, pose = self._arm.get_position()
         if pose and len(pose) >= 6:
             return {
-                "x": self._mm_to_m(pose[0]),
-                "y": self._mm_to_m(pose[1]),
-                "z": self._mm_to_m(pose[2]),
-                "roll": self._deg_to_rad(pose[3]),
-                "pitch": self._deg_to_rad(pose[4]),
-                "yaw": self._deg_to_rad(pose[5]),
+                "x": pose[0] * MM_TO_M,
+                "y": pose[1] * MM_TO_M,
+                "z": pose[2] * MM_TO_M,
+                "roll": math.radians(pose[3]),
+                "pitch": math.radians(pose[4]),
+                "yaw": math.radians(pose[5]),
             }
         return None
 
@@ -338,13 +311,13 @@ class XArmBackend(ManipulatorBackend):
             return False
 
         code: int = self._arm.set_position(
-            x=self._m_to_mm(pose.get("x", 0)),
-            y=self._m_to_mm(pose.get("y", 0)),
-            z=self._m_to_mm(pose.get("z", 0)),
-            roll=self._rad_to_deg(pose.get("roll", 0)),
-            pitch=self._rad_to_deg(pose.get("pitch", 0)),
-            yaw=self._rad_to_deg(pose.get("yaw", 0)),
-            speed=self._velocity_to_speed_mm(velocity),
+            x=pose.get("x", 0) * M_TO_MM,
+            y=pose.get("y", 0) * M_TO_MM,
+            z=pose.get("z", 0) * M_TO_MM,
+            roll=math.degrees(pose.get("roll", 0)),
+            pitch=math.degrees(pose.get("pitch", 0)),
+            yaw=math.degrees(pose.get("yaw", 0)),
+            speed=velocity * MAX_CARTESIAN_SPEED_MM,
             wait=False,
         )
         return code == 0

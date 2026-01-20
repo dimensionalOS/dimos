@@ -14,7 +14,8 @@
 
 """Piper backend - implements ManipulatorBackend protocol.
 
-Handles all Piper SDK communication and unit conversion.
+SDK Units: angles=0.001 degrees (millidegrees), distance=mm
+DimOS Units: angles=radians, distance=meters
 """
 
 import math
@@ -29,9 +30,10 @@ from dimos.hardware.manipulators.spec import (
 )
 
 # Unit conversion constants
-# Piper uses 0.001 degrees internally
-RAD_TO_PIPER = 57295.7795  # radians to Piper units (0.001 degrees)
-PIPER_TO_RAD = 1.0 / RAD_TO_PIPER  # Piper units to radians
+# Piper uses 0.001 degrees (millidegrees) for angles
+RAD_TO_MILLIDEG = 57295.7795  # radians -> millidegrees
+MILLIDEG_TO_RAD = 1.0 / RAD_TO_MILLIDEG  # millidegrees -> radians
+MM_TO_M = 0.001  # mm -> meters
 
 
 class PiperBackend(ManipulatorBackend):
@@ -202,12 +204,12 @@ class PiperBackend(ManipulatorBackend):
 
         js = joint_msgs.joint_state
         return [
-            js.joint_1 * PIPER_TO_RAD,
-            js.joint_2 * PIPER_TO_RAD,
-            js.joint_3 * PIPER_TO_RAD,
-            js.joint_4 * PIPER_TO_RAD,
-            js.joint_5 * PIPER_TO_RAD,
-            js.joint_6 * PIPER_TO_RAD,
+            js.joint_1 * MILLIDEG_TO_RAD,
+            js.joint_2 * MILLIDEG_TO_RAD,
+            js.joint_3 * MILLIDEG_TO_RAD,
+            js.joint_4 * MILLIDEG_TO_RAD,
+            js.joint_5 * MILLIDEG_TO_RAD,
+            js.joint_6 * MILLIDEG_TO_RAD,
         ]
 
     def read_joint_velocities(self) -> list[float]:
@@ -294,7 +296,7 @@ class PiperBackend(ManipulatorBackend):
             return False
 
         # Convert radians to Piper units (0.001 degrees)
-        piper_joints = [round(rad * RAD_TO_PIPER) for rad in positions]
+        piper_joints = [round(rad * RAD_TO_MILLIDEG) for rad in positions]
 
         # Set speed rate if not full speed
         if velocity < 1.0:
@@ -426,12 +428,12 @@ class PiperBackend(ManipulatorBackend):
                 if pose_msgs and pose_msgs.end_pose:
                     ep = pose_msgs.end_pose
                     return {
-                        "x": ep.X_axis / 1000.0,  # mm -> m
-                        "y": ep.Y_axis / 1000.0,
-                        "z": ep.Z_axis / 1000.0,
-                        "roll": ep.RX_axis * PIPER_TO_RAD,
-                        "pitch": ep.RY_axis * PIPER_TO_RAD,
-                        "yaw": ep.RZ_axis * PIPER_TO_RAD,
+                        "x": ep.X_axis * MM_TO_M,
+                        "y": ep.Y_axis * MM_TO_M,
+                        "z": ep.Z_axis * MM_TO_M,
+                        "roll": ep.RX_axis * MILLIDEG_TO_RAD,
+                        "pitch": ep.RY_axis * MILLIDEG_TO_RAD,
+                        "yaw": ep.RZ_axis * MILLIDEG_TO_RAD,
                     }
         except Exception:
             pass
