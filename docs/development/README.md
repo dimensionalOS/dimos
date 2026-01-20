@@ -266,7 +266,7 @@ You can enable a tag by selecting -m <tag_name> - these are configured in `./pyp
 - Open the PR against the `dev` branch (not `main`).
 - **No matter what, provide a few-lines that, when run, let a reviewer test the feature you added** (assuming you changed functional python code).
 - Less changed files = better.
-- If you're writing documentation, see [writing docs](/docs/development/writing_docs.md)
+- If you're writing documentation, see [writing docs](/docs/development/writing_docs/README.md)
 - If you get mypy errors, please fix them. Don't just add # type: ignore. Please first understand why mypy is complaining and try to fix it. It's only okay to ignore if the issue cannot be fixed.
 - If you made a change that is likely going to involve a debate, open the github UI and add a graphical comment on that code. Justify your choice and explain downsides of alternatives.
 - We don't require 100% test coverage, but if you're making a PR of notable python changes you should probably either have unit tests or good reason why not (ex: visualization stuff is hard to test so we don't).
