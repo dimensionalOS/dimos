@@ -115,7 +115,7 @@ class TestWriteSysctlInt:
                     ["sudo", "sysctl", "-w", "net.core.rmem_max=67108864"],
                     check=True,
                     text=True,
-                    capture_output=True,
+                    capture_output=False,
                 )
 
 
