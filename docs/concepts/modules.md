@@ -47,8 +47,8 @@ print(CameraModule.io())
  ├─ color_image: Image
  ├─ camera_info: CameraInfo
  │
- ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
  ├─ RPC start()
+ ├─ RPC stop()
  │
  ├─ Skill video_stream (stream=passive, reducer=latest_reducer, output=image)
 ```
@@ -58,7 +58,7 @@ We can see that the camera module outputs two streams:
 - `color_image` with [sensor_msgs.Image](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html) type
 - `camera_info` with [sensor_msgs.CameraInfo](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/CameraInfo.html) type
 
-It offers one module-specific RPC call: `start()`. You will also see the base `set_transport(...)` RPC from `Module`. The module still has a `stop()` lifecycle method, but it's called on the local instance (or by the coordinator), not via RPC.
+It offers two RPC calls: `start()` and `stop()` (lifecycle methods).
 
 It also exposes an agentic [skill](/docs/concepts/blueprints.md#defining-skills) called `video_stream` (more on skills in the Blueprints guide).
 
