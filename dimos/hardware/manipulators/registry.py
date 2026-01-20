@@ -93,7 +93,7 @@ class BackendRegistry:
                 if hasattr(module, "register"):
                     module.register(self)
             except ImportError as e:
-                logger.debug(f"Skipping backend {name}: {e}")
+                logger.info(f"Skipping backend {name}: {e}")
 
         self._discovered = True
 
