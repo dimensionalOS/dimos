@@ -102,8 +102,12 @@ LIDAR_GATEWAY=192.168.1.1        # Gateway IP address for the lidar subnet
 LIDAR_IP=192.168.1.1xx           # xx = last two digits from lidar QR code serial number
 ROBOT_IP=                        # IP addres of robot on local network (if using WebRTC connection)
 
-# Motor Controller
-MOTOR_SERIAL_DEVICE=/dev/ttyACM0  # Serial device (check with: ls /dev/ttyACM*)
+# Special Configuration for Unitree G1 EDU
+For the Unitree G1 EDU, use these specific values:
+LIDAR_COMPUTER_IP=192.168.123.5
+LIDAR_GATEWAY=192.168.123.1
+LIDAR_IP=192.168.123.120
+ROBOT_IP=192.168.12.1  # For WebRTC local AP mode (optional, need additional wifi dongle)
 ```
 
 ### Start the Navigation Stack
