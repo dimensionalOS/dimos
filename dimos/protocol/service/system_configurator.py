@@ -60,8 +60,7 @@ def _read_sysctl_int(name: str) -> int | None:
 
 
 def _write_sysctl_int(name: str, value: int) -> None:
-    # Sysctl writes require root.
-    sudo_run("sysctl", "-w", f"{name}={value}", check=True, text=True, capture_output=True)
+    sudo_run("sysctl", "-w", f"{name}={value}", check=True, text=True, capture_output=False)
 
 
 # -------------------------- base class for system config checks/requirements --------------------------
