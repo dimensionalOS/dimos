@@ -2,8 +2,8 @@ We have many diagramming tools. View source code of this page to see examples.
 
 # How to make diagrams
 
-1. Use Pikchr (language) to define a diagram
-2. Use `md-babel-py` from [codeblocks.md](/docs/development/writing_docs/codeblocks.md) to execute the diagram and insert the result.
+1. First define a diagram using a codeblock (examples below). See [Pikchr](https://pikchr.org/) for more details on syntax.
+2. Then use the cli tool `md-babel-py` (ex: `md-babel-py run README.md`) to generate the diagram. See [codeblocks.md](/docs/development/writing_docs/codeblocks.md) for how to get the `md-babel-py` cli tool.
 
 # Pikchr
 
