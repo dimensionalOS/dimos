@@ -37,12 +37,12 @@ class DDSMsg(Protocol):
 
     @classmethod
     def dds_encode(cls, msg: DDSMsg) -> bytes:
-        """Encode this message instance into bytes."""
+        """Encode message to bytes for DDS transmission."""
         ...
 
     @classmethod
     def dds_decode(cls, data: bytes) -> DDSMsg:
-        """Decode bytes into a DDS message instance."""
+        """Decode message from bytes for DDS transmission."""
         ...
 
 
