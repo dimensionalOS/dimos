@@ -142,7 +142,7 @@ def configure_system(checks: list[SystemConfigurator], check_only: bool = False)
 # ------------------------------ specific checks: multicast ------------------------------
 
 
-class LinuxMulticast(SystemConfigurator):
+class MulticastConfiguratorLinux(SystemConfigurator):
     critical = True
     MULTICAST_PREFIX = "224.0.0.0/4"
 
@@ -245,7 +245,7 @@ class LinuxMulticast(SystemConfigurator):
             sudo_run(*self.add_route_cmd, check=True, text=True, capture_output=True)
 
 
-class MacOSMulticast(SystemConfigurator):
+class MulticastConfiguratorMacOS(SystemConfigurator):
     critical = True
 
     def __init__(self, loopback_interface: str = "lo0"):
@@ -285,7 +285,7 @@ class MacOSMulticast(SystemConfigurator):
 IDEAL_RMEM_SIZE = 67_108_864  # 64MB
 
 
-class LinuxBuffer(SystemConfigurator):
+class BufferConfiguratorLinux(SystemConfigurator):
     critical = False
 
     TARGET_RMEM_SIZE = IDEAL_RMEM_SIZE
@@ -315,7 +315,7 @@ class LinuxBuffer(SystemConfigurator):
             _write_sysctl_int(key, target)
 
 
-class MacOSBuffer(SystemConfigurator):
+class BufferConfiguratorMacOS(SystemConfigurator):
     critical = False
     MAX_POSSIBLE_RECVSPACE = 2_097_152
     MAX_POSSIBLE_BUFFER_SIZE = 8_388_608
@@ -355,7 +355,7 @@ class MacOSBuffer(SystemConfigurator):
 # ------------------------------ specific checks: ulimit ------------------------------
 
 
-class MacOSUlimit(SystemConfigurator):
+class MaxFilConfiguratorMacOS(SystemConfigurator):
     """Ensure the open file descriptor limit (ulimit -n) is at least TARGET_FILE_COUNT_LIMIT."""
 
     critical = False

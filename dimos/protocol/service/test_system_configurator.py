@@ -21,11 +21,11 @@ import pytest
 
 from dimos.protocol.service.system_configurator import (
     IDEAL_RMEM_SIZE,
-    LinuxBuffer,
-    LinuxMulticast,
-    MacOSBuffer,
-    MacOSMulticast,
-    MacOSUlimit,
+    BufferConfiguratorLinux,
+    BufferConfiguratorMacOS,
+    MaxFilConfiguratorMacOS,
+    MulticastConfiguratorLinux,
+    MulticastConfiguratorMacOS,
     SystemConfigurator,
     _is_root_user,
     _read_sysctl_int,
@@ -191,12 +191,12 @@ class TestConfigureSystem:
                 assert not mock_check.fix_called
 
 
-# ----------------------------- LinuxMulticast tests -----------------------------
+# ----------------------------- MulticastConfiguratorLinux tests -----------------------------
 
 
-class TestLinuxMulticast:
+class TestMulticastConfiguratorLinux:
     def test_check_returns_true_when_fully_configured(self) -> None:
-        configurator = LinuxMulticast()
+        configurator = MulticastConfiguratorLinux()
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0),  # ip -V
@@ -211,7 +211,7 @@ class TestLinuxMulticast:
             assert configurator.route_ok is True
 
     def test_check_returns_false_when_multicast_flag_missing(self) -> None:
-        configurator = LinuxMulticast()
+        configurator = MulticastConfiguratorLinux()
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0),  # ip -V
@@ -223,7 +223,7 @@ class TestLinuxMulticast:
             assert configurator.route_ok is True
 
     def test_check_returns_false_when_route_missing(self) -> None:
-        configurator = LinuxMulticast()
+        configurator = MulticastConfiguratorLinux()
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0),  # ip -V
@@ -238,14 +238,14 @@ class TestLinuxMulticast:
             assert configurator.route_ok is False
 
     def test_check_returns_false_when_ip_not_found(self) -> None:
-        configurator = LinuxMulticast()
+        configurator = MulticastConfiguratorLinux()
         with patch("subprocess.run", side_effect=FileNotFoundError):
             assert configurator.check() is False
             assert configurator.loopback_ok is False
             assert configurator.route_ok is False
 
     def test_explanation_includes_needed_commands(self) -> None:
-        configurator = LinuxMulticast()
+        configurator = MulticastConfiguratorLinux()
         configurator.loopback_ok = False
         configurator.route_ok = False
         explanation = configurator.explanation()
@@ -254,7 +254,7 @@ class TestLinuxMulticast:
 
     def test_fix_runs_needed_commands(self) -> None:
         _is_root_user.cache_clear()
-        configurator = LinuxMulticast()
+        configurator = MulticastConfiguratorLinux()
         configurator.loopback_ok = False
         configurator.route_ok = False
         with patch("os.geteuid", return_value=0):
@@ -264,12 +264,12 @@ class TestLinuxMulticast:
                 assert mock_run.call_count == 2
 
 
-# ----------------------------- MacOSMulticast tests -----------------------------
+# ----------------------------- MulticastConfiguratorMacOS tests -----------------------------
 
 
-class TestMacOSMulticast:
+class TestMulticastConfiguratorMacOS:
     def test_check_returns_true_when_route_exists(self) -> None:
-        configurator = MacOSMulticast()
+        configurator = MulticastConfiguratorMacOS()
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
@@ -278,7 +278,7 @@ class TestMacOSMulticast:
             assert configurator.check() is True
 
     def test_check_returns_false_when_route_missing(self) -> None:
-        configurator = MacOSMulticast()
+        configurator = MulticastConfiguratorMacOS()
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0, stdout="default    192.168.1.1    UGScg    en0"
@@ -286,19 +286,19 @@ class TestMacOSMulticast:
             assert configurator.check() is False
 
     def test_check_returns_false_on_netstat_error(self) -> None:
-        configurator = MacOSMulticast()
+        configurator = MulticastConfiguratorMacOS()
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1, stderr="error")
             assert configurator.check() is False
 
     def test_explanation_includes_route_command(self) -> None:
-        configurator = MacOSMulticast()
+        configurator = MulticastConfiguratorMacOS()
         explanation = configurator.explanation()
         assert "route add -net 224.0.0.0/4 -interface lo0" in explanation
 
     def test_fix_runs_route_command(self) -> None:
         _is_root_user.cache_clear()
-        configurator = MacOSMulticast()
+        configurator = MulticastConfiguratorMacOS()
         with patch("os.geteuid", return_value=0):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
@@ -309,19 +309,19 @@ class TestMacOSMulticast:
                 assert "224.0.0.0/4" in args
 
 
-# ----------------------------- LinuxBuffer tests -----------------------------
+# ----------------------------- BufferConfiguratorLinux tests -----------------------------
 
 
-class TestLinuxBuffer:
+class TestBufferConfiguratorLinux:
     def test_check_returns_true_when_buffers_sufficient(self) -> None:
-        configurator = LinuxBuffer()
+        configurator = BufferConfiguratorLinux()
         with patch("dimos.protocol.service.system_configurator._read_sysctl_int") as mock_read:
             mock_read.return_value = IDEAL_RMEM_SIZE
             assert configurator.check() is True
             assert configurator.needs == []
 
     def test_check_returns_false_when_rmem_max_low(self) -> None:
-        configurator = LinuxBuffer()
+        configurator = BufferConfiguratorLinux()
         with patch("dimos.protocol.service.system_configurator._read_sysctl_int") as mock_read:
             mock_read.side_effect = [1048576, IDEAL_RMEM_SIZE]  # rmem_max low
             assert configurator.check() is False
@@ -329,75 +329,75 @@ class TestLinuxBuffer:
             assert configurator.needs[0][0] == "net.core.rmem_max"
 
     def test_check_returns_false_when_both_low(self) -> None:
-        configurator = LinuxBuffer()
+        configurator = BufferConfiguratorLinux()
         with patch("dimos.protocol.service.system_configurator._read_sysctl_int") as mock_read:
             mock_read.return_value = 1048576  # Both low
             assert configurator.check() is False
             assert len(configurator.needs) == 2
 
     def test_explanation_lists_needed_changes(self) -> None:
-        configurator = LinuxBuffer()
+        configurator = BufferConfiguratorLinux()
         configurator.needs = [("net.core.rmem_max", IDEAL_RMEM_SIZE)]
         explanation = configurator.explanation()
         assert "net.core.rmem_max" in explanation
         assert str(IDEAL_RMEM_SIZE) in explanation
 
     def test_fix_writes_needed_values(self) -> None:
-        configurator = LinuxBuffer()
+        configurator = BufferConfiguratorLinux()
         configurator.needs = [("net.core.rmem_max", IDEAL_RMEM_SIZE)]
         with patch("dimos.protocol.service.system_configurator._write_sysctl_int") as mock_write:
             configurator.fix()
             mock_write.assert_called_once_with("net.core.rmem_max", IDEAL_RMEM_SIZE)
 
 
-# ----------------------------- MacOSBuffer tests -----------------------------
+# ----------------------------- BufferConfiguratorMacOS tests -----------------------------
 
 
-class TestMacOSBuffer:
+class TestBufferConfiguratorMacOS:
     def test_check_returns_true_when_buffers_sufficient(self) -> None:
-        configurator = MacOSBuffer()
+        configurator = BufferConfiguratorMacOS()
         with patch("dimos.protocol.service.system_configurator._read_sysctl_int") as mock_read:
             mock_read.side_effect = [
-                MacOSBuffer.TARGET_BUFFER_SIZE,
-                MacOSBuffer.TARGET_RECVSPACE,
-                MacOSBuffer.TARGET_DGRAM_SIZE,
+                BufferConfiguratorMacOS.TARGET_BUFFER_SIZE,
+                BufferConfiguratorMacOS.TARGET_RECVSPACE,
+                BufferConfiguratorMacOS.TARGET_DGRAM_SIZE,
             ]
             assert configurator.check() is True
             assert configurator.needs == []
 
     def test_check_returns_false_when_values_low(self) -> None:
-        configurator = MacOSBuffer()
+        configurator = BufferConfiguratorMacOS()
         with patch("dimos.protocol.service.system_configurator._read_sysctl_int") as mock_read:
             mock_read.return_value = 1024  # All low
             assert configurator.check() is False
             assert len(configurator.needs) == 3
 
     def test_explanation_lists_needed_changes(self) -> None:
-        configurator = MacOSBuffer()
+        configurator = BufferConfiguratorMacOS()
         configurator.needs = [
-            ("kern.ipc.maxsockbuf", MacOSBuffer.TARGET_BUFFER_SIZE),
+            ("kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET_BUFFER_SIZE),
         ]
         explanation = configurator.explanation()
         assert "kern.ipc.maxsockbuf" in explanation
 
     def test_fix_writes_needed_values(self) -> None:
-        configurator = MacOSBuffer()
+        configurator = BufferConfiguratorMacOS()
         configurator.needs = [
-            ("kern.ipc.maxsockbuf", MacOSBuffer.TARGET_BUFFER_SIZE),
+            ("kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET_BUFFER_SIZE),
         ]
         with patch("dimos.protocol.service.system_configurator._write_sysctl_int") as mock_write:
             configurator.fix()
             mock_write.assert_called_once_with(
-                "kern.ipc.maxsockbuf", MacOSBuffer.TARGET_BUFFER_SIZE
+                "kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET_BUFFER_SIZE
             )
 
 
-# ----------------------------- MacOSUlimit tests -----------------------------
+# ----------------------------- MaxFilConfiguratorMacOS tests -----------------------------
 
 
-class TestMacOSUlimit:
+class TestMaxFilConfiguratorMacOS:
     def test_check_returns_true_when_soft_limit_sufficient(self) -> None:
-        configurator = MacOSUlimit(target=65536)
+        configurator = MaxFilConfiguratorMacOS(target=65536)
         with patch("resource.getrlimit") as mock_getrlimit:
             mock_getrlimit.return_value = (65536, 1048576)
             assert configurator.check() is True
@@ -405,26 +405,26 @@ class TestMacOSUlimit:
             assert configurator.current_hard == 1048576
 
     def test_check_returns_false_when_soft_limit_low(self) -> None:
-        configurator = MacOSUlimit(target=65536)
+        configurator = MaxFilConfiguratorMacOS(target=65536)
         with patch("resource.getrlimit") as mock_getrlimit:
             mock_getrlimit.return_value = (256, 1048576)
             assert configurator.check() is False
             assert configurator.can_fix_without_sudo is True
 
     def test_check_returns_false_when_both_limits_low(self) -> None:
-        configurator = MacOSUlimit(target=65536)
+        configurator = MaxFilConfiguratorMacOS(target=65536)
         with patch("resource.getrlimit") as mock_getrlimit:
             mock_getrlimit.return_value = (256, 10240)
             assert configurator.check() is False
             assert configurator.can_fix_without_sudo is False
 
     def test_check_returns_false_on_exception(self) -> None:
-        configurator = MacOSUlimit(target=65536)
+        configurator = MaxFilConfiguratorMacOS(target=65536)
         with patch("resource.getrlimit", side_effect=Exception("error")):
             assert configurator.check() is False
 
     def test_explanation_when_sudo_not_needed(self) -> None:
-        configurator = MacOSUlimit(target=65536)
+        configurator = MaxFilConfiguratorMacOS(target=65536)
         configurator.current_soft = 256
         configurator.current_hard = 1048576
         configurator.can_fix_without_sudo = True
@@ -433,7 +433,7 @@ class TestMacOSUlimit:
         assert "no sudo" in explanation.lower() or "Raise soft" in explanation
 
     def test_explanation_when_sudo_needed(self) -> None:
-        configurator = MacOSUlimit(target=65536)
+        configurator = MaxFilConfiguratorMacOS(target=65536)
         configurator.current_soft = 256
         configurator.current_hard = 10240
         configurator.can_fix_without_sudo = False
@@ -441,7 +441,7 @@ class TestMacOSUlimit:
         assert "launchctl" in explanation
 
     def test_fix_raises_soft_limit_without_sudo(self) -> None:
-        configurator = MacOSUlimit(target=65536)
+        configurator = MaxFilConfiguratorMacOS(target=65536)
         configurator.current_soft = 256
         configurator.current_hard = 1048576
         configurator.can_fix_without_sudo = True
@@ -450,7 +450,7 @@ class TestMacOSUlimit:
             mock_setrlimit.assert_called_once_with(resource.RLIMIT_NOFILE, (65536, 1048576))
 
     def test_fix_does_nothing_when_already_sufficient(self) -> None:
-        configurator = MacOSUlimit(target=65536)
+        configurator = MaxFilConfiguratorMacOS(target=65536)
         configurator.current_soft = 65536
         configurator.current_hard = 1048576
         with patch("resource.setrlimit") as mock_setrlimit:
@@ -459,7 +459,7 @@ class TestMacOSUlimit:
 
     def test_fix_uses_launchctl_when_hard_limit_low(self) -> None:
         _is_root_user.cache_clear()
-        configurator = MacOSUlimit(target=65536)
+        configurator = MaxFilConfiguratorMacOS(target=65536)
         configurator.current_soft = 256
         configurator.current_hard = 10240
         configurator.can_fix_without_sudo = False
@@ -474,7 +474,7 @@ class TestMacOSUlimit:
                     assert "maxfiles" in args
 
     def test_fix_raises_on_setrlimit_error(self) -> None:
-        configurator = MacOSUlimit(target=65536)
+        configurator = MaxFilConfiguratorMacOS(target=65536)
         configurator.current_soft = 256
         configurator.current_hard = 1048576
         configurator.can_fix_without_sudo = True

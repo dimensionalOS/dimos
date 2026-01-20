@@ -28,11 +28,11 @@ from dimos.protocol.service.lcmservice import (
     configure_system_for_lcm,
 )
 from dimos.protocol.service.system_configurator import (
-    LinuxBuffer,
-    LinuxMulticast,
-    MacOSBuffer,
-    MacOSMulticast,
-    MacOSUlimit,
+    BufferConfiguratorLinux,
+    BufferConfiguratorMacOS,
+    MaxFilConfiguratorMacOS,
+    MulticastConfiguratorLinux,
+    MulticastConfiguratorMacOS,
 )
 
 # ----------------------------- configure_system_for_lcm tests -----------------------------
@@ -46,8 +46,8 @@ class TestConfigureSystemForLcm:
                 mock_configure.assert_called_once()
                 checks = mock_configure.call_args[0][0]
                 assert len(checks) == 2
-                assert isinstance(checks[0], LinuxMulticast)
-                assert isinstance(checks[1], LinuxBuffer)
+                assert isinstance(checks[0], MulticastConfiguratorLinux)
+                assert isinstance(checks[1], BufferConfiguratorLinux)
                 assert checks[0].loopback_interface == "lo"
 
     def test_creates_macos_checks_on_darwin(self) -> None:
@@ -57,9 +57,9 @@ class TestConfigureSystemForLcm:
                 mock_configure.assert_called_once()
                 checks = mock_configure.call_args[0][0]
                 assert len(checks) == 3
-                assert isinstance(checks[0], MacOSMulticast)
-                assert isinstance(checks[1], MacOSBuffer)
-                assert isinstance(checks[2], MacOSUlimit)
+                assert isinstance(checks[0], MulticastConfiguratorMacOS)
+                assert isinstance(checks[1], BufferConfiguratorMacOS)
+                assert isinstance(checks[2], MaxFilConfiguratorMacOS)
                 assert checks[0].loopback_interface == "lo0"
 
     def test_passes_check_only_flag(self) -> None:

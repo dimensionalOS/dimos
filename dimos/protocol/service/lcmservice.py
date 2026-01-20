@@ -25,11 +25,11 @@ import lcm
 
 from dimos.protocol.service.spec import Service
 from dimos.protocol.service.system_configurator import (
-    LinuxBuffer,
-    LinuxMulticast,
-    MacOSBuffer,
-    MacOSMulticast,
-    MacOSUlimit,
+    BufferConfiguratorLinux,
+    BufferConfiguratorMacOS,
+    MaxFilConfiguratorMacOS,
+    MulticastConfiguratorLinux,
+    MulticastConfiguratorMacOS,
     SystemConfigurator,
     configure_system,
 )
@@ -49,14 +49,14 @@ def autoconf(check_only: bool = False) -> None:
     checks: list[SystemConfigurator] = []
     if system == "Linux":
         checks = [
-            LinuxMulticast(loopback_interface="lo"),
-            LinuxBuffer(),
+            MulticastConfiguratorLinux(loopback_interface="lo"),
+            BufferConfiguratorLinux(),
         ]
     elif system == "Darwin":
         checks = [
-            MacOSMulticast(loopback_interface="lo0"),
-            MacOSBuffer(),
-            MacOSUlimit(),
+            MulticastConfiguratorMacOS(loopback_interface="lo0"),
+            BufferConfiguratorMacOS(),
+            MaxFilConfiguratorMacOS(),
         ]
     else:
         logger.error(f"System configuration not supported on {system}")
