@@ -20,7 +20,7 @@ import os
 import re
 import resource
 import subprocess
-from typing import Any, Optional
+from typing import Any
 
 # ----------------------------- sudo helpers -----------------------------
 
