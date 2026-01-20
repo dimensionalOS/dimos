@@ -158,7 +158,7 @@ class LCMService(Service[LCMConfig]):
                 self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
 
         try:
-            configure_system_for_lcm(check_only=not self.config.autoconf)
+            autoconf(check_only=not self.config.autoconf)
         except Exception as e:
             print(f"Error checking system configuration: {e}")
 
