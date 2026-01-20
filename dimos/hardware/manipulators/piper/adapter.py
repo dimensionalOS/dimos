@@ -484,7 +484,7 @@ class PiperAdapter(ManipulatorAdapter):
                 gripper_msgs = self._sdk.GetArmGripperMsgs()
                 if gripper_msgs and gripper_msgs.gripper_state:
                     # Piper gripper position is 0-100 percentage
-                    pos = gripper_msgs.gripper_state.grippers_angle
+                    pos: float = gripper_msgs.gripper_state.grippers_angle
                     return (pos / 100.0) * GRIPPER_MAX_OPENING_M
         except Exception:
             pass
