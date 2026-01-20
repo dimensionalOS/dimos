@@ -23,7 +23,7 @@ from dimos.protocol.service.system_configurator import (
     IDEAL_RMEM_SIZE,
     BufferConfiguratorLinux,
     BufferConfiguratorMacOS,
-    MaxFilConfiguratorMacOS,
+    MaxFileConfiguratorMacOS,
     MulticastConfiguratorLinux,
     MulticastConfiguratorMacOS,
     SystemConfigurator,
@@ -392,12 +392,12 @@ class TestBufferConfiguratorMacOS:
             )
 
 
-# ----------------------------- MaxFilConfiguratorMacOS tests -----------------------------
+# ----------------------------- MaxFileConfiguratorMacOS tests -----------------------------
 
 
-class TestMaxFilConfiguratorMacOS:
+class TestMaxFileConfiguratorMacOS:
     def test_check_returns_true_when_soft_limit_sufficient(self) -> None:
-        configurator = MaxFilConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=65536)
         with patch("resource.getrlimit") as mock_getrlimit:
             mock_getrlimit.return_value = (65536, 1048576)
             assert configurator.check() is True
@@ -405,26 +405,26 @@ class TestMaxFilConfiguratorMacOS:
             assert configurator.current_hard == 1048576
 
     def test_check_returns_false_when_soft_limit_low(self) -> None:
-        configurator = MaxFilConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=65536)
         with patch("resource.getrlimit") as mock_getrlimit:
             mock_getrlimit.return_value = (256, 1048576)
             assert configurator.check() is False
             assert configurator.can_fix_without_sudo is True
 
     def test_check_returns_false_when_both_limits_low(self) -> None:
-        configurator = MaxFilConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=65536)
         with patch("resource.getrlimit") as mock_getrlimit:
             mock_getrlimit.return_value = (256, 10240)
             assert configurator.check() is False
             assert configurator.can_fix_without_sudo is False
 
     def test_check_returns_false_on_exception(self) -> None:
-        configurator = MaxFilConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=65536)
         with patch("resource.getrlimit", side_effect=Exception("error")):
             assert configurator.check() is False
 
     def test_explanation_when_sudo_not_needed(self) -> None:
-        configurator = MaxFilConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=65536)
         configurator.current_soft = 256
         configurator.current_hard = 1048576
         configurator.can_fix_without_sudo = True
@@ -433,7 +433,7 @@ class TestMaxFilConfiguratorMacOS:
         assert "no sudo" in explanation.lower() or "Raise soft" in explanation
 
     def test_explanation_when_sudo_needed(self) -> None:
-        configurator = MaxFilConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=65536)
         configurator.current_soft = 256
         configurator.current_hard = 10240
         configurator.can_fix_without_sudo = False
@@ -441,7 +441,7 @@ class TestMaxFilConfiguratorMacOS:
         assert "launchctl" in explanation
 
     def test_fix_raises_soft_limit_without_sudo(self) -> None:
-        configurator = MaxFilConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=65536)
         configurator.current_soft = 256
         configurator.current_hard = 1048576
         configurator.can_fix_without_sudo = True
@@ -450,7 +450,7 @@ class TestMaxFilConfiguratorMacOS:
             mock_setrlimit.assert_called_once_with(resource.RLIMIT_NOFILE, (65536, 1048576))
 
     def test_fix_does_nothing_when_already_sufficient(self) -> None:
-        configurator = MaxFilConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=65536)
         configurator.current_soft = 65536
         configurator.current_hard = 1048576
         with patch("resource.setrlimit") as mock_setrlimit:
@@ -459,7 +459,7 @@ class TestMaxFilConfiguratorMacOS:
 
     def test_fix_uses_launchctl_when_hard_limit_low(self) -> None:
         _is_root_user.cache_clear()
-        configurator = MaxFilConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=65536)
         configurator.current_soft = 256
         configurator.current_hard = 10240
         configurator.can_fix_without_sudo = False
@@ -474,7 +474,7 @@ class TestMaxFilConfiguratorMacOS:
                     assert "maxfiles" in args
 
     def test_fix_raises_on_setrlimit_error(self) -> None:
-        configurator = MaxFilConfiguratorMacOS(target=65536)
+        configurator = MaxFileConfiguratorMacOS(target=65536)
         configurator.current_soft = 256
         configurator.current_hard = 1048576
         configurator.can_fix_without_sudo = True

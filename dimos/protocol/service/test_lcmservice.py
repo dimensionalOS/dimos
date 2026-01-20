@@ -30,7 +30,7 @@ from dimos.protocol.service.lcmservice import (
 from dimos.protocol.service.system_configurator import (
     BufferConfiguratorLinux,
     BufferConfiguratorMacOS,
-    MaxFilConfiguratorMacOS,
+    MaxFileConfiguratorMacOS,
     MulticastConfiguratorLinux,
     MulticastConfiguratorMacOS,
 )
@@ -59,7 +59,7 @@ class TestConfigureSystemForLcm:
                 assert len(checks) == 3
                 assert isinstance(checks[0], MulticastConfiguratorMacOS)
                 assert isinstance(checks[1], BufferConfiguratorMacOS)
-                assert isinstance(checks[2], MaxFilConfiguratorMacOS)
+                assert isinstance(checks[2], MaxFileConfiguratorMacOS)
                 assert checks[0].loopback_interface == "lo0"
 
     def test_passes_check_only_flag(self) -> None:

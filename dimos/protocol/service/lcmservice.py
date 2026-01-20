@@ -27,7 +27,7 @@ from dimos.protocol.service.spec import Service
 from dimos.protocol.service.system_configurator import (
     BufferConfiguratorLinux,
     BufferConfiguratorMacOS,
-    MaxFilConfiguratorMacOS,
+    MaxFileConfiguratorMacOS,
     MulticastConfiguratorLinux,
     MulticastConfiguratorMacOS,
     SystemConfigurator,
@@ -56,7 +56,7 @@ def autoconf(check_only: bool = False) -> None:
         checks = [
             MulticastConfiguratorMacOS(loopback_interface="lo0"),
             BufferConfiguratorMacOS(),
-            MaxFilConfiguratorMacOS(),
+            MaxFileConfiguratorMacOS(),
         ]
     else:
         logger.error(f"System configuration not supported on {system}")

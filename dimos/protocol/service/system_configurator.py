@@ -355,7 +355,7 @@ class BufferConfiguratorMacOS(SystemConfigurator):
 # ------------------------------ specific checks: ulimit ------------------------------
 
 
-class MaxFilConfiguratorMacOS(SystemConfigurator):
+class MaxFileConfiguratorMacOS(SystemConfigurator):
     """Ensure the open file descriptor limit (ulimit -n) is at least TARGET_FILE_COUNT_LIMIT."""
 
     critical = False
