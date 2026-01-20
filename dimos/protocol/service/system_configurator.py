@@ -334,7 +334,7 @@ class MacOSBuffer(SystemConfigurator):
         self.needs.clear()
         for key, target in [
             ("kern.ipc.maxsockbuf", self.TARGET_BUFFER_SIZE),
-            ("net.inet.udp.recvspace", self.MAX_POSSIBLE_RECVSPACE),
+            ("net.inet.udp.recvspace", self.TARGET_RECVSPACE),
             ("net.inet.udp.maxdgram", self.TARGET_DGRAM_SIZE),
         ]:
             current = _read_sysctl_int(key)
