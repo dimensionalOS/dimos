@@ -343,7 +343,7 @@ class XArmBackend(ManipulatorBackend):
         code: int = result[0]
         pos: float | None = result[1]
         if code == 0 and pos is not None:
-            return pos / 1000.0  # mm -> m
+            return pos * MM_TO_M
         return None
 
     def write_gripper_position(self, position: float) -> bool:
@@ -351,7 +351,7 @@ class XArmBackend(ManipulatorBackend):
         if not self._arm:
             return False
 
-        pos_mm = position * 1000.0  # m -> mm
+        pos_mm = position * M_TO_MM
         code: int = self._arm.set_gripper_position(pos_mm)
         return code == 0
 

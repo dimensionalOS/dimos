@@ -40,6 +40,12 @@ RAD_TO_MILLIDEG = 57295.7795  # radians -> millidegrees
 MILLIDEG_TO_RAD = 1.0 / RAD_TO_MILLIDEG  # millidegrees -> radians
 MM_TO_M = 0.001  # mm -> meters
 
+# Hardware specs
+GRIPPER_MAX_OPENING_M = 0.08  # Max gripper opening in meters
+
+# Default configurable parameters
+DEFAULT_GRIPPER_SPEED = 1000
+
 
 class PiperBackend(ManipulatorBackend):
     """Piper-specific backend.
@@ -52,11 +58,18 @@ class PiperBackend(ManipulatorBackend):
     - Velocities: Piper uses internal units, we use rad/s
     """
 
-    def __init__(self, address: str = "can0", dof: int = 6, **_: object) -> None:
+    def __init__(
+        self,
+        address: str = "can0",
+        dof: int = 6,
+        gripper_speed: int = DEFAULT_GRIPPER_SPEED,
+        **_: object,
+    ) -> None:
         if dof != 6:
             raise ValueError(f"PiperBackend only supports 6 DOF (got {dof})")
         self._can_port = address
         self._dof = dof
+        self._gripper_speed = gripper_speed
         self._sdk: Any = None
         self._connected: bool = False
         self._enabled: bool = False
@@ -471,9 +484,8 @@ class PiperBackend(ManipulatorBackend):
                 gripper_msgs = self._sdk.GetArmGripperMsgs()
                 if gripper_msgs and gripper_msgs.gripper_state:
                     # Piper gripper position is 0-100 percentage
-                    # Convert to meters (assume max opening 0.08m)
                     pos = gripper_msgs.gripper_state.grippers_angle
-                    return float(pos / 100.0) * 0.08
+                    return (pos / 100.0) * GRIPPER_MAX_OPENING_M
         except Exception:
             pass
 
@@ -487,10 +499,9 @@ class PiperBackend(ManipulatorBackend):
         try:
             if hasattr(self._sdk, "GripperCtrl"):
                 # Convert meters to percentage (0-100)
-                # Assume max opening 0.08m
-                percentage = int((position / 0.08) * 100)
+                percentage = int((position / GRIPPER_MAX_OPENING_M) * 100)
                 percentage = max(0, min(100, percentage))
-                self._sdk.GripperCtrl(percentage, 1000, 0x01, 0)
+                self._sdk.GripperCtrl(percentage, self._gripper_speed, 0x01, 0)
                 return True
         except Exception:
             pass
