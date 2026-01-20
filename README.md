@@ -121,7 +121,7 @@ humancli
 If you you need more information on how DimOS works, check out the following links:
 
 - [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are singleton python classes.
-- [Streams](/docs/api/sensor_streams/index.md): How modules communicate, a Pub / Sub system.
+- [Streams](/docs/api/sensor_streams/README.md): How modules communicate, a Pub / Sub system.
 - [Blueprints](/docs/concepts/blueprints.md): a way to group modules together and define their connections to each other.
 - [RPC](/docs/concepts/blueprints.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
 - [Skills](/docs/concepts/blueprints.md#defining-skills): An RPC function, except it can be called by an AI agent (a tool for an AI).
