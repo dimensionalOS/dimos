@@ -18,9 +18,14 @@ SDK Units: angles=0.001 degrees (millidegrees), distance=mm
 DimOS Units: angles=radians, distance=meters
 """
 
+from __future__ import annotations
+
 import math
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from dimos.hardware.manipulators.registry import BackendRegistry
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
@@ -47,10 +52,10 @@ class PiperBackend(ManipulatorBackend):
     - Velocities: Piper uses internal units, we use rad/s
     """
 
-    def __init__(self, can_port: str = "can0", dof: int = 6) -> None:
+    def __init__(self, address: str = "can0", dof: int = 6, **_: object) -> None:
         if dof != 6:
             raise ValueError(f"PiperBackend only supports 6 DOF (got {dof})")
-        self._can_port = can_port
+        self._can_port = address
         self._dof = dof
         self._sdk: Any = None
         self._connected: bool = False
@@ -502,6 +507,11 @@ class PiperBackend(ManipulatorBackend):
         Note: Piper doesn't typically have F/T sensor.
         """
         return None
+
+
+def register(registry: BackendRegistry) -> None:
+    """Register this backend with the registry."""
+    registry.register("piper", PiperBackend)
 
 
 __all__ = ["PiperBackend"]

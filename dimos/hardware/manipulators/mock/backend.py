@@ -21,7 +21,13 @@ Usage:
     >>> arm.start()  # No hardware!
 """
 
+from __future__ import annotations
+
 import math
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dimos.hardware.manipulators.registry import BackendRegistry
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
@@ -40,7 +46,7 @@ class MockBackend:
     - Development without physical robot
     """
 
-    def __init__(self, dof: int = 6) -> None:
+    def __init__(self, dof: int = 6, **_: object) -> None:
         self._dof = dof
         self._positions = [0.0] * dof
         self._velocities = [0.0] * dof
@@ -245,6 +251,11 @@ class MockBackend:
     def set_efforts(self, efforts: list[float]) -> None:
         """Set efforts directly for testing."""
         self._efforts = list(efforts)
+
+
+def register(registry: BackendRegistry) -> None:
+    """Register this backend with the registry."""
+    registry.register("mock", MockBackend)
 
 
 __all__ = ["MockBackend"]

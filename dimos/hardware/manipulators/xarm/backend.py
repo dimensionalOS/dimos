@@ -18,9 +18,15 @@ SDK Units: angles=degrees, distance=mm, velocity=deg/s
 DimOS Units: angles=radians, distance=meters, velocity=rad/s
 """
 
+from __future__ import annotations
+
 import math
+from typing import TYPE_CHECKING
 
 from xarm.wrapper import XArmAPI
+
+if TYPE_CHECKING:
+    from dimos.hardware.manipulators.registry import BackendRegistry
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
@@ -49,8 +55,10 @@ class XArmBackend(ManipulatorBackend):
     No inheritance required - just matching method signatures.
     """
 
-    def __init__(self, ip: str, dof: int = 6) -> None:
-        self._ip = ip
+    def __init__(self, address: str, dof: int = 6, **_: object) -> None:
+        if not address:
+            raise ValueError("address (IP) is required for XArmBackend")
+        self._ip = address
         self._dof = dof
         self._arm: XArmAPI | None = None
         self._control_mode: ControlMode = ControlMode.POSITION
@@ -360,6 +368,11 @@ class XArmBackend(ManipulatorBackend):
         if code == 0 and ft:
             return list(ft)
         return None
+
+
+def register(registry: BackendRegistry) -> None:
+    """Register this backend with the registry."""
+    registry.register("xarm", XArmBackend)
 
 
 __all__ = ["XArmBackend"]

@@ -210,24 +210,13 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
     def _create_backend(self, component: HardwareComponent) -> ManipulatorBackend:
         """Create a manipulator backend from component config."""
-        dof = len(component.joints)
-        match component.backend_type.lower():
-            case "mock":
-                from dimos.hardware.manipulators.mock import MockBackend
+        from dimos.hardware.manipulators.registry import backend_registry
 
-                return MockBackend(dof=dof)
-            case "xarm":
-                if component.address is None:
-                    raise ValueError("address (IP) is required for xarm backend")
-                from dimos.hardware.manipulators.xarm import XArmBackend
-
-                return XArmBackend(ip=component.address, dof=dof)
-            case "piper":
-                from dimos.hardware.manipulators.piper import PiperBackend
-
-                return PiperBackend(can_port=component.address or "can0", dof=dof)
-            case _:
-                raise ValueError(f"Unknown backend type: {component.backend_type}")
+        return backend_registry.create(
+            component.backend_type,
+            dof=len(component.joints),
+            address=component.address,
+        )
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
         """Create a control task from config."""
