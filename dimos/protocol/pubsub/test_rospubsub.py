@@ -27,7 +27,6 @@ from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
 
 
-@pytest.fixture()
 def ros_node():
     ros = DimosROS()
     ros.start()
@@ -38,12 +37,12 @@ def ros_node():
 
 
 @pytest.fixture()
-def publisher(ros_node) -> Generator[DimosROS, None, None]:
+def publisher() -> Generator[DimosROS, None, None]:
     yield from ros_node()
 
 
 @pytest.fixture()
-def subscriber(ros_node) -> Generator[DimosROS, None, None]:
+def subscriber() -> Generator[DimosROS, None, None]:
     yield from ros_node()
 
 
