@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import os
 import platform
 import threading
 import traceback
@@ -37,10 +38,12 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-# these are derived from the LCM
 _DEFAULT_LCM_HOST = "239.255.76.67"
 _DEFAULT_LCM_PORT = "7667"
-_DEFAULT_LCM_URL = f"udpm://{_DEFAULT_LCM_HOST}:{_DEFAULT_LCM_PORT}?ttl=0"
+# LCM_DEFAULT_URL is used by LCM (we didn't pick that env var name)
+_DEFAULT_LCM_URL = os.getenv(
+    "LCM_DEFAULT_URL", f"udpm://{_DEFAULT_LCM_HOST}:{_DEFAULT_LCM_PORT}?ttl=0"
+)
 
 
 def autoconf(check_only: bool = False) -> None:
