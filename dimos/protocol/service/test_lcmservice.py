@@ -25,7 +25,7 @@ from dimos.protocol.service.lcmservice import (
     LCMConfig,
     LCMService,
     Topic,
-    configure_system_for_lcm,
+    autoconf,
 )
 from dimos.protocol.service.system_configurator import (
     BufferConfiguratorLinux,
@@ -35,14 +35,14 @@ from dimos.protocol.service.system_configurator import (
     MulticastConfiguratorMacOS,
 )
 
-# ----------------------------- configure_system_for_lcm tests -----------------------------
+# ----------------------------- autoconf tests -----------------------------
 
 
 class TestConfigureSystemForLcm:
     def test_creates_linux_checks_on_linux(self) -> None:
         with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Linux"):
             with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
-                configure_system_for_lcm()
+                autoconf()
                 mock_configure.assert_called_once()
                 checks = mock_configure.call_args[0][0]
                 assert len(checks) == 2
@@ -53,7 +53,7 @@ class TestConfigureSystemForLcm:
     def test_creates_macos_checks_on_darwin(self) -> None:
         with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Darwin"):
             with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
-                configure_system_for_lcm()
+                autoconf()
                 mock_configure.assert_called_once()
                 checks = mock_configure.call_args[0][0]
                 assert len(checks) == 3
@@ -65,7 +65,7 @@ class TestConfigureSystemForLcm:
     def test_passes_check_only_flag(self) -> None:
         with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Linux"):
             with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
-                configure_system_for_lcm(check_only=True)
+                autoconf(check_only=True)
                 mock_configure.assert_called_once()
                 assert mock_configure.call_args[1]["check_only"] is True
 
@@ -73,7 +73,7 @@ class TestConfigureSystemForLcm:
         with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Windows"):
             with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
                 with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
-                    configure_system_for_lcm()
+                    autoconf()
                     mock_configure.assert_not_called()
                     mock_logger.error.assert_called_once()
                     assert "Windows" in mock_logger.error.call_args[0][0]
@@ -157,7 +157,7 @@ class TestLCMService:
             mock_lcm_instance = MagicMock()
             mock_lcm_class.return_value = mock_lcm_instance
 
-            with patch("dimos.protocol.service.lcmservice.configure_system_for_lcm"):
+            with patch("dimos.protocol.service.lcmservice.autoconf"):
                 service = LCMService(autoconf=False)
                 service.start()
 
@@ -176,9 +176,7 @@ class TestLCMService:
             mock_lcm_instance = MagicMock()
             mock_lcm_class.return_value = mock_lcm_instance
 
-            with patch(
-                "dimos.protocol.service.lcmservice.configure_system_for_lcm"
-            ) as mock_configure:
+            with patch("dimos.protocol.service.lcmservice.autoconf") as mock_configure:
                 service = LCMService(autoconf=True)
                 service.start()
 
@@ -192,9 +190,7 @@ class TestLCMService:
             mock_lcm_instance = MagicMock()
             mock_lcm_class.return_value = mock_lcm_instance
 
-            with patch(
-                "dimos.protocol.service.lcmservice.configure_system_for_lcm"
-            ) as mock_configure:
+            with patch("dimos.protocol.service.lcmservice.autoconf") as mock_configure:
                 service = LCMService(autoconf=False)
                 service.start()
 
@@ -243,7 +239,7 @@ class TestLCMService:
             mock_lcm_instance = MagicMock()
             mock_lcm_class.return_value = mock_lcm_instance
 
-            with patch("dimos.protocol.service.lcmservice.configure_system_for_lcm"):
+            with patch("dimos.protocol.service.lcmservice.autoconf"):
                 service = LCMService()
                 state = service.__getstate__()
 
@@ -264,7 +260,7 @@ class TestLCMService:
             mock_lcm_instance = MagicMock()
             mock_lcm_class.return_value = mock_lcm_instance
 
-            with patch("dimos.protocol.service.lcmservice.configure_system_for_lcm"):
+            with patch("dimos.protocol.service.lcmservice.autoconf"):
                 service = LCMService()
                 service.start()
                 service.stop()
@@ -275,7 +271,7 @@ class TestLCMService:
     def test_stop_preserves_external_lcm_instance(self) -> None:
         mock_lcm_instance = MagicMock()
 
-        with patch("dimos.protocol.service.lcmservice.configure_system_for_lcm"):
+        with patch("dimos.protocol.service.lcmservice.autoconf"):
             # Pass lcm as kwarg
             service = LCMService(lcm=mock_lcm_instance)
             service.start()
@@ -308,7 +304,7 @@ class TestLCMService:
             mock_lcm_instance = MagicMock()
             mock_lcm_class.return_value = mock_lcm_instance
 
-            with patch("dimos.protocol.service.lcmservice.configure_system_for_lcm"):
+            with patch("dimos.protocol.service.lcmservice.autoconf"):
                 service = LCMService()
                 service.start()
 
