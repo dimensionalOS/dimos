@@ -37,7 +37,7 @@ from dimos.control.tasks.trajectory_task import (
     TrajectoryState,
 )
 from dimos.control.tick_loop import TickLoop
-from dimos.hardware.manipulators.spec import ManipulatorBackend
+from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
 
 # =============================================================================
@@ -48,7 +48,7 @@ from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
 @pytest.fixture
 def mock_adapter():
     """Create a mock manipulator adapter."""
-    adapter = MagicMock(spec=ManipulatorBackend)
+    adapter = MagicMock(spec=ManipulatorAdapter)
     adapter.get_dof.return_value = 6
     adapter.read_joint_positions.return_value = [0.0] * 6
     adapter.read_joint_velocities.return_value = [0.0] * 6
