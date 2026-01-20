@@ -43,7 +43,7 @@ _DEFAULT_LCM_PORT = "7667"
 _DEFAULT_LCM_URL = f"udpm://{_DEFAULT_LCM_HOST}:{_DEFAULT_LCM_PORT}?ttl=0"
 
 
-def configure_system_for_lcm(check_only: bool = False) -> None:
+def autoconf(check_only: bool = False) -> None:
     # check multicast and buffer sizes
     system = platform.system()
     checks: list[SystemConfigurator] = []
