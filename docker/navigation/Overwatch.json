@@ -138,24 +138,60 @@
         "/viz_graph_topic": {
           "visible": true,
           "namespaces": {
-            "angle_direct": { "visible": false },
-            "boundary_edge": { "visible": false },
-            "boundary_vertex": { "visible": false },
-            "freespace_vertex": { "visible": false },
-            "freespace_vgraph": { "visible": true },
-            "frontier_vertex": { "visible": false },
-            "global_vertex": { "visible": false },
-            "global_vgraph": { "visible": false },
-            "localrange_vertex": { "visible": false },
-            "odom_edge": { "visible": false },
-            "polygon_edge": { "visible": true },
-            "to_goal_edge": { "visible": false },
-            "trajectory_edge": { "visible": false },
-            "trajectory_vertex": { "visible": false },
-            "updating_vertex": { "visible": false },
-            "vertex_angle": { "visible": false },
-            "vertices_matches": { "visible": false },
-            "visibility_edge": { "visible": false }
+            "angle_direct": {
+              "visible": false
+            },
+            "boundary_edge": {
+              "visible": false
+            },
+            "boundary_vertex": {
+              "visible": false
+            },
+            "freespace_vertex": {
+              "visible": false
+            },
+            "freespace_vgraph": {
+              "visible": true
+            },
+            "frontier_vertex": {
+              "visible": false
+            },
+            "global_vertex": {
+              "visible": false
+            },
+            "global_vgraph": {
+              "visible": false
+            },
+            "localrange_vertex": {
+              "visible": false
+            },
+            "odom_edge": {
+              "visible": false
+            },
+            "polygon_edge": {
+              "visible": true
+            },
+            "to_goal_edge": {
+              "visible": false
+            },
+            "trajectory_edge": {
+              "visible": false
+            },
+            "trajectory_vertex": {
+              "visible": false
+            },
+            "updating_vertex": {
+              "visible": false
+            },
+            "vertex_angle": {
+              "visible": false
+            },
+            "vertices_matches": {
+              "visible": false
+            },
+            "visibility_edge": {
+              "visible": false
+            }
           }
         }
       },
