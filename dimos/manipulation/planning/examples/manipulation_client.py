@@ -24,20 +24,21 @@ Usage:
     # Run interactive client:
     python -m dimos.manipulation.planning.examples.manipulation_client
 
-IPython Commands (client is available as 'c'):
-    c.joints()              # Get current joint positions
-    c.ee()                  # Get end-effector pose
-    c.state()               # Get manipulation state
-    c.url()                 # Get Meshcat visualization URL
+Commands (call directly, no prefix needed):
+    joints()                # Get current joint positions
+    ee()                    # Get end-effector pose
+    state()                 # Get manipulation state
+    url()                   # Get Meshcat visualization URL
 
-    c.plan([0.1, ...])      # Plan to joint config
-    c.plan_pose(x, y, z)    # Plan to cartesian pose
-    c.preview()             # Preview path in Meshcat
-    c.execute()             # Execute via orchestrator
+    plan([0.1, ...])        # Plan to joint config
+    plan_pose(x, y, z)      # Plan to cartesian pose
+    preview()               # Preview path in Meshcat
+    execute()               # Execute via orchestrator
 
-    c.box("table", ...)     # Add box obstacle
-    c.sphere("ball", ...)   # Add sphere obstacle
-    c.remove("obstacle_id") # Remove obstacle
+    box("name", x, y, z, w, h, d)   # Add box obstacle
+    sphere("name", x, y, z, r)      # Add sphere obstacle
+    cylinder("name", x, y, z, r, l) # Add cylinder obstacle
+    remove("obstacle_id")           # Remove obstacle
 """
 
 from __future__ import annotations
@@ -267,29 +268,44 @@ def main() -> None:
 
     c = ManipulationClient()
 
+    # Expose methods directly (no 'c.' prefix needed)
+
     banner = """
 Manipulation Client - IPython Interface
 ========================================
 
-Client available as 'c'. Examples:
-  c.joints()              # Get joint positions
-  c.ee()                  # Get end-effector pose
-  c.url()                 # Get Meshcat URL
+Commands (no prefix needed):
+  joints()                # Get joint positions
+  ee()                    # Get end-effector pose
+  url()                   # Get Meshcat URL
+  state()                 # Get manipulation state
+  robots()                # List configured robots
 
-  c.plan([0.1, 0.2, ...]) # Plan to joints
-  c.plan_pose(0.4, 0, 0.3)# Plan to pose
-  c.preview()             # Preview in Meshcat
-  c.execute()             # Execute trajectory
+Planning:
+  plan([0.1, 0.2, ...])   # Plan to joint config
+  plan_pose(0.4, 0, 0.3)  # Plan to cartesian pose (keeps orientation)
+  plan_pose(0.4, 0, 0.3, roll=0, pitch=3.14, yaw=0)  # With orientation
+  preview()               # Preview path in Meshcat
+  execute()               # Execute via orchestrator
 
-  c.box("table", 0.5, 0, 0, 0.6, 0.4, 0.02)  # Add obstacle
-  c.remove("obstacle_id")                     # Remove obstacle
+Obstacles:
+  box("name", x, y, z, width, height, depth)        # Add box
+  box("table", 0.5, 0, -0.02, 1.0, 0.6, 0.04)       # Example: table
+  sphere("name", x, y, z, radius)                   # Add sphere
+  cylinder("name", x, y, z, radius, length)         # Add cylinder
+  remove("obstacle_id")                             # Remove obstacle
 
-Type c.<TAB> for all methods, or help(c.method) for details.
+Utility:
+  collision([0.1, ...])   # Check if config is collision-free
+  reset()                 # Reset to IDLE state
+  cancel()                # Cancel current motion
+
+Type help(command) for details, e.g. help(box)
 """
     print(banner)
 
     try:
-        embed(colors="neutral")
+        embed(colors="neutral")  # type: ignore[no-untyped-call]
     finally:
         c.stop()
 

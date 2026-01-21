@@ -12,7 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Drake Kinematics - optimization-based and differential IK using Drake."""
+"""Backend-agnostic Jacobian-based inverse kinematics.
+
+JacobianIK provides iterative and differential IK methods that work with any
+WorldSpec implementation. It only uses the standard WorldSpec interface methods
+(get_jacobian, get_ee_pose, get_joint_limits) and doesn't depend on any specific
+physics backend.
+
+For full nonlinear optimization IK with Drake, use DrakeOptimizationIK.
+"""
 
 from __future__ import annotations
 
@@ -32,44 +40,49 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-try:
-    from pydrake.math import RigidTransform, RotationMatrix
-    from pydrake.multibody.inverse_kinematics import InverseKinematics
-    from pydrake.solvers import Solve
-
-    DRAKE_AVAILABLE = True
-except ImportError:
-    DRAKE_AVAILABLE = False
-
 logger = setup_logger()
 
 
-class DrakeKinematics:
-    """Drake IK solver - optimization-based and Jacobian-based methods."""
+class JacobianIK:
+    """Backend-agnostic Jacobian-based IK solver.
+
+    This class provides iterative and differential IK methods using only
+    the standard WorldSpec interface. It works with any physics backend
+    (Drake, MuJoCo, PyBullet, etc.).
+
+    Methods:
+        - solve_iterative(): Iterative Jacobian-based IK until convergence
+        - solve_differential(): Single Jacobian step for velocity control
+        - solve_differential_position_only(): Position-only differential IK
+        - solve(): Wrapper for solve_iterative with multiple random restarts
+
+    Example:
+        ik = JacobianIK(damping=0.01)
+        result = ik.solve_iterative(
+            world, robot_id,
+            target_pose=target,
+            seed=current_joints,
+        )
+        if result.is_success():
+            print(f"Solution: {result.joint_positions}")
+    """
 
     def __init__(
         self,
-        damping: float = 0.01,
-        max_iterations: int = 100,
-        singularity_threshold: float = 0.001,
+        damping: float = 0.05,
+        max_iterations: int = 200,
+        singularity_threshold: float = 1e-6,
     ):
-        if not DRAKE_AVAILABLE:
-            raise ImportError("Drake is not installed. Install with: pip install drake")
+        """Create Jacobian IK solver.
+
+        Args:
+            damping: Damping factor for pseudoinverse (higher = more stable near singularities)
+            max_iterations: Default maximum iterations for iterative IK
+            singularity_threshold: Manipulability threshold for singularity detection
+        """
         self._damping = damping
         self._max_iterations = max_iterations
         self._singularity_threshold = singularity_threshold
-
-    def _validate_world(self, world: WorldSpec) -> IKResult | None:
-        """Validate world is DrakeWorld and finalized. Returns error or None."""
-        from dimos.manipulation.planning.world.drake_world import DrakeWorld
-
-        if not isinstance(world, DrakeWorld):
-            return _create_failure_result(
-                IKStatus.NO_SOLUTION, "DrakeKinematics requires DrakeWorld"
-            )
-        if not world.is_finalized:
-            return _create_failure_result(IKStatus.NO_SOLUTION, "World must be finalized before IK")
-        return None
 
     def solve(
         self,
@@ -82,21 +95,33 @@ class DrakeKinematics:
         check_collision: bool = True,
         max_attempts: int = 10,
     ) -> IKResult:
-        """Full nonlinear IK with multiple random restarts."""
-        error = self._validate_world(world)
-        if error is not None:
-            return error
+        """Solve IK with multiple random restarts.
 
-        # Get joint limits
+        Tries iterative IK from multiple starting configurations to find
+        a collision-free solution.
+
+        Args:
+            world: World for FK/collision checking
+            robot_id: Robot to solve IK for
+            target_pose: Target end-effector pose (4x4 transform)
+            seed: Initial guess (uses current position if None)
+            position_tolerance: Required position accuracy (meters)
+            orientation_tolerance: Required orientation accuracy (radians)
+            check_collision: Whether to check collision of solution
+            max_attempts: Maximum random restart attempts
+
+        Returns:
+            IKResult with solution or failure status
+        """
+        if not world.is_finalized:
+            return _create_failure_result(IKStatus.NO_SOLUTION, "World must be finalized before IK")
+
         lower_limits, upper_limits = world.get_joint_limits(robot_id)
 
         # Get seed from current state if not provided
         if seed is None:
             with world.scratch_context() as ctx:
                 seed = world.get_positions(ctx, robot_id)
-
-        # Target transform
-        target_transform = RigidTransform(target_pose)
 
         best_result: IKResult | None = None
         best_error = float("inf")
@@ -109,25 +134,22 @@ class DrakeKinematics:
                 # Random seed within joint limits
                 current_seed = np.random.uniform(lower_limits, upper_limits)
 
-            # Solve IK
-            result = self._solve_single(
+            # Solve iterative IK
+            result = self.solve_iterative(
                 world=world,
                 robot_id=robot_id,
-                target_transform=target_transform,
+                target_pose=target_pose,
                 seed=current_seed,
+                max_iterations=self._max_iterations,
                 position_tolerance=position_tolerance,
                 orientation_tolerance=orientation_tolerance,
-                lower_limits=lower_limits,
-                upper_limits=upper_limits,
             )
 
             if result.is_success() and result.joint_positions is not None:
                 # Check collision if requested
                 if check_collision:
-                    with world.scratch_context() as ctx:
-                        world.set_positions(ctx, robot_id, result.joint_positions)
-                        if not world.is_collision_free(ctx, robot_id):
-                            continue  # Try another seed
+                    if not world.check_config_collision_free(robot_id, result.joint_positions):
+                        continue  # Try another seed
 
                 # Check error
                 total_error = result.position_error + result.orientation_error
@@ -150,89 +172,6 @@ class DrakeKinematics:
             f"IK failed after {max_attempts} attempts",
         )
 
-    def _solve_single(
-        self,
-        world: WorldSpec,
-        robot_id: str,
-        target_transform: RigidTransform,
-        seed: NDArray[np.float64],
-        position_tolerance: float,
-        orientation_tolerance: float,
-        lower_limits: NDArray[np.float64],
-        upper_limits: NDArray[np.float64],
-    ) -> IKResult:
-        """Solve IK with a single seed."""
-        # Get robot data from world internals (Drake-specific access)
-        robot_data = world._robots[robot_id]  # type: ignore[attr-defined]
-        plant = world.plant  # type: ignore[attr-defined]
-
-        # Create IK problem
-        ik = InverseKinematics(plant)
-
-        # Get end-effector frame
-        ee_frame = robot_data.ee_frame
-
-        # Add position constraint
-        ik.AddPositionConstraint(
-            frameB=ee_frame,
-            p_BQ=np.array([0.0, 0.0, 0.0]),
-            frameA=plant.world_frame(),
-            p_AQ_lower=target_transform.translation() - np.array([position_tolerance] * 3),
-            p_AQ_upper=target_transform.translation() + np.array([position_tolerance] * 3),
-        )
-
-        # Add orientation constraint
-        ik.AddOrientationConstraint(
-            frameAbar=plant.world_frame(),
-            R_AbarA=target_transform.rotation(),
-            frameBbar=ee_frame,
-            R_BbarB=RotationMatrix(),
-            theta_bound=orientation_tolerance,
-        )
-
-        # Get program and set initial guess
-        prog = ik.get_mutable_prog()
-        q = ik.q()
-
-        # Set initial guess (full positions vector)
-        full_seed = np.zeros(plant.num_positions())
-        for i, joint_idx in enumerate(robot_data.joint_indices):
-            full_seed[joint_idx] = seed[i]
-        prog.SetInitialGuess(q, full_seed)
-
-        # Solve
-        result = Solve(prog)
-
-        if not result.is_success():
-            return _create_failure_result(
-                IKStatus.NO_SOLUTION,
-                f"Optimization failed: {result.get_solution_result()}",
-            )
-
-        # Extract solution for this robot's joints
-        full_solution = result.GetSolution(q)
-        joint_solution = np.array([full_solution[idx] for idx in robot_data.joint_indices])
-
-        # Clip to limits
-        joint_solution = np.clip(joint_solution, lower_limits, upper_limits)
-
-        # Compute actual error using FK
-        with world.scratch_context() as ctx:
-            world.set_positions(ctx, robot_id, joint_solution)
-            actual_pose = world.get_ee_pose(ctx, robot_id)
-
-        position_error, orientation_error = compute_pose_error(
-            actual_pose,
-            target_transform.GetAsMatrix4(),
-        )
-
-        return _create_success_result(
-            joint_positions=joint_solution,
-            position_error=position_error,
-            orientation_error=orientation_error,
-            iterations=1,
-        )
-
     def solve_iterative(
         self,
         world: WorldSpec,
@@ -243,7 +182,23 @@ class DrakeKinematics:
         position_tolerance: float = 0.001,
         orientation_tolerance: float = 0.01,
     ) -> IKResult:
-        """Iterative Jacobian-based IK until convergence."""
+        """Iterative Jacobian-based IK until convergence.
+
+        Uses the damped pseudoinverse method with adaptive step size.
+        Converges when both position and orientation errors are within tolerance.
+
+        Args:
+            world: World for FK/Jacobian computation
+            robot_id: Robot to solve IK for
+            target_pose: Target end-effector pose (4x4 transform)
+            seed: Initial joint configuration
+            max_iterations: Maximum iterations before giving up
+            position_tolerance: Required position accuracy (meters)
+            orientation_tolerance: Required orientation accuracy (radians)
+
+        Returns:
+            IKResult with solution or failure status
+        """
         max_iterations = max_iterations or self._max_iterations
         current_joints = seed.copy()
 
@@ -275,21 +230,24 @@ class DrakeKinematics:
                 # Get Jacobian
                 J = world.get_jacobian(ctx, robot_id)
 
-            # Check for singularity
+            # Adaptive damping near singularities
             if check_singularity(J, threshold=self._singularity_threshold):
-                return _create_failure_result(
-                    IKStatus.SINGULARITY,
-                    f"Singularity at iteration {iteration}",
-                    iterations=iteration + 1,
-                )
+                # Increase damping near singularity instead of failing
+                effective_damping = self._damping * 10.0
+            else:
+                effective_damping = self._damping
 
             # Compute joint velocities
-            J_pinv = damped_pseudoinverse(J, self._damping)
+            J_pinv = damped_pseudoinverse(J, effective_damping)
             q_dot = J_pinv @ twist
 
-            # Step size (adaptive based on error)
-            step_size = min(0.5, pos_error + ori_error)
-            current_joints = current_joints + step_size * q_dot
+            # Clamp maximum joint change per iteration (like reference implementations)
+            max_delta = 0.1  # radians per iteration
+            max_change = np.max(np.abs(q_dot))
+            if max_change > max_delta:
+                q_dot = q_dot * (max_delta / max_change)
+
+            current_joints = current_joints + q_dot
 
             # Clip to limits
             current_joints = np.clip(current_joints, lower_limits, upper_limits)
@@ -314,7 +272,21 @@ class DrakeKinematics:
         twist: NDArray[np.float64],
         dt: float,
     ) -> NDArray[np.float64] | None:
-        """Single Jacobian step for velocity control. Returns None if near singularity."""
+        """Single Jacobian step for velocity control.
+
+        Computes joint velocities from desired end-effector twist using
+        the damped pseudoinverse method. Returns None if near singularity.
+
+        Args:
+            world: World for Jacobian computation
+            robot_id: Robot to compute for
+            current_joints: Current joint configuration
+            twist: Desired 6D end-effector twist [vx, vy, vz, wx, wy, wz]
+            dt: Time step (not used, but kept for interface compatibility)
+
+        Returns:
+            Joint velocities, or None if near singularity
+        """
         with world.scratch_context() as ctx:
             world.set_positions(ctx, robot_id, current_joints)
             J = world.get_jacobian(ctx, robot_id)
@@ -346,7 +318,20 @@ class DrakeKinematics:
         current_joints: NDArray[np.float64],
         linear_velocity: NDArray[np.float64],
     ) -> NDArray[np.float64] | None:
-        """Position-only differential IK using linear Jacobian. Returns None if singular."""
+        """Position-only differential IK using linear Jacobian.
+
+        Computes joint velocities from desired linear velocity, ignoring
+        orientation. Returns None if near singularity.
+
+        Args:
+            world: World for Jacobian computation
+            robot_id: Robot to compute for
+            current_joints: Current joint configuration
+            linear_velocity: Desired linear velocity [vx, vy, vz]
+
+        Returns:
+            Joint velocities, or None if singular
+        """
         with world.scratch_context() as ctx:
             world.set_positions(ctx, robot_id, current_joints)
             J = world.get_jacobian(ctx, robot_id)

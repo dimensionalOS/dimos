@@ -688,6 +688,47 @@ class DrakeWorld:
 
         return float(min(pair.distance for pair in signed_distance_pairs))
 
+    # ============= Collision Checking (context-free, for planning) =============
+
+    def check_config_collision_free(self, robot_id: str, q: NDArray[np.float64]) -> bool:
+        """Check if a configuration is collision-free (manages context internally).
+
+        This is a convenience method for planners that don't need to manage contexts.
+        """
+        with self.scratch_context() as ctx:
+            self.set_positions(ctx, robot_id, q)
+            return self.is_collision_free(ctx, robot_id)
+
+    def check_edge_collision_free(
+        self,
+        robot_id: str,
+        q_start: NDArray[np.float64],
+        q_end: NDArray[np.float64],
+        step_size: float = 0.05,
+    ) -> bool:
+        """Check if the entire edge between two configurations is collision-free.
+
+        Interpolates between q_start and q_end at the given step_size and checks
+        each configuration for collisions. This is more efficient than checking
+        each configuration separately as it uses a single scratch context.
+        """
+        # Compute number of steps needed
+        dist = float(np.linalg.norm(q_end - q_start))
+        if dist < 1e-8:
+            return self.check_config_collision_free(robot_id, q_start)
+
+        n_steps = max(2, int(np.ceil(dist / step_size)) + 1)
+
+        with self.scratch_context() as ctx:
+            for i in range(n_steps):
+                t = i / (n_steps - 1)
+                q = q_start + t * (q_end - q_start)
+                self.set_positions(ctx, robot_id, q)
+                if not self.is_collision_free(ctx, robot_id):
+                    return False
+
+        return True
+
     # ============= Forward Kinematics (context-based) =============
 
     def get_ee_pose(self, ctx: Context, robot_id: str) -> NDArray[np.float64]:
@@ -764,14 +805,14 @@ class DrakeWorld:
 
     # ============= Visualization =============
 
-    def get_meshcat_url(self) -> str | None:
-        """Get Meshcat visualization URL."""
+    def get_visualization_url(self) -> str | None:
+        """Get visualization URL if enabled."""
         if self._meshcat is not None:
             return self._meshcat.web_url()
         return None
 
-    def publish_to_meshcat(self, ctx: Context | None = None) -> None:
-        """Force publish current state to Meshcat.
+    def publish_visualization(self, ctx: Context | None = None) -> None:
+        """Publish current state to visualization.
 
         Args:
             ctx: Context to publish. Uses live context if None.
@@ -821,7 +862,7 @@ class DrakeWorld:
                     self.set_positions(ctx, rid, pos)
                 # Set animated robot's position
                 self.set_positions(ctx, robot_id, q)
-                self.publish_to_meshcat(ctx)
+                self.publish_visualization(ctx)
             time.sleep(dt)
 
     # ============= Direct Access (use with caution) =============

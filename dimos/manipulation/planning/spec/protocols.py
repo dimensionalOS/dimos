@@ -125,6 +125,21 @@ class WorldSpec(Protocol):
         """Get minimum distance to obstacles (negative if collision)."""
         ...
 
+    # Collision Checking (context-free, for planning)
+    def check_config_collision_free(self, robot_id: str, q: NDArray[np.float64]) -> bool:
+        """Check if a configuration is collision-free (manages context internally)."""
+        ...
+
+    def check_edge_collision_free(
+        self,
+        robot_id: str,
+        q_start: NDArray[np.float64],
+        q_end: NDArray[np.float64],
+        step_size: float = 0.05,
+    ) -> bool:
+        """Check if the entire edge between two configurations is collision-free."""
+        ...
+
     # Forward Kinematics (require context)
     def get_ee_pose(self, ctx: Any, robot_id: str) -> NDArray[np.float64]:
         """Get end-effector pose (4x4 transform)."""
@@ -135,12 +150,12 @@ class WorldSpec(Protocol):
         ...
 
     # Visualization (optional)
-    def get_meshcat_url(self) -> str | None:
-        """Get Meshcat visualization URL if enabled."""
+    def get_visualization_url(self) -> str | None:
+        """Get visualization URL if enabled."""
         ...
 
-    def publish_to_meshcat(self, ctx: Any | None = None) -> None:
-        """Publish current state to Meshcat visualization."""
+    def publish_visualization(self, ctx: Any | None = None) -> None:
+        """Publish current state to visualization."""
         ...
 
     def animate_path(
@@ -162,7 +177,8 @@ class KinematicsSpec(Protocol):
         - solve_differential(): Single Jacobian step for velocity control
 
     Implementations:
-        - DrakeKinematics: Uses Drake's InverseKinematics + SNOPT/IPOPT
+        - JacobianIK: Backend-agnostic iterative/differential IK
+        - DrakeOptimizationIK: Uses Drake's InverseKinematics + SNOPT/IPOPT
     """
 
     def solve(
@@ -210,10 +226,11 @@ class PlannerSpec(Protocol):
 
     Planners find collision-free paths from start to goal configurations.
     They use WorldSpec for collision checking and are stateless.
+    All planners are backend-agnostic - they only use WorldSpec methods.
 
     Implementations:
-        - DrakePlanner: RRT-Connect planner
-        - DrakeRRTStarPlanner: RRT* planner (asymptotically optimal)
+        - RRTConnectPlanner: Bi-directional RRT-Connect planner
+        - RRTStarPlanner: RRT* planner (asymptotically optimal)
     """
 
     def plan_joint_path(
@@ -229,33 +246,4 @@ class PlannerSpec(Protocol):
 
     def get_name(self) -> str:
         """Get planner name."""
-        ...
-
-
-@runtime_checkable
-class VizSpec(Protocol):
-    """Protocol for visualization backend.
-
-    Note: For Drake, visualization is typically integrated into DrakeWorld
-    via enable_viz=True. This protocol is for advanced use cases.
-    """
-
-    def set_robot_state(self, robot_id: str, positions: NDArray[np.float64]) -> None:
-        """Update robot visualization state."""
-        ...
-
-    def add_obstacle(self, obstacle: Obstacle) -> str:
-        """Add obstacle to visualization."""
-        ...
-
-    def remove_obstacle(self, obstacle_id: str) -> None:
-        """Remove obstacle from visualization."""
-        ...
-
-    def get_url(self) -> str | None:
-        """Get visualization URL (e.g., Meshcat URL)."""
-        ...
-
-    def publish(self) -> None:
-        """Force publish current state to visualization."""
         ...

@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""RRT-Connect and RRT* motion planners implementing PlannerSpec."""
+"""RRT-Connect and RRT* motion planners implementing PlannerSpec.
+
+These planners are backend-agnostic - they only use WorldSpec methods and can work
+with any physics backend (Drake, MuJoCo, PyBullet, etc.).
+"""
 
 from __future__ import annotations
 
@@ -23,10 +27,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from dimos.manipulation.planning.spec import PlanningResult, PlanningStatus, WorldSpec
-from dimos.manipulation.planning.utils.path_utils import (
-    compute_path_length,
-    interpolate_segment,
-)
+from dimos.manipulation.planning.utils.path_utils import compute_path_length
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-@dataclass
+@dataclass(eq=False)
 class TreeNode:
     """Node in RRT tree with optional cost tracking (for RRT*)."""
 
@@ -54,8 +55,12 @@ class TreeNode:
         return list(reversed(path))
 
 
-class DrakePlanner:
-    """Bi-directional RRT-Connect planner."""
+class RRTConnectPlanner:
+    """Bi-directional RRT-Connect planner.
+
+    This planner is backend-agnostic - it only uses WorldSpec methods for
+    collision checking and can work with any physics backend.
+    """
 
     def __init__(
         self,
@@ -149,23 +154,19 @@ class DrakePlanner:
                 f"Robot '{robot_id}' not found",
             )
 
-        # Check start validity
-        with world.scratch_context() as ctx:
-            world.set_positions(ctx, robot_id, q_start)
-            if not world.is_collision_free(ctx, robot_id):
-                return _create_failure_result(
-                    PlanningStatus.COLLISION_AT_START,
-                    "Start configuration is in collision",
-                )
+        # Check start validity using context-free method
+        if not world.check_config_collision_free(robot_id, q_start):
+            return _create_failure_result(
+                PlanningStatus.COLLISION_AT_START,
+                "Start configuration is in collision",
+            )
 
-        # Check goal validity
-        with world.scratch_context() as ctx:
-            world.set_positions(ctx, robot_id, q_goal)
-            if not world.is_collision_free(ctx, robot_id):
-                return _create_failure_result(
-                    PlanningStatus.COLLISION_AT_GOAL,
-                    "Goal configuration is in collision",
-                )
+        # Check goal validity using context-free method
+        if not world.check_config_collision_free(robot_id, q_goal):
+            return _create_failure_result(
+                PlanningStatus.COLLISION_AT_GOAL,
+                "Goal configuration is in collision",
+            )
 
         # Check limits
         lower, upper = world.get_joint_limits(robot_id)
@@ -204,8 +205,10 @@ class DrakePlanner:
         else:
             new_config = nearest.config + step_size * (diff / dist)
 
-        # Check validity of edge
-        if self._is_edge_valid(world, robot_id, nearest.config, new_config):
+        # Check validity of edge using context-free method
+        if world.check_edge_collision_free(
+            robot_id, nearest.config, new_config, self._collision_step_size
+        ):
             new_node = TreeNode(config=new_config, parent=nearest)
             nearest.children.append(new_node)
             tree.append(new_node)
@@ -232,25 +235,6 @@ class DrakePlanner:
             # Check if reached target
             if float(np.linalg.norm(result.config - target)) < self._goal_tolerance:
                 return result
-
-    def _is_edge_valid(
-        self,
-        world: WorldSpec,
-        robot_id: str,
-        q_start: NDArray[np.float64],
-        q_end: NDArray[np.float64],
-    ) -> bool:
-        """Check if edge between two configurations is collision-free."""
-        # Interpolate and check each point
-        segment = interpolate_segment(q_start, q_end, self._collision_step_size)
-
-        with world.scratch_context() as ctx:
-            for q in segment:
-                world.set_positions(ctx, robot_id, q)
-                if not world.is_collision_free(ctx, robot_id):
-                    return False
-
-        return True
 
     def _extract_path(
         self,
@@ -291,182 +275,14 @@ class DrakePlanner:
             i = np.random.randint(0, len(simplified) - 2)
             j = np.random.randint(i + 2, len(simplified))
 
-            # Check if direct connection is valid
-            if self._is_edge_valid(world, robot_id, simplified[i], simplified[j]):
+            # Check if direct connection is valid using context-free method
+            if world.check_edge_collision_free(
+                robot_id, simplified[i], simplified[j], self._collision_step_size
+            ):
                 # Remove intermediate waypoints
                 simplified = simplified[: i + 1] + simplified[j:]
 
         return simplified
-
-
-class DrakeRRTStarPlanner:
-    """RRT* (Optimal RRT) planner implementing PlannerSpec.
-
-    Like RRT but optimizes path cost through rewiring.
-    Produces asymptotically optimal paths.
-    """
-
-    def __init__(
-        self,
-        step_size: float = 0.1,
-        goal_tolerance: float = 0.1,
-        rewire_radius: float = 0.5,
-        collision_step_size: float = 0.02,
-    ):
-        """Create RRT* planner.
-
-        Args:
-            step_size: Extension step size
-            goal_tolerance: Distance to goal to consider success
-            rewire_radius: Radius for rewiring neighbors
-            collision_step_size: Step size for collision checking
-        """
-        self._step_size = step_size
-        self._goal_tolerance = goal_tolerance
-        self._rewire_radius = rewire_radius
-        self._collision_step_size = collision_step_size
-
-    def plan_joint_path(
-        self,
-        world: WorldSpec,
-        robot_id: str,
-        q_start: NDArray[np.float64],
-        q_goal: NDArray[np.float64],
-        timeout: float = 10.0,
-        max_iterations: int = 5000,
-    ) -> PlanningResult:
-        """Plan optimal path using RRT* with rewiring."""
-        start_time = time.time()
-        lower, upper = world.get_joint_limits(robot_id)
-
-        # Validate start/goal
-        with world.scratch_context() as ctx:
-            world.set_positions(ctx, robot_id, q_start)
-            if not world.is_collision_free(ctx, robot_id):
-                return _create_failure_result(
-                    PlanningStatus.COLLISION_AT_START, "Start in collision"
-                )
-            world.set_positions(ctx, robot_id, q_goal)
-            if not world.is_collision_free(ctx, robot_id):
-                return _create_failure_result(PlanningStatus.COLLISION_AT_GOAL, "Goal in collision")
-
-        nodes = [TreeNode(config=q_start.copy(), cost=0.0)]
-        goal_node: TreeNode | None = None
-        best_cost = float("inf")
-        iterations_run = 0
-
-        for _ in range(max_iterations):
-            iterations_run += 1
-            if time.time() - start_time > timeout:
-                break
-
-            # Sample and find nearest
-            sample = np.random.uniform(lower, upper)
-            nearest = min(nodes, key=lambda n: float(np.linalg.norm(n.config - sample)))
-
-            # Extend toward sample
-            diff = sample - nearest.config
-            dist = float(np.linalg.norm(diff))
-            new_config = (
-                nearest.config + min(dist, self._step_size) * (diff / dist)
-                if dist > 0
-                else sample.copy()
-            )
-
-            if not self._is_edge_valid(world, robot_id, nearest.config, new_config):
-                continue
-
-            # Find best parent among neighbors
-            neighbors = [
-                n
-                for n in nodes
-                if float(np.linalg.norm(n.config - new_config)) < self._rewire_radius
-            ]
-            best_parent, best_cost_to_new = (
-                nearest,
-                nearest.cost + float(np.linalg.norm(new_config - nearest.config)),
-            )
-            for n in neighbors:
-                cost = n.cost + float(np.linalg.norm(new_config - n.config))
-                if cost < best_cost_to_new and self._is_edge_valid(
-                    world, robot_id, n.config, new_config
-                ):
-                    best_parent, best_cost_to_new = n, cost
-
-            # Add node and rewire neighbors
-            new_node = TreeNode(config=new_config, parent=best_parent, cost=best_cost_to_new)
-            best_parent.children.append(new_node)
-            nodes.append(new_node)
-            self._rewire_neighbors(world, robot_id, new_node, neighbors)
-
-            # Check goal
-            if (
-                float(np.linalg.norm(new_node.config - q_goal)) < self._goal_tolerance
-                and new_node.cost < best_cost
-            ):
-                goal_node, best_cost = new_node, new_node.cost
-
-        if goal_node is not None:
-            path = [*goal_node.path_to_root(), q_goal]
-            return _create_success_result(path, time.time() - start_time, iterations_run)
-
-        return _create_failure_result(
-            PlanningStatus.NO_SOLUTION,
-            f"No path after {max_iterations} iterations",
-            time.time() - start_time,
-            max_iterations,
-        )
-
-    def get_name(self) -> str:
-        return "RRTStar"
-
-    def _is_edge_valid(
-        self,
-        world: WorldSpec,
-        robot_id: str,
-        q_start: NDArray[np.float64],
-        q_end: NDArray[np.float64],
-    ) -> bool:
-        """Check if edge is collision-free."""
-        segment = interpolate_segment(q_start, q_end, self._collision_step_size)
-
-        with world.scratch_context() as ctx:
-            for q in segment:
-                world.set_positions(ctx, robot_id, q)
-                if not world.is_collision_free(ctx, robot_id):
-                    return False
-
-        return True
-
-    def _rewire_neighbors(
-        self,
-        world: WorldSpec,
-        robot_id: str,
-        new_node: TreeNode,
-        neighbors: list[TreeNode],
-    ) -> None:
-        """Rewire neighbors through new node if it provides a shorter path."""
-        for neighbor in neighbors:
-            if neighbor == new_node.parent:
-                continue
-            potential_cost = new_node.cost + float(
-                np.linalg.norm(neighbor.config - new_node.config)
-            )
-            if potential_cost < neighbor.cost and self._is_edge_valid(
-                world, robot_id, new_node.config, neighbor.config
-            ):
-                if neighbor.parent is not None:
-                    neighbor.parent.children.remove(neighbor)
-                neighbor.parent = new_node
-                neighbor.cost = potential_cost
-                new_node.children.append(neighbor)
-                self._update_costs(neighbor)
-
-    def _update_costs(self, node: TreeNode) -> None:
-        """Recursively update costs after rewiring."""
-        for child in node.children:
-            child.cost = node.cost + float(np.linalg.norm(child.config - node.config))
-            self._update_costs(child)
 
 
 # ============= Result Helpers =============

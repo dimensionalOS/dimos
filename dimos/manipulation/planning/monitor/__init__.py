@@ -53,11 +53,10 @@ from dimos.manipulation.planning.monitor.world_obstacle_monitor import (
 from dimos.manipulation.planning.monitor.world_state_monitor import WorldStateMonitor
 
 # Re-export message types from spec for convenience
-from dimos.manipulation.planning.spec import CollisionObjectMessage, Detection3D
+from dimos.manipulation.planning.spec import CollisionObjectMessage
 
 __all__ = [
     "CollisionObjectMessage",
-    "Detection3D",
     "WorldMonitor",
     "WorldObstacleMonitor",
     "WorldStateMonitor",

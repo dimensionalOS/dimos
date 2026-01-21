@@ -31,11 +31,11 @@ from typing import TYPE_CHECKING
 
 from dimos.manipulation.planning.spec import (
     CollisionObjectMessage,
-    Detection3D,
     Obstacle,
     ObstacleType,
 )
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from dimos.manipulation.planning.spec import WorldSpec
+    from dimos.msgs.vision_msgs import Detection3D
 
 logger = setup_logger()
 
@@ -54,7 +55,7 @@ class WorldObstacleMonitor:
 
     This class handles updates from:
     - Explicit collision objects (CollisionObjectMessage)
-    - Perception detections (Detection3D)
+    - Perception detections (Detection3D from dimos.msgs.vision_msgs)
 
     ## Thread Safety
 
@@ -224,7 +225,7 @@ class WorldObstacleMonitor:
         - Removes obstacles for detections that are no longer present
 
         Args:
-            detections: List of 3D detections
+            detections: List of Detection3D messages from dimos.msgs.vision_msgs
         """
         if not self._running:
             return
@@ -237,10 +238,12 @@ class WorldObstacleMonitor:
                 det_id = detection.id
                 seen_ids.add(det_id)
 
+                pose = self._detection3d_to_pose(detection)
+
                 if det_id in self._perception_objects:
                     # Update existing obstacle
                     obstacle_id = self._perception_objects[det_id]
-                    self._world.update_obstacle_pose(obstacle_id, detection.pose)
+                    self._world.update_obstacle_pose(obstacle_id, pose)
                     self._perception_timestamps[det_id] = current_time
                 else:
                     # Add new obstacle
@@ -261,13 +264,19 @@ class WorldObstacleMonitor:
             # Remove stale detections
             self._cleanup_stale_detections(current_time, seen_ids)
 
+    def _detection3d_to_pose(self, detection: Detection3D) -> NDArray[np.float64]:
+        """Convert Detection3D bbox.center to 4x4 transform."""
+        return pose_to_matrix(detection.bbox.center)
+
     def _detection_to_obstacle(self, detection: Detection3D) -> Obstacle:
-        """Convert detection to obstacle."""
+        """Convert Detection3D to Obstacle."""
+        pose = self._detection3d_to_pose(detection)
+        size = detection.bbox.size
         return Obstacle(
             name=f"detection_{detection.id}",
             obstacle_type=ObstacleType.BOX,
-            pose=detection.pose,
-            dimensions=detection.dimensions,
+            pose=pose,
+            dimensions=(size.x, size.y, size.z),
             color=(0.2, 0.8, 0.2, 0.6),  # Green for perception objects
         )
 

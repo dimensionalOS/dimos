@@ -126,29 +126,3 @@ class CollisionObjectMessage:
     pose: NDArray[np.float64] | None = None
     dimensions: tuple[float, ...] | None = None
     color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
-
-
-@dataclass
-class PerceptionDetection:
-    """3D detection for planning obstacle updates.
-
-    Internal type for the planning system using numpy transforms.
-    For LCM messages, use dimos_lcm.vision_msgs.Detection3D instead.
-
-    Attributes:
-        id: Unique detection ID
-        label: Object class label
-        pose: 4x4 homogeneous transform
-        dimensions: (width, height, depth)
-        confidence: Detection confidence (0-1)
-    """
-
-    id: str
-    label: str
-    pose: NDArray[np.float64]
-    dimensions: tuple[float, float, float]
-    confidence: float = 1.0
-
-
-# Backwards compatibility alias - will be removed in future version
-Detection3D = PerceptionDetection

@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,9 +19,29 @@ Contains IK solver implementations that use WorldSpec.
 
 ## Implementations
 
-- DrakeKinematics: Uses Drake's InverseKinematics + SNOPT/IPOPT
+- JacobianIK: Backend-agnostic iterative/differential IK (works with any WorldSpec)
+- DrakeOptimizationIK: Drake-specific nonlinear optimization IK (requires DrakeWorld)
+
+## Usage
+
+Use factory functions to create IK solvers:
+
+```python
+from dimos.manipulation.planning.factory import create_kinematics
+
+# Backend-agnostic (works with any WorldSpec)
+kinematics = create_kinematics(name="jacobian")
+
+# Drake-specific (requires DrakeWorld, more accurate)
+kinematics = create_kinematics(name="drake_optimization")
+
+result = kinematics.solve(world, robot_id, target_pose)
+```
 """
 
-from dimos.manipulation.planning.kinematics.drake_kinematics import DrakeKinematics
+from dimos.manipulation.planning.kinematics.drake_optimization_ik import (
+    DrakeOptimizationIK,
+)
+from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
 
-__all__ = ["DrakeKinematics"]
+__all__ = ["DrakeOptimizationIK", "JacobianIK"]

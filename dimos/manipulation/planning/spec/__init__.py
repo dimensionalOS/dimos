@@ -12,72 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Manipulation Planning Specifications.
-
-Protocols:
-    - WorldSpec: Core backend owning physics/collision (implemented by DrakeWorld)
-    - KinematicsSpec: Stateless IK operations (implemented by DrakeKinematics)
-    - PlannerSpec: Joint-space path planning (implemented by DrakePlanner)
-    - VizSpec: Visualization backend
-
-Data Classes:
-    - RobotModelConfig: Robot configuration for adding to world
-    - Obstacle: Obstacle specification
-    - IKResult: Result of IK solve
-    - PlanningResult: Result of path planning
-
-Usage:
-    All code should use Protocol types (not concrete classes):
-
-    ```python
-    from dimos.manipulation.planning.spec import WorldSpec, KinematicsSpec
-
-    def plan_motion(world: WorldSpec, kinematics: KinematicsSpec, ...):
-        pass
-    ```
-
-    Use factory functions to create concrete instances:
-
-    ```python
-    from dimos.manipulation.planning.factory import create_world
-    world = create_world(backend="drake")
-    ```
-"""
+"""Manipulation Planning Specifications."""
 
 from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.manipulation.planning.spec.enums import IKStatus, ObstacleType, PlanningStatus
 from dimos.manipulation.planning.spec.protocols import (
     KinematicsSpec,
     PlannerSpec,
-    VizSpec,
     WorldSpec,
 )
 from dimos.manipulation.planning.spec.types import (
     CollisionObjectMessage,
-    Detection3D,
     IKResult,
     Obstacle,
-    PerceptionDetection,
     PlanningResult,
 )
 
 __all__ = [
     "CollisionObjectMessage",
-    "Detection3D",  # Backwards compat alias for PerceptionDetection
     "IKResult",
     "IKStatus",
     "KinematicsSpec",
-    # Types
     "Obstacle",
-    # Enums
     "ObstacleType",
-    "PerceptionDetection",
     "PlannerSpec",
     "PlanningResult",
     "PlanningStatus",
-    # Config
     "RobotModelConfig",
-    "VizSpec",
-    # Protocols
     "WorldSpec",
 ]

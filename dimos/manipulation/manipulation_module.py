@@ -28,6 +28,8 @@ from dimos.core.module import ModuleConfig
 from dimos.manipulation.planning import (
     JointTrajectoryGenerator,
     KinematicsSpec,
+    Obstacle,
+    ObstacleType,
     PlannerSpec,
     RobotModelConfig,
     create_kinematics,
@@ -68,6 +70,8 @@ class ManipulationModuleConfig(ModuleConfig):
     robots: list[RobotModelConfig] = field(default_factory=list)
     planning_timeout: float = 10.0
     enable_viz: bool = False
+    planner_name: str = "rrt_connect"  # "rrt_connect"
+    kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
 
 
 class ManipulationModule(Module):
@@ -145,11 +149,11 @@ class ManipulationModule(Module):
 
         if self.config.enable_viz:
             self._world_monitor.start_visualization_thread(rate_hz=10.0)
-            if url := self._world_monitor.get_meshcat_url():
+            if url := self._world_monitor.get_visualization_url():
                 logger.info(f"Visualization: {url}")
 
-        self._planner = create_planner(name="rrt_connect")
-        self._kinematics = create_kinematics(backend="drake")
+        self._planner = create_planner(name=self.config.planner_name)
+        self._kinematics = create_kinematics(name=self.config.kinematics_name)
 
     def _get_default_robot_name(self) -> str | None:
         """Get default robot name (first robot if only one, else None)."""
@@ -423,7 +427,7 @@ class ManipulationModule(Module):
         """
         if self._world_monitor is None:
             return None
-        return self._world_monitor.get_meshcat_url()
+        return self._world_monitor.get_visualization_url()
 
     @rpc
     def clear_planned_path(self) -> bool:
@@ -570,22 +574,43 @@ class ManipulationModule(Module):
         return self._world_monitor
 
     @rpc
-    def add_obstacle(self, name: str, pose: Pose, shape: str, dimensions: list[float]) -> str:
-        """Add obstacle: shape='box'|'sphere'|'cylinder', dimensions=[w,h,d]|[r]|[r,len]."""
+    def add_obstacle(
+        self,
+        name: str,
+        pose: Pose,
+        shape: str,
+        dimensions: list[float] | None = None,
+        mesh_path: str | None = None,
+    ) -> str:
+        """Add obstacle: shape='box'|'sphere'|'cylinder'|'mesh'. Returns obstacle_id."""
         if not self._world_monitor:
             return ""
-        p = pose_to_matrix(pose)
-        match shape:
-            case "box":
-                return self._world_monitor.add_box_obstacle(name, p, tuple(dimensions))  # type: ignore[arg-type]
-            case "sphere":
-                return self._world_monitor.add_sphere_obstacle(name, p, dimensions[0])
-            case "cylinder":
-                return self._world_monitor.add_cylinder_obstacle(
-                    name, p, dimensions[0], dimensions[1]
-                )
-            case _:
-                return ""
+
+        # Map shape string to ObstacleType
+        shape_map = {
+            "box": ObstacleType.BOX,
+            "sphere": ObstacleType.SPHERE,
+            "cylinder": ObstacleType.CYLINDER,
+            "mesh": ObstacleType.MESH,
+        }
+        obstacle_type = shape_map.get(shape)
+        if obstacle_type is None:
+            logger.warning(f"Unknown obstacle shape: {shape}")
+            return ""
+
+        # Validate mesh_path for mesh type
+        if obstacle_type == ObstacleType.MESH and not mesh_path:
+            logger.warning("mesh_path required for mesh obstacles")
+            return ""
+
+        obstacle = Obstacle(
+            name=name,
+            obstacle_type=obstacle_type,
+            pose=pose_to_matrix(pose),
+            dimensions=tuple(dimensions) if dimensions else (),
+            mesh_path=mesh_path,
+        )
+        return self._world_monitor.add_obstacle(obstacle)
 
     @rpc
     def remove_obstacle(self, obstacle_id: str) -> bool:

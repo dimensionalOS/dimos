@@ -17,11 +17,15 @@ Manipulation Planning Module
 
 Motion planning stack for robotic manipulators using Protocol-based architecture.
 
-## Core Components
+## Architecture
 
-- WorldSpec: Core backend owning physics/collision (DrakeWorld)
-- KinematicsSpec: Stateless IK operations (DrakeKinematics)
-- PlannerSpec: Joint-space path planning (DrakePlanner)
+- WorldSpec: Core backend owning physics/collision (DrakeWorld, future: MuJoCoWorld)
+- KinematicsSpec: IK solvers
+  - JacobianIK: Backend-agnostic iterative/differential IK
+  - DrakeOptimizationIK: Drake-specific nonlinear optimization IK
+- PlannerSpec: Backend-agnostic joint-space path planning
+  - RRTConnectPlanner: Bi-directional RRT-Connect
+  - RRTStarPlanner: RRT* (asymptotically optimal)
 
 ## Factory Functions
 
@@ -35,8 +39,8 @@ from dimos.manipulation.planning.factory import (
 )
 
 world = create_world(backend="drake", enable_viz=True)
-kinematics = create_kinematics(backend="drake")
-planner = create_planner(name="rrt_connect")
+kinematics = create_kinematics(name="jacobian")  # or "drake_optimization"
+planner = create_planner(name="rrt_connect")  # backend-agnostic
 ```
 
 ## Monitors
@@ -64,7 +68,6 @@ from dimos.manipulation.planning.factory import (
 # Data classes and Protocols
 from dimos.manipulation.planning.spec import (
     CollisionObjectMessage,
-    Detection3D,
     IKResult,
     IKStatus,
     KinematicsSpec,
@@ -74,7 +77,6 @@ from dimos.manipulation.planning.spec import (
     PlanningResult,
     PlanningStatus,
     RobotModelConfig,
-    VizSpec,
     WorldSpec,
 )
 
@@ -84,14 +86,10 @@ from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator
 )
 
 __all__ = [
-    # Data classes
     "CollisionObjectMessage",
-    "Detection3D",
     "IKResult",
     "IKStatus",
-    # Trajectory
     "JointTrajectoryGenerator",
-    # Protocols
     "KinematicsSpec",
     "Obstacle",
     "ObstacleType",
@@ -99,9 +97,7 @@ __all__ = [
     "PlanningResult",
     "PlanningStatus",
     "RobotModelConfig",
-    "VizSpec",
     "WorldSpec",
-    # Factory functions
     "create_kinematics",
     "create_planner",
     "create_planning_stack",

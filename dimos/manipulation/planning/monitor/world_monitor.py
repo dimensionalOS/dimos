@@ -34,12 +34,12 @@ if TYPE_CHECKING:
 
     from dimos.manipulation.planning.spec import (
         CollisionObjectMessage,
-        Detection3D,
         Obstacle,
         RobotModelConfig,
         WorldSpec,
     )
     from dimos.msgs.sensor_msgs import JointState
+    from dimos.msgs.vision_msgs import Detection3D
 
 logger = setup_logger()
 
@@ -200,7 +200,7 @@ class WorldMonitor:
             self._obstacle_monitor.on_collision_object(msg)
 
     def on_detections(self, detections: list[Detection3D]) -> None:
-        """Handle perception detections."""
+        """Handle perception detections (Detection3D from dimos.msgs.vision_msgs)."""
         if self._obstacle_monitor is not None:
             self._obstacle_monitor.on_detections(detections)
 
@@ -324,26 +324,26 @@ class WorldMonitor:
 
     # ============= Visualization =============
 
-    def get_meshcat_url(self) -> str | None:
-        """Get Meshcat URL or None if not enabled."""
-        if hasattr(self._world, "get_meshcat_url"):
-            url = self._world.get_meshcat_url()
+    def get_visualization_url(self) -> str | None:
+        """Get visualization URL or None if not enabled."""
+        if hasattr(self._world, "get_visualization_url"):
+            url = self._world.get_visualization_url()
             return str(url) if url else None
         return None
 
     def publish_visualization(self) -> None:
         """Force publish current state to visualization."""
-        if hasattr(self._world, "publish_to_meshcat"):
-            self._world.publish_to_meshcat()
+        if hasattr(self._world, "publish_visualization"):
+            self._world.publish_visualization()
 
     def start_visualization_thread(self, rate_hz: float = 10.0) -> None:
-        """Start background thread for Meshcat updates at given rate."""
+        """Start background thread for visualization updates at given rate."""
         if self._viz_thread is not None and self._viz_thread.is_alive():
             logger.warning("Visualization thread already running")
             return
 
-        if not hasattr(self._world, "publish_to_meshcat"):
-            logger.warning("World does not support Meshcat visualization")
+        if not hasattr(self._world, "publish_visualization"):
+            logger.warning("World does not support visualization")
             return
 
         self._viz_rate_hz = rate_hz
@@ -375,8 +375,8 @@ class WorldMonitor:
         period = 1.0 / self._viz_rate_hz
         while not self._viz_stop_event.is_set():
             try:
-                if hasattr(self._world, "publish_to_meshcat"):
-                    self._world.publish_to_meshcat()
+                if hasattr(self._world, "publish_visualization"):
+                    self._world.publish_visualization()
             except Exception as e:
                 logger.debug(f"Visualization publish failed: {e}")
             time.sleep(period)

@@ -29,7 +29,6 @@ Usage:
 
 import numpy as np
 
-from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import manipulation_module
 from dimos.manipulation.planning.spec import RobotModelConfig
@@ -304,104 +303,10 @@ xarm7_planner_orchestrator = manipulation_module(
 )
 
 
-# =============================================================================
-# Combined Blueprints (Orchestrator + Planner in one process)
-# =============================================================================
-
-
-# Combined: Quad mock orchestrator + Quad manipulation planner
-# Usage: dimos run quad-mock-with-planner
-def _make_quad_mock_with_planner():
-    """Create combined quad-arm blueprint (lazy import to avoid circular deps)."""
-    from dimos.control.blueprints import orchestrator_quad_mock
-
-    return autoconnect(
-        orchestrator_quad_mock,
-        manipulation_module(
-            robots=[
-                _make_xarm6_config(
-                    "arm1", y_offset=0.75, joint_prefix="arm1_", orchestrator_task="traj_arm1"
-                ),
-                _make_xarm6_config(
-                    "arm2", y_offset=0.25, joint_prefix="arm2_", orchestrator_task="traj_arm2"
-                ),
-                _make_xarm6_config(
-                    "arm3", y_offset=-0.25, joint_prefix="arm3_", orchestrator_task="traj_arm3"
-                ),
-                _make_xarm6_config(
-                    "arm4", y_offset=-0.75, joint_prefix="arm4_", orchestrator_task="traj_arm4"
-                ),
-            ],
-            planning_timeout=10.0,
-            enable_viz=True,
-        ),
-    ).transports(
-        {
-            ("joint_state", JointState): LCMTransport("/orchestrator/joint_state", JointState),
-        }
-    )
-
-
-# Lazy-loaded to avoid circular import
-quad_mock_with_planner = _make_quad_mock_with_planner()
-
-
-# Combined: Mixed-arm orchestrator (XArm7 + XArm6 + Piper) + manipulation planner
-# Usage: dimos run mixed-mock-with-planner
-def _make_mixed_mock_with_planner():
-    """Create combined mixed-arm blueprint (XArm7 + XArm6 + Piper).
-
-    Layout (top view, looking down at table):
-        y=0.5: XArm7 (7-DOF with gripper)
-        y=0.0: XArm6 (6-DOF with gripper)
-        y=-0.5: Piper (6-DOF with parallel jaw gripper)
-    """
-    from dimos.control.blueprints import orchestrator_mixed_mock
-
-    return autoconnect(
-        orchestrator_mixed_mock,
-        manipulation_module(
-            robots=[
-                _make_xarm7_config(
-                    "xarm7",
-                    y_offset=0.5,
-                    joint_prefix="xarm7_",
-                    orchestrator_task="traj_xarm7",
-                    add_gripper=True,
-                ),
-                _make_xarm6_config(
-                    "xarm6",
-                    y_offset=0.0,
-                    joint_prefix="xarm6_",
-                    orchestrator_task="traj_xarm6",
-                ),
-                _make_piper_config(
-                    "piper",
-                    y_offset=-0.5,
-                    joint_prefix="piper_",
-                    orchestrator_task="traj_piper",
-                ),
-            ],
-            planning_timeout=10.0,
-            enable_viz=True,
-        ),
-    ).transports(
-        {
-            ("joint_state", JointState): LCMTransport("/orchestrator/joint_state", JointState),
-        }
-    )
-
-
-# Lazy-loaded to avoid circular import
-mixed_mock_with_planner = _make_mixed_mock_with_planner()
-
-
 __all__ = [
     "PIPER_GRIPPER_COLLISION_EXCLUSIONS",
     "XARM_GRIPPER_COLLISION_EXCLUSIONS",
     "dual_xarm6_planner",
-    "mixed_mock_with_planner",
-    "quad_mock_with_planner",
     "xarm6_planner_only",
     "xarm7_planner_orchestrator",
 ]

@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,10 +17,12 @@ Motion Planners Module
 
 Contains motion planning implementations that use WorldSpec.
 
+All planners are backend-agnostic - they only use WorldSpec methods and
+work with any physics backend (Drake, MuJoCo, PyBullet, etc.).
+
 ## Implementations
 
-- DrakePlanner: RRT-Connect planner
-- DrakeRRTStarPlanner: RRT* planner (asymptotically optimal)
+- RRTConnectPlanner: Bi-directional RRT-Connect planner (fast, reliable)
 
 ## Usage
 
@@ -34,9 +36,6 @@ result = planner.plan_joint_path(world, robot_id, q_start, q_goal)
 ```
 """
 
-from dimos.manipulation.planning.planners.drake_planner import (
-    DrakePlanner,
-    DrakeRRTStarPlanner,
-)
+from dimos.manipulation.planning.planners.rrt_planner import RRTConnectPlanner
 
-__all__ = ["DrakePlanner", "DrakeRRTStarPlanner"]
+__all__ = ["RRTConnectPlanner"]
