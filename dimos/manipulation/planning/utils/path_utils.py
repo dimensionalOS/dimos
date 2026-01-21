@@ -277,8 +277,8 @@ def concatenate_paths(
             continue
 
         if remove_duplicates and result:
-            # Check if last point matches first point
-            if np.allclose(result[-1], path[0]):
+            # Check if last point matches first point (tight tolerance for joint space)
+            if np.allclose(result[-1], path[0], atol=1e-6, rtol=0):
                 result.extend(path[1:])
             else:
                 result.extend(path)

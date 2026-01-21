@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 try:
-    from pydrake.geometry import (
+    from pydrake.geometry import (  # type: ignore[import-not-found]
         AddContactMaterial,
         Box,
         CollisionFilterDeclaration,
@@ -57,15 +57,15 @@ try:
         SceneGraph,
         Sphere,
     )
-    from pydrake.math import RigidTransform
-    from pydrake.multibody.parsing import Parser
-    from pydrake.multibody.plant import (
+    from pydrake.math import RigidTransform  # type: ignore[import-not-found]
+    from pydrake.multibody.parsing import Parser  # type: ignore[import-not-found]
+    from pydrake.multibody.plant import (  # type: ignore[import-not-found]
         AddMultibodyPlantSceneGraph,
         CoulombFriction,
         MultibodyPlant,
     )
-    from pydrake.multibody.tree import JacobianWrtVariable
-    from pydrake.systems.framework import Context, DiagramBuilder
+    from pydrake.multibody.tree import JacobianWrtVariable  # type: ignore[import-not-found]
+    from pydrake.systems.framework import Context, DiagramBuilder  # type: ignore[import-not-found]
 
     DRAKE_AVAILABLE = True
 except ImportError:
@@ -598,7 +598,7 @@ class DrakeWorld:
                             self._plant_context, robot_data.model_instance
                         )
                         self._plant.SetPositions(plant_ctx, robot_data.model_instance, positions)
-                    except Exception:
+                    except RuntimeError:
                         pass  # Robot not yet synced
 
         yield ctx
@@ -745,7 +745,8 @@ class DrakeWorld:
         ee_body = robot_data.ee_frame.body()
         X_WE = self._plant.EvalBodyPoseInWorld(plant_ctx, ee_body)
 
-        return X_WE.GetAsMatrix4()
+        result: NDArray[np.float64] = X_WE.GetAsMatrix4()
+        return result
 
     def get_link_pose(self, ctx: Context, robot_id: str, link_name: str) -> NDArray[np.float64]:
         """Get link pose as 4x4 transform."""
@@ -765,7 +766,8 @@ class DrakeWorld:
 
         X_WL = self._plant.EvalBodyPoseInWorld(plant_ctx, body)
 
-        return X_WL.GetAsMatrix4()
+        result: NDArray[np.float64] = X_WL.GetAsMatrix4()
+        return result
 
     def get_jacobian(self, ctx: Context, robot_id: str) -> NDArray[np.float64]:
         """Get geometric Jacobian (6 x n_joints).
@@ -808,7 +810,8 @@ class DrakeWorld:
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""
         if self._meshcat is not None:
-            return self._meshcat.web_url()
+            url: str = self._meshcat.web_url()
+            return url
         return None
 
     def publish_visualization(self, ctx: Context | None = None) -> None:
@@ -850,9 +853,7 @@ class DrakeWorld:
         other_robot_positions: dict[str, NDArray[np.float64]] = {}
         for rid, _robot_data in self._robots.items():
             if rid != robot_id:
-                pos = self.get_positions(self.get_live_context(), rid)
-                if pos is not None:
-                    other_robot_positions[rid] = pos
+                other_robot_positions[rid] = self.get_positions(self.get_live_context(), rid)
 
         dt = duration / (len(path) - 1)
         for q in path:

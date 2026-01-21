@@ -32,7 +32,6 @@ Example:
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 import re
 import shutil
@@ -135,7 +134,7 @@ def _process_xacro(
 ) -> str:
     """Process xacro file to URDF."""
     try:
-        import xacro  # type: ignore[import-untyped]
+        import xacro  # type: ignore[import-not-found]
     except ImportError:
         raise ImportError(
             "xacro is required for processing .xacro files. Install with: pip install xacro"
@@ -184,9 +183,9 @@ def _strip_transmission_blocks(urdf_content: str) -> str:
     Returns:
         URDF content with transmission blocks removed
     """
-    # Pattern to match <transmission>...</transmission> blocks (including nested content)
+    # Pattern to match <transmission>...</transmission> blocks and self-closing <transmission/>
     # Uses non-greedy matching and handles nested tags
-    pattern = r"<transmission[^>]*>.*?</transmission>"
+    pattern = r"<transmission[^>]*(?:/>|>.*?</transmission>)"
 
     # Remove transmission blocks (with flags for multiline and dotall)
     result = re.sub(pattern, "", urdf_content, flags=re.DOTALL | re.MULTILINE)
@@ -205,8 +204,8 @@ def _resolve_package_uris(
     output_dir: Path,
 ) -> str:
     """Resolve package:// URIs to filesystem paths."""
-    # Pattern for package:// URIs
-    pattern = r'package://([^/]+)/(.+?)(["\s<>])'
+    # Pattern for package:// URIs (handles both single and double quotes)
+    pattern = r'package://([^/]+)/(.+?)(["\'\\s<>])'
 
     def replace_uri(match: re.Match[str]) -> str:
         pkg_name = match.group(1)

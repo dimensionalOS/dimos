@@ -46,7 +46,6 @@ from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from dimos.control.orchestrator import ControlOrchestrator
     from dimos.core.rpc_client import RPCClient
     from dimos.msgs.geometry_msgs import Pose
 
@@ -106,7 +105,7 @@ class ManipulationModule(Module):
         self._planned_trajectories: dict[str, JointTrajectory] = {}
 
         # Orchestrator integration (lazy initialized)
-        self._orchestrator_client: RPCClient[ControlOrchestrator] | None = None
+        self._orchestrator_client: RPCClient | None = None
 
         logger.info("ManipulationModule initialized")
 
@@ -486,7 +485,7 @@ class ManipulationModule(Module):
     # Orchestrator Integration RPC Methods
     # =========================================================================
 
-    def _get_orchestrator_client(self) -> RPCClient[ControlOrchestrator] | None:
+    def _get_orchestrator_client(self) -> RPCClient | None:
         """Get or create orchestrator RPC client (lazy init)."""
         if not any(c.orchestrator_task_name for _, c, _ in self._robots.values()):
             return None

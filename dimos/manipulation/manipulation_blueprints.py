@@ -108,6 +108,7 @@ def _make_xarm6_config(
     y_offset: float = 0.0,
     joint_prefix: str = "",
     orchestrator_task: str | None = None,
+    add_gripper: bool = True,
 ) -> RobotModelConfig:
     """Create XArm6 robot config.
 
@@ -116,9 +117,18 @@ def _make_xarm6_config(
         y_offset: Y-axis offset for base pose (for multi-arm setups)
         joint_prefix: Prefix for joint name mapping (e.g., "left_" or "right_")
         orchestrator_task: Task name for orchestrator RPC execution
+        add_gripper: Whether to add the xarm gripper
     """
     joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
     joint_mapping = {f"{joint_prefix}{j}": j for j in joint_names} if joint_prefix else {}
+
+    xacro_args: dict[str, str] = {
+        "dof": "6",
+        "limited": "true",
+        "attach_xyz": f"0 {y_offset} 0",
+    }
+    if add_gripper:
+        xacro_args["add_gripper"] = "true"
 
     return RobotModelConfig(
         name=name,
@@ -133,17 +143,11 @@ def _make_xarm6_config(
             dtype=np.float64,
         ),
         joint_names=joint_names,
-        end_effector_link="link_tcp",
+        end_effector_link="link_tcp" if add_gripper else "link6",
         base_link="link_base",
         package_paths=_get_xarm_package_paths(),
-        # Pass attach_xyz to position each robot; xacro creates world_joint at this offset
-        xacro_args={
-            "dof": "6",
-            "limited": "true",
-            "add_gripper": "true",
-            "attach_xyz": f"0 {y_offset} 0",
-        },
-        collision_exclusion_pairs=XARM_GRIPPER_COLLISION_EXCLUSIONS,
+        xacro_args=xacro_args,
+        collision_exclusion_pairs=XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
         auto_convert_meshes=True,
         max_velocity=1.0,
         max_acceleration=2.0,

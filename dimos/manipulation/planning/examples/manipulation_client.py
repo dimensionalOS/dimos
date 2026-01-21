@@ -45,8 +45,6 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-import numpy as np
-
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.protocol.rpc import LCMRPC
 
@@ -268,7 +266,35 @@ def main() -> None:
 
     c = ManipulationClient()
 
-    # Expose methods directly (no 'c.' prefix needed)
+    # Expose methods directly in user namespace (no 'c.' prefix needed)
+    user_ns = {
+        "c": c,
+        "client": c,
+        # Query methods
+        "state": c.state,
+        "joints": c.joints,
+        "ee": c.ee,
+        "url": c.url,
+        "robots": c.robots,
+        "info": c.info,
+        # Planning methods
+        "plan": c.plan,
+        "plan_pose": c.plan_pose,
+        "preview": c.preview,
+        "execute": c.execute,
+        "has_plan": c.has_plan,
+        "clear_plan": c.clear_plan,
+        # Obstacle methods
+        "box": c.box,
+        "sphere": c.sphere,
+        "cylinder": c.cylinder,
+        "remove": c.remove,
+        # Utility methods
+        "collision": c.collision,
+        "reset": c.reset,
+        "cancel": c.cancel,
+        "status": c.status,
+    }
 
     banner = """
 Manipulation Client - IPython Interface
@@ -305,7 +331,7 @@ Type help(command) for details, e.g. help(box)
     print(banner)
 
     try:
-        embed(colors="neutral")  # type: ignore[no-untyped-call]
+        embed(user_ns=user_ns, colors="neutral")  # type: ignore[no-untyped-call]
     finally:
         c.stop()
 

@@ -295,7 +295,9 @@ class WorldObstacleMonitor:
 
         for det_id in stale_ids:
             obstacle_id = self._perception_objects[det_id]
-            self._world.remove_obstacle(obstacle_id)
+            removed = self._world.remove_obstacle(obstacle_id)
+            if not removed:
+                logger.warning(f"Obstacle '{obstacle_id}' not found in world during cleanup")
             del self._perception_objects[det_id]
             del self._perception_timestamps[det_id]
 

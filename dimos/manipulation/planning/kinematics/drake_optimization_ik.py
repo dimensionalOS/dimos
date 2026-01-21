@@ -35,9 +35,11 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 try:
-    from pydrake.math import RigidTransform, RotationMatrix
-    from pydrake.multibody.inverse_kinematics import InverseKinematics
-    from pydrake.solvers import Solve
+    from pydrake.math import RigidTransform, RotationMatrix  # type: ignore[import-not-found]
+    from pydrake.multibody.inverse_kinematics import (  # type: ignore[import-not-found]
+        InverseKinematics,
+    )
+    from pydrake.solvers import Solve  # type: ignore[import-not-found]
 
     DRAKE_AVAILABLE = True
 except ImportError:

@@ -274,9 +274,10 @@ def rotation_matrix_to_axis_angle(R: NDArray[np.float64]) -> tuple[NDArray[np.fl
         idx = int(np.argmax(diag))
         axis = np.zeros(3)
         axis[idx] = np.sqrt((diag[idx] + 1) / 2)
-        for j in range(3):
-            if j != idx:
-                axis[j] = R[idx, j] / (2 * axis[idx])
+        if axis[idx] > 1e-12:
+            for j in range(3):
+                if j != idx:
+                    axis[j] = R[idx, j] / (2 * axis[idx])
         return axis, angle
 
     # General case

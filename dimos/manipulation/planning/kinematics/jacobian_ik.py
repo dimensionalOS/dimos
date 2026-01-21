@@ -305,9 +305,13 @@ class JacobianIK:
         # Apply velocity limits if available
         config = world.get_robot_config(robot_id)
         if config.velocity_limits is not None:
-            max_ratio = np.max(np.abs(q_dot) / np.array(config.velocity_limits))
-            if max_ratio > 1.0:
-                q_dot = q_dot / max_ratio
+            velocity_limits = np.array(config.velocity_limits)
+            # Only consider joints with non-zero velocity limits
+            nonzero_mask = velocity_limits > 0
+            if np.any(nonzero_mask):
+                max_ratio = np.max(np.abs(q_dot[nonzero_mask]) / velocity_limits[nonzero_mask])
+                if max_ratio > 1.0:
+                    q_dot = q_dot / max_ratio
 
         return q_dot
 
