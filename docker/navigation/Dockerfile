@@ -3,7 +3,7 @@
 # =============================================================================
 #
 # Key optimizations:
-# 1. Use ros:jazzy-ros-base instead of desktop-full (~2.5 GB saved)
+# 1. Multi-stage build with ros:desktop-full base image
 # 2. Multi-stage build to discard build artifacts
 # 3. No Python ML dependencies (~14 GB saved)
 # 4. COPY dimos source for editable pip install (volume-mounted at runtime overlays it)
