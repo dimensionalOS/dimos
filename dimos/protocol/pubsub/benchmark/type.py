@@ -38,7 +38,7 @@ PubSubContext = Callable[[], AbstractContextManager[PubSub[TopicT, MsgT]]]
 
 
 @dataclass
-class TestCase(Generic[TopicT, MsgT]):
+class Case(Generic[TopicT, MsgT]):
     pubsub_context: PubSubContext[TopicT, MsgT]
     msg_gen: MsgGen[TopicT, MsgT]
 
@@ -49,7 +49,7 @@ class TestCase(Generic[TopicT, MsgT]):
         return 2
 
 
-TestData = Sequence[TestCase[Any, Any]]
+TestData = Sequence[Case[Any, Any]]
 
 
 def _format_size(size_bytes: int) -> str:
@@ -248,10 +248,7 @@ class BenchmarkResults:
         """Print msgs/sec heatmap."""
 
         def fmt(v: float) -> str:
-            if v >= 1000:
-                scaled = v / 1000
-                return f"{scaled:.0f}k" if scaled >= 10 else f"{scaled:.1f}k"
-            return f"{v:.0f}"
+            return f"{v / 1000:.1f}k" if v >= 1000 else f"{v:.0f}"
 
         self._print_heatmap("Msgs/sec", lambda r: r.throughput_msgs, fmt)
 
@@ -260,8 +257,7 @@ class BenchmarkResults:
 
         def fmt(v: float) -> str:
             if v >= 1e9:
-                scaled = v / 1e9
-                return f"{scaled:.0f}G" if scaled >= 10 else f"{scaled:.1f}G"
+                return f"{v / 1e9:.1f}G"
             if v >= 1e6:
                 return f"{v / 1e6:.0f}M"
             if v >= 1e3:
@@ -275,8 +271,7 @@ class BenchmarkResults:
 
         def fmt(v: float) -> str:
             if v >= 1:
-                return f"{v:.0f}s" if v >= 10 else f"{v:.1f}s"
-            ms = v * 1000
-            return f"{ms:.0f}ms" if ms >= 10 else f"{ms:.1f}ms"
+                return f"{v:.1f}s"
+            return f"{v * 1000:.0f}ms"
 
         self._print_heatmap("Latency", lambda r: r.receive_time, fmt, high_is_good=False)

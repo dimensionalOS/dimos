@@ -25,9 +25,9 @@ from dimos.protocol.pubsub.benchmark.testdata import testdata
 from dimos.protocol.pubsub.benchmark.type import (
     BenchmarkResult,
     BenchmarkResults,
+    Case,
     MsgGen,
     PubSubContext,
-    TestCase,
 )
 
 # Message sizes for throughput benchmarking (powers of 2 from 64B to 10MB)
@@ -65,7 +65,7 @@ def size_id(size: int) -> str:
     return f"{size}B"
 
 
-def pubsub_id(testcase: TestCase[Any, Any]) -> str:
+def pubsub_id(testcase: Case[Any, Any]) -> str:
     """Extract pubsub implementation name from context manager function name."""
     name: str = testcase.pubsub_context.__name__
     # Convert e.g. "lcm_pubsub_channel" -> "LCM", "memory_pubsub_channel" -> "Memory"

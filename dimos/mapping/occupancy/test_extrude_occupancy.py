@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
 from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.utils.data import get_data
 
 
+@pytest.mark.integration
 def test_generate_mujoco_scene(occupancy) -> None:
     with open(get_data("expected_occupancy_scene.xml")) as f:
         expected = f.read()

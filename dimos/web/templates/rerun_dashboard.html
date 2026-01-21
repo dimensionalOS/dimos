@@ -6,15 +6,78 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { width: 100%; height: 100%; overflow: hidden; }
         body { background: #0a0a0f; font-family: -apple-system, system-ui, sans-serif; }
+        :root { --command-center-width: max(30vw, 35rem); }
         .container { display: flex; width: 100%; height: 100%; }
-        .rerun { flex: 1; border: none; }
-        .command-center { width: 400px; border: none; border-left: 1px solid #333; }
+        .command-center {
+            width: var(--command-center-width);
+            min-width: 16rem;
+            border: none;
+            border-right: 1px solid #333;
+        }
+        .rerun { flex: 1 1 auto; border: none; min-width: 0; }
+        .divider {
+            width: 6px;
+            background: linear-gradient(180deg, #202530 0%, #141824 100%);
+            cursor: col-resize;
+            border-left: 1px solid #0f1016;
+            border-right: 1px solid #0f1016;
+        }
+        .divider:hover { background: #2a3140; }
+        .divider.dragging { background: #3a4458; }
+        body.dragging { user-select: none; cursor: col-resize; }
     </style>
 </head>
 <body>
     <div class="container">
-        <iframe class="rerun" src="http://localhost:9090/?url=rerun%2Bhttp%3A%2F%2Flocalhost%3A9876%2Fproxy"></iframe>
         <iframe class="command-center" src="http://localhost:7779/command-center"></iframe>
+        <div class="divider" role="separator" aria-label="Resize panels"></div>
+        <iframe class="rerun" src="http://localhost:9090/?url=rerun%2Bhttp%3A%2F%2Flocalhost%3A9876%2Fproxy"></iframe>
     </div>
+    <script>
+        (function () {
+            const container = document.querySelector('.container');
+            const divider = document.querySelector('.divider');
+            const commandCenter = document.querySelector('.command-center');
+            const body = document.body;
+            const minWidth = 0; // 16rem baseline for small screens
+
+            let isDragging = false;
+            let pointerId = null;
+
+            function onPointerMove(event) {
+                if (!isDragging) return;
+                const rect = container.getBoundingClientRect();
+                const dividerWidth = divider.getBoundingClientRect().width;
+                const available = event.clientX - rect.left - dividerWidth / 2;
+                const nextWidth = Math.max(minWidth, Math.min(available, rect.width));
+                commandCenter.style.width = `${nextWidth}px`;
+                document.documentElement.style.setProperty('--command-center-width', `${nextWidth}px`);
+            }
+
+            function stopDragging() {
+                if (!isDragging) return;
+                isDragging = false;
+                divider.classList.remove('dragging');
+                body.classList.remove('dragging');
+                window.removeEventListener('pointermove', onPointerMove);
+                window.removeEventListener('pointerup', stopDragging);
+                if (pointerId !== null) {
+                    divider.releasePointerCapture(pointerId);
+                    pointerId = null;
+                }
+            }
+
+            divider.addEventListener('pointerdown', (event) => {
+                event.preventDefault();
+                isDragging = true;
+                pointerId = event.pointerId;
+                divider.setPointerCapture(pointerId);
+                divider.classList.add('dragging');
+                body.classList.add('dragging');
+                window.addEventListener('pointermove', onPointerMove);
+                window.addEventListener('pointerup', stopDragging);
+            });
+        })();
+    </script>
 </body>
 </html>

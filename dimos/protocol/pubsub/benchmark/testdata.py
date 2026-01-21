@@ -17,10 +17,10 @@ from contextlib import contextmanager
 from typing import Any
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.protocol.pubsub.benchmark.type import TestCase
+from dimos.protocol.pubsub.benchmark.type import Case
 from dimos.protocol.pubsub.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
 from dimos.protocol.pubsub.memory import Memory
-from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory
+from dimos.protocol.pubsub.shmpubsub import LCMSharedMemory, PickleSharedMemory, SharedMemory
 
 
 def make_data(size: int) -> bytes:
@@ -28,7 +28,7 @@ def make_data(size: int) -> bytes:
     return bytes(i % 256 for i in range(size))
 
 
-testdata: list[TestCase[Any, Any]] = []
+testdata: list[Case[Any, Any]] = []
 
 
 @contextmanager
@@ -58,7 +58,7 @@ def lcm_msggen(size: int) -> tuple[LCMTopic, Image]:
 
 
 testdata.append(
-    TestCase(
+    Case(
         pubsub_context=lcm_pubsub_channel,
         msg_gen=lcm_msggen,
     )
@@ -80,12 +80,12 @@ def udp_raw_msggen(size: int) -> tuple[LCMTopic, bytes]:
     return (topic, make_data(size))
 
 
-testdata.append(
-    TestCase(
-        pubsub_context=udp_raw_pubsub_channel,
-        msg_gen=udp_raw_msggen,
-    )
-)
+# testdata.append(
+#     Case(
+#         pubsub_context=udp_raw_pubsub_channel,
+#         msg_gen=udp_raw_msggen,
+#     )
+# )
 
 
 @contextmanager
@@ -108,7 +108,7 @@ def memory_msggen(size: int) -> tuple[str, Any]:
 
 
 # testdata.append(
-#     TestCase(
+#     Case(
 #         pubsub_context=memory_pubsub_channel,
 #         msg_gen=memory_msggen,
 #     )
@@ -139,7 +139,7 @@ def shm_msggen(size: int) -> tuple[str, Any]:
 
 
 testdata.append(
-    TestCase(
+    Case(
         pubsub_context=shm_pubsub_channel,
         msg_gen=shm_msggen,
     )
@@ -161,14 +161,11 @@ def shm_bytes_msggen(size: int) -> tuple[str, bytes]:
 
 
 testdata.append(
-    TestCase(
+    Case(
         pubsub_context=shm_bytes_pubsub_channel,
         msg_gen=shm_bytes_msggen,
     )
 )
-
-
-from dimos.protocol.pubsub.shmpubsub import LCMSharedMemory
 
 
 @contextmanager
@@ -181,7 +178,7 @@ def shm_lcm_pubsub_channel() -> Generator[LCMSharedMemory, None, None]:
 
 
 testdata.append(
-    TestCase(
+    Case(
         pubsub_context=shm_lcm_pubsub_channel,
         msg_gen=lcm_msggen,  # Reuse the LCM message generator
     )
@@ -206,7 +203,7 @@ try:
         return ("benchmark/redis", {"data": data, "size": size})
 
     testdata.append(
-        TestCase(
+        Case(
             pubsub_context=redis_pubsub_channel,
             msg_gen=redis_msggen,
         )
@@ -217,7 +214,7 @@ except (ConnectionError, ImportError):
     print("Redis not available")
 
 
-from dimos.protocol.pubsub.rospubsub import ROS_AVAILABLE, RawROS, ROSTopic
+from dimos.protocol.pubsub.rospubsub import ROS_AVAILABLE, RawROS, RawROSTopic
 
 if ROS_AVAILABLE:
     from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
@@ -249,7 +246,7 @@ if ROS_AVAILABLE:
         yield ros_pubsub
         ros_pubsub.stop()
 
-    def ros_msggen(size: int) -> tuple[ROSTopic, ROSImage]:
+    def ros_msggen(size: int) -> tuple[RawROSTopic, ROSImage]:
         import numpy as np
 
         # Create image data
@@ -269,18 +266,18 @@ if ROS_AVAILABLE:
         msg.step = width * 3
         msg.data = data.tobytes()
 
-        topic = ROSTopic(topic="/benchmark/ros", ros_type=ROSImage)
+        topic = RawROSTopic(topic="/benchmark/ros", ros_type=ROSImage)
         return (topic, msg)
 
     testdata.append(
-        TestCase(
+        Case(
             pubsub_context=ros_best_effort_pubsub_channel,
             msg_gen=ros_msggen,
         )
     )
 
     testdata.append(
-        TestCase(
+        Case(
             pubsub_context=ros_reliable_pubsub_channel,
             msg_gen=ros_msggen,
         )

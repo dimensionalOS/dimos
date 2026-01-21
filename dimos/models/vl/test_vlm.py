@@ -8,6 +8,7 @@ import pytest
 
 from dimos.core import LCMTransport
 from dimos.models.vl.moondream import MoondreamVlModel
+from dimos.models.vl.moondream_hosted import MoondreamHostedVlModel
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import ImageDetections2D
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     "model_class,model_name",
     [
         (MoondreamVlModel, "Moondream"),
+        (MoondreamHostedVlModel, "Moondream Hosted"),
         (QwenVlModel, "Qwen"),
     ],
 )
@@ -94,6 +96,7 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
     "model_class,model_name",
     [
         (MoondreamVlModel, "Moondream"),
+        (MoondreamHostedVlModel, "Moondream Hosted"),
         (QwenVlModel, "Qwen"),
     ],
 )

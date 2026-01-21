@@ -32,7 +32,7 @@ def test_spatial_memory_navigation(
     human_input: Callable[[str], None],
     follow_points: Callable[..., None],
 ) -> None:
-    start_blueprint("unitree-go2-agentic")
+    start_blueprint("run", "unitree-go2-agentic")
 
     lcm_spy.save_topic("/rpc/HumanInput/start/res")
     lcm_spy.wait_for_saved_topic("/rpc/HumanInput/start/res", timeout=120.0)

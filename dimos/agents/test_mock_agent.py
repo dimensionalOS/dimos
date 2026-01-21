@@ -24,12 +24,12 @@ from dimos.agents.agent import Agent
 from dimos.agents.testing import MockModel
 from dimos.core import LCMTransport, start
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 from dimos.robot.unitree.connection.go2 import GO2Connection
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 
+@pytest.mark.integration
 def test_tool_call() -> None:
     """Test agent initialization and tool call execution."""
     # Create a fake model that will respond with tool calls
@@ -74,6 +74,7 @@ def test_tool_call() -> None:
     agent.stop()
 
 
+@pytest.mark.integration
 def test_image_tool_call() -> None:
     """Test agent with image tool call execution."""
     dimos = start(2)
@@ -158,7 +159,7 @@ def test_tool_call_implicit_detections() -> None:
     )
 
     robot_connection = dimos.deploy(GO2Connection, connection_type="fake")
-    robot_connection.lidar.transport = LCMTransport("/lidar", LidarMessage)
+    robot_connection.lidar.transport = LCMTransport("/lidar", PointCloud2)
     robot_connection.odom.transport = LCMTransport("/odom", PoseStamped)
     robot_connection.video.transport = LCMTransport("/image", Image)
     robot_connection.cmd_vel.transport = LCMTransport("/cmd_vel", Vector3)

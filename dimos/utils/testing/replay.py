@@ -40,7 +40,7 @@ class SensorReplay(Generic[T]):
     Args:
         name: The name of the test dataset
         autocast: Optional function that takes unpickled data and returns a processed result.
-                  For example: lambda data: LidarMessage.from_msg(data)
+                  For example: pointcloud2_from_webrtc_lidar
     """
 
     def __init__(self, name: str, autocast: Callable[[Any], T] | None = None) -> None:

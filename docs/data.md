@@ -129,7 +129,7 @@ Loaded pointcloud with 63672 points
 
 Data files live in `data/` at the repo root. Large files are stored in `data/.lfs/` as `.tar.gz` archives tracked by Git LFS.
 
-<details><summary>Diagon</summary>
+<details><summary>Diagram</summary>
 
 ```diagon fold mode=Tree
 data/

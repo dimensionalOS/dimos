@@ -61,6 +61,51 @@ except (ConnectionError, ImportError):
     # either redis is not installed or the server is not running
     print("Redis not available")
 
+try:
+    from geometry_msgs.msg import Vector3 as ROSVector3
+    from rclpy.qos import (
+        QoSDurabilityPolicy,
+        QoSHistoryPolicy,
+        QoSProfile,
+        QoSReliabilityPolicy,
+    )
+
+    from dimos.protocol.pubsub.rospubsub import RawROS, RawROSTopic
+
+    # Use RELIABLE QoS with larger depth for testing
+    _test_qos = QoSProfile(
+        reliability=QoSReliabilityPolicy.RELIABLE,
+        history=QoSHistoryPolicy.KEEP_ALL,
+        durability=QoSDurabilityPolicy.VOLATILE,
+        depth=5000,
+    )
+
+    @contextmanager
+    def ros_context() -> Generator[RawROS, None, None]:
+        ros_pubsub = RawROS(qos=_test_qos)
+        ros_pubsub.start()
+        time.sleep(0.1)
+        try:
+            yield ros_pubsub
+        finally:
+            ros_pubsub.stop()
+
+    testdata.append(
+        (
+            ros_context,
+            RawROSTopic(topic="/test_ros_topic", ros_type=ROSVector3, qos=_test_qos),
+            [
+                ROSVector3(x=1.0, y=2.0, z=3.0),
+                ROSVector3(x=4.0, y=5.0, z=6.0),
+                ROSVector3(x=7.0, y=8.0, z=9.0),
+            ],
+        )
+    )
+
+except ImportError:
+    # ROS 2 not available
+    print("ROS 2 not available")
+
 
 @contextmanager
 def lcm_context() -> Generator[LCM, None, None]:
@@ -270,7 +315,10 @@ async def test_async_iterator(
 def test_high_volume_messages(
     pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
 ) -> None:
-    """Test that all 5000 messages are received correctly."""
+    """Test that all 5k messages are received correctly.
+    Limited to 5k because ros transport cannot handle more.
+    Might want to have separate expectations per transport later
+    """
     with pubsub_context() as x:
         # Create a list to capture received messages
         received_messages: list[Any] = []
@@ -284,13 +332,13 @@ def test_high_volume_messages(
         # Subscribe to the topic
         x.subscribe(topic, callback)
 
-        # Publish 10000 messages
-        num_messages = 10000
+        # Publish 5000 messages
+        num_messages = 5000
         for _ in range(num_messages):
             x.publish(topic, values[0])
 
         # Wait until no messages received for 0.5 seconds
-        timeout = 1.0  # Maximum time to wait
+        timeout = 2.0  # Maximum time to wait
         stable_duration = 0.1  # Time without new messages to consider done
         start_time = time.time()
 

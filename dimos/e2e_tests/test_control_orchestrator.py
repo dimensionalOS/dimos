@@ -33,6 +33,7 @@ from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint, Traject
 
 
 @pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM doesn't work in CI.")
+@pytest.mark.e2e
 class TestControlOrchestratorE2E:
     """End-to-end tests for ControlOrchestrator."""
 

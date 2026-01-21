@@ -1,6 +1,6 @@
 # Configuration
 
-Dimos provides a `Configurable` base class, see [`service/spec.py`](/dimos/protocol/service/spec.py#L22).
+Dimos provides a `Configurable` base class. See [`service/spec.py`](/dimos/protocol/service/spec.py#L22).
 
 This allows using dataclasses to specify configuration structure and default values per module.
 
@@ -45,7 +45,7 @@ Error: Config.__init__() got an unexpected keyword argument 'something'
 
 # Configurable Modules
 
-[Modules]() inherit from `Configurable`, so all of the above applies. Module configs should inherit from `ModuleConfig` ([`core/module.py`](/dimos/core/module.py#L40)), which includes shared configuration for all modules like transport protocols, frame_ids etc
+[Modules]() inherit from `Configurable`, so all of the above applies. Module configs should inherit from `ModuleConfig` ([`core/module.py`](/dimos/core/module.py#L40)), which includes shared configuration for all modules like transport protocols, frame_ids, etc.
 
 ```python
 from dataclasses import dataclass

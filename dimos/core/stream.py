@@ -86,7 +86,9 @@ class Transport(Resource, ObservableMixin[T]):
         raise NotImplementedError
 
     # used by local Input
-    def subscribe(self, callback: Callable[[T], Any], selfstream: Stream[T]) -> Callable[[], None]:
+    def subscribe(
+        self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
+    ) -> Callable[[], None]:
         raise NotImplementedError
 
     def publish(self, msg: T) -> None:

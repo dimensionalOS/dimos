@@ -16,9 +16,9 @@ import pickle
 
 from dimos_lcm.sensor_msgs import CameraInfo
 
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 
 image_resize_factor = 1
@@ -102,7 +102,7 @@ def transform_chain(odom_frame: Odometry) -> list:  # type: ignore[type-arg]
 
 def broadcast(  # type: ignore[no-untyped-def]
     timestamp: float,
-    lidar_frame: LidarMessage,
+    lidar_frame: PointCloud2,
     video_frame: Image,
     odom_frame: Odometry,
     detections,
@@ -115,7 +115,7 @@ def broadcast(  # type: ignore[no-untyped-def]
     from dimos.core import LCMTransport
     from dimos.msgs.geometry_msgs import PoseStamped
 
-    lidar_transport = LCMTransport("/lidar", LidarMessage)  # type: ignore[var-annotated]
+    lidar_transport = LCMTransport("/lidar", PointCloud2)  # type: ignore[var-annotated]
     odom_transport = LCMTransport("/odom", PoseStamped)  # type: ignore[var-annotated]
     video_transport = LCMTransport("/image", Image)  # type: ignore[var-annotated]
     camera_info_transport = LCMTransport("/camera_info", CameraInfo)  # type: ignore[var-annotated]
@@ -141,14 +141,16 @@ def process_data():  # type: ignore[no-untyped-def]
         Detection2DModule,
         build_imageannotations,
     )
-    from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+    from dimos.robot.unitree_webrtc.type.lidar import pointcloud2_from_webrtc_lidar
     from dimos.robot.unitree_webrtc.type.odometry import Odometry
     from dimos.utils.data import get_data
     from dimos.utils.testing import TimedSensorReplay
 
     get_data("unitree_office_walk")
     target = 1751591272.9654856
-    lidar_store = TimedSensorReplay("unitree_office_walk/lidar", autocast=LidarMessage.from_msg)
+    lidar_store = TimedSensorReplay(
+        "unitree_office_walk/lidar", autocast=pointcloud2_from_webrtc_lidar
+    )
     video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
     odom_store = TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
 

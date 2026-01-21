@@ -1,4 +1,4 @@
-When writing or editing markdown documentation, use `doclinks` tool to resolve file references.
+When writing or editing markdown documentation, use the `doclinks` tool to resolve file references.
 
 Full documentation if needed: [`utils/docs/doclinks.md`](/dimos/utils/docs/doclinks.md)
 
