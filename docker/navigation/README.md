@@ -103,7 +103,7 @@ LIDAR_IP=192.168.1.1xx           # xx = last two digits from lidar QR code seria
 ROBOT_IP=                        # IP addres of robot on local network (if using WebRTC connection)
 
 # Special Configuration for Unitree G1 EDU
-For the Unitree G1 EDU, use these specific values:
+# Special Configuration for Unitree G1 EDU
 LIDAR_COMPUTER_IP=192.168.123.5
 LIDAR_GATEWAY=192.168.123.1
 LIDAR_IP=192.168.123.120
