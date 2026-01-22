@@ -17,8 +17,8 @@ import time
 
 import pytest
 
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.testing.mock import Mock
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 
 @pytest.mark.needsdata
@@ -28,11 +28,9 @@ def test_mock_load_cast() -> None:
     # Load a frame with type casting
     frame = mock.load("a")
 
-    # Verify it's a LidarMessage object
-    assert frame.__class__.__name__ == "LidarMessage"
-    assert hasattr(frame, "timestamp")
-    assert hasattr(frame, "origin")
-    assert hasattr(frame, "resolution")
+    # Verify it's a PointCloud2 object
+    assert frame.__class__.__name__ == "PointCloud2"
+    assert hasattr(frame, "ts")
     assert hasattr(frame, "pointcloud")
 
     # Verify pointcloud has points
@@ -49,7 +47,7 @@ def test_mock_iterate() -> None:
     frames = list(mock.iterate())
     assert len(frames) > 0
     for frame in frames:
-        assert isinstance(frame, LidarMessage)
+        assert isinstance(frame, PointCloud2)
         assert frame.pointcloud.has_points()
 
 
@@ -61,4 +59,4 @@ def test_mock_stream() -> None:
     sub1.dispose()
 
     assert len(frames) >= 2
-    assert isinstance(frames[0], LidarMessage)
+    assert isinstance(frames[0], PointCloud2)

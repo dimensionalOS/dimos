@@ -27,16 +27,25 @@ from dimos.agents.cli.human import human_input
 from dimos.agents.cli.web import web_input
 from dimos.agents.ollama_agent import ollama_installed
 from dimos.agents.skills.navigation import navigation_skill
+from dimos.agents.skills.person_follow import person_follow_skill
 from dimos.agents.skills.speak_skill import speak_skill
 from dimos.agents.spec import Provider
 from dimos.agents.vlm_agent import vlm_agent
 from dimos.agents.vlm_stream_tester import vlm_stream_tester
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
-from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
+from dimos.core.transport import (
+    JpegLcmTransport,
+    JpegShmTransport,
+    LCMTransport,
+    ROSTransport,
+    pSHMTransport,
+)
 from dimos.dashboard.tf_rerun_module import tf_rerun
 from dimos.mapping.costmapper import cost_mapper
 from dimos.mapping.voxels import voxel_mapper
+from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.navigation.frontier_exploration import (
@@ -99,6 +108,15 @@ nav = autoconnect(
     wavefront_frontier_explorer(),
 ).global_config(n_dask_workers=6, robot_model="unitree_go2")
 
+ros = nav.transports(
+    {
+        ("lidar", PointCloud2): ROSTransport("lidar", PointCloud2),
+        ("global_map", PointCloud2): ROSTransport("global_map", PointCloud2),
+        ("odom", PoseStamped): ROSTransport("odom", PoseStamped),
+        ("color_image", Image): ROSTransport("color_image", Image),
+    }
+)
+
 detection = (
     autoconnect(
         nav,
@@ -142,7 +160,13 @@ detection = (
 
 spatial = autoconnect(
     nav,
-    spatial_memory(),
+    # TODO: Turn back on. Turned off to stop logging.
+    # EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+    # EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+    # EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+    # EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+    # EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
+    # spatial_memory(),
     utilization(),
 ).global_config(n_dask_workers=8)
 
@@ -168,6 +192,7 @@ with_jpegshm = autoconnect(
 _common_agentic = autoconnect(
     human_input(),
     navigation_skill(),
+    person_follow_skill(camera_info=GO2Connection.camera_info_static),
     unitree_skills(),
     web_input(),
     speak_skill(),

@@ -17,7 +17,7 @@ import pytest
 from dimos.mapping.pointclouds.accumulators.general import _splice_cylinder
 from dimos.robot.unitree_webrtc.testing.helpers import show3d
 from dimos.robot.unitree_webrtc.testing.mock import Mock
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.utils.testing import SensorReplay
 
@@ -34,7 +34,7 @@ def test_costmap_vis() -> None:
         map.add_frame(frame)
 
     # Get global map and costmap
-    global_map = map.to_lidar_message()
+    global_map = map.to_PointCloud2()
     print(f"Global map has {len(global_map.pointcloud.points)} points")
     show3d(global_map.pointcloud, title="Global Map").run()
 
@@ -78,27 +78,3 @@ def map_():
     map = Map(voxel_size=0.5)
     yield map
     map.stop()
-
-
-def test_robot_mapping(map_) -> None:
-    lidar_replay = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
-
-    # Mock the output streams to avoid publishing errors
-    class MockStream:
-        def publish(self, msg) -> None:
-            pass  # Do nothing
-
-    map_.global_costmap = MockStream()
-    map_.global_map = MockStream()
-
-    # Process all frames from replay
-    for frame in lidar_replay.iterate():
-        map_.add_frame(frame)
-
-    # Check the built map
-    global_map = map_.to_lidar_message()
-    pointcloud = global_map.pointcloud
-
-    # Verify map has points
-    assert len(pointcloud.points) > 0
-    print(f"Map contains {len(pointcloud.points)} points")

@@ -1,7 +1,7 @@
 
 # LCM Messages
 
-[LCM (Lightweight Communications and Marshalling)](https://github.com/lcm-proj/lcm) is a message passing system with bindings for many languages (C, C++, Python, Java, Lua, Go). While LCM includes a UDP multicast transport, its real power is the message definition format - classes that can encode themselves to compact binary representation.
+[LCM (Lightweight Communications and Marshalling)](https://github.com/lcm-proj/lcm) is a message-passing system with bindings for many languages (C, C++, Python, Java, Lua, Go). While LCM includes a UDP multicast transport, its real power is the message definition format - classes that can encode themselves to a compact binary representation.
 
 Dimos uses LCM message definitions for all inter-module communication. Because messages serialize to binary, they can be sent over any transport - not just LCM's UDP multicast, but also shared memory, Redis, WebSockets, or any other channel.
 
@@ -125,7 +125,7 @@ print(f"Memory transport: received {received[0]}")
 
 # The LCM binary can also be sent raw over any byte-oriented channel
 binary = msg.lcm_encode()
-# send over websocket, redis, tcp, file, etc.
+# send over WebSocket, Redis, TCP, file, etc.
 decoded = Vector3.lcm_decode(binary)
 print(f"Raw binary transport: decoded {decoded}")
 ```

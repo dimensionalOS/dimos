@@ -107,7 +107,7 @@ def _set_net_value(commands_needed: list[str], sudo: str, name: str, value: int)
         return None
 
 
-TARGET_RMEM_SIZE = 2097152  # prev was 67108864
+TARGET_RMEM_SIZE = 67108864
 TARGET_MAX_SOCKET_BUFFER_SIZE_MACOS = 8388608
 TARGET_MAX_DGRAM_SIZE_MACOS = 65535
 
@@ -155,7 +155,7 @@ def check_system() -> None:
     multicast_commands = check_multicast()
     buffer_commands, current_buffer_size = check_buffers()
 
-    # Check multicast first - this is critical
+    # Multicast configuration
     if multicast_commands:
         logger.error(
             "Critical: Multicast configuration required. Please run the following commands:"
@@ -165,7 +165,7 @@ def check_system() -> None:
         logger.error("\nThen restart your application.")
         sys.exit(1)
 
-    # Buffer configuration is just for performance
+    # Buffer configuration is critical for throughput and packet loss
     elif buffer_commands:
         if current_buffer_size:
             logger.warning(

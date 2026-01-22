@@ -37,9 +37,9 @@ from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untype
 from dimos.core import rpc
 from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs import Pose, Transform, Twist
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.lidar import RawLidarMsg, pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.decorators.decorators import simple_mcache
@@ -235,7 +235,7 @@ class UnitreeWebRTCConnection(Resource):
         return future.result()
 
     @simple_mcache
-    def raw_lidar_stream(self) -> Observable[LidarMessage]:
+    def raw_lidar_stream(self) -> Observable[RawLidarMsg]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]))
 
     @simple_mcache
@@ -243,12 +243,8 @@ class UnitreeWebRTCConnection(Resource):
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]))
 
     @simple_mcache
-    def lidar_stream(self) -> Observable[LidarMessage]:
-        return backpressure(
-            self.raw_lidar_stream().pipe(
-                ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame, ts=time.time()))  # type: ignore[arg-type]
-            )
-        )
+    def lidar_stream(self) -> Observable[PointCloud2]:
+        return backpressure(self.raw_lidar_stream().pipe(ops.map(pointcloud2_from_webrtc_lidar)))
 
     @simple_mcache
     def tf_stream(self) -> Observable[Transform]:

@@ -15,7 +15,8 @@
 
 import itertools
 
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.robot.unitree_webrtc.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.utils.testing import SensorReplay
 
 
@@ -24,5 +25,5 @@ def test_init() -> None:
 
     for raw_frame in itertools.islice(lidar.iterate(), 5):
         assert isinstance(raw_frame, dict)
-        frame = LidarMessage.from_msg(raw_frame)
-        assert isinstance(frame, LidarMessage)
+        frame = pointcloud2_from_webrtc_lidar(raw_frame)
+        assert isinstance(frame, PointCloud2)

@@ -10,8 +10,15 @@
     }
   },
   "containerEnv": {
-    "PYTHONPATH": "${localEnv:PYTHONPATH}:/workspaces/dimos"
+    "PYTHONPATH": "${localEnv:PYTHONPATH}:/workspaces/dimos",
+    "DISPLAY": "${localEnv:DISPLAY}",
+    "WAYLAND_DISPLAY": "${localEnv:WAYLAND_DISPLAY}",
+    "XDG_RUNTIME_DIR": "${localEnv:XDG_RUNTIME_DIR}"
   },
+  "mounts": [
+    "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind",
+    "source=${localEnv:XDG_RUNTIME_DIR},target=${localEnv:XDG_RUNTIME_DIR},type=bind"
+  ],
   "postCreateCommand": "git config --global --add safe.directory /workspaces/dimos && cd /workspaces/dimos && pre-commit install",
   "settings": {
     "notebook.formatOnSave.enabled": true,
