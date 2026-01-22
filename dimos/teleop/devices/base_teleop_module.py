@@ -28,12 +28,12 @@ from dimos.core import Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, TwistStamped
 from dimos.msgs.std_msgs import Bool
-from dimos.utils.logging_config import setup_logger
 from dimos.teleop.utils.teleop_visualization import (
     init_rerun_visualization,
     visualize_pose,
     visualize_trigger_value,
 )
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
