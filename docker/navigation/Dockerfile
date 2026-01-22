@@ -118,7 +118,7 @@ RUN echo "source /opt/dimos-venv/bin/activate" >> ~/.bashrc
 WORKDIR ${DIMOS_PATH}
 RUN /bin/bash -c "source /opt/dimos-venv/bin/activate && \
     pip install --upgrade pip setuptools wheel && \
-    pip install -e .[cpu,dev] 'mmengine>=0.10.3' 'mmcv>=2.1.0'"
+    pip install -e .[cpu,dev,visualization,agents] 'mmengine>=0.10.3' 'mmcv>=2.1.0'"
 
 # Copy helper scripts
 COPY docker/navigation/run_both.sh /usr/local/bin/run_both.sh
@@ -130,96 +130,8 @@ RUN echo 'SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", M
     usermod -a -G dialout root || true
 
 # Set up entrypoint script
-RUN echo '#!/bin/bash\n\
-set -e\n\
-\n\
-git config --global --add safe.directory /workspace/dimos\n\
-\n\
-# Source ROS setup\n\
-source /opt/ros/${ROS_DISTRO}/setup.bash\n\
-source ${WORKSPACE}/install/setup.bash\n\
-\n\
-# Activate Python virtual environment for dimos\n\
-source /opt/dimos-venv/bin/activate\n\
-\n\
-# Export ROBOT_CONFIG_PATH for autonomy stack\n\
-export ROBOT_CONFIG_PATH="${ROBOT_CONFIG_PATH:-mechanum_drive}"\n\
-\n\
-# Hardware-specific configurations\n\
-if [ "${HARDWARE_MODE}" = "true" ]; then\n\
-    # Set network buffer sizes for WiFi data transmission (if needed)\n\
-    if [ "${ENABLE_WIFI_BUFFER}" = "true" ]; then\n\
-        sysctl -w net.core.rmem_max=67108864 net.core.rmem_default=67108864 2>/dev/null || true\n\
-        sysctl -w net.core.wmem_max=67108864 net.core.wmem_default=67108864 2>/dev/null || true\n\
-    fi\n\
-    \n\
-    # Configure network interface for Mid-360 lidar if specified\n\
-    if [ -n "${LIDAR_INTERFACE}" ] && [ -n "${LIDAR_COMPUTER_IP}" ]; then\n\
-        ip addr add ${LIDAR_COMPUTER_IP}/24 dev ${LIDAR_INTERFACE} 2>/dev/null || true\n\
-        ip link set ${LIDAR_INTERFACE} up 2>/dev/null || true\n\
-        if [ -n "${LIDAR_GATEWAY}" ]; then\n\
-            ip route add default via ${LIDAR_GATEWAY} dev ${LIDAR_INTERFACE} 2>/dev/null || true\n\
-        fi\n\
-    fi\n\
-    \n\
-    # Generate MID360_config.json if LIDAR_COMPUTER_IP and LIDAR_IP are set\n\
-    if [ -n "${LIDAR_COMPUTER_IP}" ] && [ -n "${LIDAR_IP}" ]; then\n\
-        cat > ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config/MID360_config.json <<EOF\n\
-{\n\
-  "lidar_summary_info": {\n\
-    "lidar_type": 8\n\
-  },\n\
-  "MID360": {\n\
-    "lidar_net_info": {\n\
-      "cmd_data_port": 56100,\n\
-      "push_msg_port": 56200,\n\
-      "point_data_port": 56300,\n\
-      "imu_data_port": 56400,\n\
-      "log_data_port": 56500\n\
-    },\n\
-    "host_net_info": {\n\
-      "cmd_data_ip": "${LIDAR_COMPUTER_IP}",\n\
-      "cmd_data_port": 56101,\n\
-      "push_msg_ip": "${LIDAR_COMPUTER_IP}",\n\
-      "push_msg_port": 56201,\n\
-      "point_data_ip": "${LIDAR_COMPUTER_IP}",\n\
-      "point_data_port": 56301,\n\
-      "imu_data_ip": "${LIDAR_COMPUTER_IP}",\n\
-      "imu_data_port": 56401,\n\
-      "log_data_ip": "${LIDAR_COMPUTER_IP}",\n\
-      "log_data_port": 56501\n\
-    }\n\
-  },\n\
-  "lidar_configs": [\n\
-    {\n\
-      "ip": "${LIDAR_IP}",\n\
-      "pcl_data_type": 1,\n\
-      "pattern_mode": 0,\n\
-      "extrinsic_parameter": {\n\
-        "roll": 0.0,\n\
-        "pitch": 0.0,\n\
-        "yaw": 0.0,\n\
-        "x": 0,\n\
-        "y": 0,\n\
-        "z": 0\n\
-      }\n\
-    }\n\
-  ]\n\
-}\n\
-EOF\n\
-        echo "Generated MID360_config.json with LIDAR_COMPUTER_IP=${LIDAR_COMPUTER_IP} and LIDAR_IP=${LIDAR_IP}"\n\
-    fi\n\
-    \n\
-    # Display Robot IP configuration if set\n\
-    if [ -n "${ROBOT_IP}" ]; then\n\
-        echo "Robot IP configured on local network: ${ROBOT_IP}"\n\
-    fi\n\
-    \n\
-fi\n\
-\n\
-# Execute the command\n\
-exec "$@"' > /ros_entrypoint.sh && \
-    chmod +x /ros_entrypoint.sh
+COPY docker/navigation/ros_entrypoint.sh /ros_entrypoint.sh
+RUN chmod +x /ros_entrypoint.sh
 
 # Set the entrypoint
 ENTRYPOINT ["/ros_entrypoint.sh"]

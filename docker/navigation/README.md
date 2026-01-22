@@ -8,6 +8,10 @@ This directory contains Docker configuration files to run DimOS and the ROS auto
 2. **Install NVIDIA GPU drivers**. See [NVIDIA driver installation](https://www.nvidia.com/download/index.aspx).
 3. **Install NVIDIA Container Toolkit**. Follow the [installation guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
 
+### Hardware Requirements
+- **RAM:** Minimum 8GB (16GB+ recommended). The build process is memory intensive.
+- **Disk:** Minimum 40GB free space (Docker image is ~30GB).
+
 ## Automated Quick Start
 
 This is an optimistic overview. Use the commands below for an in depth version.
@@ -38,12 +42,16 @@ Go to the docker dir and clone the ROS navigation stack.
 
 ```bash
 cd docker/navigation
-git clone -b jazzy git@github.com:dimensionalOS/ros-navigation-autonomy-stack.git
+git clone -b jazzy https://github.com/dimensionalOS/ros-navigation-autonomy-stack.git
+cd ros-navigation-autonomy-stack
+# IMPORTANT: You must initialize submodules to get all planners
+git submodule update --init --recursive
+cd ..
 ```
 
 Download a [Unity environment model for the Mecanum wheel platform](https://drive.google.com/drive/folders/1G1JYkccvoSlxyySuTlPfvmrWoJUO8oSs?usp=sharing) and unzip the files to `unity_models`.
 
-Alternativelly, extract `office_building_1` from LFS:
+Alternatively, extract `office_building_1` from LFS (ensure you have run `git lfs install && git lfs pull` in the root first):
 
 ```bash
 tar -xf ../../data/.lfs/office_building_1.tar.gz
@@ -122,3 +130,23 @@ cd /ros2_ws/src/ros-navigation-autonomy-stack
 ```
 
 Now you can place goal points/poses in RVIZ by clicking the "Goalpoint" button. The robot will navigate to the point, running both local and global planners for dynamic obstacle avoidance.
+
+## Troubleshooting
+
+### Build Crashes (RAM issues)
+If your computer freezes or the build crashes with "signal: killed", you are likely running out of RAM.
+- **Fix:** The `Dockerfile` by default tries to use all cores. Edit `Dockerfile` and change `make -j$(nproc)` to `make -j1` in the heavy build sections (GTSAM, Ceres).
+
+### RVIZ "No Image"
+If RVIZ launches but camera panels show "No Image":
+1.  Click the specific Image panel settings in RVIZ.
+2.  Change the **Topic** dropdown. Sometimes it defaults to an inactive topic.
+
+### Disk Full
+If the build fails with "no space left on device":
+- **Fix:** Run `docker system prune` to clear dangling build cache. The image requires significant space.
+
+### Robot Not Moving
+If `PCT_planner` or other packages are missing logic:
+- Check if `ros-navigation-autonomy-stack` has empty directories.
+- Run `git submodule update --init --recursive` in that directory.
