@@ -30,7 +30,7 @@ from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.jpeg_shm import JpegSharedMemory
 from dimos.protocol.pubsub.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.rospubsub import DimosROS, ROSTopic
-from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory
+from dimos.protocol.pubsub.shmpubsub import BytesSharedMemory, PickleSharedMemory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -167,7 +167,7 @@ class SHMTransport(PubSubTransport[T]):
 
     def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(topic)
-        self.shm = SharedMemory(**kwargs)
+        self.shm = BytesSharedMemory(**kwargs)
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (SHMTransport, (self.topic,))

@@ -18,7 +18,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
-from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf
+from dimos.protocol.service.lcmservice import (
+    LCMConfig,
+    LCMService,
+    autoconf,
+)
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

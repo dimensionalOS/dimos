@@ -25,7 +25,7 @@ from dimos.e2e_tests.lcm_spy import LcmSpy
 
 @pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
-@pytest.mark.e2e
+@pytest.mark.mujoco
 def test_spatial_memory_navigation(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[[str], DimosCliCall],

@@ -28,7 +28,11 @@ class DimosCliCall:
         if self.demo_args is None:
             raise ValueError("Demo args must be set before starting the process.")
 
-        self.process = subprocess.Popen(["dimos", "--simulation", *self.demo_args])
+        args = list(self.demo_args)
+        if len(args) == 1:
+            args = ["run", *args]
+
+        self.process = subprocess.Popen(["dimos", "--simulation", *args])
 
     def stop(self) -> None:
         if self.process is None:

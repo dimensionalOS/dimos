@@ -32,6 +32,31 @@ except Exception:  # pragma: no cover - optional dependency
     cp = None
     HAS_CUDA = False
 
+# NVRTC defaults to C++11; libcu++ in recent CUDA requires at least C++17.
+if HAS_CUDA:
+    try:
+        import cupy.cuda.compiler as _cupy_compiler  # type: ignore[import-not-found]
+
+        if not getattr(_cupy_compiler, "_dimos_force_cxx17", False):
+            _orig_compile_using_nvrtc = _cupy_compiler.compile_using_nvrtc
+
+            def _compile_using_nvrtc(  # type: ignore[no-untyped-def]
+                source, options=(), *args, **kwargs
+            ):
+                filtered = tuple(
+                    opt
+                    for opt in options
+                    if opt not in ("-std=c++11", "--std=c++11", "-std=c++14", "--std=c++14")
+                )
+                if "--std=c++17" not in filtered and "-std=c++17" not in filtered:
+                    filtered = (*filtered, "--std=c++17")
+                return _orig_compile_using_nvrtc(source, filtered, *args, **kwargs)
+
+            _cupy_compiler.compile_using_nvrtc = _compile_using_nvrtc
+            _cupy_compiler._dimos_force_cxx17 = True
+    except Exception:
+        pass
+
 # Optional nvImageCodec (preferred GPU codec)
 USE_NVIMGCODEC = os.environ.get("USE_NVIMGCODEC", "0") == "1"
 NVIMGCODEC_LAST_USED = False

@@ -3,4 +3,4 @@
 set -euo pipefail
 
 . .venv/bin/activate
-exec pytest "$@" -m 'not (tool or cuda or gpu or module or temporal)' dimos
+exec pytest "$@" -m 'not (tool or module or neverending or mujoco)' dimos

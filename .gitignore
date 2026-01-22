@@ -64,5 +64,7 @@ yolo11n.pt
 
 *mobileclip*
 
+/results
+
 # Teleop SSL certificates
 assets/teleop_certs/

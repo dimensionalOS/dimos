@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from dimos.protocol.pubsub.benchmark.testdata import testdata
+from dimos.protocol.pubsub.benchmark.testdata import testcases
 from dimos.protocol.pubsub.benchmark.type import (
     BenchmarkResult,
     BenchmarkResults,
@@ -86,7 +86,7 @@ def benchmark_results() -> Generator[BenchmarkResults, None, None]:
 
 @pytest.mark.tool
 @pytest.mark.parametrize("msg_size", MSG_SIZES, ids=[size_id(s) for s in MSG_SIZES])
-@pytest.mark.parametrize("pubsub_context, msggen", testdata, ids=[pubsub_id(t) for t in testdata])
+@pytest.mark.parametrize("pubsub_context, msggen", testcases, ids=[pubsub_id(t) for t in testcases])
 def test_throughput(
     pubsub_context: PubSubContext[Any, Any],
     msggen: MsgGen[Any, Any],

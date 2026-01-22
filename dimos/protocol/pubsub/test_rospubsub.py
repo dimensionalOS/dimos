@@ -14,7 +14,6 @@
 
 from collections.abc import Generator
 import threading
-import time
 
 from dimos_lcm.geometry_msgs import PointStamped
 import numpy as np

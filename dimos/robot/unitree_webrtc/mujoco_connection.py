@@ -15,6 +15,7 @@
 # limitations under the License.
 
 
+import atexit
 import base64
 from collections.abc import Callable
 import functools
@@ -25,6 +26,7 @@ import sys
 import threading
 import time
 from typing import Any, TypeVar
+import weakref
 
 import numpy as np
 from numpy.typing import NDArray
@@ -121,6 +123,7 @@ class MujocoConnection:
         try:
             # mjpython must be used macOS (because of launch_passive inside mujoco_process.py)
             executable = sys.executable if sys.platform != "darwin" else "mjpython"
+
             self.process = subprocess.Popen(
                 [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
             )
@@ -140,6 +143,16 @@ class MujocoConnection:
                 raise RuntimeError(f"MuJoCo process failed to start (exit code {exit_code})")
             if self.shm_data.is_ready():
                 logger.info("MuJoCo process started successfully")
+                # Register atexit handler to ensure subprocess is cleaned up
+                # Use weakref to avoid preventing garbage collection
+                weak_self = weakref.ref(self)
+
+                def cleanup_on_exit() -> None:
+                    instance = weak_self()
+                    if instance is not None:
+                        instance.stop()
+
+                atexit.register(cleanup_on_exit)
                 return
             time.sleep(0.1)
 

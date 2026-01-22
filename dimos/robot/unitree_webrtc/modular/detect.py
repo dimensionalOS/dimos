@@ -141,7 +141,6 @@ def process_data():  # type: ignore[no-untyped-def]
         Detection2DModule,
         build_imageannotations,
     )
-    from dimos.robot.unitree_webrtc.type.lidar import pointcloud2_from_webrtc_lidar
     from dimos.robot.unitree_webrtc.type.odometry import Odometry
     from dimos.utils.data import get_data
     from dimos.utils.testing import TimedSensorReplay

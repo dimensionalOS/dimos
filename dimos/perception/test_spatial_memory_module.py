@@ -110,6 +110,7 @@ class OdometryReplayModule(Module):
 
 
 @pytest.mark.gpu
+@pytest.mark.neverending
 class TestSpatialMemoryModule:
     @pytest.fixture(scope="function")
     def temp_dir(self):

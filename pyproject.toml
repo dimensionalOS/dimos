@@ -346,24 +346,22 @@ follow_imports = "skip"
 testpaths = ["dimos"]
 markers = [
     "heavy: resource heavy test",
-    "vis: marks tests that run visuals and require a visual check by dev",
-    "benchmark: benchmark, executes something multiple times, calculates avg, prints to console",
-    "exclude: arbitrary exclusion from CI and default test exec",
     "tool: dev tooling",
-    "needsdata: needs test data to be downloaded",
     "ros: depend on ros",
     "lcm: tests that run actual LCM bus (can't execute in CI)",
     "module: tests that need to run directly as modules",
     "gpu: tests that require GPU",
     "tofix: temporarily disabled test",
     "e2e: end to end tests",
-    "temporal: not working for me",
     "integration: slower integration tests",
+    "neverending: they don't finish",
+    "mujoco: tests which open mujoco",
 ]
 env = [
-  "GOOGLE_MAPS_API_KEY=AIzafake_google_key"
+  "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
+  "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "-v -p no:warnings -ra --color=yes -m 'not (vis or benchmark or exclude or tool or needsdata or lcm or ros or heavy or gpu or module or tofix or e2e or temporal or integration)'"
+addopts = "-v -p no:warnings -ra --color=yes -m 'not (vis or exclude or tool or lcm or ros or heavy or gpu or module or tofix or e2e or integration or neverending or mujoco)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

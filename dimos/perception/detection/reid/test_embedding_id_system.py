@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 import pytest
-import torch
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
@@ -25,8 +25,7 @@ def mobileclip_model():
     """Load MobileCLIP model once for all tests."""
     from dimos.models.embedding.mobileclip import MobileCLIPModel
 
-    model_path = get_data("models_mobileclip") / "mobileclip2_s0.pt"
-    model = MobileCLIPModel(model_name="MobileCLIP2-S0", model_path=model_path)
+    model = MobileCLIPModel()  # Uses default MobileCLIP2-S4
     model.start()
     return model
 
@@ -34,7 +33,11 @@ def mobileclip_model():
 @pytest.fixture
 def track_associator(mobileclip_model):
     """Create fresh EmbeddingIDSystem for each test."""
-    return EmbeddingIDSystem(model=lambda: mobileclip_model, similarity_threshold=0.75)
+    return EmbeddingIDSystem(
+        model=lambda: mobileclip_model,
+        similarity_threshold=0.75,
+        min_embeddings_for_matching=1,  # Allow matching with single embedding for tests
+    )
 
 
 @pytest.fixture(scope="session")
@@ -52,39 +55,40 @@ def test_update_embedding_single(track_associator, mobileclip_model, test_image)
     track_associator.update_embedding(track_id=1, new_embedding=embedding)
 
     assert 1 in track_associator.track_embeddings
-    assert track_associator.embedding_counts[1] == 1
+    assert len(track_associator.track_embeddings[1]) == 1
 
-    # Verify embedding is on device and normalized
-    emb_vec = track_associator.track_embeddings[1]
-    assert isinstance(emb_vec, torch.Tensor)
-    assert emb_vec.device.type in ["cuda", "cpu"]
-    norm = torch.norm(emb_vec).item()
+    # Verify embedding is stored as numpy array and normalized
+    emb_vec = track_associator.track_embeddings[1][0]
+    assert isinstance(emb_vec, np.ndarray)
+    norm = np.linalg.norm(emb_vec)
     assert abs(norm - 1.0) < 0.01, "Embedding should be normalized"
 
 
 @pytest.mark.gpu
-def test_update_embedding_running_average(track_associator, mobileclip_model, test_image) -> None:
-    """Test running average of embeddings."""
+def test_update_embedding_multiple(track_associator, mobileclip_model, test_image) -> None:
+    """Test storing multiple embeddings per track."""
     embedding1 = mobileclip_model.embed(test_image)
     embedding2 = mobileclip_model.embed(test_image)
 
     # Add first embedding
     track_associator.update_embedding(track_id=1, new_embedding=embedding1)
-    first_vec = track_associator.track_embeddings[1].clone()
+    first_vec = track_associator.track_embeddings[1][0].copy()
 
     # Add second embedding (same image, should be very similar)
     track_associator.update_embedding(track_id=1, new_embedding=embedding2)
-    avg_vec = track_associator.track_embeddings[1]
 
-    assert track_associator.embedding_counts[1] == 2
+    # Should have 2 embeddings now
+    assert len(track_associator.track_embeddings[1]) == 2
 
-    # Average should still be normalized
-    norm = torch.norm(avg_vec).item()
-    assert abs(norm - 1.0) < 0.01, "Average embedding should be normalized"
+    # Both should be normalized
+    for emb in track_associator.track_embeddings[1]:
+        norm = np.linalg.norm(emb)
+        assert abs(norm - 1.0) < 0.01, "Embedding should be normalized"
 
-    # Average should be similar to both originals (same image)
-    similarity1 = (first_vec @ avg_vec).item()
-    assert similarity1 > 0.99, "Average should be very similar to original"
+    # Second embedding should be similar to first (same image)
+    second_vec = track_associator.track_embeddings[1][1]
+    similarity = float(np.dot(first_vec, second_vec))
+    assert similarity > 0.99, "Same image should produce very similar embeddings"
 
 
 @pytest.mark.gpu
@@ -199,31 +203,33 @@ def test_associate_returns_cached(track_associator, mobileclip_model, test_image
 
 
 @pytest.mark.gpu
-def test_associate_not_ready(track_associator) -> None:
-    """Test that associate returns -1 for track without embedding."""
+def test_associate_no_embedding(track_associator) -> None:
+    """Test that associate creates new ID for track without embedding."""
+    # Track with no embedding gets assigned a new ID
     long_term_id = track_associator.associate(track_id=999)
-    assert long_term_id == -1, "Should return -1 for track without embedding"
+    assert long_term_id == 0, "Track without embedding should get new long_term_id"
+    assert track_associator.long_term_counter == 1
 
 
 @pytest.mark.gpu
-def test_gpu_performance(track_associator, mobileclip_model, test_image) -> None:
-    """Test that embeddings stay on GPU for performance."""
+def test_embeddings_stored_as_numpy(track_associator, mobileclip_model, test_image) -> None:
+    """Test that embeddings are stored as numpy arrays for efficient CPU comparisons."""
     embedding = mobileclip_model.embed(test_image)
     track_associator.update_embedding(track_id=1, new_embedding=embedding)
 
-    # Embedding should stay on device
-    emb_vec = track_associator.track_embeddings[1]
-    assert isinstance(emb_vec, torch.Tensor)
-    # Device comparison (handle "cuda" vs "cuda:0")
-    expected_device = mobileclip_model.device
-    assert emb_vec.device.type == torch.device(expected_device).type
+    # Embeddings should be stored as numpy arrays
+    emb_list = track_associator.track_embeddings[1]
+    assert isinstance(emb_list, list)
+    assert len(emb_list) == 1
+    assert isinstance(emb_list[0], np.ndarray)
 
-    # Running average should happen on GPU
+    # Add more embeddings
     embedding2 = mobileclip_model.embed(test_image)
     track_associator.update_embedding(track_id=1, new_embedding=embedding2)
 
-    avg_vec = track_associator.track_embeddings[1]
-    assert avg_vec.device.type == torch.device(expected_device).type
+    assert len(track_associator.track_embeddings[1]) == 2
+    for emb in track_associator.track_embeddings[1]:
+        assert isinstance(emb, np.ndarray)
 
 
 @pytest.mark.gpu
@@ -247,12 +253,12 @@ def test_multi_track_scenario(track_associator, mobileclip_model, test_image) ->
 
     # Frame 2: Track 1 and Track 2 appear (different objects)
     text_emb = mobileclip_model.embed_text("a dog")
-    track_associator.update_embedding(1, emb1)  # Update average
+    track_associator.update_embedding(1, emb1)  # Update embedding
     track_associator.update_embedding(2, text_emb)
     track_associator.add_negative_constraints([1, 2])  # Co-occur = different
     lt2 = track_associator.associate(2)
 
-    # Track 2 should get different ID despite any similarity
+    # Track 2 should get different ID due to negative constraint
     assert lt1 != lt2
 
     # Frame 3: Track 1 disappears, Track 3 appears (same as Track 1)

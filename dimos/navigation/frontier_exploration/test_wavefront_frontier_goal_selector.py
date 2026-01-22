@@ -15,12 +15,10 @@
 import time
 
 import numpy as np
-from PIL import ImageDraw
 import pytest
 
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
-from dimos.navigation.frontier_exploration.utils import costmap_to_pil_image
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
@@ -308,92 +306,6 @@ def test_exploration_with_no_gain_detection() -> None:
         # Should have stopped due to no information gain
         assert goal is None, "Exploration should stop after no-gain threshold"
         assert explorer.no_gain_counter == 0, "Counter should reset after stopping"
-    finally:
-        explorer.stop()
-
-
-@pytest.mark.vis
-def test_frontier_detection_visualization() -> None:
-    """Test frontier detection with visualization (marked with @pytest.mark.vis)."""
-    # Get test costmap
-    costmap, first_lidar = create_test_costmap()
-
-    # Initialize frontier explorer with default parameters
-    explorer = WavefrontFrontierExplorer()
-
-    try:
-        # Use lidar origin as robot position
-        robot_pose = first_lidar.origin
-
-        # Detect all frontiers for visualization
-        all_frontiers = explorer.detect_frontiers(robot_pose, costmap)
-
-        # Get selected goal
-        selected_goal = explorer.get_exploration_goal(robot_pose, costmap)
-
-        print(f"Visualizing {len(all_frontiers)} frontier candidates")
-        if selected_goal:
-            print(f"Selected goal: ({selected_goal.x:.2f}, {selected_goal.y:.2f})")
-
-        # Create visualization
-        image_scale_factor = 4
-        base_image = costmap_to_pil_image(costmap, image_scale_factor)
-
-        # Helper function to convert world coordinates to image coordinates
-        def world_to_image_coords(world_pos: Vector3) -> tuple[int, int]:
-            grid_pos = costmap.world_to_grid(world_pos)
-            img_x = int(grid_pos.x * image_scale_factor)
-            img_y = int((costmap.height - grid_pos.y) * image_scale_factor)  # Flip Y
-            return img_x, img_y
-
-        # Draw visualization
-        draw = ImageDraw.Draw(base_image)
-
-        # Draw frontier candidates as gray dots
-        for frontier in all_frontiers[:20]:  # Limit to top 20
-            x, y = world_to_image_coords(frontier)
-            radius = 6
-            draw.ellipse(
-                [x - radius, y - radius, x + radius, y + radius],
-                fill=(128, 128, 128),  # Gray
-                outline=(64, 64, 64),
-                width=1,
-            )
-
-        # Draw robot position as blue dot
-        robot_x, robot_y = world_to_image_coords(robot_pose)
-        robot_radius = 10
-        draw.ellipse(
-            [
-                robot_x - robot_radius,
-                robot_y - robot_radius,
-                robot_x + robot_radius,
-                robot_y + robot_radius,
-            ],
-            fill=(0, 0, 255),  # Blue
-            outline=(0, 0, 128),
-            width=3,
-        )
-
-        # Draw selected goal as red dot
-        if selected_goal:
-            goal_x, goal_y = world_to_image_coords(selected_goal)
-            goal_radius = 12
-            draw.ellipse(
-                [
-                    goal_x - goal_radius,
-                    goal_y - goal_radius,
-                    goal_x + goal_radius,
-                    goal_y + goal_radius,
-                ],
-                fill=(255, 0, 0),  # Red
-                outline=(128, 0, 0),
-                width=3,
-            )
-
-        # Display the image
-        base_image.show(title="Frontier Detection - Office Lidar")
-        print("Visualization displayed. Close the image window to continue.")
     finally:
         explorer.stop()
 

@@ -24,7 +24,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pytest
 
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.sensor_msgs import Image, ImageFormat
