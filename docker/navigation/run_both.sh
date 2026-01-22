@@ -6,6 +6,8 @@ echo "Starting ROS route planner and DimOS..."
 # Variables for process IDs
 ROS_PID=""
 DIMOS_PID=""
+RVIZ_PID=""
+UNITY_PID=""
 SHUTDOWN_IN_PROGRESS=false
 
 # Function to handle cleanup
@@ -18,7 +20,27 @@ cleanup() {
     echo ""
     echo "Shutdown initiated. Stopping services..."
 
-    # First, try to gracefully stop DimOS
+    # First, stop RViz
+    if [ -n "$RVIZ_PID" ] && kill -0 $RVIZ_PID 2>/dev/null; then
+        echo "Stopping RViz..."
+        kill -TERM $RVIZ_PID 2>/dev/null || true
+        sleep 1
+        if kill -0 $RVIZ_PID 2>/dev/null; then
+            kill -9 $RVIZ_PID 2>/dev/null || true
+        fi
+    fi
+
+    # Stop Unity simulator
+    if [ -n "$UNITY_PID" ] && kill -0 $UNITY_PID 2>/dev/null; then
+        echo "Stopping Unity simulator..."
+        kill -TERM $UNITY_PID 2>/dev/null || true
+        sleep 1
+        if kill -0 $UNITY_PID 2>/dev/null; then
+            kill -9 $UNITY_PID 2>/dev/null || true
+        fi
+    fi
+
+    # Then, try to gracefully stop DimOS
     if [ -n "$DIMOS_PID" ] && kill -0 $DIMOS_PID 2>/dev/null; then
         echo "Stopping DimOS..."
         kill -TERM $DIMOS_PID 2>/dev/null || true
@@ -71,6 +93,8 @@ cleanup() {
 
     # Clean up any remaining ROS2 processes
     echo "Cleaning up any remaining processes..."
+    pkill -f "rviz2" 2>/dev/null || true
+    pkill -f "Model.x86_64" 2>/dev/null || true
     pkill -f "ros2" 2>/dev/null || true
     pkill -f "localPlanner" 2>/dev/null || true
     pkill -f "pathFollower" 2>/dev/null || true
@@ -97,10 +121,12 @@ echo "Starting ROS route planner..."
 cd /ros2_ws/src/ros-navigation-autonomy-stack
 # Run simulation directly instead of using the script (which has wrong install path)
 ./src/base_autonomy/vehicle_simulator/mesh/unity/environment/Model.x86_64 &
+UNITY_PID=$!
 sleep 3
 setsid bash -c 'ros2 launch vehicle_simulator system_simulation_with_route_planner.launch.py' &
 ROS_PID=$!
 ros2 run rviz2 rviz2 -d src/route_planner/far_planner/rviz/default.rviz &
+RVIZ_PID=$!
 
 # Wait a bit for ROS to initialize
 echo "Waiting for ROS to initialize..."
