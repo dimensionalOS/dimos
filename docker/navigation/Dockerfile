@@ -9,55 +9,55 @@ ENV DIMOS_PATH=/workspace/dimos
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-  # ROS packages
-  ros-jazzy-pcl-ros \
-  # Development tools
-  git \
-  git-lfs \
-  cmake \
-  build-essential \
-  python3-colcon-common-extensions \
-  # PCL and system libraries
-  libpcl-dev \
-  libgoogle-glog-dev \
-  libgflags-dev \
-  libatlas-base-dev \
-  libeigen3-dev \
-  libsuitesparse-dev \
-  # X11 and GUI support for RVIZ
-  x11-apps \
-  xorg \
-  openbox \
-  # Networking tools
-  iputils-ping \
-  net-tools \
-  iproute2 \
-  ethtool \
-  # USB and serial tools (for hardware support)
-  usbutils \
-  udev \
-  # Time synchronization (for multi-computer setup)
-  chrony \
-  # Editor (optional but useful)
-  nano \
-  vim \
-  # Python tools
-  python3-pip \
-  python3-setuptools \
-  python3-venv \
-  # Additional dependencies for dimos
-  ffmpeg \
-  portaudio19-dev \
-  libsndfile1 \
-  # For OpenCV
-  libgl1 \
-  libglib2.0-0 \
-  # For Open3D
-  libgomp1 \
-  # For TurboJPEG
-  libturbojpeg0-dev \
-  # Clean up
-  && rm -rf /var/lib/apt/lists/*
+    # ROS packages
+    ros-jazzy-pcl-ros \
+    # Development tools
+    git \
+    git-lfs \
+    cmake \
+    build-essential \
+    python3-colcon-common-extensions \
+    # PCL and system libraries
+    libpcl-dev \
+    libgoogle-glog-dev \
+    libgflags-dev \
+    libatlas-base-dev \
+    libeigen3-dev \
+    libsuitesparse-dev \
+    # X11 and GUI support for RVIZ
+    x11-apps \
+    xorg \
+    openbox \
+    # Networking tools
+    iputils-ping \
+    net-tools \
+    iproute2 \
+    ethtool \
+    # USB and serial tools (for hardware support)
+    usbutils \
+    udev \
+    # Time synchronization (for multi-computer setup)
+    chrony \
+    # Editor (optional but useful)
+    nano \
+    vim \
+    # Python tools
+    python3-pip \
+    python3-setuptools \
+    python3-venv \
+    # Additional dependencies for dimos
+    ffmpeg \
+    portaudio19-dev \
+    libsndfile1 \
+    # For OpenCV
+    libgl1 \
+    libglib2.0-0 \
+    # For Open3D
+    libgomp1 \
+    # For TurboJPEG
+    libturbojpeg0-dev \
+    # Clean up
+    && rm -rf /var/lib/apt/lists/*
 
 # Create workspace directory
 RUN mkdir -p ${WORKSPACE}/src
@@ -73,29 +73,28 @@ RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc
 
 # Build all hardware dependencies
 RUN \
-  # Build Livox-SDK2 for Mid-360 lidar
-  cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/Livox-SDK2 && \
-  mkdir -p build && cd build && \
-  cmake .. && make -j$(nproc) && make install && ldconfig && \
-  # Install Sophus
-  cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/Sophus && \
-  mkdir -p build && cd build && \
-  cmake .. -DBUILD_TESTS=OFF && make -j$(nproc) && make install && \
-  # Install Ceres Solver
-  cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/ceres-solver && \
-  mkdir -p build && cd build && \
-  cmake .. && make -j$(nproc) && make install && \
-  # Install GTSAM
-  cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam && \
-  mkdir -p build && cd build && \
-  cmake .. -DGTSAM_USE_SYSTEM_EIGEN=ON -DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF && \
-  make -j$(nproc) && make install && ldconfig
+    # Build Livox-SDK2 for Mid-360 lidar
+    cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/Livox-SDK2 && \
+    mkdir -p build && cd build && \
+    cmake .. && make -j$(nproc) && make install && ldconfig && \
+    # Install Sophus
+    cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/Sophus && \
+    mkdir -p build && cd build && \
+    cmake .. -DBUILD_TESTS=OFF && make -j$(nproc) && make install && \
+    # Install Ceres Solver
+    cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/ceres-solver && \
+    mkdir -p build && cd build && \
+    cmake .. && make -j$(nproc) && make install && \
+    # Install GTSAM
+    cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam && \
+    mkdir -p build && cd build && \
+    cmake .. -DGTSAM_USE_SYSTEM_EIGEN=ON -DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF && \
+    make -j$(nproc) && make install && ldconfig
 
 # Build the autonomy stack
-# Build the autonomy stack
 RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
-  cd ${WORKSPACE} && \
-  colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release"
+    cd ${WORKSPACE} && \
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release"
 
 # Source the workspace setup
 RUN echo "source ${WORKSPACE}/install/setup.bash" >> ~/.bashrc
@@ -118,8 +117,8 @@ RUN echo "source /opt/dimos-venv/bin/activate" >> ~/.bashrc
 # Install Python dependencies for dimos
 WORKDIR ${DIMOS_PATH}
 RUN /bin/bash -c "source /opt/dimos-venv/bin/activate && \
-  pip install --upgrade pip setuptools wheel && \
-  pip install -e .[cpu,dev,visualization,agents] 'mmengine>=0.10.3' 'mmcv>=2.1.0'"
+    pip install --upgrade pip setuptools wheel && \
+    pip install -e .[cpu,dev,visualization,agents] 'mmengine>=0.10.3' 'mmcv>=2.1.0'"
 
 # Copy helper scripts
 COPY docker/navigation/run_both.sh /usr/local/bin/run_both.sh
@@ -128,7 +127,7 @@ RUN chmod +x /usr/local/bin/run_both.sh /usr/local/bin/ros_launch_wrapper.py
 
 # Set up udev rules for USB devices (motor controller)
 RUN echo 'SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", MODE="0666", GROUP="dialout"' > /etc/udev/rules.d/99-motor-controller.rules && \
-  usermod -a -G dialout root || true
+    usermod -a -G dialout root || true
 
 # Set up entrypoint script
 COPY docker/navigation/ros_entrypoint.sh /ros_entrypoint.sh
