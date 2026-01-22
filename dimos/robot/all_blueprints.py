@@ -25,6 +25,13 @@ all_blueprints = {
     "coordinator-piper-xarm": "dimos.control.blueprints:coordinator_piper_xarm",
     "coordinator-xarm6": "dimos.control.blueprints:coordinator_xarm6",
     "coordinator-xarm7": "dimos.control.blueprints:coordinator_xarm7",
+    "coordinator-highfreq-mock": "dimos.control.blueprints:coordinator_highfreq_mock",
+    "coordinator-basic": "dimos.control.blueprints:coordinator_basic",
+    # Streaming control (NEW)
+    "coordinator-teleop-xarm6": "dimos.control.blueprints:coordinator_teleop_xarm6",
+    "coordinator-velocity-xarm6": "dimos.control.blueprints:coordinator_velocity_xarm6",
+    "coordinator-combined-xarm6": "dimos.control.blueprints:coordinator_combined_xarm6",
+    # Demo blueprints
     "demo-camera": "dimos.hardware.sensors.camera.module:demo_camera",
     "demo-error-on-name-conflicts": "dimos.robot.unitree_webrtc.demo_error_on_name_conflicts:demo_error_on_name_conflicts",
     "demo-google-maps-skill": "dimos.agents.skills.demo_google_maps_skill:demo_google_maps_skill",

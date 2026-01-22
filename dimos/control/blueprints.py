@@ -299,6 +299,114 @@ coordinator_piper_xarm = control_coordinator(
 )
 
 # =============================================================================
+# Streaming Control Blueprints (NEW)
+# =============================================================================
+
+# XArm6 teleop - streaming position control
+coordinator_teleop_xarm6 = control_coordinator(
+    tick_rate=100.0,
+    publish_joint_state=True,
+    joint_state_frame_id="coordinator",
+    hardware=[
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            adapter_type="xarm",
+            address="192.168.1.210",
+            auto_enable=True,
+        ),
+    ],
+    tasks=[
+        TaskConfig(
+            name="servo_arm",
+            type="servo",
+            joint_names=_joint_names("arm", 6),
+            priority=10,
+        ),
+    ],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_command", JointState): LCMTransport("/teleop/joint_command", JointState),
+    }
+)
+
+# XArm6 velocity control - streaming velocity for joystick
+coordinator_velocity_xarm6 = control_coordinator(
+    tick_rate=100.0,
+    publish_joint_state=True,
+    joint_state_frame_id="coordinator",
+    hardware=[
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            adapter_type="xarm",
+            address="192.168.1.210",
+            auto_enable=True,
+        ),
+    ],
+    tasks=[
+        TaskConfig(
+            name="velocity_arm",
+            type="velocity",
+            joint_names=_joint_names("arm", 6),
+            priority=10,
+        ),
+    ],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_command", JointState): LCMTransport("/joystick/joint_command", JointState),
+    }
+)
+
+# XArm6 combined (both servo AND velocity tasks - live switch by sending different commands)
+# Send positions -> servo task activates
+# Send velocities -> velocity task activates
+# Both use same topic, routing is automatic based on message content
+coordinator_combined_xarm6 = control_coordinator(
+    tick_rate=100.0,
+    publish_joint_state=True,
+    joint_state_frame_id="coordinator",
+    hardware=[
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            adapter_type="xarm",
+            address="192.168.1.210",
+            auto_enable=True,
+        ),
+    ],
+    tasks=[
+        # Servo task for position streaming (teleop_sender)
+        TaskConfig(
+            name="servo_arm",
+            type="servo",
+            joint_names=_joint_names("arm", 6),
+            priority=10,
+        ),
+        # Velocity task for velocity streaming (velocity_sender)
+        TaskConfig(
+            name="velocity_arm",
+            type="velocity",
+            joint_names=_joint_names("arm", 6),
+            priority=10,  # Same priority - whichever receives commands wins
+        ),
+    ],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_command", JointState): LCMTransport(
+            "/control/joint_command",
+            JointState,  # Common topic for both
+        ),
+    }
+)
+
+# =============================================================================
 # High-frequency Blueprints (200Hz)
 # =============================================================================
 
@@ -346,8 +454,10 @@ coordinator_basic = control_coordinator(
 
 
 __all__ = [
-    # Raw blueprints (for programmatic setup)
+    # Raw blueprints
     "coordinator_basic",
+    # Streaming control (NEW)
+    "coordinator_combined_xarm6",
     # Dual arm blueprints
     "coordinator_dual_mock",
     "coordinator_dual_xarm",
@@ -357,6 +467,8 @@ __all__ = [
     "coordinator_mock",
     "coordinator_piper",
     "coordinator_piper_xarm",
+    "coordinator_teleop_xarm6",
+    "coordinator_velocity_xarm6",
     "coordinator_xarm6",
     "coordinator_xarm7",
 ]
