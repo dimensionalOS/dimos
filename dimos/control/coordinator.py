@@ -36,15 +36,16 @@ from dimos.control.components import HardwareComponent, HardwareId, JointName, T
 from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import ControlTask
 from dimos.control.tick_loop import TickLoop
-from dimos.core import Module, Out, rpc
+from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.sensor_msgs import (
     JointState,  # noqa: TC001 - needed at runtime for Out[JointState]
 )
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
 logger = setup_logger()
@@ -70,21 +71,6 @@ class TaskConfig:
     type: str = "trajectory"
     joint_names: list[str] = field(default_factory=lambda: [])
     priority: int = 10
-
-
-@dataclass
-class TaskStatus:
-    """Status of a control task.
-
-    Attributes:
-        active: Whether the task is currently active
-        state: Task state name (e.g., "IDLE", "RUNNING", "DONE")
-        progress: Task progress from 0.0 to 1.0
-    """
-
-    active: bool
-    state: str | None = None
-    progress: float | None = None
 
 
 @dataclass
@@ -144,6 +130,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     # Output: Aggregated joint state for external consumers
     joint_state: Out[JointState]
 
+    # Input: Streaming joint commands for real-time control
+    joint_command: In[JointState]
+
     config: ControlCoordinatorConfig
     default_config = ControlCoordinatorConfig
 
@@ -163,6 +152,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
         # Tick loop (created on start)
         self._tick_loop: TickLoop | None = None
+
+        # Subscription handle for streaming joint commands
+        self._joint_command_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -228,6 +220,28 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             return JointTrajectoryTask(
                 cfg.name,
                 JointTrajectoryTaskConfig(
+                    joint_names=cfg.joint_names,
+                    priority=cfg.priority,
+                ),
+            )
+
+        elif task_type == "servo":
+            from dimos.control.tasks import JointServoTask, JointServoTaskConfig
+
+            return JointServoTask(
+                cfg.name,
+                JointServoTaskConfig(
+                    joint_names=cfg.joint_names,
+                    priority=cfg.priority,
+                ),
+            )
+
+        elif task_type == "velocity":
+            from dimos.control.tasks import JointVelocityTask, JointVelocityTaskConfig
+
+            return JointVelocityTask(
+                cfg.name,
+                JointVelocityTaskConfig(
                     joint_names=cfg.joint_names,
                     priority=cfg.priority,
                 ),
@@ -370,65 +384,59 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             return [name for name, task in self._tasks.items() if task.is_active()]
 
     # =========================================================================
-    # Trajectory Execution (RPC)
+    # Streaming Control
     # =========================================================================
 
+    def _on_joint_command(self, msg: JointState) -> None:
+        """Route incoming JointState to streaming tasks by joint name.
+
+        Routes position data to servo tasks and velocity data to velocity tasks.
+        Each task only receives data for joints it claims.
+        """
+        if not msg.name:
+            return
+
+        t_now = time.perf_counter()
+        incoming_joints = set(msg.name)
+
+        with self._task_lock:
+            for task in self._tasks.values():
+                claimed_joints = task.claim().joints
+
+                # Skip if no overlap between incoming and claimed joints
+                if not (claimed_joints & incoming_joints):
+                    continue
+
+                # Route to servo tasks (position control)
+                if hasattr(task, "set_target_by_name") and msg.position:
+                    positions_by_name = dict(zip(msg.name, msg.position, strict=False))
+                    task.set_target_by_name(positions_by_name, t_now)  # type: ignore[attr-defined]
+
+                # Route to velocity tasks (velocity control)
+                elif hasattr(task, "set_velocities_by_name") and msg.velocity:
+                    velocities_by_name = dict(zip(msg.name, msg.velocity, strict=False))
+                    task.set_velocities_by_name(velocities_by_name, t_now)  # type: ignore[attr-defined]
+
     @rpc
-    def execute_trajectory(self, task_name: str, trajectory: JointTrajectory) -> bool:
-        """Execute a trajectory on a named task."""
+    def task_invoke(self, task_name: str, method: str, kwargs: dict | None = None) -> Any:
+        """Invoke a method on a task. Pass t_now=None to auto-inject current time."""
         with self._task_lock:
             task = self._tasks.get(task_name)
             if task is None:
                 logger.warning(f"Task {task_name} not found")
-                return False
-
-            if not hasattr(task, "execute"):
-                logger.warning(f"Task {task_name} doesn't support execute()")
-                return False
-
-            logger.info(
-                f"Executing trajectory on {task_name}: "
-                f"{len(trajectory.points)} points, duration={trajectory.duration:.3f}s"
-            )
-            return task.execute(trajectory)  # type: ignore[attr-defined,no-any-return]
-
-    @rpc
-    def get_trajectory_status(self, task_name: str) -> TaskStatus | None:
-        """Get the status of a trajectory task."""
-        with self._task_lock:
-            task = self._tasks.get(task_name)
-            if task is None:
                 return None
 
-            state: str | None = None
-            if hasattr(task, "get_state"):
-                task_state: TrajectoryState = task.get_state()  # type: ignore[attr-defined]
-                state = (
-                    task_state.name if isinstance(task_state, TrajectoryState) else str(task_state)
-                )
+            if not hasattr(task, method):
+                logger.warning(f"Task {task_name} has no method {method}")
+                return None
 
-            progress: float | None = None
-            if hasattr(task, "get_progress"):
-                t_now = time.perf_counter()
-                progress = task.get_progress(t_now)  # type: ignore[attr-defined]
+            kwargs = kwargs or {}
 
-            return TaskStatus(active=task.is_active(), state=state, progress=progress)
+            # Auto-inject t_now if requested (None means "use current time")
+            if "t_now" in kwargs and kwargs["t_now"] is None:
+                kwargs["t_now"] = time.perf_counter()
 
-    @rpc
-    def cancel_trajectory(self, task_name: str) -> bool:
-        """Cancel an active trajectory on a task."""
-        with self._task_lock:
-            task = self._tasks.get(task_name)
-            if task is None:
-                logger.warning(f"Task {task_name} not found")
-                return False
-
-            if not hasattr(task, "cancel"):
-                logger.warning(f"Task {task_name} doesn't support cancel()")
-                return False
-
-            logger.info(f"Cancelling trajectory on {task_name}")
-            return task.cancel()  # type: ignore[attr-defined,no-any-return]
+            return getattr(task, method)(**kwargs)
 
     # =========================================================================
     # Lifecycle
@@ -462,12 +470,34 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         )
         self._tick_loop.start()
 
+        # Subscribe to joint commands if any streaming tasks configured
+        streaming_types = ("servo", "velocity")
+        has_streaming = any(t.type in streaming_types for t in self.config.tasks)
+        if has_streaming:
+            # Only subscribe if transport is configured
+            try:
+                if self.joint_command.transport:
+                    self._joint_command_unsub = self.joint_command.subscribe(self._on_joint_command)
+                    logger.info("Subscribed to joint_command for streaming tasks")
+                else:
+                    logger.warning(
+                        "Streaming tasks configured but no transport set for joint_command. "
+                        "Use task_invoke RPC or set transport via blueprint."
+                    )
+            except Exception as e:
+                logger.warning(f"Could not subscribe to joint_command: {e}")
+
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
 
     @rpc
     def stop(self) -> None:
         """Stop the coordinator."""
         logger.info("Stopping ControlCoordinator...")
+
+        # Unsubscribe from joint commands
+        if self._joint_command_unsub:
+            self._joint_command_unsub()
+            self._joint_command_unsub = None
 
         if self._tick_loop:
             self._tick_loop.stop()
