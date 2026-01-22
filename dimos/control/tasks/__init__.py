@@ -14,12 +14,24 @@
 
 """Task implementations for the ControlCoordinator."""
 
+from dimos.control.tasks.servo_task import (
+    JointServoTask,
+    JointServoTaskConfig,
+)
 from dimos.control.tasks.trajectory_task import (
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
 )
+from dimos.control.tasks.velocity_task import (
+    JointVelocityTask,
+    JointVelocityTaskConfig,
+)
 
 __all__ = [
+    "JointServoTask",
+    "JointServoTaskConfig",
     "JointTrajectoryTask",
     "JointTrajectoryTaskConfig",
+    "JointVelocityTask",
+    "JointVelocityTaskConfig",
 ]
