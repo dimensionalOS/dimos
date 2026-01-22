@@ -119,9 +119,18 @@ source /ros2_ws/install/setup.bash
 # Start ROS route planner in background (in new process group)
 echo "Starting ROS route planner..."
 cd /ros2_ws/src/ros-navigation-autonomy-stack
-# Run simulation directly instead of using the script (which has wrong install path)
-./src/base_autonomy/vehicle_simulator/mesh/unity/environment/Model.x86_64 &
-UNITY_PID=$!
+
+# Run Unity simulation if available
+UNITY_EXECUTABLE="./src/base_autonomy/vehicle_simulator/mesh/unity/environment/Model.x86_64"
+if [ -f "$UNITY_EXECUTABLE" ]; then
+    echo "Starting Unity simulation environment..."
+    "$UNITY_EXECUTABLE" &
+    UNITY_PID=$!
+else
+    echo "Warning: Unity environment not found at $UNITY_EXECUTABLE"
+    echo "Continuing without Unity simulation (you may need to provide sensor data)"
+    UNITY_PID=""
+fi
 sleep 3
 setsid bash -c 'ros2 launch vehicle_simulator system_simulation_with_route_planner.launch.py' &
 ROS_PID=$!
