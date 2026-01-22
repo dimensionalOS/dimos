@@ -59,7 +59,7 @@ def visualize_pose(pose: Pose, controller_label: str) -> None:
     if not RERUN_AVAILABLE:
         return
     try:
-        from dimos.utils.teleop_transforms import pose_to_pose_stamped
+        from dimos.teleop.utils.teleop_transforms import pose_to_pose_stamped
 
         pose_stamped = pose_to_pose_stamped(
             pose, frame_id=f"world/teleop/{controller_label}_controller"

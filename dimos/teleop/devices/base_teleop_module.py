@@ -29,7 +29,7 @@ from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, TwistStamped
 from dimos.msgs.std_msgs import Bool
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.teleop_visualization import (
+from dimos.teleop.utils.teleop_visualization import (
     init_rerun_visualization,
     visualize_pose,
     visualize_trigger_value,

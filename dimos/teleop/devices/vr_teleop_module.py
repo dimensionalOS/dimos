@@ -33,7 +33,7 @@ from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
 from dimos.msgs.std_msgs import Bool, Float32
 from dimos.teleop.devices.base_teleop_module import BaseTeleopConfig, BaseTeleopModule
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.teleop_transforms import (
+from dimos.teleop.utils.teleop_transforms import (
     pose_to_pose_stamped,
     pose_to_twist_stamped,
     transform_vr_to_robot,
