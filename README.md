@@ -193,7 +193,7 @@ if __name__ == "__main__":
 Blueprints are how robots are constructed on Dimensional; instructions for how to construct and wire modules. You compose them with
 `autoconnect(...)`, which connects streams by `(name, type)` and returns a `ModuleBlueprintSet`.
 
-Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `IN[]` and `OUT[]` message types.
+Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `In[]` and `Out[]` message types.
 
 A blueprint example that connects the image stream from a robot to an LLM Agent for reasoning and action execution.
 ```py
