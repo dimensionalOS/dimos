@@ -33,7 +33,9 @@ def _get_user_data_dir() -> Path:
     # if virtual env is available, use it to keep venv's from fighting over data
     # a better fix for large files will be added later to minimize storage duplication
     if os.environ.get("VIRTUAL_ENV"):
-        venv_data_dir = f"{os.environ.get('VIRTUAL_ENV')}/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages/dimos/data"
+        venv_data_dir = Path(
+            f"{os.environ.get('VIRTUAL_ENV')}/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages/dimos/data"
+        )
         return venv_data_dir
 
     if system == "Linux":
