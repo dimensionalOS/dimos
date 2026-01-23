@@ -4,7 +4,7 @@ This page explains general concepts. For specific API docs see [the API referenc
 
 ## Table of Contents
 
-- [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are singleton python classes.
+- [Modules](/docs/concepts/modules.md): The primary units of deployment in DimOS, modules run in parallel and are python classes.
 - [Streams](/docs/api/sensor_streams/README.md): How modules communicate, a Pub / Sub system.
 - [Blueprints](/docs/concepts/blueprints.md): a way to group modules together and define their connections to each other.
 - [RPC](/docs/concepts/blueprints.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
