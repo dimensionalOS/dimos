@@ -1427,6 +1427,7 @@ agents = [
     { name = "openai" },
     { name = "openai-whisper" },
     { name = "sounddevice" },
+    { name = "soundfile" },
 ]
 base = [
     { name = "anthropic" },
@@ -1710,6 +1711,7 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'misc'" },
     { name = "sortedcontainers", specifier = "==2.4.0" },
     { name = "sounddevice", marker = "extra == 'agents'" },
+    { name = "soundfile", marker = "extra == 'agents'" },
     { name = "soundfile", marker = "extra == 'web'" },
     { name = "sse-starlette", marker = "extra == 'web'", specifier = ">=2.2.1" },
     { name = "structlog", specifier = ">=25.5.0,<26" },

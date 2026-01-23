@@ -188,7 +188,7 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
             # Create AudioEvent and emit it
             audio_event = AudioEvent(
                 data=audio_array,
-                sample_rate=24000,
+                sample_rate=actual_sample_rate,
                 timestamp=timestamp,
                 channels=1 if audio_array.ndim == 1 else audio_array.shape[1],
             )
@@ -232,7 +232,7 @@ if __name__ == "__main__":
     tts_node.consume_text(text_subject)
 
     # Create and connect an audio output node - explicitly set sample rate
-    audio_output = SounddeviceAudioOutput(sample_rate=24000)
+    audio_output = SounddeviceAudioOutput(sample_rate=48000)
     audio_output.consume_audio(tts_node.emit_audio())
 
     stdout = TextPrinterNode(prefix="[Spoken Text] ")

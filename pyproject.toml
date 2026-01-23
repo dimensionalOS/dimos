@@ -141,6 +141,7 @@ agents = [
     "openai",
     "openai-whisper",
     "sounddevice",
+    "soundfile",
 
     # MCP Server
     "mcp>=1.0.0",
