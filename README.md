@@ -39,20 +39,28 @@ drone, or wheeled embodiment.
 **Programming physical robots is now as simple as programming digital software**: Composable, Modular, Repeatable.
 
 Core Features:
-- **Transport/Middleware:** DimOS native Python transport supports LCM, DDS, and SHM, plus ROS 2.
-- **Robot integrations:** We integrate with the majority of hardware OEMs and are moving fast to cover them
-  all. Supported and/or immediate roadmap: Unitree Go2, Unitree G1, Unitree B1, Booster K1, DJI Mavic 2,
-  AGIBOT X2, ABIBOT A2, AGIBOT D1 Max/Pro, OpenARMs, xARM 6/7, AgileX Piper, HighTorque Pantera, and
-  many more.
+- **Navigation:** Production navigation stack for any robot with lidar: SLAM, terrain analysis, collision
+  avoidance, route planning, exploration.
+- **Robot integrations:** We integrate with the majority of hardware OEMs and are moving fast to cover
+  them all.
+
+  | Category | Platforms |
+  | --- | --- |
+  | Quadrupeds | Unitree Go2, Unitree B1, AGIBOT D1 Max/Pro, Dobot Rover |
+  | Drones | DJI Mavic 2, Holybro x500|
+  | Humanoids | Unitree G1, Booster K1, AGIBOT X2, ABIBOT A2 |
+  | Arms | OpenARMs, xARM 6/7, AgileX Piper, HighTorque Pantera |
+- **Dashboard:** The DimOS command center gives developers the tooling to debug, visualize, compose, and
+  test dimensional applications in real-time. Control your robot via waypoint, agent query, keyboard,
+  VR, more.
+- **Modules:** Standalone components (equivalent to ROS nodes) that publish and subscribe to typed
+  In/Out streams that communicate over DimOS transports. The building blocks of Dimensional.
 - **Agents (experimental):** DimOS agents understand physical space, subscribe to sensor streams, and call
   **physical** tools. Emergence appears when agents have physical agency.
 - **MCP (experimental):** Vibecode robots by giving your AI editor (Cursor, Claude Code) MCP access to run
   physical commands (move forward 1 meter, jump, etc.).
-- **Navigation:** Production navigation stack for any robot with lidar: SLAM, terrain analysis, collision
-  avoidance, route planning, exploration.
-- **Dashboard:** The DimOS command center gives developers the tooling to debug, visualize, compose, and test dimensional applications in real-time. Control your robot via waypoint, agent query, keyboard, VR, more.
-- **Modules:** Standalone components (equivelent to ROS nodes) that publish & subscribe to typed In/Out streams that communicate over DimOS transports: The building blocks of Dimensional.
 - **Manipulation (unreleased)** Classical (OMPL, IK, GraspGen), Agentive (TAMP), and VLA-native manipulation stack runs out-of-the-box on any DimOS supported arm embodiment.
+- **Transport/Middleware:** DimOS native Python transport supports LCM, DDS, and SHM, plus ROS 2.
 
 # Getting Started
 
@@ -136,33 +144,9 @@ humancli
 
 # The Dimensional Library
 
-### Blueprints
-
-Blueprints are how robots are constructed on Dimensional; instructions for how to construct and wire modules. You compose them with
-`autoconnect(...)`, which connects streams by `(name, type)` and returns a `ModuleBlueprintSet`.
-
-Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `IN[]` and `OUT[]` message types.
-
-A blueprint example that connects the image stream from a robot to an LLM Agent for reasoning and action execution.
-```py
-from dimos.core.blueprints import autoconnect
-from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs import Image
-from dimos.robot.unitree.connection.go2 import go2_connection
-from dimos.agents.agent import llm_agent
-
-blueprint = autoconnect(
-    go2_connection(),
-    llm_agent(),
-).transports({("color_image", Image): LCMTransport("/color_image", Image)})
-
-# Run the blueprint
-blueprint.build().loop()
-```
-
 ### Modules
 
-A simple robot connection module that sends streams of continuous `cmd_vel` to the robot and recieves `color_image` to a simple `Listener` module.
+Modules are subsystems on a robot that operate autonomously and communicate with other subsystems using standardized messages. See below a simple robot connection module that sends streams of continuous `cmd_vel` to the robot and recieves `color_image` to a simple `Listener` module.
 
 ```py
 import threading, time, numpy as np
@@ -204,7 +188,31 @@ if __name__ == "__main__":
     ).build().loop()
 ```
 
-## Development
+### Blueprints
+
+Blueprints are how robots are constructed on Dimensional; instructions for how to construct and wire modules. You compose them with
+`autoconnect(...)`, which connects streams by `(name, type)` and returns a `ModuleBlueprintSet`.
+
+Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `IN[]` and `OUT[]` message types.
+
+A blueprint example that connects the image stream from a robot to an LLM Agent for reasoning and action execution.
+```py
+from dimos.core.blueprints import autoconnect
+from dimos.core.transport import LCMTransport
+from dimos.msgs.sensor_msgs import Image
+from dimos.robot.unitree.connection.go2 import go2_connection
+from dimos.agents.agent import llm_agent
+
+blueprint = autoconnect(
+    go2_connection(),
+    llm_agent(),
+).transports({("color_image", Image): LCMTransport("/color_image", Image)})
+
+# Run the blueprint
+blueprint.build().loop()
+```
+
+# Development
 
 ```sh
 GIT_LFS_SKIP_SMUDGE=1 git clone -b dev https://github.com/dimensionalOS/dimos.git
