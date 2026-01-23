@@ -17,9 +17,9 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 
 <p align="center">
-  <a href="#the-dimensional-framework">Key Features</a> •
-  <a href="#getting-started">How To Use</a> •
+  <a href="#the-dimensional-framework">Features</a> •
   <a href="#installation">Installation</a> •
+  <a href="#documentation">Documentation</a> •
   <a href="#development">Development</a> •
   <a href="#contributing">Contributing</a>
 </p>
@@ -28,7 +28,7 @@
 
 > \[!NOTE]
 >
-> **Active Beta: Expect Breaking Changes**
+> ⚠️ **Alpha Pre-Release: Expect Breaking Changes** ⚠️
 
 # The Dimensional Framework
 
@@ -52,6 +52,7 @@ Core Features:
   avoidance, route planning, exploration.
 - **Dashboard:** The DimOS command center gives developers the tooling to debug, visualize, compose, and test dimensional applications in real-time. Control your robot via waypoint, agent query, keyboard, VR, more.
 - **Modules:** Standalone components (equivelent to ROS nodes) that publish & subscribe to typed In/Out streams that communicate over DimOS transports: The building blocks of Dimensional.
+- **Manipulation (unreleased)** Classical (OMPL, IK, GraspGen), Agentive (TAMP), and VLA-native manipulation stack runs out-of-the-box on any DimOS supported arm embodiment.
 
 # Getting Started
 
@@ -203,7 +204,7 @@ if __name__ == "__main__":
     ).build().loop()
 ```
 
-## Development (clone + setup)
+## Development
 
 ```sh
 GIT_LFS_SKIP_SMUDGE=1 git clone -b dev https://github.com/dimensionalOS/dimos.git
