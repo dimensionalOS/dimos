@@ -14,9 +14,8 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-import importlib
 import threading
-from typing import Any, Protocol, TypeAlias, TypeVar, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 try:
     import rclpy
@@ -36,17 +35,15 @@ except ImportError:
     SingleThreadedExecutor = None  # type: ignore[assignment, misc]
     Node = None  # type: ignore[assignment, misc]
 
-from dimos.protocol.pubsub.spec import MsgT, PubSub, PubSubEncoderMixin, TopicT
+import uuid
 
-
-# Type definitions for LCM and ROS messages, be gentle for now
-# just a sketch until proper translation is written
-@runtime_checkable
-class DimosMessage(Protocol):
-    """Protocol for LCM message types (from dimos_lcm or lcm_msgs)."""
-
-    msg_name: str
-    __slots__: tuple[str, ...]
+from dimos.msgs import DimosMsg
+from dimos.protocol.pubsub.rospubsub_conversion import (
+    derive_ros_type,
+    dimos_to_ros,
+    ros_to_dimos,
+)
+from dimos.protocol.pubsub.spec import PubSub
 
 
 @runtime_checkable
@@ -57,42 +54,50 @@ class ROSMessage(Protocol):
 
 
 @dataclass
-class ROSTopic:
-    """Topic descriptor for ROS pubsub."""
+class RawROSTopic:
+    """Topic descriptor for raw ROS pubsub (uses ROS types directly)."""
 
     topic: str
     ros_type: type
-    qos: "QoSProfile | None" = None  # Optional per-topic QoS override
+    qos: "QoSProfile | None" = None
 
 
-class RawROS(PubSub[ROSTopic, Any]):
+@dataclass
+class ROSTopic:
+    """Topic descriptor for DimosROS pubsub (uses dimos message types)."""
+
+    topic: str
+    msg_type: type[DimosMsg]
+    qos: "QoSProfile | None" = None
+
+
+class RawROS(PubSub[RawROSTopic, Any]):
     """ROS 2 PubSub implementation following the PubSub spec.
 
     This allows direct comparison of ROS messaging performance against
     native LCM and other pubsub implementations.
     """
 
-    def __init__(
-        self, node_name: str = "dimos_ros_pubsub", qos: "QoSProfile | None" = None
-    ) -> None:
+    def __init__(self, node_name: str | None = None, qos: "QoSProfile | None" = None) -> None:
         """Initialize the ROS pubsub.
 
         Args:
-            node_name: Name for the ROS node
+            node_name: Name for the ROS node (auto-generated if None)
             qos: Optional QoS profile (defaults to BEST_EFFORT for throughput)
         """
         if not ROS_AVAILABLE:
             raise ImportError("rclpy is not installed. ROS pubsub requires ROS 2.")
 
-        self._node_name = node_name
+        # Use unique node name to avoid conflicts in tests
+        self._node_name = node_name or f"dimos_ros_{uuid.uuid4().hex[:8]}"
         self._node: Node | None = None
         self._executor: SingleThreadedExecutor | None = None
         self._spin_thread: threading.Thread | None = None
-        self._running = False
+        self._stop_event = threading.Event()
 
         # Track publishers and subscriptions
         self._publishers: dict[str, Any] = {}
-        self._subscriptions: dict[str, list[tuple[Any, Callable[[Any, ROSTopic], None]]]] = {}
+        self._subscriptions: dict[str, list[tuple[Any, Callable[[Any, RawROSTopic], None]]]] = {}
         self._lock = threading.Lock()
 
         # QoS profile - use provided or default to best-effort for throughput
@@ -100,65 +105,79 @@ class RawROS(PubSub[ROSTopic, Any]):
             self._qos = qos
         else:
             self._qos = QoSProfile(
-                reliability=QoSReliabilityPolicy.BEST_EFFORT,
+                # Haven't noticed any difference between BEST_EFFORT and RELIABLE for local comms in our tests
+                # ./bin/dev python -m pytest -svm tool -k ros dimos/protocol/pubsub/benchmark/test_benchmark.py
+                #
+                # but RELIABLE seems to have marginally higher throughput
+                reliability=QoSReliabilityPolicy.RELIABLE,
                 history=QoSHistoryPolicy.KEEP_LAST,
                 durability=QoSDurabilityPolicy.VOLATILE,
-                depth=1,
+                depth=5000,
             )
 
     def start(self) -> None:
         """Start the ROS node and executor."""
-        if self._running:
+        if self._spin_thread is not None:
             return
 
         if not rclpy.ok():
             rclpy.init()
 
+        self._stop_event.clear()
         self._node = Node(self._node_name)
         self._executor = SingleThreadedExecutor()
         self._executor.add_node(self._node)
 
-        self._running = True
         self._spin_thread = threading.Thread(target=self._spin, name="ros_pubsub_spin")
         self._spin_thread.start()
 
     def stop(self) -> None:
         """Stop the ROS node and clean up."""
-        if not self._running:
+        if self._spin_thread is None:
             return
 
-        self._running = False
-
-        # Wake up the executor so spin thread can exit
+        # Signal spin thread to stop and shutdown executor
+        self._stop_event.set()
         if self._executor:
-            self._executor.wake()
+            self._executor.shutdown()  # This stops spin_once from blocking
 
-        # Wait for spin thread to finish
-        if self._spin_thread and self._spin_thread.is_alive():
-            self._spin_thread.join(timeout=2.0)
+        # Wait for spin thread to exit
+        self._spin_thread.join(timeout=1.0)
 
-        if self._executor:
-            self._executor.shutdown()
+        # Grab references while holding lock, then destroy without lock
+        with self._lock:
+            subs_to_destroy = [
+                sub for topic_subs in self._subscriptions.values() for sub, _ in topic_subs
+            ]
+            pubs_to_destroy = list(self._publishers.values())
+            self._subscriptions.clear()
+            self._publishers.clear()
+
+        if self._node:
+            for subscription in subs_to_destroy:
+                self._node.destroy_subscription(subscription)
+            for publisher in pubs_to_destroy:
+                self._node.destroy_publisher(publisher)
 
         if self._node:
             self._node.destroy_node()
+            self._node = None
 
-        if rclpy.ok():
-            rclpy.shutdown()
-
-        self._publishers.clear()
-        self._subscriptions.clear()
+        self._executor = None
         self._spin_thread = None
 
     def _spin(self) -> None:
         """Background thread for spinning the ROS executor."""
-        while self._running:
+        while not self._stop_event.is_set():
             executor = self._executor
             if executor is None:
                 break
-            executor.spin_once(timeout_sec=0)  # Non-blocking for max throughput
+            try:
+                executor.spin_once(timeout_sec=0.01)
+            except Exception:
+                break
 
-    def _get_or_create_publisher(self, topic: ROSTopic) -> Any:
+    def _get_or_create_publisher(self, topic: RawROSTopic) -> Any:
         """Get existing publisher or create a new one."""
         with self._lock:
             if topic.topic not in self._publishers:
@@ -171,32 +190,32 @@ class RawROS(PubSub[ROSTopic, Any]):
                 )
             return self._publishers[topic.topic]
 
-    def publish(self, topic: ROSTopic, message: Any) -> None:
+    def publish(self, topic: RawROSTopic, message: Any) -> None:
         """Publish a message to a ROS topic.
 
         Args:
-            topic: ROSTopic descriptor with topic name and message type
+            topic: RawROSTopic descriptor with topic name and message type
             message: ROS message to publish
         """
-        if not self._running or not self._node:
+        if self._node is None:
             return
 
         publisher = self._get_or_create_publisher(topic)
         publisher.publish(message)
 
     def subscribe(
-        self, topic: ROSTopic, callback: Callable[[Any, ROSTopic], None]
+        self, topic: RawROSTopic, callback: Callable[[Any, RawROSTopic], None]
     ) -> Callable[[], None]:
         """Subscribe to a ROS topic with a callback.
 
         Args:
-            topic: ROSTopic descriptor with topic name and message type
+            topic: RawROSTopic descriptor with topic name and message type
             callback: Function called with (message, topic) when message received
 
         Returns:
             Unsubscribe function
         """
-        if not self._running or not self._node:
+        if self._node is None:
             raise RuntimeError("ROS pubsub not started")
 
         with self._lock:
@@ -227,43 +246,66 @@ class RawROS(PubSub[ROSTopic, Any]):
             return unsubscribe
 
 
-class Dimos2RosMixin(PubSubEncoderMixin[TopicT, DimosMessage, ROSMessage]):
-    """Mixin that converts between dimos_lcm (LCM-based) and ROS messages.
+class DimosROS(PubSub[ROSTopic, DimosMsg]):
+    """ROS PubSub with automatic dimos.msgs ↔ ROS message conversion.
 
-    This enables seamless interop: publish LCM messages to ROS topics
-    and receive ROS messages as LCM messages.
+    Uses ROSTopic (with dimos msg_type) instead of RawROSTopic (with ros_type).
+    Automatically converts between dimos and ROS message formats.
+    Uses composition with RawROS internally.
     """
 
-    def encode(self, msg: DimosMessage, *_: TopicT) -> ROSMessage:
-        """Convert a dimos_lcm message to its equivalent ROS message.
+    def __init__(self, node_name: str | None = None, qos: "QoSProfile | None" = None) -> None:
+        """Initialize the DimosROS pubsub.
 
         Args:
-            msg: An LCM message (e.g., dimos_lcm.geometry_msgs.Vector3)
-
-        Returns:
-            The corresponding ROS message (e.g., geometry_msgs.msg.Vector3)
+            node_name: Name for the ROS node (auto-generated if None)
+            qos: Optional QoS profile (defaults to BEST_EFFORT for throughput)
         """
-        raise NotImplementedError("Encode method not implemented")
+        self._raw = RawROS(node_name, qos)
 
-    def decode(self, msg: ROSMessage, _: TopicT | None = None) -> DimosMessage:
-        """Convert a ROS message to its equivalent dimos_lcm message.
+    def start(self) -> None:
+        """Start the ROS node and executor."""
+        self._raw.start()
+
+    def stop(self) -> None:
+        """Stop the ROS node and clean up."""
+        self._raw.stop()
+
+    def _to_raw_topic(self, topic: ROSTopic) -> RawROSTopic:
+        """Convert a ROSTopic to a RawROSTopic by deriving the ROS type."""
+        ros_type = derive_ros_type(topic.msg_type)
+        return RawROSTopic(topic=topic.topic, ros_type=ros_type, qos=topic.qos)
+
+    def publish(self, topic: ROSTopic, message: DimosMsg) -> None:
+        """Publish a dimos message to a ROS topic.
 
         Args:
-            msg: A ROS message (e.g., geometry_msgs.msg.Vector3)
+            topic: ROSTopic with dimos msg_type
+            message: Dimos message to publish
+        """
+        raw_topic = self._to_raw_topic(topic)
+        ros_message = dimos_to_ros(message, raw_topic.ros_type)
+        self._raw.publish(raw_topic, ros_message)
+
+    def subscribe(
+        self, topic: ROSTopic, callback: Callable[[DimosMsg, ROSTopic], None]
+    ) -> Callable[[], None]:
+        """Subscribe to a ROS topic with automatic dimos message conversion.
+
+        Args:
+            topic: ROSTopic with dimos msg_type
+            callback: Function called with (dimos_message, topic)
 
         Returns:
-            The corresponding LCM message (e.g., dimos_lcm.geometry_msgs.Vector3)
+            Unsubscribe function
         """
-        raise NotImplementedError("Decode method not implemented")
+        raw_topic = self._to_raw_topic(topic)
 
+        def wrapped_callback(ros_msg: Any, _raw_topic: RawROSTopic) -> None:
+            dimos_msg = ros_to_dimos(ros_msg, topic.msg_type)
+            callback(dimos_msg, topic)
 
-class DimosROS(
-    Dimos2RosMixin[ROSTopic],
-    RawROS,
-):
-    """ROS PubSub with automatic dimos.msgs ↔ ROS message conversion."""
-
-    pass
+        return self._raw.subscribe(raw_topic, wrapped_callback)
 
 
 ROS = DimosROS

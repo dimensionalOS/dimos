@@ -15,37 +15,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any
 
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
-from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf
+from dimos.protocol.service.lcmservice import (
+    LCMConfig,
+    LCMService,
+    autoconf,
+)
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     import threading
 
+    from dimos.msgs import DimosMsg
+
 logger = setup_logger()
-
-
-@runtime_checkable
-class LCMMsg(Protocol):
-    msg_name: str
-
-    @classmethod
-    def lcm_decode(cls, data: bytes) -> LCMMsg:
-        """Decode bytes into an LCM message instance."""
-        ...
-
-    def lcm_encode(self) -> bytes:
-        """Encode this message instance into bytes."""
-        ...
 
 
 @dataclass
 class Topic:
     topic: str = ""
-    lcm_type: type[LCMMsg] | None = None
+    lcm_type: type[DimosMsg] | None = None
 
     def __str__(self) -> str:
         if self.lcm_type is None:
@@ -96,10 +88,10 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
 
 
 class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any, bytes]):
-    def encode(self, msg: LCMMsg, _: Topic) -> bytes:
+    def encode(self, msg: DimosMsg, _: Topic) -> bytes:
         return msg.lcm_encode()
 
-    def decode(self, msg: bytes, topic: Topic) -> LCMMsg:
+    def decode(self, msg: bytes, topic: Topic) -> DimosMsg:
         if topic.lcm_type is None:
             raise ValueError(
                 f"Cannot decode message for topic '{topic.topic}': no lcm_type specified"
@@ -108,10 +100,10 @@ class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any, bytes]):
 
 
 class JpegEncoderMixin(PubSubEncoderMixin[Topic, Any, bytes]):
-    def encode(self, msg: LCMMsg, _: Topic) -> bytes:
+    def encode(self, msg: DimosMsg, _: Topic) -> bytes:
         return msg.lcm_jpeg_encode()  # type: ignore[attr-defined, no-any-return]
 
-    def decode(self, msg: bytes, topic: Topic) -> LCMMsg:
+    def decode(self, msg: bytes, topic: Topic) -> DimosMsg:
         if topic.lcm_type is None:
             raise ValueError(
                 f"Cannot decode message for topic '{topic.topic}': no lcm_type specified"
@@ -141,8 +133,6 @@ __all__ = [
     "LCM",
     "JpegLCM",
     "LCMEncoderMixin",
-    "LCMMsg",
-    "LCMMsg",
     "LCMPubSubBase",
     "PickleLCM",
     "autoconf",

@@ -29,7 +29,6 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleConfig
 from dimos.dashboard.rerun_init import connect_rerun
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
@@ -52,7 +51,7 @@ class VoxelGridMapper(Module):
     default_config = Config
     config: Config
 
-    lidar: In[LidarMessage]
+    lidar: In[PointCloud2]
     global_map: Out[PointCloud2]
 
     @classmethod
@@ -136,7 +135,7 @@ class VoxelGridMapper(Module):
     def stop(self) -> None:
         super().stop()
 
-    def _on_frame(self, frame: LidarMessage) -> None:
+    def _on_frame(self, frame: PointCloud2) -> None:
         # Track receipt time with monotonic clock (works correctly in replay)
         self._latest_frame_rx_monotonic = time.monotonic()
         self.add_frame(frame)

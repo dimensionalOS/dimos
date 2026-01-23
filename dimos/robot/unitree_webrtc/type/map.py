@@ -28,12 +28,11 @@ from dimos.mapping.pointclouds.occupancy import general_occupancy
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 
 class Map(Module):
-    lidar: In[LidarMessage]
-    global_map: Out[LidarMessage]
+    lidar: In[PointCloud2]
+    global_map: Out[PointCloud2]
     global_costmap: Out[OccupancyGrid]
 
     _point_cloud_accumulator: PointCloudAccumulator
@@ -85,17 +84,9 @@ class Map(Module):
             ts=time.time(),
         )
 
-    def to_lidar_message(self) -> LidarMessage:
-        return LidarMessage(
-            pointcloud=self._point_cloud_accumulator.get_point_cloud(),
-            origin=[0.0, 0.0, 0.0],
-            resolution=self.voxel_size,
-            ts=time.time(),
-        )
-
     # TODO: Why is this RPC?
     @rpc
-    def add_frame(self, frame: LidarMessage) -> None:
+    def add_frame(self, frame: PointCloud2) -> None:
         self._point_cloud_accumulator.add(frame.pointcloud)
 
     @property
@@ -103,10 +94,10 @@ class Map(Module):
         return self._point_cloud_accumulator.get_point_cloud()
 
     def _publish(self, _: Any) -> None:
-        self.global_map.publish(self.to_lidar_message())
+        self.global_map.publish(self.to_PointCloud2())
 
         occupancygrid = general_occupancy(
-            self.to_lidar_message(),
+            self.to_PointCloud2(),
             resolution=self.cost_resolution,
             min_height=self.min_height,
             max_height=self.max_height,
@@ -127,7 +118,7 @@ mapper = Map.blueprint
 
 def deploy(dimos: DimosCluster, connection: Go2ConnectionProtocol):  # type: ignore[no-untyped-def]
     mapper = dimos.deploy(Map, global_publish_interval=1.0)  # type: ignore[attr-defined]
-    mapper.global_map.transport = LCMTransport("/global_map", LidarMessage)
+    mapper.global_map.transport = LCMTransport("/global_map", PointCloud2)
     mapper.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
     mapper.lidar.connect(connection.pointcloud)  # type: ignore[attr-defined]
     mapper.start()

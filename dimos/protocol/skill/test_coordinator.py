@@ -96,6 +96,7 @@ class SkillContainerTest(Module):
         return img
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_coordinator_parallel_calls() -> None:
     container = SkillContainerTest()
@@ -136,6 +137,7 @@ async def test_coordinator_parallel_calls() -> None:
     skillCoordinator.stop()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_coordinator_generator() -> None:
     container = SkillContainerTest()

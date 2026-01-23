@@ -36,7 +36,6 @@ from dimos.msgs.geometry_msgs import (
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
@@ -146,7 +145,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     cmd_vel: In[Twist]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
-    lidar: Out[LidarMessage]
+    lidar: Out[PointCloud2]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
 

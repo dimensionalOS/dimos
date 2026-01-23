@@ -153,20 +153,20 @@ class WebsocketVisModule(Module):
         self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
         self._uvicorn_server_thread.start()
 
-        # Auto-open the appropriate landing page:
-        # - rerun-web: "/" serves dashboard with Rerun iframe + command center iframe
-        # - rerun-native: "/" redirects to "/command-center"
-        url = f"http://localhost:{self.port}/"
-        logger.info(f"Dimensional Command Center: {url}")
+        # Auto-open browser only for rerun-web (dashboard with Rerun iframe + command center)
+        # For rerun-native and foxglove, users access the command center manually if needed
+        if self._global_config.viewer_backend == "rerun-web":
+            url = f"http://localhost:{self.port}/"
+            logger.info(f"Dimensional Command Center: {url}")
 
-        global _browser_opened
-        with _browser_open_lock:
-            if not _browser_opened:
-                try:
-                    webbrowser.open_new_tab(url)
-                    _browser_opened = True
-                except Exception as e:
-                    logger.debug(f"Failed to open browser: {e}")
+            global _browser_opened
+            with _browser_open_lock:
+                if not _browser_opened:
+                    try:
+                        webbrowser.open_new_tab(url)
+                        _browser_opened = True
+                    except Exception as e:
+                        logger.debug(f"Failed to open browser: {e}")
 
         try:
             unsub = self.odom.subscribe(self._on_robot_pose)

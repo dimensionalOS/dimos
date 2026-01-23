@@ -69,8 +69,13 @@ class FrameChannel(ABC):
     def dtype(self) -> np.dtype: ...  # type: ignore[type-arg]
 
     @abstractmethod
-    def publish(self, frame) -> None:  # type: ignore[no-untyped-def]
-        """Write into inactive buffer, then flip visible index (write control last)."""
+    def publish(self, frame, length: int | None = None) -> None:  # type: ignore[no-untyped-def]
+        """Write into inactive buffer, then flip visible index (write control last).
+
+        Args:
+            frame: The numpy array to publish
+            length: Optional length to copy (for variable-size messages). If None, copies full frame.
+        """
         ...
 
     @abstractmethod
@@ -185,7 +190,7 @@ class CpuShmChannel(FrameChannel):
     def dtype(self):  # type: ignore[no-untyped-def]
         return self._dtype
 
-    def publish(self, frame) -> None:  # type: ignore[no-untyped-def]
+    def publish(self, frame, length: int | None = None) -> None:  # type: ignore[no-untyped-def]
         assert isinstance(frame, np.ndarray)
         assert frame.shape == self._shape and frame.dtype == self._dtype
         active = int(self._ctrl[2])
@@ -196,7 +201,11 @@ class CpuShmChannel(FrameChannel):
             buffer=self._shm_data.buf,
             offset=inactive * self._nbytes,
         )
-        np.copyto(view, frame, casting="no")
+        # Only copy actual payload length if specified, otherwise copy full frame
+        if length is not None and length < len(frame):
+            np.copyto(view[:length], frame[:length], casting="no")
+        else:
+            np.copyto(view, frame, casting="no")
         ts = np.int64(time.time_ns())
         # Publish order: ts -> idx -> seq
         self._ctrl[1] = ts

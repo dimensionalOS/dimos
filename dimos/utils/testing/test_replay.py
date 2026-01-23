@@ -16,7 +16,8 @@ import re
 
 from reactivex import operators as ops
 
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.robot.unitree_webrtc.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.data import get_data
 from dimos.utils.testing import replay
@@ -33,10 +34,10 @@ def test_sensor_replay() -> None:
 def test_sensor_replay_cast() -> None:
     counter = 0
     for message in replay.SensorReplay(
-        name="office_lidar", autocast=LidarMessage.from_msg
+        name="office_lidar", autocast=pointcloud2_from_webrtc_lidar
     ).iterate():
         counter += 1
-        assert isinstance(message, LidarMessage)
+        assert isinstance(message, PointCloud2)
     assert counter == 500
 
 
@@ -204,7 +205,7 @@ def test_first_methods() -> None:
     """Test first() and first_timestamp() methods"""
 
     # Test SensorReplay.first()
-    lidar_replay = replay.SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
+    lidar_replay = replay.SensorReplay("office_lidar", autocast=pointcloud2_from_webrtc_lidar)
 
     print("first file", lidar_replay.files[0])
     # Verify the first file ends with 000.pickle using regex
@@ -214,13 +215,13 @@ def test_first_methods() -> None:
 
     first_msg = lidar_replay.first()
     assert first_msg is not None
-    assert isinstance(first_msg, LidarMessage)
+    assert isinstance(first_msg, PointCloud2)
 
     # Verify it's the same type as first item from iterate()
     first_from_iterate = next(lidar_replay.iterate())
     print("DONE")
     assert type(first_msg) is type(first_from_iterate)
-    # Since LidarMessage.from_msg uses time.time(), timestamps will be slightly different
+    # Since pointcloud2_from_webrtc_lidar uses time.time(), timestamps will be slightly different
     assert abs(first_msg.ts - first_from_iterate.ts) < 1.0  # Within 1 second tolerance
 
     # Test TimedSensorReplay.first_timestamp()

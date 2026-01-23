@@ -29,8 +29,7 @@ from numpy.typing import NDArray
 import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.geometry_msgs import Vector3
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.simulation.mujoco.constants import (
     DEPTH_CAMERA_FOV,
     LIDAR_FPS,
@@ -41,6 +40,7 @@ from dimos.simulation.mujoco.constants import (
 )
 from dimos.simulation.mujoco.depth_camera import depth_image_to_point_cloud
 from dimos.simulation.mujoco.model import load_model, load_scene_xml
+from dimos.simulation.mujoco.person_on_track import PersonPositionController
 from dimos.simulation.mujoco.shared_memory import ShmReader
 from dimos.utils.logging_config import setup_logger
 
@@ -97,6 +97,9 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
     camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
     lidar_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_front_camera")
+
+    person_position_controller = PersonPositionController(model)
+
     lidar_left_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_left_camera")
     lidar_right_camera_id = mujoco.mj_name2id(
         model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_right_camera"
@@ -137,6 +140,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
             # Step simulation
             for _ in range(config.mujoco_steps_per_frame):
                 mujoco.mj_step(model, data)
+
+            person_position_controller.tick(data)
 
             m_viewer.sync()
 
@@ -205,11 +210,10 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
                     pcd.points = o3d.utility.Vector3dVector(combined_points)
                     pcd = pcd.voxel_down_sample(voxel_size=LIDAR_RESOLUTION)
 
-                    lidar_msg = LidarMessage(
+                    lidar_msg = PointCloud2(
                         pointcloud=pcd,
                         ts=time.time(),
-                        origin=Vector3(pos[0], pos[1], pos[2]),
-                        resolution=LIDAR_RESOLUTION,
+                        frame_id="world",
                     )
                     shm.write_lidar(lidar_msg)
 
@@ -219,6 +223,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
             time_until_next_step = model.opt.timestep - (time.time() - step_start)
             if time_until_next_step > 0:
                 time.sleep(time_until_next_step)
+
+        person_position_controller.stop()
 
 
 if __name__ == "__main__":

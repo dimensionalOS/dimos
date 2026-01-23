@@ -38,7 +38,6 @@ Example with trajectory setter:
 from __future__ import annotations
 
 from dimos.control.orchestrator import (
-    ControlOrchestrator,
     HardwareConfig,
     TaskConfig,
     control_orchestrator,

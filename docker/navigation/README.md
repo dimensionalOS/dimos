@@ -16,28 +16,39 @@ This is an optimistic overview. Use the commands below for an in depth version.
 
 ```bash
 cd docker/navigation
-./build.sh
+./build.sh --humble  # Build with ROS 2 Humble (default)
+# or
+./build.sh --jazzy   # Build with ROS 2 Jazzy
 ```
 
 This will:
-- Clone the ros-navigation-autonomy-stack repository (jazzy branch)
+- Clone the ros-navigation-autonomy-stack repository (matching branch: humble or jazzy)
 - Build a Docker image with both ROS and DimOS dependencies
 - Set up the environment for both systems
 
-Note that the build will take over 10 minutes and build an image over 30GiB.
+The resulting image will be named `dimos_autonomy_stack:humble` or `dimos_autonomy_stack:jazzy` depending on the option used.
+
+Note that the build will take a while and produce an image of approximately 24 GB.
 
 **Run the simulator to test it's working:**
 
+Use the same ROS distribution flag as your build:
+
 ```bash
-./start.sh --simulation
+./start.sh --simulation --humble  # If built with --humble
+# or
+./start.sh --simulation --jazzy   # If built with --jazzy
 ```
 
-## Manual build
+<details>
+<summary><h2>Manual build</h2></summary>
 
-Go to the docker dir and clone the ROS navigation stack.
+Go to the docker dir and clone the ROS navigation stack (choose the branch matching your ROS distribution).
 
 ```bash
 cd docker/navigation
+git clone -b humble git@github.com:dimensionalOS/ros-navigation-autonomy-stack.git
+# or
 git clone -b jazzy git@github.com:dimensionalOS/ros-navigation-autonomy-stack.git
 ```
 
@@ -50,12 +61,16 @@ tar -xf ../../data/.lfs/office_building_1.tar.gz
 mv office_building_1 unity_models
 ```
 
-Then, go back to the root and build the docker image:
+Then, go back to the root (from docker/navigation) and build the docker image:
 
 ```bash
-cd ../..
-docker compose -f docker/navigation/docker-compose.yml build
+cd ../..  # Back to dimos root
+ROS_DISTRO=humble docker compose -f docker/navigation/docker-compose.yml build
+# or
+ROS_DISTRO=jazzy docker compose -f docker/navigation/docker-compose.yml build
 ```
+
+</details>
 
 ## On Real Hardware
 
@@ -77,36 +92,71 @@ cp .env.hardware .env
 Key configuration parameters:
 
 ```bash
+# Robot Configuration
+ROBOT_CONFIG_PATH=unitree/unitree_go2  # Robot type (mechanum_drive, unitree/unitree_go2, unitree/unitree_g1)
+
 # Lidar Configuration
 LIDAR_INTERFACE=eth0              # Your ethernet interface (find with: ip link show)
 LIDAR_COMPUTER_IP=192.168.1.5    # Computer IP on the lidar subnet
 LIDAR_GATEWAY=192.168.1.1        # Gateway IP address for the lidar subnet
-LIDAR_IP=192.168.1.116           # Full IP address of your Mid-360 lidar
+LIDAR_IP=192.168.1.1xx           # xx = last two digits from lidar QR code serial number
 ROBOT_IP=                        # IP addres of robot on local network (if using WebRTC connection)
 
-# Motor Controller
-MOTOR_SERIAL_DEVICE=/dev/ttyACM0  # Serial device (check with: ls /dev/ttyACM*)
+# Special Configuration for Unitree G1 EDU
+# Special Configuration for Unitree G1 EDU
+LIDAR_COMPUTER_IP=192.168.123.5
+LIDAR_GATEWAY=192.168.123.1
+LIDAR_IP=192.168.123.120
+ROBOT_IP=192.168.12.1  # For WebRTC local AP mode (optional, need additional wifi dongle)
 ```
 
-### Start the Container
+### Start the Navigation Stack
 
-Start the container and leave it open.
+#### Start with Route Planner automatically
+
+Use --humble or --jazzy matching your build:
 
 ```bash
-./start.sh --hardware
+./start.sh --hardware --humble --route-planner         # Run route planner automatically
+./start.sh --hardware --humble --route-planner --rviz  # Route planner + RViz2 visualization
+./start.sh --hardware --humble --dev                   # Development mode (mount src for config editing)
+```
+
+[Foxglove Studio](https://foxglove.dev/download) is the default visualization tool. It's ideal for remote operation - SSH with port forwarding to the robot's mini PC and run commands there:
+
+```bash
+ssh -L 8765:localhost:8765 user@robot-ip
+```
+
+Then on your local machine:
+1. Open Foxglove and connect to `ws://localhost:8765`
+2. Load the layout from `docker/navigation/Overwatch.json` (Layout menu → Import)
+3. Click in the 3D panel to drop a target pose (similar to RViz). The "Autonomy ON" indicator should be green, and "Goal Reached" will show when the robot arrives.
+
+<details>
+<summary><h4>Start manually</h4></summary>
+
+Start the container and leave it open. Use the same ROS distribution flag as your build:
+
+```bash
+./start.sh --hardware --humble  # If built with --humble
+# or
+./start.sh --hardware --jazzy   # If built with --jazzy
 ```
 
 It doesn't do anything by default. You have to run commands on it by `exec`-ing:
+
+To enter the container from another terminal:
 
 ```bash
 docker exec -it dimos_hardware_container bash
 ```
 
-### In the container
+##### In the container
 
 In the container to run the full navigation stack you must run both the dimensional python runfile with connection module and the navigation stack.
 
-#### Dimensional Python + Connection Module
+###### Dimensional Python + Connection Module
 
 For the Unitree G1
 ```bash
@@ -114,7 +164,7 @@ dimos run unitree-g1
 ROBOT_IP=XX.X.X.XXX dimos run unitree-g1 # If ROBOT_IP env variable is not set in .env
 ```
 
-#### Navigation Stack
+###### Navigation Stack
 
 ```bash
 cd /ros2_ws/src/ros-navigation-autonomy-stack
@@ -122,3 +172,5 @@ cd /ros2_ws/src/ros-navigation-autonomy-stack
 ```
 
 Now you can place goal points/poses in RVIZ by clicking the "Goalpoint" button. The robot will navigate to the point, running both local and global planners for dynamic obstacle avoidance.
+
+</details>

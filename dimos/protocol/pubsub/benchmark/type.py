@@ -17,20 +17,9 @@
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-import pickle
-import threading
-import time
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic
 
-import pytest
-
-from dimos.msgs.geometry_msgs import Vector3
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
-from dimos.protocol.pubsub.memory import Memory
-from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
 from dimos.protocol.pubsub.spec import MsgT, PubSub, TopicT
-from dimos.utils.data import get_data
 
 MsgGen = Callable[[int], tuple[TopicT, MsgT]]
 
@@ -38,7 +27,7 @@ PubSubContext = Callable[[], AbstractContextManager[PubSub[TopicT, MsgT]]]
 
 
 @dataclass
-class TestCase(Generic[TopicT, MsgT]):
+class Case(Generic[TopicT, MsgT]):
     pubsub_context: PubSubContext[TopicT, MsgT]
     msg_gen: MsgGen[TopicT, MsgT]
 
@@ -49,7 +38,7 @@ class TestCase(Generic[TopicT, MsgT]):
         return 2
 
 
-TestData = Sequence[TestCase[Any, Any]]
+TestData = Sequence[Case[Any, Any]]
 
 
 def _format_size(size_bytes: int) -> str:

@@ -8,7 +8,7 @@ from PIL import Image as PILImage
 
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
+from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
 
 
 class MoondreamHostedVlModel(VlModel):
@@ -107,29 +107,41 @@ class MoondreamHostedVlModel(VlModel):
 
         return image_detections
 
-    def point(self, image: Image, query: str) -> list[tuple[float, float]]:
-        """Get coordinates of specific objects in an image.
+    def query_points(
+        self, image: Image, query: str, **kwargs: object
+    ) -> ImageDetections2D[Detection2DPoint]:
+        """Detect point locations using Moondream's hosted point method.
 
         Args:
             image: Input image
-            query: Object query
+            query: Object query (e.g., "person's head", "center of the ball")
 
         Returns:
-            List of (x, y) pixel coordinates
+            ImageDetections2D containing detected points
         """
         pil_image = self._to_pil_image(image)
         result = self._client.point(pil_image, query)
-        points = result.get("points", [])
 
-        pixel_points = []
+        image_detections: ImageDetections2D[Detection2DPoint] = ImageDetections2D(image)
         height, width = image.height, image.width
 
-        for p in points:
-            x_norm = p.get("x", 0.0)
-            y_norm = p.get("y", 0.0)
-            pixel_points.append((x_norm * width, y_norm * height))
+        for track_id, point in enumerate(result.get("points", [])):
+            x = point.get("x", 0.0) * width
+            y = point.get("y", 0.0) * height
 
-        return pixel_points
+            detection = Detection2DPoint(
+                x=x,
+                y=y,
+                name=query,
+                ts=image.ts,
+                image=image,
+                track_id=track_id,
+            )
+
+            if detection.is_valid():
+                image_detections.detections.append(detection)
+
+        return image_detections
 
     def stop(self) -> None:
         pass

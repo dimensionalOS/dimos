@@ -133,6 +133,7 @@ def test_mcp_module_handles_hidden_and_errors() -> None:
     assert "Error:" in response["result"]["content"][0]["text"]
 
 
+@pytest.mark.integration
 def test_mcp_end_to_end_lcm_bridge() -> None:
     try:
         import lcm  # type: ignore[import-untyped]

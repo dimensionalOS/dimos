@@ -24,6 +24,7 @@ OPTIONAL_ERROR_SUBSTRINGS = {
 }
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("blueprint_name", all_blueprints.keys())
 def test_all_blueprints_are_valid(blueprint_name: str) -> None:
     """Test that all blueprints in all_blueprints are valid ModuleBlueprintSet instances."""

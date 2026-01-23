@@ -1,5 +1,6 @@
 <div align="center">
    <img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/15283d94-ad95-42c9-abd5-6565a222a837" /> </a>
+    <h4 align="center">Program Atoms</h4>
     <h4 align="center">The Agentive Operating System for Generalist Robotics</h4>
 
 
@@ -16,27 +17,54 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 
 <p align="center">
-  <a href="#how-does-dimensional-work">Key Features</a> •
-  <a href="#how-do-i-get-started">How To Use</a> •
-  <a href="#contributing--building-from-source">Contributing</a> •
-  <a href="#license">License</a>
+  <a href="#the-dimensional-framework">Features</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#documentation">Documentation</a> •
+  <a href="#development">Development</a> •
+  <a href="#contributing">Contributing</a>
 </p>
 
 </div>
 
 > \[!NOTE]
 >
-> **Active Beta: Expect Breaking Changes**
+> ⚠️ **Alpha Pre-Release: Expect Breaking Changes** ⚠️
 
-# What is Dimensional?
+# The Dimensional Framework
 
-DimOS is both a language-agnostic framework and a Python-first library for robot control. It has optional ROS integration and is designed to let AI agents invoke tools (skills), directly access sensor and state data, and generate complex emergent behaviors.
+Dimensional is the open-source, universal operating system for generalist robotics. On DimOS, developers
+can design, build, and run physical ("dimensional") applications that run on any humanoid, quadruped,
+drone, or wheeled embodiment.
 
-The python library comes with a rich set of integrations; visualizers, spatial reasoners, planners, simulators (mujoco, Isaac Sim, etc.), robot state/action primitives, and more.
+**Programming physical robots is now as simple as programming digital software**: Composable, Modular, Repeatable.
 
-# How do I get started?
+Core Features:
+- **Navigation:** Production navigation stack for any robot with lidar: SLAM, terrain analysis, collision
+  avoidance, route planning, exploration.
+- **Dashboard:** The DimOS command center gives developers the tooling to debug, visualize, compose, and
+  test dimensional applications in real-time. Control your robot via waypoint, agent query, keyboard,
+  VR, more.
+- **Modules:** Standalone components (equivalent to ROS nodes) that publish and subscribe to typed
+  In/Out streams that communicate over DimOS transports. The building blocks of Dimensional.
+- **Agents (experimental):** DimOS agents understand physical space, subscribe to sensor streams, and call
+  **physical** tools. Emergence appears when agents have physical agency.
+- **MCP (experimental):** Vibecode robots by giving your AI editor (Cursor, Claude Code) MCP access to run
+  physical commands (move forward 1 meter, jump, etc.).
+- **Manipulation (unreleased)** Classical (OMPL, IK, GraspGen), Agentive (TAMP), and VLA-native manipulation stack runs out-of-the-box on any DimOS supported arm embodiment.
+- **Transport/Middleware:** DimOS native Python transport supports LCM, DDS, and SHM, plus ROS 2.
+- **Robot integrations:** We integrate with the majority of hardware OEMs and are moving fast to cover
+  them all. Supported and/or immediate roadmap:
 
-### Installation
+  | Category | Platforms |
+  | --- | --- |
+  | Quadrupeds | Unitree Go2, Unitree B1, AGIBOT D1 Max/Pro, Dobot Rover |
+  | Drones | DJI Mavic 2, Holybro x500 |
+  | Humanoids | Unitree G1, Booster K1, AGIBOT X2, ABIBOT A2 |
+  | Arms | OpenARMs, xARM 6/7, AgileX Piper, HighTorque Pantera |
+
+# Getting Started
+
+## Installation
 
 Supported/tested matrix:
 
@@ -73,7 +101,7 @@ uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
 
 <!-- command for testing pre launch: `GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" uv pip install 'dimos[unitree] @ git+ssh://git@github.com/dimensionalOS/dimos.git@dev'` -->
 
-### Dimensional Usage
+### Test Installation
 
 #### Control a robot in a simulation (no robot required)
 
@@ -114,50 +142,116 @@ source .venv/bin/activate
 humancli
 ```
 
-## Using DimOS as a Library
+# The Dimensional Library
 
-### Documentation & Concepts
+### Modules
 
-If you you need more information on how DimOS works, check out the following links:
+Modules are subsystems on a robot that operate autonomously and communicate with other subsystems using standardized messages. See below a simple robot connection module that sends streams of continuous `cmd_vel` to the robot and recieves `color_image` to a simple `Listener` module.
 
-- [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are singleton python classes.
-- [Streams](/docs/api/sensor_streams/README.md): How modules communicate, a Pub / Sub system.
-- [Blueprints](/docs/concepts/blueprints.md): a way to group modules together and define their connections to each other.
-- [RPC](/docs/concepts/blueprints.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
-- [Skills](/docs/concepts/blueprints.md#defining-skills): An RPC function, except it can be called by an AI agent (a tool for an AI).
-- Agents: AI that has an objective, access to stream data, and is capable of calling skills as tools.
+```py
+import threading, time, numpy as np
+from dimos.core import In, Module, Out, rpc
+from dimos.core.blueprints import autoconnect
+from dimos.msgs.geometry_msgs import Twist
+from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 
-### Simple DimOS Application
+class RobotConnection(Module):
+    cmd_vel: In[Twist]
+    color_image: Out[Image]
 
-While `dimos run unitree-go2` is a good demo, we can recreate it with a few lines of code.
+    @rpc
+    def start(self):
+        threading.Thread(target=self._image_loop, daemon=True).start()
 
-Save and run the following to get behavior like `dimos run unitree-go2`:
+    def _image_loop(self):
+        while True:
+            img = Image.from_numpy(
+                np.zeros((120, 160, 3), np.uint8),
+                format=ImageFormat.RGB,
+                frame_id="camera_optical",
+            )
+            self.color_image.publish(img)
+            time.sleep(0.2)
 
-```python
-from dimos.robot.unitree_webrtc.unitree_go2_blueprints import autoconnect, basic, cost_mapper, voxel_mapper, replanning_a_star_planner, wavefront_frontier_explorer
+class Listener(Module):
+    color_image: In[Image]
 
-nav = autoconnect(
-    basic,
-    voxel_mapper(voxel_size=0.3),
-    cost_mapper(),
-).global_config(simulation=True)
+    @rpc
+    def start(self):
+        self.color_image.subscribe(lambda img: print(f"image {img.width}x{img.height}"))
 
-nav.build().loop()
+if __name__ == "__main__":
+    autoconnect(
+        RobotConnection.blueprint(),
+        Listener.blueprint(),
+    ).build().loop()
 ```
 
-## Contributing / Building From Source
+### Blueprints
 
-We welcome contributions! Open up the [Development Guide](/docs/development/README.md) to see how to hack on DimOS and make PR's and  our [Bounty List](https://docs.google.com/spreadsheets/d/1tzYTPvhO7Lou21cU6avSWTQOhACl5H8trSvhtYtsk8U/edit?usp=sharing) for open requests for contributions. If you would like to suggest a feature or sponsor a bounty, open an issue.
+Blueprints are how robots are constructed on Dimensional; instructions for how to construct and wire modules. You compose them with
+`autoconnect(...)`, which connects streams by `(name, type)` and returns a `ModuleBlueprintSet`.
 
+Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `In[]` and `Out[]` message types.
+
+A blueprint example that connects the image stream from a robot to an LLM Agent for reasoning and action execution.
+```py
+from dimos.core.blueprints import autoconnect
+from dimos.core.transport import LCMTransport
+from dimos.msgs.sensor_msgs import Image
+from dimos.robot.unitree.connection.go2 import go2_connection
+from dimos.agents.agent import llm_agent
+
+blueprint = autoconnect(
+    go2_connection(),
+    llm_agent(),
+).transports({("color_image", Image): LCMTransport("/color_image", Image)})
+
+# Run the blueprint
+blueprint.build().loop()
+```
+
+# Development
+
+```sh
+GIT_LFS_SKIP_SMUDGE=1 git clone -b dev https://github.com/dimensionalOS/dimos.git
+cd dimos
+```
+
+Then pick one of two development paths:
+
+Option A: Devcontainer
+```sh
+./bin/dev
+```
+
+Option B: Editable install with uv
+```sh
+uv venv && . .venv/bin/activate
+uv pip install -e '.[base,dev]'
+```
+
+For system deps, Nix setups, and testing, see `/docs/development/README.md`.
 
 ### Monitoring & Debugging
 
-In addition to rerun logging, DimOS comes with a number of monitoring tools:
+DimOS comes with a number of monitoring tools:
 - Run `lcmspy` to see how fast messages are being published on streams.
 - Run `skillspy` to see how skills are being called, how long they are running, which are active, etc.
 - Run `agentspy` to see the agent's status over time.
 - If you suspect there is a bug within DimOS itself, you can enable extreme logging by prefixing the dimos command with `DIMOS_LOG_LEVEL=DEBUG RERUN_SAVE=1 `. Ex: `DIMOS_LOG_LEVEL=DEBUG RERUN_SAVE=1 dimos --replay run unitree-go2`
 
-# License
 
-DimOS is licensed under the Apache License, Version 2.0.
+# Documentation
+
+Concepts:
+- [Modules](/docs/concepts/modules.md): The building blocks of DimOS, modules run in parallel and are singleton python classes.
+- [Streams](/docs/api/sensor_streams/index.md): How modules communicate, a Pub / Sub system.
+- [Blueprints](/dimos/core/README_BLUEPRINTS.md): a way to group modules together and define their connections to each other.
+- [RPC](/dimos/core/README_BLUEPRINTS.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
+- [Skills](/dimos/core/README_BLUEPRINTS.md#defining-skills): An RPC function, except it can be called by an AI agent (a tool for an AI).
+
+## Contributing
+
+We welcome contributions! See our [Bounty List](https://docs.google.com/spreadsheets/d/1tzYTPvhO7Lou21cU6avSWTQOhACl5H8trSvhtYtsk8U/edit?usp=sharing) for open requests for contributions. If you would like to suggest a feature or sponsor a bounty, open an issue.

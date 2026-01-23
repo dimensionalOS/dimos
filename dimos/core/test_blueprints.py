@@ -162,6 +162,7 @@ def test_global_config() -> None:
     assert blueprint_set.global_config_overrides["option2"] == 42
 
 
+@pytest.mark.integration
 def test_build_happy_path() -> None:
     pubsub.lcm.autoconf()
 
@@ -272,6 +273,7 @@ def test_that_remapping_can_resolve_conflicts() -> None:
     blueprint_set_remapped._verify_no_name_conflicts()
 
 
+@pytest.mark.integration
 def test_remapping() -> None:
     """Test that remapping connections works correctly."""
     pubsub.lcm.autoconf()
@@ -351,6 +353,7 @@ def test_future_annotations_support() -> None:
     )
 
 
+@pytest.mark.integration
 def test_future_annotations_autoconnect() -> None:
     """Test that autoconnect works with modules using `from __future__ import annotations`."""
 

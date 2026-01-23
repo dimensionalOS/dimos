@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.reactive import backpressure
 from dimos.utils.testing import TimedSensorReplay
@@ -24,7 +24,7 @@ from dimos.utils.testing import TimedSensorReplay
 
 @pytest.mark.tool
 def test_replay_all() -> None:
-    lidar_store = TimedSensorReplay("unitree/lidar", autocast=LidarMessage.from_msg)
+    lidar_store = TimedSensorReplay("unitree/lidar", autocast=pointcloud2_from_webrtc_lidar)
     odom_store = TimedSensorReplay("unitree/odom", autocast=Odometry.from_msg)
     video_store = TimedSensorReplay("unitree/video")
 

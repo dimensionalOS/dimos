@@ -21,7 +21,8 @@ from typing import cast, overload
 from reactivex import from_iterable, interval, operators as ops
 from reactivex.observable import Observable
 
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage, RawLidarMsg
+from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.robot.unitree_webrtc.type.lidar import RawLidarMsg, pointcloud2_from_webrtc_lidar
 
 
 class Mock:
@@ -32,16 +33,16 @@ class Mock:
         self.cnt = 0
 
     @overload
-    def load(self, name: int | str, /) -> LidarMessage: ...
+    def load(self, name: int | str, /) -> PointCloud2: ...
     @overload
-    def load(self, *names: int | str) -> list[LidarMessage]: ...
+    def load(self, *names: int | str) -> list[PointCloud2]: ...
 
-    def load(self, *names: int | str) -> LidarMessage | list[LidarMessage]:
+    def load(self, *names: int | str) -> PointCloud2 | list[PointCloud2]:
         if len(names) == 1:
             return self.load_one(names[0])
         return list(map(lambda name: self.load_one(name), names))
 
-    def load_one(self, name: int | str) -> LidarMessage:
+    def load_one(self, name: int | str) -> PointCloud2:
         if isinstance(name, int):
             file_name = f"/lidar_data_{name:03d}.pickle"
         else:
@@ -49,9 +50,9 @@ class Mock:
 
         full_path = self.root + file_name
         with open(full_path, "rb") as f:
-            return LidarMessage.from_msg(cast("RawLidarMsg", pickle.load(f)))
+            return pointcloud2_from_webrtc_lidar(cast("RawLidarMsg", pickle.load(f)))
 
-    def iterate(self) -> Iterator[LidarMessage]:
+    def iterate(self) -> Iterator[PointCloud2]:
         pattern = os.path.join(self.root, "lidar_data_*.pickle")
         print("loading data", pattern)
         for file_path in sorted(glob.glob(pattern)):
@@ -67,7 +68,7 @@ class Mock:
             ops.map(lambda x: x[0] if isinstance(x, tuple) else x),
         )
 
-    def save_stream(self, observable: Observable[LidarMessage]):  # type: ignore[no-untyped-def]
+    def save_stream(self, observable: Observable[PointCloud2]):  # type: ignore[no-untyped-def]
         return observable.pipe(ops.map(lambda frame: self.save_one(frame)))  # type: ignore[no-untyped-call]
 
     def save(self, *frames):  # type: ignore[no-untyped-def]
@@ -83,9 +84,8 @@ class Mock:
         if os.path.isfile(full_path):
             raise Exception(f"file {full_path} exists")
 
-        if frame.__class__ == LidarMessage:
-            frame = frame.raw_msg
-
+        # Note: This saves the PointCloud2 directly. For raw message saving,
+        # use the raw message before conversion.
         with open(full_path, "wb") as f:
             pickle.dump(frame, f)
 

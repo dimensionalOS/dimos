@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.simulation.mujoco.constants import VIDEO_HEIGHT, VIDEO_WIDTH
 from dimos.utils.logging_config import setup_logger
 
@@ -148,7 +148,7 @@ class ShmReader:
         odom_array[7] = timestamp
         self._increment_seq(2)
 
-    def write_lidar(self, lidar_msg: LidarMessage) -> None:
+    def write_lidar(self, lidar_msg: PointCloud2) -> None:
         data = pickle.dumps(lidar_msg)
         data_len = len(data)
 
@@ -242,7 +242,7 @@ class ShmWriter:
         cmd_array[3:6] = angular
         self._increment_seq(3)
 
-    def read_lidar(self) -> tuple[LidarMessage | None, int]:
+    def read_lidar(self) -> tuple[PointCloud2 | None, int]:
         seq = self._get_seq(4)
         if seq > 0:
             # Read length

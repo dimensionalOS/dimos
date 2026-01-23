@@ -98,7 +98,7 @@ class CostMapper(Module):
                         grid.to_rerun(
                             mode="mesh",
                             colormap=None,  # grayscale / foxglove-style
-                            z_offset=0.05,
+                            z_offset=0.07,
                         ),
                     )
 
