@@ -71,9 +71,9 @@ Supported/tested matrix:
 | Platform | Status | Tested | Required System deps |
 | --- | --- | --- | --- |
 | Linux | supported | Ubuntu 22.04, 24.04 | See below |
-| macOS | experimental beta | not CI-tested | `brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python` |
+| macOS | experimental beta | not CI-tested | `brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python; export ARCHFLAGS="-arch $(uname -m)"` |
 
-Note: macOS is usable but expect inconsistent/flaky behavior (rather than hard errors/crashes).
+Note: macOS is usable but expect inconsistent/flaky behavior (rather than hard errors/crashes). Setting `ARCHFLAGS` is likely optional, but some systems it is required to avoid a `clang` error.
 
 ```sh
 sudo apt-get update
