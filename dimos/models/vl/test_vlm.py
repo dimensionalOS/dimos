@@ -1,3 +1,4 @@
+import os
 import time
 from typing import TYPE_CHECKING
 
@@ -8,6 +9,7 @@ import pytest
 
 from dimos.core import LCMTransport
 from dimos.models.vl.moondream import MoondreamVlModel
+from dimos.models.vl.moondream_hosted import MoondreamHostedVlModel
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import ImageDetections2D
@@ -26,11 +28,15 @@ if TYPE_CHECKING:
     "model_class,model_name",
     [
         (MoondreamVlModel, "Moondream"),
+        (MoondreamHostedVlModel, "Moondream Hosted"),
         (QwenVlModel, "Qwen"),
     ],
 )
 @pytest.mark.gpu
 def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> None:
+    if model_class is MoondreamHostedVlModel and 'MOONDREAM_API_KEY' not in os.environ:
+        pytest.skip("Need MOONDREAM_API_KEY to run")
+
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 
     print(f"Testing {model_name}")
@@ -94,12 +100,17 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
     "model_class,model_name",
     [
         (MoondreamVlModel, "Moondream"),
+        (MoondreamHostedVlModel, "Moondream Hosted"),
         (QwenVlModel, "Qwen"),
     ],
 )
 @pytest.mark.gpu
 def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> None:
     """Test VLM point detection capabilities."""
+
+    if model_class is MoondreamHostedVlModel and 'MOONDREAM_API_KEY' not in os.environ:
+        pytest.skip("Need MOONDREAM_API_KEY to run")
+
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 
     print(f"Testing {model_name} point detection")

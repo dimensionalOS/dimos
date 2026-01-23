@@ -29,12 +29,12 @@ Out: box "(image, pointcloud)" rad 5px fit wid 170% ht 170%
 
 ## Basic Usage
 
-Below we setup replay of real camera and lidar data from the Unitree Go2 robot, you can check if interested
+Below we set up replay of real camera and lidar data from the Unitree Go2 robot. You can check it if you're interested.
 
 <details>
 <summary>Stream Setup</summary>
 
-You can read more about [sensor storage here](storage_replay.md) and [LFS data store here](/docs/data.md)
+You can read more about [sensor storage here](storage_replay.md) and [LFS data store here](/docs/data.md).
 
 ```python session=align no-result
 from reactivex import Subject
@@ -47,7 +47,7 @@ import reactivex as rx
 video_replay = TimedSensorReplay("unitree_go2_bigoffice/video")
 lidar_replay = TimedSensorReplay("unitree_go2_bigoffice/lidar")
 
-# this is a bit tricky, we find the first video frame timestamp, then add 2 seconds to it
+# This is a bit tricky. We find the first video frame timestamp, then add 2 seconds to it.
 seek_ts = video_replay.first_timestamp() + 2
 
 # Lists to collect items as they flow through streams
@@ -70,9 +70,9 @@ lidar_stream = lidar_replay.stream(from_timestamp=seek_ts, duration=2.0).pipe(
 
 </details>
 
-Streams would normally come from an actual robot into your module via `IN` inputs, [`detection/module3D.py`](/dimos/perception/detection/module3D.py#L11) is a good example of this.
+Streams would normally come from an actual robot into your module via `IN` inputs. [`detection/module3D.py`](/dimos/perception/detection/module3D.py#L11) is a good example of this.
 
-Assume we have them, let's align them.
+Assume we have them. Let's align them.
 
 ```python session=align
 # Align video (primary) with lidar (secondary)
@@ -166,7 +166,7 @@ plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 <!--Result:-->
 ![output](assets/alignment_timeline.png)
 
-if we loosen up our match tolerance we might get multiple pairs matching the same lidar frame
+If we loosen up our match tolerance, we might get multiple pairs matching the same lidar frame.
 
 ```python session=align
 aligned_pairs = align_timestamped(
@@ -194,9 +194,9 @@ plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 <!--Result:-->
 ![output](assets/alignment_timeline2.png)
 
-## We can combine frame alignment with a quality filter
+## Combine Frame Alignment with a Quality Filter
 
-more on [quality filtering here](quality_filter.md)
+More on [quality filtering here](quality_filter.md).
 
 ```python session=align
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
@@ -239,7 +239,7 @@ plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 <!--Result:-->
 ![output](assets/alignment_timeline3.png)
 
-We are very picky but data is high quality. best frame, with closest lidar match in this window.
+We are very picky but data is high quality. Best frame, with closest lidar match in this window.
 
 ## How It Works
 

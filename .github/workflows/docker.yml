@@ -205,6 +205,21 @@ jobs:
       cmd: "pytest -m lcm"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
+  run-integration-tests:
+    needs: [check-changes, dev]
+    if: always()
+    uses: ./.github/workflows/tests.yml
+    secrets: inherit
+    with:
+      should-run: ${{
+        needs.check-changes.result == 'success' &&
+        ((needs.dev.result == 'success') ||
+        (needs.dev.result == 'skipped' &&
+        needs.check-changes.outputs.tests == 'true'))
+        }}
+      cmd: "pytest -m integration"
+      dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+
   run-mypy:
     needs: [check-changes, ros-dev]
     if: always()

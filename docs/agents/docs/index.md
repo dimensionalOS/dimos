@@ -2,27 +2,31 @@
 # Code Blocks
 
 **All code blocks must be executable.**
-Never write illustrative/pseudo code blocks.
+Never write illustrative/pseudocode blocks.
 If you're showing an API usage pattern, create a minimal working example that actually runs. This ensures documentation stays correct as the codebase evolves.
 
-After writing a code block in your markdown file, you can run it by executing
-`md-babel-py run document.md`
+After writing a code block in your markdown file, you can run it by executing:
+```bash
+md-babel-py run document.md
+```
 
-more information on this tool is in [codeblocks](/docs/agents/docs_agent/codeblocks.md)
+More information on this tool is in [codeblocks](/docs/agents/docs/codeblocks.md).
 
 
 # Code or Docs Links
 
-After adding a link to a doc run
+After adding a link to a doc, run
 
-`doclinks document.md`
+```bash
+doclinks document.md
+```
 
 ### Code file references
 ```markdown
 See [`service/spec.py`](/dimos/protocol/service/spec.py) for the implementation.
 ```
 
-After running doclinks, becomes:
+After running doclinks, it becomes:
 ```markdown
 See [`service/spec.py`](/dimos/protocol/service/spec.py) for the implementation.
 ```
@@ -48,7 +52,7 @@ Becomes:
 See [Configuration](/docs/concepts/configuration.md) for more details.
 ```
 
-More information on this in [doclinks](/docs/agents/docs_agent/doclinks.md)
+More information on this is in [doclinks](/docs/agents/docs/doclinks.md).
 
 
 # Pikchr

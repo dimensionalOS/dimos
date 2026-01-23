@@ -32,7 +32,7 @@ Chain operators using `.pipe()`:
 # Transform values: multiply by 2, then filter > 4
 result = []
 
-# we build another observable, it's passive until subscribe is called
+# We build another observable. It's passive until `subscribe` is called.
 observable = source.pipe(
     ops.map(lambda x: x * 2),
     ops.filter(lambda x: x > 4),
@@ -156,7 +156,7 @@ print("throttle_first() got:", results)
 throttle_first() got: [0, 3, 6, 9]
 ```
 
-### Difference between sample and throttle_first
+### Difference Between `sample` and `throttle_first`
 
 ```python session=rx
 # sample: takes LATEST value at each interval tick

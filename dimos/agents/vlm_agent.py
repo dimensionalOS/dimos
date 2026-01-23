@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from dimos.agents.llm_init import build_llm, build_system_message
 from dimos.agents.spec import AgentSpec, AnyMessage

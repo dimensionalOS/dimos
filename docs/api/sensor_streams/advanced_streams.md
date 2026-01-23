@@ -2,7 +2,7 @@
 
 > **Prerequisite:** Read [ReactiveX Fundamentals](reactivex.md) first for Observable basics.
 
-## Backpressure and parallel subscribers to hardware
+## Backpressure and Parallel Subscribers to Hardware
 
 In robotics, we deal with hardware that produces data at its own pace - a camera outputs 30fps whether you're ready or not. We can't tell the camera to slow down. And we often have multiple consumers: one module wants every frame for recording, another runs slow ML inference and only needs the latest frame.
 
@@ -43,7 +43,7 @@ from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 from dimos.utils.reactive import backpressure
 
-# we need this scaffolding here, normally dimos handles this
+# We need this scaffolding here. Normally DimOS handles this.
 scheduler = ThreadPoolScheduler(max_workers=4)
 
 # Simulate fast source
@@ -103,7 +103,7 @@ The `LATEST` strategy means: when the slow subscriber finishes processing, it ge
 
 ### Usage in modules
 
-Most module streams offer backpressured observables
+Most module streams offer backpressured observables.
 
 ```python session=bp
 from dimos.core import Module, In
@@ -122,14 +122,34 @@ class MLModel(Module):
 
 ```
 
-
-
-
-
-
 ## Getting Values Synchronously
 
-Sometimes you don't want a stream - you just want to call a function and get the latest value. We provide two approaches:
+Sometimes you don't want a stream, you just want to call a function and get the latest value.
+
+If you are doing this periodically as a part of a processing loop, it is very likely that your code will be much cleaner and safer using actual reactivex pipeline. So bias towards checking our [reactivex quick guide](reactivex.md) and [official docs](https://rxpy.readthedocs.io/)
+
+(TODO we should actually make this example actually executable)
+
+```python skip
+    self.color_image.observable().pipe(
+        # takes the best image from a stream every 200ms,
+        # ensuring we are feeding our detector with highest quality frames
+        quality_barrier(lambda x: x["quality"], target_frequency=0.2),
+
+        # converts Image into Person detections
+        ops.map(detect_person),
+
+        # converts Detection2D to Twist pointing in the direction of a detection
+        ops.map(detection2d_to_twist),
+
+        # emits the latest value every 50ms making our control loop run at 20hz
+        # despite detections running at 200ms
+        ops.sample(0.05),
+    ).subscribe(self.twist.publish) # shoots off the Twist out of the module
+```
+
+
+If you'd still like to switch to synchronous fetching, we provide two approaches, `getter_hot()` and `getter_cold()`
 
 |                  | `getter_hot()`                 | `getter_cold()`                  |
 |------------------|--------------------------------|----------------------------------|
@@ -137,6 +157,85 @@ Sometimes you don't want a stream - you just want to call a function and get the
 | **Read speed**   | Instant (value already cached) | Slower (waits for value)         |
 | **Resources**    | Keeps connection open          | Opens/closes each call           |
 | **Use when**     | Frequent reads, need latest    | Occasional reads, save resources |
+
+<details>
+<summary>diagram source</summary>
+
+```pikchr fold output=assets/getter_hot_cold.svg
+color = white
+fill = none
+
+H_Title: box "getter_hot()" rad 5px fit wid 170% ht 170%
+
+Sub: box "subscribe" rad 5px fit wid 170% ht 170% with .n at H_Title.s + (0, -0.5in)
+arrow from H_Title.s to Sub.n
+arrow right from Sub.e
+Cache: box "Cache" rad 5px fit wid 170% ht 170%
+
+# blocking box around subscribe->cache (one-time setup)
+Blk0: box dashed color 0x5c9ff0 with .nw at Sub.nw + (-0.1in, 0.25in) wid (Cache.e.x - Sub.w.x + 0.2in) ht 0.7in rad 5px
+text "blocking" italic with .n at Blk0.n + (0, -0.05in)
+
+arrow right from Cache.e
+Getter: box "getter" rad 5px fit wid 170% ht 170%
+
+arrow from Getter.e right 0.3in then down 0.25in then right 0.2in
+G1: box invis "call()" color 0x8cbdf2 fit wid 150%
+arrow right 0.4in from G1.e
+box invis "instant" fit wid 150%
+
+arrow from Getter.e right 0.3in then down 0.7in then right 0.2in
+G2: box invis "call()" color 0x8cbdf2 fit wid 150%
+arrow right 0.4in from G2.e
+box invis "instant" fit wid 150%
+
+text "always subscribed" italic with .n at Blk0.s + (0, -0.1in)
+
+
+# === getter_cold section ===
+C_Title: box "getter_cold()" rad 5px fit wid 170% ht 170% with .nw at H_Title.sw + (0, -1.6in)
+
+arrow down 0.3in from C_Title.s
+ColdGetter: box "getter" rad 5px fit wid 170% ht 170%
+
+# Branch to first call
+arrow from ColdGetter.e right 0.3in then down 0.3in then right 0.2in
+Cold1: box invis "call()" color 0x8cbdf2 fit wid 150%
+arrow right 0.4in from Cold1.e
+Sub1: box invis "subscribe" fit wid 150%
+arrow right 0.4in from Sub1.e
+Wait1: box invis "wait" fit wid 150%
+arrow right 0.4in from Wait1.e
+Val1: box invis "value" fit wid 150%
+arrow right 0.4in from Val1.e
+Disp1: box invis "dispose  " fit wid 150%
+
+# blocking box around first row
+Blk1: box dashed color 0x5c9ff0 with .nw at Cold1.nw + (-0.1in, 0.25in) wid (Disp1.e.x - Cold1.w.x + 0.2in) ht 0.7in rad 5px
+text "blocking" italic with .n at Blk1.n + (0, -0.05in)
+
+# Branch to second call
+arrow from ColdGetter.e right 0.3in then down 1.2in then right 0.2in
+Cold2: box invis "call()" color 0x8cbdf2 fit wid 150%
+arrow right 0.4in from Cold2.e
+Sub2: box invis "subscribe" fit wid 150%
+arrow right 0.4in from Sub2.e
+Wait2: box invis "wait" fit wid 150%
+arrow right 0.4in from Wait2.e
+Val2: box invis "value" fit wid 150%
+arrow right 0.4in from Val2.e
+Disp2: box invis "dispose  " fit wid 150%
+
+# blocking box around second row
+Blk2: box dashed color 0x5c9ff0 with .nw at Cold2.nw + (-0.1in, 0.25in) wid (Disp2.e.x - Cold2.w.x + 0.2in) ht 0.7in rad 5px
+text "blocking" italic with .n at Blk2.n + (0, -0.05in)
+```
+
+</details>
+
+<!--Result:-->
+![output](assets/getter_hot_cold.svg)
+
 
 **Prefer `getter_cold()`** when you can afford to wait and warmup isn't expensive. It's simpler (no cleanup needed) and doesn't hold resources. Only use `getter_hot()` when you need instant reads or the source is expensive to start.
 
@@ -151,7 +250,10 @@ from reactivex import operators as ops
 from dimos.utils.reactive import getter_hot
 
 source = rx.interval(0.1).pipe(ops.take(10))
-get_val = getter_hot(source, timeout=5.0)
+
+get_val = getter_hot(source, timeout=5.0) # blocks until first message, with 5s timeout
+# alternatively not to block (but get_val() might return None)
+# get_val = getter_hot(source, nonblocking=True)
 
 print("first call:", get_val())  # instant - value already there
 time.sleep(0.35)

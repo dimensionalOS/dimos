@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import json
+from typing import Any
 
 from dimos.protocol.pubsub.memory import Memory, MemoryWithJSONEncoder
 
@@ -24,7 +25,7 @@ def test_json_encoded_pubsub() -> None:
     pubsub = MemoryWithJSONEncoder()
     received_messages = []
 
-    def callback(message, topic) -> None:
+    def callback(message: Any, topic: str) -> None:
         received_messages.append(message)
 
     # Subscribe to a topic
@@ -56,7 +57,7 @@ def test_json_encoding_edge_cases() -> None:
     pubsub = MemoryWithJSONEncoder()
     received_messages = []
 
-    def callback(message, topic) -> None:
+    def callback(message: Any, topic: str) -> None:
         received_messages.append(message)
 
     pubsub.subscribe("edge_cases", callback)
@@ -84,10 +85,10 @@ def test_multiple_subscribers_with_encoding() -> None:
     received_messages_1 = []
     received_messages_2 = []
 
-    def callback_1(message, topic) -> None:
+    def callback_1(message: Any, topic: str) -> None:
         received_messages_1.append(message)
 
-    def callback_2(message, topic) -> None:
+    def callback_2(message: Any, topic: str) -> None:
         received_messages_2.append(f"callback_2: {message}")
 
     pubsub.subscribe("json_topic", callback_1)
@@ -130,9 +131,9 @@ def test_data_actually_encoded_in_transit() -> None:
     class SpyMemory(Memory):
         def __init__(self) -> None:
             super().__init__()
-            self.raw_messages_received = []
+            self.raw_messages_received: list[tuple[str, Any, type]] = []
 
-        def publish(self, topic: str, message) -> None:
+        def publish(self, topic: str, message: Any) -> None:
             # Capture what actually gets published
             self.raw_messages_received.append((topic, message, type(message)))
             super().publish(topic, message)
@@ -142,9 +143,9 @@ def test_data_actually_encoded_in_transit() -> None:
         pass
 
     pubsub = SpyMemoryWithJSON()
-    received_decoded = []
+    received_decoded: list[Any] = []
 
-    def callback(message, topic) -> None:
+    def callback(message: Any, topic: str) -> None:
         received_decoded.append(message)
 
     pubsub.subscribe("test_topic", callback)

@@ -24,7 +24,7 @@ from dimos.core import (
     rpc,
 )
 from dimos.core.testing import MockRobotClient, dimos
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 
 assert dimos
@@ -157,7 +157,7 @@ class SpyLCMTransport(LCMTransport):
 def test_subscription(dimos, subscriber_class) -> None:
     robot = dimos.deploy(MockRobotClient)
 
-    robot.lidar.transport = SpyLCMTransport("/lidar", LidarMessage)
+    robot.lidar.transport = SpyLCMTransport("/lidar", PointCloud2)
     robot.odometry.transport = SpyLCMTransport("/odom", Odometry)
 
     subscriber = dimos.deploy(subscriber_class)
@@ -195,7 +195,7 @@ def test_subscription(dimos, subscriber_class) -> None:
 def test_get_next(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)
 
-    robot.lidar.transport = SpyLCMTransport("/lidar", LidarMessage)
+    robot.lidar.transport = SpyLCMTransport("/lidar", PointCloud2)
     robot.odometry.transport = SpyLCMTransport("/odom", Odometry)
 
     subscriber = dimos.deploy(RXPYSubscriber)
@@ -224,7 +224,7 @@ def test_get_next(dimos) -> None:
 def test_hot_getter(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)
 
-    robot.lidar.transport = SpyLCMTransport("/lidar", LidarMessage)
+    robot.lidar.transport = SpyLCMTransport("/lidar", PointCloud2)
     robot.odometry.transport = SpyLCMTransport("/odom", Odometry)
 
     subscriber = dimos.deploy(RXPYSubscriber)

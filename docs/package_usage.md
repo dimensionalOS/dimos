@@ -11,19 +11,19 @@ uv init
 Install:
 
 ```bash
-uv add dimos[dev,cpu,sim]
+uv add dimos[base,dev,unitree]
 ```
 
 Test the Unitree Go2 robot in the simulator:
 
 ```bash
-uv run dimos-robot --simulation run unitree-g1
+uv run dimos --simulation run unitree-go2
 ```
 
 Run your actual robot:
 
 ```bash
-uv run dimos-robot --robot-ip=192.168.X.XXX run unitree-g1
+uv run dimos --robot-ip=192.168.X.XXX run unitree-go2
 ```
 
 ### Without installing
@@ -31,7 +31,7 @@ uv run dimos-robot --robot-ip=192.168.X.XXX run unitree-g1
 With `uv` you can run tools without having to explicitly install:
 
 ```bash
-uvx --from dimos dimos-robot --robot-ip=192.168.X.XXX run unitree-g1
+uvx --from dimos[base,unitree] dimos --robot-ip=192.168.X.XXX run unitree-go2
 ```
 
 ## With `pip`
@@ -46,17 +46,17 @@ python -m venv .venv
 Install:
 
 ```bash
-pip install dimos[dev,cpu,sim]
+pip install dimos[base,dev,unitree]
 ```
 
 Test the Unitree Go2 robot in the simulator:
 
 ```bash
-dimos-robot --simulation run unitree-g1
+dimos --simulation run unitree-go2
 ```
 
 Run your actual robot:
 
 ```bash
-dimos-robot --robot-ip=192.168.X.XXX run unitree-g1
+dimos --robot-ip=192.168.X.XXX run unitree-go2
 ```

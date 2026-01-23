@@ -36,7 +36,6 @@ from dimos.perception.detection.type import (
 )
 from dimos.protocol.tf import TF
 from dimos.robot.unitree.connection import go2
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
@@ -44,7 +43,7 @@ from dimos.utils.testing import TimedSensorReplay
 
 class Moment(TypedDict, total=False):
     odom_frame: Odometry
-    lidar_frame: LidarMessage
+    lidar_frame: PointCloud2
     image_frame: Image
     camera_info: CameraInfo
     transforms: list[Transform]
@@ -83,7 +82,7 @@ def get_moment(tf):
         lidar_frame_result = TimedSensorReplay(f"{data_dir}/lidar").find_closest_seek(seek)
         if lidar_frame_result is None:
             raise ValueError("No lidar frame found")
-        lidar_frame: LidarMessage = lidar_frame_result
+        lidar_frame: PointCloud2 = lidar_frame_result
 
         image_frame = TimedSensorReplay(
             f"{data_dir}/video",

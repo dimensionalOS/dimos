@@ -63,8 +63,8 @@ def follow_points(lcm_spy: LcmSpy):
 def start_blueprint() -> Iterator[Callable[[str], DimosCliCall]]:
     dimos_robot_call = DimosCliCall()
 
-    def set_name_and_start(demo_name: str) -> DimosCliCall:
-        dimos_robot_call.demo_name = demo_name
+    def set_name_and_start(*demo_args: str) -> DimosCliCall:
+        dimos_robot_call.demo_args = list(demo_args)
         dimos_robot_call.start()
         return dimos_robot_call
 

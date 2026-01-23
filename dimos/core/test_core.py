@@ -28,7 +28,7 @@ from dimos.core import (
 )
 from dimos.core.testing import MockRobotClient, dimos
 from dimos.msgs.geometry_msgs import Vector3
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 
 assert dimos
@@ -36,7 +36,7 @@ assert dimos
 
 class Navigation(Module):
     mov: Out[Vector3]
-    lidar: In[LidarMessage]
+    lidar: In[PointCloud2]
     target_position: In[Vector3]
     odometry: In[Odometry]
 
@@ -113,7 +113,7 @@ def test_basic_deployment(dimos) -> None:
     nav = dimos.deploy(Navigation)
 
     # this one encodes proper LCM messages
-    robot.lidar.transport = LCMTransport("/lidar", LidarMessage)
+    robot.lidar.transport = LCMTransport("/lidar", PointCloud2)
 
     # odometry & mov using just a pickle over LCM
     robot.odometry.transport = pLCMTransport("/odom")

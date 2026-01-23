@@ -4,9 +4,15 @@ services:
     build:
       context: ../..
       dockerfile: docker/navigation/Dockerfile
-    image: dimos_autonomy_stack:jazzy
+      network: host
+      args:
+        ROS_DISTRO: ${ROS_DISTRO:-humble}
+    image: dimos_autonomy_stack:${ROS_DISTRO:-humble}
     container_name: dimos_simulation_container
     profiles: ["", "simulation"]  # Active by default (empty profile) AND with --profile simulation
+
+    # Shared memory size for ROS 2 FastDDS
+    shm_size: '8gb'
 
     # Enable interactive terminal
     stdin_open: true
@@ -14,6 +20,10 @@ services:
 
     # Network configuration - required for ROS communication
     network_mode: host
+
+    # Allow `ip link set ...` (needed by DimOS LCM autoconf) without requiring sudo
+    cap_add:
+      - NET_ADMIN
 
     # Use nvidia runtime for GPU acceleration (falls back to runc if not available)
     runtime: ${DOCKER_RUNTIME:-nvidia}
@@ -28,6 +38,9 @@ services:
       - ROBOT_CONFIG_PATH=${ROBOT_CONFIG_PATH:-mechanum_drive}
       - ROBOT_IP=${ROBOT_IP:-}
       - HARDWARE_MODE=false
+      # DDS Configuration (FastDDS)
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml
 
     # Volume mounts
     volumes:
@@ -37,9 +50,6 @@ services:
 
       # Mount Unity environment models (if available)
       - ./unity_models:/ros2_ws/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/mesh/unity:rw
-
-      # Mount the autonomy stack source for development
-      - ./ros-navigation-autonomy-stack:/ros2_ws/src/ros-navigation-autonomy-stack:rw
 
       # Mount entire dimos directory for live development
       - ../..:/workspace/dimos:rw
@@ -66,9 +76,19 @@ services:
     build:
       context: ../..
       dockerfile: docker/navigation/Dockerfile
-    image: dimos_autonomy_stack:jazzy
+      network: host
+      args:
+        ROS_DISTRO: ${ROS_DISTRO:-humble}
+    image: dimos_autonomy_stack:${ROS_DISTRO:-humble}
     container_name: dimos_hardware_container
     profiles: ["hardware"]
+
+    # Shared memory size for ROS 2 FastDDS
+    shm_size: '8gb'
+
+    # Load environment from .env file
+    env_file:
+      - .env
 
     # Enable interactive terminal
     stdin_open: true
@@ -83,9 +103,14 @@ services:
     # Override runtime for GPU support
     runtime: ${DOCKER_RUNTIME:-runc}
 
+    # Add host groups for device access (input for joystick, dialout for serial)
+    group_add:
+      - ${INPUT_GID:-995}
+      - ${DIALOUT_GID:-20}
+
     # Hardware environment variables
     environment:
-      - DISPLAY=${DISPLAY}
+      - DISPLAY=${DISPLAY:-:0}
       - QT_X11_NO_MITSHM=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
@@ -93,6 +118,9 @@ services:
       - ROBOT_CONFIG_PATH=${ROBOT_CONFIG_PATH:-mechanum_drive}
       - ROBOT_IP=${ROBOT_IP:-}
       - HARDWARE_MODE=true
+      # DDS Configuration (FastDDS)
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml
       # Mid-360 Lidar configuration
       - LIDAR_INTERFACE=${LIDAR_INTERFACE:-}
       - LIDAR_COMPUTER_IP=${LIDAR_COMPUTER_IP:-192.168.1.5}
@@ -102,6 +130,13 @@ services:
       - MOTOR_SERIAL_DEVICE=${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}
       # Network optimization
       - ENABLE_WIFI_BUFFER=true
+      # Route planner option
+      - USE_ROUTE_PLANNER=${USE_ROUTE_PLANNER:-false}
+      # RViz option
+      - USE_RVIZ=${USE_RVIZ:-false}
+      # Unitree robot configuration
+      - UNITREE_IP=${UNITREE_IP:-192.168.12.1}
+      - UNITREE_CONN=${UNITREE_CONN:-LocalAP}
 
     # Volume mounts
     volumes:
@@ -110,8 +145,6 @@ services:
       - ${HOME}/.Xauthority:/root/.Xauthority:rw
       # Mount Unity environment models (optional for hardware)
       - ./unity_models:/ros2_ws/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/mesh/unity:rw
-      # Mount the autonomy stack source
-      - ./ros-navigation-autonomy-stack:/ros2_ws/src/ros-navigation-autonomy-stack:rw
       # Mount entire dimos directory
       - ../..:/workspace/dimos:rw
       # Mount bagfiles directory
@@ -127,8 +160,8 @@ services:
 
     # Device access for hardware
     devices:
-      # Joystick controllers
-      - /dev/input:/dev/input
+      # Joystick controller (specific device to avoid permission issues)
+      - /dev/input/js0:/dev/input/js0
       # GPU access
       - /dev/dri:/dev/dri
       # Motor controller serial ports
@@ -142,8 +175,46 @@ services:
     # Working directory
     working_dir: /workspace/dimos
 
-    # Command - for hardware, we run bash as the user will launch specific scripts
-    command: bash
+    # Command - launch the real robot system with foxglove_bridge
+    command:
+      - bash
+      - -c
+      - |
+        echo "Checking joystick..."
+        ls -la /dev/input/js0 2>/dev/null || echo "Warning: No joystick found at /dev/input/js0"
+        cd /ros2_ws
+        source install/setup.bash
+        source /opt/dimos-venv/bin/activate
+        if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+            echo "Starting real robot system WITH route planner..."
+            ros2 launch vehicle_simulator system_real_robot_with_route_planner.launch.py &
+        else
+            echo "Starting real robot system (base autonomy)..."
+            ros2 launch vehicle_simulator system_real_robot.launch.py &
+        fi
+        sleep 2
+        if [ "$USE_RVIZ" = "true" ]; then
+            echo "Starting RViz2..."
+            if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+                ros2 run rviz2 rviz2 -d /ros2_ws/src/ros-navigation-autonomy-stack/src/route_planner/far_planner/rviz/default.rviz &
+            else
+                ros2 run rviz2 rviz2 -d /ros2_ws/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/rviz/vehicle_simulator.rviz &
+            fi
+        fi
+        # Launch Unitree control if ROBOT_CONFIG_PATH contains "unitree"
+        if [[ "$ROBOT_CONFIG_PATH" == *"unitree"* ]]; then
+            echo "Starting Unitree WebRTC control (IP: $UNITREE_IP, Method: $UNITREE_CONN)..."
+            ros2 launch unitree_webrtc_ros unitree_control.launch.py robot_ip:=$UNITREE_IP connection_method:=$UNITREE_CONN &
+        fi
+        # Start twist relay for Foxglove Teleop (converts Twist -> TwistStamped)
+        echo "Starting Twist relay for Foxglove Teleop..."
+        python3 /usr/local/bin/twist_relay.py &
+        # Start goal autonomy relay (publishes Joy to enable autonomy when goal_pose received)
+        echo "Starting Goal Autonomy relay for Foxglove..."
+        python3 /usr/local/bin/goal_autonomy_relay.py &
+        echo "Starting Foxglove Bridge on port 8765..."
+        echo "Connect via Foxglove Studio: ws://$(hostname -I | awk '{print $1}'):8765"
+        ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=8765
 
     # Capabilities for hardware operations
     cap_add:

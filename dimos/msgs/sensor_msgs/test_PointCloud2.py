@@ -26,7 +26,7 @@ except ImportError:
     ROSHeader = None
 
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.utils.testing import SensorReplay
 
 # Try to import ROS types for testing
@@ -38,8 +38,8 @@ except ImportError:
 
 def test_lcm_encode_decode() -> None:
     """Test LCM encode/decode preserves pointcloud data."""
-    replay = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
-    lidar_msg: LidarMessage = replay.load_one("lidar_data_021")
+    replay = SensorReplay("office_lidar", autocast=pointcloud2_from_webrtc_lidar)
+    lidar_msg: PointCloud2 = replay.load_one("lidar_data_021")
 
     binary_msg = lidar_msg.lcm_encode()
     decoded = PointCloud2.lcm_decode(binary_msg)

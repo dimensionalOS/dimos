@@ -36,6 +36,7 @@ from dimos.control.tasks.trajectory_task import (
     TrajectoryState,
 )
 from dimos.control.tick_loop import TickLoop
+from dimos.hardware.manipulators.spec import ManipulatorBackend
 from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
 
 # =============================================================================
@@ -46,9 +47,8 @@ from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
 @pytest.fixture
 def mock_backend():
     """Create a mock manipulator backend."""
-    backend = MagicMock()
+    backend = MagicMock(spec=ManipulatorBackend)
     backend.get_dof.return_value = 6
-    backend.get_joint_names.return_value = [f"joint{i + 1}" for i in range(6)]
     backend.read_joint_positions.return_value = [0.0] * 6
     backend.read_joint_velocities.return_value = [0.0] * 6
     backend.read_joint_efforts.return_value = [0.0] * 6

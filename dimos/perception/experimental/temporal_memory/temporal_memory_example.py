@@ -22,7 +22,6 @@ This example demonstrates how to:
 3. Query the temporal memory about entities and events
 """
 
-import os
 from pathlib import Path
 
 from dotenv import load_dotenv
