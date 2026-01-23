@@ -53,13 +53,12 @@ Core Features:
 - **Manipulation (unreleased)** Classical (OMPL, IK, GraspGen), Agentive (TAMP), and VLA-native manipulation stack runs out-of-the-box on any DimOS supported arm embodiment.
 - **Transport/Middleware:** DimOS native Python transport supports LCM, DDS, and SHM, plus ROS 2.
 - **Robot integrations:** We integrate with the majority of hardware OEMs and are moving fast to cover
-  them all.
+  them all. Supported and/or immediate roadmap:
 
-Supported and/or immediate roadmap:
   | Category | Platforms |
   | --- | --- |
   | Quadrupeds | Unitree Go2, Unitree B1, AGIBOT D1 Max/Pro, Dobot Rover |
-  | Drones | DJI Mavic 2, Holybro x500|
+  | Drones | DJI Mavic 2, Holybro x500 |
   | Humanoids | Unitree G1, Booster K1, AGIBOT X2, ABIBOT A2 |
   | Arms | OpenARMs, xARM 6/7, AgileX Piper, HighTorque Pantera |
 
