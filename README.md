@@ -41,15 +41,6 @@ drone, or wheeled embodiment.
 Core Features:
 - **Navigation:** Production navigation stack for any robot with lidar: SLAM, terrain analysis, collision
   avoidance, route planning, exploration.
-- **Robot integrations:** We integrate with the majority of hardware OEMs and are moving fast to cover
-  them all.
-
-  | Category | Platforms |
-  | --- | --- |
-  | Quadrupeds | Unitree Go2, Unitree B1, AGIBOT D1 Max/Pro, Dobot Rover |
-  | Drones | DJI Mavic 2, Holybro x500|
-  | Humanoids | Unitree G1, Booster K1, AGIBOT X2, ABIBOT A2 |
-  | Arms | OpenARMs, xARM 6/7, AgileX Piper, HighTorque Pantera |
 - **Dashboard:** The DimOS command center gives developers the tooling to debug, visualize, compose, and
   test dimensional applications in real-time. Control your robot via waypoint, agent query, keyboard,
   VR, more.
@@ -61,6 +52,16 @@ Core Features:
   physical commands (move forward 1 meter, jump, etc.).
 - **Manipulation (unreleased)** Classical (OMPL, IK, GraspGen), Agentive (TAMP), and VLA-native manipulation stack runs out-of-the-box on any DimOS supported arm embodiment.
 - **Transport/Middleware:** DimOS native Python transport supports LCM, DDS, and SHM, plus ROS 2.
+- **Robot integrations:** We integrate with the majority of hardware OEMs and are moving fast to cover
+  them all.
+
+Supported and/or immediate roadmap:
+  | Category | Platforms |
+  | --- | --- |
+  | Quadrupeds | Unitree Go2, Unitree B1, AGIBOT D1 Max/Pro, Dobot Rover |
+  | Drones | DJI Mavic 2, Holybro x500|
+  | Humanoids | Unitree G1, Booster K1, AGIBOT X2, ABIBOT A2 |
+  | Arms | OpenARMs, xARM 6/7, AgileX Piper, HighTorque Pantera |
 
 # Getting Started
 
