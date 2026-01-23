@@ -17,9 +17,11 @@
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 
 <p align="center">
-  <a href="#how-does-dimensional-work">Key Features</a> •
-  <a href="#how-do-i-get-started">How To Use</a> •
-  <a href="#contributing--building-from-source">Contributing</a> • <a href="#license">License</a>
+  <a href="#the-dimensional-framework">Key Features</a> •
+  <a href="#getting-started">How To Use</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#development">Development</a> •
+  <a href="#contributing">Contributing</a>
 </p>
 
 </div>
@@ -53,7 +55,7 @@ Core Features:
 
 # Getting Started
 
-### Installation
+## Installation
 
 Supported/tested matrix:
 
@@ -88,31 +90,9 @@ Option 2: Run without installing
 uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
 ```
 
-### Development (clone + setup)
-
-```sh
-GIT_LFS_SKIP_SMUDGE=1 git clone -b dev https://github.com/dimensionalOS/dimos.git
-cd dimos
-```
-
-Then pick one of two development paths:
-
-Option A: Devcontainer
-```sh
-./bin/dev
-```
-
-Option B: Editable install with uv
-```sh
-uv venv && . .venv/bin/activate
-uv pip install -e '.[base,dev]'
-```
-
-For system deps, Nix setups, and testing, see `/docs/development/README.md`.
-
 <!-- command for testing pre launch: `GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" uv pip install 'dimos[unitree] @ git+ssh://git@github.com/dimensionalOS/dimos.git@dev'` -->
 
-### Dimensional Usage
+### Test Installation
 
 #### Control a robot in a simulation (no robot required)
 
@@ -222,6 +202,28 @@ if __name__ == "__main__":
         Listener.blueprint(),
     ).build().loop()
 ```
+
+## Development (clone + setup)
+
+```sh
+GIT_LFS_SKIP_SMUDGE=1 git clone -b dev https://github.com/dimensionalOS/dimos.git
+cd dimos
+```
+
+Then pick one of two development paths:
+
+Option A: Devcontainer
+```sh
+./bin/dev
+```
+
+Option B: Editable install with uv
+```sh
+uv venv && . .venv/bin/activate
+uv pip install -e '.[base,dev]'
+```
+
+For system deps, Nix setups, and testing, see `/docs/development/README.md`.
 
 ### Monitoring & Debugging
 
