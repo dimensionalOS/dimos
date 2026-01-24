@@ -30,7 +30,7 @@ nix run . -- run README.md --stdout
 docker run -v $(pwd):/work lesh/md-babel-py:main run /work/README.md --stdout
 
 # Or build locally via Nix
-nix build .#docker     # builds tarball to ./result
+nix build '.#docker'     # builds tarball to ./result
 docker load < result   # loads image from tarball
 docker run -v $(pwd):/work md-babel-py:latest run /work/file.md --stdout
 ```
