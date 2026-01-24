@@ -129,6 +129,7 @@ def build_graph_context(
             "relationships": [],
             "spatial_info": [],
             "semantic_knowledge": [],
+            "entity_timestamps": [],
         }
 
         # Convert time_window_s to a (start_ts, end_ts) tuple if provided
@@ -142,6 +143,25 @@ def build_graph_context(
                 all_entities = graph_db.get_all_entities()
                 ref_time = max((e.get("last_seen_ts", 0) for e in all_entities), default=0)
             time_window_tuple = (max(0, ref_time - time_window_s), ref_time)
+
+        # Get entity timestamp information for visibility duration queries
+        for entity_id in entity_ids:
+            entity = graph_db.get_entity(entity_id)
+            if entity:
+                first_seen = entity.get("first_seen_ts")
+                last_seen = entity.get("last_seen_ts")
+                duration_s = None
+                if first_seen is not None and last_seen is not None:
+                    duration_s = last_seen - first_seen
+
+                graph_context["entity_timestamps"].append(
+                    {
+                        "entity_id": entity_id,
+                        "first_seen_ts": first_seen,
+                        "last_seen_ts": last_seen,
+                        "duration_s": duration_s,
+                    }
+                )
 
         # Get recent relationships for each entity
         for entity_id in entity_ids:

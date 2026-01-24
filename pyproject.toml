@@ -23,7 +23,7 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.8"
+version = "0.0.9"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
 readme = "README.md"

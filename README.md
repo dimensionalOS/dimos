@@ -99,8 +99,6 @@ Option 2: Run without installing
 uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
 ```
 
-<!-- command for testing pre launch: `GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" uv pip install 'dimos[unitree] @ git+ssh://git@github.com/dimensionalOS/dimos.git@dev'` -->
-
 ### Test Installation
 
 #### Control a robot in a simulation (no robot required)

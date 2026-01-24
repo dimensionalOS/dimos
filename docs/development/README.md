@@ -43,7 +43,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin
 
 # this allows getting large files on-demand
 export GIT_LFS_SKIP_SMUDGE=1
-git clone -b dev git@github.com:dimensionalOS/dimos.git
+git clone -b dev https://github.com/dimensionalOS/dimos.git
 cd dimos
 
 
@@ -155,7 +155,7 @@ mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" 
 
 # this allows getting large files on-demand
 export GIT_LFS_SKIP_SMUDGE=1
-git clone -b dev git@github.com:dimensionalOS/dimos.git
+git clone -b dev https://github.com/dimensionalOS/dimos.git
 cd dimos
 
 # activate the nix .envrc
@@ -194,7 +194,7 @@ mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" 
 
 # this allows getting large files on-demand
 export GIT_LFS_SKIP_SMUDGE=1
-git clone -b dev git@github.com:dimensionalOS/dimos.git
+git clone -b dev https://github.com/dimensionalOS/dimos.git
 cd dimos
 
 # activate the nix development shell
