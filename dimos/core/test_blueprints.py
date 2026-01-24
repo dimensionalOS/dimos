@@ -23,7 +23,6 @@ from dimos.core.blueprints import (
     Blueprint,
     ModuleConnection,
     _BlueprintAtom,
-    _make_module_blueprint,
     autoconnect,
 )
 from dimos.core.core import rpc
@@ -104,7 +103,7 @@ module_c = ModuleC.blueprint
 
 
 def test_get_connection_set() -> None:
-    assert _make_module_blueprint(CatModule, args=("arg1"), kwargs={"k": "v"}) == _BlueprintAtom(
+    assert _BlueprintAtom.create(CatModule, args=("arg1"), kwargs={"k": "v"}) == _BlueprintAtom(
         module=CatModule,
         connections=(
             ModuleConnection(name="pet_cat", type=Petting, direction="in"),
@@ -335,18 +334,18 @@ def test_future_annotations_support() -> None:
     """Test that modules using `from __future__ import annotations` work correctly.
 
     PEP 563 (future annotations) stores annotations as strings instead of actual types.
-    This test verifies that _make_module_blueprint properly resolves string annotations
+    This test verifies that _BlueprintAtom.create properly resolves string annotations
     to the actual In/Out types.
     """
 
     # Test that connections are properly extracted from modules with future annotations
-    out_blueprint = _make_module_blueprint(FutureModuleOut, args=(), kwargs={})
+    out_blueprint = _BlueprintAtom.create(FutureModuleOut, args=(), kwargs={})
     assert len(out_blueprint.connections) == 1
     assert out_blueprint.connections[0] == ModuleConnection(
         name="data", type=FutureData, direction="out"
     )
 
-    in_blueprint = _make_module_blueprint(FutureModuleIn, args=(), kwargs={})
+    in_blueprint = _BlueprintAtom.create(FutureModuleIn, args=(), kwargs={})
     assert len(in_blueprint.connections) == 1
     assert in_blueprint.connections[0] == ModuleConnection(
         name="data", type=FutureData, direction="in"

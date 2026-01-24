@@ -326,9 +326,9 @@ class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
     @classproperty
     def blueprint(self):  # type: ignore[no-untyped-def]
         # Here to prevent circular imports.
-        from dimos.core.blueprints import create_module_blueprint
+        from dimos.core.blueprints import Blueprint
 
-        return partial(create_module_blueprint, self)  # type: ignore[arg-type]
+        return partial(Blueprint.create, self)  # type: ignore[arg-type]
 
     @rpc
     def get_rpc_method_names(self) -> list[str]:
