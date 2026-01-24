@@ -6,26 +6,19 @@ You don't typically want to run a single module, so multiple blueprints are hand
 
 You create a `ModuleBlueprintSet` from a single module (say `ConnectionModule`) with:
 
-```python session=blueprint-ex1
-from dimos.core.blueprints import create_module_blueprint
-from dimos.core import Module, rpc
-
-class ConnectionModule(Module):
-    def __init__(self, arg1, arg2, kwarg='value') -> None:
-        super().__init__()
-
+```python
 blueprint = create_module_blueprint(ConnectionModule, 'arg1', 'arg2', kwarg='value')
 ```
 
-But the same thing can be accomplished more succinctly as:
+But the same thing can be acomplished more succinctly as:
 
-```python session=blueprint-ex1
+```python
 connection = ConnectionModule.blueprint
 ```
 
 Now you can create the blueprint with:
 
-```python session=blueprint-ex1
+```python
 blueprint = connection('arg1', 'arg2', kwarg='value')
 ```
 
@@ -33,23 +26,7 @@ blueprint = connection('arg1', 'arg2', kwarg='value')
 
 You can link multiple blueprints together with `autoconnect`:
 
-```python session=blueprint-ex1
-from dimos.core.blueprints import autoconnect
-
-class Module1(Module):
-    def __init__(self, arg1) -> None:
-        super().__init__()
-
-class Module2(Module):
-    ...
-
-class Module3(Module):
-    ...
-
-module1 = Module1.blueprint
-module2 = Module2.blueprint
-module3 = Module3.blueprint
-
+```python
 blueprint = autoconnect(
     module1(),
     module2(),
@@ -59,16 +36,7 @@ blueprint = autoconnect(
 
 `blueprint` itself is a `ModuleBlueprintSet` so you can link it with other modules:
 
-```python session=blueprint-ex1
-class Module4(Module):
-    ...
-
-class Module5(Module):
-    ...
-
-module4 = Module4.blueprint
-module5 = Module5.blueprint
-
+```python
 expanded_blueprint = autoconnect(
     blueprint,
     module4(),
@@ -82,11 +50,11 @@ Blueprints are frozen data classes, and `autoconnect()` always constructs an exp
 
 If the same module appears multiple times in `autoconnect`, the **later blueprint wins** and overrides earlier ones:
 
-```python session=blueprint-ex1
+```python
 blueprint = autoconnect(
-    module1(arg1=1),
-    module2(),
-    module1(arg1=2),  # This one is used, the first is discarded
+    module_a(arg1=1),
+    module_b(),
+    module_a(arg1=2),  # This one is used, the first is discarded
 )
 ```
 
@@ -96,20 +64,14 @@ This is so you can "inherit" from one blueprint but override something you need 
 
 Imagine you have this code:
 
-```python session=blueprint-ex1
-from functools import partial
-
-from dimos.core.blueprints import create_module_blueprint, autoconnect
-from dimos.core import Module, rpc, Out, In
-from dimos.msgs.sensor_msgs import Image
-
+```python
 class ModuleA(Module):
     image: Out[Image]
-    start_explore: Out[bool]
+    start_explore: Out[Bool]
 
 class ModuleB(Module):
     image: In[Image]
-    begin_explore: In[bool]
+    begin_explore: In[Bool]
 
 module_a = partial(create_module_blueprint, ModuleA)
 module_b = partial(create_module_blueprint, ModuleB)
@@ -133,37 +95,24 @@ By default `LCMTransport` is used if the object supports `lcm_encode`. If it doe
 
 You can override transports with the `transports` method. It returns a new blueprint in which the override is set.
 
-```python session=blueprint-ex1
-from dimos.core.transport import pSHMTransport, pLCMTransport
-
-base_blueprint = autoconnect(
-    module1(arg1=1),
-    module2(),
-)
-expanded_blueprint = autoconnect(
-    base_blueprint,
-    module4(),
-    module5(),
-)
-base_blueprint = base_blueprint.transports({
+```python
+blueprint = autoconnect(...)
+expanded_blueprint = autoconnect(blueprint, ...)
+blueprint = blueprint.transports({
     ("image", Image): pSHMTransport(
-        "/go2/color_image", default_capacity=1920 * 1080 * 3,  # 1920x1080 frame x 3 (RGB) x uint8
+        "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
     ),
-    ("start_explore", bool): pLCMTransport("/start_explore"),
+    ("start_explore", Bool): pLCMTransport(),
 })
 ```
 
-Note: `expanded_blueprint` does not get the transport overrides because it's created from the initial value of `base_blueprint`, not the second.
+Note: `expanded_blueprint` does not get the transport overrides because it's created from the initial value of `blueprint`, not the second.
 
 ## Remapping connections
 
 Sometimes you need to rename a connection to match what other modules expect. You can use `remappings` to rename module connections:
 
-```python session=blueprint-ex2
-from dimos.core.blueprints import autoconnect
-from dimos.core import Module, rpc, Out, In
-from dimos.msgs.sensor_msgs import Image
-
+```python
 class ConnectionModule(Module):
     color_image: Out[Image]  # Outputs on 'color_image'
 
@@ -190,11 +139,12 @@ After remapping:
 
 If you want to override the topic, you still have to do it manually:
 
-```python session=blueprint-ex2
-from dimos.core.transport import LCMTransport
-blueprint.remappings([
+```python
+blueprint
+.remappings([
     (ConnectionModule, 'color_image', 'rgb_image'),
-]).transports({
+])
+.transports({
     ("rgb_image", Image): LCMTransport("/custom/rgb/image", Image),
 })
 ```
@@ -203,10 +153,7 @@ blueprint.remappings([
 
 Each module can optionally take a `global_config` option in `__init__`. E.g.:
 
-```python session=blueprint-ex3
-from dimos.core import Module, rpc
-from dimos.core.global_config import GlobalConfig
-
+```python
 class ModuleA(Module):
 
     def __init__(self, global_config: GlobalConfig | None = None):
@@ -215,17 +162,15 @@ class ModuleA(Module):
 
 The config is normally taken from .env or from environment variables. But you can specifically override the values for a specific blueprint:
 
-```python session=blueprint-ex3
-blueprint = ModuleA.blueprint().global_config(n_dask_workers=8)
+```python
+blueprint = blueprint.global_config(n_dask_workers=8)
 ```
 
 ## Calling the methods of other modules
 
 Imagine you have this code:
 
-```python session=blueprint-ex3
-from dimos.core import Module, rpc
-
+```python
 class ModuleA(Module):
 
     @rpc
@@ -241,9 +186,7 @@ And you want to call `ModuleA.get_time` in `ModuleB.request_the_time`.
 
 To do this, you can request a link to the method you want to call in `rpc_calls`. Calling `get_time_rcp` will call the original `ModuleA.get_time`.
 
-```python session=blueprint-ex3
-from dimos.core import Module, rpc
-
+```python
 class ModuleB(Module):
     rpc_calls: list[str] = [
         "ModuleA.get_time",
@@ -256,10 +199,8 @@ class ModuleB(Module):
 
 You can also request multiple methods at a time:
 
-```python session=blueprint-ex3
-class ModuleB(Module):
-    def request_the_time(self) -> None:
-        method1_rpc, method2_rpc = self.get_rpc_calls("ModuleX.m1", "ModuleX.m2")
+```python
+method1_rpc, method2_rpc = self.get_rpc_calls("ModuleX.m1", "ModuleX.m2")
 ```
 
 ## Alternative RPC calls
@@ -268,10 +209,7 @@ There is an alternative way of receiving RPC methods. It is useful when you want
 
 You can use it by defining a method like `set_<class_name>_<method_name>`:
 
-```python session=blueprint-ex3
-from dimos.core import Module, rpc
-from dimos.core.rpc_client import RpcCall
-
+```python
 class ModuleB(Module):
     @rpc # Note that it has to be an rpc method.
     def set_ModuleA_get_time(self, rpc_call: RpcCall) -> None:
@@ -290,16 +228,12 @@ In the previous examples, you can only call methods in a module called `ModuleA`
 
 You can do so by extracting the common interface as an `ABC` (abstract base class) and linking to the `ABC` instead one particular class.
 
-```python session=blueprint-ex3
-from abc import ABC, abstractmethod
-from dimos.core.blueprints import autoconnect
-from dimos.core import Module, rpc
-
+```python
 class TimeInterface(ABC):
     @abstractmethod
     def get_time(self): ...
 
-class ProperTime(Module, TimeInterface):
+class ProperTime(TimeInterface):
     def get_time(self):
         return "13:00"
 
@@ -320,7 +254,7 @@ class ModuleB(Module):
 
 The actual method that you get in `get_time_rpc` depends on which module is deployed. If you deploy `ProperTime`, you get `ProperTime.get_time`:
 
-```python session=blueprint-ex3
+```python
 blueprint = autoconnect(
     ProperTime.blueprint(),
     # get_rpc_calls("TimeInterface.get_time") returns ProperTime.get_time
@@ -334,13 +268,7 @@ If both are deployed, the blueprint will throw an error because it's ambiguous.
 
 Skills have to be registered with `AgentSpec.register_skills(self)`.
 
-```python session=blueprint-ex4
-from dimos.core import Module, rpc
-from dimos.core.skill_module import SkillModule
-from dimos.protocol.skill.skill import skill
-from dimos.core.rpc_client import RpcCall
-from dimos.core.global_config import GlobalConfig
-
+```python
 class SomeSkill(Module):
 
     @skill
@@ -362,10 +290,7 @@ class SomeSkill(Module):
 
 Or, you can avoid all of this by inheriting from `SkillModule` which does the above automatically:
 
-```python session=blueprint-ex4
-from dimos.core.skill_module import SkillModule
-from dimos.protocol.skill.skill import skill
-
+```python
 class SomeSkill(SkillModule):
 
     @skill
@@ -377,8 +302,8 @@ class SomeSkill(SkillModule):
 
 All you have to do to build a blueprint is call:
 
-```python session=blueprint-ex4
-module_coordinator = SomeSkill.blueprint().build(global_config=GlobalConfig())
+```python
+module_coordinator = blueprint.build(global_config=config)
 ```
 
 This returns a `ModuleCoordinator` instance that manages all deployed modules.
@@ -387,7 +312,7 @@ This returns a `ModuleCoordinator` instance that manages all deployed modules.
 
 You can block the thread until it exits with:
 
-```python session=blueprint-ex4
+```python
 module_coordinator.loop()
 ```
 
