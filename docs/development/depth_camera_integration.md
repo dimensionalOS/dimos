@@ -6,7 +6,7 @@ Use this guide to add a new depth camera, wire TF correctly, and publish the req
 ## Add a New Depth Camera
 
 1) **Create a new driver module**
-   - Path: `dimos/dimos/hardware/sensors/camera/<vendor>/camera.py`
+   - Path: `dimos/hardware/sensors/camera/<vendor>/camera.py`
    - Export a blueprint in `<vendor>/__init__.py` (match the `realsense` / `zed` pattern).
 
 2) **Define config**
@@ -57,7 +57,7 @@ Use this guide to add a new depth camera, wire TF correctly, and publish the req
 
 ## TF: Required Frames and Transforms
 
-Frame names are defined by the abstract depth camera spec (`dimos/dimos/hardware/sensors/camera/spec.py`).
+Frame names are defined by the abstract depth camera spec (`dimos/hardware/sensors/camera/spec.py`).
 Use the properties below to ensure consistent naming:
 
 - `_camera_link`: base link for the camera module (usually `{camera_name}_link`)
@@ -111,8 +111,8 @@ For `ObjectSceneRegistrationModule`, the required inputs are:
 - Overlay annotations and aggregated pointclouds
 
 See:
-- `dimos/dimos/perception/object_scene_registration.py`
-- `dimos/dimos/perception/demo_object_scene_registration.py`
+- `dimos/perception/object_scene_registration.py`
+- `dimos/perception/demo_object_scene_registration.py`
 
 Quick wiring example:
 
@@ -143,5 +143,5 @@ Install Foxglove from:
 - **Skills** are callable methods (decorated with `@skill`) exposed by `SkillModule` for agents.
 
 Reference:
-- Modules overview: `dimos/docs/concepts/modules.md`
-- TF fundamentals: `dimos/docs/api/transforms.md`
+- Modules overview: `/docs/concepts/modules.md`
+- TF fundamentals: `/docs/api/transforms.md`

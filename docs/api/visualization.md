@@ -54,7 +54,7 @@ VIEWER_BACKEND=foxglove dimos run unitree-go2
 - Foxglove bridge on ws://localhost:8765
 - No Rerun (saves resources)
 - Better performance with larger maps/higher resolution
-- Open layout: `dimos/assets/foxglove_dashboards/go2.json`
+- Open layout: `assets/foxglove_dashboards/old/foxglove_unitree_lcm_dashboard.json`
 
 ---
 

@@ -45,7 +45,7 @@ Error: Config.__init__() got an unexpected keyword argument 'something'
 
 # Configurable Modules
 
-[Modules]() inherit from `Configurable`, so all of the above applies. Module configs should inherit from `ModuleConfig` ([`core/module.py`](/dimos/core/module.py#L40)), which includes shared configuration for all modules like transport protocols, frame_ids, etc.
+[Modules](/docs/concepts/modules.md) inherit from `Configurable`, so all of the above applies. Module configs should inherit from `ModuleConfig` ([`core/module.py`](/dimos/core/module.py#L40)), which includes shared configuration for all modules like transport protocols, frame IDs, etc.
 
 ```python
 from dataclasses import dataclass

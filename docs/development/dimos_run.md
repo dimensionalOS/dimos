@@ -1,6 +1,20 @@
-# Robot CLI
+# DimOS Run
 
-To avoid having so many runfiles, I created a common script to run any blueprint.
+#### Warning: If you just want to run a blueprint you don't need to add it to `dimos run`:
+
+`your_code.py`
+```py
+from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic as example_blueprint
+
+if __name__ == "__main__":
+    example_blueprint.build().loop()
+```
+
+```sh
+python ./your_code.py
+```
+
+## Usage
 
 For example, to run the standard Unitree Go2 blueprint run:
 
@@ -20,7 +34,7 @@ You can dynamically connect additional modules. For example:
 dimos run unitree-go2 --extra-module llm_agent --extra-module human_input --extra-module navigation_skill
 ```
 
-## Definitions
+## Adding your own
 
 Blueprints can be defined anywhere, but they're all linked together in `dimos/robot/all_blueprints.py`. E.g.:
 
