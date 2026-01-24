@@ -100,15 +100,16 @@ Imagine you have this code:
 from functools import partial
 
 from dimos.core.blueprints import create_module_blueprint, autoconnect
-from dimos.core import Module, rpc
+from dimos.core import Module, rpc, Out, In
+from dimos.msgs.sensor_msgs import Image
 
 class ModuleA(Module):
     image: Out[Image]
-    start_explore: Out[Bool]
+    start_explore: Out[bool]
 
 class ModuleB(Module):
     image: In[Image]
-    begin_explore: In[Bool]
+    begin_explore: In[bool]
 
 module_a = partial(create_module_blueprint, ModuleA)
 module_b = partial(create_module_blueprint, ModuleB)
@@ -133,6 +134,8 @@ By default `LCMTransport` is used if the object supports `lcm_encode`. If it doe
 You can override transports with the `transports` method. It returns a new blueprint in which the override is set.
 
 ```python session=blueprint-ex1
+from dimos.core.transport import pSHMTransport, pLCMTransport
+
 base_blueprint = autoconnect(
     module1(arg1=1),
     module2(),
@@ -144,9 +147,9 @@ expanded_blueprint = autoconnect(
 )
 base_blueprint = base_blueprint.transports({
     ("image", Image): pSHMTransport(
-        "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        "/go2/color_image", default_capacity=1920 * 1080 * 3,  # 1920x1080 frame x 3 (RGB) x uint8
     ),
-    ("start_explore", Bool): pLCMTransport(),
+    ("start_explore", bool): pLCMTransport("/start_explore"),
 })
 ```
 
@@ -158,7 +161,8 @@ Sometimes you need to rename a connection to match what other modules expect. Yo
 
 ```python session=blueprint-ex2
 from dimos.core.blueprints import autoconnect
-from dimos.core import Module, rpc
+from dimos.core import Module, rpc, Out, In
+from dimos.msgs.sensor_msgs import Image
 
 class ConnectionModule(Module):
     color_image: Out[Image]  # Outputs on 'color_image'
@@ -187,11 +191,10 @@ After remapping:
 If you want to override the topic, you still have to do it manually:
 
 ```python session=blueprint-ex2
-blueprint
-.remappings([
+from dimos.core.transport import LCMTransport
+blueprint.remappings([
     (ConnectionModule, 'color_image', 'rgb_image'),
-])
-.transports({
+]).transports({
     ("rgb_image", Image): LCMTransport("/custom/rgb/image", Image),
 })
 ```
@@ -202,6 +205,7 @@ Each module can optionally take a `global_config` option in `__init__`. E.g.:
 
 ```python session=blueprint-ex3
 from dimos.core import Module, rpc
+from dimos.core.global_config import GlobalConfig
 
 class ModuleA(Module):
 
@@ -212,7 +216,7 @@ class ModuleA(Module):
 The config is normally taken from .env or from environment variables. But you can specifically override the values for a specific blueprint:
 
 ```python session=blueprint-ex3
-blueprint = blueprint.global_config(n_dask_workers=8)
+blueprint = ModuleA.blueprint().global_config(n_dask_workers=8)
 ```
 
 ## Calling the methods of other modules
@@ -253,7 +257,9 @@ class ModuleB(Module):
 You can also request multiple methods at a time:
 
 ```python session=blueprint-ex3
-method1_rpc, method2_rpc = self.get_rpc_calls("ModuleX.m1", "ModuleX.m2")
+class ModuleB(Module):
+    def request_the_time(self) -> None:
+        method1_rpc, method2_rpc = self.get_rpc_calls("ModuleX.m1", "ModuleX.m2")
 ```
 
 ## Alternative RPC calls
@@ -264,6 +270,7 @@ You can use it by defining a method like `set_<class_name>_<method_name>`:
 
 ```python session=blueprint-ex3
 from dimos.core import Module, rpc
+from dimos.core.rpc_client import RpcCall
 
 class ModuleB(Module):
     @rpc # Note that it has to be an rpc method.
@@ -285,14 +292,14 @@ You can do so by extracting the common interface as an `ABC` (abstract base clas
 
 ```python session=blueprint-ex3
 from abc import ABC, abstractmethod
-
+from dimos.core.blueprints import autoconnect
 from dimos.core import Module, rpc
 
 class TimeInterface(ABC):
     @abstractmethod
     def get_time(self): ...
 
-class ProperTime(TimeInterface):
+class ProperTime(Module, TimeInterface):
     def get_time(self):
         return "13:00"
 
@@ -331,6 +338,8 @@ Skills have to be registered with `AgentSpec.register_skills(self)`.
 from dimos.core import Module, rpc
 from dimos.core.skill_module import SkillModule
 from dimos.protocol.skill.skill import skill
+from dimos.core.rpc_client import RpcCall
+from dimos.core.global_config import GlobalConfig
 
 class SomeSkill(Module):
 
@@ -369,7 +378,7 @@ class SomeSkill(SkillModule):
 All you have to do to build a blueprint is call:
 
 ```python session=blueprint-ex4
-module_coordinator = blueprint.build(global_config=config)
+module_coordinator = SomeSkill.blueprint().build(global_config=GlobalConfig())
 ```
 
 This returns a `ModuleCoordinator` instance that manages all deployed modules.
