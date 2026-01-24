@@ -6,6 +6,8 @@ echo "Starting ROS route planner and DimOS..."
 # Variables for process IDs
 ROS_PID=""
 DIMOS_PID=""
+RVIZ_PID=""
+UNITY_PID=""
 SHUTDOWN_IN_PROGRESS=false
 
 # Function to handle cleanup
@@ -18,7 +20,27 @@ cleanup() {
     echo ""
     echo "Shutdown initiated. Stopping services..."
 
-    # First, try to gracefully stop DimOS
+    # First, stop RViz
+    if [ -n "$RVIZ_PID" ] && kill -0 $RVIZ_PID 2>/dev/null; then
+        echo "Stopping RViz..."
+        kill -TERM $RVIZ_PID 2>/dev/null || true
+        sleep 1
+        if kill -0 $RVIZ_PID 2>/dev/null; then
+            kill -9 $RVIZ_PID 2>/dev/null || true
+        fi
+    fi
+
+    # Stop Unity simulator
+    if [ -n "$UNITY_PID" ] && kill -0 $UNITY_PID 2>/dev/null; then
+        echo "Stopping Unity simulator..."
+        kill -TERM $UNITY_PID 2>/dev/null || true
+        sleep 1
+        if kill -0 $UNITY_PID 2>/dev/null; then
+            kill -9 $UNITY_PID 2>/dev/null || true
+        fi
+    fi
+
+    # Then, try to gracefully stop DimOS
     if [ -n "$DIMOS_PID" ] && kill -0 $DIMOS_PID 2>/dev/null; then
         echo "Stopping DimOS..."
         kill -TERM $DIMOS_PID 2>/dev/null || true
@@ -71,6 +93,8 @@ cleanup() {
 
     # Clean up any remaining ROS2 processes
     echo "Cleaning up any remaining processes..."
+    pkill -f "rviz2" 2>/dev/null || true
+    pkill -f "Model.x86_64" 2>/dev/null || true
     pkill -f "ros2" 2>/dev/null || true
     pkill -f "localPlanner" 2>/dev/null || true
     pkill -f "pathFollower" 2>/dev/null || true
@@ -87,11 +111,31 @@ cleanup() {
 # Set up trap to call cleanup on exit
 trap cleanup EXIT INT TERM
 
+# Source ROS environment
+echo "Sourcing ROS environment..."
+source /opt/ros/${ROS_DISTRO:-humble}/setup.bash
+source /ros2_ws/install/setup.bash
+
 # Start ROS route planner in background (in new process group)
 echo "Starting ROS route planner..."
 cd /ros2_ws/src/ros-navigation-autonomy-stack
-setsid bash -c './system_simulation_with_route_planner.sh' &
+
+# Run Unity simulation if available
+UNITY_EXECUTABLE="./src/base_autonomy/vehicle_simulator/mesh/unity/environment/Model.x86_64"
+if [ -f "$UNITY_EXECUTABLE" ]; then
+    echo "Starting Unity simulation environment..."
+    "$UNITY_EXECUTABLE" &
+    UNITY_PID=$!
+else
+    echo "Warning: Unity environment not found at $UNITY_EXECUTABLE"
+    echo "Continuing without Unity simulation (you may need to provide sensor data)"
+    UNITY_PID=""
+fi
+sleep 3
+setsid bash -c 'ros2 launch vehicle_simulator system_simulation_with_route_planner.launch.py' &
 ROS_PID=$!
+ros2 run rviz2 rviz2 -d src/route_planner/far_planner/rviz/default.rviz &
+RVIZ_PID=$!
 
 # Wait a bit for ROS to initialize
 echo "Waiting for ROS to initialize..."
@@ -111,6 +155,17 @@ else
         source /opt/dimos-venv/bin/activate
         echo "Python path: $(which python)"
         echo "Python version: $(python --version)"
+
+        # Install dimos package if not already installed
+        if ! python -c "import dimos" 2>/dev/null; then
+            echo "Installing dimos package..."
+            if [ -f "/workspace/dimos/setup.py" ] || [ -f "/workspace/dimos/pyproject.toml" ]; then
+                # Install Unitree extra (includes agents stack + unitree deps used by demo)
+                pip install -e "/workspace/dimos[unitree]" --quiet
+            else
+                echo "WARNING: dimos package not found at /workspace/dimos"
+            fi
+        fi
     else
         echo "WARNING: Virtual environment not found at /opt/dimos-venv, using system Python"
     fi

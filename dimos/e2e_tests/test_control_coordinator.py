@@ -124,7 +124,7 @@ class TestControlCoordinatorE2E:
 
             while time.time() - start_time < timeout:
                 status = client.get_trajectory_status("traj_arm")
-                if status is not None and status.get("state") == TrajectoryState.COMPLETED.name:
+                if status is not None and status.state == TrajectoryState.COMPLETED.name:
                     completed = True
                     break
                 time.sleep(0.1)
@@ -204,7 +204,7 @@ class TestControlCoordinatorE2E:
             # Check status is ABORTED
             status = client.get_trajectory_status("traj_arm")
             assert status is not None
-            assert status.get("state") == TrajectoryState.ABORTED.name
+            assert status.state == TrajectoryState.ABORTED.name
         finally:
             client.stop_rpc_client()
 
@@ -257,7 +257,7 @@ class TestControlCoordinatorE2E:
             left_status = client.get_trajectory_status("traj_left")
             right_status = client.get_trajectory_status("traj_right")
 
-            assert left_status.get("state") == TrajectoryState.COMPLETED.name
-            assert right_status.get("state") == TrajectoryState.COMPLETED.name
+            assert left_status is not None and left_status.state == TrajectoryState.COMPLETED.name
+            assert right_status is not None and right_status.state == TrajectoryState.COMPLETED.name
         finally:
             client.stop_rpc_client()

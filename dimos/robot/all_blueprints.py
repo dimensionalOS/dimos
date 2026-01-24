@@ -19,6 +19,7 @@ all_blueprints = {
     "unitree-go2": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:nav",
     "unitree-go2-basic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:basic",
     "unitree-go2-nav": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:nav",
+    "unitree-go2-ros": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:ros",
     "unitree-go2-detection": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:detection",
     "unitree-go2-spatial": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:spatial",
     "unitree-go2-temporal-memory": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:temporal_memory",

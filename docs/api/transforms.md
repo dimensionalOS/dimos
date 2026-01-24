@@ -279,21 +279,21 @@ class PerceptionModule(Module):
     """Receives transforms and performs lookups."""
 
     def start(self) -> None:
-        # this is just to init transforms system
-        # touching the property for the first time enables the system for this module.
-        # transform lookups normally happen in fast loops in IRL modules
+        # This is just to init the transforms system.
+        # Touching the property for the first time enables the system for this module.
+        # Transform lookups normally happen in fast loops in IRL modules.
         _ = self.tf
 
     @rpc
     def lookup(self) -> None:
 
-        # will pretty print information on transforms in the buffer
+        # Will pretty-print information on transforms in the buffer
         print(self.tf)
 
         direct = self.tf.get("world", "base_link")
         print(f"Direct: robot is at ({direct.translation.x}, {direct.translation.y})m in world\n")
 
-        # Chained lookup - automatically composes world->base->camera->optical
+        # Chained lookup - automatically composes world -> base -> camera -> optical
         chained = self.tf.get("world", "camera_optical")
         print(f"Chained: {chained}\n")
 
@@ -361,7 +361,7 @@ Transform tree:
 ```
 
 
-You can also run `foxglove-studio-bridge` in the next terminal (binary provided by dimos and should be in your py env) and `foxglove-studio` to view these transforms in 3D (TODO we need to update this for rerun)
+You can also run `foxglove-studio-bridge` in the next terminal (binary provided by DimOS and should be in your Python env) and `foxglove-studio` to view these transforms in 3D. (TODO we need to update this for rerun)
 
 ![transforms](assets/transforms.png)
 

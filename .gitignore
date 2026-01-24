@@ -63,3 +63,4 @@ yolo11n.pt
 /.mypy_cache*
 
 *mobileclip*
+/results

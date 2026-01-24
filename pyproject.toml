@@ -23,7 +23,7 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.7"
+version = "0.0.9"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
 readme = "README.md"
@@ -101,6 +101,7 @@ misc = [
     # Perception Dependencies
     "scikit-learn",
     "timm>=1.0.15",
+    "edgetam-dimos",
     "opencv-contrib-python==4.10.0.84",
 
     # embedding models
@@ -160,6 +161,8 @@ perception = [
     "lap>=0.5.12",
     "transformers[torch]==4.49.0",
     "moondream",
+    "omegaconf>=2.3.0",
+    "hydra-core>=1.3.0",
 ]
 
 unitree = [
@@ -219,6 +222,9 @@ dev = [
     "requests-mock==1.12.1",
     "terminaltexteffects==0.12.2",
     "watchdog>=3.0.0",
+
+    # docs
+    "md-babel-py==1.1.1",
 
     # Types
     "lxml-stubs>=0.5.1,<1",
@@ -340,21 +346,22 @@ follow_imports = "skip"
 testpaths = ["dimos"]
 markers = [
     "heavy: resource heavy test",
-    "vis: marks tests that run visuals and require a visual check by dev",
-    "benchmark: benchmark, executes something multiple times, calculates avg, prints to console",
-    "exclude: arbitrary exclusion from CI and default test exec",
     "tool: dev tooling",
-    "needsdata: needs test data to be downloaded",
     "ros: depend on ros",
     "lcm: tests that run actual LCM bus (can't execute in CI)",
     "module: tests that need to run directly as modules",
     "gpu: tests that require GPU",
-    "tofix: temporarily disabled test"
+    "tofix: temporarily disabled test",
+    "e2e: end to end tests",
+    "integration: slower integration tests",
+    "neverending: they don't finish",
+    "mujoco: tests which open mujoco",
 ]
 env = [
-  "GOOGLE_MAPS_API_KEY=AIzafake_google_key"
+  "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
+  "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module and not tofix'"
+addopts = "-v -p no:warnings -ra --color=yes -m 'not (vis or exclude or tool or lcm or ros or heavy or gpu or module or tofix or e2e or integration or neverending or mujoco)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

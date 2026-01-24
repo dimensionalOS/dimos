@@ -3,7 +3,6 @@ import glob
 import os
 
 from contact_graspnet_pytorch import config_utils  # type: ignore[import-not-found]
-from contact_graspnet_pytorch.checkpoints import CheckpointIO  # type: ignore[import-not-found]
 from contact_graspnet_pytorch.contact_grasp_estimator import (  # type: ignore[import-not-found]
     GraspEstimator,
 )
@@ -11,6 +10,7 @@ from contact_graspnet_pytorch.data import (  # type: ignore[import-not-found]
     load_available_input_data,
 )
 import numpy as np
+import torch
 
 from dimos.utils.data import get_data
 
@@ -45,12 +45,9 @@ def inference(global_config,  # type: ignore[no-untyped-def]
 
     # Load the weights
     model_checkpoint_dir = get_data(ckpt_dir)
-    checkpoint_io = CheckpointIO(checkpoint_dir=model_checkpoint_dir, model=grasp_estimator.model)
-    try:
-        checkpoint_io.load('model.pt')
-    except FileExistsError:
-        print('No model checkpoint found')
-
+    checkpoint_path = os.path.join(model_checkpoint_dir, 'model.pt')
+    state_dict = torch.load(checkpoint_path, weights_only=False)
+    grasp_estimator.model.load_state_dict(state_dict['model'])
 
     os.makedirs('results', exist_ok=True)
 

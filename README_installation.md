@@ -5,7 +5,7 @@
 Clone the repo:
 
 ```bash
-git clone -b main --single-branch git@github.com:dimensionalOS/dimos.git
+git clone -b main --single-branch https://github.com/dimensionalOS/dimos.git
 cd dimos
 ```
 

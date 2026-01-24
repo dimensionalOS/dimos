@@ -19,7 +19,7 @@ import pytest
 
 from dimos import core
 from dimos.core import Module, rpc
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.map import Map as Mapper
 
 
@@ -95,7 +95,7 @@ def test_basic(dimos) -> None:
 @pytest.mark.tool
 def test_mapper_start(dimos) -> None:
     mapper = dimos.deploy(Mapper)
-    mapper.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
+    mapper.lidar.transport = core.LCMTransport("/lidar", PointCloud2)
     print("start res", mapper.start().result())
 
 

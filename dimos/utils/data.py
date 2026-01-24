@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import platform
 import subprocess
+import sys
 import tarfile
 import tempfile
 
@@ -29,6 +30,13 @@ logger = setup_logger()
 def _get_user_data_dir() -> Path:
     """Get platform-specific user data directory."""
     system = platform.system()
+    # if virtual env is available, use it to keep venv's from fighting over data
+    # a better fix for large files will be added later to minimize storage duplication
+    if os.environ.get("VIRTUAL_ENV"):
+        venv_data_dir = Path(
+            f"{os.environ.get('VIRTUAL_ENV')}/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages/dimos/data"
+        )
+        return venv_data_dir
 
     if system == "Linux":
         # Use XDG_DATA_HOME if set, otherwise default to ~/.local/share
@@ -78,9 +86,8 @@ def _get_repo_root() -> Path:
                     "--depth",
                     "1",
                     "--branch",
-                    # TODO: Use "main",
-                    "dev",
-                    "git@github.com:dimensionalOS/dimos.git",
+                    "main",
+                    "https://github.com/dimensionalOS/dimos.git",
                     str(repo_dir),
                 ],
                 check=True,
@@ -91,7 +98,7 @@ def _get_repo_root() -> Path:
         except subprocess.CalledProcessError as e:
             raise RuntimeError(
                 f"Failed to clone dimos repository: {e.stderr}\n"
-                f"Make sure you have access to git@github.com:dimensionalOS/dimos.git"
+                f"Make sure you can access https://github.com/dimensionalOS/dimos.git"
             )
 
     return repo_dir

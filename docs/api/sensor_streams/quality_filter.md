@@ -50,7 +50,7 @@ Qualities: [0.9]
 
 For camera streams, we provide `sharpness_barrier` which uses the image's sharpness score.
 
-Let's use real camera data from the Unitree Go2 robot to demonstrate. We use the [Sensor Replay](/docs/old/testing_stream_reply.md) toolkit which provides access to recorded robot data:
+Let's use real camera data from the Unitree Go2 robot to demonstrate. We use the [Sensor Replay](/docs/old/testing_stream_reply.md) toolkit, which provides access to recorded robot data:
 
 ```python session=qb
 from dimos.utils.testing import TimedSensorReplay
@@ -177,7 +177,7 @@ plot_sharpness(input_frames, sharp_frames, '{output}')
 <!--Result:-->
 ![output](assets/sharpness_graph.svg)
 
-Let's request higher frequency
+Let's request a higher frequency.
 
 ```python session=qb
 sharp_frames = video_replay.stream(seek=5.0, duration=1.5, speed=1.0).pipe(

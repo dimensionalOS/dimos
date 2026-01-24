@@ -1,0 +1,522 @@
+{
+  "_watermark": {
+    "creator": "DIMOS Navigation",
+    "author": "bona",
+    "organization": "Dimensional",
+    "version": "1.0",
+    "timestamp": "2026-01-17",
+    "signature": "dimos-nav-overwatch-layout"
+  },
+  "configById": {
+    "3D!main": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 11.376001845526945,
+        "phi": 60.000000000004256,
+        "thetaOffset": -154.65065502183666,
+        "targetOffset": [
+          -1.3664627921863377,
+          -0.4507491962036497,
+          2.2548288625522925e-16
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.01,
+        "far": 5000
+      },
+      "followMode": "follow-none",
+      "followTf": "map",
+      "scene": {
+        "backgroundColor": "#000000",
+        "enableStats": false,
+        "syncCamera": false
+      },
+      "transforms": {
+        "frame:vehicle": {
+          "visible": true
+        },
+        "frame:map": {
+          "visible": true
+        }
+      },
+      "topics": {
+        "/registered_scan": {
+          "visible": true,
+          "colorField": "z",
+          "colorMode": "colormap",
+          "flatColor": "#ffffff",
+          "pointSize": 2,
+          "decayTime": 1
+        },
+        "/overall_map": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "flat",
+          "flatColor": "#ffffff",
+          "pointSize": 2,
+          "decayTime": 0
+        },
+        "/free_paths": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "turbo",
+          "pointSize": 2
+        },
+        "/path": {
+          "visible": true,
+          "type": "line",
+          "lineWidth": 0.05,
+          "color": "#19ff00"
+        },
+        "/way_point": {
+          "visible": true,
+          "color": "#cc29cc"
+        },
+        "/navigation_boundary": {
+          "visible": true,
+          "color": "#00ff00",
+          "lineWidth": 0.2
+        },
+        "/goal_pose": {
+          "visible": true,
+          "color": "#ff1900",
+          "type": "arrow"
+        },
+        "/terrain_map": {
+          "visible": false,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "rainbow",
+          "pointSize": 4
+        },
+        "/terrain_map_ext": {
+          "visible": false,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "rainbow",
+          "pointSize": 4
+        },
+        "/sensor_scan": {
+          "visible": false,
+          "colorField": "intensity",
+          "colorMode": "flat",
+          "flatColor": "#ffffff",
+          "pointSize": 2
+        },
+        "/added_obstacles": {
+          "visible": false,
+          "colorField": "intensity",
+          "colorMode": "flat",
+          "flatColor": "#ff1900",
+          "pointSize": 3
+        },
+        "/explored_areas": {
+          "visible": false,
+          "colorField": "intensity",
+          "colorMode": "flat",
+          "flatColor": "#00aaff",
+          "pointSize": 2
+        },
+        "/trajectory": {
+          "visible": false,
+          "colorField": "intensity",
+          "colorMode": "colormap",
+          "colorMap": "rainbow",
+          "pointSize": 7
+        },
+        "/viz_graph_topic": {
+          "visible": true,
+          "namespaces": {
+            "angle_direct": {
+              "visible": false
+            },
+            "boundary_edge": {
+              "visible": false
+            },
+            "boundary_vertex": {
+              "visible": false
+            },
+            "freespace_vertex": {
+              "visible": false
+            },
+            "freespace_vgraph": {
+              "visible": true
+            },
+            "frontier_vertex": {
+              "visible": false
+            },
+            "global_vertex": {
+              "visible": false
+            },
+            "global_vgraph": {
+              "visible": false
+            },
+            "localrange_vertex": {
+              "visible": false
+            },
+            "odom_edge": {
+              "visible": false
+            },
+            "polygon_edge": {
+              "visible": true
+            },
+            "to_goal_edge": {
+              "visible": false
+            },
+            "trajectory_edge": {
+              "visible": false
+            },
+            "trajectory_vertex": {
+              "visible": false
+            },
+            "updating_vertex": {
+              "visible": false
+            },
+            "vertex_angle": {
+              "visible": false
+            },
+            "vertices_matches": {
+              "visible": false
+            },
+            "visibility_edge": {
+              "visible": false
+            }
+          }
+        }
+      },
+      "layers": {
+        "grid": {
+          "layerId": "foxglove.Grid",
+          "visible": true,
+          "frameLocked": true,
+          "label": "Grid",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "color": "#248f24",
+          "size": 100,
+          "divisions": 100,
+          "lineWidth": 1,
+          "frameId": "map"
+        }
+      },
+      "publish": {
+        "type": "pose",
+        "poseTopic": "/goal_pose",
+        "pointTopic": "/way_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939,
+        "frameId": "map"
+      },
+      "imageMode": {},
+      "fixedFrame": "map"
+    },
+    "Image!camera": {
+      "cameraTopic": "/camera/image",
+      "enabledMarkerTopics": [],
+      "synchronize": false,
+      "transformMarkers": true,
+      "smooth": false,
+      "flipHorizontal": false,
+      "flipVertical": false,
+      "minValue": 0,
+      "maxValue": 1,
+      "rotation": 0,
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {}
+    },
+    "Image!semantic": {
+      "cameraTopic": "/camera/semantic_image",
+      "enabledMarkerTopics": [],
+      "synchronize": false,
+      "transformMarkers": true,
+      "smooth": false,
+      "flipHorizontal": false,
+      "flipVertical": false,
+      "minValue": 0,
+      "maxValue": 1,
+      "rotation": 0,
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 45,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {}
+    },
+    "Teleop!teleop": {
+      "topic": "/foxglove_teleop",
+      "publishRate": 10,
+      "upButton": {
+        "field": "linear.x",
+        "value": 0.5
+      },
+      "downButton": {
+        "field": "linear.x",
+        "value": -0.5
+      },
+      "leftButton": {
+        "field": "angular.z",
+        "value": 0.5
+      },
+      "rightButton": {
+        "field": "angular.z",
+        "value": -0.5
+      }
+    },
+    "RawMessages!odom": {
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "topicPath": "/state_estimation.pose.pose"
+    },
+    "RawMessages!cmdvel": {
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "topicPath": "/cmd_vel.twist",
+      "fontSize": 12
+    },
+    "Plot!speed": {
+      "paths": [
+        {
+          "value": "/cmd_vel.twist.linear.x",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "Linear X"
+        },
+        {
+          "value": "/cmd_vel.twist.linear.y",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "Linear Y"
+        },
+        {
+          "value": "/cmd_vel.twist.angular.z",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "Angular Z"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240,
+      "minYValue": -2,
+      "maxYValue": 2,
+      "followingViewWidth": 30
+    },
+    "Indicator!goalreached": {
+      "path": "/goal_reached.data",
+      "style": "background",
+      "fallbackColor": "#a0a0a0",
+      "fallbackLabel": "No Data",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#68e24a",
+          "label": "Goal Reached"
+        },
+        {
+          "operator": "=",
+          "rawValue": "false",
+          "color": "#f5f5f5",
+          "label": "Navigating"
+        }
+      ],
+      "fontSize": 36
+    },
+    "Indicator!stop": {
+      "path": "/stop.data",
+      "style": "background",
+      "fallbackColor": "#a0a0a0",
+      "fallbackLabel": "No Data",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "0",
+          "color": "#68e24a",
+          "label": "OK"
+        },
+        {
+          "operator": "=",
+          "rawValue": "1",
+          "color": "#f5ba42",
+          "label": "Speed Stop"
+        },
+        {
+          "operator": "=",
+          "rawValue": "2",
+          "color": "#eb4034",
+          "label": "Full Stop"
+        }
+      ],
+      "fontSize": 36
+    },
+    "Indicator!autonomy": {
+      "path": "/joy.axes[2]",
+      "style": "background",
+      "fallbackColor": "#a0a0a0",
+      "fallbackLabel": "No Joystick",
+      "rules": [
+        {
+          "operator": "<",
+          "rawValue": "-0.1",
+          "color": "#68e24a",
+          "label": "Autonomy ON"
+        },
+        {
+          "operator": ">=",
+          "rawValue": "-0.1",
+          "color": "#eb4034",
+          "label": "Autonomy OFF"
+        }
+      ],
+      "fontSize": 36
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "first": {
+      "first": "3D!main",
+      "second": {
+        "first": "Image!camera",
+        "second": "Image!semantic",
+        "direction": "column",
+        "splitPercentage": 50
+      },
+      "direction": "row",
+      "splitPercentage": 70
+    },
+    "second": {
+      "first": {
+        "first": "Teleop!teleop",
+        "second": {
+          "first": "Indicator!autonomy",
+          "second": {
+            "first": "Indicator!goalreached",
+            "second": "Indicator!stop",
+            "direction": "row",
+            "splitPercentage": 50
+          },
+          "direction": "row",
+          "splitPercentage": 33
+        },
+        "direction": "row",
+        "splitPercentage": 40
+      },
+      "second": {
+        "first": "RawMessages!cmdvel",
+        "second": "Plot!speed",
+        "direction": "row",
+        "splitPercentage": 30
+      },
+      "direction": "column",
+      "splitPercentage": 40
+    },
+    "direction": "column",
+    "splitPercentage": 75
+  }
+}

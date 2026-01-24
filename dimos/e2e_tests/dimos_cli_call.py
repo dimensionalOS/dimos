@@ -19,18 +19,20 @@ import time
 
 class DimosCliCall:
     process: subprocess.Popen[bytes] | None
-    demo_name: str | None = None
+    demo_args: list[str] | None = None
 
     def __init__(self) -> None:
         self.process = None
 
     def start(self) -> None:
-        if self.demo_name is None:
-            raise ValueError("Demo name must be set before starting the process.")
+        if self.demo_args is None:
+            raise ValueError("Demo args must be set before starting the process.")
 
-        self.process = subprocess.Popen(
-            ["dimos", "--simulation", "run", self.demo_name],
-        )
+        args = list(self.demo_args)
+        if len(args) == 1:
+            args = ["run", *args]
+
+        self.process = subprocess.Popen(["dimos", "--simulation", *args])
 
     def stop(self) -> None:
         if self.process is None:

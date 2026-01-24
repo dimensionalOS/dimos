@@ -1,0 +1,23 @@
+# =============================================================================
+# DEVELOPMENT OVERRIDES - Mount source for live editing
+# =============================================================================
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# This file adds development-specific volume mounts for editing ROS configs
+# without rebuilding the image.
+#
+# =============================================================================
+
+services:
+  dimos_simulation:
+    volumes:
+      # Mount ROS navigation stack source for config editing
+      - ./ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config:/ros2_ws/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config:rw
+      - ./ros-navigation-autonomy-stack/src/base_autonomy/local_planner/config:/ros2_ws/src/ros-navigation-autonomy-stack/src/base_autonomy/local_planner/config:rw
+
+  dimos_hardware:
+    volumes:
+      # Mount ROS navigation stack source for config editing
+      - ./ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config:/ros2_ws/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config:rw
+      - ./ros-navigation-autonomy-stack/src/base_autonomy/local_planner/config:/ros2_ws/src/ros-navigation-autonomy-stack/src/base_autonomy/local_planner/config:rw

@@ -262,13 +262,20 @@ __global__ void pnp_gn_batch(
 } // extern "C"
 """
 
+_pnp_kernel = None
 if cp is not None:
-    _mod = cp.RawModule(code=_CUDA_SRC, options=("-std=c++14",), name_expressions=("pnp_gn_batch",))
-    _pnp_kernel = _mod.get_function("pnp_gn_batch")
+    try:
+        _mod = cp.RawModule(
+            code=_CUDA_SRC, options=("-std=c++17",), name_expressions=("pnp_gn_batch",)
+        )
+        _pnp_kernel = _mod.get_function("pnp_gn_batch")
+    except Exception:
+        # CUDA not available at runtime (e.g., no GPU or driver issues)
+        pass
 
 
 def _solve_pnp_cuda_kernel(obj, img, K, iterations: int = 15, damping: float = 1e-6):  # type: ignore[no-untyped-def]
-    if cp is None:
+    if cp is None or _pnp_kernel is None:
         raise RuntimeError("CuPy/CUDA not available")
 
     obj_cu = cp.asarray(obj, dtype=cp.float32)
@@ -709,7 +716,7 @@ class CudaImage(AbstractImage):
             magnitude = cp.hypot(gx, gy)
             mean_mag = float(cp.asnumpy(magnitude.mean()))
         except Exception:
-            return 0.0
+            raise
         if mean_mag <= 0:
             return 0.0
         return float(np.clip((np.log10(mean_mag + 1) - 1.7) / 2.0, 0.0, 1.0))
