@@ -1,6 +1,6 @@
 # Development Guide
 
-1. [How to setup your system](#1-setup) (pick one: system install, nix flake + direnv, pure nix flake)
+1. [How to set up your system](#1-setup) (pick one: system install, nix flake + direnv, pure nix flake)
 2. [How to hack on DimOS](#2-how-to-hack-on-dimos) (which files to edit, debugging help, etc)
 3. [How to make a PR](#3-how-to-make-a-pr) (our expectations for a PR)
 
@@ -16,12 +16,12 @@ All the setup options are for your convenience. If you can get DimOS running on 
 
 ### Why pick this option? (pros/cons/when-to-use)
 
-* Downside: mutates your global system, causing (and receiving) side effects causes it to be unreliable
+* Downside: mutates your global system, which can create side effects and make it less reliable
 * Upside: Often good for a quick hack or exploring
 * Upside: Sometimes easier for CUDA/GPU acceleration
 * Use when: you understand system package management (arch linux user) or you don't care about making changes to your system
 
-### How to setup DimOS
+### How to set up DimOS
 
 ```bash
 # System dependencies
@@ -228,15 +228,13 @@ This will save the rerun data to `rerun.json` in the current directory.
 
 ## Where is `<thing>` located? (Architecture)
 
-<!-- * If you want to add a `dimos run <your_thing>` command see [dimos_run.md](/docs/development/dimos_run.md) -->
-* If you want to add a `dimos run <your_thing>` command see [dimos_run.md](/dimos/robot/cli/README.md)
-* If you want to add a camera driver see [depth_camera_integration.md](/docs/depth_camera_integration.md)
-<!-- * For edits to manipulation see [manipulation.md](/docs/development/manipulation.md) and [manipulation base](/dimos/hardware/manipulators/base/component_based_architecture.md) -->
-* For edits to manipulation see [manipulation.md](/dimos/hardware/manipulators/README.md) and [manipulation base](/dimos/hardware/manipulators/base/component_based_architecture.md)
+* If you want to add a `dimos run <your_thing>` command see [dimos_run.md](/docs/development/dimos_run.md)
+* If you want to add a camera driver see [depth_camera_integration.md](/docs/development/depth_camera_integration.md)
+* For edits to manipulation see [manipulation](/dimos/hardware/manipulators/README.md) and the related modules under `dimos/manipulation/`.
 * `dimos/core/`: Is where stuff like `Module`, `In`, `Out`, and `RPC` live.
 * `dimos/robot/`: Robot-specific modules live here.
 * `dimos/hardware/`: Are for sensors, end-effectors, and related individual hardware pieces.
-* `dimos/msgs/`: If you're trying to find a type to send a type over a stream, look here.
+* `dimos/msgs/`: If you're trying to find a message type to send over a stream, look here.
 * `dimos/dashboard/`: Contains code related to visualization.
 * `dimos/protocol/`: Defines low level stuff for communication between modules.
 * See `dimos/` for the remainder
@@ -258,7 +256,7 @@ pytest # run all tests at or below the current directory
 | Enable stdout in tests      | `pytest -s`                  |
 | Run tagged tests            | `pytest -m <tag>`            |
 
-We use tags for special tests, like `vis` or `tool` for things that aren't meant to be ran in CI and when casually developing, something that requires hardware or visual inspection (pointcloud merging vis etc)
+We use tags for special tests, like `tool` for things that aren't meant to be run in CI and for cases that require hardware or visual inspection (pointcloud merging visualization, etc).
 
 You can enable a tag by selecting -m <tag_name> - these are configured in `./pyproject.toml`
 
@@ -268,12 +266,12 @@ You can enable a tag by selecting -m <tag_name> - these are configured in `./pyp
 - Open the PR against the `dev` branch (not `main`).
 - **No matter what, provide a few-lines that, when run, let a reviewer test the feature you added** (assuming you changed functional python code).
 - Less changed files = better.
-- If you're writing documentation, see [writing docs](/docs/agents/docs/index.md) for how to write code blocks. <!-- THIS IS FOR THE (already finish) NEXT DOC PR: If you're writing documentation, see [writing docs](/docs/development/writing_docs.md) -->
+- If you're writing documentation, see [writing docs](/docs/development/writing_docs/README.md)
 - If you get mypy errors, please fix them. Don't just add # type: ignore. Please first understand why mypy is complaining and try to fix it. It's only okay to ignore if the issue cannot be fixed.
 - If you made a change that is likely going to involve a debate, open the github UI and add a graphical comment on that code. Justify your choice and explain downsides of alternatives.
 - We don't require 100% test coverage, but if you're making a PR of notable python changes you should probably either have unit tests or good reason why not (ex: visualization stuff is hard to test so we don't).
 - Have the name of your PR start with `WIP:` if its not ready to merge but you want to show someone the changes.
-- If you have large (>500kb) files, see [large file management](/docs/data.md) for how to store and load them (don't just commit them).
+- If you have large (>500kb) files, see [large file management](/docs/development/large_file_management.md) for how to store and load them (don't just commit them).
 - So long as you don't disable pre-commit hooks the formatting, license headers, EOLs, LFS checks, etc will be handled automatically by [pre-commit](https://pre-commit.com). If something goes wrong with the hooks you can run the step manually with `pre-commit run --all-files`.
 - If you're a new hire at DimOS:
     - Did we mention smaller PR's are better? Smaller PR's are better.

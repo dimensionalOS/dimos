@@ -1,6 +1,27 @@
-# doclinks
+# Use Doclinks to Resolve file references
 
-A Markdown link resolver that automatically fills in correct file paths for code references in documentation.
+## Syntax
+
+<!-- doclinks-ignore-start -->
+| Pattern     | Example                                             |
+|-------------|-----------------------------------------------------|
+| Code file   | `[`service/spec.py`]()` → resolves path             |
+| With symbol | `Configurable` in `[`spec.py`]()` → adds `#L<line>` |
+| Doc link    | `[Configuration](.md)` → resolves to doc            |
+<!-- doclinks-ignore-end -->
+
+## Usage
+
+```bash
+bin/doclinks docs/guide.md   # single file
+bin/doclinks docs/           # directory
+bin/doclinks --dry-run ...   # preview only
+```
+
+## Full Documentation
+
+<details>
+<summary>Click to see full documentation</summary>
 
 ## What it does
 
@@ -39,26 +60,26 @@ See [`service/spec.py`](/dimos/protocol/service/spec.py) for the implementation.
 
 ```bash
 # Process a single file
-doclinks docs/guide.md
+bin/doclinks docs/guide.md
 
 # Process a directory recursively
-doclinks docs/
+bin/doclinks docs/
 
 # Relative links (from doc location)
-doclinks --link-mode relative docs/
+bin/doclinks --link-mode relative docs/
 
 # GitHub links
-doclinks --link-mode github \
+bin/doclinks --link-mode github \
   --github-url https://github.com/org/repo docs/
 
 # Dry run (preview changes)
-doclinks --dry-run docs/
+bin/doclinks --dry-run docs/
 
 # CI check (exit 1 if changes needed)
-doclinks --check docs/
+bin/doclinks --check docs/
 
 # Watch mode (auto-update on changes)
-doclinks --watch docs/
+bin/doclinks --watch docs/
 ```
 
 ## Options
@@ -94,3 +115,5 @@ The tool builds an index of all files in the repo. For `/dimos/protocol/service/
 - `dimos/protocol/service/spec.py`
 
 Use longer paths when multiple files share the same name.
+
+</details>

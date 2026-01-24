@@ -1,59 +1,9 @@
+We have many diagramming tools. View source code of this page to see examples.
 
-# Code Blocks
+# How to make diagrams
 
-**All code blocks must be executable.**
-Never write illustrative/pseudocode blocks.
-If you're showing an API usage pattern, create a minimal working example that actually runs. This ensures documentation stays correct as the codebase evolves.
-
-After writing a code block in your markdown file, you can run it by executing:
-```bash
-md-babel-py run document.md
-```
-
-More information on this tool is in [codeblocks](/docs/agents/docs/codeblocks.md).
-
-
-# Code or Docs Links
-
-After adding a link to a doc, run
-
-```bash
-doclinks document.md
-```
-
-### Code file references
-```markdown
-See [`service/spec.py`](/dimos/protocol/service/spec.py) for the implementation.
-```
-
-After running doclinks, it becomes:
-```markdown
-See [`service/spec.py`](/dimos/protocol/service/spec.py) for the implementation.
-```
-
-### Symbol auto-linking
-Mention a symbol on the same line to auto-link to its line number:
-```markdown
-The `Configurable` class is defined in [`service/spec.py`](/dimos/protocol/service/spec.py#L22).
-```
-
-Becomes:
-```markdown
-The `Configurable` class is defined in [`service/spec.py`](/dimos/protocol/service/spec.py#L22).
-```
-### Doc-to-doc references
-Use `.md` as the link target:
-```markdown
-See [Configuration](/docs/api/configuration.md) for more details.
-```
-
-Becomes:
-```markdown
-See [Configuration](/docs/concepts/configuration.md) for more details.
-```
-
-More information on this is in [doclinks](/docs/agents/docs/doclinks.md).
-
+1. First define a diagram using a codeblock (examples below). See [Pikchr](https://pikchr.org/) for more details on syntax.
+2. Then use the cli tool `md-babel-py` (ex: `md-babel-py run README.md`) to generate the diagram. See [codeblocks.md](/docs/development/writing_docs/codeblocks.md) for how to get the `md-babel-py` cli tool.
 
 # Pikchr
 

@@ -34,7 +34,7 @@ Below we set up replay of real camera and lidar data from the Unitree Go2 robot.
 <details>
 <summary>Stream Setup</summary>
 
-You can read more about [sensor storage here](storage_replay.md) and [LFS data store here](/docs/data.md).
+You can read more about [sensor storage here](storage_replay.md) and [LFS data storage here](/docs/development/large_file_management.md).
 
 ```python session=align no-result
 from reactivex import Subject
@@ -70,7 +70,7 @@ lidar_stream = lidar_replay.stream(from_timestamp=seek_ts, duration=2.0).pipe(
 
 </details>
 
-Streams would normally come from an actual robot into your module via `IN` inputs. [`detection/module3D.py`](/dimos/perception/detection/module3D.py#L11) is a good example of this.
+Streams would normally come from an actual robot into your module via `In` inputs. [`detection/module3D.py`](/dimos/perception/detection/module3D.py#L11) is a good example of this.
 
 Assume we have them. Let's align them.
 

@@ -277,7 +277,7 @@ class TestDocIndex:
         """Should index docs by lowercase stem."""
         assert "configuration" in doc_index
         assert "modules" in doc_index
-        assert "development" in doc_index
+        assert "blueprints" in doc_index
 
     def test_case_insensitive(self, doc_index):
         """Should use lowercase keys."""
@@ -349,8 +349,8 @@ class TestDocLinking:
 
     def test_doc_link_relative_mode(self, file_index, doc_index):
         """Should generate relative paths for doc links."""
-        content = "See [Development](.md)"
-        doc_path = REPO_ROOT / "docs/concepts/test.md"
+        content = "See [Blueprints](.md)"
+        doc_path = REPO_ROOT / "docs/api/test.md"
 
         new_content, _changes, errors = process_markdown(
             content,

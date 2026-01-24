@@ -1,5 +1,5 @@
 
-# Dimos Modules
+# DimOS Modules
 
 Modules are subsystems on a robot that operate autonomously and communicate with other subsystems using standardized messages.
 
@@ -47,8 +47,8 @@ print(CameraModule.io())
  ├─ color_image: Image
  ├─ camera_info: CameraInfo
  │
- ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
  ├─ RPC start()
+ ├─ RPC stop()
  │
  ├─ Skill video_stream (stream=passive, reducer=latest_reducer, output=image)
 ```
@@ -58,9 +58,9 @@ We can see that the camera module outputs two streams:
 - `color_image` with [sensor_msgs.Image](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html) type
 - `camera_info` with [sensor_msgs.CameraInfo](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/CameraInfo.html) type
 
-It offers two RPC calls: `start()` and `stop()`.
+It offers two RPC calls: `start()` and `stop()` (lifecycle methods).
 
-As well as an agentic [Skill](skills.md) called `video_stream` (more about this later, in [Skills Tutorial](skills.md)).
+It also exposes an agentic [skill](/docs/concepts/blueprints.md#defining-skills) called `video_stream` (more on skills in the Blueprints guide).
 
 We can start this module and explore the output of its streams in real time (this will use your webcam).
 
@@ -120,7 +120,7 @@ print(Detection2DModule.io())
  ├─ RPC stop() -> None
 ```
 
-TODO: add easy way to print config
+<!-- TODO: add easy way to print config -->
 
 Looks like the detector just needs an image input and outputs some sort of detection and annotation messages. Let's connect it to a camera.
 
@@ -174,3 +174,6 @@ to_svg(agentic, "assets/go2_agentic.svg")
 
 <!--Result:-->
 ![output](assets/go2_agentic.svg)
+
+
+To see more information on how to use Blueprints, see [Blueprints](/docs/concepts/blueprints.md).
