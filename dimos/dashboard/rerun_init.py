@@ -64,7 +64,7 @@ _connected = False
 _rerun_init_lock = threading.Lock()
 
 
-def init_rerun_server(viewer_mode: str = "rerun-native", memory_limit: str = "4GB") -> str:
+def init_rerun_server(viewer_mode: str, memory_limit: str = "4GB") -> str:
     """Initialize Rerun server in the main process.
 
     Starts the gRPC server and optionally the web/native viewer.
