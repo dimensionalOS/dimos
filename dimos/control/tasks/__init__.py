@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Task implementations for the ControlOrchestrator."""
+"""Task implementations for the ControlCoordinator."""
 
 from dimos.control.tasks.trajectory_task import (
     JointTrajectoryTask,
