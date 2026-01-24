@@ -256,7 +256,7 @@ pytest # run all tests at or below the current directory
 | Enable stdout in tests      | `pytest -s`                  |
 | Run tagged tests            | `pytest -m <tag>`            |
 
-We use tags for special tests, like `vis` or `tool` for things that aren't meant to be run in CI and for cases that require hardware or visual inspection (pointcloud merging visualization, etc).
+We use tags for special tests, like `tool` for things that aren't meant to be run in CI and for cases that require hardware or visual inspection (pointcloud merging visualization, etc).
 
 You can enable a tag by selecting -m <tag_name> - these are configured in `./pyproject.toml`
 
