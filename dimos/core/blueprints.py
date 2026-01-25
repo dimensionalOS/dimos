@@ -411,6 +411,18 @@ class Blueprint:
             )
             rr.send_blueprint(composed_blueprint)
 
+    def _start_rerun(self, global_config):
+        # Initialize Rerun server before deploying modules (if backend is Rerun)
+        if global_config.rerun_enabled and global_config.viewer_backend.startswith("rerun"):
+            try:
+                from dimos.dashboard.rerun_init import init_rerun_server
+
+                server_addr = init_rerun_server(viewer_mode=global_config.viewer_backend)
+                global_config.model_copy(update={"rerun_server_addr": server_addr})
+                logger.info("Rerun server initialized", addr=server_addr)
+            except Exception as e:
+                logger.warning(f"Failed to initialize Rerun server: {e}")
+
     def build(
         self,
         global_config: GlobalConfig | None = None,
@@ -424,21 +436,12 @@ class Blueprint:
 
         self._check_requirements()
         self._verify_no_name_conflicts()
-
-        # Initialize Rerun server before deploying modules (if backend is Rerun)
-        if global_config.rerun_enabled and global_config.viewer_backend.startswith("rerun"):
-            try:
-                from dimos.dashboard.rerun_init import init_rerun_server
-
-                server_addr = init_rerun_server(viewer_mode=global_config.viewer_backend)
-                global_config = global_config.model_copy(update={"rerun_server_addr": server_addr})
-                logger.info("Rerun server initialized", addr=server_addr)
-            except Exception as e:
-                logger.warning(f"Failed to initialize Rerun server: {e}")
+        self._start_rerun(global_config)
 
         module_coordinator = ModuleCoordinator(global_config=global_config)
         module_coordinator.start()
 
+        # all module constructors are called here (each of them setup their own)
         self._deploy_all_modules(module_coordinator, global_config)
         self._connect_transports(module_coordinator)
         self._connect_rpc_methods(module_coordinator)
