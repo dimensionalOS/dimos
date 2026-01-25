@@ -25,6 +25,7 @@ import rerun.blueprint as rrb
 from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.core.global_config import GlobalConfig
+from dimos.core.skill_module import SkillModule
 from dimos.dashboard.rerun_init import connect_rerun
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
@@ -35,6 +36,8 @@ from dimos.msgs.geometry_msgs import (
 )
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
+from dimos.protocol.skill.skill import skill
+from dimos.protocol.skill.type import Output
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
@@ -141,7 +144,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
         return {"status": "ok", "message": "Fake publish"}
 
 
-class GO2Connection(Module, spec.Camera, spec.Pointcloud):
+class GO2Connection(SkillModule, spec.Camera, spec.Pointcloud):
     cmd_vel: In[Twist]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
@@ -153,6 +156,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     camera_info_static: CameraInfo = _camera_info_static()
     _global_config: GlobalConfig
     _camera_info_thread: Thread | None = None
+    _latest_video_frame: Image | None = None
 
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
@@ -212,6 +216,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         def onimage(image: Image) -> None:
             self.color_image.publish(image)
+            self._latest_video_frame = image
             if self._global_config.viewer_backend.startswith("rerun"):
                 rr.log("world/robot/camera/rgb", image.to_rerun())
 
@@ -301,6 +306,15 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
             The result of the publish request
         """
         return self.connection.publish_request(topic, data)
+
+    @skill(output=Output.image)
+    def observe(self) -> Image | None:
+        """Returns the latest video frame from the robot camera. Use this skill for any visual world queries.
+
+        This skill provides the current camera view for perception tasks.
+        Returns None if no frame has been captured yet.
+        """
+        return self._latest_video_frame
 
 
 go2_connection = GO2Connection.blueprint
