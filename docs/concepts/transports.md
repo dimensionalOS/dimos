@@ -29,7 +29,7 @@ So: treat the API as uniform, but pick a backend whose semantics match the task.
 
 ---
 
-# Benchmarks
+## Benchmarks
 
 Quick view on performance of our pubsub backends:
 
@@ -41,7 +41,7 @@ python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_b
 
 ---
 
-# Abstraction layers
+## Abstraction layers
 
 <details><summary>Pikchr</summary>
 
@@ -77,7 +77,7 @@ We’ll go through these layers top-down.
 
 ---
 
-# Using transports with blueprints
+## Using transports with blueprints
 
 See [Blueprints](blueprints.md) for the blueprint API.
 
@@ -106,7 +106,7 @@ ros = nav.transports(
 
 ---
 
-# Using transports with modules
+## Using transports with modules
 
 Each **stream** on a module can use a different transport. Set `.transport` on the stream **before starting** modules.
 
@@ -163,7 +163,7 @@ See [Modules](modules.md) for more on module architecture.
 
 ---
 
-# Inspecting LCM traffic (CLI)
+## Inspecting LCM traffic (CLI)
 
 `lcmspy` shows topic frequency/bandwidth stats:
 
@@ -178,7 +178,7 @@ Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2026-01-24 20:28
 
 ---
 
-# Implementing a transport
+## Implementing a transport
 
 At the stream layer, a transport is implemented by subclassing `Transport` (see [`core/stream.py`](/dimos/core/stream.py#L83)) and implementing:
 
@@ -194,13 +194,13 @@ Your `Transport.__init__` args can be anything meaningful for your backend:
 
 Encoding is an implementation detail, but we encourage using LCM-compatible message types when possible.
 
-## Encoding helpers
+### Encoding helpers
 
 Many of our message types provide `lcm_encode` / `lcm_decode` for compact, language-agnostic binary encoding (often faster than pickle). For details, see [LCM](/docs/concepts/lcm.md).
 
 ---
 
-# PubSub transports
+## PubSub transports
 
 Even though transport can be anything (TCP connection, unix socket) for now all our transport backends implement the `PubSub` interface.
 
@@ -232,7 +232,7 @@ print(inspect.getsource(PubSub.subscribe))
 
 Topic/message types are flexible: bytes, JSON, or our ROS-compatible [LCM](/docs/concepts/lcm.md) types. We also have pickle-based transports for arbitrary Python objects.
 
-## LCM (UDP multicast)
+### LCM (UDP multicast)
 
 LCM is UDP multicast. It’s very fast on a robot LAN, but it’s **best-effort** (packets can drop).
 For local emission it autoconfigures system in a way in which it's more robust and faster then other more common protocols like ROS, DDS
@@ -262,7 +262,7 @@ lcm.stop()
 Received velocity: x=1.0, y=0.0, z=0.5
 ```
 
-## Shared memory (IPC)
+### Shared memory (IPC)
 
 Shared memory is highest performance, but only works on the **same machine**.
 
@@ -290,7 +290,7 @@ Received: [{'data': [1, 2, 3]}]
 
 ---
 
-# A minimal transport: `Memory`
+## A minimal transport: `Memory`
 
 The simplest toy backend is `Memory` (single process). Start from there when implementing a new pubsub backend.
 
@@ -323,13 +323,13 @@ See [`memory.py`](/dimos/protocol/pubsub/memory.py) for the complete source.
 
 ---
 
-# Encode/decode mixins
+## Encode/decode mixins
 
 Transports often need to serialize messages before sending and deserialize after receiving.
 
 `PubSubEncoderMixin` at [`pubsub/spec.py`](/dimos/protocol/pubsub/spec.py#L95) provides a clean way to add encoding/decoding to any pubsub implementation.
 
-## Available mixins
+### Available mixins
 
 | Mixin                | Encoding        | Use case                           |
 |----------------------|-----------------|------------------------------------|
@@ -339,9 +339,9 @@ Transports often need to serialize messages before sending and deserialize after
 
 `LCMEncoderMixin` is especially useful: you can use LCM message definitions with *any* transport (not just UDP multicast). See [LCM](/docs/concepts/lcm.md) for details.
 
-## Creating a custom mixin
+### Creating a custom mixin
 
-```python session=jsonencoder
+```python session=jsonencoder no-result
 from dimos.protocol.pubsub.spec import PubSubEncoderMixin
 import json
 
@@ -355,7 +355,7 @@ class JsonEncoderMixin(PubSubEncoderMixin[str, dict, bytes]):
 
 Combine with a pubsub implementation via multiple inheritance:
 
-```python session=jsonencoder
+```python session=jsonencoder no-result
 from dimos.protocol.pubsub.memory import Memory
 
 class MyJsonPubSub(JsonEncoderMixin, Memory):
@@ -364,7 +364,7 @@ class MyJsonPubSub(JsonEncoderMixin, Memory):
 
 Swap serialization by changing the mixin:
 
-```python session=jsonencoder
+```python session=jsonencoder no-result
 from dimos.protocol.pubsub.spec import PickleEncoderMixin
 
 class MyPicklePubSub(PickleEncoderMixin, Memory):
@@ -373,13 +373,13 @@ class MyPicklePubSub(PickleEncoderMixin, Memory):
 
 ---
 
-# Testing and benchmarks
+## Testing and benchmarks
 
-## Spec tests
+### Spec tests
 
 See [`pubsub/test_spec.py`](/dimos/protocol/pubsub/test_spec.py) for the grid tests your new backend should pass.
 
-## Benchmarks
+### Benchmarks
 
 Add your backend to benchmarks to compare in context:
 
