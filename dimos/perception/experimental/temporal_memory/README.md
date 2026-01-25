@@ -30,3 +30,6 @@ Notes
 - Evidence is extracted in sliding windows, so queries can refer to recent or past entities.
 - Distance estimation can run in the background to enrich graph relations.
 - If you want a different output directory, set `TemporalMemoryConfig(output_dir=...)`.
+
+To visualize, run
+`python -m dimos.perception.experimental.temporal_memory.graph_viz_server assets/temporal_memory/entity_graph.db` and open in `localhost:8080` in your browser.
