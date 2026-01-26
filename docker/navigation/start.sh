@@ -10,9 +10,13 @@ NC='\033[0m'
 # Parse command line arguments
 MODE="simulation"
 USE_ROUTE_PLANNER="false"
+USE_EXPLORATION_PLANNER="false"
 USE_RVIZ="false"
 DEV_MODE="false"
 ROS_DISTRO="humble"
+BAGFILE_PATH=""
+SAVE_EXPLORED_MAP="false"
+PLAYBACK_RATE="1.0"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --hardware)
@@ -23,8 +27,16 @@ while [[ $# -gt 0 ]]; do
             MODE="simulation"
             shift
             ;;
+        --bagfile)
+            MODE="bagfile"
+            shift
+            ;;
         --route-planner)
             USE_ROUTE_PLANNER="true"
+            shift
+            ;;
+        --exploration-planner)
+            USE_EXPLORATION_PLANNER="true"
             shift
             ;;
         --rviz)
@@ -43,27 +55,46 @@ while [[ $# -gt 0 ]]; do
             ROS_DISTRO="jazzy"
             shift
             ;;
+        --save)
+            SAVE_EXPLORED_MAP="true"
+            shift
+            ;;
+        -r)
+            if [[ -n "$2" && ! "$2" =~ ^- ]]; then
+                PLAYBACK_RATE="$2"
+                shift 2
+            else
+                echo -e "${RED}Error: -r requires a rate value (e.g., -r 2.0)${NC}"
+                exit 1
+            fi
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --simulation      Start simulation container (default)"
-            echo "  --hardware        Start hardware container for real robot"
-            echo "  --route-planner   Enable FAR route planner (for hardware mode)"
-            echo "  --rviz            Launch RViz2 visualization"
-            echo "  --dev             Development mode (mount src for config editing)"
-            echo "  --humble          Use ROS 2 Humble image (default)"
-            echo "  --jazzy           Use ROS 2 Jazzy image"
-            echo "  --help, -h        Show this help message"
+            echo "  --simulation          Start simulation container (default)"
+            echo "  --hardware            Start hardware container for real robot"
+            echo "  --bagfile             Replay a ROS bag file (prompts for selection)"
+            echo "  --route-planner       Enable FAR route planner"
+            echo "  --exploration-planner Enable TARE exploration planner"
+            echo "  --rviz                Launch RViz2 visualization"
+            echo "  --save                Save /explored_areas to PLY file after replay"
+            echo "  -r <rate>             Playback rate multiplier (e.g., -r 2.0 for 2x speed)"
+            echo "  --dev                 Development mode (mount src for config editing)"
+            echo "  --humble              Use ROS 2 Humble image (default)"
+            echo "  --jazzy               Use ROS 2 Jazzy image"
+            echo "  --help, -h            Show this help message"
             echo ""
             echo "Examples:"
             echo "  $0                                    # Start simulation (Humble)"
             echo "  $0 --jazzy                            # Start simulation (Jazzy)"
-            echo "  $0 --hardware                         # Start hardware (base autonomy, Humble)"
-            echo "  $0 --hardware --jazzy                 # Start hardware (Jazzy)"
-            echo "  $0 --hardware --route-planner         # Hardware with route planner"
-            echo "  $0 --hardware --route-planner --rviz  # Hardware with route planner + RViz"
-            echo "  $0 --hardware --dev                   # Hardware with src mounted for development"
+            echo "  $0 --hardware                         # Start hardware (base autonomy)"
+            echo "  $0 --hardware --route-planner         # Hardware with FAR route planner"
+            echo "  $0 --bagfile                          # Replay bagfile (will prompt)"
+            echo "  $0 --bagfile --exploration-planner    # Bagfile with TARE exploration"
+            echo "  $0 --bagfile -r 2.0                   # Bagfile at 2x speed"
+            echo "  $0 --bagfile --save                   # Bagfile and save explored map"
+            echo "  $0 --bagfile --exploration-planner --save -r 1.5  # Full example"
             echo ""
             echo "Press Ctrl+C to stop the container"
             exit 0
@@ -81,10 +112,88 @@ export ROS_DISTRO
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
+# Function to select bagfile
+select_bagfile() {
+    BAGFILES_DIR="$SCRIPT_DIR/bagfiles"
+
+    if [ ! -d "$BAGFILES_DIR" ]; then
+        echo -e "${RED}Error: bagfiles directory not found at $BAGFILES_DIR${NC}"
+        exit 1
+    fi
+
+    # Find all valid bagfiles (folders with metadata.yaml or .mcap files)
+    declare -a BAGFILES
+    declare -a BAGFILE_NAMES
+
+    # Find ROS2 bag folders (contain metadata.yaml)
+    while IFS= read -r -d '' dir; do
+        if [ -f "$dir/metadata.yaml" ]; then
+            BAGFILES+=("$dir")
+            BAGFILE_NAMES+=("$(basename "$dir") (folder)")
+        fi
+    done < <(find "$BAGFILES_DIR" -maxdepth 2 -type d -print0 2>/dev/null)
+
+    # Find standalone .mcap files
+    while IFS= read -r -d '' file; do
+        BAGFILES+=("$file")
+        BAGFILE_NAMES+=("$(basename "$file")")
+    done < <(find "$BAGFILES_DIR" -maxdepth 1 -name "*.mcap" -type f -print0 2>/dev/null)
+
+    # Find standalone .db3 files (ROS2 SQLite format)
+    while IFS= read -r -d '' file; do
+        BAGFILES+=("$file")
+        BAGFILE_NAMES+=("$(basename "$file")")
+    done < <(find "$BAGFILES_DIR" -maxdepth 1 -name "*.db3" -type f -print0 2>/dev/null)
+
+    if [ ${#BAGFILES[@]} -eq 0 ]; then
+        echo -e "${RED}Error: No bagfiles found in $BAGFILES_DIR${NC}"
+        echo "Place your ROS2 bag files (.mcap, .db3, or folders with metadata.yaml) in:"
+        echo "  $BAGFILES_DIR"
+        exit 1
+    fi
+
+    echo -e "${GREEN}================================================${NC}"
+    echo -e "${GREEN}Available ROS Bag Files:${NC}"
+    echo -e "${GREEN}================================================${NC}"
+    echo ""
+
+    for i in "${!BAGFILE_NAMES[@]}"; do
+        echo -e "  ${YELLOW}$((i+1)))${NC} ${BAGFILE_NAMES[$i]}"
+    done
+
+    echo ""
+    read -p "Select bagfile [1-${#BAGFILES[@]}]: " selection
+
+    # Validate selection
+    if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt ${#BAGFILES[@]} ]; then
+        echo -e "${RED}Invalid selection${NC}"
+        exit 1
+    fi
+
+    BAGFILE_PATH="${BAGFILES[$((selection-1))]}"
+    BAGFILE_NAME="${BAGFILE_NAMES[$((selection-1))]}"
+
+    echo ""
+    echo -e "${GREEN}Selected: ${BAGFILE_NAME}${NC}"
+    echo ""
+}
+
+# Bagfile mode - prompt for selection
+if [ "$MODE" = "bagfile" ]; then
+    select_bagfile
+    export BAGFILE_PATH
+    # Convert to container path
+    BAGFILE_BASENAME=$(basename "$BAGFILE_PATH")
+    export CONTAINER_BAGFILE_PATH="/ros2_ws/bagfiles/$BAGFILE_BASENAME"
+fi
+
 echo -e "${GREEN}================================================${NC}"
 echo -e "${GREEN}Starting DimOS Docker Container${NC}"
 echo -e "${GREEN}Mode: ${MODE}${NC}"
 echo -e "${GREEN}ROS Distribution: ${ROS_DISTRO}${NC}"
+if [ "$MODE" = "bagfile" ]; then
+    echo -e "${GREEN}Bagfile: $(basename "$BAGFILE_PATH")${NC}"
+fi
 echo -e "${GREEN}================================================${NC}"
 echo ""
 
@@ -274,11 +383,39 @@ fi
 
 # Export settings for docker-compose
 export USE_ROUTE_PLANNER
+export USE_EXPLORATION_PLANNER
 export USE_RVIZ
+export SAVE_EXPLORED_MAP
+export PLAYBACK_RATE
 
 # Print helpful info before starting
 echo ""
-if [ "$MODE" = "hardware" ]; then
+if [ "$MODE" = "bagfile" ]; then
+    CONTAINER_NAME="dimos_bagfile_container"
+    echo "Bagfile mode - Replaying ROS bag with autonomy stack"
+    echo ""
+    echo "The container will automatically run:"
+    if [ "$USE_EXPLORATION_PLANNER" = "true" ]; then
+        echo "  - system_bagfile_with_exploration_planner.launch.py"
+        echo "  - TARE Exploration Planner"
+    elif [ "$USE_ROUTE_PLANNER" = "true" ]; then
+        echo "  - system_bagfile_with_route_planner.launch.py"
+        echo "  - FAR Route Planner"
+    else
+        echo "  - system_bagfile.launch.py (base autonomy)"
+    fi
+    echo "  - ROS2 bag replay: $(basename "$BAGFILE_PATH")"
+    if [ "$PLAYBACK_RATE" != "1.0" ]; then
+        echo "  - Playback rate: ${PLAYBACK_RATE}x"
+    fi
+    echo "  - RViz2 + Foxglove Bridge (port 8765)"
+    if [ "$SAVE_EXPLORED_MAP" = "true" ]; then
+        echo "  - Will save /explored_areas to PLY after replay"
+    fi
+    echo ""
+    echo "To enter the container from another terminal:"
+    echo -e "    ${YELLOW}docker exec -it ${CONTAINER_NAME} bash${NC}"
+elif [ "$MODE" = "hardware" ]; then
     if [ "$USE_ROUTE_PLANNER" = "true" ]; then
         echo "Hardware mode - Auto-starting ROS real robot system WITH route planner"
         echo ""
@@ -323,7 +460,9 @@ if [ "$DEV_MODE" = "true" ]; then
     COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"
 fi
 
-if [ "$MODE" = "hardware" ]; then
+if [ "$MODE" = "bagfile" ]; then
+    $COMPOSE_CMD --profile bagfile up
+elif [ "$MODE" = "hardware" ]; then
     $COMPOSE_CMD --profile hardware up
 else
     $COMPOSE_CMD up

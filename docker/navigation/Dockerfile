@@ -226,8 +226,10 @@ RUN cat > ${WORKSPACE}/config/fastdds.xml <<'EOF'
 EOF
 
 # Install portaudio for unitree-webrtc-connect (pyaudio dependency)
+# Install rosbag2-storage-mcap for playing .mcap bagfiles
 RUN apt-get update && apt-get install -y --no-install-recommends \
     portaudio19-dev \
+    ros-${ROS_DISTRO}-rosbag2-storage-mcap \
     && rm -rf /var/lib/apt/lists/*
 
 # Create Python venv and install dependencies
@@ -254,7 +256,8 @@ COPY docker/navigation/run_both.sh /usr/local/bin/run_both.sh
 COPY docker/navigation/ros_launch_wrapper.py /usr/local/bin/ros_launch_wrapper.py
 COPY docker/navigation/foxglove_utility/twist_relay.py /usr/local/bin/twist_relay.py
 COPY docker/navigation/foxglove_utility/goal_autonomy_relay.py /usr/local/bin/goal_autonomy_relay.py
-RUN chmod +x /usr/local/bin/run_both.sh /usr/local/bin/ros_launch_wrapper.py /usr/local/bin/twist_relay.py /usr/local/bin/goal_autonomy_relay.py
+COPY docker/navigation/scripts/save_explored_areas.py /usr/local/bin/save_explored_areas.py
+RUN chmod +x /usr/local/bin/run_both.sh /usr/local/bin/ros_launch_wrapper.py /usr/local/bin/twist_relay.py /usr/local/bin/goal_autonomy_relay.py /usr/local/bin/save_explored_areas.py
 
 # Set up udev rules for motor controller
 RUN mkdir -p /etc/udev/rules.d && \

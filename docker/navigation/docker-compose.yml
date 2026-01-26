@@ -221,3 +221,149 @@ services:
       - NET_ADMIN  # Network interface configuration
       - SYS_ADMIN  # System operations
       - SYS_TIME   # Time synchronization
+
+  # Bagfile replay profile
+  dimos_bagfile:
+    build:
+      context: ../..
+      dockerfile: docker/navigation/Dockerfile
+      network: host
+      args:
+        ROS_DISTRO: ${ROS_DISTRO:-humble}
+    image: dimos_autonomy_stack:${ROS_DISTRO:-humble}
+    container_name: dimos_bagfile_container
+    profiles: ["bagfile"]
+
+    # Shared memory size for ROS 2 FastDDS
+    shm_size: '8gb'
+
+    # Enable interactive terminal
+    stdin_open: true
+    tty: true
+
+    # Network configuration - required for ROS communication
+    network_mode: host
+
+    # Use nvidia runtime for GPU acceleration (falls back to runc if not available)
+    runtime: ${DOCKER_RUNTIME:-nvidia}
+
+    # Environment variables for display and ROS
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
+      - ROBOT_CONFIG_PATH=${ROBOT_CONFIG_PATH:-mechanum_drive}
+      - HARDWARE_MODE=false
+      # DDS Configuration (FastDDS)
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml
+      # Bagfile configuration
+      - CONTAINER_BAGFILE_PATH=${CONTAINER_BAGFILE_PATH:-}
+      - USE_ROUTE_PLANNER=${USE_ROUTE_PLANNER:-false}
+      - USE_EXPLORATION_PLANNER=${USE_EXPLORATION_PLANNER:-false}
+      - SAVE_EXPLORED_MAP=${SAVE_EXPLORED_MAP:-false}
+      - PLAYBACK_RATE=${PLAYBACK_RATE:-1.0}
+
+    # Volume mounts
+    volumes:
+      # X11 socket for GUI
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/root/.Xauthority:rw
+      # Mount Unity environment models (if available)
+      - ./unity_models:/ros2_ws/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/mesh/unity:rw
+      # Mount bagfiles directory
+      - ./bagfiles:/ros2_ws/bagfiles:rw
+      # Mount config files for easy editing
+      - ./config:/ros2_ws/config:rw
+
+    # Device access (for joystick controllers)
+    devices:
+      - /dev/input:/dev/input
+      - /dev/dri:/dev/dri
+
+    # Working directory
+    working_dir: /ros2_ws
+
+    # Command to run bagfile replay with autonomy stack
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        source /ros2_ws/install/setup.bash
+        cd /ros2_ws/src/ros-navigation-autonomy-stack
+
+        # Determine which launch file and rviz config to use
+        if [ "$USE_EXPLORATION_PLANNER" = "true" ]; then
+            echo "Starting bagfile replay with TARE Exploration Planner..."
+            ros2 launch vehicle_simulator system_bagfile_with_exploration_planner.launch.py &
+            RVIZ_CFG=/ros2_ws/src/ros-navigation-autonomy-stack/src/exploration_planner/tare_planner/rviz/tare_planner_ground.rviz
+        elif [ "$USE_ROUTE_PLANNER" = "true" ]; then
+            echo "Starting bagfile replay with FAR Route Planner..."
+            ros2 launch vehicle_simulator system_bagfile_with_route_planner.launch.py &
+            RVIZ_CFG=/ros2_ws/src/ros-navigation-autonomy-stack/src/route_planner/far_planner/rviz/default.rviz
+        else
+            echo "Starting bagfile replay with base autonomy..."
+            ros2 launch vehicle_simulator system_bagfile.launch.py &
+            RVIZ_CFG=/ros2_ws/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/rviz/vehicle_simulator.rviz
+        fi
+        sleep 3
+
+        # Start RViz
+        echo "Starting RViz2..."
+        ros2 run rviz2 rviz2 -d $$RVIZ_CFG &
+        sleep 2
+
+        # Start Foxglove Bridge
+        echo "Starting Foxglove Bridge on port 8765..."
+        ros2 launch foxglove_bridge foxglove_bridge_launch.xml port:=8765 &
+        sleep 1
+
+        # Play bagfile
+        if [ -z "$CONTAINER_BAGFILE_PATH" ]; then
+            echo "Error: No bagfile path specified"
+            echo "Waiting for manual bagfile replay..."
+            echo "Run: ros2 bag play /ros2_ws/bagfiles/<your_bagfile>"
+            wait
+        else
+            # Start saver in background if requested (runs during playback)
+            if [ "$SAVE_EXPLORED_MAP" = "true" ]; then
+                BAGFILE_NAME=$$(basename "$CONTAINER_BAGFILE_PATH" | sed 's/\.[^.]*$$//')
+                TIMESTAMP=$$(date +%Y%m%d_%H%M%S)
+                OUTPUT_FILE="/ros2_ws/bagfiles/$${BAGFILE_NAME}_explored_$${TIMESTAMP}.ply"
+                echo "Starting point cloud saver (will save to $$OUTPUT_FILE)..."
+                python3 /usr/local/bin/save_explored_areas.py "$$OUTPUT_FILE" 8 &
+                SAVER_PID=$$!
+            fi
+
+            echo "Starting bagfile replay: $CONTAINER_BAGFILE_PATH"
+            echo "Playback rate: ${PLAYBACK_RATE}x"
+            echo "Press Ctrl+C to stop..."
+            sleep 2
+            # Use mcap storage for .mcap files (if plugin available)
+            case "$CONTAINER_BAGFILE_PATH" in
+                *.mcap)
+                    if ros2 bag play --help 2>&1 | grep -q mcap; then
+                        ros2 bag play "$CONTAINER_BAGFILE_PATH" --clock --storage mcap -r $PLAYBACK_RATE
+                    else
+                        echo "ERROR: .mcap files require rosbag2-storage-mcap plugin"
+                        echo "Rebuild the Docker image with: ./build.sh --humble"
+                        echo "Or convert your bagfile to sqlite3 format"
+                        exit 1
+                    fi
+                    ;;
+                *)
+                    ros2 bag play "$CONTAINER_BAGFILE_PATH" --clock -r $PLAYBACK_RATE
+                    ;;
+            esac
+
+            # Wait for saver to finish (it auto-exits after idle timeout)
+            if [ "$SAVE_EXPLORED_MAP" = "true" ]; then
+                echo ""
+                echo "Bagfile replay finished. Waiting for final save..."
+                wait $$SAVER_PID 2>/dev/null || true
+                echo "Output saved to: $$OUTPUT_FILE"
+            fi
+        fi
