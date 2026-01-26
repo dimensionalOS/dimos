@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from dimos.hardware.manipulators.spec import ManipulatorAdapter
+    from dimos.msgs.geometry_msgs import PoseStamped
 
 logger = setup_logger()
 
@@ -62,15 +63,20 @@ class TaskConfig:
 
     Attributes:
         name: Task name (e.g., "traj_arm")
-        type: Task type ("trajectory")
+        type: Task type ("trajectory", "servo", "velocity", "cartesian_ik")
         joint_names: List of joint names this task controls
         priority: Task priority (higher wins arbitration)
+        model_path: Path to URDF/MJCF for IK solver (cartesian_ik only)
+        ee_joint_id: End-effector joint ID in model (cartesian_ik only)
     """
 
     name: str
     type: str = "trajectory"
     joint_names: list[str] = field(default_factory=lambda: [])
     priority: int = 10
+    # Cartesian IK specific
+    model_path: str | None = None
+    ee_joint_id: int = 6
 
 
 @dataclass
@@ -133,6 +139,10 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     # Input: Streaming joint commands for real-time control
     joint_command: In[JointState]
 
+    # Input: Streaming cartesian commands for CartesianIKTask
+    # Uses frame_id as task name for routing
+    cartesian_command: In[PoseStamped]
+
     config: ControlCoordinatorConfig
     default_config = ControlCoordinatorConfig
 
@@ -153,8 +163,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         # Tick loop (created on start)
         self._tick_loop: TickLoop | None = None
 
-        # Subscription handle for streaming joint commands
+        # Subscription handles for streaming commands
         self._joint_command_unsub: Callable[[], None] | None = None
+        self._cartesian_command_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -243,6 +254,22 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 cfg.name,
                 JointVelocityTaskConfig(
                     joint_names=cfg.joint_names,
+                    priority=cfg.priority,
+                ),
+            )
+
+        elif task_type == "cartesian_ik":
+            from dimos.control.tasks import CartesianIKTask, CartesianIKTaskConfig
+
+            if cfg.model_path is None:
+                raise ValueError(f"CartesianIKTask '{cfg.name}' requires model_path in TaskConfig")
+
+            return CartesianIKTask(
+                cfg.name,
+                CartesianIKTaskConfig(
+                    joint_names=cfg.joint_names,
+                    model_path=cfg.model_path,
+                    ee_joint_id=cfg.ee_joint_id,
                     priority=cfg.priority,
                 ),
             )
@@ -417,6 +444,30 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                     velocities_by_name = dict(zip(msg.name, msg.velocity, strict=False))
                     task.set_velocities_by_name(velocities_by_name, t_now)  # type: ignore[attr-defined]
 
+    def _on_cartesian_command(self, msg: PoseStamped) -> None:
+        """Route incoming PoseStamped to CartesianIKTask by task name.
+
+        Uses frame_id as the target task name for routing.
+        """
+        task_name = msg.frame_id
+        if not task_name:
+            logger.warning("Received cartesian_command with empty frame_id (task name)")
+            return
+
+        t_now = time.perf_counter()
+
+        with self._task_lock:
+            task = self._tasks.get(task_name)
+            if task is None:
+                logger.warning(f"Cartesian command for unknown task: {task_name}")
+                return
+
+            # Route to CartesianIKTask
+            if hasattr(task, "set_target_pose"):
+                task.set_target_pose(msg, t_now)  # type: ignore[attr-defined]
+            else:
+                logger.warning(f"Task {task_name} does not support set_target_pose")
+
     @rpc
     def task_invoke(self, task_name: str, method: str, kwargs: dict | None = None) -> Any:
         """Invoke a method on a task. Pass t_now=None to auto-inject current time."""
@@ -487,6 +538,23 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             except Exception as e:
                 logger.warning(f"Could not subscribe to joint_command: {e}")
 
+        # Subscribe to cartesian commands if any cartesian_ik tasks configured
+        has_cartesian_ik = any(t.type == "cartesian_ik" for t in self.config.tasks)
+        if has_cartesian_ik:
+            try:
+                if self.cartesian_command.transport:
+                    self._cartesian_command_unsub = self.cartesian_command.subscribe(
+                        self._on_cartesian_command
+                    )
+                    logger.info("Subscribed to cartesian_command for CartesianIK tasks")
+                else:
+                    logger.warning(
+                        "CartesianIK tasks configured but no transport set for cartesian_command. "
+                        "Use task_invoke RPC or set transport via blueprint."
+                    )
+            except Exception as e:
+                logger.warning(f"Could not subscribe to cartesian_command: {e}")
+
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
 
     @rpc
@@ -494,10 +562,13 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         """Stop the coordinator."""
         logger.info("Stopping ControlCoordinator...")
 
-        # Unsubscribe from joint commands
+        # Unsubscribe from streaming commands
         if self._joint_command_unsub:
             self._joint_command_unsub()
             self._joint_command_unsub = None
+        if self._cartesian_command_unsub:
+            self._cartesian_command_unsub()
+            self._cartesian_command_unsub = None
 
         if self._tick_loop:
             self._tick_loop.stop()
