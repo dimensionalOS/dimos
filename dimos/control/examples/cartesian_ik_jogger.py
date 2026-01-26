@@ -35,6 +35,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import time
+from typing import Any
 
 import numpy as np
 
@@ -109,7 +110,7 @@ class JogState:
             yaw=float(rpy[2]),
         )
 
-    def to_pose_stamped(self, task_name: str):
+    def to_pose_stamped(self, task_name: str) -> Any:
         """Convert to PoseStamped for LCM publishing.
 
         Args:
@@ -155,7 +156,7 @@ def _get_piper_model_path() -> str:
     return str(piper_path / "mujoco_model" / "piper_no_gripper_description.xml")
 
 
-def run_jogger_ui(model_path: str | None = None, ee_joint_id: int = 6):
+def run_jogger_ui(model_path: str | None = None, ee_joint_id: int = 6) -> None:
     """Run the pygame-based cartesian jogger UI.
 
     This is ONLY the UI - it publishes PoseStamped to LCM.
@@ -178,7 +179,9 @@ def run_jogger_ui(model_path: str | None = None, ee_joint_id: int = 6):
     print("(Coordinator must be running separately to receive commands)")
 
     # Create LCM publisher for sending cartesian commands
-    transport = LCMTransport("/coordinator/cartesian_command", PoseStamped)
+    transport: LCMTransport[PoseStamped] = LCMTransport(
+        "/coordinator/cartesian_command", PoseStamped
+    )
 
     # Initialize pygame
     pygame.init()
@@ -332,7 +335,7 @@ def run_jogger_ui(model_path: str | None = None, ee_joint_id: int = 6):
     pygame.quit()
 
 
-def main():
+def main() -> None:
     """Run the jogger UI standalone.
 
     Note: This only runs the UI. The coordinator must be started separately:

@@ -385,7 +385,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             return True
 
     @rpc
-    def remove_task(self, task_name: str) -> bool:
+    def remove_task(self, task_name: TaskName) -> bool:
         """Remove a task by name."""
         with self._task_lock:
             if task_name in self._tasks:
@@ -395,7 +395,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             return False
 
     @rpc
-    def get_task(self, task_name: str) -> ControlTask | None:
+    def get_task(self, task_name: TaskName) -> ControlTask | None:
         """Get a task by name."""
         with self._task_lock:
             return self._tasks.get(task_name)
@@ -471,7 +471,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 logger.warning(f"Task {task_name} does not support set_target_pose")
 
     @rpc
-    def task_invoke(self, task_name: str, method: str, kwargs: dict | None = None) -> Any:
+    def task_invoke(
+        self, task_name: TaskName, method: str, kwargs: dict[str, Any] | None = None
+    ) -> Any:
         """Invoke a method on a task. Pass t_now=None to auto-inject current time."""
         with self._task_lock:
             task = self._tasks.get(task_name)

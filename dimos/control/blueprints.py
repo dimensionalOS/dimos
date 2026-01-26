@@ -30,18 +30,30 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from typing import TYPE_CHECKING, Any
+
+from dimos.control.components import (
+    HardwareComponent,
+    HardwareId,
+    HardwareType,
+    JointName,
+    TaskName,
+    make_joints,
+)
 from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import JointState
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # =============================================================================
 # Helper functions
 # =============================================================================
 
 
-def _joint_names(hardware_id: str, dof: int) -> list[str]:
+def _joint_names(hardware_id: HardwareId, dof: int) -> list[JointName]:
     """Generate joint names for a hardware component."""
     return [f"{hardware_id}_joint{i + 1}" for i in range(dof)]
 
@@ -54,14 +66,14 @@ def _get_piper_model_path() -> str:
     return str(piper_path / "mujoco_model" / "piper_no_gripper_description.xml")
 
 
-def _standard_transports():
+def _standard_transports() -> dict[Any, Any]:
     """Standard transports for coordinator blueprints."""
     return {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 
 
-def _streaming_transports(joint_command_topic: str):
+def _streaming_transports(joint_command_topic: str) -> dict[Any, Any]:
     """Transports for streaming control blueprints (includes joint_command)."""
     return {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
@@ -69,7 +81,7 @@ def _streaming_transports(joint_command_topic: str):
     }
 
 
-def _cartesian_transports():
+def _cartesian_transports() -> dict[Any, Any]:
     """Transports for cartesian IK blueprints (includes cartesian_command)."""
     return {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
@@ -84,7 +96,7 @@ def _cartesian_transports():
 # =============================================================================
 
 
-def _mock_arm(hardware_id: str = "arm", dof: int = 7) -> HardwareComponent:
+def _mock_arm(hardware_id: HardwareId = "arm", dof: int = 7) -> HardwareComponent:
     """Mock arm for testing."""
     return HardwareComponent(
         hardware_id=hardware_id,
@@ -95,7 +107,7 @@ def _mock_arm(hardware_id: str = "arm", dof: int = 7) -> HardwareComponent:
 
 
 def _xarm(
-    hardware_id: str = "arm", dof: int = 6, address: str = "192.168.1.210"
+    hardware_id: HardwareId = "arm", dof: int = 6, address: str = "192.168.1.210"
 ) -> HardwareComponent:
     """XArm hardware."""
     return HardwareComponent(
@@ -108,7 +120,7 @@ def _xarm(
     )
 
 
-def _piper(hardware_id: str = "arm", address: str = "can0") -> HardwareComponent:
+def _piper(hardware_id: HardwareId = "arm", address: str = "can0") -> HardwareComponent:
     """Piper arm (6-DOF, CAN bus)."""
     return HardwareComponent(
         hardware_id=hardware_id,
@@ -125,7 +137,9 @@ def _piper(hardware_id: str = "arm", address: str = "can0") -> HardwareComponent
 # =============================================================================
 
 
-def _trajectory_task(name: str, hardware_id: str, dof: int, priority: int = 10) -> TaskConfig:
+def _trajectory_task(
+    name: TaskName, hardware_id: HardwareId, dof: int, priority: int = 10
+) -> TaskConfig:
     """Trajectory tracking task."""
     return TaskConfig(
         name=name,
@@ -135,7 +149,9 @@ def _trajectory_task(name: str, hardware_id: str, dof: int, priority: int = 10) 
     )
 
 
-def _servo_task(name: str, hardware_id: str, dof: int, priority: int = 10) -> TaskConfig:
+def _servo_task(
+    name: TaskName, hardware_id: HardwareId, dof: int, priority: int = 10
+) -> TaskConfig:
     """Streaming position control task."""
     return TaskConfig(
         name=name,
@@ -145,7 +161,9 @@ def _servo_task(name: str, hardware_id: str, dof: int, priority: int = 10) -> Ta
     )
 
 
-def _velocity_task(name: str, hardware_id: str, dof: int, priority: int = 10) -> TaskConfig:
+def _velocity_task(
+    name: TaskName, hardware_id: HardwareId, dof: int, priority: int = 10
+) -> TaskConfig:
     """Velocity control task."""
     return TaskConfig(
         name=name,
@@ -156,8 +174,8 @@ def _velocity_task(name: str, hardware_id: str, dof: int, priority: int = 10) ->
 
 
 def _cartesian_ik_task(
-    name: str,
-    hardware_id: str,
+    name: TaskName,
+    hardware_id: HardwareId,
     dof: int,
     model_path: str,
     ee_joint_id: int = 6,
@@ -312,17 +330,17 @@ class _LazyBlueprint:
     calls get_data() which shouldn't run at import time.
     """
 
-    def __init__(self, factory_fn):
+    def __init__(self, factory_fn: Callable[[], Any]) -> None:
         self._factory_fn = factory_fn
-        self._blueprint = None
+        self._blueprint: Any = None
 
-    def build(self, **kwargs):
+    def build(self, **kwargs: Any) -> Any:
         if self._blueprint is None:
             self._blueprint = self._factory_fn()
         return self._blueprint.build(**kwargs)
 
 
-def _cartesian_ik_mock_factory():
+def _cartesian_ik_mock_factory() -> Any:
     """Factory for mock CartesianIK coordinator."""
     hardware = _mock_arm("arm", 6)
     return control_coordinator(
@@ -342,7 +360,7 @@ def _cartesian_ik_mock_factory():
     ).transports(_cartesian_transports())
 
 
-def _cartesian_ik_piper_factory():
+def _cartesian_ik_piper_factory() -> Any:
     """Factory for Piper CartesianIK coordinator."""
     hardware = _piper("arm", "can0")
     return control_coordinator(
@@ -381,15 +399,15 @@ class _JoggerBlueprint:
     - Jogger publishes PoseStamped to LCM, coordinator receives and computes IK
     """
 
-    def __init__(self, coordinator_blueprint):
+    def __init__(self, coordinator_blueprint: _LazyBlueprint) -> None:
         self._coordinator_blueprint = coordinator_blueprint
-        self._coordinator = None
+        self._coordinator: Any = None
 
-    def build(self, **kwargs):
+    def build(self, **kwargs: Any) -> _JoggerBlueprint:
         self._coordinator = self._coordinator_blueprint.build(**kwargs)
         return self
 
-    def loop(self):
+    def loop(self) -> None:
         import threading
 
         from dimos.control.examples.cartesian_ik_jogger import run_jogger_ui

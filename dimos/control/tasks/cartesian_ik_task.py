@@ -26,7 +26,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.linalg import norm, solve
@@ -42,6 +42,8 @@ from dimos.control.task import (
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
     from dimos.msgs.geometry_msgs import Pose, PoseStamped
 
 logger = setup_logger()
@@ -153,7 +155,7 @@ class CartesianIKTask(ControlTask):
         self._active = False
 
         # Cache last successful IK solution for warm-starting
-        self._last_q_solution: np.ndarray | None = None
+        self._last_q_solution: NDArray[np.floating[Any]] | None = None
 
         logger.info(
             f"CartesianIKTask {name} initialized with model: {model_path}, "
@@ -235,7 +237,7 @@ class CartesianIKTask(ControlTask):
             mode=ControlMode.SERVO_POSITION,
         )
 
-    def _get_current_joints(self, state: CoordinatorState) -> np.ndarray | None:
+    def _get_current_joints(self, state: CoordinatorState) -> NDArray[np.floating[Any]] | None:
         """Get current joint positions from coordinator state.
 
         Falls back to last IK solution if joint state unavailable.
@@ -254,8 +256,8 @@ class CartesianIKTask(ControlTask):
     def _solve_ik(
         self,
         target_pose: pinocchio.SE3,
-        q_init: np.ndarray,
-    ) -> tuple[np.ndarray, bool, float]:
+        q_init: NDArray[np.floating[Any]],
+    ) -> tuple[NDArray[np.floating[Any]], bool, float]:
         """Solve IK using damped least-squares (Levenberg-Marquardt).
 
         Args:
@@ -273,7 +275,7 @@ class CartesianIKTask(ControlTask):
             iMd = self._data.oMi[self._ee_joint_id].actInv(target_pose)
 
             err = pinocchio.log(iMd).vector
-            final_err = norm(err)
+            final_err = float(norm(err))
             if final_err < self._config.ik_eps:
                 return q, True, final_err
 
@@ -290,7 +292,9 @@ class CartesianIKTask(ControlTask):
 
         return q, False, final_err
 
-    def _safety_check(self, q_new: np.ndarray, q_current: np.ndarray) -> tuple[bool, np.ndarray]:
+    def _safety_check(
+        self, q_new: NDArray[np.floating[Any]], q_current: NDArray[np.floating[Any]]
+    ) -> tuple[bool, NDArray[np.floating[Any]]]:
         """Check IK solution and clamp if needed.
 
         Args:
@@ -449,7 +453,7 @@ class CartesianIKTask(ControlTask):
         pinocchio.forwardKinematics(self._model, self._data, q_current)
         return self._data.oMi[self._ee_joint_id].copy()
 
-    def forward_kinematics(self, joint_positions: np.ndarray) -> pinocchio.SE3:
+    def forward_kinematics(self, joint_positions: NDArray[np.floating[Any]]) -> pinocchio.SE3:
         """Compute end-effector pose from joint positions.
 
         Args:
