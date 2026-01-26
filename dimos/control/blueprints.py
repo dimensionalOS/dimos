@@ -26,29 +26,152 @@ Usage:
     from dimos.control.blueprints import coordinator_mock
     coordinator = coordinator_mock.build()
     coordinator.loop()
-
-Example with trajectory setter:
-    # Terminal 1: Run the coordinator
-    dimos run coordinator-mock
-
-    # Terminal 2: Send trajectories via RPC
-    python -m dimos.control.examples.coordinator_trajectory_setter --task traj_arm
 """
 
 from __future__ import annotations
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import (
-    TaskConfig,
-    control_coordinator,
-)
+from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.transport import LCMTransport
+from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import JointState
+
+# =============================================================================
+# Helper functions
+# =============================================================================
 
 
 def _joint_names(hardware_id: str, dof: int) -> list[str]:
     """Generate joint names for a hardware component."""
     return [f"{hardware_id}_joint{i + 1}" for i in range(dof)]
+
+
+def _get_piper_model_path() -> str:
+    """Get path to Piper MJCF model for IK solver."""
+    from dimos.utils.data import get_data
+
+    piper_path = get_data("piper_description")
+    return str(piper_path / "mujoco_model" / "piper_no_gripper_description.xml")
+
+
+def _standard_transports():
+    """Standard transports for coordinator blueprints."""
+    return {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
+
+
+def _streaming_transports(joint_command_topic: str):
+    """Transports for streaming control blueprints (includes joint_command)."""
+    return {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("joint_command", JointState): LCMTransport(joint_command_topic, JointState),
+    }
+
+
+def _cartesian_transports():
+    """Transports for cartesian IK blueprints (includes cartesian_command)."""
+    return {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+    }
+
+
+# =============================================================================
+# Hardware configurations
+# =============================================================================
+
+
+def _mock_arm(hardware_id: str = "arm", dof: int = 7) -> HardwareComponent:
+    """Mock arm for testing."""
+    return HardwareComponent(
+        hardware_id=hardware_id,
+        hardware_type=HardwareType.MANIPULATOR,
+        joints=make_joints(hardware_id, dof),
+        adapter_type="mock",
+    )
+
+
+def _xarm(
+    hardware_id: str = "arm", dof: int = 6, address: str = "192.168.1.210"
+) -> HardwareComponent:
+    """XArm hardware."""
+    return HardwareComponent(
+        hardware_id=hardware_id,
+        hardware_type=HardwareType.MANIPULATOR,
+        joints=make_joints(hardware_id, dof),
+        adapter_type="xarm",
+        address=address,
+        auto_enable=True,
+    )
+
+
+def _piper(hardware_id: str = "arm", address: str = "can0") -> HardwareComponent:
+    """Piper arm (6-DOF, CAN bus)."""
+    return HardwareComponent(
+        hardware_id=hardware_id,
+        hardware_type=HardwareType.MANIPULATOR,
+        joints=make_joints(hardware_id, 6),
+        adapter_type="piper",
+        address=address,
+        auto_enable=True,
+    )
+
+
+# =============================================================================
+# Task configurations
+# =============================================================================
+
+
+def _trajectory_task(name: str, hardware_id: str, dof: int, priority: int = 10) -> TaskConfig:
+    """Trajectory tracking task."""
+    return TaskConfig(
+        name=name,
+        type="trajectory",
+        joint_names=_joint_names(hardware_id, dof),
+        priority=priority,
+    )
+
+
+def _servo_task(name: str, hardware_id: str, dof: int, priority: int = 10) -> TaskConfig:
+    """Streaming position control task."""
+    return TaskConfig(
+        name=name,
+        type="servo",
+        joint_names=_joint_names(hardware_id, dof),
+        priority=priority,
+    )
+
+
+def _velocity_task(name: str, hardware_id: str, dof: int, priority: int = 10) -> TaskConfig:
+    """Velocity control task."""
+    return TaskConfig(
+        name=name,
+        type="velocity",
+        joint_names=_joint_names(hardware_id, dof),
+        priority=priority,
+    )
+
+
+def _cartesian_ik_task(
+    name: str,
+    hardware_id: str,
+    dof: int,
+    model_path: str,
+    ee_joint_id: int = 6,
+    priority: int = 10,
+) -> TaskConfig:
+    """Cartesian IK task with internal Pinocchio solver."""
+    return TaskConfig(
+        name=name,
+        type="cartesian_ik",
+        joint_names=_joint_names(hardware_id, dof),
+        priority=priority,
+        model_path=model_path,
+        ee_joint_id=ee_joint_id,
+    )
 
 
 # =============================================================================
@@ -60,246 +183,90 @@ coordinator_mock = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
-    hardware=[
-        HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 7),
-            adapter_type="mock",
-        ),
-    ],
-    tasks=[
-        TaskConfig(
-            name="traj_arm",
-            type="trajectory",
-            joint_names=_joint_names("arm", 7),
-            priority=10,
-        ),
-    ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
-)
+    hardware=[_mock_arm("arm", 7)],
+    tasks=[_trajectory_task("traj_arm", "arm", 7)],
+).transports(_standard_transports())
 
-# XArm7 real hardware (requires IP configuration)
+# XArm7 real hardware
 coordinator_xarm7 = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
-    hardware=[
-        HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 7),
-            adapter_type="xarm",
-            address="192.168.2.235",  # Default IP, override via env or config
-            auto_enable=True,
-        ),
-    ],
-    tasks=[
-        TaskConfig(
-            name="traj_arm",
-            type="trajectory",
-            joint_names=_joint_names("arm", 7),
-            priority=10,
-        ),
-    ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
-)
+    hardware=[_xarm("arm", 7, "192.168.2.235")],
+    tasks=[_trajectory_task("traj_arm", "arm", 7)],
+).transports(_standard_transports())
 
 # XArm6 real hardware
 coordinator_xarm6 = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
-    hardware=[
-        HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
-            adapter_type="xarm",
-            address="192.168.1.210",
-            auto_enable=True,
-        ),
-    ],
-    tasks=[
-        TaskConfig(
-            name="traj_xarm",
-            type="trajectory",
-            joint_names=_joint_names("arm", 6),
-            priority=10,
-        ),
-    ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
-)
+    hardware=[_xarm("arm", 6, "192.168.1.210")],
+    tasks=[_trajectory_task("traj_xarm", "arm", 6)],
+).transports(_standard_transports())
 
 # Piper arm (6-DOF, CAN bus)
 coordinator_piper = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
-    hardware=[
-        HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
-            adapter_type="piper",
-            address="can0",
-            auto_enable=True,
-        ),
-    ],
-    tasks=[
-        TaskConfig(
-            name="traj_piper",
-            type="trajectory",
-            joint_names=_joint_names("arm", 6),
-            priority=10,
-        ),
-    ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
-)
+    hardware=[_piper("arm", "can0")],
+    tasks=[_trajectory_task("traj_piper", "arm", 6)],
+).transports(_standard_transports())
+
 
 # =============================================================================
 # Dual Arm Blueprints
 # =============================================================================
 
-# Dual mock arms (7-DOF left, 6-DOF right) for testing
+# Dual mock arms (7-DOF left, 6-DOF right)
 coordinator_dual_mock = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
     hardware=[
-        HardwareComponent(
-            hardware_id="left_arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("left_arm", 7),
-            adapter_type="mock",
-        ),
-        HardwareComponent(
-            hardware_id="right_arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("right_arm", 6),
-            adapter_type="mock",
-        ),
+        _mock_arm("left_arm", 7),
+        _mock_arm("right_arm", 6),
     ],
     tasks=[
-        TaskConfig(
-            name="traj_left",
-            type="trajectory",
-            joint_names=_joint_names("left_arm", 7),
-            priority=10,
-        ),
-        TaskConfig(
-            name="traj_right",
-            type="trajectory",
-            joint_names=_joint_names("right_arm", 6),
-            priority=10,
-        ),
+        _trajectory_task("traj_left", "left_arm", 7),
+        _trajectory_task("traj_right", "right_arm", 6),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
-)
+).transports(_standard_transports())
 
-# Dual XArm setup (XArm7 left, XArm6 right)
+# Dual XArm (XArm7 left, XArm6 right)
 coordinator_dual_xarm = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
     hardware=[
-        HardwareComponent(
-            hardware_id="left_arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("left_arm", 7),
-            adapter_type="xarm",
-            address="192.168.2.235",
-            auto_enable=True,
-        ),
-        HardwareComponent(
-            hardware_id="right_arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("right_arm", 6),
-            adapter_type="xarm",
-            address="192.168.1.210",
-            auto_enable=True,
-        ),
+        _xarm("left_arm", 7, "192.168.2.235"),
+        _xarm("right_arm", 6, "192.168.1.210"),
     ],
     tasks=[
-        TaskConfig(
-            name="traj_left",
-            type="trajectory",
-            joint_names=_joint_names("left_arm", 7),
-            priority=10,
-        ),
-        TaskConfig(
-            name="traj_right",
-            type="trajectory",
-            joint_names=_joint_names("right_arm", 6),
-            priority=10,
-        ),
+        _trajectory_task("traj_left", "left_arm", 7),
+        _trajectory_task("traj_right", "right_arm", 6),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
-)
+).transports(_standard_transports())
 
-# Dual Arm setup (XArm6 , Piper )
+# Dual arm (XArm6 + Piper)
 coordinator_piper_xarm = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
     hardware=[
-        HardwareComponent(
-            hardware_id="xarm_arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("xarm_arm", 6),
-            adapter_type="xarm",
-            address="192.168.1.210",
-            auto_enable=True,
-        ),
-        HardwareComponent(
-            hardware_id="piper_arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("piper_arm", 6),
-            adapter_type="piper",
-            address="can0",
-            auto_enable=True,
-        ),
+        _xarm("xarm_arm", 6, "192.168.1.210"),
+        _piper("piper_arm", "can0"),
     ],
     tasks=[
-        TaskConfig(
-            name="traj_xarm",
-            type="trajectory",
-            joint_names=_joint_names("xarm_arm", 6),
-            priority=10,
-        ),
-        TaskConfig(
-            name="traj_piper",
-            type="trajectory",
-            joint_names=_joint_names("piper_arm", 6),
-            priority=10,
-        ),
+        _trajectory_task("traj_xarm", "xarm_arm", 6),
+        _trajectory_task("traj_piper", "piper_arm", 6),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
-)
+).transports(_standard_transports())
+
 
 # =============================================================================
-# Streaming Control Blueprints (NEW)
+# Streaming Control Blueprints
 # =============================================================================
 
 # XArm6 teleop - streaming position control
@@ -307,166 +274,184 @@ coordinator_teleop_xarm6 = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
-    hardware=[
-        HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
-            adapter_type="xarm",
-            address="192.168.1.210",
-            auto_enable=True,
-        ),
-    ],
-    tasks=[
-        TaskConfig(
-            name="servo_arm",
-            type="servo",
-            joint_names=_joint_names("arm", 6),
-            priority=10,
-        ),
-    ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("joint_command", JointState): LCMTransport("/teleop/joint_command", JointState),
-    }
-)
+    hardware=[_xarm("arm", 6, "192.168.1.210")],
+    tasks=[_servo_task("servo_arm", "arm", 6)],
+).transports(_streaming_transports("/teleop/joint_command"))
 
 # XArm6 velocity control - streaming velocity for joystick
 coordinator_velocity_xarm6 = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
-    hardware=[
-        HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
-            adapter_type="xarm",
-            address="192.168.1.210",
-            auto_enable=True,
-        ),
-    ],
-    tasks=[
-        TaskConfig(
-            name="velocity_arm",
-            type="velocity",
-            joint_names=_joint_names("arm", 6),
-            priority=10,
-        ),
-    ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("joint_command", JointState): LCMTransport("/joystick/joint_command", JointState),
-    }
-)
+    hardware=[_xarm("arm", 6, "192.168.1.210")],
+    tasks=[_velocity_task("velocity_arm", "arm", 6)],
+).transports(_streaming_transports("/joystick/joint_command"))
 
-# XArm6 combined (both servo AND velocity tasks - live switch by sending different commands)
-# Send positions -> servo task activates
-# Send velocities -> velocity task activates
-# Both use same topic, routing is automatic based on message content
+# XArm6 combined (servo + velocity tasks)
 coordinator_combined_xarm6 = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
-    hardware=[
-        HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
-            adapter_type="xarm",
-            address="192.168.1.210",
-            auto_enable=True,
-        ),
-    ],
+    hardware=[_xarm("arm", 6, "192.168.1.210")],
     tasks=[
-        # Servo task for position streaming (teleop_sender)
-        TaskConfig(
-            name="servo_arm",
-            type="servo",
-            joint_names=_joint_names("arm", 6),
-            priority=10,
-        ),
-        # Velocity task for velocity streaming (velocity_sender)
-        TaskConfig(
-            name="velocity_arm",
-            type="velocity",
-            joint_names=_joint_names("arm", 6),
-            priority=10,  # Same priority - whichever receives commands wins
-        ),
+        _servo_task("servo_arm", "arm", 6),
+        _velocity_task("velocity_arm", "arm", 6),
     ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("joint_command", JointState): LCMTransport(
-            "/control/joint_command",
-            JointState,  # Common topic for both
-        ),
-    }
-)
+).transports(_streaming_transports("/control/joint_command"))
+
 
 # =============================================================================
-# High-frequency Blueprints (200Hz)
+# Cartesian IK Blueprints (internal Pinocchio IK solver)
 # =============================================================================
 
-# High-frequency mock for demanding applications
-coordinator_highfreq_mock = control_coordinator(
-    tick_rate=200.0,
-    publish_joint_state=True,
-    joint_state_frame_id="coordinator",
-    hardware=[
-        HardwareComponent(
-            hardware_id="arm",
-            hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 7),
-            adapter_type="mock",
-        ),
-    ],
-    tasks=[
-        TaskConfig(
-            name="traj_arm",
-            type="trajectory",
-            joint_names=_joint_names("arm", 7),
-            priority=10,
-        ),
-    ],
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
-)
+
+class _LazyBlueprint:
+    """Lazy blueprint that defers creation until build() is called.
+
+    This is needed for cartesian IK blueprints because _get_piper_model_path()
+    calls get_data() which shouldn't run at import time.
+    """
+
+    def __init__(self, factory_fn):
+        self._factory_fn = factory_fn
+        self._blueprint = None
+
+    def build(self, **kwargs):
+        if self._blueprint is None:
+            self._blueprint = self._factory_fn()
+        return self._blueprint.build(**kwargs)
+
+
+def _cartesian_ik_mock_factory():
+    """Factory for mock CartesianIK coordinator."""
+    hardware = _mock_arm("arm", 6)
+    return control_coordinator(
+        tick_rate=100.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[hardware],
+        tasks=[
+            _cartesian_ik_task(
+                name="cartesian_ik_arm",
+                hardware_id=hardware.hardware_id,
+                dof=len(hardware.joints),
+                model_path=_get_piper_model_path(),
+                ee_joint_id=6,
+            ),
+        ],
+    ).transports(_cartesian_transports())
+
+
+def _cartesian_ik_piper_factory():
+    """Factory for Piper CartesianIK coordinator."""
+    hardware = _piper("arm", "can0")
+    return control_coordinator(
+        tick_rate=100.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[hardware],
+        tasks=[
+            _cartesian_ik_task(
+                name="cartesian_ik_arm",
+                hardware_id=hardware.hardware_id,
+                dof=len(hardware.joints),
+                model_path=_get_piper_model_path(),
+                ee_joint_id=6,
+            ),
+        ],
+    ).transports(_cartesian_transports())
+
+
+# Standalone coordinators (run jogger separately)
+coordinator_cartesian_ik_mock = _LazyBlueprint(_cartesian_ik_mock_factory)
+coordinator_cartesian_ik_piper = _LazyBlueprint(_cartesian_ik_piper_factory)
+
 
 # =============================================================================
-# Raw Blueprints (no hardware/tasks configured - for programmatic setup)
+# Cartesian IK Jogger Blueprints (coordinator + pygame jogger together)
 # =============================================================================
 
-# Basic coordinator with transport only (add hardware/tasks programmatically)
+
+class _JoggerBlueprint:
+    """Blueprint that runs coordinator + pygame jogger together.
+
+    Architecture:
+    - build() creates the coordinator
+    - loop() starts coordinator in background thread, then runs pygame jogger
+    - Jogger publishes PoseStamped to LCM, coordinator receives and computes IK
+    """
+
+    def __init__(self, coordinator_blueprint):
+        self._coordinator_blueprint = coordinator_blueprint
+        self._coordinator = None
+
+    def build(self, **kwargs):
+        self._coordinator = self._coordinator_blueprint.build(**kwargs)
+        return self
+
+    def loop(self):
+        import threading
+
+        from dimos.control.examples.cartesian_ik_jogger import run_jogger_ui
+
+        if self._coordinator is None:
+            raise RuntimeError("Must call build() before loop()")
+
+        # Start coordinator in background
+        thread = threading.Thread(
+            target=self._coordinator.loop,
+            name="coordinator-loop",
+            daemon=True,
+        )
+        thread.start()
+        print("Coordinator started in background thread")
+
+        # Run jogger UI (blocks until user exits)
+        try:
+            run_jogger_ui(model_path=_get_piper_model_path(), ee_joint_id=6)
+        finally:
+            print("Stopping coordinator...")
+            self._coordinator.stop()
+            thread.join(timeout=2.0)
+
+
+coordinator_cartesian_ik_jogger_mock = _JoggerBlueprint(coordinator_cartesian_ik_mock)
+coordinator_cartesian_ik_jogger_piper = _JoggerBlueprint(coordinator_cartesian_ik_piper)
+
+
+# =============================================================================
+# Raw Blueprints (for programmatic setup)
+# =============================================================================
+
 coordinator_basic = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
-).transports(
-    {
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
-)
+).transports(_standard_transports())
 
+
+# =============================================================================
+# Exports
+# =============================================================================
 
 __all__ = [
-    # Raw blueprints
+    # Raw
     "coordinator_basic",
-    # Streaming control (NEW)
+    # Cartesian IK (with jogger)
+    "coordinator_cartesian_ik_jogger_mock",
+    "coordinator_cartesian_ik_jogger_piper",
+    # Cartesian IK (standalone)
+    "coordinator_cartesian_ik_mock",
+    "coordinator_cartesian_ik_piper",
     "coordinator_combined_xarm6",
-    # Dual arm blueprints
+    # Dual arm
     "coordinator_dual_mock",
     "coordinator_dual_xarm",
-    # High-frequency blueprints
-    "coordinator_highfreq_mock",
-    # Single arm blueprints
+    # Single arm
     "coordinator_mock",
     "coordinator_piper",
     "coordinator_piper_xarm",
+    # Streaming control
     "coordinator_teleop_xarm6",
     "coordinator_velocity_xarm6",
     "coordinator_xarm6",

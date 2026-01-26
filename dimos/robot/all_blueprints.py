@@ -29,6 +29,12 @@ all_blueprints = {
     "coordinator-teleop-xarm6": "dimos.control.blueprints:coordinator_teleop_xarm6",
     "coordinator-velocity-xarm6": "dimos.control.blueprints:coordinator_velocity_xarm6",
     "coordinator-combined-xarm6": "dimos.control.blueprints:coordinator_combined_xarm6",
+    # Cartesian IK (standalone coordinator - run jogger separately)
+    "coordinator-cartesian-ik-mock": "dimos.control.blueprints:coordinator_cartesian_ik_mock",
+    "coordinator-cartesian-ik-piper": "dimos.control.blueprints:coordinator_cartesian_ik_piper",
+    # Cartesian IK jogger (launches coordinator + pygame jogger together)
+    "coordinator-cartesian-ik-jogger-mock": "dimos.control.blueprints:coordinator_cartesian_ik_jogger_mock",
+    "coordinator-cartesian-ik-jogger-piper": "dimos.control.blueprints:coordinator_cartesian_ik_jogger_piper",
     # Demo blueprints
     "demo-camera": "dimos.hardware.sensors.camera.module:demo_camera",
     "demo-error-on-name-conflicts": "dimos.robot.unitree_webrtc.demo_error_on_name_conflicts:demo_error_on_name_conflicts",

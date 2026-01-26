@@ -38,6 +38,9 @@ from dimos.control.task import ControlTask
 from dimos.control.tick_loop import TickLoop
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
+from dimos.msgs.geometry_msgs import (
+    PoseStamped,  # noqa: TC001 - needed at runtime for In[PoseStamped]
+)
 from dimos.msgs.sensor_msgs import (
     JointState,  # noqa: TC001 - needed at runtime for Out[JointState]
 )
@@ -47,7 +50,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from dimos.hardware.manipulators.spec import ManipulatorAdapter
-    from dimos.msgs.geometry_msgs import PoseStamped
 
 logger = setup_logger()
 
