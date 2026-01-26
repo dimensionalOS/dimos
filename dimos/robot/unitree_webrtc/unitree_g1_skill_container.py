@@ -97,15 +97,11 @@ class UnitreeG1SkillContainer(SkillModule):
 
     @skill()
     def execute_arm_command(self, command_name: str) -> str:
-        return self._execute_g1_command(
-            _ARM_COMMANDS, 7106, "rt/api/arm/request", command_name
-        )
+        return self._execute_g1_command(_ARM_COMMANDS, 7106, "rt/api/arm/request", command_name)
 
     @skill()
     def execute_mode_command(self, command_name: str) -> str:
-        return self._execute_g1_command(
-            _MODE_COMMANDS, 7101, "rt/api/sport/request", command_name
-        )
+        return self._execute_g1_command(_MODE_COMMANDS, 7101, "rt/api/sport/request", command_name)
 
     def _execute_g1_command(
         self,
@@ -125,9 +121,7 @@ class UnitreeG1SkillContainer(SkillModule):
         id_, _ = command_dict[command_name]
 
         try:
-            publish_request_rpc(
-                topic, {"api_id": api_id, "parameter": {"data": id_}}
-            )
+            publish_request_rpc(topic, {"api_id": api_id, "parameter": {"data": id_}})
             return f"'{command_name}' command executed successfully."
         except Exception as e:
             logger.error(f"Failed to execute {command_name}: {e}")
