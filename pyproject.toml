@@ -36,6 +36,7 @@ dependencies = [
     # Core
     "numpy>=1.26.4",
     "scipy>=1.15.1",
+    "pin>=3.3.0",  # Pinocchio IK library
     "reactivex",
     "asyncio==3.4.3",
     "sortedcontainers==2.4.0",
