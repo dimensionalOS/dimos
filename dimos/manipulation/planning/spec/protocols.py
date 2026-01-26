@@ -167,19 +167,7 @@ class WorldSpec(Protocol):
 
 @runtime_checkable
 class KinematicsSpec(Protocol):
-    """Protocol for inverse kinematics solver.
-
-    Kinematics solvers are stateless and use WorldSpec for FK/collision.
-
-    Methods:
-        - solve(): Full optimization-based IK with collision checking
-        - solve_iterative(): Iterative Jacobian-based IK
-        - solve_differential(): Single Jacobian step for velocity control
-
-    Implementations:
-        - JacobianIK: Backend-agnostic iterative/differential IK
-        - DrakeOptimizationIK: Uses Drake's InverseKinematics + SNOPT/IPOPT
-    """
+    """Protocol for inverse kinematics solvers. Stateless, uses WorldSpec for FK/collision."""
 
     def solve(
         self,
@@ -192,31 +180,7 @@ class KinematicsSpec(Protocol):
         check_collision: bool = True,
         max_attempts: int = 10,
     ) -> IKResult:
-        """Solve full IK with optional collision checking."""
-        ...
-
-    def solve_iterative(
-        self,
-        world: WorldSpec,
-        robot_id: str,
-        target_pose: NDArray[np.float64],
-        seed: NDArray[np.float64],
-        max_iterations: int = 100,
-        position_tolerance: float = 0.001,
-        orientation_tolerance: float = 0.01,
-    ) -> IKResult:
-        """Solve IK iteratively using Jacobian method."""
-        ...
-
-    def solve_differential(
-        self,
-        world: WorldSpec,
-        robot_id: str,
-        current_joints: NDArray[np.float64],
-        twist: NDArray[np.float64],
-        dt: float,
-    ) -> NDArray[np.float64] | None:
-        """Single Jacobian step for velocity control."""
+        """Solve IK with optional collision checking."""
         ...
 
 

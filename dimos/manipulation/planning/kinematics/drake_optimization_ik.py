@@ -12,14 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Drake-specific optimization-based inverse kinematics.
-
-DrakeOptimizationIK uses Drake's InverseKinematics class with nonlinear optimization
-(SNOPT/IPOPT) to find accurate IK solutions. It requires DrakeWorld and cannot work
-with other physics backends.
-
-For backend-agnostic Jacobian-based IK, use JacobianIK.
-"""
+"""Drake optimization-based IK using SNOPT/IPOPT. Requires DrakeWorld."""
 
 from __future__ import annotations
 
@@ -49,42 +42,16 @@ logger = setup_logger()
 
 
 class DrakeOptimizationIK:
-    """Drake-specific optimization-based IK solver.
+    """Drake optimization-based IK solver using constrained nonlinear optimization.
 
-    Uses Drake's InverseKinematics class with SNOPT/IPOPT to solve constrained
-    nonlinear optimization for IK. This produces highly accurate solutions but
-    requires DrakeWorld.
-
-    For backend-agnostic IK, use JacobianIK instead.
-
-    Methods:
-        - solve(): Full nonlinear IK with multiple random restarts
-        - solve_single(): Single optimization attempt with given seed
-
-    Example:
-        from dimos.manipulation.planning.world import DrakeWorld
-
-        world = DrakeWorld(enable_viz=True)
-        world.add_robot(config)
-        world.finalize()
-
-        ik = DrakeOptimizationIK()
-        result = ik.solve(world, robot_id, target_pose)
-        if result.is_success():
-            print(f"Solution: {result.joint_positions}")
+    Requires DrakeWorld. For backend-agnostic IK, use JacobianIK.
     """
 
     def __init__(self) -> None:
-        """Create Drake optimization IK solver."""
         if not DRAKE_AVAILABLE:
             raise ImportError("Drake is not installed. Install with: pip install drake")
-        # Internal JacobianIK for iterative/differential methods
-        from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
-
-        self._jacobian_ik = JacobianIK()
 
     def _validate_world(self, world: WorldSpec) -> IKResult | None:
-        """Validate world is DrakeWorld and finalized. Returns error or None."""
         from dimos.manipulation.planning.world.drake_world import DrakeWorld
 
         if not isinstance(world, DrakeWorld):
@@ -106,25 +73,7 @@ class DrakeOptimizationIK:
         check_collision: bool = True,
         max_attempts: int = 10,
     ) -> IKResult:
-        """Full nonlinear IK with multiple random restarts.
-
-        Solves constrained nonlinear optimization using Drake's InverseKinematics
-        and SNOPT/IPOPT solvers. Tries multiple starting configurations to find
-        a collision-free solution.
-
-        Args:
-            world: DrakeWorld instance (NOT other WorldSpec implementations)
-            robot_id: Robot to solve IK for
-            target_pose: Target end-effector pose (4x4 transform)
-            seed: Initial guess (uses current position if None)
-            position_tolerance: Required position accuracy (meters)
-            orientation_tolerance: Required orientation accuracy (radians)
-            check_collision: Whether to check collision of solution
-            max_attempts: Maximum random restart attempts
-
-        Returns:
-            IKResult with solution or failure status
-        """
+        """Solve IK with multiple random restarts, returning the best collision-free solution."""
         error = self._validate_world(world)
         if error is not None:
             return error
@@ -203,7 +152,6 @@ class DrakeOptimizationIK:
         lower_limits: NDArray[np.float64],
         upper_limits: NDArray[np.float64],
     ) -> IKResult:
-        """Solve IK with a single seed."""
         # Get robot data from world internals (Drake-specific access)
         robot_data = world._robots[robot_id]  # type: ignore[attr-defined]
         plant = world.plant  # type: ignore[attr-defined]
@@ -275,47 +223,6 @@ class DrakeOptimizationIK:
             iterations=1,
         )
 
-    def solve_iterative(
-        self,
-        world: WorldSpec,
-        robot_id: str,
-        target_pose: NDArray[np.float64],
-        seed: NDArray[np.float64],
-        max_iterations: int = 100,
-        position_tolerance: float = 0.001,
-        orientation_tolerance: float = 0.01,
-    ) -> IKResult:
-        """Iterative Jacobian-based IK. Delegates to JacobianIK."""
-        return self._jacobian_ik.solve_iterative(
-            world=world,
-            robot_id=robot_id,
-            target_pose=target_pose,
-            seed=seed,
-            max_iterations=max_iterations,
-            position_tolerance=position_tolerance,
-            orientation_tolerance=orientation_tolerance,
-        )
-
-    def solve_differential(
-        self,
-        world: WorldSpec,
-        robot_id: str,
-        current_joints: NDArray[np.float64],
-        twist: NDArray[np.float64],
-        dt: float,
-    ) -> NDArray[np.float64] | None:
-        """Single Jacobian step for velocity control. Delegates to JacobianIK."""
-        return self._jacobian_ik.solve_differential(
-            world=world,
-            robot_id=robot_id,
-            current_joints=current_joints,
-            twist=twist,
-            dt=dt,
-        )
-
-
-# ============= Result Helpers =============
-
 
 def _create_success_result(
     joint_positions: NDArray[np.float64],
@@ -323,7 +230,6 @@ def _create_success_result(
     orientation_error: float,
     iterations: int,
 ) -> IKResult:
-    """Create a successful IK result."""
     return IKResult(
         status=IKStatus.SUCCESS,
         joint_positions=joint_positions,
@@ -339,7 +245,6 @@ def _create_failure_result(
     message: str,
     iterations: int = 0,
 ) -> IKResult:
-    """Create a failed IK result."""
     return IKResult(
         status=status,
         joint_positions=None,
