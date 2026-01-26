@@ -20,10 +20,13 @@ from typing import Any
 import reactivex as rx
 from reactivex import operators as ops
 import rerun as rr
+import rerun as rr
 
 from dimos.agents import Output, Reducer, Stream, skill
 from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.core.blueprints import autoconnect
+from dimos.core.global_config import GlobalConfig
+from dimos.dashboard.rerun_init import connect_rerun
 from dimos.core.global_config import GlobalConfig
 from dimos.dashboard.rerun_init import connect_rerun
 from dimos.hardware.sensors.camera.spec import CameraHardware
@@ -60,34 +63,40 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
 
     config: CameraModuleConfig
     default_config = CameraModuleConfig
+    _global_config: GlobalConfig
 
-    def __init__(self, *args: Any, global_config: GlobalConfig, **kwargs: Any) -> None:
+    def __init__(
+        self, *args:Any, global_config: GlobalConfig | None = None, **kwargs: Any
+    ) -> None:
+        self._global_config = global_config or GlobalConfig()
         super().__init__(*args, **kwargs)
-        self.global_config = global_config
 
     @rpc
     def start(self) -> None:
+        super().start()
+
         if callable(self.config.hardware):
             self.hardware = self.config.hardware()
         else:
             self.hardware = self.config.hardware
+
+        # Connect to Rerun if enabled (cache flag for use in callbacks)
+        self._rerun_enabled = self._global_config.viewer_backend.startswith("rerun")
+        if self._rerun_enabled:
+            connect_rerun(global_config=self._global_config)
 
         stream = self.hardware.image_stream()
 
         if self.config.frequency > 0:
             stream = stream.pipe(sharpness_barrier(self.config.frequency))
 
-        # Connect this worker process to Rerun if it will log sensor data.
-        if self.global_config.viewer_backend.startswith("rerun"):
-            connect_rerun(global_config=self.global_config)
-
-        def callback(image: Image) -> None:
+        def on_image(image: Image) -> None:
             self.color_image.publish(image)
-            if self.global_config.viewer_backend.startswith("rerun"):
+            if self._rerun_enabled:
                 rr.log("world/robot/camera/rgb", image.to_rerun())
 
         self._disposables.add(
-            stream.subscribe(callback),
+            stream.subscribe(on_image),
         )
 
         self._disposables.add(
