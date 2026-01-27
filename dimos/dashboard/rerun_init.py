@@ -20,8 +20,8 @@ Architecture:
     - All processes share the same Rerun recording stream
 
 Viewer modes (set via VIEWER_BACKEND config or environment variable):
-    - "rerun-web" (default): Web viewer on port 9090
-    - "rerun-native": Native Rerun viewer (requires display)
+    - "rerun-web": Web viewer on port 9090
+    - "rerun-native" (default): Native Rerun viewer (requires display)
     - "foxglove": Use Foxglove instead of Rerun
 
 Usage:
