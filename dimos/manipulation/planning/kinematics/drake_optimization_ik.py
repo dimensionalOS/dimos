@@ -30,6 +30,8 @@ from dimos.utils.transform_utils import pose_to_matrix
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+from dimos.msgs.geometry_msgs import PoseStamped, Transform
+
 try:
     from pydrake.math import RigidTransform, RotationMatrix  # type: ignore[import-not-found]
     from pydrake.multibody.inverse_kinematics import (  # type: ignore[import-not-found]

@@ -117,6 +117,12 @@ class JacobianIK:
         Returns:
             IKResult with solution or failure status
         """
+        # Convert PoseStamped to 4x4 matrix via Transform
+        target_matrix = Transform(
+            translation=target_pose.position,
+            rotation=target_pose.orientation,
+        ).to_matrix()
+
         if not world.is_finalized:
             return _create_failure_result(IKStatus.NO_SOLUTION, "World must be finalized before IK")
 
@@ -146,7 +152,7 @@ class JacobianIK:
             result = self.solve_iterative(
                 world=world,
                 robot_id=robot_id,
-                target_pose=target_pose,
+                target_pose=target_matrix,
                 seed=current_seed,
                 max_iterations=self._max_iterations,
                 position_tolerance=position_tolerance,

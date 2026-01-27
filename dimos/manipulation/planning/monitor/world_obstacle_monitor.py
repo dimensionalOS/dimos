@@ -36,7 +36,6 @@ from dimos.manipulation.planning.spec import (
 )
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     from collections.abc import Callable

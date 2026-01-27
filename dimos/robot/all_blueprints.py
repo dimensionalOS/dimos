@@ -29,6 +29,7 @@ all_blueprints = {
     "coordinator-velocity-xarm6": "dimos.control.blueprints:coordinator_velocity_xarm6",
     "coordinator-xarm6": "dimos.control.blueprints:coordinator_xarm6",
     "coordinator-xarm7": "dimos.control.blueprints:coordinator_xarm7",
+    "dual-xarm6-planner": "dimos.manipulation.manipulation_blueprints:dual_xarm6_planner",
     "demo-camera": "dimos.hardware.sensors.camera.module:demo_camera",
     "demo-error-on-name-conflicts": "dimos.robot.unitree_webrtc.demo_error_on_name_conflicts:demo_error_on_name_conflicts",
     "demo-google-maps-skill": "dimos.agents.skills.demo_google_maps_skill:demo_google_maps_skill",

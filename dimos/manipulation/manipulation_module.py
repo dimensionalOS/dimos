@@ -45,7 +45,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import RPCClient
-    from dimos.msgs.geometry_msgs import Pose
+    from dimos.msgs.geometry_msgs import Pose, PoseStamped
 
 logger = setup_logger()
 
