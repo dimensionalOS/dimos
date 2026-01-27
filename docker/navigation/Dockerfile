@@ -258,10 +258,20 @@ RUN python3 -m venv /opt/dimos-venv && \
 RUN /opt/dimos-venv/bin/pip install --no-cache-dir \
     -r ${WORKSPACE}/src/vector_perception_ros/requirements.txt
 
-# Pre-download YOLO model weights (avoids runtime download)
-RUN mkdir -p ${WORKSPACE}/src/vector_perception_ros/detect_anything/models && \
+# Pre-download YOLO and MobileCLIP model weights (avoids runtime download)
+# mobileclip_blt.ts is used by YOLO-E for text-based prompts
+# Download to package models dir and copy to ultralytics cache + working directory (for different loading paths)
+RUN mkdir -p ${WORKSPACE}/src/vector_perception_ros/detect_anything/models \
+             /root/.config/Ultralytics \
+             ${DIMOS_PATH} && \
     curl -L -o ${WORKSPACE}/src/vector_perception_ros/detect_anything/models/yoloe-11l-seg.pt \
-    https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11l-seg.pt
+    https://github.com/ultralytics/assets/releases/download/v8.4.0/yoloe-11l-seg.pt && \
+    curl -L -o ${WORKSPACE}/src/vector_perception_ros/detect_anything/models/mobileclip_blt.ts \
+    https://github.com/ultralytics/assets/releases/download/v8.4.0/mobileclip_blt.ts && \
+    cp ${WORKSPACE}/src/vector_perception_ros/detect_anything/models/mobileclip_blt.ts \
+       /root/.config/Ultralytics/mobileclip_blt.ts && \
+    cp ${WORKSPACE}/src/vector_perception_ros/detect_anything/models/mobileclip_blt.ts \
+       ${DIMOS_PATH}/mobileclip_blt.ts
 
 # Build vector_perception_ros packages (Python-only, needs venv active)
 # Note: Don't use --symlink-install here as it breaks console_scripts entry points

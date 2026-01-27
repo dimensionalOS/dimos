@@ -16,6 +16,7 @@ DEV_MODE="false"
 ROS_DISTRO="humble"
 BAGFILE_PATH=""
 SAVE_EXPLORED_MAP="false"
+SAVE_DETECTIONS="false"
 PLAYBACK_RATE="1.0"
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -59,6 +60,10 @@ while [[ $# -gt 0 ]]; do
             SAVE_EXPLORED_MAP="true"
             shift
             ;;
+        --save-detections)
+            SAVE_DETECTIONS="true"
+            shift
+            ;;
         -r)
             if [[ -n "$2" && ! "$2" =~ ^- ]]; then
                 PLAYBACK_RATE="$2"
@@ -79,6 +84,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --exploration-planner Enable TARE exploration planner"
             echo "  --rviz                Launch RViz2 visualization"
             echo "  --save                Save /explored_areas to PLY file after replay"
+            echo "  --save-detections     Save detected object images to output/object_images"
             echo "  -r <rate>             Playback rate multiplier (e.g., -r 2.0 for 2x speed)"
             echo "  --dev                 Development mode (mount src for config editing)"
             echo "  --humble              Use ROS 2 Humble image (default)"
@@ -386,6 +392,7 @@ export USE_ROUTE_PLANNER
 export USE_EXPLORATION_PLANNER
 export USE_RVIZ
 export SAVE_EXPLORED_MAP
+export SAVE_DETECTIONS
 export PLAYBACK_RATE
 
 # Print helpful info before starting
@@ -411,6 +418,9 @@ if [ "$MODE" = "bagfile" ]; then
     echo "  - RViz2 + Foxglove Bridge (port 8765)"
     if [ "$SAVE_EXPLORED_MAP" = "true" ]; then
         echo "  - Will save /explored_areas to PLY after replay"
+    fi
+    if [ "$SAVE_DETECTIONS" = "true" ]; then
+        echo "  - Will save detected object images to output/object_images"
     fi
     echo ""
     echo "To enter the container from another terminal:"

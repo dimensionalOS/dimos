@@ -264,6 +264,7 @@ services:
       - USE_ROUTE_PLANNER=${USE_ROUTE_PLANNER:-false}
       - USE_EXPLORATION_PLANNER=${USE_EXPLORATION_PLANNER:-false}
       - SAVE_EXPLORED_MAP=${SAVE_EXPLORED_MAP:-false}
+      - SAVE_DETECTIONS=${SAVE_DETECTIONS:-false}
       - PLAYBACK_RATE=${PLAYBACK_RATE:-1.0}
 
     # Volume mounts
@@ -277,6 +278,8 @@ services:
       - ./bagfiles:/ros2_ws/bagfiles:rw
       # Mount config files for easy editing
       - ./config:/ros2_ws/config:rw
+      # Mount dimos directory for output files (detection images, etc.)
+      - ../..:/workspace/dimos:rw
 
     # Device access (for joystick controllers)
     devices:
@@ -302,7 +305,7 @@ services:
             echo "Starting image decompression republisher..."
             ros2 run image_transport republish compressed raw --ros-args -r in/compressed:=/camera/image/compressed -r out:=/camera/color/image_raw &
             echo "Starting semantic mapping..."
-            ros2 launch semantic_mapping semantic_mapping.launch.py &
+            ros2 launch semantic_mapping semantic_mapping.launch.py save_png:=${SAVE_DETECTIONS:-false} output_dir:=/workspace/dimos/output/object_images &
             RVIZ_CFG=/ros2_ws/src/vector_perception_ros/rviz/semantic_mapping.rviz
         elif [ "$USE_ROUTE_PLANNER" = "true" ]; then
             echo "Starting bagfile replay with FAR Route Planner..."
