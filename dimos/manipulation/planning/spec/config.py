@@ -20,8 +20,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import numpy as np
     from numpy.typing import NDArray
+
+    from dimos.msgs.geometry_msgs import PoseStamped
 
 
 @dataclass
@@ -31,11 +35,11 @@ class RobotModelConfig:
     Attributes:
         name: Human-readable robot name
         urdf_path: Path to URDF file (can be .urdf or .xacro)
-        base_pose: 4x4 homogeneous transform for robot base
+        base_pose: Pose of robot base in world frame (position + orientation)
         joint_names: Ordered list of controlled joint names (in URDF namespace)
         end_effector_link: Name of the end-effector link for FK/IK
         base_link: Name of the base link (default: "base_link")
-        package_paths: Dict mapping package names to filesystem paths
+        package_paths: Dict mapping package names to filesystem Paths
         joint_limits_lower: Lower joint limits (radians)
         joint_limits_upper: Upper joint limits (radians)
         velocity_limits: Joint velocity limits (rad/s)
@@ -54,12 +58,12 @@ class RobotModelConfig:
     """
 
     name: str
-    urdf_path: str
-    base_pose: NDArray[np.float64]
+    urdf_path: Path
+    base_pose: PoseStamped
     joint_names: list[str]
     end_effector_link: str
     base_link: str = "base_link"
-    package_paths: dict[str, str] = field(default_factory=dict)
+    package_paths: dict[str, Path] = field(default_factory=dict)
     joint_limits_lower: NDArray[np.float64] | None = None
     joint_limits_upper: NDArray[np.float64] | None = None
     velocity_limits: NDArray[np.float64] | None = None

@@ -27,37 +27,63 @@ Usage:
     client.execute()
 """
 
-import numpy as np
+from pathlib import Path
 
 from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import manipulation_module
 from dimos.manipulation.planning.spec import RobotModelConfig
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.sensor_msgs import JointState
 from dimos.utils.data import get_data
+
+# =============================================================================
+# Pose Helpers
+# =============================================================================
+
+
+def _make_base_pose(
+    x: float = 0.0,
+    y: float = 0.0,
+    z: float = 0.0,
+    roll: float = 0.0,
+    pitch: float = 0.0,
+    yaw: float = 0.0,
+) -> PoseStamped:
+    """Create a base pose with optional xyz offset and rpy orientation.
+
+    Args:
+        x, y, z: Position offset in meters
+        roll, pitch, yaw: Orientation in radians (Euler angles)
+    """
+    return PoseStamped(
+        position=Vector3(x=x, y=y, z=z),
+        orientation=Quaternion.from_euler(Vector3(x=roll, y=pitch, z=yaw)),
+    )
+
 
 # =============================================================================
 # URDF Helpers
 # =============================================================================
 
 
-def _get_xarm_urdf_path() -> str:
+def _get_xarm_urdf_path() -> Path:
     """Get path to xarm URDF."""
-    return str(get_data("xarm_description") / "urdf/xarm_device.urdf.xacro")
+    return get_data("xarm_description") / "urdf/xarm_device.urdf.xacro"
 
 
-def _get_xarm_package_paths() -> dict[str, str]:
+def _get_xarm_package_paths() -> dict[str, Path]:
     """Get package paths for xarm xacro resolution."""
-    return {"xarm_description": str(get_data("xarm_description"))}
+    return {"xarm_description": get_data("xarm_description")}
 
 
-def _get_piper_urdf_path() -> str:
+def _get_piper_urdf_path() -> Path:
     """Get path to piper URDF."""
-    return str(get_data("piper_description") / "urdf/piper_description.xacro")
+    return get_data("piper_description") / "urdf/piper_description.xacro"
 
 
-def _get_piper_package_paths() -> dict[str, str]:
+def _get_piper_package_paths() -> dict[str, Path]:
     """Get package paths for piper xacro resolution."""
-    return {"piper_description": str(get_data("piper_description"))}
+    return {"piper_description": get_data("piper_description")}
 
 
 # Piper gripper collision exclusions (parallel jaw gripper)
@@ -133,15 +159,7 @@ def _make_xarm6_config(
     return RobotModelConfig(
         name=name,
         urdf_path=_get_xarm_urdf_path(),
-        base_pose=np.array(
-            [
-                [1, 0, 0, 0],
-                [0, 1, 0, y_offset],
-                [0, 0, 1, 0],
-                [0, 0, 0, 1],
-            ],
-            dtype=np.float64,
-        ),
+        base_pose=_make_base_pose(y=y_offset),
         joint_names=joint_names,
         end_effector_link="link_tcp" if add_gripper else "link6",
         base_link="link_base",
@@ -186,15 +204,7 @@ def _make_xarm7_config(
     return RobotModelConfig(
         name=name,
         urdf_path=_get_xarm_urdf_path(),
-        base_pose=np.array(
-            [
-                [1, 0, 0, 0],
-                [0, 1, 0, y_offset],
-                [0, 0, 1, 0],
-                [0, 0, 0, 1],
-            ],
-            dtype=np.float64,
-        ),
+        base_pose=_make_base_pose(y=y_offset),
         joint_names=joint_names,
         end_effector_link="link_tcp" if add_gripper else "link7",
         base_link="link_base",
@@ -234,15 +244,7 @@ def _make_piper_config(
     return RobotModelConfig(
         name=name,
         urdf_path=_get_piper_urdf_path(),
-        base_pose=np.array(
-            [
-                [1, 0, 0, 0],
-                [0, 1, 0, y_offset],
-                [0, 0, 1, 0],
-                [0, 0, 0, 1],
-            ],
-            dtype=np.float64,
-        ),
+        base_pose=_make_base_pose(y=y_offset),
         joint_names=joint_names,
         end_effector_link="gripper_base",  # End of arm, before gripper fingers
         base_link="arm_base",

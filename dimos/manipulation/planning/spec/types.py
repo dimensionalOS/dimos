@@ -111,6 +111,10 @@ class PlanningResult:
         path_length: Total path length in joint space (radians)
         iterations: Number of iterations/nodes expanded
         message: Human-readable status message
+        timestamps: Optional timestamps for each waypoint (seconds from start).
+            If provided by the planner, trajectory generator can use these directly.
+        velocities: Optional joint velocities at each waypoint.
+            If provided by the planner, trajectory generator can use these directly.
     """
 
     status: PlanningStatus
@@ -119,6 +123,9 @@ class PlanningResult:
     path_length: float = 0.0
     iterations: int = 0
     message: str = ""
+    # Optional timing fields (set by optimization-based planners)
+    timestamps: list[float] | None = None
+    velocities: list[NDArray[np.float64]] | None = None
 
     def is_success(self) -> bool:
         """Check if planning was successful."""

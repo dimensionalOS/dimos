@@ -181,7 +181,7 @@ class DrakeWorld(WorldSpec):
 
     def _load_urdf(self, config: RobotModelConfig) -> Any:
         """Load URDF/xacro and return model instance."""
-        original_path = Path(config.urdf_path).resolve()
+        original_path = config.urdf_path.resolve()
         if not original_path.exists():
             raise FileNotFoundError(f"URDF/xacro not found: {original_path}")
 
@@ -197,7 +197,7 @@ class DrakeWorld(WorldSpec):
         # Register package paths
         if config.package_paths:
             for pkg_name, pkg_path in config.package_paths.items():
-                self._parser.package_map().Add(pkg_name, Path(pkg_path))
+                self._parser.package_map().Add(pkg_name, pkg_path)
         else:
             self._parser.package_map().Add(f"{config.name}_description", urdf_path_obj.parent)
 
@@ -223,10 +223,11 @@ class DrakeWorld(WorldSpec):
             pass
 
         # Weld base to world
+        base_transform = self._pose_to_rigid_transform(config.base_pose)
         self._plant.WeldFrames(
             self._plant.world_frame(),
             base_body.body_frame(),
-            RigidTransform(config.base_pose),
+            base_transform,
         )
 
     def _validate_joints(self, config: RobotModelConfig, model_instance: Any) -> None:

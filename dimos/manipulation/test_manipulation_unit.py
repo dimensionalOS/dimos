@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import threading
 from unittest.mock import MagicMock, patch
 
@@ -27,6 +28,7 @@ from dimos.manipulation.manipulation_module import (
     ManipulationState,
 )
 from dimos.manipulation.planning.spec import RobotModelConfig
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
 
 # =============================================================================
@@ -39,8 +41,8 @@ def robot_config():
     """Create a robot config for testing."""
     return RobotModelConfig(
         name="test_arm",
-        urdf_path="/path/to/robot.urdf",
-        base_pose=np.eye(4, dtype=np.float64),
+        urdf_path=Path("/path/to/robot.urdf"),
+        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         end_effector_link="link_tcp",
         base_link="link_base",
@@ -55,8 +57,8 @@ def robot_config_with_mapping():
     """Create a robot config with joint name mapping (dual-arm scenario)."""
     return RobotModelConfig(
         name="left_arm",
-        urdf_path="/path/to/robot.urdf",
-        base_pose=np.eye(4, dtype=np.float64),
+        urdf_path=Path("/path/to/robot.urdf"),
+        base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         end_effector_link="link_tcp",
         base_link="link_base",
@@ -245,8 +247,8 @@ class TestExecute:
         module = _make_module()
         config_no_task = RobotModelConfig(
             name="arm",
-            urdf_path="/path",
-            base_pose=np.eye(4),
+            urdf_path=Path("/path"),
+            base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["j1"],
             end_effector_link="ee",
         )
