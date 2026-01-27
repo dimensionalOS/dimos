@@ -184,7 +184,7 @@ class Detection2DSeg(Detection2DBBox):
 
             points = []
             for pt in approx:
-                points.append(Point2(x=float(pt[0][0]), y=float(pt[0][1])))
+                points.append(Point2(x=float(pt[0][0]), y=float(pt[0][1])))  # type: ignore[index]
 
             if len(points) < 3:
                 continue

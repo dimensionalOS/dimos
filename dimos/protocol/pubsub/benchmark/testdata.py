@@ -247,11 +247,11 @@ if ROS_AVAILABLE:
         # Create image data
         data = np.frombuffer(make_data_bytes(size), dtype=np.uint8).reshape(-1)
         padded_size = ((len(data) + 2) // 3) * 3
-        data = np.pad(data, (0, padded_size - len(data)))
+        data = np.pad(data, (0, padded_size - len(data)))  # type: ignore[assignment]
         pixels = len(data) // 3
         height = max(1, int(pixels**0.5))
         width = pixels // height
-        data = data[: height * width * 3]
+        data = data[: height * width * 3]  # type: ignore[assignment]
 
         # Create ROS Image message
         msg = ROSImage()
