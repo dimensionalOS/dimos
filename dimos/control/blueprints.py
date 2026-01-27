@@ -30,7 +30,7 @@ Usage:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from dimos.control.components import (
     HardwareComponent,
@@ -44,9 +44,6 @@ from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import JointState
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 # =============================================================================
 # Helper functions
@@ -322,119 +319,39 @@ coordinator_combined_xarm6 = control_coordinator(
 # Cartesian IK Blueprints (internal Pinocchio IK solver)
 # =============================================================================
 
+# Mock 6-DOF arm with CartesianIK (run jogger separately)
+coordinator_cartesian_ik_mock = control_coordinator(
+    tick_rate=100.0,
+    publish_joint_state=True,
+    joint_state_frame_id="coordinator",
+    hardware=[_mock_arm("arm", 6)],
+    tasks=[
+        _cartesian_ik_task(
+            name="cartesian_ik_arm",
+            hardware_id="arm",
+            dof=6,
+            model_path=_get_piper_model_path(),
+            ee_joint_id=6,
+        ),
+    ],
+).transports(_cartesian_transports())
 
-class _LazyBlueprint:
-    """Lazy blueprint that defers creation until build() is called.
-
-    This is needed for cartesian IK blueprints because _get_piper_model_path()
-    calls get_data() which shouldn't run at import time.
-    """
-
-    def __init__(self, factory_fn: Callable[[], Any]) -> None:
-        self._factory_fn = factory_fn
-        self._blueprint: Any = None
-
-    def build(self, **kwargs: Any) -> Any:
-        if self._blueprint is None:
-            self._blueprint = self._factory_fn()
-        return self._blueprint.build(**kwargs)
-
-
-def _cartesian_ik_mock_factory() -> Any:
-    """Factory for mock CartesianIK coordinator."""
-    hardware = _mock_arm("arm", 6)
-    return control_coordinator(
-        tick_rate=100.0,
-        publish_joint_state=True,
-        joint_state_frame_id="coordinator",
-        hardware=[hardware],
-        tasks=[
-            _cartesian_ik_task(
-                name="cartesian_ik_arm",
-                hardware_id=hardware.hardware_id,
-                dof=len(hardware.joints),
-                model_path=_get_piper_model_path(),
-                ee_joint_id=6,
-            ),
-        ],
-    ).transports(_cartesian_transports())
-
-
-def _cartesian_ik_piper_factory() -> Any:
-    """Factory for Piper CartesianIK coordinator."""
-    hardware = _piper("arm", "can0")
-    return control_coordinator(
-        tick_rate=100.0,
-        publish_joint_state=True,
-        joint_state_frame_id="coordinator",
-        hardware=[hardware],
-        tasks=[
-            _cartesian_ik_task(
-                name="cartesian_ik_arm",
-                hardware_id=hardware.hardware_id,
-                dof=len(hardware.joints),
-                model_path=_get_piper_model_path(),
-                ee_joint_id=6,
-            ),
-        ],
-    ).transports(_cartesian_transports())
-
-
-# Standalone coordinators (run jogger separately)
-coordinator_cartesian_ik_mock = _LazyBlueprint(_cartesian_ik_mock_factory)
-coordinator_cartesian_ik_piper = _LazyBlueprint(_cartesian_ik_piper_factory)
-
-
-# =============================================================================
-# Cartesian IK Jogger Blueprints (coordinator + pygame jogger together)
-# =============================================================================
-
-
-class _JoggerBlueprint:
-    """Blueprint that runs coordinator + pygame jogger together.
-
-    Architecture:
-    - build() creates the coordinator
-    - loop() starts coordinator in background thread, then runs pygame jogger
-    - Jogger publishes PoseStamped to LCM, coordinator receives and computes IK
-    """
-
-    def __init__(self, coordinator_blueprint: _LazyBlueprint) -> None:
-        self._coordinator_blueprint = coordinator_blueprint
-        self._coordinator: Any = None
-
-    def build(self, **kwargs: Any) -> _JoggerBlueprint:
-        self._coordinator = self._coordinator_blueprint.build(**kwargs)
-        return self
-
-    def loop(self) -> None:
-        import threading
-
-        from dimos.control.examples.cartesian_ik_jogger import run_jogger_ui
-
-        if self._coordinator is None:
-            raise RuntimeError("Must call build() before loop()")
-
-        # Start coordinator in background
-        thread = threading.Thread(
-            target=self._coordinator.loop,
-            name="coordinator-loop",
-            daemon=True,
-        )
-        thread.start()
-        print("Coordinator started in background thread")
-
-        # Run jogger UI (blocks until user exits)
-        try:
-            run_jogger_ui(model_path=_get_piper_model_path(), ee_joint_id=6)
-        finally:
-            print("Stopping coordinator...")
-            self._coordinator.stop()
-            thread.join(timeout=2.0)
-
-
-coordinator_cartesian_ik_jogger_mock = _JoggerBlueprint(coordinator_cartesian_ik_mock)
-coordinator_cartesian_ik_jogger_piper = _JoggerBlueprint(coordinator_cartesian_ik_piper)
+# Piper arm with CartesianIK (run jogger separately)
+coordinator_cartesian_ik_piper = control_coordinator(
+    tick_rate=100.0,
+    publish_joint_state=True,
+    joint_state_frame_id="coordinator",
+    hardware=[_piper("arm", "can0")],
+    tasks=[
+        _cartesian_ik_task(
+            name="cartesian_ik_arm",
+            hardware_id="arm",
+            dof=6,
+            model_path=_get_piper_model_path(),
+            ee_joint_id=6,
+        ),
+    ],
+).transports(_cartesian_transports())
 
 
 # =============================================================================
@@ -455,10 +372,7 @@ coordinator_basic = control_coordinator(
 __all__ = [
     # Raw
     "coordinator_basic",
-    # Cartesian IK (with jogger)
-    "coordinator_cartesian_ik_jogger_mock",
-    "coordinator_cartesian_ik_jogger_piper",
-    # Cartesian IK (standalone)
+    # Cartesian IK
     "coordinator_cartesian_ik_mock",
     "coordinator_cartesian_ik_piper",
     "coordinator_combined_xarm6",

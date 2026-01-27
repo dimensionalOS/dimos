@@ -73,7 +73,7 @@ class JogState:
 
         This ensures the initial pose is reachable by the robot.
         """
-        import pinocchio
+        import pinocchio  # type: ignore[import-untyped]
 
         # Load model
         if model_path.endswith(".xml"):

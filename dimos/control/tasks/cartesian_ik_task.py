@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.linalg import norm, solve
-import pinocchio
+import pinocchio  # type: ignore[import-untyped]
 
 from dimos.control.task import (
     ControlMode,
