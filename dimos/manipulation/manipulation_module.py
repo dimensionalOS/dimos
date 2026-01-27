@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Manipulation Module - Motion planning with ControlOrchestrator execution."""
+"""Manipulation Module - Motion planning with ControlCoordinator execution."""
 
 from __future__ import annotations
 
@@ -90,14 +90,14 @@ class ManipulationModuleConfig(ModuleConfig):
 
 
 class ManipulationModule(Module):
-    """Motion planning module with ControlOrchestrator execution."""
+    """Motion planning module with ControlCoordinator execution."""
 
     default_config = ManipulationModuleConfig
 
     # Type annotation for the config attribute (mypy uses this)
     config: ManipulationModuleConfig
 
-    # Input: Joint state from orchestrator (for world sync)
+    # Input: Joint state from coordinator (for world sync)
     joint_state: In[JointState]
 
     def __init__(self, *args: object, **kwargs: object) -> None:
@@ -120,8 +120,8 @@ class ManipulationModule(Module):
         self._planned_paths: PlannedPaths = {}
         self._planned_trajectories: PlannedTrajectories = {}
 
-        # Orchestrator integration (lazy initialized)
-        self._orchestrator_client: RPCClient | None = None
+        # Coordinator integration (lazy initialized)
+        self._coordinator_client: RPCClient | None = None
 
         logger.info("ManipulationModule initialized")
 
@@ -507,57 +507,57 @@ class ManipulationModule(Module):
             "max_velocity": config.max_velocity,
             "max_acceleration": config.max_acceleration,
             "has_joint_name_mapping": bool(config.joint_name_mapping),
-            "orchestrator_task_name": config.orchestrator_task_name,
+            "coordinator_task_name": config.coordinator_task_name,
         }
 
     # =========================================================================
-    # Orchestrator Integration RPC Methods
+    # Coordinator Integration RPC Methods
     # =========================================================================
 
-    def _get_orchestrator_client(self) -> RPCClient | None:
-        """Get or create orchestrator RPC client (lazy init)."""
-        if not any(c.orchestrator_task_name for _, c, _ in self._robots.values()):
+    def _get_coordinator_client(self) -> RPCClient | None:
+        """Get or create coordinator RPC client (lazy init)."""
+        if not any(c.coordinator_task_name for _, c, _ in self._robots.values()):
             return None
-        if self._orchestrator_client is None:
-            from dimos.control.orchestrator import ControlOrchestrator
+        if self._coordinator_client is None:
+            from dimos.control.coordinator import ControlCoordinator
             from dimos.core.rpc_client import RPCClient
 
-            self._orchestrator_client = RPCClient(None, ControlOrchestrator)
-        return self._orchestrator_client
+            self._coordinator_client = RPCClient(None, ControlCoordinator)
+        return self._coordinator_client
 
-    def _translate_trajectory_to_orchestrator(
+    def _translate_trajectory_to_coordinator(
         self,
         trajectory: JointTrajectory,
         robot_config: RobotModelConfig,
     ) -> JointTrajectory:
-        """Translate trajectory joint names from URDF to orchestrator namespace.
+        """Translate trajectory joint names from URDF to coordinator namespace.
 
         Args:
             trajectory: Trajectory with URDF joint names
             robot_config: Robot config with joint name mapping
 
         Returns:
-            Trajectory with orchestrator joint names
+            Trajectory with coordinator joint names
         """
         if not robot_config.joint_name_mapping:
             return trajectory  # No translation needed
 
         # Translate joint names
-        orchestrator_names = [
-            robot_config.get_orchestrator_joint_name(j) for j in trajectory.joint_names
+        coordinator_names = [
+            robot_config.get_coordinator_joint_name(j) for j in trajectory.joint_names
         ]
 
         # Create new trajectory with translated names
         # Note: duration is computed automatically from points in JointTrajectory.__init__
         return JointTrajectory(
-            joint_names=orchestrator_names,
+            joint_names=coordinator_names,
             points=trajectory.points,
             timestamp=trajectory.timestamp,
         )
 
     @rpc
     def execute(self, robot_name: RobotName | None = None) -> bool:
-        """Execute planned trajectory via ControlOrchestrator."""
+        """Execute planned trajectory via ControlCoordinator."""
         if (robot := self._get_robot(robot_name)) is None:
             return False
         robot_name, _, config, _ = robot
@@ -565,25 +565,25 @@ class ManipulationModule(Module):
         if (traj := self._planned_trajectories.get(robot_name)) is None:
             logger.warning("No planned trajectory")
             return False
-        if not config.orchestrator_task_name:
-            logger.error(f"No orchestrator_task_name for '{robot_name}'")
+        if not config.coordinator_task_name:
+            logger.error(f"No coordinator_task_name for '{robot_name}'")
             return False
-        if (client := self._get_orchestrator_client()) is None:
-            logger.error("No orchestrator client")
+        if (client := self._get_coordinator_client()) is None:
+            logger.error("No coordinator client")
             return False
 
-        translated = self._translate_trajectory_to_orchestrator(traj, config)
+        translated = self._translate_trajectory_to_coordinator(traj, config)
         logger.info(
-            f"Executing: task='{config.orchestrator_task_name}', {len(translated.points)} pts, {translated.duration:.2f}s"
+            f"Executing: task='{config.coordinator_task_name}', {len(translated.points)} pts, {translated.duration:.2f}s"
         )
 
         self._state = ManipulationState.EXECUTING
-        if client.execute_trajectory(config.orchestrator_task_name, translated):
+        if client.execute_trajectory(config.coordinator_task_name, translated):
             logger.info("Trajectory accepted")
             self._state = ManipulationState.COMPLETED
             return True
         else:
-            return self._fail("Orchestrator rejected trajectory")
+            return self._fail("Coordinator rejected trajectory")
 
     @rpc
     def get_trajectory_status(
@@ -593,9 +593,9 @@ class ManipulationModule(Module):
         if (robot := self._get_robot(robot_name)) is None:
             return None
         _, _, config, _ = robot
-        if not config.orchestrator_task_name or (client := self._get_orchestrator_client()) is None:
+        if not config.coordinator_task_name or (client := self._get_coordinator_client()) is None:
             return None
-        status = client.get_trajectory_status(config.orchestrator_task_name)
+        status = client.get_trajectory_status(config.coordinator_task_name)
         return dict(status) if status else None
 
     @property

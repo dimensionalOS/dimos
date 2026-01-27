@@ -5,11 +5,11 @@ Motion planning for robotic manipulators. Backend-agnostic design with Drake imp
 ## Quick Start
 
 ```bash
-# Terminal 1: Mock orchestrator
-dimos run orchestrator-mock
+# Terminal 1: Mock coordinator
+dimos run coordinator-mock
 
 # Terminal 2: Manipulation planner
-dimos run xarm7-planner-orchestrator
+dimos run xarm7-planner-coordinator
 
 # Terminal 3: IPython client
 python -m dimos.manipulation.planning.examples.manipulation_client
@@ -20,7 +20,7 @@ In IPython:
 joints()                # Get current joints
 plan([0.1] * 7)         # Plan to target
 preview()               # Preview in Meshcat (url() for link)
-execute()               # Execute via orchestrator
+execute()               # Execute via coordinator
 ```
 
 ## Architecture
@@ -67,8 +67,8 @@ config = RobotModelConfig(
     joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
     end_effector_link="link7",
     base_link="link_base",
-    joint_name_mapping={"arm_joint1": "joint1", ...},  # orchestrator <-> URDF
-    orchestrator_task_name="traj_arm",
+    joint_name_mapping={"arm_joint1": "joint1", ...},  # coordinator <-> URDF
+    coordinator_task_name="traj_arm",
 )
 
 module = ManipulationModule(
@@ -80,7 +80,7 @@ module = ManipulationModule(
 )
 module.start()
 module.plan_to_joints([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
-module.execute()  # Sends to orchestrator
+module.execute()  # Sends to coordinator
 ```
 
 ## RobotModelConfig Fields
@@ -95,8 +95,8 @@ module.execute()  # Sends to orchestrator
 | `base_link` | Base link name |
 | `max_velocity` | Max joint velocity (rad/s) |
 | `max_acceleration` | Max acceleration (rad/s²) |
-| `joint_name_mapping` | Orchestrator → URDF name mapping |
-| `orchestrator_task_name` | Task name for execution RPC |
+| `joint_name_mapping` | Coordinator → URDF name mapping |
+| `coordinator_task_name` | Task name for execution RPC |
 | `package_paths` | ROS package paths for meshes |
 | `xacro_args` | Xacro arguments (e.g., `{"dof": "7"}`) |
 
@@ -125,8 +125,8 @@ module.execute()  # Sends to orchestrator
 
 | Blueprint | Description |
 |-----------|-------------|
-| `xarm6_planner_only` | XArm 6-DOF standalone (no orchestrator) |
-| `xarm7-planner-orchestrator` | XArm 7-DOF with orchestrator |
+| `xarm6_planner_only` | XArm 6-DOF standalone (no coordinator) |
+| `xarm7-planner-coordinator` | XArm 7-DOF with coordinator |
 | `dual-xarm6-planner` | Dual XArm 6-DOF |
 
 ## Directory Structure

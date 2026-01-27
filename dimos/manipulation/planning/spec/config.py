@@ -46,10 +46,10 @@ class RobotModelConfig:
             links may legitimately overlap (e.g., mimic joints).
         max_velocity: Maximum joint velocity for trajectory generation (rad/s)
         max_acceleration: Maximum joint acceleration for trajectory generation (rad/s^2)
-        joint_name_mapping: Maps orchestrator joint names to URDF joint names.
-            Example: {"left_joint1": "joint1"} means orchestrator's "left_joint1"
+        joint_name_mapping: Maps coordinator joint names to URDF joint names.
+            Example: {"left_joint1": "joint1"} means coordinator's "left_joint1"
             corresponds to URDF's "joint1". If empty, names are assumed to match.
-        orchestrator_task_name: Task name for executing trajectories via orchestrator RPC.
+        coordinator_task_name: Task name for executing trajectories via coordinator RPC.
             If set, trajectories can be executed via execute_trajectory() RPC.
     """
 
@@ -69,23 +69,23 @@ class RobotModelConfig:
     # Motion constraints for trajectory generation
     max_velocity: float = 1.0
     max_acceleration: float = 2.0
-    # Orchestrator integration
+    # Coordinator integration
     joint_name_mapping: dict[str, str] = field(default_factory=dict)
-    orchestrator_task_name: str | None = None
+    coordinator_task_name: str | None = None
 
-    def get_urdf_joint_name(self, orchestrator_name: str) -> str:
-        """Translate orchestrator joint name to URDF joint name."""
-        return self.joint_name_mapping.get(orchestrator_name, orchestrator_name)
+    def get_urdf_joint_name(self, coordinator_name: str) -> str:
+        """Translate coordinator joint name to URDF joint name."""
+        return self.joint_name_mapping.get(coordinator_name, coordinator_name)
 
-    def get_orchestrator_joint_name(self, urdf_name: str) -> str:
-        """Translate URDF joint name to orchestrator joint name."""
-        for orch_name, u_name in self.joint_name_mapping.items():
+    def get_coordinator_joint_name(self, urdf_name: str) -> str:
+        """Translate URDF joint name to coordinator joint name."""
+        for coord_name, u_name in self.joint_name_mapping.items():
             if u_name == urdf_name:
-                return orch_name
+                return coord_name
         return urdf_name
 
-    def get_orchestrator_joint_names(self) -> list[str]:
-        """Get joint names in orchestrator namespace."""
+    def get_coordinator_joint_names(self) -> list[str]:
+        """Get joint names in coordinator namespace."""
         if not self.joint_name_mapping:
             return self.joint_names
-        return [self.get_orchestrator_joint_name(j) for j in self.joint_names]
+        return [self.get_coordinator_joint_name(j) for j in self.joint_names]

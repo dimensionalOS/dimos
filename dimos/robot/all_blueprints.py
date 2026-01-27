@@ -55,7 +55,7 @@ all_blueprints = {
     "unitree-go2-temporal-memory": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_temporal_memory",
     "unitree-go2-vlm-stream-test": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_vlm_stream_test",
     "xarm6-planner-only": "dimos.manipulation.manipulation_blueprints:xarm6_planner_only",
-    "xarm7-planner-orchestrator": "dimos.manipulation.manipulation_blueprints:xarm7_planner_orchestrator",
+    "xarm7-planner-coordinator": "dimos.manipulation.manipulation_blueprints:xarm7_planner_coordinator",
 }
 
 

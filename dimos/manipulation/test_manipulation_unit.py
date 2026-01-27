@@ -46,7 +46,7 @@ def robot_config():
         base_link="link_base",
         max_velocity=1.0,
         max_acceleration=2.0,
-        orchestrator_task_name="traj_arm",
+        coordinator_task_name="traj_arm",
     )
 
 
@@ -65,7 +65,7 @@ def robot_config_with_mapping():
             "left_joint2": "joint2",
             "left_joint3": "joint3",
         },
-        orchestrator_task_name="traj_left",
+        coordinator_task_name="traj_left",
     )
 
 
@@ -98,7 +98,7 @@ def _make_module():
         module._world_monitor = None
         module._planner = None
         module._kinematics = None
-        module._orchestrator_client = None
+        module._coordinator_client = None
         return module
 
 
@@ -199,25 +199,25 @@ class TestRobotSelection:
 
 
 # =============================================================================
-# Test Joint Name Translation (for orchestrator integration)
+# Test Joint Name Translation (for coordinator integration)
 # =============================================================================
 
 
 class TestJointNameTranslation:
-    """Test trajectory joint name translation for orchestrator."""
+    """Test trajectory joint name translation for coordinator."""
 
     def test_no_mapping_returns_original(self, robot_config, simple_trajectory):
         """Without mapping, trajectory is returned unchanged."""
         module = _make_module()
 
-        result = module._translate_trajectory_to_orchestrator(simple_trajectory, robot_config)
+        result = module._translate_trajectory_to_coordinator(simple_trajectory, robot_config)
         assert result is simple_trajectory  # Same object
 
     def test_mapping_translates_names(self, robot_config_with_mapping, simple_trajectory):
         """With mapping, joint names are translated."""
         module = _make_module()
 
-        result = module._translate_trajectory_to_orchestrator(
+        result = module._translate_trajectory_to_coordinator(
             simple_trajectory, robot_config_with_mapping
         )
         assert result.joint_names == ["left_joint1", "left_joint2", "left_joint3"]
@@ -230,7 +230,7 @@ class TestJointNameTranslation:
 
 
 class TestExecute:
-    """Test orchestrator execution."""
+    """Test coordinator execution."""
 
     def test_execute_requires_trajectory(self, robot_config):
         """Execute fails without planned trajectory."""
@@ -241,7 +241,7 @@ class TestExecute:
         assert module.execute() is False
 
     def test_execute_requires_task_name(self):
-        """Execute fails without orchestrator_task_name."""
+        """Execute fails without coordinator_task_name."""
         module = _make_module()
         config_no_task = RobotModelConfig(
             name="arm",
@@ -256,14 +256,14 @@ class TestExecute:
         assert module.execute() is False
 
     def test_execute_success(self, robot_config, simple_trajectory):
-        """Successful execute calls orchestrator."""
+        """Successful execute calls coordinator."""
         module = _make_module()
         module._robots = {"test_arm": ("id", robot_config, MagicMock())}
         module._planned_trajectories = {"test_arm": simple_trajectory}
 
         mock_client = MagicMock()
         mock_client.execute_trajectory.return_value = True
-        module._orchestrator_client = mock_client
+        module._coordinator_client = mock_client
 
         assert module.execute() is True
         assert module._state == ManipulationState.COMPLETED
@@ -277,7 +277,7 @@ class TestExecute:
 
         mock_client = MagicMock()
         mock_client.execute_trajectory.return_value = False
-        module._orchestrator_client = mock_client
+        module._coordinator_client = mock_client
 
         assert module.execute() is False
         assert module._state == ManipulationState.FAULT
@@ -292,13 +292,13 @@ class TestRobotModelConfigMapping:
     """Test RobotModelConfig joint name mapping helpers."""
 
     def test_bidirectional_mapping(self, robot_config_with_mapping):
-        """Test URDF <-> orchestrator name translation."""
+        """Test URDF <-> coordinator name translation."""
         config = robot_config_with_mapping
 
-        # Orchestrator -> URDF
+        # Coordinator -> URDF
         assert config.get_urdf_joint_name("left_joint1") == "joint1"
         assert config.get_urdf_joint_name("unknown") == "unknown"
 
-        # URDF -> Orchestrator
-        assert config.get_orchestrator_joint_name("joint1") == "left_joint1"
-        assert config.get_orchestrator_joint_name("unknown") == "unknown"
+        # URDF -> Coordinator
+        assert config.get_coordinator_joint_name("joint1") == "left_joint1"
+        assert config.get_coordinator_joint_name("unknown") == "unknown"

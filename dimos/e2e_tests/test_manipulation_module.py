@@ -86,7 +86,7 @@ def _get_xarm7_config() -> RobotModelConfig:
             "arm_joint6": "joint6",
             "arm_joint7": "joint7",
         },
-        orchestrator_task_name="traj_arm",
+        coordinator_task_name="traj_arm",
     )
 
 
@@ -277,7 +277,7 @@ class TestManipulationModuleIntegration:
             assert info["name"] == "test_arm"
             assert len(info["joint_names"]) == 7
             assert info["end_effector_link"] == "link7"
-            assert info["orchestrator_task_name"] == "traj_arm"
+            assert info["coordinator_task_name"] == "traj_arm"
             assert info["has_joint_name_mapping"] is True
         finally:
             module.stop()
@@ -308,7 +308,7 @@ class TestManipulationModuleIntegration:
             module.stop()
 
     def test_trajectory_name_translation(self, xarm7_config, joint_state_zeros):
-        """Test that trajectory joint names are translated for orchestrator."""
+        """Test that trajectory joint names are translated for coordinator."""
         module = ManipulationModule(
             robots=[xarm7_config],
             planning_timeout=10.0,
@@ -330,7 +330,7 @@ class TestManipulationModuleIntegration:
             robot_config = module._robots["test_arm"][1]
 
             # Translate it
-            translated = module._translate_trajectory_to_orchestrator(traj, robot_config)
+            translated = module._translate_trajectory_to_coordinator(traj, robot_config)
 
             # Verify names are translated
             for name in translated.joint_names:
@@ -340,18 +340,18 @@ class TestManipulationModuleIntegration:
 
 
 # =============================================================================
-# Orchestrator Integration Tests (mocked orchestrator)
+# Coordinator Integration Tests (mocked coordinator)
 # =============================================================================
 
 
 @pytest.mark.skipif(not _drake_available(), reason="Drake not installed")
 @pytest.mark.skipif(not _xarm_urdf_available(), reason="XArm URDF not available")
 @pytest.mark.skipif(bool(os.getenv("CI")), reason="Skip in CI - requires LFS data")
-class TestOrchestratorIntegration:
-    """Test orchestrator integration with mocked RPC client."""
+class TestCoordinatorIntegration:
+    """Test coordinator integration with mocked RPC client."""
 
-    def test_execute_with_mock_orchestrator(self, xarm7_config, joint_state_zeros):
-        """Test execute sends trajectory to orchestrator."""
+    def test_execute_with_mock_coordinator(self, xarm7_config, joint_state_zeros):
+        """Test execute sends trajectory to coordinator."""
         module = ManipulationModule(
             robots=[xarm7_config],
             planning_timeout=10.0,
@@ -368,10 +368,10 @@ class TestOrchestratorIntegration:
             success = module.plan_to_joints([0.05] * 7)
             assert success is True
 
-            # Mock the orchestrator client
+            # Mock the coordinator client
             mock_client = MagicMock()
             mock_client.execute_trajectory.return_value = True
-            module._orchestrator_client = mock_client
+            module._coordinator_client = mock_client
 
             # Execute
             result = module.execute()
@@ -379,7 +379,7 @@ class TestOrchestratorIntegration:
             assert result is True
             assert module._state == ManipulationState.COMPLETED
 
-            # Verify orchestrator was called
+            # Verify coordinator was called
             mock_client.execute_trajectory.assert_called_once()
             call_args = mock_client.execute_trajectory.call_args
             task_name, trajectory = call_args[0]
@@ -391,8 +391,8 @@ class TestOrchestratorIntegration:
         finally:
             module.stop()
 
-    def test_execute_rejected_by_orchestrator(self, xarm7_config, joint_state_zeros):
-        """Test handling of orchestrator rejection."""
+    def test_execute_rejected_by_coordinator(self, xarm7_config, joint_state_zeros):
+        """Test handling of coordinator rejection."""
         module = ManipulationModule(
             robots=[xarm7_config],
             planning_timeout=10.0,
@@ -408,10 +408,10 @@ class TestOrchestratorIntegration:
             # Plan a motion
             module.plan_to_joints([0.05] * 7)
 
-            # Mock orchestrator to reject
+            # Mock coordinator to reject
             mock_client = MagicMock()
             mock_client.execute_trajectory.return_value = False
-            module._orchestrator_client = mock_client
+            module._coordinator_client = mock_client
 
             # Execute
             result = module.execute()
@@ -450,10 +450,10 @@ class TestOrchestratorIntegration:
             # Plan again
             module.plan_to_joints([0.05] * 7)
 
-            # Mock orchestrator
+            # Mock coordinator
             mock_client = MagicMock()
             mock_client.execute_trajectory.return_value = True
-            module._orchestrator_client = mock_client
+            module._coordinator_client = mock_client
 
             # Execute - should go to EXECUTING then COMPLETED
             module.execute()

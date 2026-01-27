@@ -79,7 +79,7 @@ class WorldStateMonitor:
             lock: Shared lock for thread-safe access
             robot_id: ID of the robot to monitor
             joint_names: Ordered list of joint names for this robot (URDF names)
-            joint_name_mapping: Maps orchestrator joint names to URDF joint names.
+            joint_name_mapping: Maps coordinator joint names to URDF joint names.
                 Example: {"left_joint1": "joint1"} means messages with "left_joint1"
                 will be mapped to URDF "joint1". If None, names must match exactly.
             timeout: Timeout for waiting for initial state (seconds)
@@ -90,9 +90,9 @@ class WorldStateMonitor:
         self._joint_names = joint_names
         self._timeout = timeout
 
-        # Joint name mapping: orchestrator name -> URDF name
+        # Joint name mapping: coordinator name -> URDF name
         self._joint_name_mapping = joint_name_mapping or {}
-        # Build reverse mapping: URDF name -> orchestrator name
+        # Build reverse mapping: URDF name -> coordinator name
         self._reverse_mapping = {v: k for k, v in self._joint_name_mapping.items()}
 
         # Latest state
@@ -185,16 +185,16 @@ class WorldStateMonitor:
     def _extract_positions(self, msg: JointState) -> NDArray[np.float64] | None:
         """Extract positions for our joints from JointState message.
 
-        Handles joint name translation from orchestrator namespace to URDF namespace.
+        Handles joint name translation from coordinator namespace to URDF namespace.
         If joint_name_mapping is set, message names are looked up via the reverse mapping.
 
         Args:
-            msg: JointState message (may use orchestrator joint names)
+            msg: JointState message (may use coordinator joint names)
 
         Returns:
             Array of joint positions or None if any joint is missing
         """
-        # Build name->index map from message (orchestrator names)
+        # Build name->index map from message (coordinator names)
         name_to_idx = {name: i for i, name in enumerate(msg.name)}
 
         positions = []
@@ -203,7 +203,7 @@ class WorldStateMonitor:
             if urdf_joint_name in name_to_idx:
                 idx = name_to_idx[urdf_joint_name]
             else:
-                # Try reverse mapping: URDF name -> orchestrator name -> msg index
+                # Try reverse mapping: URDF name -> coordinator name -> msg index
                 orch_name = self._reverse_mapping.get(urdf_joint_name)
                 if orch_name is None or orch_name not in name_to_idx:
                     return None  # Missing joint

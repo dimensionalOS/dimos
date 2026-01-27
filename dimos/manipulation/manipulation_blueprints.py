@@ -13,11 +13,11 @@
 # limitations under the License.
 
 """
-Blueprints for manipulation module integration with ControlOrchestrator.
+Blueprints for manipulation module integration with ControlCoordinator.
 
 Usage:
-    # Start orchestrator first, then planner:
-    coordinator = xarm7_planner_orchestrator.build()
+    # Start coordinator first, then planner:
+    coordinator = xarm7_planner_coordinator.build()
     coordinator.loop()
 
     # Plan and execute via RPC client:
@@ -107,7 +107,7 @@ def _make_xarm6_config(
     name: str = "arm",
     y_offset: float = 0.0,
     joint_prefix: str = "",
-    orchestrator_task: str | None = None,
+    coordinator_task: str | None = None,
     add_gripper: bool = True,
 ) -> RobotModelConfig:
     """Create XArm6 robot config.
@@ -116,7 +116,7 @@ def _make_xarm6_config(
         name: Robot name in Drake world
         y_offset: Y-axis offset for base pose (for multi-arm setups)
         joint_prefix: Prefix for joint name mapping (e.g., "left_" or "right_")
-        orchestrator_task: Task name for orchestrator RPC execution
+        coordinator_task: Task name for coordinator RPC execution
         add_gripper: Whether to add the xarm gripper
     """
     joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
@@ -152,7 +152,7 @@ def _make_xarm6_config(
         max_velocity=1.0,
         max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
-        orchestrator_task_name=orchestrator_task,
+        coordinator_task_name=coordinator_task,
     )
 
 
@@ -160,7 +160,7 @@ def _make_xarm7_config(
     name: str = "arm",
     y_offset: float = 0.0,
     joint_prefix: str = "",
-    orchestrator_task: str | None = None,
+    coordinator_task: str | None = None,
     add_gripper: bool = False,
 ) -> RobotModelConfig:
     """Create XArm7 robot config.
@@ -169,7 +169,7 @@ def _make_xarm7_config(
         name: Robot name in Drake world
         y_offset: Y-axis offset for base pose (for multi-arm setups)
         joint_prefix: Prefix for joint name mapping (e.g., "left_" or "right_")
-        orchestrator_task: Task name for orchestrator RPC execution
+        coordinator_task: Task name for coordinator RPC execution
         add_gripper: Whether to add the xarm gripper
     """
     joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
@@ -205,7 +205,7 @@ def _make_xarm7_config(
         max_velocity=1.0,
         max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
-        orchestrator_task_name=orchestrator_task,
+        coordinator_task_name=coordinator_task,
     )
 
 
@@ -213,7 +213,7 @@ def _make_piper_config(
     name: str = "piper",
     y_offset: float = 0.0,
     joint_prefix: str = "",
-    orchestrator_task: str | None = None,
+    coordinator_task: str | None = None,
 ) -> RobotModelConfig:
     """Create Piper robot config.
 
@@ -221,7 +221,7 @@ def _make_piper_config(
         name: Robot name in Drake world
         y_offset: Y-axis offset for base pose (for multi-arm setups)
         joint_prefix: Prefix for joint name mapping (e.g., "piper_")
-        orchestrator_task: Task name for orchestrator RPC execution
+        coordinator_task: Task name for coordinator RPC execution
 
     Note:
         Piper has 6 revolute joints (joint1-joint6) for the arm and 2 prismatic
@@ -253,7 +253,7 @@ def _make_piper_config(
         max_velocity=1.0,
         max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
-        orchestrator_task_name=orchestrator_task,
+        coordinator_task_name=coordinator_task,
     )
 
 
@@ -262,7 +262,7 @@ def _make_piper_config(
 # =============================================================================
 
 
-# Single XArm6 planner (standalone, no orchestrator)
+# Single XArm6 planner (standalone, no coordinator)
 xarm6_planner_only = manipulation_module(
     robots=[_make_xarm6_config()],
     planning_timeout=10.0,
@@ -274,35 +274,35 @@ xarm6_planner_only = manipulation_module(
 )
 
 
-# Dual XArm6 planner with orchestrator integration
-# Usage: Start with orchestrator_dual_mock, then plan/execute via RPC
+# Dual XArm6 planner with coordinator integration
+# Usage: Start with coordinator_dual_mock, then plan/execute via RPC
 dual_xarm6_planner = manipulation_module(
     robots=[
         _make_xarm6_config(
-            "left_arm", y_offset=0.5, joint_prefix="left_", orchestrator_task="traj_left"
+            "left_arm", y_offset=0.5, joint_prefix="left_", coordinator_task="traj_left"
         ),
         _make_xarm6_config(
-            "right_arm", y_offset=-0.5, joint_prefix="right_", orchestrator_task="traj_right"
+            "right_arm", y_offset=-0.5, joint_prefix="right_", coordinator_task="traj_right"
         ),
     ],
     planning_timeout=10.0,
     enable_viz=True,
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/orchestrator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
 
 
-# Single XArm7 planner for orchestrator-mock
-# Usage: dimos run orchestrator-mock, then dimos run xarm7-planner-orchestrator
-xarm7_planner_orchestrator = manipulation_module(
-    robots=[_make_xarm7_config("arm", joint_prefix="arm_", orchestrator_task="traj_arm")],
+# Single XArm7 planner for coordinator-mock
+# Usage: dimos run coordinator-mock, then dimos run xarm7-planner-coordinator
+xarm7_planner_coordinator = manipulation_module(
+    robots=[_make_xarm7_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
     planning_timeout=10.0,
     enable_viz=True,
 ).transports(
     {
-        ("joint_state", JointState): LCMTransport("/orchestrator/joint_state", JointState),
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
     }
 )
 
@@ -312,5 +312,5 @@ __all__ = [
     "XARM_GRIPPER_COLLISION_EXCLUSIONS",
     "dual_xarm6_planner",
     "xarm6_planner_only",
-    "xarm7_planner_orchestrator",
+    "xarm7_planner_coordinator",
 ]

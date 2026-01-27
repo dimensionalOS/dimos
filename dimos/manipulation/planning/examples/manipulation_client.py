@@ -17,9 +17,9 @@
 Manipulation Client - IPython interface for ManipulationModule
 
 Usage:
-    # Start orchestrator and planner first:
-    dimos run orchestrator-mock
-    dimos run xarm7-planner-orchestrator
+    # Start coordinator and planner first:
+    dimos run coordinator-mock
+    dimos run xarm7-planner-coordinator
 
     # Run interactive client:
     python -m dimos.manipulation.planning.examples.manipulation_client
@@ -33,7 +33,7 @@ Commands (call directly, no prefix needed):
     plan([0.1, ...])        # Plan to joint config
     plan_pose(x, y, z)      # Plan to cartesian pose
     preview()               # Preview path in Meshcat
-    execute()               # Execute via orchestrator
+    execute()               # Execute via coordinator
 
     box("name", x, y, z, w, h, d)   # Add box obstacle
     sphere("name", x, y, z, r)      # Add sphere obstacle
@@ -172,7 +172,7 @@ class ManipulationClient:
         return cast("bool", self._call("preview_path", duration, robot_name=robot_name))
 
     def execute(self, robot_name: str | None = None) -> bool:
-        """Execute planned trajectory via orchestrator."""
+        """Execute planned trajectory via coordinator."""
         return cast("bool", self._call("execute", robot_name))
 
     def has_plan(self) -> bool:
@@ -312,7 +312,7 @@ Planning:
   plan_pose(0.4, 0, 0.3)  # Plan to cartesian pose (keeps orientation)
   plan_pose(0.4, 0, 0.3, roll=0, pitch=3.14, yaw=0)  # With orientation
   preview()               # Preview path in Meshcat
-  execute()               # Execute via orchestrator
+  execute()               # Execute via coordinator
 
 Obstacles:
   box("name", x, y, z, width, height, depth)        # Add box
