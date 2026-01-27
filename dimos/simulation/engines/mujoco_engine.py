@@ -16,6 +16,10 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+import subprocess
+import sys
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -24,15 +28,21 @@ import mujoco
 import mujoco.viewer as viewer  # type: ignore[import-untyped]
 
 from dimos.simulation.engines.base import SimulationEngine
+from dimos.simulation.manipulators.mujoco_subprocess.constants import LAUNCHER_PATH
+from dimos.simulation.manipulators.mujoco_subprocess.shared_memory import ShmWriter
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from dimos.msgs.sensor_msgs import JointState
 
+    pass
+
 logger = setup_logger()
+
+_MODE_POSITION = 0
+_MODE_VELOCITY = 1
+_MODE_EFFORT = 2
 
 
 class MujocoEngine(SimulationEngine):
@@ -59,6 +69,9 @@ class MujocoEngine(SimulationEngine):
         self._control_frequency = 1.0 / timestep if timestep > 0.0 else 100.0
 
         self._connected = False
+        self._use_subprocess = sys.platform == "darwin" and not headless
+        self._process: subprocess.Popen[bytes] | None = None
+        self._shm: ShmWriter | None = None
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._sim_thread: threading.Thread | None = None
@@ -77,8 +90,6 @@ class MujocoEngine(SimulationEngine):
             self._joint_positions[i] = current_pos
 
     def _resolve_xml_path(self, config_path: Path) -> Path:
-        if config_path is None:
-            raise ValueError("config_path is required for MuJoCo simulation loading")
         resolved = config_path.expanduser()
         xml_path = resolved / "scene.xml" if resolved.is_dir() else resolved
         if not xml_path.exists():
@@ -143,6 +154,42 @@ class MujocoEngine(SimulationEngine):
     def connect(self) -> bool:
         try:
             logger.info(f"{self.__class__.__name__}: connect()")
+            if self._use_subprocess:
+                if self._connected:
+                    return True
+
+                self._shm = ShmWriter(self._num_joints)
+                if sys.platform == "darwin":
+                    mjpython = Path(sys.executable).with_name("mjpython")
+                    executable = str(mjpython) if mjpython.exists() else "mjpython"
+                else:
+                    executable = sys.executable
+                args = [
+                    executable,
+                    str(LAUNCHER_PATH),
+                    str(self._xml_path),
+                    "1" if self._headless else "0",
+                    str(self._num_joints),
+                    json.dumps(self._shm.shm.to_names()),
+                ]
+                self._process = subprocess.Popen(args)
+
+                ready_timeout = 30.0
+                start_time = time.time()
+                while time.time() - start_time < ready_timeout:
+                    if self._process.poll() is not None:
+                        exit_code = self._process.returncode
+                        self.disconnect()
+                        raise RuntimeError(
+                            f"MuJoCo subprocess failed to start (exit code {exit_code})"
+                        )
+                    if self._shm.is_ready():
+                        self._connected = True
+                        return True
+                    time.sleep(0.1)
+
+                self.disconnect()
+                raise RuntimeError("MuJoCo subprocess failed to start (timeout)")
             with self._lock:
                 self._connected = True
                 self._stop_event.clear()
@@ -162,6 +209,25 @@ class MujocoEngine(SimulationEngine):
     def disconnect(self) -> bool:
         try:
             logger.info(f"{self.__class__.__name__}: disconnect()")
+            if self._use_subprocess:
+                self._connected = False
+                if self._shm:
+                    self._shm.signal_stop()
+
+                if self._process:
+                    try:
+                        self._process.terminate()
+                        self._process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("MuJoCo subprocess did not stop gracefully, killing")
+                        self._process.kill()
+                        self._process.wait(timeout=2)
+                    self._process = None
+
+                if self._shm:
+                    self._shm.cleanup()
+                    self._shm = None
+                return True
             with self._lock:
                 self._connected = False
             self._stop_event.set()
@@ -204,6 +270,13 @@ class MujocoEngine(SimulationEngine):
 
     @property
     def connected(self) -> bool:
+        if self._use_subprocess:
+            if not self._connected:
+                return False
+            if self._process and self._process.poll() is not None:
+                self._connected = False
+                return False
+            return True
         with self._lock:
             return self._connected
 
@@ -239,15 +312,43 @@ class MujocoEngine(SimulationEngine):
         return self._control_frequency
 
     def read_joint_positions(self) -> list[float]:
+        if self._use_subprocess:
+            if not self._shm:
+                return []
+            positions, _, _ = self._shm.read_state()
+            return positions
         return self.joint_positions
 
     def read_joint_velocities(self) -> list[float]:
+        if self._use_subprocess:
+            if not self._shm:
+                return []
+            _, velocities, _ = self._shm.read_state()
+            return velocities
         return self.joint_velocities
 
     def read_joint_efforts(self) -> list[float]:
+        if self._use_subprocess:
+            if not self._shm:
+                return []
+            _, _, efforts = self._shm.read_state()
+            return efforts
         return self.joint_efforts
 
     def write_joint_command(self, command: JointState) -> None:
+        if self._use_subprocess:
+            if not self._shm:
+                return
+            if command.position:
+                self._shm.write_command(_MODE_POSITION, positions=list(command.position))
+                return
+            if command.velocity:
+                self._shm.write_command(_MODE_VELOCITY, velocities=list(command.velocity))
+                return
+            if command.effort:
+                self._shm.write_command(_MODE_EFFORT, efforts=list(command.effort))
+                return
+            return
         if command.position:
             self._command_mode = "position"
             self._set_position_targets(command.position)
@@ -289,6 +390,13 @@ class MujocoEngine(SimulationEngine):
                 self._joint_effort_targets[i] = float(efforts[i])
 
     def hold_current_position(self) -> None:
+        if self._use_subprocess:
+            if not self._shm:
+                return
+            positions = self.read_joint_positions()
+            if positions:
+                self._shm.write_command(_MODE_POSITION, positions=positions)
+            return
         with self._lock:
             self._command_mode = "position"
             for i, mapping in enumerate(self._joint_mappings):

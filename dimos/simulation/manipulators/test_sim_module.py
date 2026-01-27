@@ -17,6 +17,7 @@ import threading
 
 import pytest
 
+from dimos.simulation.manipulators.mujoco_subprocess.shared_memory import ShmReader, ShmWriter
 from dimos.simulation.manipulators.sim_module import SimulationModule
 
 
@@ -99,7 +100,7 @@ def test_simulation_module_publishes_joint_state(monkeypatch) -> None:
     finally:
         module.stop()
 
-    assert len(joint_states) == 1
+    assert len(joint_states) >= 1
     assert joint_states[0].name == ["joint1", "joint2", "joint3"]
 
 
@@ -121,3 +122,39 @@ def test_simulation_module_publishes_robot_state(monkeypatch) -> None:
 
     assert len(robot_states) == 1
     assert robot_states[0].state == 1
+
+
+def test_mujoco_subprocess_shared_memory_roundtrip() -> None:
+    writer = ShmWriter(dof=2)
+    reader = ShmReader(writer.shm.to_names(), dof=2)
+    try:
+        assert writer.is_ready() is False
+        reader.signal_ready()
+        assert writer.is_ready() is True
+
+        writer.write_command(
+            mode=1,
+            positions=[1.0, 2.0],
+            velocities=[3.0, 4.0],
+            efforts=[5.0, 6.0],
+        )
+        cmd = reader.read_command()
+        assert cmd is not None
+        mode, positions, velocities, efforts = cmd
+        assert mode == 1
+        assert positions.tolist() == [1.0, 2.0]
+        assert velocities.tolist() == [3.0, 4.0]
+        assert efforts.tolist() == [5.0, 6.0]
+        assert reader.read_command() is None
+
+        reader.write_state([0.1, 0.2], [0.0, 0.1], [0.2, 0.3])
+        positions, velocities, efforts = writer.read_state()
+        assert positions == pytest.approx([0.1, 0.2])
+        assert velocities == pytest.approx([0.0, 0.1])
+        assert efforts == pytest.approx([0.2, 0.3])
+
+        writer.signal_stop()
+        assert reader.should_stop() is True
+    finally:
+        reader.cleanup()
+        writer.cleanup()

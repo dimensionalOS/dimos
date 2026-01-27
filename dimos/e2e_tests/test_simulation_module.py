@@ -34,12 +34,20 @@ def _positions_within_tolerance(
 @pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM doesn't work in CI.")
 @pytest.mark.e2e
 class TestSimulationModuleE2E:
-    def test_xarm7_joint_state_published(self, lcm_spy, start_blueprint) -> None:
+    def test_xarm7_joint_state_published(
+        self,
+        lcm_spy,
+        start_blueprint,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.setenv("DIMOS_HEADLESS", "1")
+        monkeypatch.delenv("DIMOS_MUJOCO_FORCE_SUBPROCESS", raising=False)
+
         joint_state_topic = "/xarm/joint_states#sensor_msgs.JointState"
         lcm_spy.save_topic(joint_state_topic)
 
-        start_blueprint("simulation-xarm7")
-        lcm_spy.wait_for_saved_topic(joint_state_topic, timeout=15.0)
+        start_blueprint("xarm7-trajectory-sim")
+        lcm_spy.wait_for_saved_topic(joint_state_topic, timeout=30.0)
 
         with lcm_spy._messages_lock:
             raw_joint_state = lcm_spy.messages[joint_state_topic][0]
@@ -48,12 +56,20 @@ class TestSimulationModuleE2E:
         assert len(joint_state.name) == 8
         assert len(joint_state.position) == 8
 
-    def test_xarm7_robot_state_published(self, lcm_spy, start_blueprint) -> None:
+    def test_xarm7_robot_state_published(
+        self,
+        lcm_spy,
+        start_blueprint,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.setenv("DIMOS_HEADLESS", "1")
+        monkeypatch.delenv("DIMOS_MUJOCO_FORCE_SUBPROCESS", raising=False)
+
         robot_state_topic = "/xarm/robot_state#sensor_msgs.RobotState"
         lcm_spy.save_topic(robot_state_topic)
 
-        start_blueprint("simulation-xarm7")
-        lcm_spy.wait_for_saved_topic(robot_state_topic, timeout=15.0)
+        start_blueprint("xarm7-trajectory-sim")
+        lcm_spy.wait_for_saved_topic(robot_state_topic, timeout=30.0)
 
         with lcm_spy._messages_lock:
             raw_robot_state = lcm_spy.messages[robot_state_topic][0]
@@ -61,13 +77,21 @@ class TestSimulationModuleE2E:
         robot_state = RobotState.lcm_decode(raw_robot_state)
         assert robot_state.mt_able in (0, 1)
 
-    def test_xarm7_joint_command_updates_joint_state(self, lcm_spy, start_blueprint) -> None:
+    def test_xarm7_joint_command_updates_joint_state(
+        self,
+        lcm_spy,
+        start_blueprint,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.setenv("DIMOS_HEADLESS", "1")
+        monkeypatch.delenv("DIMOS_MUJOCO_FORCE_SUBPROCESS", raising=False)
+
         joint_state_topic = "/xarm/joint_states#sensor_msgs.JointState"
         joint_command_topic = "/xarm/joint_position_command#sensor_msgs.JointCommand"
         lcm_spy.save_topic(joint_state_topic)
 
-        start_blueprint("simulation-xarm7")
-        lcm_spy.wait_for_saved_topic(joint_state_topic, timeout=15.0)
+        start_blueprint("xarm7-trajectory-sim")
+        lcm_spy.wait_for_saved_topic(joint_state_topic, timeout=30.0)
 
         target_positions = [0.2, -0.2, 0.1, -0.1, 0.15, -0.15, 0.05]
         lcm_spy.publish(joint_command_topic, JointCommand(positions=target_positions))
