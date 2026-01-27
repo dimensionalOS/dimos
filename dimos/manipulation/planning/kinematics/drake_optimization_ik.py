@@ -20,12 +20,14 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.manipulation.planning.spec import IKResult, IKStatus, WorldSpec
+from dimos.manipulation.planning.spec import IKResult, IKStatus, WorldRobotID, WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+from dimos.msgs.geometry_msgs import PoseStamped, Transform
 
 try:
     from pydrake.math import RigidTransform, RotationMatrix  # type: ignore[import-not-found]
@@ -65,8 +67,8 @@ class DrakeOptimizationIK:
     def solve(
         self,
         world: WorldSpec,
-        robot_id: str,
-        target_pose: NDArray[np.float64],
+        robot_id: WorldRobotID,
+        target_pose: PoseStamped,
         seed: NDArray[np.float64] | None = None,
         position_tolerance: float = 0.001,
         orientation_tolerance: float = 0.01,
@@ -78,6 +80,12 @@ class DrakeOptimizationIK:
         if error is not None:
             return error
 
+        # Convert PoseStamped to 4x4 matrix via Transform
+        target_matrix = Transform(
+            translation=target_pose.position,
+            rotation=target_pose.orientation,
+        ).to_matrix()
+
         # Get joint limits
         lower_limits, upper_limits = world.get_joint_limits(robot_id)
 
@@ -87,7 +95,7 @@ class DrakeOptimizationIK:
                 seed = world.get_positions(ctx, robot_id)
 
         # Target transform
-        target_transform = RigidTransform(target_pose)
+        target_transform = RigidTransform(target_matrix)
 
         best_result: IKResult | None = None
         best_error = float("inf")
@@ -144,7 +152,7 @@ class DrakeOptimizationIK:
     def _solve_single(
         self,
         world: WorldSpec,
-        robot_id: str,
+        robot_id: WorldRobotID,
         target_transform: RigidTransform,
         seed: NDArray[np.float64],
         position_tolerance: float,

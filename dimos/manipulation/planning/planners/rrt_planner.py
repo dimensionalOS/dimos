@@ -26,7 +26,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.manipulation.planning.spec import PlanningResult, PlanningStatus, WorldSpec
+from dimos.manipulation.planning.spec import (
+    JointPath,
+    PlanningResult,
+    PlanningStatus,
+    WorldRobotID,
+    WorldSpec,
+)
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
 from dimos.utils.logging_config import setup_logger
 
@@ -77,7 +83,7 @@ class RRTConnectPlanner:
     def plan_joint_path(
         self,
         world: WorldSpec,
-        robot_id: str,
+        robot_id: WorldRobotID,
         q_start: NDArray[np.float64],
         q_goal: NDArray[np.float64],
         timeout: float = 10.0,
@@ -135,7 +141,7 @@ class RRTConnectPlanner:
     def _validate_inputs(
         self,
         world: WorldSpec,
-        robot_id: str,
+        robot_id: WorldRobotID,
         q_start: NDArray[np.float64],
         q_goal: NDArray[np.float64],
     ) -> PlanningResult | None:
@@ -187,7 +193,7 @@ class RRTConnectPlanner:
     def _extend_tree(
         self,
         world: WorldSpec,
-        robot_id: str,
+        robot_id: WorldRobotID,
         tree: list[TreeNode],
         target: NDArray[np.float64],
         step_size: float,
@@ -219,7 +225,7 @@ class RRTConnectPlanner:
     def _connect_tree(
         self,
         world: WorldSpec,
-        robot_id: str,
+        robot_id: WorldRobotID,
         tree: list[TreeNode],
         target: NDArray[np.float64],
         step_size: float,
@@ -240,7 +246,7 @@ class RRTConnectPlanner:
         self,
         start_node: TreeNode,
         goal_node: TreeNode,
-    ) -> list[NDArray[np.float64]]:
+    ) -> JointPath:
         """Extract path from two connected nodes."""
         # Path from start node to its root (reversed to be root->node)
         start_path = start_node.path_to_root()
@@ -257,10 +263,10 @@ class RRTConnectPlanner:
     def _simplify_path(
         self,
         world: WorldSpec,
-        robot_id: str,
-        path: list[NDArray[np.float64]],
+        robot_id: WorldRobotID,
+        path: JointPath,
         max_iterations: int = 100,
-    ) -> list[NDArray[np.float64]]:
+    ) -> JointPath:
         """Simplify path by random shortcutting."""
         if len(path) <= 2:
             return path

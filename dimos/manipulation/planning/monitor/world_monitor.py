@@ -34,8 +34,10 @@ if TYPE_CHECKING:
 
     from dimos.manipulation.planning.spec import (
         CollisionObjectMessage,
+        JointPath,
         Obstacle,
         RobotModelConfig,
+        WorldRobotID,
         WorldSpec,
     )
     from dimos.msgs.sensor_msgs import JointState
@@ -56,8 +58,8 @@ class WorldMonitor:
         self._backend = backend
         self._world: WorldSpec = create_world(backend=backend, enable_viz=enable_viz, **kwargs)
         self._lock = threading.RLock()
-        self._robot_joints: dict[str, list[str]] = {}
-        self._state_monitors: dict[str, WorldStateMonitor] = {}
+        self._robot_joints: dict[WorldRobotID, list[str]] = {}
+        self._state_monitors: dict[WorldRobotID, WorldStateMonitor] = {}
         self._obstacle_monitor: WorldObstacleMonitor | None = None
         self._viz_thread: threading.Thread | None = None
         self._viz_stop_event = threading.Event()
@@ -65,7 +67,7 @@ class WorldMonitor:
 
     # ============= Robot Management =============
 
-    def add_robot(self, config: RobotModelConfig) -> str:
+    def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
         """Add a robot. Returns robot_id."""
         with self._lock:
             robot_id = self._world.add_robot(config)
@@ -73,17 +75,19 @@ class WorldMonitor:
             logger.info(f"Added robot '{config.name}' as '{robot_id}'")
             return robot_id
 
-    def get_robot_ids(self) -> list[str]:
+    def get_robot_ids(self) -> list[WorldRobotID]:
         """Get all robot IDs."""
         with self._lock:
             return self._world.get_robot_ids()
 
-    def get_robot_config(self, robot_id: str) -> RobotModelConfig:
+    def get_robot_config(self, robot_id: WorldRobotID) -> RobotModelConfig:
         """Get robot configuration."""
         with self._lock:
             return self._world.get_robot_config(robot_id)
 
-    def get_joint_limits(self, robot_id: str) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    def get_joint_limits(
+        self, robot_id: WorldRobotID
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Get joint limits for a robot."""
         with self._lock:
             return self._world.get_joint_limits(robot_id)
@@ -109,7 +113,7 @@ class WorldMonitor:
 
     def start_state_monitor(
         self,
-        robot_id: str,
+        robot_id: WorldRobotID,
         joint_names: list[str] | None = None,
         joint_name_mapping: dict[str, str] | None = None,
     ) -> None:
@@ -176,7 +180,7 @@ class WorldMonitor:
 
     # ============= Message Handlers =============
 
-    def on_joint_state(self, msg: JointState, robot_id: str | None = None) -> None:
+    def on_joint_state(self, msg: JointState, robot_id: WorldRobotID | None = None) -> None:
         """Handle joint state message. Broadcasts to all monitors if robot_id is None."""
         try:
             if robot_id is not None:
@@ -206,7 +210,7 @@ class WorldMonitor:
 
     # ============= State Access =============
 
-    def get_current_positions(self, robot_id: str) -> NDArray[np.float64] | None:
+    def get_current_positions(self, robot_id: WorldRobotID) -> NDArray[np.float64] | None:
         """Get current joint positions. Returns None if not yet received."""
         # Try state monitor first
         if robot_id in self._state_monitors:
@@ -219,19 +223,19 @@ class WorldMonitor:
             ctx = self._world.get_live_context()
             return self._world.get_positions(ctx, robot_id)
 
-    def get_current_velocities(self, robot_id: str) -> NDArray[np.float64] | None:
+    def get_current_velocities(self, robot_id: WorldRobotID) -> NDArray[np.float64] | None:
         """Get current joint velocities. Returns None if not available."""
         if robot_id in self._state_monitors:
             return self._state_monitors[robot_id].get_current_velocities()
         return None
 
-    def wait_for_state(self, robot_id: str, timeout: float = 1.0) -> bool:
+    def wait_for_state(self, robot_id: WorldRobotID, timeout: float = 1.0) -> bool:
         """Wait until state is received. Returns False on timeout."""
         if robot_id in self._state_monitors:
             return self._state_monitors[robot_id].wait_for_state(timeout)
         return False
 
-    def is_state_stale(self, robot_id: str, max_age: float = 1.0) -> bool:
+    def is_state_stale(self, robot_id: WorldRobotID, max_age: float = 1.0) -> bool:
         """Check if state is stale."""
         if robot_id in self._state_monitors:
             return self._state_monitors[robot_id].is_state_stale(max_age)
@@ -251,14 +255,14 @@ class WorldMonitor:
 
     # ============= Collision Checking =============
 
-    def is_state_valid(self, robot_id: str, joint_positions: NDArray[np.float64]) -> bool:
+    def is_state_valid(self, robot_id: WorldRobotID, joint_positions: NDArray[np.float64]) -> bool:
         """Check if configuration is collision-free."""
         with self._world.scratch_context() as ctx:
             self._world.set_positions(ctx, robot_id, joint_positions)
             return self._world.is_collision_free(ctx, robot_id)
 
     def is_path_valid(
-        self, robot_id: str, path: list[NDArray[np.float64]], step_size: float = 0.05
+        self, robot_id: WorldRobotID, path: JointPath, step_size: float = 0.05
     ) -> bool:
         """Check if path is collision-free with interpolation."""
         with self._world.scratch_context() as ctx:
@@ -280,7 +284,7 @@ class WorldMonitor:
 
         return True
 
-    def get_min_distance(self, robot_id: str) -> float:
+    def get_min_distance(self, robot_id: WorldRobotID) -> float:
         """Get minimum distance to obstacles for current state."""
         with self._world.scratch_context() as ctx:
             return self._world.get_min_distance(ctx, robot_id)
@@ -288,7 +292,7 @@ class WorldMonitor:
     # ============= Kinematics =============
 
     def get_ee_pose(
-        self, robot_id: str, joint_positions: NDArray[np.float64] | None = None
+        self, robot_id: WorldRobotID, joint_positions: NDArray[np.float64] | None = None
     ) -> NDArray[np.float64]:
         """Get end-effector pose as 4x4 transform. Uses current state if positions is None."""
         with self._world.scratch_context() as ctx:
@@ -302,7 +306,7 @@ class WorldMonitor:
             return self._world.get_ee_pose(ctx, robot_id)
 
     def get_jacobian(
-        self, robot_id: str, joint_positions: NDArray[np.float64]
+        self, robot_id: WorldRobotID, joint_positions: NDArray[np.float64]
     ) -> NDArray[np.float64]:
         """Get 6xN Jacobian matrix."""
         with self._world.scratch_context() as ctx:

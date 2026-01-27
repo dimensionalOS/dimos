@@ -35,13 +35,13 @@ import numpy as np
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from dimos.manipulation.planning.spec import WorldSpec
+    from dimos.manipulation.planning.spec import JointPath, WorldRobotID, WorldSpec
 
 
 def interpolate_path(
-    path: list[NDArray[np.float64]],
+    path: JointPath,
     resolution: float = 0.05,
-) -> list[NDArray[np.float64]]:
+) -> JointPath:
     """Interpolate path to have uniform resolution.
 
     Adds intermediate waypoints so that the maximum joint-space distance
@@ -125,11 +125,11 @@ def interpolate_segment(
 
 def simplify_path(
     world: WorldSpec,
-    robot_id: str,
-    path: list[NDArray[np.float64]],
+    robot_id: WorldRobotID,
+    path: JointPath,
     max_iterations: int = 100,
     collision_step_size: float = 0.02,
-) -> list[NDArray[np.float64]]:
+) -> JointPath:
     """Simplify path by removing unnecessary waypoints.
 
     Uses random shortcutting: randomly select two points and check if
@@ -181,7 +181,7 @@ def simplify_path(
     return simplified
 
 
-def compute_path_length(path: list[NDArray[np.float64]]) -> float:
+def compute_path_length(path: JointPath) -> float:
     """Compute total path length in joint space.
 
     Sums the Euclidean distances between consecutive waypoints.
@@ -207,7 +207,7 @@ def compute_path_length(path: list[NDArray[np.float64]]) -> float:
 
 
 def is_path_within_limits(
-    path: list[NDArray[np.float64]],
+    path: JointPath,
     lower_limits: NDArray[np.float64],
     upper_limits: NDArray[np.float64],
 ) -> bool:
@@ -228,10 +228,10 @@ def is_path_within_limits(
 
 
 def clip_path_to_limits(
-    path: list[NDArray[np.float64]],
+    path: JointPath,
     lower_limits: NDArray[np.float64],
     upper_limits: NDArray[np.float64],
-) -> list[NDArray[np.float64]]:
+) -> JointPath:
     """Clip all waypoints in path to joint limits.
 
     Args:
@@ -245,7 +245,7 @@ def clip_path_to_limits(
     return [np.clip(q, lower_limits, upper_limits) for q in path]
 
 
-def reverse_path(path: list[NDArray[np.float64]]) -> list[NDArray[np.float64]]:
+def reverse_path(path: JointPath) -> JointPath:
     """Reverse a path (for returning to start, etc.).
 
     Args:
@@ -258,9 +258,9 @@ def reverse_path(path: list[NDArray[np.float64]]) -> list[NDArray[np.float64]]:
 
 
 def concatenate_paths(
-    *paths: list[NDArray[np.float64]],
+    *paths: JointPath,
     remove_duplicates: bool = True,
-) -> list[NDArray[np.float64]]:
+) -> JointPath:
     """Concatenate multiple paths into one.
 
     Args:

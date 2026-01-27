@@ -205,7 +205,8 @@ def _resolve_package_uris(
 ) -> str:
     """Resolve package:// URIs to filesystem paths."""
     # Pattern for package:// URIs (handles both single and double quotes)
-    pattern = r'package://([^/]+)/(.+?)(["\'\\s<>])'
+    # Note: Use triple quotes so \s is correctly interpreted as whitespace, not literal 's'
+    pattern = r"""package://([^/]+)/(.+?)(["'<>\s])"""
 
     def replace_uri(match: re.Match[str]) -> str:
         pkg_name = match.group(1)
