@@ -48,7 +48,7 @@ _CACHE_DIR = Path(tempfile.gettempdir()) / "dimos_urdf_cache"
 
 def prepare_urdf_for_drake(
     urdf_path: Path | str,
-    package_paths: dict[str, str] | None = None,
+    package_paths: dict[str, Path] | None = None,
     xacro_args: dict[str, str] | None = None,
     convert_meshes: bool = False,
 ) -> str:
@@ -108,7 +108,7 @@ def prepare_urdf_for_drake(
 
 def _generate_cache_key(
     urdf_path: Path,
-    package_paths: dict[str, str],
+    package_paths: dict[str, Path],
     xacro_args: dict[str, str],
     convert_meshes: bool,
 ) -> str:
@@ -129,7 +129,7 @@ def _generate_cache_key(
 
 def _process_xacro(
     xacro_path: Path,
-    package_paths: dict[str, str],
+    package_paths: dict[str, Path],
     xacro_args: dict[str, str],
 ) -> str:
     """Process xacro file to URDF."""
@@ -200,7 +200,7 @@ def _strip_transmission_blocks(urdf_content: str) -> str:
 
 def _resolve_package_uris(
     urdf_content: str,
-    package_paths: dict[str, str],
+    package_paths: dict[str, Path],
     output_dir: Path,
 ) -> str:
     """Resolve package:// URIs to filesystem paths."""
