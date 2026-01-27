@@ -70,6 +70,7 @@ from dimos.manipulation.planning.spec import (
     CollisionObjectMessage,
     IKResult,
     IKStatus,
+    JointPath,
     KinematicsSpec,
     Obstacle,
     ObstacleType,
@@ -77,6 +78,8 @@ from dimos.manipulation.planning.spec import (
     PlanningResult,
     PlanningStatus,
     RobotModelConfig,
+    RobotName,
+    WorldRobotID,
     WorldSpec,
 )
 
@@ -89,6 +92,7 @@ __all__ = [
     "CollisionObjectMessage",
     "IKResult",
     "IKStatus",
+    "JointPath",
     "JointTrajectoryGenerator",
     "KinematicsSpec",
     "Obstacle",
@@ -97,6 +101,8 @@ __all__ = [
     "PlanningResult",
     "PlanningStatus",
     "RobotModelConfig",
+    "RobotName",
+    "WorldRobotID",
     "WorldSpec",
     "create_kinematics",
     "create_planner",

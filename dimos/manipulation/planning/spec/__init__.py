@@ -24,14 +24,18 @@ from dimos.manipulation.planning.spec.protocols import (
 from dimos.manipulation.planning.spec.types import (
     CollisionObjectMessage,
     IKResult,
+    JointPath,
     Obstacle,
     PlanningResult,
+    RobotName,
+    WorldRobotID,
 )
 
 __all__ = [
     "CollisionObjectMessage",
     "IKResult",
     "IKStatus",
+    "JointPath",
     "KinematicsSpec",
     "Obstacle",
     "ObstacleType",
@@ -39,5 +43,7 @@ __all__ = [
     "PlanningResult",
     "PlanningStatus",
     "RobotModelConfig",
+    "RobotName",
+    "WorldRobotID",
     "WorldSpec",
 ]

@@ -26,9 +26,12 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.manipulation.planning.spec import (
+    JointPath,
     Obstacle,
     ObstacleType,
     RobotModelConfig,
+    WorldRobotID,
+    WorldSpec,
 )
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.utils.logging_config import setup_logger
@@ -37,6 +40,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from numpy.typing import NDArray
+
+from dimos.msgs.geometry_msgs import PoseStamped, Transform
 
 try:
     from pydrake.geometry import (  # type: ignore[import-not-found]
@@ -78,7 +83,7 @@ logger = setup_logger()
 class _RobotData:
     """Internal data for tracking a robot in the world."""
 
-    robot_id: str
+    robot_id: WorldRobotID
     config: RobotModelConfig
     model_instance: Any  # ModelInstanceIndex
     joint_indices: list[int]  # Indices into plant's position vector
@@ -96,7 +101,7 @@ class _ObstacleData:
     source_id: Any  # SourceId
 
 
-class DrakeWorld:
+class DrakeWorld(WorldSpec):
     """Drake implementation of WorldSpec with MultibodyPlant, SceneGraph, optional Meshcat."""
 
     def __init__(self, time_step: float = 0.0, enable_viz: bool = False):
@@ -129,7 +134,7 @@ class DrakeWorld:
         self._obstacles_model_instance = self._plant.AddModelInstance("obstacles")
 
         # Tracking data
-        self._robots: dict[str, _RobotData] = {}
+        self._robots: dict[WorldRobotID, _RobotData] = {}
         self._obstacles: dict[str, _ObstacleData] = {}
         self._robot_counter = 0
         self._obstacle_counter = 0
@@ -144,7 +149,7 @@ class DrakeWorld:
         # Obstacle source for dynamic obstacles
         self._obstacle_source_id: Any = None
 
-    def add_robot(self, config: RobotModelConfig) -> str:
+    def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
         """Add a robot to the world. Returns robot_id."""
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
@@ -232,17 +237,19 @@ class DrakeWorld:
             except RuntimeError:
                 raise ValueError(f"Joint '{joint_name}' not found in URDF")
 
-    def get_robot_ids(self) -> list[str]:
+    def get_robot_ids(self) -> list[WorldRobotID]:
         """Get all robot IDs in the world."""
         return list(self._robots.keys())
 
-    def get_robot_config(self, robot_id: str) -> RobotModelConfig:
+    def get_robot_config(self, robot_id: WorldRobotID) -> RobotModelConfig:
         """Get robot configuration by ID."""
         if robot_id not in self._robots:
             raise KeyError(f"Robot '{robot_id}' not found")
         return self._robots[robot_id].config
 
-    def get_joint_limits(self, robot_id: str) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    def get_joint_limits(
+        self, robot_id: WorldRobotID
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         """Get joint limits (lower, upper) in radians."""
         if robot_id not in self._robots:
             raise KeyError(f"Robot '{robot_id}' not found")
@@ -313,7 +320,7 @@ class DrakeWorld:
             self._obstacles_model_instance,
         )
 
-        transform = RigidTransform(obstacle.pose)
+        transform = self._pose_to_rigid_transform(obstacle.pose)
         geometry_id = self._plant.RegisterCollisionGeometry(
             body,
             RigidTransform(),
@@ -345,7 +352,7 @@ class DrakeWorld:
             raise RuntimeError("Obstacle source not initialized")
 
         shape = self._create_shape(obstacle)
-        transform = RigidTransform(obstacle.pose)
+        transform = self._pose_to_rigid_transform(obstacle.pose)
         # MakePhongIllustrationProperties expects numpy array, not Rgba
         rgba_array = np.array(obstacle.color, dtype=np.float64)
 
@@ -387,7 +394,7 @@ class DrakeWorld:
 
         # Use Drake's geometry types for Meshcat
         path = f"obstacles/{obstacle_id}"
-        transform = RigidTransform(obstacle.pose)
+        transform = self._pose_to_rigid_transform(obstacle.pose)
         rgba = Rgba(*obstacle.color)
 
         # Create Drake shape and add to Meshcat
@@ -405,6 +412,14 @@ class DrakeWorld:
         # Use Drake's Meshcat.SetObject with shape and color
         self._meshcat.SetObject(path, shape, rgba)
         self._meshcat.SetTransform(path, transform)
+
+    def _pose_to_rigid_transform(self, pose: PoseStamped) -> Any:
+        """Convert PoseStamped to Drake RigidTransform."""
+        pose_matrix = Transform(
+            translation=pose.position,
+            rotation=pose.orientation,
+        ).to_matrix()
+        return RigidTransform(pose_matrix)
 
     def _create_shape(self, obstacle: Obstacle) -> Any:
         """Create Drake shape from obstacle specification."""
@@ -440,21 +455,19 @@ class DrakeWorld:
             logger.debug(f"Removed obstacle '{obstacle_id}'")
             return True
 
-    def update_obstacle_pose(self, obstacle_id: str, pose: NDArray[np.float64]) -> bool:
-        """Update obstacle pose (4x4 transform)."""
+    def update_obstacle_pose(self, obstacle_id: str, pose: PoseStamped) -> bool:
+        """Update obstacle pose."""
         with self._lock:
             if obstacle_id not in self._obstacles:
                 return False
 
-            if pose.shape != (4, 4):
-                raise ValueError(f"Pose must be 4x4, got {pose.shape}")
-
-            self._obstacles[obstacle_id].obstacle.pose = pose.copy()
+            # Store PoseStamped directly
+            self._obstacles[obstacle_id].obstacle.pose = pose
 
             # Update Meshcat visualization
             if self._meshcat is not None:
                 path = f"obstacles/{obstacle_id}"
-                transform = RigidTransform(pose)
+                transform = self._pose_to_rigid_transform(pose)
                 self._meshcat.SetTransform(path, transform)
 
             # Note: SceneGraph geometry pose is fixed after registration
@@ -603,7 +616,7 @@ class DrakeWorld:
 
         yield ctx
 
-    def sync_from_joint_state(self, robot_id: str, positions: NDArray[np.float64]) -> None:
+    def sync_from_joint_state(self, robot_id: WorldRobotID, positions: NDArray[np.float64]) -> None:
         """Sync live context from driver's joint state.
 
         Called by StateMonitor when new JointState arrives.
@@ -620,7 +633,9 @@ class DrakeWorld:
 
     # ============= State Operations (context-based) =============
 
-    def set_positions(self, ctx: Context, robot_id: str, positions: NDArray[np.float64]) -> None:
+    def set_positions(
+        self, ctx: Context, robot_id: WorldRobotID, positions: NDArray[np.float64]
+    ) -> None:
         """Set robot positions in given context."""
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
@@ -630,7 +645,7 @@ class DrakeWorld:
         self._set_positions_internal(plant_ctx, robot_id, positions)
 
     def _set_positions_internal(
-        self, plant_ctx: Context, robot_id: str, positions: NDArray[np.float64]
+        self, plant_ctx: Context, robot_id: WorldRobotID, positions: NDArray[np.float64]
     ) -> None:
         """Internal: Set positions in a plant context."""
         if robot_id not in self._robots:
@@ -644,7 +659,7 @@ class DrakeWorld:
 
         self._plant.SetPositions(plant_ctx, full_positions)
 
-    def get_positions(self, ctx: Context, robot_id: str) -> NDArray[np.float64]:
+    def get_positions(self, ctx: Context, robot_id: WorldRobotID) -> NDArray[np.float64]:
         """Get robot positions from given context."""
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
@@ -660,7 +675,7 @@ class DrakeWorld:
 
     # ============= Collision Checking (context-based) =============
 
-    def is_collision_free(self, ctx: Context, robot_id: str) -> bool:
+    def is_collision_free(self, ctx: Context, robot_id: WorldRobotID) -> bool:
         """Check if current configuration in context is collision-free."""
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
@@ -673,7 +688,7 @@ class DrakeWorld:
 
         return not query_object.HasCollisions()  # type: ignore[attr-defined]
 
-    def get_min_distance(self, ctx: Context, robot_id: str) -> float:
+    def get_min_distance(self, ctx: Context, robot_id: WorldRobotID) -> float:
         """Get minimum signed distance (positive = clearance, negative = penetration)."""
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
@@ -690,7 +705,7 @@ class DrakeWorld:
 
     # ============= Collision Checking (context-free, for planning) =============
 
-    def check_config_collision_free(self, robot_id: str, q: NDArray[np.float64]) -> bool:
+    def check_config_collision_free(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> bool:
         """Check if a configuration is collision-free (manages context internally).
 
         This is a convenience method for planners that don't need to manage contexts.
@@ -701,7 +716,7 @@ class DrakeWorld:
 
     def check_edge_collision_free(
         self,
-        robot_id: str,
+        robot_id: WorldRobotID,
         q_start: NDArray[np.float64],
         q_end: NDArray[np.float64],
         step_size: float = 0.05,
@@ -731,7 +746,7 @@ class DrakeWorld:
 
     # ============= Forward Kinematics (context-based) =============
 
-    def get_ee_pose(self, ctx: Context, robot_id: str) -> NDArray[np.float64]:
+    def get_ee_pose(self, ctx: Context, robot_id: WorldRobotID) -> NDArray[np.float64]:
         """Get end-effector pose as 4x4 transform."""
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
@@ -748,7 +763,9 @@ class DrakeWorld:
         result: NDArray[np.float64] = X_WE.GetAsMatrix4()
         return result
 
-    def get_link_pose(self, ctx: Context, robot_id: str, link_name: str) -> NDArray[np.float64]:
+    def get_link_pose(
+        self, ctx: Context, robot_id: WorldRobotID, link_name: str
+    ) -> NDArray[np.float64]:
         """Get link pose as 4x4 transform."""
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
@@ -769,7 +786,7 @@ class DrakeWorld:
         result: NDArray[np.float64] = X_WL.GetAsMatrix4()
         return result
 
-    def get_jacobian(self, ctx: Context, robot_id: str) -> NDArray[np.float64]:
+    def get_jacobian(self, ctx: Context, robot_id: WorldRobotID) -> NDArray[np.float64]:
         """Get geometric Jacobian (6 x n_joints).
 
         Rows: [vx, vy, vz, wx, wy, wz] (linear, then angular)
@@ -833,8 +850,8 @@ class DrakeWorld:
 
     def animate_path(
         self,
-        robot_id: str,
-        path: list[NDArray[np.float64]],
+        robot_id: WorldRobotID,
+        path: JointPath,
         duration: float = 3.0,
     ) -> None:
         """Animate a path in Meshcat visualization.
@@ -850,7 +867,7 @@ class DrakeWorld:
             return
 
         # Capture current positions of all OTHER robots so they don't snap to zero
-        other_robot_positions: dict[str, NDArray[np.float64]] = {}
+        other_robot_positions: dict[WorldRobotID, NDArray[np.float64]] = {}
         for rid, _robot_data in self._robots.items():
             if rid != robot_id:
                 other_robot_positions[rid] = self.get_positions(self.get_live_context(), rid)

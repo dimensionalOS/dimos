@@ -34,15 +34,12 @@ from dimos.manipulation.planning.spec import (
     Obstacle,
     ObstacleType,
 )
+from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     import threading
-
-    import numpy as np
-    from numpy.typing import NDArray
 
     from dimos.manipulation.planning.spec import WorldSpec
     from dimos.msgs.vision_msgs import Detection3D
@@ -264,9 +261,13 @@ class WorldObstacleMonitor:
             # Remove stale detections
             self._cleanup_stale_detections(current_time, seen_ids)
 
-    def _detection3d_to_pose(self, detection: Detection3D) -> NDArray[np.float64]:
-        """Convert Detection3D bbox.center to 4x4 transform."""
-        return pose_to_matrix(detection.bbox.center)
+    def _detection3d_to_pose(self, detection: Detection3D) -> PoseStamped:
+        """Convert Detection3D bbox.center to PoseStamped."""
+        center = detection.bbox.center
+        return PoseStamped(
+            position=center.position,
+            orientation=center.orientation,
+        )
 
     def _detection_to_obstacle(self, detection: Detection3D) -> Obstacle:
         """Convert Detection3D to Obstacle."""
@@ -314,7 +315,7 @@ class WorldObstacleMonitor:
         self,
         name: str,
         obstacle_type: str,
-        pose: NDArray[np.float64],
+        pose: PoseStamped,
         dimensions: tuple[float, ...],
         color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8),
     ) -> str:
@@ -323,7 +324,7 @@ class WorldObstacleMonitor:
         Args:
             name: Unique name for the obstacle
             obstacle_type: Type ("box", "sphere", "cylinder")
-            pose: 4x4 homogeneous transform
+            pose: Pose of the obstacle in world frame
             dimensions: Type-specific dimensions
             color: RGBA color
 

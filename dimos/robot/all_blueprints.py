@@ -25,6 +25,7 @@ all_blueprints = {
     "coordinator-piper-xarm": "dimos.control.blueprints:coordinator_piper_xarm",
     "coordinator-xarm6": "dimos.control.blueprints:coordinator_xarm6",
     "coordinator-xarm7": "dimos.control.blueprints:coordinator_xarm7",
+    "dual-xarm6-planner": "dimos.manipulation.manipulation_blueprints:dual_xarm6_planner",
     "demo-camera": "dimos.hardware.sensors.camera.module:demo_camera",
     "demo-error-on-name-conflicts": "dimos.robot.unitree_webrtc.demo_error_on_name_conflicts:demo_error_on_name_conflicts",
     "demo-google-maps-skill": "dimos.agents.skills.demo_google_maps_skill:demo_google_maps_skill",
@@ -53,6 +54,8 @@ all_blueprints = {
     "unitree-go2-spatial": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_spatial",
     "unitree-go2-temporal-memory": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_temporal_memory",
     "unitree-go2-vlm-stream-test": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_vlm_stream_test",
+    "xarm6-planner-only": "dimos.manipulation.manipulation_blueprints:xarm6_planner_only",
+    "xarm7-planner-orchestrator": "dimos.manipulation.manipulation_blueprints:xarm7_planner_orchestrator",
 }
 
 
@@ -77,6 +80,7 @@ all_modules = {
     "joint_trajectory_controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller",
     "keyboard_teleop": "dimos.robot.unitree_webrtc.keyboard_teleop",
     "llm_agent": "dimos.agents.agent",
+    "manipulation_module": "dimos.manipulation.manipulation_module",
     "mapper": "dimos.robot.unitree_webrtc.type.map",
     "navigation_skill": "dimos.agents.skills.navigation",
     "object_scene_registration_module": "dimos.perception.object_scene_registration",

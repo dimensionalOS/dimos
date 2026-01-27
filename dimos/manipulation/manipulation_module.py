@@ -19,19 +19,22 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 import numpy as np
 
 from dimos.core import In, Module, rpc
 from dimos.core.module import ModuleConfig
 from dimos.manipulation.planning import (
+    JointPath,
     JointTrajectoryGenerator,
     KinematicsSpec,
     Obstacle,
     ObstacleType,
     PlannerSpec,
     RobotModelConfig,
+    RobotName,
+    WorldRobotID,
     create_kinematics,
     create_planner,
 )
@@ -41,15 +44,28 @@ from dimos.manipulation.planning.monitor import WorldMonitor
 from dimos.msgs.sensor_msgs import JointState  # noqa: TC001
 from dimos.msgs.trajectory_msgs import JointTrajectory
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
+from dimos.utils.transform_utils import matrix_to_pose
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from dimos.core.rpc_client import RPCClient
-    from dimos.msgs.geometry_msgs import Pose
+    from dimos.msgs.geometry_msgs import Pose, PoseStamped
 
 logger = setup_logger()
+
+# Composite type aliases for readability (using semantic IDs from planning.spec)
+RobotEntry: TypeAlias = tuple[WorldRobotID, RobotModelConfig, JointTrajectoryGenerator]
+"""(world_robot_id, config, trajectory_generator)"""
+
+RobotRegistry: TypeAlias = dict[RobotName, RobotEntry]
+"""Maps robot_name -> RobotEntry"""
+
+PlannedPaths: TypeAlias = dict[RobotName, JointPath]
+"""Maps robot_name -> planned joint path"""
+
+PlannedTrajectories: TypeAlias = dict[RobotName, JointTrajectory]
+"""Maps robot_name -> planned trajectory"""
 
 
 class ManipulationState(Enum):
@@ -98,11 +114,11 @@ class ManipulationModule(Module):
         self._kinematics: KinematicsSpec | None = None
 
         # Robot registry: maps robot_name -> (world_robot_id, config, trajectory_gen)
-        self._robots: dict[str, tuple[str, RobotModelConfig, JointTrajectoryGenerator]] = {}
+        self._robots: RobotRegistry = {}
 
         # Stored path for plan/preview/execute workflow (per robot)
-        self._planned_paths: dict[str, list[NDArray[np.float64]]] = {}
-        self._planned_trajectories: dict[str, JointTrajectory] = {}
+        self._planned_paths: PlannedPaths = {}
+        self._planned_trajectories: PlannedTrajectories = {}
 
         # Orchestrator integration (lazy initialized)
         self._orchestrator_client: RPCClient | None = None
@@ -154,15 +170,15 @@ class ManipulationModule(Module):
         self._planner = create_planner(name=self.config.planner_name)
         self._kinematics = create_kinematics(name=self.config.kinematics_name)
 
-    def _get_default_robot_name(self) -> str | None:
+    def _get_default_robot_name(self) -> RobotName | None:
         """Get default robot name (first robot if only one, else None)."""
         if len(self._robots) == 1:
             return next(iter(self._robots.keys()))
         return None
 
     def _get_robot(
-        self, robot_name: str | None = None
-    ) -> tuple[str, str, RobotModelConfig, JointTrajectoryGenerator] | None:
+        self, robot_name: RobotName | None = None
+    ) -> tuple[RobotName, WorldRobotID, RobotModelConfig, JointTrajectoryGenerator] | None:
         """Get robot by name or default.
 
         Args:
@@ -236,7 +252,7 @@ class ManipulationModule(Module):
         return True
 
     @rpc
-    def get_current_joints(self, robot_name: str | None = None) -> list[float] | None:
+    def get_current_joints(self, robot_name: RobotName | None = None) -> list[float] | None:
         """Get current joint positions.
 
         Args:
@@ -249,7 +265,7 @@ class ManipulationModule(Module):
         return None
 
     @rpc
-    def get_ee_pose(self, robot_name: str | None = None) -> Pose | None:
+    def get_ee_pose(self, robot_name: RobotName | None = None) -> Pose | None:
         """Get current end-effector pose.
 
         Args:
@@ -260,7 +276,7 @@ class ManipulationModule(Module):
         return None
 
     @rpc
-    def is_collision_free(self, joints: list[float], robot_name: str | None = None) -> bool:
+    def is_collision_free(self, joints: list[float], robot_name: RobotName | None = None) -> bool:
         """Check if joint configuration is collision-free.
 
         Args:
@@ -277,7 +293,9 @@ class ManipulationModule(Module):
     # Plan/Preview/Execute Workflow RPC Methods
     # =========================================================================
 
-    def _begin_planning(self, robot_name: str | None = None) -> tuple[str, str] | None:
+    def _begin_planning(
+        self, robot_name: RobotName | None = None
+    ) -> tuple[RobotName, WorldRobotID] | None:
         """Check state and begin planning. Returns (robot_name, robot_id) or None.
 
         Args:
@@ -303,7 +321,7 @@ class ManipulationModule(Module):
         return False
 
     @rpc
-    def plan_to_pose(self, pose: Pose, robot_name: str | None = None) -> bool:
+    def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
         """Plan motion to pose. Use preview_path() then execute().
 
         Args:
@@ -319,10 +337,19 @@ class ManipulationModule(Module):
         if current is None:
             return self._fail("No joint state")
 
+        # Convert Pose to PoseStamped for the IK solver
+        from dimos.msgs.geometry_msgs import PoseStamped
+
+        target_pose = PoseStamped(
+            frame_id="world",
+            position=pose.position,
+            orientation=pose.orientation,
+        )
+
         ik = self._kinematics.solve(
             world=self._world_monitor.world,
             robot_id=robot_id,
-            target_pose=pose_to_matrix(pose),
+            target_pose=target_pose,
             seed=current,
             check_collision=True,
         )
@@ -333,7 +360,7 @@ class ManipulationModule(Module):
         return self._plan_path_only(robot_name, robot_id, ik.joint_positions)
 
     @rpc
-    def plan_to_joints(self, joints: list[float], robot_name: str | None = None) -> bool:
+    def plan_to_joints(self, joints: list[float], robot_name: RobotName | None = None) -> bool:
         """Plan motion to joint config. Use preview_path() then execute().
 
         Args:
@@ -346,7 +373,9 @@ class ManipulationModule(Module):
         logger.info(f"Planning to joints for {robot_name}: {[f'{j:.3f}' for j in joints]}")
         return self._plan_path_only(robot_name, robot_id, np.array(joints))
 
-    def _plan_path_only(self, robot_name: str, robot_id: str, goal: NDArray[np.float64]) -> bool:
+    def _plan_path_only(
+        self, robot_name: RobotName, robot_id: WorldRobotID, goal: NDArray[np.float64]
+    ) -> bool:
         """Plan path from current position to goal, store result."""
         assert self._world_monitor and self._planner  # guaranteed by _begin_planning
         start = self._world_monitor.get_current_positions(robot_id)
@@ -375,7 +404,7 @@ class ManipulationModule(Module):
         return True
 
     @rpc
-    def preview_path(self, duration: float = 3.0, robot_name: str | None = None) -> bool:
+    def preview_path(self, duration: float = 3.0, robot_name: RobotName | None = None) -> bool:
         """Preview the planned path in the visualizer.
 
         Args:
@@ -454,7 +483,7 @@ class ManipulationModule(Module):
         return list(self._robots.keys())
 
     @rpc
-    def get_robot_info(self, robot_name: str | None = None) -> dict[str, object] | None:
+    def get_robot_info(self, robot_name: RobotName | None = None) -> dict[str, object] | None:
         """Get information about a robot.
 
         Args:
@@ -527,7 +556,7 @@ class ManipulationModule(Module):
         )
 
     @rpc
-    def execute(self, robot_name: str | None = None) -> bool:
+    def execute(self, robot_name: RobotName | None = None) -> bool:
         """Execute planned trajectory via ControlOrchestrator."""
         if (robot := self._get_robot(robot_name)) is None:
             return False
@@ -557,7 +586,9 @@ class ManipulationModule(Module):
             return self._fail("Orchestrator rejected trajectory")
 
     @rpc
-    def get_trajectory_status(self, robot_name: str | None = None) -> dict[str, object] | None:
+    def get_trajectory_status(
+        self, robot_name: RobotName | None = None
+    ) -> dict[str, object] | None:
         """Get trajectory execution status."""
         if (robot := self._get_robot(robot_name)) is None:
             return None
@@ -602,10 +633,13 @@ class ManipulationModule(Module):
             logger.warning("mesh_path required for mesh obstacles")
             return ""
 
+        # Import PoseStamped here to avoid circular imports
+        from dimos.msgs.geometry_msgs import PoseStamped
+
         obstacle = Obstacle(
             name=name,
             obstacle_type=obstacle_type,
-            pose=pose_to_matrix(pose),
+            pose=PoseStamped(position=pose.position, orientation=pose.orientation),
             dimensions=tuple(dimensions) if dimensions else (),
             mesh_path=mesh_path,
         )

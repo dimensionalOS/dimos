@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.manipulation.planning.spec import IKResult, IKStatus, WorldSpec
+from dimos.manipulation.planning.spec import IKResult, IKStatus, WorldRobotID, WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import (
     check_singularity,
     compute_error_twist,
@@ -39,6 +39,8 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+from dimos.msgs.geometry_msgs import PoseStamped, Transform
 
 logger = setup_logger()
 
@@ -87,8 +89,8 @@ class JacobianIK:
     def solve(
         self,
         world: WorldSpec,
-        robot_id: str,
-        target_pose: NDArray[np.float64],
+        robot_id: WorldRobotID,
+        target_pose: PoseStamped,
         seed: NDArray[np.float64] | None = None,
         position_tolerance: float = 0.001,
         orientation_tolerance: float = 0.01,
@@ -103,7 +105,7 @@ class JacobianIK:
         Args:
             world: World for FK/collision checking
             robot_id: Robot to solve IK for
-            target_pose: Target end-effector pose (4x4 transform)
+            target_pose: Target end-effector pose
             seed: Initial guess (uses current position if None)
             position_tolerance: Required position accuracy (meters)
             orientation_tolerance: Required orientation accuracy (radians)
@@ -113,6 +115,12 @@ class JacobianIK:
         Returns:
             IKResult with solution or failure status
         """
+        # Convert PoseStamped to 4x4 matrix via Transform
+        target_matrix = Transform(
+            translation=target_pose.position,
+            rotation=target_pose.orientation,
+        ).to_matrix()
+
         if not world.is_finalized:
             return _create_failure_result(IKStatus.NO_SOLUTION, "World must be finalized before IK")
 
@@ -138,7 +146,7 @@ class JacobianIK:
             result = self.solve_iterative(
                 world=world,
                 robot_id=robot_id,
-                target_pose=target_pose,
+                target_pose=target_matrix,
                 seed=current_seed,
                 max_iterations=self._max_iterations,
                 position_tolerance=position_tolerance,
@@ -175,7 +183,7 @@ class JacobianIK:
     def solve_iterative(
         self,
         world: WorldSpec,
-        robot_id: str,
+        robot_id: WorldRobotID,
         target_pose: NDArray[np.float64],
         seed: NDArray[np.float64],
         max_iterations: int = 100,
@@ -267,7 +275,7 @@ class JacobianIK:
     def solve_differential(
         self,
         world: WorldSpec,
-        robot_id: str,
+        robot_id: WorldRobotID,
         current_joints: NDArray[np.float64],
         twist: NDArray[np.float64],
         dt: float,
@@ -318,7 +326,7 @@ class JacobianIK:
     def solve_differential_position_only(
         self,
         world: WorldSpec,
-        robot_id: str,
+        robot_id: WorldRobotID,
         current_joints: NDArray[np.float64],
         linear_velocity: NDArray[np.float64],
     ) -> NDArray[np.float64] | None:

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeAlias
 
 from dimos.manipulation.planning.spec.enums import (
     IKStatus,
@@ -29,6 +29,26 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
+    from dimos.msgs.geometry_msgs import PoseStamped
+
+# =============================================================================
+# Semantic ID Types (documentation only, not enforced at runtime)
+# =============================================================================
+
+RobotName: TypeAlias = str
+"""User-facing robot name (e.g., 'left_arm', 'right_arm')"""
+
+WorldRobotID: TypeAlias = str
+"""Internal Drake world robot ID"""
+
+JointPath: TypeAlias = "list[NDArray[np.float64]]"
+"""List of joint configurations forming a path"""
+
+
+# =============================================================================
+# Data Classes
+# =============================================================================
+
 
 @dataclass
 class Obstacle:
@@ -37,7 +57,7 @@ class Obstacle:
     Attributes:
         name: Unique name for the obstacle
         obstacle_type: Type of geometry (BOX, SPHERE, CYLINDER, MESH)
-        pose: 4x4 homogeneous transform
+        pose: Pose of the obstacle in world frame
         dimensions: Type-specific dimensions:
             - BOX: (width, height, depth)
             - SPHERE: (radius,)
@@ -49,7 +69,7 @@ class Obstacle:
 
     name: str
     obstacle_type: ObstacleType
-    pose: NDArray[np.float64]
+    pose: PoseStamped
     dimensions: tuple[float, ...] = ()
     color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
     mesh_path: str | None = None
@@ -115,7 +135,7 @@ class CollisionObjectMessage:
         id: Unique identifier for the object
         operation: "add", "update", or "remove"
         primitive_type: "box", "sphere", or "cylinder" (for add/update)
-        pose: 4x4 transform (for add/update)
+        pose: Pose of the obstacle (for add/update)
         dimensions: Type-specific dimensions (for add/update)
         color: RGBA color tuple
     """
@@ -123,6 +143,6 @@ class CollisionObjectMessage:
     id: str
     operation: str  # "add", "update", "remove"
     primitive_type: str | None = None
-    pose: NDArray[np.float64] | None = None
+    pose: PoseStamped | None = None
     dimensions: tuple[float, ...] | None = None
     color: tuple[float, float, float, float] = (0.8, 0.2, 0.2, 0.8)
