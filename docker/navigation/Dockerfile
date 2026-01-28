@@ -21,11 +21,20 @@
 
 # Build argument for ROS distribution (default: humble)
 ARG ROS_DISTRO=humble
+ARG TARGETARCH
+
+# -----------------------------------------------------------------------------
+# Platform-specific base images
+# - amd64: Use osrf/ros desktop-full (includes Gazebo, full GUI)
+# - arm64: Use ros-base (desktop-full not available for ARM)
+# -----------------------------------------------------------------------------
+FROM osrf/ros:${ROS_DISTRO}-desktop-full AS base-amd64
+FROM ros:${ROS_DISTRO}-ros-base AS base-arm64
 
 # -----------------------------------------------------------------------------
 # STAGE 1: Build Stage - compile all C++ dependencies
 # -----------------------------------------------------------------------------
-FROM osrf/ros:${ROS_DISTRO}-desktop-full AS builder
+FROM base-${TARGETARCH} AS builder
 
 ARG ROS_DISTRO
 ENV DEBIAN_FRONTEND=noninteractive
@@ -104,7 +113,8 @@ RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
 # STAGE 2: Runtime Stage - minimal image for running
 # -----------------------------------------------------------------------------
 ARG ROS_DISTRO
-FROM osrf/ros:${ROS_DISTRO}-desktop-full AS runtime
+ARG TARGETARCH
+FROM base-${TARGETARCH} AS runtime
 
 ARG ROS_DISTRO
 ENV DEBIAN_FRONTEND=noninteractive
