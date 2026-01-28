@@ -57,11 +57,13 @@ done
 
 export ROS_DISTRO
 export SLAM_TYPE
+export IMAGE_TAG="${ROS_DISTRO}-${SLAM_TYPE}"
 
 echo -e "${GREEN}================================================${NC}"
 echo -e "${GREEN}Building DimOS + ROS Autonomy Stack Docker Image${NC}"
 echo -e "${GREEN}ROS Distribution: ${ROS_DISTRO}${NC}"
 echo -e "${GREEN}SLAM Type: ${SLAM_TYPE}${NC}"
+echo -e "${GREEN}Image Tag: ${IMAGE_TAG}${NC}"
 echo -e "${GREEN}================================================${NC}"
 echo ""
 
@@ -140,18 +142,17 @@ docker compose -f docker/navigation/docker-compose.yml build --build-arg SLAM_TY
 echo ""
 echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}Docker image built successfully!${NC}"
-echo -e "${GREEN}Image: dimos_autonomy_stack:${ROS_DISTRO}${NC}"
-echo -e "${GREEN}SLAM: ${SLAM_TYPE}${NC}"
+echo -e "${GREEN}Image: dimos_autonomy_stack:${IMAGE_TAG}${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
 echo "To run in SIMULATION mode:"
-echo -e "${YELLOW}  ./start.sh --${ROS_DISTRO}${NC}"
+echo -e "${YELLOW}  ./start.sh --${ROS_DISTRO} --${SLAM_TYPE}${NC}"
 echo ""
 echo "To run in HARDWARE mode:"
 echo "  1. Configure your hardware settings in .env file"
 echo "     (copy from .env.hardware if needed)"
 echo "  2. Run the hardware container:"
-echo -e "${YELLOW}     ./start.sh --hardware --${ROS_DISTRO}${NC}"
+echo -e "${YELLOW}     ./start.sh --hardware --${ROS_DISTRO} --${SLAM_TYPE}${NC}"
 echo ""
 echo "The script runs in foreground. Press Ctrl+C to stop."
 echo ""

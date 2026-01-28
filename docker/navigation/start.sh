@@ -124,13 +124,7 @@ fi
 echo -e "${GREEN}================================================${NC}"
 echo ""
 
-# Pull image from Docker Hub if requested (hardware mode)
-if [ "$MODE" = "hardware" ] && [ "$PULL_IMAGE" = "true" ]; then
-    echo -e "${YELLOW}Pulling image from Docker Hub: bonaiserve/dimos_autonomy_stack:${IMAGE_TAG}${NC}"
-    docker pull bonaiserve/dimos_autonomy_stack:${IMAGE_TAG}
-    echo -e "${GREEN}Image pulled successfully!${NC}"
-    echo ""
-fi
+# Pull image option removed - use build.sh to build locally
 
 # Hardware-specific checks
 if [ "$MODE" = "hardware" ]; then
@@ -262,18 +256,12 @@ if [ "$MODE" = "hardware" ]; then
 
 fi
 
-# Check if the image exists (for simulation, check local; for hardware, check Docker Hub image)
-if [ "$MODE" = "simulation" ]; then
-    if ! docker images | grep -q "dimos_autonomy_stack.*${ROS_DISTRO}"; then
-        echo -e "${YELLOW}Docker image for ROS ${ROS_DISTRO} not found. Building...${NC}"
-        ./build.sh --${ROS_DISTRO}
-    fi
-else
-    # Hardware mode - check for Docker Hub image
-    if ! docker images | grep -q "bonaiserve/dimos_autonomy_stack.*${IMAGE_TAG}"; then
-        echo -e "${YELLOW}Docker image not found locally. Pulling from Docker Hub...${NC}"
-        docker pull bonaiserve/dimos_autonomy_stack:${IMAGE_TAG}
-    fi
+# Check if the image exists
+if ! docker images | grep -q "dimos_autonomy_stack.*${IMAGE_TAG}"; then
+    echo -e "${RED}Docker image dimos_autonomy_stack:${IMAGE_TAG} not found.${NC}"
+    echo -e "${YELLOW}Please build it first with:${NC}"
+    echo -e "  ./build.sh --${ROS_DISTRO} --${SLAM_TYPE}"
+    exit 1
 fi
 
 # Check for X11 display
@@ -374,19 +362,14 @@ if [ "$MODE" = "hardware" ]; then
     mkdir -p bagfiles config logs maps
 fi
 
-# Build compose command based on mode
+# Build compose command
+COMPOSE_CMD="docker compose -f docker-compose.yml"
+if [ "$DEV_MODE" = "true" ]; then
+    COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"
+fi
+
 if [ "$MODE" = "hardware" ]; then
-    # Hardware mode uses deploy compose (Docker Hub image)
-    COMPOSE_CMD="docker compose -f docker-compose.deploy.yml"
-    if [ "$DEV_MODE" = "true" ]; then
-        COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"
-    fi
     $COMPOSE_CMD --profile hardware up
 else
-    # Simulation mode uses local compose (local build)
-    COMPOSE_CMD="docker compose -f docker-compose.yml"
-    if [ "$DEV_MODE" = "true" ]; then
-        COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"
-    fi
     $COMPOSE_CMD up
 fi
