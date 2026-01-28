@@ -60,6 +60,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-cv-bridge \
     && rm -rf /var/lib/apt/lists/*
 
+# On arm64, ros-base doesn't include rviz2 (unlike desktop-full on amd64)
+# Install it separately for building rviz plugins
+# Note: ARG must be re-declared after FROM; placed here to maximize layer caching above
+ARG TARGETARCH
+RUN if [ "${TARGETARCH}" = "arm64" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+        ros-${ROS_DISTRO}-rviz2 \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
 # Create workspace
 RUN mkdir -p ${WORKSPACE}/src
 
