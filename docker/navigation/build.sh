@@ -78,7 +78,7 @@ if [ "${SLAM_TYPE}" = "fastlio" ]; then
 else
     TARGET_BRANCH="dev"
     TARGET_REMOTE="origin"
-    CLONE_URL="git@github.com:dimensionalOS/ros-navigation-autonomy-stack.git"
+    CLONE_URL="https://github.com/dimensionalOS/ros-navigation-autonomy-stack.git"
 fi
 
 # Clone or checkout ros-navigation-autonomy-stack with appropriate branch
