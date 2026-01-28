@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any, TypeVar
 
 import dimos.core.colors as colors
@@ -220,6 +221,7 @@ class DDSTransport(PubSubTransport[T]):
         super().__init__(DDSTopic(topic, type))
         if not hasattr(self, "dds"):
             self.dds = DDS(**kwargs)
+        self._start_lock = threading.Lock()
 
     def start(self) -> None:
         self.dds.start()
@@ -230,13 +232,15 @@ class DDSTransport(PubSubTransport[T]):
         self._started = False
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
-        if not self._started:
-            self.start()
+        with self._start_lock:
+            if not self._started:
+                self.start()
         self.dds.publish(self.topic, msg)
 
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
-        if not self._started:
-            self.start()
+        with self._start_lock:
+            if not self._started:
+                self.start()
         return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
 
 
