@@ -81,8 +81,8 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
             self.hardware = self.config.hardware
 
         # Connect to Rerun if enabled (cache flag for use in callbacks)
-        rerun_enabled = self._global_config.viewer_backend.startswith("rerun")
-        if rerun_enabled:
+        self._rerun_enabled = self._global_config.viewer_backend.startswith("rerun")
+        if self._rerun_enabled:
             connect_rerun(global_config=self._global_config)
 
         stream = self.hardware.image_stream()
@@ -92,7 +92,7 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
 
         def on_image(image: Image) -> None:
             self.color_image.publish(image)
-            if rerun_enabled:
+            if self._rerun_enabled:
                 rr.log("world/robot/camera/rgb", image.to_rerun())
 
         self._disposables.add(
@@ -106,6 +106,9 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
     def publish_metadata(self) -> None:
         camera_info = self.hardware.camera_info.with_ts(time.time())
         self.camera_info.publish(camera_info)
+
+        if self._rerun_enabled:
+            rr.log("world/robot/camera", camera_info.to_rerun())
 
         if not self.config.transform:
             return
