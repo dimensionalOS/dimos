@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import threading
-from typing import Any, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from cyclonedds.core import Listener
 from cyclonedds.pub import DataWriter as DDSDataWriter
@@ -28,22 +28,10 @@ from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.ddsservice import DDSService
 from dimos.utils.logging_config import setup_logger
 
+if TYPE_CHECKING:
+    from cyclonedds.idl import IdlStruct
+
 logger = setup_logger()
-
-
-@runtime_checkable
-class DDSMsg(Protocol):
-    msg_name: str
-
-    @classmethod
-    def dds_encode(cls, msg: DDSMsg) -> bytes:
-        """Encode message to bytes for DDS transmission."""
-        ...
-
-    @classmethod
-    def dds_decode(cls, data: bytes) -> DDSMsg:
-        """Decode message from bytes for DDS transmission."""
-        ...
 
 
 @dataclass(frozen=True)
@@ -51,7 +39,7 @@ class Topic:
     """Represents a DDS topic."""
 
     name: str
-    typename: type[DDSMsg]
+    typename: type[IdlStruct]
 
     def __hash__(self) -> int:
         return hash((self.name, self.typename))
@@ -71,9 +59,7 @@ class _DDSMessageListener(Listener):
     def __init__(self, topic: Topic, callbacks_dict: dict[Topic, list[MessageCallback]]) -> None:
         super().__init__()
         self.topic = topic
-        self.callbacks = callbacks_dict[
-            topic
-        ]  # Cache callbacks list to avoid dict lookup per message
+        self.callbacks = callbacks_dict[topic]
 
     def on_data_available(self, reader: DDSDataReader) -> None:
         """Called when data is available on the reader."""
@@ -104,8 +90,7 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
         with self._writer_lock:
             if topic not in self._writers:
                 dds_topic = DDSTopic(self.get_participant(), topic.name, topic.typename)
-                writer = DDSDataWriter(self.get_participant(), dds_topic)
-                self._writers[topic] = writer
+                self._writers[topic] = DDSDataWriter(self.get_participant(), dds_topic)
             return self._writers[topic]
 
     def publish(self, topic: Topic, message: Any) -> None:
@@ -122,8 +107,9 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
             if topic not in self._readers:
                 dds_topic = DDSTopic(self.get_participant(), topic.name, topic.typename)
                 listener = _DDSMessageListener(topic, self._callbacks)
-                reader = DDSDataReader(self.get_participant(), dds_topic, listener=listener)
-                self._readers[topic] = reader
+                self._readers[topic] = DDSDataReader(
+                    self.get_participant(), dds_topic, listener=listener
+                )
             return self._readers[topic]
 
     def subscribe(self, topic: Topic, callback: MessageCallback) -> Callable[[], None]:
@@ -140,8 +126,6 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
         with self._callback_lock:
             if topic in self._callbacks and callback in self._callbacks[topic]:
                 self._callbacks[topic].remove(callback)
-                if not self._callbacks[topic]:
-                    del self._callbacks[topic]
 
 
 class DDS(DDSPubSubBase): ...
@@ -149,7 +133,6 @@ class DDS(DDSPubSubBase): ...
 
 __all__ = [
     "DDS",
-    "DDSMsg",
     "DDSPubSubBase",
     "MessageCallback",
     "Topic",
