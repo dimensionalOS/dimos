@@ -41,9 +41,6 @@ class Topic:
     name: str
     typename: type[IdlStruct]
 
-    def __hash__(self) -> int:
-        return hash((self.name, self.typename))
-
     def __str__(self) -> str:
         return f"{self.name}#{self.typename.__name__}"
 
@@ -65,14 +62,18 @@ class _DDSMessageListener(Listener):
         """Called when data is available on the reader."""
         try:
             samples = reader.take()
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error reading from topic {self.topic}: {e}")
             return
         callbacks = self.callbacks
         topic = self.topic
         for sample in samples:
             if sample is not None:
                 for callback in callbacks:
-                    callback(sample, topic)
+                    try:
+                        callback(sample, topic)
+                    except Exception as e:
+                        logger.error(f"Callback error on topic {topic}: {e}")
 
 
 class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
