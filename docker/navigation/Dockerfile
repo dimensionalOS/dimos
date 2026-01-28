@@ -70,6 +70,42 @@ RUN if [ "${TARGETARCH}" = "arm64" ]; then \
         && rm -rf /var/lib/apt/lists/*; \
     fi
 
+# On arm64, build open3d from source (no Linux aarch64 wheels on PyPI)
+# Cached as a separate layer; the wheel is copied to the runtime stage
+# mkdir runs unconditionally so COPY --from=builder works on all architectures
+RUN mkdir -p /opt/open3d-wheel && \
+    PYTHON_MINOR=$(python3 -c "import sys; print(sys.version_info.minor)") && \
+    if [ "${TARGETARCH}" = "arm64" ] && [ "$PYTHON_MINOR" -ge 12 ]; then \
+        echo "Building open3d from source for arm64 + Python 3.${PYTHON_MINOR} (no PyPI wheel)..." && \
+        apt-get update && apt-get install -y --no-install-recommends \
+            python3-dev \
+            python3-pip \
+            python3-setuptools \
+            python3-wheel \
+            libblas-dev \
+            liblapack-dev \
+            libgl1-mesa-dev \
+            libglib2.0-dev \
+        && rm -rf /var/lib/apt/lists/* && \
+        cd /tmp && \
+        git clone --depth 1 --branch v0.18.0 https://github.com/isl-org/Open3D.git && \
+        cd Open3D && mkdir build && cd build && \
+        cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_CUDA_MODULE=OFF \
+            -DBUILD_GUI=OFF \
+            -DBUILD_TENSORFLOW_OPS=OFF \
+            -DBUILD_PYTORCH_OPS=OFF \
+            -DBUILD_UNIT_TESTS=OFF \
+            -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_EXAMPLES=OFF && \
+        make -j$(nproc) && \
+        make pip-package -j$(nproc) && \
+        mkdir -p /opt/open3d-wheel && \
+        cp lib/python_package/pip_package/open3d*.whl /opt/open3d-wheel/ && \
+        cd / && rm -rf /tmp/Open3D; \
+    fi
+
 # On arm64, build or-tools from source (pre-built binaries are x86_64 only)
 # This is cached as a separate layer since it takes significant time to build
 ENV OR_TOOLS_VERSION=9.8
@@ -315,6 +351,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m venv /opt/dimos-venv && \
     /opt/dimos-venv/bin/pip install --no-cache-dir \
     pyyaml
+
+# On arm64, install open3d wheel built from source in the builder stage
+COPY --from=builder /opt/open3d-wheel /opt/open3d-wheel
+ARG TARGETARCH
+RUN if [ "${TARGETARCH}" = "arm64" ] && ls /opt/open3d-wheel/open3d*.whl 1>/dev/null 2>&1; then \
+        echo "Installing open3d from pre-built arm64 wheel..." && \
+        /opt/dimos-venv/bin/pip install --no-cache-dir /opt/open3d-wheel/open3d*.whl && \
+        rm -rf /opt/open3d-wheel; \
+    fi
 
 # Copy dimos source and install as editable package
 # The volume mount at runtime will overlay /workspace/dimos, but the editable

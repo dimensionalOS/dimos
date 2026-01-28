@@ -52,7 +52,7 @@ dependencies = [
 
     # Core Msgs
     "opencv-python",
-    "open3d",
+    "open3d==0.18.0",
 
     # CLI
     "pydantic-settings>=2.11.0,<3",
