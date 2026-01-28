@@ -86,6 +86,10 @@ RUN mkdir -p /opt/open3d-wheel && \
             liblapack-dev \
             libgl1-mesa-dev \
             libglib2.0-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxi-dev \
         && rm -rf /var/lib/apt/lists/* && \
         cd /tmp && \
         git clone --depth 1 --branch v0.18.0 https://github.com/isl-org/Open3D.git && \
