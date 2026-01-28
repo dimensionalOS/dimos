@@ -189,12 +189,25 @@ services:
         cd /ros2_ws
         source install/setup.bash
         source /opt/dimos-venv/bin/activate
-        if [ "$USE_ROUTE_PLANNER" = "true" ]; then
-            echo "Starting real robot system WITH route planner..."
-            ros2 launch vehicle_simulator system_real_robot_with_route_planner.launch.py &
+        # Launch with SLAM method based on LOCALIZATION_METHOD
+        if [ "$LOCALIZATION_METHOD" = "fastlio" ]; then
+            echo "Using FASTLIO2 localization"
+            if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+                echo "Starting real robot system WITH route planner..."
+                ros2 launch vehicle_simulator system_real_robot_with_route_planner.launch.py use_fastlio2:=true &
+            else
+                echo "Starting real robot system (base autonomy)..."
+                ros2 launch vehicle_simulator system_real_robot.launch.py use_fastlio2:=true &
+            fi
         else
-            echo "Starting real robot system (base autonomy)..."
-            ros2 launch vehicle_simulator system_real_robot.launch.py &
+            echo "Using arise_slam localization"
+            if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+                echo "Starting real robot system WITH route planner..."
+                ros2 launch vehicle_simulator system_real_robot_with_route_planner.launch.py &
+            else
+                echo "Starting real robot system (base autonomy)..."
+                ros2 launch vehicle_simulator system_real_robot.launch.py &
+            fi
         fi
         sleep 2
         if [ "$USE_RVIZ" = "true" ]; then
