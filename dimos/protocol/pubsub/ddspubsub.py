@@ -119,7 +119,7 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
             if topic not in self._callbacks:
                 self._callbacks[topic] = []
             self._callbacks[topic].append(callback)
-        self._get_reader(topic)
+            self._get_reader(topic)
         return lambda: self._unsubscribe_callback(topic, callback)
 
     def _unsubscribe_callback(self, topic: Topic, callback: MessageCallback) -> None:
