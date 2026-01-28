@@ -12,12 +12,21 @@
 # 7. DDS configuration for optimized ROS 2 communication
 #
 # Supported ROS distributions: jazzy, humble
-# Build with: docker build --build-arg ROS_DISTRO=humble ...
+# Supported SLAM types: arise (default), fastlio
+#
+# Build examples:
+#   docker build --build-arg ROS_DISTRO=humble .
+#   docker build --build-arg ROS_DISTRO=jazzy --build-arg SLAM_TYPE=fastlio .
 #
 # =============================================================================
 
 # Build argument for ROS distribution (default: humble)
 ARG ROS_DISTRO=humble
+
+# Build argument for SLAM type: arise (default) or fastlio
+# - arise: Uses arise_slam_mid360 (tightly-coupled LiDAR-IMU odometry)
+# - fastlio: Uses FASTLIO2_ROS2 (fast LiDAR-inertial odometry)
+ARG SLAM_TYPE=arise
 
 # -----------------------------------------------------------------------------
 # STAGE 1: Build Stage - compile all C++ dependencies
@@ -25,8 +34,10 @@ ARG ROS_DISTRO=humble
 FROM osrf/ros:${ROS_DISTRO}-desktop-full AS builder
 
 ARG ROS_DISTRO
+ARG SLAM_TYPE
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ROS_DISTRO=${ROS_DISTRO}
+ENV SLAM_TYPE=${SLAM_TYPE}
 ENV WORKSPACE=/ros2_ws
 
 # Install build dependencies only
@@ -91,20 +102,39 @@ RUN cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam 
     make -j$(nproc) && make install && ldconfig && \
     rm -rf ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam/build
 
+# Remove unselected SLAM packages before build to reduce image size
+# Note: FASTLIO2 location varies by branch:
+#   - vector/fastlio2 branch: src/slam/FASTLIO2_ROS2 + src/slam/fastlio2_autonomy_bridge
+#   - add_fast_lio branch: src/FASTLIO2_ROS2
+RUN if [ "${SLAM_TYPE}" = "fastlio" ]; then \
+        echo "SLAM_TYPE=fastlio: Removing arise_slam packages"; \
+        rm -rf ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360 \
+               ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360_msgs; \
+    else \
+        echo "SLAM_TYPE=arise: Removing FASTLIO2 packages"; \
+        rm -rf ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/FASTLIO2_ROS2 \
+               ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2 \
+               ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/fastlio2_autonomy_bridge; \
+    fi
+
 # Build ROS workspace (no --symlink-install for multi-stage build compatibility)
 RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     cd ${WORKSPACE} && \
+    echo 'Building with SLAM_TYPE=${SLAM_TYPE}' && \
     colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release"
 
 # -----------------------------------------------------------------------------
 # STAGE 2: Runtime Stage - minimal image for running
 # -----------------------------------------------------------------------------
 ARG ROS_DISTRO
+ARG SLAM_TYPE
 FROM osrf/ros:${ROS_DISTRO}-desktop-full AS runtime
 
 ARG ROS_DISTRO
+ARG SLAM_TYPE
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ROS_DISTRO=${ROS_DISTRO}
+ENV SLAM_TYPE=${SLAM_TYPE}
 ENV WORKSPACE=/ros2_ws
 ENV DIMOS_PATH=/workspace/dimos
 
@@ -164,8 +194,28 @@ COPY --from=builder ${WORKSPACE}/install ${WORKSPACE}/install
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/rviz
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/route_planner/far_planner/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/route_planner/far_planner/rviz
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/exploration_planner/tare_planner/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/exploration_planner/tare_planner/rviz
-COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config
+# Copy SLAM config files based on SLAM_TYPE
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config
+
+# Copy SLAM-specific config files based on SLAM_TYPE
+RUN --mount=from=builder,source=${WORKSPACE}/src/ros-navigation-autonomy-stack/src,target=/tmp/src \
+    if [ "${SLAM_TYPE}" = "fastlio" ]; then \
+        echo "Copying FASTLIO2 configs"; \
+        mkdir -p ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/FASTLIO2_ROS2 && \
+        for pkg in fastlio2 localizer pgo hba; do \
+            if [ -d "/tmp/src/FASTLIO2_ROS2/$pkg/config" ]; then \
+                mkdir -p ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/FASTLIO2_ROS2/$pkg && \
+                cp -r /tmp/src/FASTLIO2_ROS2/$pkg/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/FASTLIO2_ROS2/$pkg/; \
+            fi; \
+            if [ -d "/tmp/src/FASTLIO2_ROS2/$pkg/rviz" ]; then \
+                cp -r /tmp/src/FASTLIO2_ROS2/$pkg/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/FASTLIO2_ROS2/$pkg/; \
+            fi; \
+        done; \
+    else \
+        echo "Copying arise_slam configs"; \
+        mkdir -p ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360 && \
+        cp -r /tmp/src/slam/arise_slam_mid360/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/ 2>/dev/null || true; \
+    fi
 
 # Copy simulation shell scripts (real robot mode uses volume mount)
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/system_simulation*.sh ${WORKSPACE}/src/ros-navigation-autonomy-stack/

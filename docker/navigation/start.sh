@@ -12,7 +12,10 @@ MODE="simulation"
 USE_ROUTE_PLANNER="false"
 USE_RVIZ="false"
 DEV_MODE="false"
+PULL_IMAGE="false"
 ROS_DISTRO="humble"
+SLAM_TYPE="arise"
+CUSTOM_TAG=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --hardware)
@@ -35,6 +38,10 @@ while [[ $# -gt 0 ]]; do
             DEV_MODE="true"
             shift
             ;;
+        --pull)
+            PULL_IMAGE="true"
+            shift
+            ;;
         --humble)
             ROS_DISTRO="humble"
             shift
@@ -43,25 +50,41 @@ while [[ $# -gt 0 ]]; do
             ROS_DISTRO="jazzy"
             shift
             ;;
+        --fastlio)
+            SLAM_TYPE="fastlio"
+            shift
+            ;;
+        --arise)
+            SLAM_TYPE="arise"
+            shift
+            ;;
+        --tag)
+            CUSTOM_TAG="$2"
+            shift 2
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
             echo "  --simulation      Start simulation container (default)"
-            echo "  --hardware        Start hardware container for real robot"
+            echo "  --hardware        Start hardware container (pulls from Docker Hub)"
+            echo "  --pull            Pull latest image from Docker Hub before starting"
+            echo "  --tag <tag>       Specify image tag (e.g., latest, humble-fastlio)"
             echo "  --route-planner   Enable FAR route planner (for hardware mode)"
             echo "  --rviz            Launch RViz2 visualization"
             echo "  --dev             Development mode (mount src for config editing)"
             echo "  --humble          Use ROS 2 Humble image (default)"
             echo "  --jazzy           Use ROS 2 Jazzy image"
+            echo "  --arise           Use arise_slam SLAM (default)"
+            echo "  --fastlio         Use FASTLIO2 SLAM"
             echo "  --help, -h        Show this help message"
             echo ""
             echo "Examples:"
             echo "  $0                                    # Start simulation (Humble)"
-            echo "  $0 --jazzy                            # Start simulation (Jazzy)"
-            echo "  $0 --hardware                         # Start hardware (base autonomy, Humble)"
-            echo "  $0 --hardware --jazzy                 # Start hardware (Jazzy)"
-            echo "  $0 --hardware --route-planner         # Hardware with route planner"
+            echo "  $0 --hardware                         # Start hardware (humble-arise)"
+            echo "  $0 --hardware --fastlio               # Start hardware with FASTLIO2"
+            echo "  $0 --hardware --tag latest            # Use 'latest' tag"
+            echo "  $0 --hardware --pull                  # Pull latest and start hardware"
             echo "  $0 --hardware --route-planner --rviz  # Hardware with route planner + RViz"
             echo "  $0 --hardware --dev                   # Hardware with src mounted for development"
             echo ""
@@ -77,6 +100,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 export ROS_DISTRO
+export SLAM_TYPE
+
+# Set image tag for Docker Hub (use custom tag if provided)
+if [ -n "$CUSTOM_TAG" ]; then
+    IMAGE_TAG="$CUSTOM_TAG"
+else
+    IMAGE_TAG="${ROS_DISTRO}-${SLAM_TYPE}"
+fi
+export IMAGE_TAG
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
@@ -85,8 +117,20 @@ echo -e "${GREEN}================================================${NC}"
 echo -e "${GREEN}Starting DimOS Docker Container${NC}"
 echo -e "${GREEN}Mode: ${MODE}${NC}"
 echo -e "${GREEN}ROS Distribution: ${ROS_DISTRO}${NC}"
+if [ "$MODE" = "hardware" ]; then
+    echo -e "${GREEN}SLAM Type: ${SLAM_TYPE}${NC}"
+    echo -e "${GREEN}Image Tag: ${IMAGE_TAG}${NC}"
+fi
 echo -e "${GREEN}================================================${NC}"
 echo ""
+
+# Pull image from Docker Hub if requested (hardware mode)
+if [ "$MODE" = "hardware" ] && [ "$PULL_IMAGE" = "true" ]; then
+    echo -e "${YELLOW}Pulling image from Docker Hub: bonaiserve/dimos_autonomy_stack:${IMAGE_TAG}${NC}"
+    docker pull bonaiserve/dimos_autonomy_stack:${IMAGE_TAG}
+    echo -e "${GREEN}Image pulled successfully!${NC}"
+    echo ""
+fi
 
 # Hardware-specific checks
 if [ "$MODE" = "hardware" ]; then
@@ -218,10 +262,18 @@ if [ "$MODE" = "hardware" ]; then
 
 fi
 
-# Check if the correct ROS distro image exists
-if ! docker images | grep -q "dimos_autonomy_stack.*${ROS_DISTRO}"; then
-    echo -e "${YELLOW}Docker image for ROS ${ROS_DISTRO} not found. Building...${NC}"
-    ./build.sh --${ROS_DISTRO}
+# Check if the image exists (for simulation, check local; for hardware, check Docker Hub image)
+if [ "$MODE" = "simulation" ]; then
+    if ! docker images | grep -q "dimos_autonomy_stack.*${ROS_DISTRO}"; then
+        echo -e "${YELLOW}Docker image for ROS ${ROS_DISTRO} not found. Building...${NC}"
+        ./build.sh --${ROS_DISTRO}
+    fi
+else
+    # Hardware mode - check for Docker Hub image
+    if ! docker images | grep -q "bonaiserve/dimos_autonomy_stack.*${IMAGE_TAG}"; then
+        echo -e "${YELLOW}Docker image not found locally. Pulling from Docker Hub...${NC}"
+        docker pull bonaiserve/dimos_autonomy_stack:${IMAGE_TAG}
+    fi
 fi
 
 # Check for X11 display
@@ -317,14 +369,24 @@ fi
 # Note: DISPLAY is now passed directly via environment variable
 # No need to write RUNTIME_DISPLAY to .env for local host running
 
-# Build compose command with optional dev mode
-COMPOSE_CMD="docker compose -f docker-compose.yml"
-if [ "$DEV_MODE" = "true" ]; then
-    COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"
+# Create required directories for hardware mode
+if [ "$MODE" = "hardware" ]; then
+    mkdir -p bagfiles config logs maps
 fi
 
+# Build compose command based on mode
 if [ "$MODE" = "hardware" ]; then
+    # Hardware mode uses deploy compose (Docker Hub image)
+    COMPOSE_CMD="docker compose -f docker-compose.deploy.yml"
+    if [ "$DEV_MODE" = "true" ]; then
+        COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"
+    fi
     $COMPOSE_CMD --profile hardware up
 else
+    # Simulation mode uses local compose (local build)
+    COMPOSE_CMD="docker compose -f docker-compose.yml"
+    if [ "$DEV_MODE" = "true" ]; then
+        COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"
+    fi
     $COMPOSE_CMD up
 fi
