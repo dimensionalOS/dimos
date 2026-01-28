@@ -76,6 +76,7 @@ Dimos includes several transport implementations:
 | `SharedMemory` | Multi-process on same machine | Yes | No |
 | `LCM` | Network communication (UDP multicast) | Yes | Yes |
 | `Redis` | Network communication via Redis server | Yes | Yes |
+| `DDS` | Network communication via Data Distribution Service (DDS) | Yes | Yes |
 
 ### SharedMemory Transport
 
@@ -132,11 +133,40 @@ lcm.stop()
 Received velocity: x=1.0, y=0.0, z=0.5
 ```
 
-### Inspecting LCM traffic (CLI)
+#### Inspecting LCM traffic (CLI)
 
 - `dimos lcmspy` shows topic frequency/bandwidth stats.
 - `dimos topic echo /topic` listens on typed channels like `/topic#pkg.Msg` and decodes automatically.
 - `dimos topic echo /topic TypeName` is the explicit legacy form.
+
+### DDS Transport
+
+For network communication, DDS uses the Data Distribution Service (DDS) protocol:
+
+```python session=dds_demo ansi=false
+from dataclasses import dataclass
+from cyclonedds.idl import IdlStruct
+from dimos.protocol.pubsub.ddspubsub import DDS, Topic
+
+@dataclass
+class SensorReading(IdlStruct):
+    value: float
+
+dds = DDS()
+dds.start()
+
+received = []
+sensor_topic = Topic(name="sensors/temperature", typename=SensorReading)
+
+dds.subscribe(sensor_topic, lambda msg, t: received.append(msg))
+dds.publish(sensor_topic, SensorReading(value=22.5))
+
+import time
+time.sleep(0.1)
+
+print(f"Received: {received[0].value}")
+dds.stop()
+```
 
 ## Encoder Mixins
 
@@ -178,6 +208,7 @@ from dimos.core.transport import pLCMTransport, pSHMTransport
 # Transport wrappers for module streams:
 # - pLCMTransport: Pickle-encoded LCM
 # - LCMTransport: Native LCM encoding
+# - DDSTransport: DDS encoding
 # - pSHMTransport: Pickle-encoded SharedMemory
 # - SHMTransport: Native SharedMemory
 # - JpegShmTransport: JPEG-compressed images via SharedMemory
@@ -193,7 +224,7 @@ print([name for name in dir(transport) if "Transport" in name])
 <!--Result:-->
 ```
 Available transport wrappers in dimos.core.transport:
-['JpegLcmTransport', 'JpegShmTransport', 'LCMTransport', 'PubSubTransport', 'SHMTransport', 'ZenohTransport', 'pLCMTransport', 'pSHMTransport']
+['DDSTransport', 'JpegLcmTransport', 'JpegShmTransport', 'LCMTransport', 'PubSubTransport', 'SHMTransport', 'Transport', 'ZenohTransport', 'pLCMTransport', 'pSHMTransport']
 ```
 
 ## Testing Custom Transports
