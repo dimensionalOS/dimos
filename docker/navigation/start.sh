@@ -117,6 +117,7 @@ echo -e "${GREEN}================================================${NC}"
 echo -e "${GREEN}Starting DimOS Docker Container${NC}"
 echo -e "${GREEN}Mode: ${MODE}${NC}"
 echo -e "${GREEN}ROS Distribution: ${ROS_DISTRO}${NC}"
+echo -e "${GREEN}ROS Domain ID: ${ROS_DOMAIN_ID:-42}${NC}"
 if [ "$MODE" = "hardware" ]; then
     echo -e "${GREEN}SLAM Type: ${SLAM_TYPE}${NC}"
     echo -e "${GREEN}Image Tag: ${IMAGE_TAG}${NC}"
