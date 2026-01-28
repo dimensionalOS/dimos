@@ -183,6 +183,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-foxglove-bridge \
     ros-${ROS_DISTRO}-rviz2 \
     ros-${ROS_DISTRO}-rqt* \
+    ros-${ROS_DISTRO}-joy \
     # DDS middleware (FastDDS is default, just ensure it's installed)
     ros-${ROS_DISTRO}-rmw-fastrtps-cpp \
     # Runtime libraries
