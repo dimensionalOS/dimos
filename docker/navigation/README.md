@@ -16,17 +16,18 @@ This is an optimistic overview. Use the commands below for an in depth version.
 
 ```bash
 cd docker/navigation
-./build.sh --humble  # Build with ROS 2 Humble (default)
-# or
-./build.sh --jazzy   # Build with ROS 2 Jazzy
+./build.sh --humble              # Humble + arise_slam (default)
+./build.sh --humble --fastlio    # Humble + FASTLIO2
+./build.sh --jazzy               # Jazzy + arise_slam
+./build.sh --jazzy --fastlio     # Jazzy + FASTLIO2
 ```
 
 This will:
-- Clone the ros-navigation-autonomy-stack repository (matching branch: humble or jazzy)
-- Build a Docker image with both ROS and DimOS dependencies
-- Set up the environment for both systems
+- Clone the ros-navigation-autonomy-stack repository
+- Build a Docker image with the selected SLAM type
+- Set up the environment for both ROS and DimOS
 
-The resulting image will be named `dimos_autonomy_stack:humble` or `dimos_autonomy_stack:jazzy` depending on the option used.
+The resulting image will be named `dimos_autonomy_stack:{distro}-{slam}` (e.g., `humble-arise`, `humble-fastlio`).
 
 Note that the build will take a while and produce an image of approximately 24 GB.
 
@@ -114,12 +115,19 @@ ROBOT_IP=192.168.12.1  # For WebRTC local AP mode (optional, need additional wif
 
 #### Start with Route Planner automatically
 
-Use --humble or --jazzy matching your build:
+Use flags matching your build:
 
 ```bash
-./start.sh --hardware --humble --route-planner         # Run route planner automatically
-./start.sh --hardware --humble --route-planner --rviz  # Route planner + RViz2 visualization
-./start.sh --hardware --humble --dev                   # Development mode (mount src for config editing)
+# arise_slam (default)
+./start.sh --hardware --route-planner
+./start.sh --hardware --route-planner --rviz
+
+# FASTLIO2 (use --tag to specify the image)
+./start.sh --hardware --tag humble-fastlio --route-planner
+./start.sh --hardware --tag jazzy-fastlio --route-planner --rviz
+
+# Development mode (mount src for config editing)
+./start.sh --hardware --dev
 ```
 
 [Foxglove Studio](https://foxglove.dev/download) is the default visualization tool. It's ideal for remote operation - SSH with port forwarding to the robot's mini PC and run commands there:
@@ -130,7 +138,7 @@ ssh -L 8765:localhost:8765 user@robot-ip
 
 Then on your local machine:
 1. Open Foxglove and connect to `ws://localhost:8765`
-2. Load the layout from `docker/navigation/Overwatch.json` (Layout menu → Import)
+2. Load the layout from `dimos/assets/foxglove_dashboards/Overwatch.json` (Layout menu → Import)
 3. Click in the 3D panel to drop a target pose (similar to RViz). The "Autonomy ON" indicator should be green, and "Goal Reached" will show when the robot arrives.
 
 <details>

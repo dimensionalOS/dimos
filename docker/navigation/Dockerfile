@@ -1,22 +1,20 @@
 # =============================================================================
-# OPTIMIZED DOCKERFILE - Multi-stage build for reduced image size
+# DimOS Navigation Docker Image
 # =============================================================================
 #
-# Key optimizations:
-# 1. Multi-stage build with ros:desktop-full base image
-# 2. Multi-stage build to discard build artifacts
-# 3. No Python ML dependencies (~14 GB saved)
-# 4. COPY dimos source for editable pip install (volume-mounted at runtime overlays it)
-# 5. Clean up build directories after compile (~800 MB saved)
-# 6. Minimal apt packages with --no-install-recommends
-# 7. DDS configuration for optimized ROS 2 communication
+# Multi-stage build for ROS 2 navigation with SLAM support.
 #
-# Supported ROS distributions: jazzy, humble
-# Supported SLAM types: arise (default), fastlio
+# Supported configurations:
+#   - ROS distributions: humble, jazzy
+#   - SLAM types: arise (arise_slam_mid360), fastlio (FASTLIO2)
 #
-# Build examples:
-#   docker build --build-arg ROS_DISTRO=humble .
-#   docker build --build-arg ROS_DISTRO=jazzy --build-arg SLAM_TYPE=fastlio .
+# Build:
+#   ./build.sh --humble              # Humble + arise_slam (default)
+#   ./build.sh --humble --fastlio    # Humble + FASTLIO2
+#   ./build.sh --jazzy --fastlio     # Jazzy + FASTLIO2
+#
+# Run:
+#   ./start.sh --hardware --tag humble-fastlio --route-planner
 #
 # =============================================================================
 
@@ -103,17 +101,13 @@ RUN cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam 
     rm -rf ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam/build
 
 # Remove unselected SLAM packages before build to reduce image size
-# Note: FASTLIO2 location varies by branch:
-#   - vector/fastlio2 branch: src/slam/FASTLIO2_ROS2 + src/slam/fastlio2_autonomy_bridge
-#   - add_fast_lio branch: src/FASTLIO2_ROS2
 RUN if [ "${SLAM_TYPE}" = "fastlio" ]; then \
         echo "SLAM_TYPE=fastlio: Removing arise_slam packages"; \
         rm -rf ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360 \
                ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360_msgs; \
     else \
         echo "SLAM_TYPE=arise: Removing FASTLIO2 packages"; \
-        rm -rf ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/FASTLIO2_ROS2 \
-               ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2 \
+        rm -rf ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2 \
                ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/fastlio2_autonomy_bridge; \
     fi
 
@@ -201,14 +195,14 @@ COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities
 RUN --mount=from=builder,source=${WORKSPACE}/src/ros-navigation-autonomy-stack/src,target=/tmp/src \
     if [ "${SLAM_TYPE}" = "fastlio" ]; then \
         echo "Copying FASTLIO2 configs"; \
-        mkdir -p ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/FASTLIO2_ROS2 && \
+        mkdir -p ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2 && \
         for pkg in fastlio2 localizer pgo hba; do \
-            if [ -d "/tmp/src/FASTLIO2_ROS2/$pkg/config" ]; then \
-                mkdir -p ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/FASTLIO2_ROS2/$pkg && \
-                cp -r /tmp/src/FASTLIO2_ROS2/$pkg/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/FASTLIO2_ROS2/$pkg/; \
+            if [ -d "/tmp/src/slam/FASTLIO2_ROS2/$pkg/config" ]; then \
+                mkdir -p ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/$pkg && \
+                cp -r /tmp/src/slam/FASTLIO2_ROS2/$pkg/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/$pkg/; \
             fi; \
-            if [ -d "/tmp/src/FASTLIO2_ROS2/$pkg/rviz" ]; then \
-                cp -r /tmp/src/FASTLIO2_ROS2/$pkg/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/FASTLIO2_ROS2/$pkg/; \
+            if [ -d "/tmp/src/slam/FASTLIO2_ROS2/$pkg/rviz" ]; then \
+                cp -r /tmp/src/slam/FASTLIO2_ROS2/$pkg/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/$pkg/; \
             fi; \
         done; \
     else \
