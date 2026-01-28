@@ -47,7 +47,6 @@ class AdapterRegistry:
 
     def __init__(self) -> None:
         self._adapters: dict[str, type[ManipulatorAdapter]] = {}
-        self._discovered = False
 
     def register(self, name: str, cls: type[ManipulatorAdapter]) -> None:
         """Register an adapter class."""
@@ -66,9 +65,6 @@ class AdapterRegistry:
         Raises:
             KeyError: If adapter name is not found
         """
-        if not self._discovered:
-            self._discover()
-
         key = name.lower()
         if key not in self._adapters:
             raise KeyError(f"Unknown adapter: {name}. Available: {self.available()}")
@@ -77,12 +73,13 @@ class AdapterRegistry:
 
     def available(self) -> list[str]:
         """List available adapter names."""
-        if not self._discovered:
-            self._discover()
         return sorted(self._adapters.keys())
 
-    def _discover(self) -> None:
-        """Auto-discover adapters in subpackages."""
+    def discover(self) -> None:
+        """Discover and register adapters from subpackages.
+
+        Can be called multiple times to pick up newly added adapters.
+        """
         import dimos.hardware.manipulators as pkg
 
         for _, name, ispkg in pkgutil.iter_modules(pkg.__path__):
@@ -93,11 +90,10 @@ class AdapterRegistry:
                 if hasattr(module, "register"):
                     module.register(self)
             except ImportError as e:
-                logger.info(f"Skipping adapter {name}: {e}")
-
-        self._discovered = True
+                logger.debug(f"Skipping adapter {name}: {e}")
 
 
 adapter_registry = AdapterRegistry()
+adapter_registry.discover()
 
 __all__ = ["AdapterRegistry", "adapter_registry"]
