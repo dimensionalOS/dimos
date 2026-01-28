@@ -90,10 +90,13 @@ RUN mkdir -p /opt/open3d-wheel && \
             libxcursor-dev \
             libxrandr-dev \
             libxi-dev \
+            gfortran \
         && rm -rf /var/lib/apt/lists/* && \
         cd /tmp && \
-        git clone --depth 1 --branch v0.18.0 https://github.com/isl-org/Open3D.git && \
-        cd Open3D && mkdir build && cd build && \
+        git clone --depth 1 --branch v0.19.0 https://github.com/isl-org/Open3D.git && \
+        cd Open3D && \
+        util/install_deps_ubuntu.sh assume-yes && \
+        mkdir build && cd build && \
         cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_CUDA_MODULE=OFF \
@@ -102,9 +105,10 @@ RUN mkdir -p /opt/open3d-wheel && \
             -DBUILD_PYTORCH_OPS=OFF \
             -DBUILD_UNIT_TESTS=OFF \
             -DBUILD_BENCHMARKS=OFF \
-            -DBUILD_EXAMPLES=OFF && \
-        make -j$(nproc) && \
-        make pip-package -j$(nproc) && \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_WEBRTC=OFF && \
+        make -j$(($(nproc) > 4 ? 4 : $(nproc))) && \
+        make pip-package -j$(($(nproc) > 4 ? 4 : $(nproc))) && \
         mkdir -p /opt/open3d-wheel && \
         cp lib/python_package/pip_package/open3d*.whl /opt/open3d-wheel/ && \
         cd / && rm -rf /tmp/Open3D; \
