@@ -229,9 +229,6 @@ class DDSTransport(PubSubTransport[T]):
         self.dds.stop()
         self._started = False
 
-    def __reduce__(self):  # type: ignore[no-untyped-def]
-        return (DDSTransport, (self.topic.topic, self.topic.dds_type))
-
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         if not self._started:
             self.start()
