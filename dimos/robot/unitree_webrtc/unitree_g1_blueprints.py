@@ -31,6 +31,7 @@ from dimos.agents.skills.navigation import navigation_skill
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport
+from dimos.dashboard.tf_rerun_module import tf_rerun
 from dimos.hardware.sensors.camera import zed
 from dimos.hardware.sensors.camera.module import camera_module  # type: ignore[attr-defined]
 from dimos.hardware.sensors.camera.webcam import Webcam
@@ -56,7 +57,6 @@ from dimos.perception.detection.moduleDB import ObjectDBModule, detection_db_mod
 from dimos.perception.detection.person_tracker import PersonTracker, person_tracker_module
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
-from dimos.dashboard.tf_rerun_module import tf_rerun
 from dimos.robot.foxglove_bridge import foxglove_bridge
 from dimos.robot.unitree.connection.g1 import g1_connection
 from dimos.robot.unitree.connection.g1sim import g1_sim_connection
