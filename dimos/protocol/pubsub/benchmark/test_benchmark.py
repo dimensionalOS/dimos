@@ -15,17 +15,13 @@
 # limitations under the License.
 
 from collections.abc import Generator
-from contextlib import contextmanager
-from dataclasses import dataclass
 import threading
 import time
 from typing import Any
 
-from cyclonedds.idl import IdlStruct
-from cyclonedds.idl.types import sequence, uint8
 import pytest
 
-from dimos.protocol.pubsub.benchmark.testdata import make_data, testdata
+from dimos.protocol.pubsub.benchmark.testdata import testdata
 from dimos.protocol.pubsub.benchmark.type import (
     BenchmarkResult,
     BenchmarkResults,
@@ -33,7 +29,6 @@ from dimos.protocol.pubsub.benchmark.type import (
     PubSubContext,
     TestCase,
 )
-from dimos.protocol.pubsub.ddspubsub import DDS, Topic
 
 # Message sizes for throughput benchmarking (powers of 2 from 64B to 10MB)
 MSG_SIZES = [
@@ -76,39 +71,6 @@ def pubsub_id(testcase: TestCase[Any, Any]) -> str:
     # Convert e.g. "lcm_pubsub_channel" -> "LCM", "memory_pubsub_channel" -> "Memory"
     prefix = name.replace("_pubsub_channel", "").replace("_", " ")
     return prefix.upper() if len(prefix) <= 3 else prefix.title().replace(" ", "")
-
-
-# DDS Testing Implementation
-@dataclass
-class Message(IdlStruct):
-    """DDS message with binary data payload following IdlStruct format."""
-
-    payload: sequence[uint8]
-
-
-@contextmanager
-def dds_pubsub_channel() -> Generator[DDS, None, None]:
-    """Context manager for DDS PubSub implementation."""
-    dds_pubsub = DDS()
-    dds_pubsub.start()
-    yield dds_pubsub
-    dds_pubsub.stop()
-
-
-def dds_msggen(size: int) -> tuple[Topic, Message]:
-    """Generate message for DDS pubsub benchmark."""
-    topic = Topic("benchmark/dds", Message)
-    msg = Message(payload=list(make_data(size)))
-    return (topic, msg)
-
-
-# Add DDS to benchmark testdata before test is defined
-testdata.append(
-    TestCase(
-        pubsub_context=dds_pubsub_channel,
-        msg_gen=dds_msggen,
-    )
-)
 
 
 @pytest.fixture(scope="module")

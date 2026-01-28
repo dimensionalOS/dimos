@@ -14,12 +14,18 @@
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
+
+from cyclonedds.idl import IdlStruct
+from cyclonedds.idl.types import sequence, uint8
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.benchmark.type import TestCase
+from dimos.protocol.pubsub.ddspubsub import DDS, Topic as DDSTopic
 from dimos.protocol.pubsub.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
 from dimos.protocol.pubsub.memory import Memory
+from dimos.protocol.pubsub.rospubsub import ROS_AVAILABLE, RawROS, ROSTopic
 from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
 
 
@@ -175,7 +181,36 @@ except (ConnectionError, ImportError):
     print("Redis not available")
 
 
-from dimos.protocol.pubsub.rospubsub import ROS_AVAILABLE, RawROS, ROSTopic
+@dataclass
+class DDSMessage(IdlStruct):
+    """DDS message with binary data payload following IdlStruct format."""
+
+    payload: sequence[uint8]
+
+
+@contextmanager
+def dds_pubsub_channel() -> Generator[DDS, None, None]:
+    """Context manager for DDS PubSub implementation."""
+    dds_pubsub = DDS()
+    dds_pubsub.start()
+    yield dds_pubsub
+    dds_pubsub.stop()
+
+
+def dds_msggen(size: int) -> tuple[DDSTopic, DDSMessage]:
+    """Generate message for DDS pubsub benchmark."""
+    topic = DDSTopic("benchmark/dds", DDSMessage)
+    msg = DDSMessage(payload=list(make_data(size)))
+    return (topic, msg)
+
+
+testdata.append(
+    TestCase(
+        pubsub_context=dds_pubsub_channel,
+        msg_gen=dds_msggen,
+    )
+)
+
 
 if ROS_AVAILABLE:
     from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
