@@ -70,11 +70,48 @@ RUN if [ "${TARGETARCH}" = "arm64" ]; then \
         && rm -rf /var/lib/apt/lists/*; \
     fi
 
+# On arm64, build or-tools from source (pre-built binaries are x86_64 only)
+# This is cached as a separate layer since it takes significant time to build
+ENV OR_TOOLS_VERSION=9.8
+RUN if [ "${TARGETARCH}" = "arm64" ]; then \
+        echo "Building or-tools v${OR_TOOLS_VERSION} from source for arm64..." && \
+        apt-get update && apt-get install -y --no-install-recommends \
+            lsb-release \
+            wget \
+        && rm -rf /var/lib/apt/lists/* && \
+        cd /tmp && \
+        wget -q https://github.com/google/or-tools/archive/refs/tags/v${OR_TOOLS_VERSION}.tar.gz && \
+        tar xzf v${OR_TOOLS_VERSION}.tar.gz && \
+        cd or-tools-${OR_TOOLS_VERSION} && \
+        cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_DEPS=ON \
+            -DBUILD_SAMPLES=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_FLATZINC=OFF \
+            -DUSE_SCIP=OFF \
+            -DUSE_COINOR=OFF && \
+        cmake --build build --config Release -j$(nproc) && \
+        cmake --install build --prefix /opt/or-tools && \
+        rm -rf /tmp/or-tools-${OR_TOOLS_VERSION} /tmp/v${OR_TOOLS_VERSION}.tar.gz; \
+    fi
+
 # Create workspace
 RUN mkdir -p ${WORKSPACE}/src
 
 # Copy autonomy stack source
 COPY docker/navigation/ros-navigation-autonomy-stack ${WORKSPACE}/src/ros-navigation-autonomy-stack
+
+# On arm64, replace pre-built x86_64 or-tools with arm64 built version
+RUN if [ "${TARGETARCH}" = "arm64" ] && [ -d "/opt/or-tools" ]; then \
+        echo "Replacing x86_64 or-tools with arm64 build..." && \
+        OR_TOOLS_DIR=${WORKSPACE}/src/ros-navigation-autonomy-stack/src/exploration_planner/tare_planner/or-tools && \
+        rm -rf ${OR_TOOLS_DIR}/lib/*.so* ${OR_TOOLS_DIR}/lib/*.a && \
+        cp -r /opt/or-tools/lib/* ${OR_TOOLS_DIR}/lib/ && \
+        rm -rf ${OR_TOOLS_DIR}/include && \
+        cp -r /opt/or-tools/include ${OR_TOOLS_DIR}/ && \
+        ldconfig; \
+    fi
 
 # Compatibility fix: In Humble, cv_bridge uses .h extension, but Jazzy uses .hpp
 # Create a symlink so code written for Jazzy works on Humble
