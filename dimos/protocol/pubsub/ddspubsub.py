@@ -93,22 +93,20 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._callbacks: dict[Topic, list[MessageCallback]] = {}
+        self._callback_lock = threading.Lock()
         self._writers: dict[Topic, DDSDataWriter] = {}
-        self._readers: dict[Topic, DDSDataReader] = {}
         self._writer_lock = threading.Lock()
+        self._readers: dict[Topic, DDSDataReader] = {}
         self._reader_lock = threading.Lock()
 
     def _get_writer(self, topic: Topic) -> DDSDataWriter:
         """Get or create a DataWriter for the given topic."""
-        writer = self._writers.get(topic)
-        if writer is None:
-            with self._writer_lock:
-                writer = self._writers.get(topic)
-                if writer is None:
-                    dds_topic = DDSTopic(self.get_participant(), topic.name, topic.typename)
-                    writer = DDSDataWriter(self.get_participant(), dds_topic)
-                    self._writers[topic] = writer
-        return writer
+        with self._writer_lock:
+            if topic not in self._writers:
+                dds_topic = DDSTopic(self.get_participant(), topic.name, topic.typename)
+                writer = DDSDataWriter(self.get_participant(), dds_topic)
+                self._writers[topic] = writer
+            return self._writers[topic]
 
     def publish(self, topic: Topic, message: Any) -> None:
         """Publish a message to a DDS topic."""
@@ -120,30 +118,30 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
 
     def _get_reader(self, topic: Topic) -> DDSDataReader:
         """Get or create a DataReader for the given topic with listener."""
-        reader = self._readers.get(topic)
-        if reader is None:
-            with self._reader_lock:
-                reader = self._readers.get(topic)
-                if reader is None:
-                    dds_topic = DDSTopic(self.get_participant(), topic.name, topic.typename)
-                    listener = _DDSMessageListener(topic, self._callbacks)
-                    reader = DDSDataReader(self.get_participant(), dds_topic, listener=listener)
-                    self._readers[topic] = reader
-        return reader
+        with self._reader_lock:
+            if topic not in self._readers:
+                dds_topic = DDSTopic(self.get_participant(), topic.name, topic.typename)
+                listener = _DDSMessageListener(topic, self._callbacks)
+                reader = DDSDataReader(self.get_participant(), dds_topic, listener=listener)
+                self._readers[topic] = reader
+            return self._readers[topic]
 
     def subscribe(self, topic: Topic, callback: MessageCallback) -> Callable[[], None]:
         """Subscribe to a DDS topic with a callback."""
-        self._callbacks.setdefault(topic, [])  # Ensure list exists before creating reader
+        with self._callback_lock:
+            if topic not in self._callbacks:
+                self._callbacks[topic] = []
+            self._callbacks[topic].append(callback)
         self._get_reader(topic)
-        self._callbacks[topic].append(callback)
-        return lambda: self.unsubscribe_callback(topic, callback)
+        return lambda: self._unsubscribe_callback(topic, callback)
 
-    def unsubscribe_callback(self, topic: Topic, callback: MessageCallback) -> None:
+    def _unsubscribe_callback(self, topic: Topic, callback: MessageCallback) -> None:
         """Unsubscribe a callback from a topic."""
-        if topic in self._callbacks and callback in self._callbacks[topic]:
-            self._callbacks[topic].remove(callback)
-            if not self._callbacks[topic]:
-                del self._callbacks[topic]
+        with self._callback_lock:
+            if topic in self._callbacks and callback in self._callbacks[topic]:
+                self._callbacks[topic].remove(callback)
+                if not self._callbacks[topic]:
+                    del self._callbacks[topic]
 
 
 class DDS(DDSPubSubBase): ...
