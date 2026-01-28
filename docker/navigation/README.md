@@ -16,18 +16,17 @@ This is an optimistic overview. Use the commands below for an in depth version.
 
 ```bash
 cd docker/navigation
-./build.sh --humble              # Humble + arise_slam (default)
-./build.sh --humble --fastlio    # Humble + FASTLIO2
-./build.sh --jazzy               # Jazzy + arise_slam
-./build.sh --jazzy --fastlio     # Jazzy + FASTLIO2
+./build.sh --humble    # Build for ROS 2 Humble
+./build.sh --jazzy     # Build for ROS 2 Jazzy
 ```
 
 This will:
 - Clone the ros-navigation-autonomy-stack repository
-- Build a Docker image with the selected SLAM type
+- Build a Docker image with both arise_slam and FASTLIO2
 - Set up the environment for both ROS and DimOS
 
-The resulting image will be named `dimos_autonomy_stack:{distro}-{slam}` (e.g., `humble-arise`, `humble-fastlio`).
+The resulting image will be named `dimos_autonomy_stack:{distro}` (e.g., `humble`, `jazzy`).
+Select SLAM method at runtime via `--arise` or `--fastlio` flags.
 
 Note that the build will take a while and produce an image of approximately 24 GB.
 
@@ -115,16 +114,14 @@ ROBOT_IP=192.168.12.1  # For WebRTC local AP mode (optional, need additional wif
 
 #### Start with Route Planner automatically
 
-Use flags matching your build:
-
 ```bash
 # arise_slam (default)
 ./start.sh --hardware --route-planner
 ./start.sh --hardware --route-planner --rviz
 
-# FASTLIO2 (use --tag to specify the image)
-./start.sh --hardware --tag humble-fastlio --route-planner
-./start.sh --hardware --tag jazzy-fastlio --route-planner --rviz
+# FASTLIO2
+./start.sh --hardware --fastlio --route-planner
+./start.sh --hardware --fastlio --route-planner --rviz
 
 # Development mode (mount src for config editing)
 ./start.sh --hardware --dev

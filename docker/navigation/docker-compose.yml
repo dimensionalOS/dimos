@@ -7,7 +7,7 @@ services:
       network: host
       args:
         ROS_DISTRO: ${ROS_DISTRO:-humble}
-    image: dimos_autonomy_stack:${IMAGE_TAG:-humble-arise}
+    image: dimos_autonomy_stack:${IMAGE_TAG:-humble}
     container_name: dimos_simulation_container
     profiles: ["", "simulation"]  # Active by default (empty profile) AND with --profile simulation
 
@@ -41,6 +41,8 @@ services:
       # DDS Configuration (FastDDS)
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
       - FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml
+      # Localization method: arise_slam (default) or fastlio
+      - LOCALIZATION_METHOD=${LOCALIZATION_METHOD:-arise_slam}
 
     # Volume mounts
     volumes:
@@ -79,7 +81,7 @@ services:
       network: host
       args:
         ROS_DISTRO: ${ROS_DISTRO:-humble}
-    image: dimos_autonomy_stack:${IMAGE_TAG:-humble-arise}
+    image: dimos_autonomy_stack:${IMAGE_TAG:-humble}
     container_name: dimos_hardware_container
     profiles: ["hardware"]
 
@@ -121,6 +123,8 @@ services:
       # DDS Configuration (FastDDS)
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
       - FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml
+      # Localization method: arise_slam (default) or fastlio
+      - LOCALIZATION_METHOD=${LOCALIZATION_METHOD:-arise_slam}
       # Mid-360 Lidar configuration
       - LIDAR_INTERFACE=${LIDAR_INTERFACE:-}
       - LIDAR_COMPUTER_IP=${LIDAR_COMPUTER_IP:-192.168.1.5}

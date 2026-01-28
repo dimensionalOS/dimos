@@ -12,9 +12,8 @@ MODE="simulation"
 USE_ROUTE_PLANNER="false"
 USE_RVIZ="false"
 DEV_MODE="false"
-PULL_IMAGE="false"
 ROS_DISTRO="humble"
-SLAM_TYPE="arise"
+LOCALIZATION_METHOD="${LOCALIZATION_METHOD:-arise_slam}"
 CUSTOM_TAG=""
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -38,10 +37,6 @@ while [[ $# -gt 0 ]]; do
             DEV_MODE="true"
             shift
             ;;
-        --pull)
-            PULL_IMAGE="true"
-            shift
-            ;;
         --humble)
             ROS_DISTRO="humble"
             shift
@@ -51,11 +46,11 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --fastlio)
-            SLAM_TYPE="fastlio"
+            LOCALIZATION_METHOD="fastlio"
             shift
             ;;
         --arise)
-            SLAM_TYPE="arise"
+            LOCALIZATION_METHOD="arise_slam"
             shift
             ;;
         --tag)
@@ -67,24 +62,21 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  --simulation      Start simulation container (default)"
-            echo "  --hardware        Start hardware container (pulls from Docker Hub)"
-            echo "  --pull            Pull latest image from Docker Hub before starting"
-            echo "  --tag <tag>       Specify image tag (e.g., latest, humble-fastlio)"
+            echo "  --hardware        Start hardware container"
             echo "  --route-planner   Enable FAR route planner (for hardware mode)"
             echo "  --rviz            Launch RViz2 visualization"
             echo "  --dev             Development mode (mount src for config editing)"
             echo "  --humble          Use ROS 2 Humble image (default)"
             echo "  --jazzy           Use ROS 2 Jazzy image"
-            echo "  --arise           Use arise_slam SLAM (default)"
-            echo "  --fastlio         Use FASTLIO2 SLAM"
+            echo "  --arise           Use arise_slam localization (default)"
+            echo "  --fastlio         Use FASTLIO2 localization"
+            echo "  --tag <tag>       Specify image tag (e.g., humble, jazzy)"
             echo "  --help, -h        Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                                    # Start simulation (Humble)"
-            echo "  $0 --hardware                         # Start hardware (humble-arise)"
+            echo "  $0 --simulation                       # Start simulation"
+            echo "  $0 --hardware                         # Start hardware with arise_slam"
             echo "  $0 --hardware --fastlio               # Start hardware with FASTLIO2"
-            echo "  $0 --hardware --tag latest            # Use 'latest' tag"
-            echo "  $0 --hardware --pull                  # Pull latest and start hardware"
             echo "  $0 --hardware --route-planner --rviz  # Hardware with route planner + RViz"
             echo "  $0 --hardware --dev                   # Hardware with src mounted for development"
             echo ""
@@ -100,13 +92,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 export ROS_DISTRO
-export SLAM_TYPE
+export LOCALIZATION_METHOD
 
-# Set image tag for Docker Hub (use custom tag if provided)
+# Set image tag (use custom tag if provided)
 if [ -n "$CUSTOM_TAG" ]; then
     IMAGE_TAG="$CUSTOM_TAG"
 else
-    IMAGE_TAG="${ROS_DISTRO}-${SLAM_TYPE}"
+    IMAGE_TAG="${ROS_DISTRO}"
 fi
 export IMAGE_TAG
 
@@ -118,10 +110,8 @@ echo -e "${GREEN}Starting DimOS Docker Container${NC}"
 echo -e "${GREEN}Mode: ${MODE}${NC}"
 echo -e "${GREEN}ROS Distribution: ${ROS_DISTRO}${NC}"
 echo -e "${GREEN}ROS Domain ID: ${ROS_DOMAIN_ID:-42}${NC}"
-if [ "$MODE" = "hardware" ]; then
-    echo -e "${GREEN}SLAM Type: ${SLAM_TYPE}${NC}"
-    echo -e "${GREEN}Image Tag: ${IMAGE_TAG}${NC}"
-fi
+echo -e "${GREEN}Localization: ${LOCALIZATION_METHOD}${NC}"
+echo -e "${GREEN}Image Tag: ${IMAGE_TAG}${NC}"
 echo -e "${GREEN}================================================${NC}"
 echo ""
 
@@ -258,10 +248,10 @@ if [ "$MODE" = "hardware" ]; then
 fi
 
 # Check if the image exists
-if ! docker images | grep -q "dimos_autonomy_stack.*${IMAGE_TAG}"; then
+if ! docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^dimos_autonomy_stack:${IMAGE_TAG}$"; then
     echo -e "${RED}Docker image dimos_autonomy_stack:${IMAGE_TAG} not found.${NC}"
     echo -e "${YELLOW}Please build it first with:${NC}"
-    echo -e "  ./build.sh --${ROS_DISTRO} --${SLAM_TYPE}"
+    echo -e "  ./build.sh --${ROS_DISTRO}"
     exit 1
 fi
 
