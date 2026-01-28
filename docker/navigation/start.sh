@@ -25,6 +25,10 @@ while [[ $# -gt 0 ]]; do
             MODE="simulation"
             shift
             ;;
+        --bagfile)
+            MODE="bagfile"
+            shift
+            ;;
         --route-planner)
             USE_ROUTE_PLANNER="true"
             shift
@@ -63,6 +67,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --simulation      Start simulation container (default)"
             echo "  --hardware        Start hardware container"
+            echo "  --bagfile         Start bagfile playback container (use_sim_time=true)"
             echo "  --route-planner   Enable FAR route planner (for hardware mode)"
             echo "  --rviz            Launch RViz2 visualization"
             echo "  --dev             Development mode (mount src for config editing)"
@@ -79,6 +84,8 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --hardware --fastlio               # Start hardware with FASTLIO2"
             echo "  $0 --hardware --route-planner --rviz  # Hardware with route planner + RViz"
             echo "  $0 --hardware --dev                   # Hardware with src mounted for development"
+            echo "  $0 --bagfile                          # Bagfile playback (use_sim_time=true)"
+            echo "  $0 --bagfile --fastlio --route-planner # Bagfile with FASTLIO2 + route planner"
             echo ""
             echo "Press Ctrl+C to stop the container"
             exit 0
@@ -299,6 +306,8 @@ fi
 # Set container name for reference
 if [ "$MODE" = "hardware" ]; then
     CONTAINER_NAME="dimos_hardware_container"
+elif [ "$MODE" = "bagfile" ]; then
+    CONTAINER_NAME="dimos_bagfile_container"
 else
     CONTAINER_NAME="dimos_simulation_container"
 fi
@@ -334,6 +343,27 @@ if [ "$MODE" = "hardware" ]; then
     echo ""
     echo "To enter the container from another terminal:"
     echo -e "    ${YELLOW}docker exec -it ${CONTAINER_NAME} bash${NC}"
+elif [ "$MODE" = "bagfile" ]; then
+    if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+        echo "Bagfile mode - Starting bagfile playback system WITH route planner"
+        echo ""
+        echo "The container will run (use_sim_time=true):"
+        echo "  - ROS navigation stack (system_bagfile_with_route_planner.launch)"
+        echo "  - FAR Planner for goal-based navigation"
+    else
+        echo "Bagfile mode - Starting bagfile playback system (base autonomy)"
+        echo ""
+        echo "The container will run (use_sim_time=true):"
+        echo "  - ROS navigation stack (system_bagfile.launch)"
+    fi
+    if [ "$USE_RVIZ" = "true" ]; then
+        echo "  - RViz2 visualization"
+    fi
+    echo ""
+    echo -e "${YELLOW}Remember to play bagfile with: ros2 bag play --clock <bagfile>${NC}"
+    echo ""
+    echo "To enter the container from another terminal:"
+    echo -e "    ${YELLOW}docker exec -it ${CONTAINER_NAME} bash${NC}"
 else
     echo "Simulation mode - Auto-starting ROS simulation and DimOS"
     echo ""
@@ -348,9 +378,11 @@ fi
 # Note: DISPLAY is now passed directly via environment variable
 # No need to write RUNTIME_DISPLAY to .env for local host running
 
-# Create required directories for hardware mode
+# Create required directories
 if [ "$MODE" = "hardware" ]; then
     mkdir -p bagfiles config logs maps
+elif [ "$MODE" = "bagfile" ]; then
+    mkdir -p bagfiles config maps
 fi
 
 # Build compose command
@@ -361,6 +393,8 @@ fi
 
 if [ "$MODE" = "hardware" ]; then
     $COMPOSE_CMD --profile hardware up
+elif [ "$MODE" = "bagfile" ]; then
+    $COMPOSE_CMD --profile bagfile up
 else
     $COMPOSE_CMD up
 fi
