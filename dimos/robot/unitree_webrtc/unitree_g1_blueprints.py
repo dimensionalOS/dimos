@@ -56,6 +56,7 @@ from dimos.perception.detection.moduleDB import ObjectDBModule, detection_db_mod
 from dimos.perception.detection.person_tracker import PersonTracker, person_tracker_module
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
+from dimos.dashboard.tf_rerun_module import tf_rerun
 from dimos.robot.foxglove_bridge import foxglove_bridge
 from dimos.robot.unitree.connection.g1 import g1_connection
 from dimos.robot.unitree.connection.g1sim import g1_sim_connection
@@ -68,7 +69,7 @@ _basic_no_nav = (
     autoconnect(
         camera_module(
             transform=Transform(
-                translation=Vector3(0.05, 0.0, 0.0),
+                translation=Vector3(0.05, 0.0, 0.6),
                 rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
                 frame_id="sensor",
                 child_frame_id="camera_link",
@@ -86,6 +87,12 @@ _basic_no_nav = (
         # Visualization
         websocket_vis(),
         foxglove_bridge(),
+        tf_rerun(
+            robot_frame="base_link",
+            cameras=[
+                ("world/robot/camera", "camera_optical", zed.CameraInfo.SingleWebcam),
+            ],
+        ),
     )
     .global_config(n_dask_workers=4, robot_model="unitree_g1")
     .transports(
