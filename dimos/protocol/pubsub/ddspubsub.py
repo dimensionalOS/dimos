@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 from cyclonedds.core import Listener
 from cyclonedds.pub import DataWriter as DDSDataWriter
+from cyclonedds.qos import Policy, Qos
 from cyclonedds.sub import DataReader as DDSDataReader
 from cyclonedds.topic import Topic as DDSTopic
 
@@ -77,8 +78,9 @@ class _DDSMessageListener(Listener):
 
 
 class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, qos: Qos | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._qos = qos
         self._callbacks: dict[Topic, list[MessageCallback]] = {}
         self._callback_lock = threading.Lock()
         self._writers: dict[Topic, DDSDataWriter] = {}
@@ -86,12 +88,19 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
         self._readers: dict[Topic, DDSDataReader] = {}
         self._reader_lock = threading.Lock()
 
+    @property
+    def qos(self) -> Qos | None:
+        """Get the QoS settings."""
+        return self._qos
+
     def _get_writer(self, topic: Topic) -> DDSDataWriter:
         """Get or create a DataWriter for the given topic."""
         with self._writer_lock:
             if topic not in self._writers:
                 dds_topic = DDSTopic(self.get_participant(), topic.name, topic.typename)
-                self._writers[topic] = DDSDataWriter(self.get_participant(), dds_topic)
+                self._writers[topic] = DDSDataWriter(
+                    self.get_participant(), dds_topic, qos=self._qos
+                )
             return self._writers[topic]
 
     def publish(self, topic: Topic, message: Any) -> None:
@@ -109,7 +118,7 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
                 dds_topic = DDSTopic(self.get_participant(), topic.name, topic.typename)
                 listener = _DDSMessageListener(topic, self._callbacks)
                 self._readers[topic] = DDSDataReader(
-                    self.get_participant(), dds_topic, listener=listener
+                    self.get_participant(), dds_topic, qos=self._qos, listener=listener
                 )
             return self._readers[topic]
 
@@ -136,5 +145,7 @@ __all__ = [
     "DDS",
     "DDSPubSubBase",
     "MessageCallback",
+    "Policy",
+    "Qos",
     "Topic",
 ]
