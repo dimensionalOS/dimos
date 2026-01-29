@@ -135,7 +135,7 @@ RUN if [ "${TARGETARCH}" = "arm64" ]; then \
             -DBUILD_FLATZINC=OFF \
             -DUSE_SCIP=OFF \
             -DUSE_COINOR=OFF && \
-        cmake --build build --config Release -j$(nproc) && \
+        cmake --build build --config Release -j$(($(nproc) > 4 ? 4 : $(nproc))) && \
         cmake --install build --prefix /opt/or-tools && \
         rm -rf /tmp/or-tools-${OR_TOOLS_VERSION} /tmp/v${OR_TOOLS_VERSION}.tar.gz; \
     fi

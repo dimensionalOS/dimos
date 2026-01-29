@@ -14,7 +14,6 @@ USE_RVIZ="false"
 DEV_MODE="false"
 ROS_DISTRO="humble"
 LOCALIZATION_METHOD="${LOCALIZATION_METHOD:-arise_slam}"
-CUSTOM_TAG=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --hardware)
@@ -41,51 +40,48 @@ while [[ $# -gt 0 ]]; do
             DEV_MODE="true"
             shift
             ;;
-        --humble)
-            ROS_DISTRO="humble"
-            shift
+        --image)
+            if [ -z "$2" ] || [[ "$2" == --* ]]; then
+                echo -e "${RED}--image requires a value (humble or jazzy)${NC}"
+                exit 1
+            fi
+            ROS_DISTRO="$2"
+            shift 2
             ;;
-        --jazzy)
-            ROS_DISTRO="jazzy"
-            shift
-            ;;
-        --fastlio)
-            LOCALIZATION_METHOD="fastlio"
-            shift
-            ;;
-        --arise)
-            LOCALIZATION_METHOD="arise_slam"
-            shift
-            ;;
-        --tag)
-            CUSTOM_TAG="$2"
+        --localization)
+            if [ -z "$2" ] || [[ "$2" == --* ]]; then
+                echo -e "${RED}--localization requires a value (arise_slam or fastlio)${NC}"
+                exit 1
+            fi
+            LOCALIZATION_METHOD="$2"
             shift 2
             ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
-            echo "Options:"
-            echo "  --simulation      Start simulation container (default)"
-            echo "  --hardware        Start hardware container"
-            echo "  --bagfile         Start bagfile playback container (use_sim_time=true)"
-            echo "  --route-planner   Enable FAR route planner (for hardware mode)"
-            echo "  --rviz            Launch RViz2 visualization"
-            echo "  --dev             Development mode (mount src for config editing)"
-            echo "  --humble          Use ROS 2 Humble image (default)"
-            echo "  --jazzy           Use ROS 2 Jazzy image"
-            echo "  --arise           Use arise_slam localization (default)"
-            echo "  --fastlio         Use FASTLIO2 localization"
-            echo "  --tag <tag>       Specify image tag (e.g., humble, jazzy)"
-            echo "  --help, -h        Show this help message"
+            echo "Mode (mutually exclusive):"
+            echo "  --simulation              Start simulation container (default)"
+            echo "  --hardware                Start hardware container"
+            echo "  --bagfile                  Start bagfile playback container (use_sim_time=true)"
+            echo ""
+            echo "Image and localization:"
+            echo "  --image <distro>           ROS 2 distribution: humble (default), jazzy"
+            echo "  --localization <method>    SLAM method: arise_slam (default), fastlio"
+            echo ""
+            echo "Additional options:"
+            echo "  --route-planner            Enable FAR route planner (for hardware mode)"
+            echo "  --rviz                     Launch RViz2 visualization"
+            echo "  --dev                      Development mode (mount src for config editing)"
+            echo "  --help, -h                 Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0 --simulation                       # Start simulation"
-            echo "  $0 --hardware                         # Start hardware with arise_slam"
-            echo "  $0 --hardware --fastlio               # Start hardware with FASTLIO2"
-            echo "  $0 --hardware --route-planner --rviz  # Hardware with route planner + RViz"
-            echo "  $0 --hardware --dev                   # Hardware with src mounted for development"
-            echo "  $0 --bagfile                          # Bagfile playback (use_sim_time=true)"
-            echo "  $0 --bagfile --fastlio --route-planner # Bagfile with FASTLIO2 + route planner"
+            echo "  $0 --simulation                                        # Start simulation"
+            echo "  $0 --hardware --image jazzy                            # Hardware with Jazzy"
+            echo "  $0 --hardware --localization fastlio                    # Hardware with FASTLIO2"
+            echo "  $0 --hardware --route-planner --rviz                   # Hardware with route planner + RViz"
+            echo "  $0 --hardware --dev                                    # Hardware with src mounted"
+            echo "  $0 --bagfile                                           # Bagfile playback"
+            echo "  $0 --bagfile --localization fastlio --route-planner    # Bagfile with FASTLIO2 + route planner"
             echo ""
             echo "Press Ctrl+C to stop the container"
             exit 0
@@ -100,14 +96,7 @@ done
 
 export ROS_DISTRO
 export LOCALIZATION_METHOD
-
-# Set image tag (use custom tag if provided)
-if [ -n "$CUSTOM_TAG" ]; then
-    IMAGE_TAG="$CUSTOM_TAG"
-else
-    IMAGE_TAG="${ROS_DISTRO}"
-fi
-export IMAGE_TAG
+export IMAGE_TAG="${ROS_DISTRO}"
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"

@@ -69,18 +69,13 @@ if [ ! -d "ros-navigation-autonomy-stack" ]; then
     echo -e "${YELLOW}Cloning ros-navigation-autonomy-stack repository (${TARGET_BRANCH} branch)...${NC}"
     git clone -b ${TARGET_BRANCH} ${CLONE_URL} ros-navigation-autonomy-stack
     echo -e "${GREEN}Repository cloned successfully!${NC}"
-    # Add both remotes for flexibility
+    # Add vector remote (origin is already set by clone)
     cd ros-navigation-autonomy-stack
     git remote add vector https://github.com/VectorRobotics/vector_navigation_stack.git 2>/dev/null || true
-    git remote add origin https://github.com/dimensionalOS/ros-navigation-autonomy-stack.git 2>/dev/null || true
     cd ..
 else
     # Directory exists, ensure we're on the correct branch
     cd ros-navigation-autonomy-stack
-
-    # Ensure both remotes exist
-    git remote add vector https://github.com/VectorRobotics/vector_navigation_stack.git 2>/dev/null || true
-    git remote add origin https://github.com/dimensionalOS/ros-navigation-autonomy-stack.git 2>/dev/null || true
 
     CURRENT_BRANCH=$(git branch --show-current)
     if [ "$CURRENT_BRANCH" != "${TARGET_BRANCH}" ]; then
@@ -94,7 +89,13 @@ else
         echo -e "${GREEN}Switched to ${TARGET_BRANCH} branch${NC}"
     else
         echo -e "${GREEN}Already on ${TARGET_BRANCH} branch${NC}"
-        # Pull latest changes
+        # Check for local changes before pulling latest
+        if ! git diff --quiet || ! git diff --cached --quiet; then
+            echo -e "${RED}Local changes detected in ros-navigation-autonomy-stack.${NC}"
+            echo -e "${RED}Please commit or discard them before building.${NC}"
+            git status --short
+            exit 1
+        fi
         git fetch ${TARGET_REMOTE} ${TARGET_BRANCH}
         git reset --hard ${TARGET_REMOTE}/${TARGET_BRANCH}
     fi

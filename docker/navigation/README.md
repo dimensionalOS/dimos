@@ -26,7 +26,7 @@ This will:
 - Set up the environment for both ROS and DimOS
 
 The resulting image will be named `dimos_autonomy_stack:{distro}` (e.g., `humble`, `jazzy`).
-Select SLAM method at runtime via `--arise` or `--fastlio` flags.
+Select SLAM method at runtime via `--localization arise_slam` or `--localization fastlio`.
 
 Note that the build will take a while and produce an image of approximately 24 GB.
 
@@ -35,9 +35,9 @@ Note that the build will take a while and produce an image of approximately 24 G
 Use the same ROS distribution flag as your build:
 
 ```bash
-./start.sh --simulation --humble  # If built with --humble
+./start.sh --simulation --image humble  # If built with --humble
 # or
-./start.sh --simulation --jazzy   # If built with --jazzy
+./start.sh --simulation --image jazzy   # If built with --jazzy
 ```
 
 <details>
@@ -120,8 +120,11 @@ ROBOT_IP=192.168.12.1  # For WebRTC local AP mode (optional, need additional wif
 ./start.sh --hardware --route-planner --rviz
 
 # FASTLIO2
-./start.sh --hardware --fastlio --route-planner
-./start.sh --hardware --fastlio --route-planner --rviz
+./start.sh --hardware --localization fastlio --route-planner
+./start.sh --hardware --localization fastlio --route-planner --rviz
+
+# Jazzy image
+./start.sh --hardware --image jazzy --route-planner
 
 # Development mode (mount src for config editing)
 ./start.sh --hardware --dev
@@ -144,9 +147,9 @@ Then on your local machine:
 Start the container and leave it open. Use the same ROS distribution flag as your build:
 
 ```bash
-./start.sh --hardware --humble  # If built with --humble
+./start.sh --hardware --image humble  # If built with --humble
 # or
-./start.sh --hardware --jazzy   # If built with --jazzy
+./start.sh --hardware --image jazzy   # If built with --jazzy
 ```
 
 It doesn't do anything by default. You have to run commands on it by `exec`-ing:
