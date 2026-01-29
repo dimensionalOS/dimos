@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.utils.transform_utils import euler_to_quaternion
 
 
-# @pytest.mark.skip
 def test_stop_movement(create_navigation_agent, navigation_skill_container, mocker) -> None:
     cancel_goal_mock = mocker.Mock()
     stop_exploration_mock = mocker.Mock()
@@ -35,6 +35,7 @@ def test_stop_movement(create_navigation_agent, navigation_skill_container, mock
     stop_exploration_mock.assert_called_once_with()
 
 
+@pytest.mark.integration
 def test_take_a_look_around(create_navigation_agent, navigation_skill_container, mocker) -> None:
     explore_mock = mocker.Mock()
     is_exploration_active_mock = mocker.Mock()

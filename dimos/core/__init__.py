@@ -50,6 +50,7 @@ __all__ = [
     "TFSpec",
     "Transport",
     "ZenohTransport",
+    "colors",
     "pLCMTransport",
     "pSHMTransport",
     "rpc",
@@ -179,7 +180,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             from dimos.protocol.pubsub import shmpubsub
 
             for obj in gc.get_objects():
-                if isinstance(obj, shmpubsub.SharedMemory | shmpubsub.PickleSharedMemory):
+                if isinstance(obj, shmpubsub.SharedMemoryPubSubBase):
                     try:
                         obj.stop()
                     except Exception:

@@ -1,8 +1,7 @@
 name: code-cleanup
 on:
   push:
-    paths-ignore:
-      - '**.md'
+  pull_request:
 
 permissions:
   contents: write

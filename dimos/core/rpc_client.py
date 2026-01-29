@@ -22,7 +22,6 @@ logger = setup_logger()
 
 
 class RpcCall:
-    _original_method: Callable[..., Any] | None
     _rpc: LCMRPC | None
     _name: str
     _remote_name: str
@@ -38,7 +37,6 @@ class RpcCall:
         unsub_fns: list,  # type: ignore[type-arg]
         stop_client: Callable[[], None] | None = None,
     ) -> None:
-        self._original_method = original_method
         self._rpc = rpc
         self._name = name
         self._remote_name = remote_name
@@ -71,10 +69,10 @@ class RpcCall:
         return result
 
     def __getstate__(self):  # type: ignore[no-untyped-def]
-        return (self._original_method, self._name, self._remote_name)
+        return (self._name, self._remote_name)
 
     def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        self._original_method, self._name, self._remote_name = state
+        self._name, self._remote_name = state
         self._unsub_fns = []
         self._rpc = None
         self._stop_rpc_client = None

@@ -21,3 +21,25 @@ class Resource(ABC):
 
     @abstractmethod
     def stop(self) -> None: ...
+
+    def dispose(self) -> None:
+        """
+        Makes a Resource disposable
+        So you can do a
+
+        from reactivex.disposable import CompositeDisposable
+
+        disposables = CompositeDisposable()
+
+        transport1 = LCMTransport(...)
+        transport2 = LCMTransport(...)
+
+        disposables.add(transport1)
+        disposables.add(transport2)
+
+        ...
+
+        disposables.dispose()
+
+        """
+        self.stop()

@@ -14,27 +14,37 @@
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from typing import Any
 
-from cyclonedds.idl import IdlStruct
-from cyclonedds.idl.types import sequence, uint8
+import numpy as np
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
-from dimos.protocol.pubsub.benchmark.type import TestCase
-from dimos.protocol.pubsub.ddspubsub import DDS, Topic as DDSTopic
+from dimos.protocol.pubsub.benchmark.type import Case
 from dimos.protocol.pubsub.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
 from dimos.protocol.pubsub.memory import Memory
-from dimos.protocol.pubsub.rospubsub import ROS_AVAILABLE, RawROS, ROSTopic
-from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
+from dimos.protocol.pubsub.shmpubsub import BytesSharedMemory, LCMSharedMemory, PickleSharedMemory
 
 
-def make_data(size: int) -> bytes:
+def make_data_bytes(size: int) -> bytes:
     """Generate random bytes of given size."""
     return bytes(i % 256 for i in range(size))
 
 
-testdata: list[TestCase[Any, Any]] = []
+def make_data_image(size: int) -> Image:
+    """Generate an RGB Image with approximately `size` bytes of data."""
+    raw_data = np.frombuffer(make_data_bytes(size), dtype=np.uint8).reshape(-1)
+    # Pad to make it divisible by 3 for RGB
+    padded_size = ((len(raw_data) + 2) // 3) * 3
+    padded_data = np.pad(raw_data, (0, padded_size - len(raw_data)))
+    pixels = len(padded_data) // 3
+    # Find reasonable dimensions
+    height = max(1, int(pixels**0.5))
+    width = pixels // height
+    data = padded_data[: height * width * 3].reshape(height, width, 3)
+    return Image(data=data, format=ImageFormat.RGB)
+
+
+testcases: list[Case[Any, Any]] = []
 
 
 @contextmanager
@@ -46,25 +56,12 @@ def lcm_pubsub_channel() -> Generator[LCM, None, None]:
 
 
 def lcm_msggen(size: int) -> tuple[LCMTopic, Image]:
-    import numpy as np
-
-    # Create image data as numpy array with shape (height, width, channels)
-    raw_data = np.frombuffer(make_data(size), dtype=np.uint8).reshape(-1)
-    # Pad to make it divisible by 3 for RGB
-    padded_size = ((len(raw_data) + 2) // 3) * 3
-    padded_data = np.pad(raw_data, (0, padded_size - len(raw_data)))
-    pixels = len(padded_data) // 3
-    # Find reasonable dimensions
-    height = max(1, int(pixels**0.5))
-    width = pixels // height
-    data = padded_data[: height * width * 3].reshape(height, width, 3)
     topic = LCMTopic(topic="benchmark/lcm", lcm_type=Image)
-    msg = Image(data=data, format=ImageFormat.RGB)
-    return (topic, msg)
+    return (topic, make_data_image(size))
 
 
-testdata.append(
-    TestCase(
+testcases.append(
+    Case(
         pubsub_context=lcm_pubsub_channel,
         msg_gen=lcm_msggen,
     )
@@ -72,7 +69,7 @@ testdata.append(
 
 
 @contextmanager
-def udp_raw_pubsub_channel() -> Generator[LCMPubSubBase, None, None]:
+def udp_bytes_pubsub_channel() -> Generator[LCMPubSubBase, None, None]:
     """LCM with raw bytes - no encoding overhead."""
     lcm_pubsub = LCMPubSubBase(autoconf=True)
     lcm_pubsub.start()
@@ -80,16 +77,16 @@ def udp_raw_pubsub_channel() -> Generator[LCMPubSubBase, None, None]:
     lcm_pubsub.stop()
 
 
-def udp_raw_msggen(size: int) -> tuple[LCMTopic, bytes]:
+def udp_bytes_msggen(size: int) -> tuple[LCMTopic, bytes]:
     """Generate raw bytes for LCM transport benchmark."""
     topic = LCMTopic(topic="benchmark/lcm_raw")
-    return (topic, make_data(size))
+    return (topic, make_data_bytes(size))
 
 
-testdata.append(
-    TestCase(
-        pubsub_context=udp_raw_pubsub_channel,
-        msg_gen=udp_raw_msggen,
+testcases.append(
+    Case(
+        pubsub_context=udp_bytes_pubsub_channel,
+        msg_gen=udp_bytes_msggen,
     )
 )
 
@@ -101,20 +98,11 @@ def memory_pubsub_channel() -> Generator[Memory, None, None]:
 
 
 def memory_msggen(size: int) -> tuple[str, Any]:
-    import numpy as np
-
-    raw_data = np.frombuffer(make_data(size), dtype=np.uint8).reshape(-1)
-    padded_size = ((len(raw_data) + 2) // 3) * 3
-    padded_data = np.pad(raw_data, (0, padded_size - len(raw_data)))
-    pixels = len(padded_data) // 3
-    height = max(1, int(pixels**0.5))
-    width = pixels // height
-    data = padded_data[: height * width * 3].reshape(height, width, 3)
-    return ("benchmark/memory", Image(data=data, format=ImageFormat.RGB))
+    return ("benchmark/memory", make_data_image(size))
 
 
-# testdata.append(
-#     TestCase(
+# testcases.append(
+#     Case(
 #         pubsub_context=memory_pubsub_channel,
 #         msg_gen=memory_msggen,
 #     )
@@ -122,7 +110,7 @@ def memory_msggen(size: int) -> tuple[str, Any]:
 
 
 @contextmanager
-def shm_pubsub_channel() -> Generator[PickleSharedMemory, None, None]:
+def shm_pickle_pubsub_channel() -> Generator[PickleSharedMemory, None, None]:
     # 12MB capacity to handle benchmark sizes up to 10MB
     shm_pubsub = PickleSharedMemory(prefer="cpu", default_capacity=12 * 1024 * 1024)
     shm_pubsub.start()
@@ -132,22 +120,52 @@ def shm_pubsub_channel() -> Generator[PickleSharedMemory, None, None]:
 
 def shm_msggen(size: int) -> tuple[str, Any]:
     """Generate message for SharedMemory pubsub benchmark."""
-    import numpy as np
-
-    raw_data = np.frombuffer(make_data(size), dtype=np.uint8).reshape(-1)
-    padded_size = ((len(raw_data) + 2) // 3) * 3
-    padded_data = np.pad(raw_data, (0, padded_size - len(raw_data)))
-    pixels = len(padded_data) // 3
-    height = max(1, int(pixels**0.5))
-    width = pixels // height
-    data = padded_data[: height * width * 3].reshape(height, width, 3)
-    return ("benchmark/shm", Image(data=data, format=ImageFormat.RGB))
+    return ("benchmark/shm", make_data_image(size))
 
 
-testdata.append(
-    TestCase(
-        pubsub_context=shm_pubsub_channel,
+testcases.append(
+    Case(
+        pubsub_context=shm_pickle_pubsub_channel,
         msg_gen=shm_msggen,
+    )
+)
+
+
+@contextmanager
+def shm_bytes_pubsub_channel() -> Generator[BytesSharedMemory, None, None]:
+    """SharedMemory with raw bytes - no pickle overhead."""
+    shm_pubsub = BytesSharedMemory(prefer="cpu", default_capacity=12 * 1024 * 1024)
+    shm_pubsub.start()
+    yield shm_pubsub
+    shm_pubsub.stop()
+
+
+def shm_bytes_msggen(size: int) -> tuple[str, bytes]:
+    """Generate raw bytes for SharedMemory transport benchmark."""
+    return ("benchmark/shm_bytes", make_data_bytes(size))
+
+
+testcases.append(
+    Case(
+        pubsub_context=shm_bytes_pubsub_channel,
+        msg_gen=shm_bytes_msggen,
+    )
+)
+
+
+@contextmanager
+def shm_lcm_pubsub_channel() -> Generator[LCMSharedMemory, None, None]:
+    """SharedMemory with LCM binary encoding - no pickle overhead."""
+    shm_pubsub = LCMSharedMemory(prefer="cpu", default_capacity=12 * 1024 * 1024)
+    shm_pubsub.start()
+    yield shm_pubsub
+    shm_pubsub.stop()
+
+
+testcases.append(
+    Case(
+        pubsub_context=shm_lcm_pubsub_channel,
+        msg_gen=lcm_msggen,  # Reuse the LCM message generator
     )
 )
 
@@ -166,11 +184,11 @@ try:
         # Redis uses JSON serialization, so use a simple dict with base64-encoded data
         import base64
 
-        data = base64.b64encode(make_data(size)).decode("ascii")
+        data = base64.b64encode(make_data_bytes(size)).decode("ascii")
         return ("benchmark/redis", {"data": data, "size": size})
 
-    testdata.append(
-        TestCase(
+    testcases.append(
+        Case(
             pubsub_context=redis_pubsub_channel,
             msg_gen=redis_msggen,
         )
@@ -181,36 +199,7 @@ except (ConnectionError, ImportError):
     print("Redis not available")
 
 
-@dataclass
-class DDSMessage(IdlStruct):
-    """DDS message with binary data payload following IdlStruct format."""
-
-    payload: sequence[uint8]
-
-
-@contextmanager
-def dds_pubsub_channel() -> Generator[DDS, None, None]:
-    """Context manager for DDS PubSub implementation."""
-    dds_pubsub = DDS()
-    dds_pubsub.start()
-    yield dds_pubsub
-    dds_pubsub.stop()
-
-
-def dds_msggen(size: int) -> tuple[DDSTopic, DDSMessage]:
-    """Generate message for DDS pubsub benchmark."""
-    topic = DDSTopic("benchmark/dds", DDSMessage)
-    msg = DDSMessage(payload=make_data(size))
-    return (topic, msg)
-
-
-testdata.append(
-    TestCase(
-        pubsub_context=dds_pubsub_channel,
-        msg_gen=dds_msggen,
-    )
-)
-
+from dimos.protocol.pubsub.rospubsub import ROS_AVAILABLE, DimosROS, RawROS, RawROSTopic, ROSTopic
 
 if ROS_AVAILABLE:
     from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
@@ -242,11 +231,11 @@ if ROS_AVAILABLE:
         yield ros_pubsub
         ros_pubsub.stop()
 
-    def ros_msggen(size: int) -> tuple[ROSTopic, ROSImage]:
+    def ros_msggen(size: int) -> tuple[RawROSTopic, ROSImage]:
         import numpy as np
 
         # Create image data
-        data = np.frombuffer(make_data(size), dtype=np.uint8).reshape(-1)
+        data = np.frombuffer(make_data_bytes(size), dtype=np.uint8).reshape(-1)
         padded_size = ((len(data) + 2) // 3) * 3
         data = np.pad(data, (0, padded_size - len(data)))
         pixels = len(data) // 3
@@ -262,19 +251,65 @@ if ROS_AVAILABLE:
         msg.step = width * 3
         msg.data = data.tobytes()
 
-        topic = ROSTopic(topic="/benchmark/ros", ros_type=ROSImage)
+        topic = RawROSTopic(topic="/benchmark/ros", ros_type=ROSImage)
         return (topic, msg)
 
-    testdata.append(
-        TestCase(
+    testcases.append(
+        Case(
             pubsub_context=ros_best_effort_pubsub_channel,
             msg_gen=ros_msggen,
         )
     )
 
-    testdata.append(
-        TestCase(
+    testcases.append(
+        Case(
             pubsub_context=ros_reliable_pubsub_channel,
             msg_gen=ros_msggen,
+        )
+    )
+
+    @contextmanager
+    def dimos_ros_best_effort_pubsub_channel() -> Generator[DimosROS, None, None]:
+        qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            durability=QoSDurabilityPolicy.VOLATILE,
+            depth=5000,
+        )
+        ros_pubsub = DimosROS(node_name="benchmark_dimos_ros_best_effort", qos=qos)
+        ros_pubsub.start()
+        yield ros_pubsub
+        ros_pubsub.stop()
+
+    @contextmanager
+    def dimos_ros_reliable_pubsub_channel() -> Generator[DimosROS, None, None]:
+        qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            durability=QoSDurabilityPolicy.VOLATILE,
+            depth=5000,
+        )
+        ros_pubsub = DimosROS(node_name="benchmark_dimos_ros_reliable", qos=qos)
+        ros_pubsub.start()
+        yield ros_pubsub
+        ros_pubsub.stop()
+
+    def dimos_ros_msggen(size: int) -> tuple[ROSTopic, Image]:
+        topic = ROSTopic(topic="/benchmark/dimos_ros", msg_type=Image)
+        return (topic, make_data_image(size))
+
+    # commented to save benchmarking time,
+    # since reliable and best effort are very similar in performance for local pubsub
+    # testcases.append(
+    #     Case(
+    #         pubsub_context=dimos_ros_best_effort_pubsub_channel,
+    #         msg_gen=dimos_ros_msggen,
+    #     )
+    # )
+
+    testcases.append(
+        Case(
+            pubsub_context=dimos_ros_reliable_pubsub_channel,
+            msg_gen=dimos_ros_msggen,
         )
     )

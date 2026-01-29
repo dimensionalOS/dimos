@@ -307,6 +307,6 @@ class ObjectDBModule(Detection3DModule, TableStr):
         return len(self.objects.values())
 
 
-detectionDB_module = ObjectDBModule.blueprint
+detection_db_module = ObjectDBModule.blueprint
 
-__all__ = ["ObjectDBModule", "detectionDB_module"]
+__all__ = ["ObjectDBModule", "detection_db_module"]

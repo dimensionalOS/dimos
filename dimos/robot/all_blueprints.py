@@ -12,91 +12,92 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.blueprints import ModuleBlueprintSet
+# This file is auto-generated. Do not edit manually.
+# Run `pytest dimos/robot/test_all_blueprints_generation.py` to regenerate.
 
-# The blueprints are defined as import strings so as not to trigger unnecessary imports.
 all_blueprints = {
-    "unitree-go2": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:nav",
-    "unitree-go2-basic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:basic",
-    "unitree-go2-nav": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:nav",
-    "unitree-go2-detection": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:detection",
-    "unitree-go2-spatial": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:spatial",
-    "unitree-go2-temporal-memory": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:temporal_memory",
-    "unitree-go2-agentic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic",
-    "unitree-go2-agentic-mcp": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic_mcp",
-    "unitree-go2-agentic-ollama": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic_ollama",
-    "unitree-go2-agentic-huggingface": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic_huggingface",
-    "unitree-go2-vlm-stream-test": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:vlm_stream_test",
-    "unitree-g1": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:standard",
-    "unitree-g1-sim": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:standard_sim",
-    "unitree-g1-basic": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:basic_ros",
-    "unitree-g1-basic-sim": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:basic_sim",
-    "unitree-g1-shm": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:standard_with_shm",
-    "unitree-g1-agentic": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:agentic",
-    "unitree-g1-agentic-sim": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:agentic_sim",
-    "unitree-g1-joystick": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:with_joystick",
-    "unitree-g1-full": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:full_featured",
-    "unitree-g1-detection": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:detection",
-    # Control orchestrator blueprints
-    "orchestrator-mock": "dimos.control.blueprints:orchestrator_mock",
-    "orchestrator-xarm7": "dimos.control.blueprints:orchestrator_xarm7",
-    "orchestrator-xarm6": "dimos.control.blueprints:orchestrator_xarm6",
-    "orchestrator-piper": "dimos.control.blueprints:orchestrator_piper",
-    "orchestrator-dual-mock": "dimos.control.blueprints:orchestrator_dual_mock",
-    "orchestrator-dual-xarm": "dimos.control.blueprints:orchestrator_dual_xarm",
-    "orchestrator-piper-xarm": "dimos.control.blueprints:orchestrator_piper_xarm",
-    # Demo blueprints
+    "coordinator-basic": "dimos.control.blueprints:coordinator_basic",
+    "coordinator-dual-mock": "dimos.control.blueprints:coordinator_dual_mock",
+    "coordinator-dual-xarm": "dimos.control.blueprints:coordinator_dual_xarm",
+    "coordinator-highfreq-mock": "dimos.control.blueprints:coordinator_highfreq_mock",
+    "coordinator-mock": "dimos.control.blueprints:coordinator_mock",
+    "coordinator-piper": "dimos.control.blueprints:coordinator_piper",
+    "coordinator-piper-xarm": "dimos.control.blueprints:coordinator_piper_xarm",
+    "coordinator-xarm6": "dimos.control.blueprints:coordinator_xarm6",
+    "coordinator-xarm7": "dimos.control.blueprints:coordinator_xarm7",
     "demo-camera": "dimos.hardware.sensors.camera.module:demo_camera",
+    "demo-error-on-name-conflicts": "dimos.robot.unitree_webrtc.demo_error_on_name_conflicts:demo_error_on_name_conflicts",
+    "demo-google-maps-skill": "dimos.agents.skills.demo_google_maps_skill:demo_google_maps_skill",
+    "demo-gps-nav": "dimos.agents.skills.demo_gps_nav:demo_gps_nav",
+    "demo-object-scene-registration": "dimos.perception.demo_object_scene_registration:demo_object_scene_registration",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
     "demo-skill": "dimos.agents.skills.demo_skill:demo_skill",
-    "demo-gps-nav": "dimos.agents.skills.demo_gps_nav:demo_gps_nav_skill",
-    "demo-google-maps-skill": "dimos.agents.skills.demo_google_maps_skill:demo_google_maps_skill",
-    "demo-object-scene-registration": "dimos.perception.demo_object_scene_registration:demo_object_scene_registration",
-    "demo-error-on-name-conflicts": "dimos.robot.unitree_webrtc.demo_error_on_name_conflicts:blueprint",
+    "unitree-g1": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:unitree_g1",
+    "unitree-g1-agentic": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:unitree_g1_agentic",
+    "unitree-g1-agentic-sim": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:unitree_g1_agentic_sim",
+    "unitree-g1-basic": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:unitree_g1_basic",
+    "unitree-g1-basic-sim": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:unitree_g1_basic_sim",
+    "unitree-g1-detection": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:unitree_g1_detection",
+    "unitree-g1-full": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:unitree_g1_full",
+    "unitree-g1-joystick": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:unitree_g1_joystick",
+    "unitree-g1-shm": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:unitree_g1_shm",
+    "unitree-g1-sim": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:unitree_g1_sim",
+    "unitree-go2": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2",
+    "unitree-go2-agentic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_agentic",
+    "unitree-go2-agentic-huggingface": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_agentic_huggingface",
+    "unitree-go2-agentic-mcp": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_agentic_mcp",
+    "unitree-go2-agentic-ollama": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_agentic_ollama",
+    "unitree-go2-basic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_basic",
+    "unitree-go2-detection": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_detection",
+    "unitree-go2-ros": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_ros",
+    "unitree-go2-spatial": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_spatial",
+    "unitree-go2-temporal-memory": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_temporal_memory",
+    "unitree-go2-vlm-stream-test": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_vlm_stream_test",
 }
 
 
 all_modules = {
-    "replanning_a_star_planner": "dimos.navigation.replanning_a_star.module",
-    "camera_module": "dimos.hardware.camera.module",
+    "camera_module": "dimos.hardware.sensors.camera.module",
+    "cartesian_motion_controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller",
+    "control_coordinator": "dimos.control.coordinator",
+    "cost_mapper": "dimos.mapping.costmapper",
+    "demo_calculator_skill": "dimos.agents.skills.demo_calculator_skill",
+    "demo_robot": "dimos.agents.skills.demo_robot",
     "depth_module": "dimos.robot.unitree_webrtc.depth_module",
-    "detection_2d": "dimos.perception.detection2d.module2D",
+    "detection3d_module": "dimos.perception.detection.module3D",
+    "detection_db_module": "dimos.perception.detection.moduleDB",
     "foxglove_bridge": "dimos.robot.foxglove_bridge",
     "g1_connection": "dimos.robot.unitree.connection.g1",
-    "g1_joystick": "dimos.robot.unitree_webrtc.g1_joystick_module",
+    "g1_sim_connection": "dimos.robot.unitree.connection.g1sim",
     "g1_skills": "dimos.robot.unitree_webrtc.unitree_g1_skill_container",
+    "go2_connection": "dimos.robot.unitree.connection.go2",
     "google_maps_skill": "dimos.agents.skills.google_maps_skill_container",
     "gps_nav_skill": "dimos.agents.skills.gps_nav_skill",
     "human_input": "dimos.agents.cli.human",
+    "joint_trajectory_controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller",
     "keyboard_teleop": "dimos.robot.unitree_webrtc.keyboard_teleop",
     "llm_agent": "dimos.agents.agent",
     "mapper": "dimos.robot.unitree_webrtc.type.map",
     "navigation_skill": "dimos.agents.skills.navigation",
+    "object_scene_registration_module": "dimos.perception.object_scene_registration",
     "object_tracking": "dimos.perception.object_tracker",
     "osm_skill": "dimos.agents.skills.osm",
+    "person_follow_skill": "dimos.agents.skills.person_follow",
+    "person_tracker_module": "dimos.perception.detection.person_tracker",
+    "realsense_camera": "dimos.hardware.sensors.camera.realsense.camera",
+    "replanning_a_star_planner": "dimos.navigation.replanning_a_star.module",
+    "rerun_scene_wiring": "dimos.dashboard.rerun_scene_wiring",
     "ros_nav": "dimos.navigation.rosnav",
     "spatial_memory": "dimos.perception.spatial_perception",
     "speak_skill": "dimos.agents.skills.speak_skill",
+    "temporal_memory": "dimos.perception.experimental.temporal_memory.temporal_memory",
     "unitree_skills": "dimos.robot.unitree_webrtc.unitree_skill_container",
     "utilization": "dimos.utils.monitoring",
+    "vlm_agent": "dimos.agents.vlm_agent",
+    "vlm_stream_tester": "dimos.agents.vlm_stream_tester",
+    "voxel_mapper": "dimos.mapping.voxels",
     "wavefront_frontier_explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector",
-    "websocket_vis": "dimos.web.websocket_vis.websocket_vis_module",
     "web_input": "dimos.agents.cli.web",
-    # Control orchestrator module
-    "control_orchestrator": "dimos.control.orchestrator",
+    "websocket_vis": "dimos.web.websocket_vis.websocket_vis_module",
+    "zed_camera": "dimos.hardware.sensors.camera.zed.camera",
 }
-
-
-def get_blueprint_by_name(name: str) -> ModuleBlueprintSet:
-    if name not in all_blueprints:
-        raise ValueError(f"Unknown blueprint set name: {name}")
-    module_path, attr = all_blueprints[name].split(":")
-    module = __import__(module_path, fromlist=[attr])
-    return getattr(module, attr)  # type: ignore[no-any-return]
-
-
-def get_module_by_name(name: str) -> ModuleBlueprintSet:
-    if name not in all_modules:
-        raise ValueError(f"Unknown module name: {name}")
-    python_module = __import__(all_modules[name], fromlist=[name])
-    return getattr(python_module, name)()  # type: ignore[no-any-return]

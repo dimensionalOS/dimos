@@ -48,6 +48,7 @@ class GlobalConfig(BaseSettings):
     robot_rotation_diameter: float = 0.6
     planner_strategy: NavigationStrategy = "simple"
     planner_robot_speed: float | None = None
+    dask: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",

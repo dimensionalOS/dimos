@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 
+
+@pytest.mark.integration
 def test_what_is_your_name(create_potato_agent) -> None:
     agent = create_potato_agent(fixture="test_what_is_your_name.json")
     response = agent.query("hi there, please tell me what's your name?")
     assert "Mr. Potato" in response
 
 
+@pytest.mark.integration
 def test_how_much_is_124181112_plus_124124(create_potato_agent) -> None:
     agent = create_potato_agent(fixture="test_how_much_is_124181112_plus_124124.json")
 
@@ -29,6 +33,7 @@ def test_how_much_is_124181112_plus_124124(create_potato_agent) -> None:
     assert "999000000" in response.replace(",", "")
 
 
+@pytest.mark.integration
 def test_what_do_you_see_in_this_picture(create_potato_agent) -> None:
     agent = create_potato_agent(fixture="test_what_do_you_see_in_this_picture.json")
 

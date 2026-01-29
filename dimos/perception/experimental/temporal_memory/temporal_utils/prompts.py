@@ -240,9 +240,15 @@ def build_query_prompt(
 - {currently_present_str}
 - The 'entity_roster' contains all known entities with their descriptions
 - The 'rolling_summary' describes what has happened over time
+- The 'graph_knowledge.entity_timestamps' contains visibility information for each entity:
+  - 'first_seen_ts': timestamp (in seconds) when the entity was first detected
+  - 'last_seen_ts': timestamp (in seconds) when the entity was last detected
+  - 'duration_s': total time span from first to last appearance (last_seen_ts - first_seen_ts)
+  - Use this information to answer questions about when entities appeared, disappeared, or how long they were visible
 - If 'currently_present_entities' is empty, it means no entities were detected in recent windows, but entities may still exist in the roster from earlier
-- Answer based on the provided context (entity_roster, rolling_summary, currently_present_entities) AND what you see in the current frame
+- Answer based on the provided context (entity_roster, rolling_summary, currently_present_entities, graph_knowledge) AND what you see in the current frame
 - If the context says entities were present but you don't see them in the current frame, mention both: what was recently detected AND what you currently see
+- For duration questions, use the 'duration_s' field from 'entity_timestamps' if available
 
 Provide a concise answer.
 """

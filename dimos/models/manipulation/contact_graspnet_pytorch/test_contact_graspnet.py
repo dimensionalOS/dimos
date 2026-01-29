@@ -8,11 +8,12 @@ import pytest
 def is_manipulation_installed() -> bool:
     """Check if the manipulation extras are installed."""
     try:
-        import contact_graspnet_pytorch
+        import contact_graspnet_pytorch  # noqa: F401
         return True
     except ImportError:
         return False
 
+@pytest.mark.integration
 @pytest.mark.skipif(not is_manipulation_installed(),
                    reason="This test requires 'pip install .[manipulation]' to be run")
 def test_contact_graspnet_inference() -> None:

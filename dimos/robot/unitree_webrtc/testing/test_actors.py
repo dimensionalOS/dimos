@@ -19,7 +19,7 @@ import pytest
 
 from dimos import core
 from dimos.core import Module, rpc
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.map import Map as Mapper
 
 
@@ -38,6 +38,7 @@ class Consumer:
 
     def __init__(self, counter=None) -> None:
         self.testf = counter
+        self._tasks: set[asyncio.Task[None]] = set()
         print("consumer init with", counter)
 
     async def waitcall(self, n: int):
@@ -48,7 +49,9 @@ class Consumer:
             res = await self.testf(n)
             print("res is", res)
 
-        asyncio.create_task(task())
+        background_task = asyncio.create_task(task())
+        self._tasks.add(background_task)
+        background_task.add_done_callback(self._tasks.discard)
         return n
 
 
@@ -95,7 +98,7 @@ def test_basic(dimos) -> None:
 @pytest.mark.tool
 def test_mapper_start(dimos) -> None:
     mapper = dimos.deploy(Mapper)
-    mapper.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
+    mapper.lidar.transport = core.LCMTransport("/lidar", PointCloud2)
     print("start res", mapper.start().result())
 
 

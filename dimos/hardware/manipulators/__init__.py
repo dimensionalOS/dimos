@@ -14,12 +14,11 @@
 
 """Manipulator drivers for robotic arms.
 
-Architecture: B-lite (Protocol-based backends with per-arm drivers)
-
-- spec.py: ManipulatorBackend Protocol and shared types
-- xarm/: XArm driver and backend
-- piper/: Piper driver and backend
-- mock/: Mock backend for testing
+Architecture: Protocol-based adapters for different manipulator hardware.
+- spec.py: ManipulatorAdapter Protocol and shared types
+- xarm/: XArm adapter
+- piper/: Piper adapter
+- mock/: Mock adapter for testing
 
 Usage:
     >>> from dimos.hardware.manipulators.xarm import XArm
@@ -30,8 +29,8 @@ Usage:
 
 Testing:
     >>> from dimos.hardware.manipulators.xarm import XArm
-    >>> from dimos.hardware.manipulators.mock import MockBackend
-    >>> arm = XArm(backend=MockBackend())
+    >>> from dimos.hardware.manipulators.mock import MockAdapter
+    >>> arm = XArm(adapter=MockAdapter())
     >>> arm.start()  # No hardware needed!
 """
 
@@ -39,7 +38,7 @@ from dimos.hardware.manipulators.spec import (
     ControlMode,
     DriverStatus,
     JointLimits,
-    ManipulatorBackend,
+    ManipulatorAdapter,
     ManipulatorInfo,
 )
 
@@ -47,6 +46,6 @@ __all__ = [
     "ControlMode",
     "DriverStatus",
     "JointLimits",
-    "ManipulatorBackend",
+    "ManipulatorAdapter",
     "ManipulatorInfo",
 ]

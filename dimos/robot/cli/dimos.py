@@ -22,8 +22,9 @@ import typer
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
 from dimos.protocol import pubsub
-from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name, get_module_by_name
+from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.cli.topic import topic_echo, topic_send
+from dimos.robot.get_all_blueprints import get_blueprint_by_name, get_module_by_name
 from dimos.utils.logging_config import setup_exception_handler
 
 RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})  # type: ignore[misc]

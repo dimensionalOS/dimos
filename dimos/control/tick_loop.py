@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tick loop for the ControlOrchestrator.
+"""Tick loop for the ControlCoordinator.
 
 This module contains the core control loop logic:
 - Read state from all hardware
@@ -21,7 +21,7 @@ This module contains the core control loop logic:
 - Route commands to hardware
 - Publish aggregated joint state
 
-Separated from orchestrator.py following the DimOS pattern of
+Separated from coordinator.py following the DimOS pattern of
 splitting coordination logic from module wrapper.
 """
 
@@ -33,9 +33,9 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from dimos.control.task import (
     ControlTask,
+    CoordinatorState,
     JointCommandOutput,
     JointStateSnapshot,
-    OrchestratorState,
     ResourceClaim,
 )
 from dimos.msgs.sensor_msgs import JointState
@@ -44,7 +44,8 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from dimos.control.hardware_interface import HardwareInterface
+    from dimos.control.components import HardwareId, JointName, TaskName
+    from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.manipulators.spec import ControlMode
 
 logger = setup_logger()
@@ -60,7 +61,7 @@ class JointWinner(NamedTuple):
 
 
 class TickLoop:
-    """Core tick loop for the control orchestrator.
+    """Core tick loop for the control coordinator.
 
     Runs the deterministic control cycle:
     1. READ: Collect joint state from all hardware
@@ -73,7 +74,7 @@ class TickLoop:
 
     Args:
         tick_rate: Control loop frequency in Hz
-        hardware: Dict of hardware_id -> HardwareInterface
+        hardware: Dict of hardware_id -> ConnectedHardware
         hardware_lock: Lock protecting hardware dict
         tasks: Dict of task_name -> ControlTask
         task_lock: Lock protecting tasks dict
@@ -86,13 +87,13 @@ class TickLoop:
     def __init__(
         self,
         tick_rate: float,
-        hardware: dict[str, HardwareInterface],
+        hardware: dict[HardwareId, ConnectedHardware],
         hardware_lock: threading.Lock,
-        tasks: dict[str, ControlTask],
+        tasks: dict[TaskName, ControlTask],
         task_lock: threading.Lock,
-        joint_to_hardware: dict[str, str],
+        joint_to_hardware: dict[JointName, HardwareId],
         publish_callback: Callable[[JointState], None] | None = None,
-        frame_id: str = "orchestrator",
+        frame_id: str = "coordinator",
         log_ticks: bool = False,
     ) -> None:
         self._tick_rate = tick_rate
@@ -133,7 +134,7 @@ class TickLoop:
 
         self._tick_thread = threading.Thread(
             target=self._loop,
-            name="ControlOrchestrator-Tick",
+            name="ControlCoordinator-Tick",
             daemon=True,
         )
         self._tick_thread.start()
@@ -173,7 +174,7 @@ class TickLoop:
 
         # === PHASE 1: READ ALL HARDWARE ===
         joint_states = self._read_all_hardware()
-        state = OrchestratorState(joints=joint_states, t_now=t_now, dt=dt)
+        state = CoordinatorState(joints=joint_states, t_now=t_now, dt=dt)
 
         # === PHASE 2: COMPUTE ALL ACTIVE TASKS ===
         commands = self._compute_all_tasks(state)
@@ -213,10 +214,10 @@ class TickLoop:
             for hw in self._hardware.values():
                 try:
                     state = hw.read_state()
-                    for joint_name, (pos, vel, eff) in state.items():
-                        joint_positions[joint_name] = pos
-                        joint_velocities[joint_name] = vel
-                        joint_efforts[joint_name] = eff
+                    for joint_name, joint_state in state.items():
+                        joint_positions[joint_name] = joint_state.position
+                        joint_velocities[joint_name] = joint_state.velocity
+                        joint_efforts[joint_name] = joint_state.effort
                 except Exception as e:
                     logger.error(f"Failed to read {hw.hardware_id}: {e}")
 
@@ -228,7 +229,7 @@ class TickLoop:
         )
 
     def _compute_all_tasks(
-        self, state: OrchestratorState
+        self, state: CoordinatorState
     ) -> list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]]:
         """Compute outputs from all active tasks."""
         results: list[tuple[ControlTask, ResourceClaim, JointCommandOutput | None]] = []

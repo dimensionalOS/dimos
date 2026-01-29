@@ -12,22 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from concurrent.futures import ThreadPoolExecutor
 import time
-from typing import TypeVar
+from typing import Any
 
 from dimos import core
-from dimos.core import DimosCluster, Module
+from dimos.core import DimosCluster
 from dimos.core.global_config import GlobalConfig
+from dimos.core.module import Module, ModuleT
 from dimos.core.resource import Resource
-
-T = TypeVar("T", bound="Module")
+from dimos.core.rpc_client import RPCClient
+from dimos.core.worker_manager import WorkerManager
 
 
 class ModuleCoordinator(Resource):
-    _client: DimosCluster | None = None
+    _client: DimosCluster | WorkerManager | None = None
+    _global_config: GlobalConfig
     _n: int | None = None
     _memory_limit: str = "auto"
-    _deployed_modules: dict[type[Module], Module] = {}
+    _deployed_modules: dict[type[Module], RPCClient] = {}
 
     def __init__(
         self,
@@ -37,9 +40,13 @@ class ModuleCoordinator(Resource):
         cfg = global_config or GlobalConfig()
         self._n = n if n is not None else cfg.n_dask_workers
         self._memory_limit = cfg.memory_limit
+        self._global_config = cfg
 
     def start(self) -> None:
-        self._client = core.start(self._n, self._memory_limit)
+        if self._global_config.dask:
+            self._client = core.start(self._n, self._memory_limit)
+        else:
+            self._client = WorkerManager()
 
     def stop(self) -> None:
         for module in reversed(self._deployed_modules.values()):
@@ -47,19 +54,41 @@ class ModuleCoordinator(Resource):
 
         self._client.close_all()  # type: ignore[union-attr]
 
-    def deploy(self, module_class: type[T], *args, **kwargs) -> T:  # type: ignore[no-untyped-def]
+    def deploy(self, module_class: type[ModuleT], *args: Any, **kwargs: Any) -> RPCClient:
         if not self._client:
             raise ValueError("Not started")
 
-        module = self._client.deploy(module_class, *args, **kwargs)  # type: ignore[attr-defined]
+        module = self._client.deploy(module_class, *args, **kwargs)  # type: ignore[union-attr]
         self._deployed_modules[module_class] = module
-        return module  # type: ignore[no-any-return]
+        return module
+
+    def deploy_parallel(
+        self, module_specs: list[tuple[type[ModuleT], tuple[Any, ...], dict[str, Any]]]
+    ) -> list[RPCClient]:
+        if not self._client:
+            raise ValueError("Not started")
+
+        if isinstance(self._client, WorkerManager):
+            modules = self._client.deploy_parallel(module_specs)
+            for (module_class, _, _), module in zip(module_specs, modules, strict=True):
+                self._deployed_modules[module_class] = module
+            return modules  # type: ignore[return-value]
+        else:
+            return [
+                self.deploy(module_class, *args, **kwargs)
+                for module_class, args, kwargs in module_specs
+            ]
 
     def start_all_modules(self) -> None:
-        for module in self._deployed_modules.values():
-            module.start()
+        modules = list(self._deployed_modules.values())
+        if isinstance(self._client, WorkerManager):
+            with ThreadPoolExecutor(max_workers=len(modules)) as executor:
+                list(executor.map(lambda m: m.start(), modules))
+        else:
+            for module in modules:
+                module.start()
 
-    def get_instance(self, module: type[T]) -> T | None:
+    def get_instance(self, module: type[ModuleT]) -> ModuleT | None:
         return self._deployed_modules.get(module)  # type: ignore[return-value]
 
     def loop(self) -> None:

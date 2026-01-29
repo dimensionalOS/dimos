@@ -54,6 +54,7 @@ def test_weaklist_basic_operations() -> None:
     assert SampleObject(4) not in wl
 
 
+@pytest.mark.integration
 def test_weaklist_auto_removal() -> None:
     """Test that objects are automatically removed when garbage collected."""
     wl = WeakList()
@@ -136,6 +137,7 @@ def test_weaklist_clear() -> None:
     assert obj1 not in wl
 
 
+@pytest.mark.integration
 def test_weaklist_iteration_during_modification() -> None:
     """Test that iteration works even if objects are deleted during iteration."""
     wl = WeakList()

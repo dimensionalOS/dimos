@@ -52,6 +52,7 @@ class UnifiedGatewayClient:
         self.timeout = timeout
         self._client = None
         self._async_client = None
+        self._aclose_task: asyncio.Task[None] | None = None
 
         # Always use TensorZero embedded gateway
         try:
@@ -177,7 +178,7 @@ class UnifiedGatewayClient:
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    loop.create_task(self.aclose())
+                    self._aclose_task = loop.create_task(self.aclose())
                 else:
                     loop.run_until_complete(self.aclose())
             except RuntimeError:

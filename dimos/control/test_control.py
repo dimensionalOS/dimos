@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the Control Orchestrator module."""
+"""Tests for the Control Coordinator module."""
 
 from __future__ import annotations
 
@@ -22,12 +22,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.control.hardware_interface import BackendHardwareInterface
+from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import (
     ControlMode,
+    CoordinatorState,
     JointCommandOutput,
     JointStateSnapshot,
-    OrchestratorState,
     ResourceClaim,
 )
 from dimos.control.tasks.trajectory_task import (
@@ -36,6 +37,7 @@ from dimos.control.tasks.trajectory_task import (
     TrajectoryState,
 )
 from dimos.control.tick_loop import TickLoop
+from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
 
 # =============================================================================
@@ -44,28 +46,28 @@ from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
 
 
 @pytest.fixture
-def mock_backend():
-    """Create a mock manipulator backend."""
-    backend = MagicMock()
-    backend.get_dof.return_value = 6
-    backend.get_joint_names.return_value = [f"joint{i + 1}" for i in range(6)]
-    backend.read_joint_positions.return_value = [0.0] * 6
-    backend.read_joint_velocities.return_value = [0.0] * 6
-    backend.read_joint_efforts.return_value = [0.0] * 6
-    backend.write_joint_positions.return_value = True
-    backend.write_joint_velocities.return_value = True
-    backend.set_control_mode.return_value = True
-    return backend
+def mock_adapter():
+    """Create a mock manipulator adapter."""
+    adapter = MagicMock(spec=ManipulatorAdapter)
+    adapter.get_dof.return_value = 6
+    adapter.read_joint_positions.return_value = [0.0] * 6
+    adapter.read_joint_velocities.return_value = [0.0] * 6
+    adapter.read_joint_efforts.return_value = [0.0] * 6
+    adapter.write_joint_positions.return_value = True
+    adapter.write_joint_velocities.return_value = True
+    adapter.set_control_mode.return_value = True
+    return adapter
 
 
 @pytest.fixture
-def hardware_interface(mock_backend):
-    """Create a BackendHardwareInterface with mock backend."""
-    return BackendHardwareInterface(
-        backend=mock_backend,
+def connected_hardware(mock_adapter):
+    """Create a ConnectedHardware instance with mock adapter."""
+    component = HardwareComponent(
         hardware_id="test_arm",
-        joint_prefix="arm",
+        hardware_type=HardwareType.MANIPULATOR,
+        joints=make_joints("arm", 6),
     )
+    return ConnectedHardware(adapter=mock_adapter, component=component)
 
 
 @pytest.fixture
@@ -99,15 +101,15 @@ def simple_trajectory():
 
 
 @pytest.fixture
-def orchestrator_state():
-    """Create a sample OrchestratorState."""
+def coordinator_state():
+    """Create a sample CoordinatorState."""
     joints = JointStateSnapshot(
         joint_positions={"arm_joint1": 0.0, "arm_joint2": 0.0, "arm_joint3": 0.0},
         joint_velocities={"arm_joint1": 0.0, "arm_joint2": 0.0, "arm_joint3": 0.0},
         joint_efforts={"arm_joint1": 0.0, "arm_joint2": 0.0, "arm_joint3": 0.0},
         timestamp=time.perf_counter(),
     )
-    return OrchestratorState(joints=joints, t_now=time.perf_counter(), dt=0.01)
+    return CoordinatorState(joints=joints, t_now=time.perf_counter(), dt=0.01)
 
 
 # =============================================================================
@@ -170,13 +172,13 @@ class TestJointStateSnapshot:
 
 
 # =============================================================================
-# Test BackendHardwareInterface
+# Test ConnectedHardware
 # =============================================================================
 
 
-class TestBackendHardwareInterface:
-    def test_joint_names_prefixed(self, hardware_interface):
-        names = hardware_interface.joint_names
+class TestConnectedHardware:
+    def test_joint_names_prefixed(self, connected_hardware):
+        names = connected_hardware.joint_names
         assert names == [
             "arm_joint1",
             "arm_joint2",
@@ -186,22 +188,22 @@ class TestBackendHardwareInterface:
             "arm_joint6",
         ]
 
-    def test_read_state(self, hardware_interface):
-        state = hardware_interface.read_state()
+    def test_read_state(self, connected_hardware):
+        state = connected_hardware.read_state()
         assert "arm_joint1" in state
         assert len(state) == 6
-        pos, vel, eff = state["arm_joint1"]
-        assert pos == 0.0
-        assert vel == 0.0
-        assert eff == 0.0
+        joint_state = state["arm_joint1"]
+        assert joint_state.position == 0.0
+        assert joint_state.velocity == 0.0
+        assert joint_state.effort == 0.0
 
-    def test_write_command(self, hardware_interface, mock_backend):
+    def test_write_command(self, connected_hardware, mock_adapter):
         commands = {
             "arm_joint1": 0.5,
             "arm_joint2": 1.0,
         }
-        hardware_interface.write_command(commands, ControlMode.POSITION)
-        mock_backend.write_joint_positions.assert_called()
+        connected_hardware.write_command(commands, ControlMode.POSITION)
+        mock_adapter.write_joint_positions.assert_called()
 
 
 # =============================================================================
@@ -229,23 +231,21 @@ class TestJointTrajectoryTask:
         assert trajectory_task.is_active()
         assert trajectory_task.get_state() == TrajectoryState.EXECUTING
 
-    def test_compute_during_trajectory(
-        self, trajectory_task, simple_trajectory, orchestrator_state
-    ):
+    def test_compute_during_trajectory(self, trajectory_task, simple_trajectory, coordinator_state):
         t_start = time.perf_counter()
         trajectory_task.execute(simple_trajectory)
 
         # First compute sets start time (deferred start)
-        state0 = OrchestratorState(
-            joints=orchestrator_state.joints,
+        state0 = CoordinatorState(
+            joints=coordinator_state.joints,
             t_now=t_start,
             dt=0.01,
         )
         trajectory_task.compute(state0)
 
         # Compute at 0.5s into trajectory
-        state = OrchestratorState(
-            joints=orchestrator_state.joints,
+        state = CoordinatorState(
+            joints=coordinator_state.joints,
             t_now=t_start + 0.5,
             dt=0.01,
         )
@@ -256,21 +256,21 @@ class TestJointTrajectoryTask:
         assert len(output.positions) == 3
         assert 0.4 < output.positions[0] < 0.6
 
-    def test_trajectory_completes(self, trajectory_task, simple_trajectory, orchestrator_state):
+    def test_trajectory_completes(self, trajectory_task, simple_trajectory, coordinator_state):
         t_start = time.perf_counter()
         trajectory_task.execute(simple_trajectory)
 
         # First compute sets start time (deferred start)
-        state0 = OrchestratorState(
-            joints=orchestrator_state.joints,
+        state0 = CoordinatorState(
+            joints=coordinator_state.joints,
             t_now=t_start,
             dt=0.01,
         )
         trajectory_task.compute(state0)
 
         # Compute past trajectory duration
-        state = OrchestratorState(
-            joints=orchestrator_state.joints,
+        state = CoordinatorState(
+            joints=coordinator_state.joints,
             t_now=t_start + 1.5,
             dt=0.01,
         )
@@ -297,13 +297,13 @@ class TestJointTrajectoryTask:
         assert trajectory_task.get_state() == TrajectoryState.ABORTED
         assert not trajectory_task.is_active()
 
-    def test_progress(self, trajectory_task, simple_trajectory, orchestrator_state):
+    def test_progress(self, trajectory_task, simple_trajectory, coordinator_state):
         t_start = time.perf_counter()
         trajectory_task.execute(simple_trajectory)
 
         # First compute sets start time (deferred start)
-        state0 = OrchestratorState(
-            joints=orchestrator_state.joints,
+        state0 = CoordinatorState(
+            joints=coordinator_state.joints,
             t_now=t_start,
             dt=0.01,
         )
@@ -428,8 +428,13 @@ class TestArbitration:
 
 
 class TestTickLoop:
-    def test_tick_loop_starts_and_stops(self, mock_backend):
-        hw = BackendHardwareInterface(mock_backend, "arm", "arm")
+    def test_tick_loop_starts_and_stops(self, mock_adapter):
+        component = HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+        )
+        hw = ConnectedHardware(mock_adapter, component)
         hardware = {"arm": hw}
         tasks: dict = {}
         joint_to_hardware = {f"arm_joint{i + 1}": "arm" for i in range(6)}
@@ -452,8 +457,13 @@ class TestTickLoop:
         time.sleep(0.02)
         assert tick_loop.tick_count == final_count
 
-    def test_tick_loop_calls_compute(self, mock_backend):
-        hw = BackendHardwareInterface(mock_backend, "arm", "arm")
+    def test_tick_loop_calls_compute(self, mock_adapter):
+        component = HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+        )
+        hw = ConnectedHardware(mock_adapter, component)
         hardware = {"arm": hw}
 
         mock_task = MagicMock()
@@ -494,8 +504,13 @@ class TestTickLoop:
 
 
 class TestIntegration:
-    def test_full_trajectory_execution(self, mock_backend):
-        hw = BackendHardwareInterface(mock_backend, "arm", "arm")
+    def test_full_trajectory_execution(self, mock_adapter):
+        component = HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+        )
+        hw = ConnectedHardware(mock_adapter, component)
         hardware = {"arm": hw}
 
         config = JointTrajectoryTaskConfig(
@@ -539,4 +554,4 @@ class TestIntegration:
         tick_loop.stop()
 
         assert traj_task.get_state() == TrajectoryState.COMPLETED
-        assert mock_backend.write_joint_positions.call_count > 0
+        assert mock_adapter.write_joint_positions.call_count > 0

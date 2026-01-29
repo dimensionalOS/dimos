@@ -19,12 +19,11 @@ import time
 from typing import Literal
 
 import cv2
-from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import create
 from reactivex.observable import Observable
 
 from dimos.hardware.sensors.camera.spec import CameraConfig, CameraHardware
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.utils.reactive import backpressure
 

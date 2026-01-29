@@ -26,12 +26,15 @@ from typing import (
     overload,
 )
 
+from typing_extensions import TypeVar as TypeVarExtension
+
 if TYPE_CHECKING:
     from dimos.core.introspection.module import ModuleInfo
 
+from typing import TypeVar
+
 from dask.distributed import Actor, get_worker
 from reactivex.disposable import CompositeDisposable
-from typing_extensions import TypeVar
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
@@ -82,7 +85,7 @@ class ModuleConfig:
     frame_id: str | None = None
 
 
-ModuleConfigT = TypeVar("ModuleConfigT", bound=ModuleConfig, default=ModuleConfig)
+ModuleConfigT = TypeVarExtension("ModuleConfigT", bound=ModuleConfig, default=ModuleConfig)
 
 
 class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
@@ -355,7 +358,7 @@ class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
         return result[0] if len(result) == 1 else result
 
 
-class DaskModule(ModuleBase[ModuleConfigT]):
+class Module(ModuleBase[ModuleConfigT]):
     ref: Actor
     worker: int
 
@@ -454,5 +457,4 @@ class DaskModule(ModuleBase[ModuleConfigT]):
         getattr(self, output_name).transport.dask_register_subscriber(subscriber)
 
 
-# global setting
-Module = DaskModule
+ModuleT = TypeVar("ModuleT", bound="Module")

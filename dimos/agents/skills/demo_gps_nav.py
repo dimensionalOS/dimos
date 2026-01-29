@@ -24,7 +24,7 @@ from dimos.core.blueprints import autoconnect
 load_dotenv()
 
 
-demo_gps_nav_skill = autoconnect(
+demo_gps_nav = autoconnect(
     demo_robot(),
     gps_nav_skill(),
     human_input(),

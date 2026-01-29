@@ -27,16 +27,24 @@ from dimos.agents.cli.human import human_input
 from dimos.agents.cli.web import web_input
 from dimos.agents.ollama_agent import ollama_installed
 from dimos.agents.skills.navigation import navigation_skill
+from dimos.agents.skills.person_follow import person_follow_skill
 from dimos.agents.skills.speak_skill import speak_skill
 from dimos.agents.spec import Provider
 from dimos.agents.vlm_agent import vlm_agent
 from dimos.agents.vlm_stream_tester import vlm_stream_tester
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
-from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
+from dimos.core.transport import (
+    JpegLcmTransport,
+    JpegShmTransport,
+    LCMTransport,
+    ROSTransport,
+    pSHMTransport,
+)
 from dimos.dashboard.tf_rerun_module import tf_rerun
 from dimos.mapping.costmapper import cost_mapper
 from dimos.mapping.voxels import voxel_mapper
+from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.navigation.frontier_exploration import (
@@ -62,7 +70,7 @@ _GO2_URDF = Path(_go2_mod.__file__).parent.parent / "go2" / "go2.urdf"
 #
 # so we use pSHMTransport for color_image
 # (Could we adress this on the system config layer? Is this fixable on mac?)
-mac = autoconnect(
+_mac = autoconnect(
     foxglove_bridge(
         shm_channels=[
             "/color_image#sensor_msgs.Image",
@@ -77,11 +85,11 @@ mac = autoconnect(
 )
 
 
-linux = autoconnect(foxglove_bridge())
+_linux = autoconnect(foxglove_bridge())
 
-basic = autoconnect(
+unitree_go2_basic = autoconnect(
     go2_connection(),
-    linux if platform.system() == "Linux" else mac,
+    _linux if platform.system() == "Linux" else _mac,
     websocket_vis(),
     tf_rerun(
         urdf_path=str(_GO2_URDF),
@@ -91,17 +99,26 @@ basic = autoconnect(
     ),
 ).global_config(n_dask_workers=4, robot_model="unitree_go2")
 
-nav = autoconnect(
-    basic,
+unitree_go2 = autoconnect(
+    unitree_go2_basic,
     voxel_mapper(voxel_size=0.1),
     cost_mapper(),
     replanning_a_star_planner(),
     wavefront_frontier_explorer(),
 ).global_config(n_dask_workers=6, robot_model="unitree_go2")
 
-detection = (
+unitree_go2_ros = unitree_go2.transports(
+    {
+        ("lidar", PointCloud2): ROSTransport("lidar", PointCloud2),
+        ("global_map", PointCloud2): ROSTransport("global_map", PointCloud2),
+        ("odom", PoseStamped): ROSTransport("odom", PoseStamped),
+        ("color_image", Image): ROSTransport("color_image", Image),
+    }
+)
+
+unitree_go2_detection = (
     autoconnect(
-        nav,
+        unitree_go2,
         detection3d_module(
             camera_info=GO2Connection.camera_info_static,
         ),
@@ -140,20 +157,20 @@ detection = (
 )
 
 
-spatial = autoconnect(
-    nav,
+unitree_go2_spatial = autoconnect(
+    unitree_go2,
     spatial_memory(),
     utilization(),
 ).global_config(n_dask_workers=8)
 
-with_jpeglcm = nav.transports(
+_with_jpeglcm = unitree_go2.transports(
     {
         ("color_image", Image): JpegLcmTransport("/color_image", Image),
     }
 )
 
-with_jpegshm = autoconnect(
-    nav.transports(
+_with_jpegshm = autoconnect(
+    unitree_go2.transports(
         {
             ("color_image", Image): JpegShmTransport("/color_image", quality=75),
         }
@@ -168,24 +185,25 @@ with_jpegshm = autoconnect(
 _common_agentic = autoconnect(
     human_input(),
     navigation_skill(),
+    person_follow_skill(camera_info=GO2Connection.camera_info_static),
     unitree_skills(),
     web_input(),
     speak_skill(),
 )
 
-agentic = autoconnect(
-    spatial,
+unitree_go2_agentic = autoconnect(
+    unitree_go2_spatial,
     llm_agent(),
     _common_agentic,
 )
 
-agentic_mcp = autoconnect(
-    agentic,
+unitree_go2_agentic_mcp = autoconnect(
+    unitree_go2_agentic,
     MCPModule.blueprint(),
 )
 
-agentic_ollama = autoconnect(
-    spatial,
+unitree_go2_agentic_ollama = autoconnect(
+    unitree_go2_spatial,
     llm_agent(
         model="qwen3:8b",
         provider=Provider.OLLAMA,  # type: ignore[attr-defined]
@@ -195,8 +213,8 @@ agentic_ollama = autoconnect(
     ollama_installed,
 )
 
-agentic_huggingface = autoconnect(
-    spatial,
+unitree_go2_agentic_huggingface = autoconnect(
+    unitree_go2_spatial,
     llm_agent(
         model="Qwen/Qwen2.5-1.5B-Instruct",
         provider=Provider.HUGGINGFACE,  # type: ignore[attr-defined]
@@ -204,13 +222,13 @@ agentic_huggingface = autoconnect(
     _common_agentic,
 )
 
-vlm_stream_test = autoconnect(
-    basic,
+unitree_go2_vlm_stream_test = autoconnect(
+    unitree_go2_basic,
     vlm_agent(),
     vlm_stream_tester(),
 )
 
-temporal_memory = autoconnect(
-    agentic,
+unitree_go2_temporal_memory = autoconnect(
+    unitree_go2_agentic,
     temporal_memory(),
 )

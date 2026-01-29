@@ -20,8 +20,8 @@ Architecture:
     - All processes share the same Rerun recording stream
 
 Viewer modes (set via VIEWER_BACKEND config or environment variable):
-    - "rerun-web" (default): Web viewer on port 9090
-    - "rerun-native": Native Rerun viewer (requires display)
+    - "rerun-web": Web viewer on port 9090
+    - "rerun-native" (default): Native Rerun viewer (requires display)
     - "foxglove": Use Foxglove instead of Rerun
 
 Usage:
@@ -64,7 +64,7 @@ _connected = False
 _rerun_init_lock = threading.Lock()
 
 
-def init_rerun_server(viewer_mode: str = "rerun-web", memory_limit: str = "4GB") -> str:
+def init_rerun_server(viewer_mode: str, memory_limit: str = "4GB") -> str:
     """Initialize Rerun server in the main process.
 
     Starts the gRPC server and optionally the web/native viewer.

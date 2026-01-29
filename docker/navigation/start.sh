@@ -9,6 +9,10 @@ NC='\033[0m'
 
 # Parse command line arguments
 MODE="simulation"
+USE_ROUTE_PLANNER="false"
+USE_RVIZ="false"
+DEV_MODE="false"
+ROS_DISTRO="humble"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --hardware)
@@ -19,17 +23,47 @@ while [[ $# -gt 0 ]]; do
             MODE="simulation"
             shift
             ;;
+        --route-planner)
+            USE_ROUTE_PLANNER="true"
+            shift
+            ;;
+        --rviz)
+            USE_RVIZ="true"
+            shift
+            ;;
+        --dev)
+            DEV_MODE="true"
+            shift
+            ;;
+        --humble)
+            ROS_DISTRO="humble"
+            shift
+            ;;
+        --jazzy)
+            ROS_DISTRO="jazzy"
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --simulation    Start simulation container (default)"
-            echo "  --hardware      Start hardware container for real robot"
-            echo "  --help, -h      Show this help message"
+            echo "  --simulation      Start simulation container (default)"
+            echo "  --hardware        Start hardware container for real robot"
+            echo "  --route-planner   Enable FAR route planner (for hardware mode)"
+            echo "  --rviz            Launch RViz2 visualization"
+            echo "  --dev             Development mode (mount src for config editing)"
+            echo "  --humble          Use ROS 2 Humble image (default)"
+            echo "  --jazzy           Use ROS 2 Jazzy image"
+            echo "  --help, -h        Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                # Start simulation container"
-            echo "  $0 --hardware     # Start hardware container"
+            echo "  $0                                    # Start simulation (Humble)"
+            echo "  $0 --jazzy                            # Start simulation (Jazzy)"
+            echo "  $0 --hardware                         # Start hardware (base autonomy, Humble)"
+            echo "  $0 --hardware --jazzy                 # Start hardware (Jazzy)"
+            echo "  $0 --hardware --route-planner         # Hardware with route planner"
+            echo "  $0 --hardware --route-planner --rviz  # Hardware with route planner + RViz"
+            echo "  $0 --hardware --dev                   # Hardware with src mounted for development"
             echo ""
             echo "Press Ctrl+C to stop the container"
             exit 0
@@ -42,12 +76,15 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+export ROS_DISTRO
+
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
 echo -e "${GREEN}================================================${NC}"
 echo -e "${GREEN}Starting DimOS Docker Container${NC}"
 echo -e "${GREEN}Mode: ${MODE}${NC}"
+echo -e "${GREEN}ROS Distribution: ${ROS_DISTRO}${NC}"
 echo -e "${GREEN}================================================${NC}"
 echo ""
 
@@ -74,7 +111,23 @@ if [ "$MODE" = "hardware" ]; then
         set -a
         source .env
         set +a
+    fi
 
+    # Auto-detect group IDs for device permissions
+    echo -e "${GREEN}Detecting device group IDs...${NC}"
+    export INPUT_GID=$(getent group input | cut -d: -f3 || echo "995")
+    export DIALOUT_GID=$(getent group dialout | cut -d: -f3 || echo "20")
+    # Warn if fallback values are being used
+    if ! getent group input > /dev/null 2>&1; then
+        echo -e "${YELLOW}Warning: input group not found, using fallback GID ${INPUT_GID}${NC}"
+    fi
+    if ! getent group dialout > /dev/null 2>&1; then
+        echo -e "${YELLOW}Warning: dialout group not found, using fallback GID ${DIALOUT_GID}${NC}"
+    fi
+    echo -e "  input group GID: ${INPUT_GID}"
+    echo -e "  dialout group GID: ${DIALOUT_GID}"
+
+    if [ -f ".env" ]; then
         # Check for required environment variables
         if [ -z "$LIDAR_IP" ] || [ "$LIDAR_IP" = "192.168.1.116" ]; then
             echo -e "${YELLOW}Warning: LIDAR_IP still using default value in .env${NC}"
@@ -165,21 +218,33 @@ if [ "$MODE" = "hardware" ]; then
 
 fi
 
-# Check if unified image exists
-if ! docker images | grep -q "dimos_autonomy_stack.*jazzy"; then
-    echo -e "${YELLOW}Docker image not found. Building...${NC}"
-    ./build.sh
+# Check if the correct ROS distro image exists
+if ! docker images | grep -q "dimos_autonomy_stack.*${ROS_DISTRO}"; then
+    echo -e "${YELLOW}Docker image for ROS ${ROS_DISTRO} not found. Building...${NC}"
+    ./build.sh --${ROS_DISTRO}
 fi
 
 # Check for X11 display
 if [ -z "$DISPLAY" ]; then
     echo -e "${YELLOW}Warning: DISPLAY not set. GUI applications may not work.${NC}"
     export DISPLAY=:0
+else
+    echo -e "${GREEN}Using DISPLAY: $DISPLAY${NC}"
 fi
+export DISPLAY
 
 # Allow X11 connections from Docker
 echo -e "${GREEN}Configuring X11 access...${NC}"
 xhost +local:docker 2>/dev/null || true
+
+# Setup X11 auth for remote/SSH connections
+XAUTH=/tmp/.docker.xauth
+touch $XAUTH 2>/dev/null || true
+if [ -n "$DISPLAY" ]; then
+    xauth nlist $DISPLAY 2>/dev/null | sed -e 's/^..../ffff/' | xauth -f $XAUTH nmerge - 2>/dev/null || true
+    chmod 644 $XAUTH 2>/dev/null || true
+    echo -e "${GREEN}X11 auth configured for display: $DISPLAY${NC}"
+fi
 
 cleanup() {
     xhost -local:docker 2>/dev/null || true
@@ -207,15 +272,37 @@ else
     CONTAINER_NAME="dimos_simulation_container"
 fi
 
+# Export settings for docker-compose
+export USE_ROUTE_PLANNER
+export USE_RVIZ
+
 # Print helpful info before starting
 echo ""
 if [ "$MODE" = "hardware" ]; then
-    echo "Hardware mode - Interactive shell"
+    if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+        echo "Hardware mode - Auto-starting ROS real robot system WITH route planner"
+        echo ""
+        echo "The container will automatically run:"
+        echo "  - ROS navigation stack (system_real_robot_with_route_planner.launch)"
+        echo "  - FAR Planner for goal-based navigation"
+        echo "  - Foxglove Bridge"
+    else
+        echo "Hardware mode - Auto-starting ROS real robot system (base autonomy)"
+        echo ""
+        echo "The container will automatically run:"
+        echo "  - ROS navigation stack (system_real_robot.launch)"
+        echo "  - Foxglove Bridge"
+    fi
+    if [ "$USE_RVIZ" = "true" ]; then
+        echo "  - RViz2 visualization"
+    fi
+    if [ "$DEV_MODE" = "true" ]; then
+        echo ""
+        echo -e "  ${YELLOW}Development mode: src folder mounted for config editing${NC}"
+    fi
     echo ""
-    echo -e "${GREEN}=================================================${NC}"
-    echo -e "${GREEN}The container is running. Exec in to run scripts:${NC}"
+    echo "To enter the container from another terminal:"
     echo -e "    ${YELLOW}docker exec -it ${CONTAINER_NAME} bash${NC}"
-    echo -e "${GREEN}=================================================${NC}"
 else
     echo "Simulation mode - Auto-starting ROS simulation and DimOS"
     echo ""
@@ -227,8 +314,17 @@ else
     echo "  docker exec -it ${CONTAINER_NAME} bash"
 fi
 
+# Note: DISPLAY is now passed directly via environment variable
+# No need to write RUNTIME_DISPLAY to .env for local host running
+
+# Build compose command with optional dev mode
+COMPOSE_CMD="docker compose -f docker-compose.yml"
+if [ "$DEV_MODE" = "true" ]; then
+    COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"
+fi
+
 if [ "$MODE" = "hardware" ]; then
-    docker compose -f docker-compose.yml --profile hardware up
+    $COMPOSE_CMD --profile hardware up
 else
-    docker compose -f docker-compose.yml up
+    $COMPOSE_CMD up
 fi

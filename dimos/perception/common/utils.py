@@ -34,6 +34,49 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+__all__ = [
+    "BoundingBox2D",
+    "CameraInfo",
+    "Detection2D",
+    "Detection3D",
+    "Header",
+    "Image",
+    "ObjectData",
+    "Pose",
+    "Quaternion",
+    "Union",
+    "Vector",
+    "Vector3",
+    "bbox2d_to_corners",
+    "colorize_depth",
+    "combine_object_data",
+    "cp",
+    "cv2",
+    "detection_results_to_object_data",
+    "draw_bounding_box",
+    "draw_object_detection_visualization",
+    "draw_segmentation_mask",
+    "extract_pose_from_detection3d",
+    "find_clicked_detection",
+    "load_camera_info",
+    "load_camera_info_opencv",
+    "logger",
+    "np",
+    "point_in_bbox",
+    "project_2d_points_to_3d",
+    "project_2d_points_to_3d_cpu",
+    "project_2d_points_to_3d_cuda",
+    "project_3d_points_to_2d",
+    "project_3d_points_to_2d_cpu",
+    "project_3d_points_to_2d_cuda",
+    "rectify_image",
+    "rectify_image_cpu",
+    "rectify_image_cuda",
+    "setup_logger",
+    "torch",
+    "yaml",
+]
+
 # Optional CuPy support
 try:  # pragma: no cover - optional dependency
     import cupy as cp  # type: ignore[import-not-found]
