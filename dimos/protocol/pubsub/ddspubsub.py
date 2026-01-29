@@ -35,6 +35,21 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+# High-throughput QoS preset
+HIGH_THROUGHPUT_QOS = Qos(
+    Policy.Reliability.BestEffort,
+    Policy.History.KeepLast(depth=1),
+    Policy.Durability.Volatile,
+)
+
+# Reliable QoS preset
+RELIABLE_QOS = Qos(
+    Policy.Reliability.Reliable(max_blocking_time=0),
+    Policy.History.KeepLast(depth=5000),
+    Policy.Durability.Volatile,
+)
+
+
 @dataclass(frozen=True)
 class Topic:
     """Represents a DDS topic."""
@@ -78,7 +93,7 @@ class _DDSMessageListener(Listener):
 
 
 class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
-    def __init__(self, qos: Qos | None = None, **kwargs: Any) -> None:
+    def __init__(self, qos: Qos = HIGH_THROUGHPUT_QOS, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._qos = qos
         self._callbacks: dict[Topic, list[MessageCallback]] = {}
@@ -143,6 +158,8 @@ class DDS(DDSPubSubBase): ...
 
 __all__ = [
     "DDS",
+    "HIGH_THROUGHPUT_QOS",
+    "RELIABLE_QOS",
     "DDSPubSubBase",
     "MessageCallback",
     "Policy",
