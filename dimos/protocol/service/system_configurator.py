@@ -282,11 +282,13 @@ class MulticastConfiguratorMacOS(SystemConfigurator):
 # ------------------------------ specific checks: buffers ------------------------------
 
 IDEAL_RMEM_SIZE = 67_108_864  # 64MB
+IDEAL_WMEM_SIZE = 67_108_864  # 64MB
 
 
 class BufferConfiguratorLinux(SystemConfigurator):
     critical = False
 
+    TARGET_WMEM_SIZE = IDEAL_WMEM_SIZE
     TARGET_RMEM_SIZE = IDEAL_RMEM_SIZE
 
     def __init__(self) -> None:
@@ -297,6 +299,8 @@ class BufferConfiguratorLinux(SystemConfigurator):
         for key, target in [
             ("net.core.rmem_max", self.TARGET_RMEM_SIZE),
             ("net.core.rmem_default", self.TARGET_RMEM_SIZE),
+            ("net.core.wmem_max", self.TARGET_WMEM_SIZE),
+            ("net.core.wmem_default", self.TARGET_WMEM_SIZE),
         ]:
             current = _read_sysctl_int(key)
             if current is None or current < target:
