@@ -200,7 +200,7 @@ def dds_pubsub_channel() -> Generator[DDS, None, None]:
 def dds_msggen(size: int) -> tuple[DDSTopic, DDSMessage]:
     """Generate message for DDS pubsub benchmark."""
     topic = DDSTopic("benchmark/dds", DDSMessage)
-    msg = DDSMessage(payload=list(make_data(size)))
+    msg = DDSMessage(payload=make_data(size))
     return (topic, msg)
 
 
