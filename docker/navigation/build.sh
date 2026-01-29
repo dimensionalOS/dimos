@@ -61,18 +61,14 @@ cd "$SCRIPT_DIR"
 
 # Use fastlio2 branch which has both arise_slam and FASTLIO2
 TARGET_BRANCH="fastlio2"
-TARGET_REMOTE="vector"
-CLONE_URL="https://github.com/VectorRobotics/vector_navigation_stack.git"
+TARGET_REMOTE="origin"
+CLONE_URL="https://github.com/dimensionalOS/ros-navigation-autonomy-stack.git"
 
 # Clone or checkout ros-navigation-autonomy-stack
 if [ ! -d "ros-navigation-autonomy-stack" ]; then
     echo -e "${YELLOW}Cloning ros-navigation-autonomy-stack repository (${TARGET_BRANCH} branch)...${NC}"
     git clone -b ${TARGET_BRANCH} ${CLONE_URL} ros-navigation-autonomy-stack
     echo -e "${GREEN}Repository cloned successfully!${NC}"
-    # Add vector remote (origin is already set by clone)
-    cd ros-navigation-autonomy-stack
-    git remote add vector https://github.com/VectorRobotics/vector_navigation_stack.git 2>/dev/null || true
-    cd ..
 else
     # Directory exists, ensure we're on the correct branch
     cd ros-navigation-autonomy-stack
