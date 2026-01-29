@@ -69,7 +69,7 @@ _basic_no_nav = (
     autoconnect(
         camera_module(
             transform=Transform(
-                translation=Vector3(0.05, 0.0, 0.6),
+                translation=Vector3(0.05, 0.0, 0.6),  # height of camera on G1 robot
                 rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
                 frame_id="sensor",
                 child_frame_id="camera_link",
