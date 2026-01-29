@@ -16,15 +16,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from cyclonedds.domain import DomainParticipant
 
 from dimos.protocol.service.spec import Service
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 logger = setup_logger()
 
