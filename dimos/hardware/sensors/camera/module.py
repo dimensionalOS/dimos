@@ -20,13 +20,10 @@ from typing import Any
 import reactivex as rx
 from reactivex import operators as ops
 import rerun as rr
-import rerun as rr
 
 from dimos.agents import Output, Reducer, Stream, skill
 from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.core.blueprints import autoconnect
-from dimos.core.global_config import GlobalConfig
-from dimos.dashboard.rerun_init import connect_rerun
 from dimos.core.global_config import GlobalConfig
 from dimos.dashboard.rerun_init import connect_rerun
 from dimos.hardware.sensors.camera.spec import CameraHardware
@@ -66,7 +63,7 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
     _global_config: GlobalConfig
 
     def __init__(
-        self, *args:Any, global_config: GlobalConfig | None = None, **kwargs: Any
+        self, *args: Any, global_config: GlobalConfig | None = None, **kwargs: Any
     ) -> None:
         self._global_config = global_config or GlobalConfig()
         super().__init__(*args, **kwargs)
