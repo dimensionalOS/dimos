@@ -30,8 +30,8 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
 )
 
 try:
-    import cupy as cp  # type: ignore[import-not-found]
-    from cupyx.scipy import (  # type: ignore[import-not-found]
+    import cupy as cp  # type: ignore[import-not-found, import-untyped]
+    from cupyx.scipy import (  # type: ignore[import-not-found, import-untyped]
         ndimage as cndimage,
         signal as csignal,
     )
@@ -516,7 +516,7 @@ def _rodrigues(x, inverse: bool = False):  # type: ignore[no-untyped-def]
 def _undistort_points_cuda(
     img_px: cp.ndarray, K: cp.ndarray, dist: cp.ndarray, iterations: int = 8
 ) -> cp.ndarray:
-    """Iteratively undistort pixel coordinates on device (Brown–Conrady).
+    """Iteratively undistort pixel coordinates on device (Brown-Conrady).
 
     Returns pixel coordinates after undistortion (fx*xu+cx, fy*yu+cy).
     """

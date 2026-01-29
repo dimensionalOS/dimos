@@ -8,7 +8,7 @@ import pytest
 def is_manipulation_installed() -> bool:
     """Check if the manipulation extras are installed."""
     try:
-        import contact_graspnet_pytorch
+        import contact_graspnet_pytorch  # noqa: F401
         return True
     except ImportError:
         return False

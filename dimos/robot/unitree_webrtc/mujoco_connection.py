@@ -62,7 +62,7 @@ class MujocoConnection:
 
     def __init__(self, global_config: GlobalConfig) -> None:
         try:
-            import mujoco
+            import mujoco  # noqa: F401
         except ImportError:
             raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
 
@@ -147,7 +147,9 @@ class MujocoConnection:
                 # Use weakref to avoid preventing garbage collection
                 weak_self = weakref.ref(self)
 
-                def cleanup_on_exit() -> None:
+                def cleanup_on_exit(
+                    weak_self: "weakref.ReferenceType[MujocoConnection]" = weak_self,
+                ) -> None:
                     instance = weak_self()
                     if instance is not None:
                         instance.stop()

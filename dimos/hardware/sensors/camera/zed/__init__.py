@@ -20,7 +20,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CalibrationProvider
 
 # Check if ZED SDK is available
 try:
-    import pyzed.sl as sl
+    import pyzed.sl as sl  # noqa: F401
 
     HAS_ZED_SDK = True
 except ImportError:

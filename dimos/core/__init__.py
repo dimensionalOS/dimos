@@ -48,6 +48,7 @@ __all__ = [
     "TFSpec",
     "Transport",
     "ZenohTransport",
+    "colors",
     "pLCMTransport",
     "pSHMTransport",
     "rpc",
@@ -68,7 +69,7 @@ class CudaCleanupPlugin:
             import sys
 
             if "cupy" in sys.modules:
-                import cupy as cp  # type: ignore[import-not-found]
+                import cupy as cp  # type: ignore[import-not-found, import-untyped]
 
                 # Clear memory pools
                 mempool = cp.get_default_memory_pool()

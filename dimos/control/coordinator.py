@@ -18,7 +18,7 @@ Centralized control coordinator that replaces per-driver/per-controller
 loops with a single deterministic tick-based system.
 
 Features:
-- Single tick loop (read → compute → arbitrate → route → write)
+- Single tick loop (read -> compute -> arbitrate -> route -> write)
 - Per-joint arbitration (highest priority wins)
 - Mode conflict detection
 - Partial command support (hold last value)
@@ -32,8 +32,8 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.control.components import HardwareComponent
-from dimos.control.hardware_interface import BackendHardwareInterface, HardwareInterface
+from dimos.control.components import HardwareComponent, HardwareId, JointName, TaskName
+from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import ControlTask
 from dimos.control.tick_loop import TickLoop
 from dimos.core import Module, Out, rpc
@@ -45,7 +45,7 @@ from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.hardware.manipulators.spec import ManipulatorBackend
+    from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
 logger = setup_logger()
 
@@ -132,12 +132,12 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
     Example:
         >>> from dimos.control import ControlCoordinator
-        >>> from dimos.hardware.manipulators.xarm import XArmBackend
+        >>> from dimos.hardware.manipulators.xarm import XArmAdapter
         >>>
         >>> orch = ControlCoordinator(tick_rate=100.0)
-        >>> backend = XArmBackend(ip="192.168.1.185", dof=7)
-        >>> backend.connect()
-        >>> orch.add_hardware("left_arm", backend, joint_prefix="left")
+        >>> adapter = XArmAdapter(ip="192.168.1.185", dof=7)
+        >>> adapter.connect()
+        >>> orch.add_hardware("left_arm", adapter, joint_prefix="left")
         >>> orch.start()
     """
 
@@ -150,15 +150,15 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
-        # Hardware interfaces (keyed by hardware_id)
-        self._hardware: dict[str, HardwareInterface] = {}
+        # Connected hardware (keyed by hardware_id)
+        self._hardware: dict[HardwareId, ConnectedHardware] = {}
         self._hardware_lock = threading.Lock()
 
         # Joint -> hardware mapping (built when hardware added)
-        self._joint_to_hardware: dict[str, str] = {}
+        self._joint_to_hardware: dict[JointName, HardwareId] = {}
 
         # Registered tasks
-        self._tasks: dict[str, ControlTask] = {}
+        self._tasks: dict[TaskName, ControlTask] = {}
         self._task_lock = threading.Lock()
 
         # Tick loop (created on start)
@@ -193,41 +193,30 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             raise
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
-        """Connect and add a single hardware backend."""
-        backend = self._create_backend(component)
+        """Connect and add a single hardware adapter."""
+        adapter = self._create_adapter(component)
 
-        if not backend.connect():
-            raise RuntimeError(f"Failed to connect to {component.backend_type} backend")
+        if not adapter.connect():
+            raise RuntimeError(f"Failed to connect to {component.adapter_type} adapter")
 
         try:
-            if component.auto_enable and hasattr(backend, "write_enable"):
-                backend.write_enable(True)
+            if component.auto_enable and hasattr(adapter, "write_enable"):
+                adapter.write_enable(True)
 
-            self.add_hardware(backend, component)
+            self.add_hardware(adapter, component)
         except Exception:
-            backend.disconnect()
+            adapter.disconnect()
             raise
 
-    def _create_backend(self, component: HardwareComponent) -> ManipulatorBackend:
-        """Create a manipulator backend from component config."""
-        dof = len(component.joints)
-        match component.backend_type.lower():
-            case "mock":
-                from dimos.hardware.manipulators.mock import MockBackend
+    def _create_adapter(self, component: HardwareComponent) -> ManipulatorAdapter:
+        """Create a manipulator adapter from component config."""
+        from dimos.hardware.manipulators.registry import adapter_registry
 
-                return MockBackend(dof=dof)
-            case "xarm":
-                if component.address is None:
-                    raise ValueError("address (IP) is required for xarm backend")
-                from dimos.hardware.manipulators.xarm import XArmBackend
-
-                return XArmBackend(ip=component.address, dof=dof)
-            case "piper":
-                from dimos.hardware.manipulators.piper import PiperBackend
-
-                return PiperBackend(can_port=component.address or "can0", dof=dof)
-            case _:
-                raise ValueError(f"Unknown backend type: {component.backend_type}")
+        return adapter_registry.create(
+            component.adapter_type,
+            dof=len(component.joints),
+            address=component.address,
+        )
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
         """Create a control task from config."""
@@ -254,26 +243,26 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     @rpc
     def add_hardware(
         self,
-        backend: ManipulatorBackend,
+        adapter: ManipulatorAdapter,
         component: HardwareComponent,
     ) -> bool:
-        """Register a hardware backend with the coordinator."""
+        """Register a hardware adapter with the coordinator."""
         with self._hardware_lock:
             if component.hardware_id in self._hardware:
                 logger.warning(f"Hardware {component.hardware_id} already registered")
                 return False
 
-            interface = BackendHardwareInterface(
-                backend=backend,
+            connected = ConnectedHardware(
+                adapter=adapter,
                 component=component,
             )
-            self._hardware[component.hardware_id] = interface
+            self._hardware[component.hardware_id] = connected
 
-            for joint_name in interface.joint_names:
+            for joint_name in connected.joint_names:
                 self._joint_to_hardware[joint_name] = component.hardware_id
 
             logger.info(
-                f"Added hardware {component.hardware_id} with joints: {interface.joint_names}"
+                f"Added hardware {component.hardware_id} with joints: {connected.joint_names}"
             )
             return True
 
@@ -483,7 +472,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         if self._tick_loop:
             self._tick_loop.stop()
 
-        # Disconnect all hardware backends
+        # Disconnect all hardware adapters
         with self._hardware_lock:
             for hw_id, interface in self._hardware.items():
                 try:

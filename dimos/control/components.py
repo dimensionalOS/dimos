@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hardware component schema for the ControlCoordnator."""
+"""Hardware component schema for the ControlCoordinator."""
 
 from dataclasses import dataclass, field
 from enum import Enum
 
 HardwareId = str
 JointName = str
+TaskName = str
 
 
 class HardwareType(Enum):
@@ -44,7 +45,7 @@ class HardwareComponent:
         hardware_id: Unique identifier, also used as joint name prefix
         hardware_type: Type of hardware (MANIPULATOR, BASE, GRIPPER)
         joints: List of joint names (e.g., ["arm_joint1", "arm_joint2", ...])
-        backend_type: Backend type ("mock", "xarm", "piper")
+        adapter_type: Adapter type ("mock", "xarm", "piper")
         address: Connection address - IP for TCP, port for CAN
         auto_enable: Whether to auto-enable servos
     """
@@ -52,7 +53,7 @@ class HardwareComponent:
     hardware_id: HardwareId
     hardware_type: HardwareType
     joints: list[JointName] = field(default_factory=list)
-    backend_type: str = "mock"
+    adapter_type: str = "mock"
     address: str | None = None
     auto_enable: bool = True
 
@@ -76,5 +77,6 @@ __all__ = [
     "HardwareType",
     "JointName",
     "JointState",
+    "TaskName",
     "make_joints",
 ]

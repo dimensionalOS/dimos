@@ -44,7 +44,8 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from dimos.control.hardware_interface import HardwareInterface
+    from dimos.control.components import HardwareId, JointName, TaskName
+    from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.manipulators.spec import ControlMode
 
 logger = setup_logger()
@@ -73,7 +74,7 @@ class TickLoop:
 
     Args:
         tick_rate: Control loop frequency in Hz
-        hardware: Dict of hardware_id -> HardwareInterface
+        hardware: Dict of hardware_id -> ConnectedHardware
         hardware_lock: Lock protecting hardware dict
         tasks: Dict of task_name -> ControlTask
         task_lock: Lock protecting tasks dict
@@ -86,11 +87,11 @@ class TickLoop:
     def __init__(
         self,
         tick_rate: float,
-        hardware: dict[str, HardwareInterface],
+        hardware: dict[HardwareId, ConnectedHardware],
         hardware_lock: threading.Lock,
-        tasks: dict[str, ControlTask],
+        tasks: dict[TaskName, ControlTask],
         task_lock: threading.Lock,
-        joint_to_hardware: dict[str, str],
+        joint_to_hardware: dict[JointName, HardwareId],
         publish_callback: Callable[[JointState], None] | None = None,
         frame_id: str = "coordinator",
         log_ticks: bool = False,

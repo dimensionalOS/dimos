@@ -64,7 +64,7 @@ class ImageEmbeddingProvider:
         """Initialize the specified embedding model."""
         try:
             import onnxruntime as ort  # type: ignore[import-untyped]
-            import torch
+            import torch  # noqa: F401
             from transformers import (  # type: ignore[import-untyped]
                 AutoFeatureExtractor,
                 AutoModel,

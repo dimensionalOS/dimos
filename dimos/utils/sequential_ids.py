@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Task implementations for the ControlCoordinator."""
+from threading import RLock
 
-from dimos.control.tasks.trajectory_task import (
-    JointTrajectoryTask,
-    JointTrajectoryTaskConfig,
-)
 
-__all__ = [
-    "JointTrajectoryTask",
-    "JointTrajectoryTaskConfig",
-]
+class SequentialIds:
+    def __init__(self) -> None:
+        self._value = 0
+        self._lock: RLock = RLock()
+
+    def next(self) -> int:
+        with self._lock:
+            v = self._value
+            self._value += 1
+            return v

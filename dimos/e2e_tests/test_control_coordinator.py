@@ -255,7 +255,7 @@ class TestControlCoordinatorE2E:
             left_status = client.get_trajectory_status("traj_left")
             right_status = client.get_trajectory_status("traj_right")
 
-            assert left_status is not None and left_status.state == TrajectoryState.COMPLETED.name
-            assert right_status is not None and right_status.state == TrajectoryState.COMPLETED.name
+            assert left_status.state == TrajectoryState.COMPLETED.name
+            assert right_status.state == TrajectoryState.COMPLETED.name
         finally:
             client.stop_rpc_client()

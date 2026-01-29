@@ -202,12 +202,15 @@ class ModuleBlueprintSet:
     def _deploy_all_modules(
         self, module_coordinator: ModuleCoordinator, global_config: GlobalConfig
     ) -> None:
+        module_specs: list[tuple[type[Module], tuple[Any, ...], dict[str, Any]]] = []
         for blueprint in self.blueprints:
             kwargs = {**blueprint.kwargs}
             sig = inspect.signature(blueprint.module.__init__)
             if "global_config" in sig.parameters:
                 kwargs["global_config"] = global_config
-            module_coordinator.deploy(blueprint.module, *blueprint.args, **kwargs)
+            module_specs.append((blueprint.module, blueprint.args, kwargs))
+
+        module_coordinator.deploy_parallel(module_specs)
 
     def _connect_transports(self, module_coordinator: ModuleCoordinator) -> None:
         # Gather all the In/Out connections with remapping applied.

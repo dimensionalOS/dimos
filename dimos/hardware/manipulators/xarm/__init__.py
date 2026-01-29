@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""XArm manipulator hardware backend.
+"""XArm manipulator hardware adapter.
 
 Usage:
-    >>> from dimos.hardware.manipulators.xarm import XArmBackend
-    >>> backend = XArmBackend(ip="192.168.1.185", dof=6)
-    >>> backend.connect()
-    >>> positions = backend.read_joint_positions()
+    >>> from dimos.hardware.manipulators.xarm import XArmAdapter
+    >>> adapter = XArmAdapter(ip="192.168.1.185", dof=6)
+    >>> adapter.connect()
+    >>> positions = adapter.read_joint_positions()
 """
 
-from dimos.hardware.manipulators.xarm.backend import XArmBackend
+from dimos.hardware.manipulators.xarm.adapter import XArmAdapter
 
-__all__ = ["XArmBackend"]
+__all__ = ["XArmAdapter"]

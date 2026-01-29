@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Mock backend for testing manipulator drivers without hardware.
+"""Mock adapter for testing manipulator drivers without hardware.
 
 Usage:
     >>> from dimos.hardware.manipulators.xarm import XArm
-    >>> from dimos.hardware.manipulators.mock import MockBackend
-    >>> arm = XArm(backend=MockBackend())
+    >>> from dimos.hardware.manipulators.mock import MockAdapter
+    >>> arm = XArm(adapter=MockAdapter())
     >>> arm.start()  # No hardware needed!
     >>> arm.move_joint([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
-    >>> assert arm.backend.read_joint_positions() == [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+    >>> assert arm.adapter.read_joint_positions() == [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
 """
 
-from dimos.hardware.manipulators.mock.backend import MockBackend
+from dimos.hardware.manipulators.mock.adapter import MockAdapter
 
-__all__ = ["MockBackend"]
+__all__ = ["MockAdapter"]

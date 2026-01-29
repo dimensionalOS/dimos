@@ -65,7 +65,7 @@ all_modules = {
     "demo_robot": "dimos.agents.skills.demo_robot",
     "depth_module": "dimos.robot.unitree_webrtc.depth_module",
     "detection3d_module": "dimos.perception.detection.module3D",
-    "detectionDB_module": "dimos.perception.detection.moduleDB",
+    "detection_db_module": "dimos.perception.detection.moduleDB",
     "foxglove_bridge": "dimos.robot.foxglove_bridge",
     "g1_connection": "dimos.robot.unitree.connection.g1",
     "g1_sim_connection": "dimos.robot.unitree.connection.g1sim",

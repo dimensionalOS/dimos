@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 from dotenv import load_dotenv
 from openai import NOT_GIVEN, OpenAI
 from pydantic import BaseModel
-from reactivex import Observable, Observer, create, empty, just, operators as RxOps
+from reactivex import Observable, Observer, create, empty, just, operators as rxops
 from reactivex.disposable import CompositeDisposable, Disposable
 from reactivex.subject import Subject
 
@@ -201,8 +201,8 @@ class LLMAgent(Agent):
             if (input_data_stream is None)
             else (
                 input_query_stream.pipe(  # type: ignore[misc, union-attr]
-                    RxOps.with_latest_from(input_data_stream),
-                    RxOps.map(
+                    rxops.with_latest_from(input_data_stream),
+                    rxops.map(
                         lambda combined: {
                             "query": combined[0],  # type: ignore[index]
                             "objects": combined[1]  # type: ignore[index]
@@ -210,10 +210,10 @@ class LLMAgent(Agent):
                             else "No object data available",
                         }
                     ),
-                    RxOps.map(
+                    rxops.map(
                         lambda data: f"{data['query']}\n\nCurrent objects detected:\n{data['objects']}"  # type: ignore[index]
                     ),
-                    RxOps.do_action(
+                    rxops.do_action(
                         lambda x: print(f"\033[34mEnriched query: {x.split(chr(10))[0]}\033[0m")  # type: ignore[arg-type]
                         or [print(f"\033[34m{line}\033[0m") for line in x.split(chr(10))[1:]]  # type: ignore[var-annotated]
                     ),
@@ -513,9 +513,9 @@ class LLMAgent(Agent):
                 frame = emission
             return just(frame).pipe(  # type: ignore[call-overload, no-any-return]
                 MyOps.print_emission(id="B", **print_emission_args),  # type: ignore[arg-type]
-                RxOps.observe_on(self.pool_scheduler),
+                rxops.observe_on(self.pool_scheduler),
                 MyOps.print_emission(id="C", **print_emission_args),  # type: ignore[arg-type]
-                RxOps.subscribe_on(self.pool_scheduler),
+                rxops.subscribe_on(self.pool_scheduler),
                 MyOps.print_emission(id="D", **print_emission_args),  # type: ignore[arg-type]
                 MyVidOps.with_jpeg_export(
                     self.frame_processor,  # type: ignore[arg-type]
@@ -525,13 +525,13 @@ class LLMAgent(Agent):
                 MyOps.print_emission(id="E", **print_emission_args),  # type: ignore[arg-type]
                 MyVidOps.encode_image(),
                 MyOps.print_emission(id="F", **print_emission_args),  # type: ignore[arg-type]
-                RxOps.filter(
+                rxops.filter(
                     lambda base64_and_dims: base64_and_dims is not None
                     and base64_and_dims[0] is not None  # type: ignore[index]
                     and base64_and_dims[1] is not None  # type: ignore[index]
                 ),
                 MyOps.print_emission(id="G", **print_emission_args),  # type: ignore[arg-type]
-                RxOps.flat_map(
+                rxops.flat_map(
                     lambda base64_and_dims: create(  # type: ignore[arg-type, return-value]
                         lambda observer, _: self._observable_query(
                             observer,  # type: ignore[arg-type]
@@ -555,11 +555,11 @@ class LLMAgent(Agent):
                 is_processing[0] = True
                 return _process_frame(emission).pipe(
                     MyOps.print_emission(id="I", **print_emission_args),  # type: ignore[arg-type]
-                    RxOps.observe_on(self.pool_scheduler),
+                    rxops.observe_on(self.pool_scheduler),
                     MyOps.print_emission(id="J", **print_emission_args),  # type: ignore[arg-type]
-                    RxOps.subscribe_on(self.pool_scheduler),
+                    rxops.subscribe_on(self.pool_scheduler),
                     MyOps.print_emission(id="K", **print_emission_args),  # type: ignore[arg-type]
-                    RxOps.do_action(
+                    rxops.do_action(
                         on_completed=lambda: is_processing.__setitem__(0, False),
                         on_error=lambda e: is_processing.__setitem__(0, False),
                     ),
@@ -568,7 +568,7 @@ class LLMAgent(Agent):
 
         observable = frame_observable.pipe(
             MyOps.print_emission(id="A", **print_emission_args),  # type: ignore[arg-type]
-            RxOps.flat_map(process_if_free),
+            rxops.flat_map(process_if_free),
             MyOps.print_emission(id="M", **print_emission_args),  # type: ignore[arg-type]
         )
 
@@ -601,7 +601,7 @@ class LLMAgent(Agent):
             """
             return just(query).pipe(
                 MyOps.print_emission(id="Pr A", **print_emission_args),  # type: ignore[arg-type]
-                RxOps.flat_map(
+                rxops.flat_map(
                     lambda query: create(  # type: ignore[arg-type, return-value]
                         lambda observer, _: self._observable_query(observer, incoming_query=query)  # type: ignore[arg-type]
                     )
@@ -622,11 +622,11 @@ class LLMAgent(Agent):
                 logger.info("Processing Query.")
                 return _process_query(query).pipe(
                     MyOps.print_emission(id="B", **print_emission_args),  # type: ignore[arg-type]
-                    RxOps.observe_on(self.pool_scheduler),
+                    rxops.observe_on(self.pool_scheduler),
                     MyOps.print_emission(id="C", **print_emission_args),  # type: ignore[arg-type]
-                    RxOps.subscribe_on(self.pool_scheduler),
+                    rxops.subscribe_on(self.pool_scheduler),
                     MyOps.print_emission(id="D", **print_emission_args),  # type: ignore[arg-type]
-                    RxOps.do_action(
+                    rxops.do_action(
                         on_completed=lambda: is_processing.__setitem__(0, False),
                         on_error=lambda e: is_processing.__setitem__(0, False),
                     ),
@@ -635,7 +635,7 @@ class LLMAgent(Agent):
 
         observable = query_observable.pipe(
             MyOps.print_emission(id="A", **print_emission_args),  # type: ignore[arg-type]
-            RxOps.flat_map(lambda query: process_if_free(query)),  # type: ignore[no-untyped-call]
+            rxops.flat_map(lambda query: process_if_free(query)),  # type: ignore[no-untyped-call]
             MyOps.print_emission(id="F", **print_emission_args),  # type: ignore[arg-type]
         )
 
@@ -654,9 +654,9 @@ class LLMAgent(Agent):
             Observable: An observable that emits string responses from the agent.
         """
         return self.response_subject.pipe(
-            RxOps.observe_on(self.pool_scheduler),
-            RxOps.subscribe_on(self.pool_scheduler),
-            RxOps.share(),
+            rxops.observe_on(self.pool_scheduler),
+            rxops.subscribe_on(self.pool_scheduler),
+            rxops.share(),
         )
 
     def run_observable_query(self, query_text: str, **kwargs) -> Observable:  # type: ignore[no-untyped-def, type-arg]

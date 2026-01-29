@@ -12,32 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Piper backend - implements ManipulatorBackend protocol.
+"""Piper adapter - implements ManipulatorAdapter protocol.
 
-Handles all Piper SDK communication and unit conversion.
+SDK Units: angles=0.001 degrees (millidegrees), distance=mm
+DimOS Units: angles=radians, distance=meters
 """
+
+from __future__ import annotations
 
 import math
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from dimos.hardware.manipulators.registry import AdapterRegistry
 
 from dimos.hardware.manipulators.spec import (
     ControlMode,
     JointLimits,
-    ManipulatorBackend,
+    ManipulatorAdapter,
     ManipulatorInfo,
 )
 
 # Unit conversion constants
-# Piper uses 0.001 degrees internally
-RAD_TO_PIPER = 57295.7795  # radians to Piper units (0.001 degrees)
-PIPER_TO_RAD = 1.0 / RAD_TO_PIPER  # Piper units to radians
+# Piper uses 0.001 degrees (millidegrees) for angles
+RAD_TO_MILLIDEG = 57295.7795  # radians -> millidegrees
+MILLIDEG_TO_RAD = 1.0 / RAD_TO_MILLIDEG  # millidegrees -> radians
+MM_TO_M = 0.001  # mm -> meters
+
+# Hardware specs
+GRIPPER_MAX_OPENING_M = 0.08  # Max gripper opening in meters
+
+# Default configurable parameters
+DEFAULT_GRIPPER_SPEED = 1000
 
 
-class PiperBackend(ManipulatorBackend):
-    """Piper-specific backend.
+class PiperAdapter(ManipulatorAdapter):
+    """Piper-specific adapter.
 
-    Implements ManipulatorBackend protocol via duck typing.
+    Implements ManipulatorAdapter protocol via duck typing.
     No inheritance required - just matching method signatures.
 
     Unit conversions:
@@ -45,11 +58,18 @@ class PiperBackend(ManipulatorBackend):
     - Velocities: Piper uses internal units, we use rad/s
     """
 
-    def __init__(self, can_port: str = "can0", dof: int = 6) -> None:
+    def __init__(
+        self,
+        address: str = "can0",
+        dof: int = 6,
+        gripper_speed: int = DEFAULT_GRIPPER_SPEED,
+        **_: object,
+    ) -> None:
         if dof != 6:
-            raise ValueError(f"PiperBackend only supports 6 DOF (got {dof})")
-        self._can_port = can_port
+            raise ValueError(f"PiperAdapter only supports 6 DOF (got {dof})")
+        self._can_port = address
         self._dof = dof
+        self._gripper_speed = gripper_speed
         self._sdk: Any = None
         self._connected: bool = False
         self._enabled: bool = False
@@ -202,12 +222,12 @@ class PiperBackend(ManipulatorBackend):
 
         js = joint_msgs.joint_state
         return [
-            js.joint_1 * PIPER_TO_RAD,
-            js.joint_2 * PIPER_TO_RAD,
-            js.joint_3 * PIPER_TO_RAD,
-            js.joint_4 * PIPER_TO_RAD,
-            js.joint_5 * PIPER_TO_RAD,
-            js.joint_6 * PIPER_TO_RAD,
+            js.joint_1 * MILLIDEG_TO_RAD,
+            js.joint_2 * MILLIDEG_TO_RAD,
+            js.joint_3 * MILLIDEG_TO_RAD,
+            js.joint_4 * MILLIDEG_TO_RAD,
+            js.joint_5 * MILLIDEG_TO_RAD,
+            js.joint_6 * MILLIDEG_TO_RAD,
         ]
 
     def read_joint_velocities(self) -> list[float]:
@@ -294,7 +314,7 @@ class PiperBackend(ManipulatorBackend):
             return False
 
         # Convert radians to Piper units (0.001 degrees)
-        piper_joints = [round(rad * RAD_TO_PIPER) for rad in positions]
+        piper_joints = [round(rad * RAD_TO_MILLIDEG) for rad in positions]
 
         # Set speed rate if not full speed
         if velocity < 1.0:
@@ -426,12 +446,12 @@ class PiperBackend(ManipulatorBackend):
                 if pose_msgs and pose_msgs.end_pose:
                     ep = pose_msgs.end_pose
                     return {
-                        "x": ep.X_axis / 1000.0,  # mm -> m
-                        "y": ep.Y_axis / 1000.0,
-                        "z": ep.Z_axis / 1000.0,
-                        "roll": ep.RX_axis * PIPER_TO_RAD,
-                        "pitch": ep.RY_axis * PIPER_TO_RAD,
-                        "yaw": ep.RZ_axis * PIPER_TO_RAD,
+                        "x": ep.X_axis * MM_TO_M,
+                        "y": ep.Y_axis * MM_TO_M,
+                        "z": ep.Z_axis * MM_TO_M,
+                        "roll": ep.RX_axis * MILLIDEG_TO_RAD,
+                        "pitch": ep.RY_axis * MILLIDEG_TO_RAD,
+                        "yaw": ep.RZ_axis * MILLIDEG_TO_RAD,
                     }
         except Exception:
             pass
@@ -464,9 +484,8 @@ class PiperBackend(ManipulatorBackend):
                 gripper_msgs = self._sdk.GetArmGripperMsgs()
                 if gripper_msgs and gripper_msgs.gripper_state:
                     # Piper gripper position is 0-100 percentage
-                    # Convert to meters (assume max opening 0.08m)
-                    pos = gripper_msgs.gripper_state.grippers_angle
-                    return float(pos / 100.0) * 0.08
+                    pos: float = gripper_msgs.gripper_state.grippers_angle
+                    return (pos / 100.0) * GRIPPER_MAX_OPENING_M
         except Exception:
             pass
 
@@ -480,10 +499,9 @@ class PiperBackend(ManipulatorBackend):
         try:
             if hasattr(self._sdk, "GripperCtrl"):
                 # Convert meters to percentage (0-100)
-                # Assume max opening 0.08m
-                percentage = int((position / 0.08) * 100)
+                percentage = int((position / GRIPPER_MAX_OPENING_M) * 100)
                 percentage = max(0, min(100, percentage))
-                self._sdk.GripperCtrl(percentage, 1000, 0x01, 0)
+                self._sdk.GripperCtrl(percentage, self._gripper_speed, 0x01, 0)
                 return True
         except Exception:
             pass
@@ -502,4 +520,9 @@ class PiperBackend(ManipulatorBackend):
         return None
 
 
-__all__ = ["PiperBackend"]
+def register(registry: AdapterRegistry) -> None:
+    """Register this adapter with the registry."""
+    registry.register("piper", PiperAdapter)
+
+
+__all__ = ["PiperAdapter"]
