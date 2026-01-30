@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-import copy
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
@@ -57,7 +56,6 @@ try:
         MeshcatVisualizer,
         MeshcatVisualizerParams,
         ProximityProperties,
-        QueryObject,
         Rgba,
         Role,
         SceneGraph,

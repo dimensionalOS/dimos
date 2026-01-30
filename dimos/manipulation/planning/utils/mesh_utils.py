@@ -36,7 +36,6 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
-from typing import TYPE_CHECKING
 
 from dimos.utils.logging_config import setup_logger
 

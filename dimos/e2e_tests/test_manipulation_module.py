@@ -21,11 +21,10 @@ They require Drake to be installed and will be skipped otherwise.
 
 from __future__ import annotations
 
+import importlib.util
 import os
-import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import numpy as np
 import pytest
 
 from dimos.manipulation.manipulation_module import (
@@ -44,12 +43,7 @@ from dimos.utils.data import get_data
 
 def _drake_available() -> bool:
     """Check if Drake is available."""
-    try:
-        import pydrake
-
-        return True
-    except ImportError:
-        return False
+    return importlib.util.find_spec("pydrake") is not None
 
 
 def _xarm_urdf_available() -> bool:

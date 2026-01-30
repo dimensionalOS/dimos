@@ -36,7 +36,7 @@ if TYPE_CHECKING:
         PlanningResult,
         WorldRobotID,
     )
-    from dimos.msgs.geometry_msgs import Pose, PoseStamped
+    from dimos.msgs.geometry_msgs import PoseStamped
     from dimos.msgs.sensor_msgs import JointState
 
 

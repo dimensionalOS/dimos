@@ -20,7 +20,6 @@ from pathlib import Path
 import threading
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 
 from dimos.manipulation.manipulation_module import (
