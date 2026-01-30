@@ -26,10 +26,8 @@ from dimos.manipulation.planning.spec.enums import (
 )
 
 if TYPE_CHECKING:
-    import numpy as np
-    from numpy.typing import NDArray
-
     from dimos.msgs.geometry_msgs import PoseStamped
+    from dimos.msgs.sensor_msgs import JointState
 
 # =============================================================================
 # Semantic ID Types (documentation only, not enforced at runtime)
@@ -41,8 +39,8 @@ RobotName: TypeAlias = str
 WorldRobotID: TypeAlias = str
 """Internal Drake world robot ID"""
 
-JointPath: TypeAlias = "list[NDArray[np.float64]]"
-"""List of joint configurations forming a path"""
+JointPath: TypeAlias = "list[JointState]"
+"""List of joint states forming a path (each waypoint has names + positions)"""
 
 
 # =============================================================================
@@ -81,7 +79,7 @@ class IKResult:
 
     Attributes:
         status: Solution status
-        joint_positions: Solution joint positions (None if failed)
+        joint_state: Solution joint state with names and positions (None if failed)
         position_error: Cartesian position error (meters)
         orientation_error: Orientation error (radians)
         iterations: Number of iterations taken
@@ -89,7 +87,7 @@ class IKResult:
     """
 
     status: IKStatus
-    joint_positions: NDArray[np.float64] | None = None
+    joint_state: JointState | None = None
     position_error: float = 0.0
     orientation_error: float = 0.0
     iterations: int = 0
@@ -106,26 +104,24 @@ class PlanningResult:
 
     Attributes:
         status: Planning status
-        path: List of joint configurations (empty if failed)
+        path: List of joint states forming the path (empty if failed).
+            Each JointState contains names, positions, and optionally velocities.
         planning_time: Time taken to plan (seconds)
         path_length: Total path length in joint space (radians)
         iterations: Number of iterations/nodes expanded
         message: Human-readable status message
         timestamps: Optional timestamps for each waypoint (seconds from start).
             If provided by the planner, trajectory generator can use these directly.
-        velocities: Optional joint velocities at each waypoint.
-            If provided by the planner, trajectory generator can use these directly.
     """
 
     status: PlanningStatus
-    path: list[NDArray[np.float64]] = field(default_factory=list)
+    path: list[JointState] = field(default_factory=list)
     planning_time: float = 0.0
     path_length: float = 0.0
     iterations: int = 0
     message: str = ""
-    # Optional timing fields (set by optimization-based planners)
+    # Optional timing (set by optimization-based planners)
     timestamps: list[float] | None = None
-    velocities: list[NDArray[np.float64]] | None = None
 
     def is_success(self) -> bool:
         """Check if planning was successful."""

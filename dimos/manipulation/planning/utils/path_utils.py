@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from dimos.msgs.sensor_msgs import JointState
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
@@ -48,7 +50,7 @@ def interpolate_path(
     between consecutive waypoints is at most `resolution`.
 
     Args:
-        path: Original path (list of joint configurations)
+        path: Original path (list of JointState waypoints)
         resolution: Maximum distance between waypoints (radians)
 
     Returns:
@@ -56,37 +58,39 @@ def interpolate_path(
 
     Example:
         # After planning, interpolate for smoother execution
-        raw_path = planner.plan_joint_path(world, robot_id, q_start, q_goal).path
+        raw_path = planner.plan_joint_path(world, robot_id, start, goal).path
         smooth_path = interpolate_path(raw_path, resolution=0.02)
     """
     if len(path) <= 1:
-        return path
+        return list(path)
 
-    interpolated = [path[0]]
+    interpolated: list[JointState] = [path[0]]
+    joint_names = path[0].name
 
     for i in range(len(path) - 1):
-        start = path[i]
-        end = path[i + 1]
+        q_start = np.array(path[i].position, dtype=np.float64)
+        q_end = np.array(path[i + 1].position, dtype=np.float64)
 
-        diff = end - start
+        diff = q_end - q_start
         max_diff = float(np.max(np.abs(diff)))
 
         if max_diff <= resolution:
-            interpolated.append(end)
+            interpolated.append(path[i + 1])
         else:
             num_steps = int(np.ceil(max_diff / resolution))
             for step in range(1, num_steps + 1):
                 alpha = step / num_steps
-                interpolated.append(start + alpha * diff)
+                q_interp = q_start + alpha * diff
+                interpolated.append(JointState(name=joint_names, position=q_interp.tolist()))
 
     return interpolated
 
 
 def interpolate_segment(
-    start: NDArray[np.float64],
-    end: NDArray[np.float64],
+    start: JointState,
+    end: JointState,
     step_size: float,
-) -> list[NDArray[np.float64]]:
+) -> JointPath:
     """Interpolate between two configurations.
 
     Returns a list of configurations from start to end (inclusive)
@@ -98,27 +102,32 @@ def interpolate_segment(
         step_size: Maximum step size (radians)
 
     Returns:
-        List of interpolated configurations [start, ..., end]
+        List of interpolated JointState waypoints [start, ..., end]
 
     Example:
         # Check collision along a segment
-        segment = interpolate_segment(q1, q2, step_size=0.02)
-        for q in segment:
-            if not world.is_collision_free(ctx, robot_id):
+        segment = interpolate_segment(start_state, end_state, step_size=0.02)
+        for state in segment:
+            if not world.check_config_collision_free(robot_id, state):
                 return False
     """
-    diff = end - start
+    q_start = np.array(start.position, dtype=np.float64)
+    q_end = np.array(end.position, dtype=np.float64)
+    joint_names = start.name
+
+    diff = q_end - q_start
     distance = float(np.linalg.norm(diff))
 
     if distance <= step_size:
         return [start, end]
 
     num_steps = int(np.ceil(distance / step_size))
-    segment = []
+    segment: JointPath = []
 
     for i in range(num_steps + 1):
         alpha = i / num_steps
-        segment.append(start + alpha * diff)
+        q_interp = q_start + alpha * diff
+        segment.append(JointState(name=joint_names, position=q_interp.tolist()))
 
     return segment
 
@@ -139,7 +148,7 @@ def simplify_path(
     Args:
         world: World for collision checking
         robot_id: Which robot
-        path: Original path
+        path: Original path (list of JointState waypoints)
         max_iterations: Maximum shortcutting attempts
         collision_step_size: Step size for collision checking along shortcuts
 
@@ -147,11 +156,11 @@ def simplify_path(
         Simplified path with fewer waypoints
 
     Example:
-        raw_path = planner.plan_joint_path(world, robot_id, q_start, q_goal).path
+        raw_path = planner.plan_joint_path(world, robot_id, start, goal).path
         simplified = simplify_path(world, robot_id, raw_path)
     """
     if len(path) <= 2:
-        return path
+        return list(path)
 
     simplified = list(path)
 
@@ -163,20 +172,12 @@ def simplify_path(
         i = np.random.randint(0, len(simplified) - 2)
         j = np.random.randint(i + 2, len(simplified))
 
-        # Check if direct connection is valid
-        with world.scratch_context() as ctx:
-            segment = interpolate_segment(simplified[i], simplified[j], collision_step_size)
-            valid = True
-
-            for q in segment:
-                world.set_positions(ctx, robot_id, q)
-                if not world.is_collision_free(ctx, robot_id):
-                    valid = False
-                    break
-
-            if valid:
-                # Remove intermediate waypoints
-                simplified = simplified[: i + 1] + simplified[j:]
+        # Check if direct connection is valid using context-free API
+        if world.check_edge_collision_free(
+            robot_id, simplified[i], simplified[j], collision_step_size
+        ):
+            # Remove intermediate waypoints
+            simplified = simplified[: i + 1] + simplified[j:]
 
     return simplified
 
@@ -187,7 +188,7 @@ def compute_path_length(path: JointPath) -> float:
     Sums the Euclidean distances between consecutive waypoints.
 
     Args:
-        path: Path to measure
+        path: Path to measure (list of JointState waypoints)
 
     Returns:
         Total length in radians
@@ -201,7 +202,9 @@ def compute_path_length(path: JointPath) -> float:
 
     length = 0.0
     for i in range(len(path) - 1):
-        length += float(np.linalg.norm(path[i + 1] - path[i]))
+        q_curr = np.array(path[i].position, dtype=np.float64)
+        q_next = np.array(path[i + 1].position, dtype=np.float64)
+        length += float(np.linalg.norm(q_next - q_curr))
 
     return length
 
@@ -214,14 +217,15 @@ def is_path_within_limits(
     """Check if all waypoints in path are within joint limits.
 
     Args:
-        path: Path to check
+        path: Path to check (list of JointState waypoints)
         lower_limits: Lower joint limits (radians)
         upper_limits: Upper joint limits (radians)
 
     Returns:
         True if all waypoints are within limits
     """
-    for q in path:
+    for state in path:
+        q = np.array(state.position, dtype=np.float64)
         if np.any(q < lower_limits) or np.any(q > upper_limits):
             return False
     return True
@@ -235,14 +239,19 @@ def clip_path_to_limits(
     """Clip all waypoints in path to joint limits.
 
     Args:
-        path: Path to clip
+        path: Path to clip (list of JointState waypoints)
         lower_limits: Lower joint limits (radians)
         upper_limits: Upper joint limits (radians)
 
     Returns:
         Path with all waypoints clipped to limits
     """
-    return [np.clip(q, lower_limits, upper_limits) for q in path]
+    clipped: list[JointState] = []
+    for state in path:
+        q = np.array(state.position, dtype=np.float64)
+        q_clipped = np.clip(q, lower_limits, upper_limits)
+        clipped.append(JointState(name=state.name, position=q_clipped.tolist()))
+    return clipped
 
 
 def reverse_path(path: JointPath) -> JointPath:
@@ -264,13 +273,13 @@ def concatenate_paths(
     """Concatenate multiple paths into one.
 
     Args:
-        *paths: Paths to concatenate
+        *paths: Paths to concatenate (each is a list of JointState waypoints)
         remove_duplicates: If True, remove duplicate waypoints at junctions
 
     Returns:
         Single concatenated path
     """
-    result: list[NDArray[np.float64]] = []
+    result: list[JointState] = []
 
     for path in paths:
         if not path:
@@ -278,7 +287,9 @@ def concatenate_paths(
 
         if remove_duplicates and result:
             # Check if last point matches first point (tight tolerance for joint space)
-            if np.allclose(result[-1], path[0], atol=1e-6, rtol=0):
+            q_last = np.array(result[-1].position, dtype=np.float64)
+            q_first = np.array(path[0].position, dtype=np.float64)
+            if np.allclose(q_last, q_first, atol=1e-6, rtol=0):
                 result.extend(path[1:])
             else:
                 result.extend(path)

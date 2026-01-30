@@ -22,12 +22,13 @@ import numpy as np
 
 from dimos.manipulation.planning.spec import IKResult, IKStatus, WorldRobotID, WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
+from dimos.msgs.geometry_msgs import PoseStamped, Transform
+from dimos.msgs.sensor_msgs import JointState
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import pose_to_matrix
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
-
-from dimos.msgs.geometry_msgs import PoseStamped, Transform
 
 try:
     from pydrake.math import RigidTransform, RotationMatrix  # type: ignore[import-not-found]
@@ -69,7 +70,7 @@ class DrakeOptimizationIK:
         world: WorldSpec,
         robot_id: WorldRobotID,
         target_pose: PoseStamped,
-        seed: NDArray[np.float64] | None = None,
+        seed: JointState | None = None,
         position_tolerance: float = 0.001,
         orientation_tolerance: float = 0.01,
         check_collision: bool = True,
@@ -92,7 +93,11 @@ class DrakeOptimizationIK:
         # Get seed from current state if not provided
         if seed is None:
             with world.scratch_context() as ctx:
-                seed = world.get_positions(ctx, robot_id)
+                seed = world.get_joint_state(ctx, robot_id)
+
+        # Extract joint names and seed positions
+        joint_names = seed.name
+        seed_positions = np.array(seed.position, dtype=np.float64)
 
         # Target transform
         target_transform = RigidTransform(target_matrix)
@@ -101,9 +106,9 @@ class DrakeOptimizationIK:
         best_error = float("inf")
 
         for attempt in range(max_attempts):
-            # Generate seed
+            # Generate seed positions
             if attempt == 0:
-                current_seed = seed
+                current_seed = seed_positions
             else:
                 # Random seed within joint limits
                 current_seed = np.random.uniform(lower_limits, upper_limits)
@@ -114,19 +119,18 @@ class DrakeOptimizationIK:
                 robot_id=robot_id,
                 target_transform=target_transform,
                 seed=current_seed,
+                joint_names=joint_names,
                 position_tolerance=position_tolerance,
                 orientation_tolerance=orientation_tolerance,
                 lower_limits=lower_limits,
                 upper_limits=upper_limits,
             )
 
-            if result.is_success() and result.joint_positions is not None:
+            if result.is_success() and result.joint_state is not None:
                 # Check collision if requested
                 if check_collision:
-                    with world.scratch_context() as ctx:
-                        world.set_positions(ctx, robot_id, result.joint_positions)
-                        if not world.is_collision_free(ctx, robot_id):
-                            continue  # Try another seed
+                    if not world.check_config_collision_free(robot_id, result.joint_state):
+                        continue  # Try another seed
 
                 # Check error
                 total_error = result.position_error + result.orientation_error
@@ -155,6 +159,7 @@ class DrakeOptimizationIK:
         robot_id: WorldRobotID,
         target_transform: RigidTransform,
         seed: NDArray[np.float64],
+        joint_names: list[str],
         position_tolerance: float,
         orientation_tolerance: float,
         lower_limits: NDArray[np.float64],
@@ -215,16 +220,18 @@ class DrakeOptimizationIK:
         joint_solution = np.clip(joint_solution, lower_limits, upper_limits)
 
         # Compute actual error using FK
+        solution_state = JointState(name=joint_names, position=joint_solution.tolist())
         with world.scratch_context() as ctx:
-            world.set_positions(ctx, robot_id, joint_solution)
+            world.set_joint_state(ctx, robot_id, solution_state)
             actual_pose = world.get_ee_pose(ctx, robot_id)
 
         position_error, orientation_error = compute_pose_error(
-            actual_pose,
+            pose_to_matrix(actual_pose),
             target_transform.GetAsMatrix4(),
         )
 
         return _create_success_result(
+            joint_names=joint_names,
             joint_positions=joint_solution,
             position_error=position_error,
             orientation_error=orientation_error,
@@ -233,6 +240,7 @@ class DrakeOptimizationIK:
 
 
 def _create_success_result(
+    joint_names: list[str],
     joint_positions: NDArray[np.float64],
     position_error: float,
     orientation_error: float,
@@ -240,7 +248,7 @@ def _create_success_result(
 ) -> IKResult:
     return IKResult(
         status=IKStatus.SUCCESS,
-        joint_positions=joint_positions,
+        joint_state=JointState(name=joint_names, position=joint_positions.tolist()),
         position_error=position_error,
         orientation_error=orientation_error,
         iterations=iterations,
@@ -255,7 +263,7 @@ def _create_failure_result(
 ) -> IKResult:
     return IKResult(
         status=status,
-        joint_positions=None,
+        joint_state=None,
         iterations=iterations,
         message=message,
     )

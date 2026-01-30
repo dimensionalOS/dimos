@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         WorldRobotID,
     )
     from dimos.msgs.geometry_msgs import Pose, PoseStamped
+    from dimos.msgs.sensor_msgs import JointState
 
 
 @runtime_checkable
@@ -72,7 +73,7 @@ class WorldSpec(Protocol):
 
     def get_joint_limits(
         self, robot_id: WorldRobotID
-    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:  # lower limits, upper limits
         """Get joint limits (lower, upper) for a robot."""
         ...
 
@@ -112,19 +113,17 @@ class WorldSpec(Protocol):
         """Get a scratch context for planning (thread-safe clone)."""
         ...
 
-    def sync_from_joint_state(self, robot_id: WorldRobotID, positions: NDArray[np.float64]) -> None:
-        """Sync live context from joint state."""
+    def sync_from_joint_state(self, robot_id: WorldRobotID, joint_state: JointState) -> None:
+        """Sync live context from joint state message."""
         ...
 
     # State Operations (require context)
-    def set_positions(
-        self, ctx: Any, robot_id: WorldRobotID, positions: NDArray[np.float64]
-    ) -> None:
-        """Set robot joint positions in a context."""
+    def set_joint_state(self, ctx: Any, robot_id: WorldRobotID, joint_state: JointState) -> None:
+        """Set robot joint state in a context."""
         ...
 
-    def get_positions(self, ctx: Any, robot_id: WorldRobotID) -> NDArray[np.float64]:
-        """Get robot joint positions from a context."""
+    def get_joint_state(self, ctx: Any, robot_id: WorldRobotID) -> JointState:
+        """Get robot joint state from a context."""
         ...
 
     # Collision Checking (require context)
@@ -137,23 +136,23 @@ class WorldSpec(Protocol):
         ...
 
     # Collision Checking (context-free, for planning)
-    def check_config_collision_free(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> bool:
-        """Check if a configuration is collision-free (manages context internally)."""
+    def check_config_collision_free(self, robot_id: WorldRobotID, joint_state: JointState) -> bool:
+        """Check if a joint state is collision-free (manages context internally)."""
         ...
 
     def check_edge_collision_free(
         self,
         robot_id: WorldRobotID,
-        q_start: NDArray[np.float64],
-        q_end: NDArray[np.float64],
+        start: JointState,
+        end: JointState,
         step_size: float = 0.05,
     ) -> bool:
-        """Check if the entire edge between two configurations is collision-free."""
+        """Check if the entire edge between two joint states is collision-free."""
         ...
 
     # Forward Kinematics (require context)
-    def get_ee_pose(self, ctx: Any, robot_id: WorldRobotID) -> NDArray[np.float64]:
-        """Get end-effector pose (4x4 transform)."""
+    def get_ee_pose(self, ctx: Any, robot_id: WorldRobotID) -> PoseStamped:
+        """Get end-effector pose."""
         ...
 
     def get_jacobian(self, ctx: Any, robot_id: WorldRobotID) -> NDArray[np.float64]:
@@ -183,7 +182,7 @@ class KinematicsSpec(Protocol):
         world: WorldSpec,
         robot_id: WorldRobotID,
         target_pose: PoseStamped,
-        seed: NDArray[np.float64] | None = None,
+        seed: JointState | None = None,
         position_tolerance: float = 0.001,
         orientation_tolerance: float = 0.01,
         check_collision: bool = True,
@@ -210,8 +209,8 @@ class PlannerSpec(Protocol):
         self,
         world: WorldSpec,
         robot_id: WorldRobotID,
-        q_start: NDArray[np.float64],
-        q_goal: NDArray[np.float64],
+        start: JointState,
+        goal: JointState,
         timeout: float = 10.0,
     ) -> PlanningResult:
         """Plan a collision-free joint-space path."""

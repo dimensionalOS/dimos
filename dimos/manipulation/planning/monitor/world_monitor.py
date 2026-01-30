@@ -20,16 +20,16 @@ from contextlib import contextmanager
 import threading
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
-
 from dimos.manipulation.planning.factory import create_world
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.manipulation.planning.monitor.world_state_monitor import WorldStateMonitor
+from dimos.msgs.sensor_msgs import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    import numpy as np
     from numpy.typing import NDArray
 
     from dimos.manipulation.planning.spec import (
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
         WorldRobotID,
         WorldSpec,
     )
-    from dimos.msgs.sensor_msgs import JointState
+    from dimos.msgs.geometry_msgs import PoseStamped
     from dimos.msgs.vision_msgs import Detection3D
 
 logger = setup_logger()
@@ -210,23 +210,32 @@ class WorldMonitor:
 
     # ============= State Access =============
 
-    def get_current_positions(self, robot_id: WorldRobotID) -> NDArray[np.float64] | None:
-        """Get current joint positions. Returns None if not yet received."""
-        # Try state monitor first
+    def get_current_joint_state(self, robot_id: WorldRobotID) -> JointState | None:
+        """Get current joint state. Returns None if not yet received."""
+        # Try state monitor first for positions
         if robot_id in self._state_monitors:
             positions = self._state_monitors[robot_id].get_current_positions()
+            velocities = self._state_monitors[robot_id].get_current_velocities()
             if positions is not None:
-                return positions
+                joint_names = self._robot_joints.get(robot_id, [])
+                return JointState(
+                    name=joint_names,
+                    position=positions.tolist(),
+                    velocity=velocities.tolist() if velocities is not None else [],
+                )
 
         # Fall back to world's live context
         with self._lock:
             ctx = self._world.get_live_context()
-            return self._world.get_positions(ctx, robot_id)
+            return self._world.get_joint_state(ctx, robot_id)
 
-    def get_current_velocities(self, robot_id: WorldRobotID) -> NDArray[np.float64] | None:
-        """Get current joint velocities. Returns None if not available."""
+    def get_current_velocities(self, robot_id: WorldRobotID) -> JointState | None:
+        """Get current joint velocities as JointState. Returns None if not available."""
         if robot_id in self._state_monitors:
-            return self._state_monitors[robot_id].get_current_velocities()
+            velocities = self._state_monitors[robot_id].get_current_velocities()
+            if velocities is not None:
+                joint_names = self._robot_joints.get(robot_id, [])
+                return JointState(name=joint_names, velocity=velocities.tolist())
         return None
 
     def wait_for_state(self, robot_id: WorldRobotID, timeout: float = 1.0) -> bool:
@@ -255,32 +264,30 @@ class WorldMonitor:
 
     # ============= Collision Checking =============
 
-    def is_state_valid(self, robot_id: WorldRobotID, joint_positions: NDArray[np.float64]) -> bool:
+    def is_state_valid(self, robot_id: WorldRobotID, joint_state: JointState) -> bool:
         """Check if configuration is collision-free."""
-        with self._world.scratch_context() as ctx:
-            self._world.set_positions(ctx, robot_id, joint_positions)
-            return self._world.is_collision_free(ctx, robot_id)
+        return self._world.check_config_collision_free(robot_id, joint_state)
 
     def is_path_valid(
         self, robot_id: WorldRobotID, path: JointPath, step_size: float = 0.05
     ) -> bool:
-        """Check if path is collision-free with interpolation."""
-        with self._world.scratch_context() as ctx:
-            for i in range(len(path) - 1):
-                q_start = path[i]
-                q_end = path[i + 1]
+        """Check if path is collision-free with interpolation.
 
-                # Number of interpolation steps
-                dist = np.linalg.norm(q_end - q_start)
-                num_steps = max(2, int(np.ceil(dist / step_size)))
+        Args:
+            robot_id: Robot to check
+            path: List of JointState waypoints
+            step_size: Max step size for interpolation (radians)
 
-                for j in range(num_steps):
-                    alpha = j / (num_steps - 1)
-                    q = q_start + alpha * (q_end - q_start)
+        Returns:
+            True if entire path is collision-free
+        """
+        if len(path) < 2:
+            return len(path) == 0 or self._world.check_config_collision_free(robot_id, path[0])
 
-                    self._world.set_positions(ctx, robot_id, q)
-                    if not self._world.is_collision_free(ctx, robot_id):
-                        return False
+        # Check each edge
+        for i in range(len(path) - 1):
+            if not self._world.check_edge_collision_free(robot_id, path[i], path[i + 1], step_size):
+                return False
 
         return True
 
@@ -292,25 +299,23 @@ class WorldMonitor:
     # ============= Kinematics =============
 
     def get_ee_pose(
-        self, robot_id: WorldRobotID, joint_positions: NDArray[np.float64] | None = None
-    ) -> NDArray[np.float64]:
-        """Get end-effector pose as 4x4 transform. Uses current state if positions is None."""
+        self, robot_id: WorldRobotID, joint_state: JointState | None = None
+    ) -> PoseStamped:
+        """Get end-effector pose. Uses current state if joint_state is None."""
         with self._world.scratch_context() as ctx:
-            # If no positions provided, fetch current from state monitor
-            if joint_positions is None:
-                joint_positions = self.get_current_positions(robot_id)
+            # If no state provided, fetch current from state monitor
+            if joint_state is None:
+                joint_state = self.get_current_joint_state(robot_id)
 
-            if joint_positions is not None:
-                self._world.set_positions(ctx, robot_id, joint_positions)
+            if joint_state is not None:
+                self._world.set_joint_state(ctx, robot_id, joint_state)
 
             return self._world.get_ee_pose(ctx, robot_id)
 
-    def get_jacobian(
-        self, robot_id: WorldRobotID, joint_positions: NDArray[np.float64]
-    ) -> NDArray[np.float64]:
+    def get_jacobian(self, robot_id: WorldRobotID, joint_state: JointState) -> NDArray[np.float64]:
         """Get 6xN Jacobian matrix."""
         with self._world.scratch_context() as ctx:
-            self._world.set_positions(ctx, robot_id, joint_positions)
+            self._world.set_joint_state(ctx, robot_id, joint_state)
             return self._world.get_jacobian(ctx, robot_id)
 
     # ============= Lifecycle =============

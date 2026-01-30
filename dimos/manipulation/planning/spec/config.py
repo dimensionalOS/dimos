@@ -22,9 +22,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import numpy as np
-    from numpy.typing import NDArray
-
     from dimos.msgs.geometry_msgs import PoseStamped
 
 
@@ -64,9 +61,9 @@ class RobotModelConfig:
     end_effector_link: str
     base_link: str = "base_link"
     package_paths: dict[str, Path] = field(default_factory=dict)
-    joint_limits_lower: NDArray[np.float64] | None = None
-    joint_limits_upper: NDArray[np.float64] | None = None
-    velocity_limits: NDArray[np.float64] | None = None
+    joint_limits_lower: list[float] | None = None
+    joint_limits_upper: list[float] | None = None
+    velocity_limits: list[float] | None = None
     auto_convert_meshes: bool = False
     xacro_args: dict[str, str] = field(default_factory=dict)
     collision_exclusion_pairs: list[tuple[str, str]] = field(default_factory=list)

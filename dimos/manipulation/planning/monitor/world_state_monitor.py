@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from dimos.msgs.sensor_msgs import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -40,7 +41,6 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from dimos.manipulation.planning.spec import WorldSpec
-    from dimos.msgs.sensor_msgs import JointState
 
 logger = setup_logger()
 
@@ -103,8 +103,8 @@ class WorldStateMonitor:
         # Running state
         self._running = False
 
-        # Callbacks
-        self._state_callbacks: list[Callable[[str, NDArray[np.float64]], None]] = []
+        # Callbacks: (robot_id, joint_state) called on each state update
+        self._state_callbacks: list[Callable[[str, JointState], None]] = []
 
     def start(self) -> None:
         """Start the state monitor."""
@@ -165,14 +165,19 @@ class WorldStateMonitor:
 
                 # Sync to world's live context (for visualization)
                 try:
-                    self._world.sync_from_joint_state(self._robot_id, positions)
+                    # Create JointState for world sync (API uses JointState)
+                    joint_state = JointState(
+                        name=self._joint_names,
+                        position=positions.tolist(),
+                    )
+                    self._world.sync_from_joint_state(self._robot_id, joint_state)
                 except Exception as e:
                     logger.error(f"Failed to sync joint state to live context: {e}")
 
                 # Call registered callbacks
                 for callback in self._state_callbacks:
                     try:
-                        callback(self._robot_id, positions)
+                        callback(self._robot_id, joint_state)
                     except Exception as e:
                         logger.error(f"State callback error: {e}")
 
@@ -308,18 +313,18 @@ class WorldStateMonitor:
 
     def add_state_callback(
         self,
-        callback: Callable[[str, NDArray[np.float64]], None],
+        callback: Callable[[str, JointState], None],
     ) -> None:
         """Add callback for state updates.
 
         Args:
-            callback: Function called with (robot_id, positions) on each update
+            callback: Function called with (robot_id, joint_state) on each update
         """
         self._state_callbacks.append(callback)
 
     def remove_state_callback(
         self,
-        callback: Callable[[str, NDArray[np.float64]], None],
+        callback: Callable[[str, JointState], None],
     ) -> None:
         """Remove a state callback."""
         if callback in self._state_callbacks:

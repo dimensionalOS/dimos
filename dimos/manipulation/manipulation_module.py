@@ -21,8 +21,6 @@ from enum import Enum
 import threading
 from typing import TYPE_CHECKING, TypeAlias
 
-import numpy as np
-
 from dimos.core import In, Module, rpc
 from dimos.core.module import ModuleConfig
 from dimos.manipulation.planning import (
@@ -41,14 +39,11 @@ from dimos.manipulation.planning import (
 from dimos.manipulation.planning.monitor import WorldMonitor
 
 # These must be imported at runtime (not TYPE_CHECKING) for In/Out port creation
-from dimos.msgs.sensor_msgs import JointState  # noqa: TC001
+from dimos.msgs.sensor_msgs import JointState
 from dimos.msgs.trajectory_msgs import JointTrajectory
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import matrix_to_pose
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
-
     from dimos.core.rpc_client import RPCClient
     from dimos.msgs.geometry_msgs import Pose, PoseStamped
 
@@ -259,9 +254,9 @@ class ManipulationModule(Module):
             robot_name: Robot to query (required if multiple robots configured)
         """
         if (robot := self._get_robot(robot_name)) and self._world_monitor:
-            pos = self._world_monitor.get_current_positions(robot[1])
-            if pos is not None:
-                return list(pos)
+            state = self._world_monitor.get_current_joint_state(robot[1])
+            if state is not None:
+                return list(state.position)
         return None
 
     @rpc
@@ -272,7 +267,7 @@ class ManipulationModule(Module):
             robot_name: Robot to query (required if multiple robots configured)
         """
         if (robot := self._get_robot(robot_name)) and self._world_monitor:
-            return matrix_to_pose(self._world_monitor.get_ee_pose(robot[1]))
+            return self._world_monitor.get_ee_pose(robot[1], joint_state=None)
         return None
 
     @rpc
@@ -284,9 +279,9 @@ class ManipulationModule(Module):
             robot_name: Robot to check (required if multiple robots configured)
         """
         if (robot := self._get_robot(robot_name)) and self._world_monitor:
-            return self._world_monitor.is_state_valid(
-                robot[1], np.array(joints)
-            )  # robot[1] is the robot_id.
+            _, robot_id, config, _ = robot
+            joint_state = JointState(name=config.joint_names, position=joints)
+            return self._world_monitor.is_state_valid(robot_id, joint_state)
         return False
 
     # =========================================================================
@@ -333,7 +328,7 @@ class ManipulationModule(Module):
         robot_name, robot_id = r
         assert self._world_monitor  # guaranteed by _begin_planning
 
-        current = self._world_monitor.get_current_positions(robot_id)
+        current = self._world_monitor.get_current_joint_state(robot_id)
         if current is None:
             return self._fail("No joint state")
 
@@ -353,11 +348,11 @@ class ManipulationModule(Module):
             seed=current,
             check_collision=True,
         )
-        if not ik.is_success() or ik.joint_positions is None:
+        if not ik.is_success() or ik.joint_state is None:
             return self._fail(f"IK failed: {ik.status.name}")
 
         logger.info(f"IK solved, error: {ik.position_error:.4f}m")
-        return self._plan_path_only(robot_name, robot_id, ik.joint_positions)
+        return self._plan_path_only(robot_name, robot_id, ik.joint_state)
 
     @rpc
     def plan_to_joints(self, joints: list[float], robot_name: RobotName | None = None) -> bool:
@@ -370,23 +365,25 @@ class ManipulationModule(Module):
         if (r := self._begin_planning(robot_name)) is None:
             return False
         robot_name, robot_id = r
+        _, config, _ = self._robots[robot_name]
+        goal_state = JointState(name=config.joint_names, position=joints)
         logger.info(f"Planning to joints for {robot_name}: {[f'{j:.3f}' for j in joints]}")
-        return self._plan_path_only(robot_name, robot_id, np.array(joints))
+        return self._plan_path_only(robot_name, robot_id, goal_state)
 
     def _plan_path_only(
-        self, robot_name: RobotName, robot_id: WorldRobotID, goal: NDArray[np.float64]
+        self, robot_name: RobotName, robot_id: WorldRobotID, goal: JointState
     ) -> bool:
         """Plan path from current position to goal, store result."""
         assert self._world_monitor and self._planner  # guaranteed by _begin_planning
-        start = self._world_monitor.get_current_positions(robot_id)
+        start = self._world_monitor.get_current_joint_state(robot_id)
         if start is None:
             return self._fail("No joint state")
 
         result = self._planner.plan_joint_path(
             world=self._world_monitor.world,
             robot_id=robot_id,
-            q_start=start,
-            q_goal=goal,
+            start=start,
+            goal=goal,
             timeout=self.config.planning_timeout,
         )
         if not result.is_success():
@@ -396,7 +393,8 @@ class ManipulationModule(Module):
         self._planned_paths[robot_name] = result.path
 
         _, _, traj_gen = self._robots[robot_name]
-        traj = traj_gen.generate([list(q) for q in result.path])
+        # Convert JointState path to list of position lists for trajectory generator
+        traj = traj_gen.generate([list(state.position) for state in result.path])
         self._planned_trajectories[robot_name] = traj
         logger.info(f"Trajectory: {traj.duration:.3f}s")
 

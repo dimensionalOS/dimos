@@ -90,7 +90,7 @@ class WorldObstacleMonitor:
         # Running state
         self._running = False
 
-        # Callbacks
+        # Callbacks: (operation, obstacle_id, obstacle) where operation is "add"/"update"/"remove"
         self._obstacle_callbacks: list[Callable[[str, str, Obstacle | None], None]] = []
 
     def start(self) -> None:

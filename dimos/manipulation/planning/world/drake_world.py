@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 from dimos.msgs.geometry_msgs import PoseStamped, Transform
+from dimos.msgs.sensor_msgs import JointState
 
 try:
     from pydrake.geometry import (  # type: ignore[import-not-found]
@@ -617,13 +618,16 @@ class DrakeWorld(WorldSpec):
 
         yield ctx
 
-    def sync_from_joint_state(self, robot_id: WorldRobotID, positions: NDArray[np.float64]) -> None:
-        """Sync live context from driver's joint state.
+    def sync_from_joint_state(self, robot_id: WorldRobotID, joint_state: JointState) -> None:
+        """Sync live context from driver's joint state message.
 
         Called by StateMonitor when new JointState arrives.
         """
         if not self._finalized or self._plant_context is None:
             return  # Silently ignore before finalization
+
+        # Extract positions as numpy array for internal use
+        positions = np.array(joint_state.position, dtype=np.float64)
 
         with self._lock:
             self._set_positions_internal(self._plant_context, robot_id, positions)
@@ -634,12 +638,15 @@ class DrakeWorld(WorldSpec):
 
     # ============= State Operations (context-based) =============
 
-    def set_positions(
-        self, ctx: Context, robot_id: WorldRobotID, positions: NDArray[np.float64]
+    def set_joint_state(
+        self, ctx: Context, robot_id: WorldRobotID, joint_state: JointState
     ) -> None:
-        """Set robot positions in given context."""
+        """Set robot joint state in given context."""
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
+
+        # Extract positions as numpy array for internal use
+        positions = np.array(joint_state.position, dtype=np.float64)
 
         # Get plant context from diagram context
         plant_ctx = self._diagram.GetMutableSubsystemContext(self._plant, ctx)
@@ -660,8 +667,8 @@ class DrakeWorld(WorldSpec):
 
         self._plant.SetPositions(plant_ctx, full_positions)
 
-    def get_positions(self, ctx: Context, robot_id: WorldRobotID) -> NDArray[np.float64]:
-        """Get robot positions from given context."""
+    def get_joint_state(self, ctx: Context, robot_id: WorldRobotID) -> JointState:
+        """Get robot joint state from given context."""
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
 
@@ -672,7 +679,8 @@ class DrakeWorld(WorldSpec):
         plant_ctx = self._diagram.GetSubsystemContext(self._plant, ctx)
         full_positions = self._plant.GetPositions(plant_ctx)
 
-        return np.array([full_positions[idx] for idx in robot_data.joint_indices])
+        positions = [float(full_positions[idx]) for idx in robot_data.joint_indices]
+        return JointState(name=robot_data.config.joint_names, position=positions)
 
     # ============= Collision Checking (context-based) =============
 
@@ -706,32 +714,36 @@ class DrakeWorld(WorldSpec):
 
     # ============= Collision Checking (context-free, for planning) =============
 
-    def check_config_collision_free(self, robot_id: WorldRobotID, q: NDArray[np.float64]) -> bool:
-        """Check if a configuration is collision-free (manages context internally).
+    def check_config_collision_free(self, robot_id: WorldRobotID, joint_state: JointState) -> bool:
+        """Check if a joint state is collision-free (manages context internally).
 
         This is a convenience method for planners that don't need to manage contexts.
         """
         with self.scratch_context() as ctx:
-            self.set_positions(ctx, robot_id, q)
+            self.set_joint_state(ctx, robot_id, joint_state)
             return self.is_collision_free(ctx, robot_id)
 
     def check_edge_collision_free(
         self,
         robot_id: WorldRobotID,
-        q_start: NDArray[np.float64],
-        q_end: NDArray[np.float64],
+        start: JointState,
+        end: JointState,
         step_size: float = 0.05,
     ) -> bool:
-        """Check if the entire edge between two configurations is collision-free.
+        """Check if the entire edge between two joint states is collision-free.
 
-        Interpolates between q_start and q_end at the given step_size and checks
+        Interpolates between start and end at the given step_size and checks
         each configuration for collisions. This is more efficient than checking
         each configuration separately as it uses a single scratch context.
         """
+        # Extract positions as numpy arrays for interpolation
+        q_start = np.array(start.position, dtype=np.float64)
+        q_end = np.array(end.position, dtype=np.float64)
+
         # Compute number of steps needed
         dist = float(np.linalg.norm(q_end - q_start))
         if dist < 1e-8:
-            return self.check_config_collision_free(robot_id, q_start)
+            return self.check_config_collision_free(robot_id, start)
 
         n_steps = max(2, int(np.ceil(dist / step_size)) + 1)
 
@@ -739,7 +751,9 @@ class DrakeWorld(WorldSpec):
             for i in range(n_steps):
                 t = i / (n_steps - 1)
                 q = q_start + t * (q_end - q_start)
-                self.set_positions(ctx, robot_id, q)
+                # Create interpolated JointState
+                interp_state = JointState(name=start.name, position=q.tolist())
+                self.set_joint_state(ctx, robot_id, interp_state)
                 if not self.is_collision_free(ctx, robot_id):
                     return False
 
@@ -747,8 +761,8 @@ class DrakeWorld(WorldSpec):
 
     # ============= Forward Kinematics (context-based) =============
 
-    def get_ee_pose(self, ctx: Context, robot_id: WorldRobotID) -> NDArray[np.float64]:
-        """Get end-effector pose as 4x4 transform."""
+    def get_ee_pose(self, ctx: Context, robot_id: WorldRobotID) -> PoseStamped:
+        """Get end-effector pose."""
         if not self._finalized:
             raise RuntimeError("World must be finalized first")
 
@@ -761,8 +775,15 @@ class DrakeWorld(WorldSpec):
         ee_body = robot_data.ee_frame.body()
         X_WE = self._plant.EvalBodyPoseInWorld(plant_ctx, ee_body)
 
-        result: NDArray[np.float64] = X_WE.GetAsMatrix4()
-        return result
+        # Extract position and quaternion from Drake transform
+        pos = X_WE.translation()
+        quat = X_WE.rotation().ToQuaternion()  # Drake returns [w, x, y, z]
+
+        return PoseStamped(
+            frame_id="world",
+            position=[float(pos[0]), float(pos[1]), float(pos[2])],
+            orientation=[float(quat.x()), float(quat.y()), float(quat.z()), float(quat.w())],
+        )
 
     def get_link_pose(
         self, ctx: Context, robot_id: WorldRobotID, link_name: str
@@ -859,7 +880,7 @@ class DrakeWorld(WorldSpec):
 
         Args:
             robot_id: Robot to animate
-            path: List of joint configurations
+            path: List of joint states forming the path
             duration: Total animation duration in seconds
         """
         import time
@@ -867,20 +888,20 @@ class DrakeWorld(WorldSpec):
         if self._meshcat is None or len(path) < 2:
             return
 
-        # Capture current positions of all OTHER robots so they don't snap to zero
-        other_robot_positions: dict[WorldRobotID, NDArray[np.float64]] = {}
+        # Capture current states of all OTHER robots so they don't snap to zero
+        other_robot_states: dict[WorldRobotID, JointState] = {}
         for rid, _robot_data in self._robots.items():
             if rid != robot_id:
-                other_robot_positions[rid] = self.get_positions(self.get_live_context(), rid)
+                other_robot_states[rid] = self.get_joint_state(self.get_live_context(), rid)
 
         dt = duration / (len(path) - 1)
-        for q in path:
+        for joint_state in path:
             with self.scratch_context() as ctx:
-                # Restore other robots to their current positions
-                for rid, pos in other_robot_positions.items():
-                    self.set_positions(ctx, rid, pos)
-                # Set animated robot's position
-                self.set_positions(ctx, robot_id, q)
+                # Restore other robots to their current states
+                for rid, state in other_robot_states.items():
+                    self.set_joint_state(ctx, rid, state)
+                # Set animated robot's state
+                self.set_joint_state(ctx, robot_id, joint_state)
                 self.publish_visualization(ctx)
             time.sleep(dt)
 
