@@ -75,9 +75,9 @@ class PersonFollowSkillContainer(SkillModule):
 
         # Use MuJoCo camera intrinsics in simulation mode
         if self._global_config.simulation:
-            from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+            from dimos.robot.unitree.connection.go2 import GO2Connection
 
-            camera_info = MujocoConnection.camera_info_static
+            camera_info = GO2Connection.camera_info_static
 
         self._camera_info = camera_info
         self._visual_servo = VisualServoing2D(camera_info, self._global_config.simulation)
