@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Protocol
+
 import pytest
 
 from dimos.core._test_future_annotations_helper import (
@@ -20,10 +22,9 @@ from dimos.core._test_future_annotations_helper import (
     FutureModuleOut,
 )
 from dimos.core.blueprints import (
-    ModuleBlueprint,
-    ModuleBlueprintSet,
-    ModuleConnection,
-    _make_module_blueprint,
+    Blueprint,
+    StreamRef,
+    _BlueprintAtom,
     autoconnect,
 )
 from dimos.core.core import rpc
@@ -33,7 +34,9 @@ from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
+from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
+from dimos.spec.utils import Spec
 
 # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
 _BUILD_WITHOUT_RERUN = {
@@ -104,13 +107,14 @@ module_c = ModuleC.blueprint
 
 
 def test_get_connection_set() -> None:
-    assert _make_module_blueprint(CatModule, args=("arg1"), kwargs={"k": "v"}) == ModuleBlueprint(
+    assert _BlueprintAtom.create(CatModule, args=("arg1",), kwargs={"k": "v"}) == _BlueprintAtom(
         module=CatModule,
-        connections=(
-            ModuleConnection(name="pet_cat", type=Petting, direction="in"),
-            ModuleConnection(name="scratches", type=Scratch, direction="out"),
+        streams=(
+            StreamRef(name="pet_cat", type=Petting, direction="in"),
+            StreamRef(name="scratches", type=Scratch, direction="out"),
         ),
-        args=("arg1"),
+        module_refs=(),
+        args=("arg1",),
         kwargs={"k": "v"},
     )
 
@@ -118,24 +122,26 @@ def test_get_connection_set() -> None:
 def test_autoconnect() -> None:
     blueprint_set = autoconnect(module_a(), module_b())
 
-    assert blueprint_set == ModuleBlueprintSet(
+    assert blueprint_set == Blueprint(
         blueprints=(
-            ModuleBlueprint(
+            _BlueprintAtom(
                 module=ModuleA,
-                connections=(
-                    ModuleConnection(name="data1", type=Data1, direction="out"),
-                    ModuleConnection(name="data2", type=Data2, direction="out"),
+                streams=(
+                    StreamRef(name="data1", type=Data1, direction="out"),
+                    StreamRef(name="data2", type=Data2, direction="out"),
                 ),
+                module_refs=(),
                 args=(),
                 kwargs={},
             ),
-            ModuleBlueprint(
+            _BlueprintAtom(
                 module=ModuleB,
-                connections=(
-                    ModuleConnection(name="data1", type=Data1, direction="in"),
-                    ModuleConnection(name="data2", type=Data2, direction="in"),
-                    ModuleConnection(name="data3", type=Data3, direction="out"),
+                streams=(
+                    StreamRef(name="data1", type=Data1, direction="in"),
+                    StreamRef(name="data2", type=Data2, direction="in"),
+                    StreamRef(name="data3", type=Data3, direction="out"),
                 ),
+                module_refs=(),
                 args=(),
                 kwargs={},
             ),
@@ -212,7 +218,7 @@ def test_name_conflicts_are_reported() -> None:
         pytest.fail("Expected ValueError to be raised")
     except ValueError as e:
         error_message = str(e)
-        assert "Blueprint cannot start because there are conflicting connections" in error_message
+        assert "Blueprint cannot start because there are conflicting streams" in error_message
         assert "'shared_data' has conflicting types" in error_message
         assert "Data1 in ModuleA" in error_message
         assert "Data2 in ModuleB" in error_message
@@ -234,7 +240,7 @@ def test_multiple_name_conflicts_are_reported() -> None:
         pytest.fail("Expected ValueError to be raised")
     except ValueError as e:
         error_message = str(e)
-        assert "Blueprint cannot start because there are conflicting connections" in error_message
+        assert "Blueprint cannot start because there are conflicting streams" in error_message
         assert "'sensor_data' has conflicting types" in error_message
         assert "'control_signal' has conflicting types" in error_message
 
@@ -275,10 +281,10 @@ def test_that_remapping_can_resolve_conflicts() -> None:
 
 @pytest.mark.integration
 def test_remapping() -> None:
-    """Test that remapping connections works correctly."""
+    """Test that remapping streams works correctly."""
     pubsub.lcm.autoconf()
 
-    # Define test modules with connections that will be remapped
+    # Define test modules with streams that will be remapped
     class SourceModule(Module):
         color_image: Out[Data1]  # Will be remapped to 'remapped_data'
 
@@ -304,7 +310,7 @@ def test_remapping() -> None:
     # The original name shouldn't be in the name types since it's remapped
     assert ("color_image", Data1) not in blueprint_set._all_name_types
 
-    # Build and verify connections work
+    # Build and verify streams work
     coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
 
     try:
@@ -335,22 +341,18 @@ def test_future_annotations_support() -> None:
     """Test that modules using `from __future__ import annotations` work correctly.
 
     PEP 563 (future annotations) stores annotations as strings instead of actual types.
-    This test verifies that _make_module_blueprint properly resolves string annotations
+    This test verifies that _BlueprintAtom.create properly resolves string annotations
     to the actual In/Out types.
     """
 
-    # Test that connections are properly extracted from modules with future annotations
-    out_blueprint = _make_module_blueprint(FutureModuleOut, args=(), kwargs={})
-    assert len(out_blueprint.connections) == 1
-    assert out_blueprint.connections[0] == ModuleConnection(
-        name="data", type=FutureData, direction="out"
-    )
+    # Test that streams are properly extracted from modules with future annotations
+    out_blueprint = _BlueprintAtom.create(FutureModuleOut, args=(), kwargs={})
+    assert len(out_blueprint.streams) == 1
+    assert out_blueprint.streams[0] == StreamRef(name="data", type=FutureData, direction="out")
 
-    in_blueprint = _make_module_blueprint(FutureModuleIn, args=(), kwargs={})
-    assert len(in_blueprint.connections) == 1
-    assert in_blueprint.connections[0] == ModuleConnection(
-        name="data", type=FutureData, direction="in"
-    )
+    in_blueprint = _BlueprintAtom.create(FutureModuleIn, args=(), kwargs={})
+    assert len(in_blueprint.streams) == 1
+    assert in_blueprint.streams[0] == StreamRef(name="data", type=FutureData, direction="in")
 
 
 @pytest.mark.integration
@@ -375,5 +377,129 @@ def test_future_annotations_autoconnect() -> None:
         # They should be connected via the same transport
         assert out_instance.data.transport.topic == in_instance.data.transport.topic
 
+    finally:
+        coordinator.stop()
+
+
+# ModuleRef / RPC tests
+class CalculatorSpec(Spec, Protocol):
+    @rpc
+    def compute1(self, a: int, b: int) -> int: ...
+
+    @rpc
+    def compute2(self, a: float, b: float) -> float: ...
+
+
+class Calculator1(Module):
+    @rpc
+    def compute1(self, a: int, b: int) -> int:
+        return a + b
+
+    @rpc
+    def compute2(self, a: float, b: float) -> float:
+        return a + b
+
+    @rpc
+    def start(self) -> None: ...
+
+    @rpc
+    def stop(self) -> None: ...
+
+
+class Calculator2(Module):
+    @rpc
+    def compute1(self, a: int, b: int) -> int:
+        return a * b
+
+    @rpc
+    def compute2(self, a: float, b: float) -> float:
+        return a * b
+
+    @rpc
+    def start(self) -> None: ...
+
+    @rpc
+    def stop(self) -> None: ...
+
+
+# link to a specific module
+class Mod1(Module):
+    stream1: In[Image]
+    calc: Calculator1
+
+    @rpc
+    def start(self) -> None:
+        _ = self.calc.compute1
+
+    @rpc
+    def stop(self) -> None: ...
+
+
+# link to any module that implements a spec (Autoconnect will handle it)
+class Mod2(Module):
+    stream1: In[Image]
+    calc: CalculatorSpec
+
+    @rpc
+    def start(self) -> None:
+        _ = self.calc.compute1
+
+    @rpc
+    def stop(self) -> None: ...
+
+
+@pytest.mark.integration
+def test_module_ref_direct() -> None:
+    coordinator = autoconnect(
+        Calculator1.blueprint(),
+        Mod1.blueprint(),
+    ).build(**_BUILD_WITHOUT_RERUN)
+
+    try:
+        mod1 = coordinator.get_instance(Mod1)
+        assert mod1 is not None
+        assert mod1.calc.compute1(2, 3) == 5
+        assert mod1.calc.compute2(1.5, 2.5) == 4.0
+    finally:
+        coordinator.stop()
+
+
+@pytest.mark.integration
+def test_module_ref_spec() -> None:
+    coordinator = autoconnect(
+        Calculator1.blueprint(),
+        Mod2.blueprint(),
+    ).build(**_BUILD_WITHOUT_RERUN)
+
+    try:
+        mod2 = coordinator.get_instance(Mod2)
+        assert mod2 is not None
+        assert mod2.calc.compute1(4, 5) == 9
+        assert mod2.calc.compute2(3.0, 0.5) == 3.5
+    finally:
+        coordinator.stop()
+
+
+@pytest.mark.integration
+def test_module_ref_remap_ambiguous() -> None:
+    coordinator = (
+        autoconnect(
+            Calculator1.blueprint(),
+            Calculator2.blueprint(),
+            Mod2.blueprint(),
+        )
+        .remappings(
+            [
+                (Mod2, "calc", Calculator1),
+            ]
+        )
+        .build(**_BUILD_WITHOUT_RERUN)
+    )
+
+    try:
+        mod2 = coordinator.get_instance(Mod2)
+        assert mod2 is not None
+        assert mod2.calc.compute1(2, 3) == 5
+        assert mod2.calc.compute2(2.0, 3.0) == 5.0
     finally:
         coordinator.stop()

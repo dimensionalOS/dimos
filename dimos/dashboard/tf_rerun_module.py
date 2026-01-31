@@ -38,7 +38,7 @@ from typing import Any, cast
 import rerun as rr
 
 from dimos.core import Module, rpc
-from dimos.core.blueprints import ModuleBlueprintSet, autoconnect
+from dimos.core.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import GlobalConfig
 from dimos.dashboard.rerun_init import connect_rerun
 from dimos.dashboard.rerun_scene_wiring import rerun_scene_wiring
@@ -144,18 +144,18 @@ def tf_rerun(
     axes_size: float | None = 0.5,
     cameras: Sequence[tuple[str, str, Any]] = (),
     camera_rgb_suffix: str = "rgb",
-) -> ModuleBlueprintSet:
+) -> Blueprint:
     """Convenience blueprint: TF snapshot polling + (optional) static scene wiring.
 
     - TF visualization stays in `TFRerunModule` (poll TF buffer, log to `world/tf/*`).
     - Scene wiring is handled by `RerunSceneWiringModule` (view coords, attachments, URDF, pinholes).
     """
-    tf_bp = cast("ModuleBlueprintSet", TFRerunModule.blueprint(poll_hz=poll_hz))
+    tf_bp = cast("Blueprint", TFRerunModule.blueprint(poll_hz=poll_hz))
     if not scene:
         return tf_bp
 
     scene_bp = cast(
-        "ModuleBlueprintSet",
+        "Blueprint",
         rerun_scene_wiring(
             world_entity=world_entity,
             robot_entity=robot_entity,

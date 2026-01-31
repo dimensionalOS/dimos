@@ -3,6 +3,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import signal
 import time
+from typing import TYPE_CHECKING, cast
 
 from dask.distributed import Client, LocalCluster
 from rich.console import Console
@@ -24,6 +25,10 @@ from dimos.protocol.rpc.spec import RPCSpec
 from dimos.protocol.tf import LCMTF, TF, PubSubTF, TFConfig, TFSpec
 from dimos.utils.actor_registry import ActorRegistry
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    # Avoid runtime import to prevent circular import; ruff's TC001 would otherwise move it.
+    from dimos.core.rpc_client import ModuleProxy
 
 logger = setup_logger()
 
@@ -91,10 +96,10 @@ DimosCluster = Client
 
 def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
     def deploy(  # type: ignore[no-untyped-def]
-        actor_class,
+        actor_class: type[Module],
         *args,
         **kwargs,
-    ):
+    ) -> ModuleProxy:
         logger.info("Deploying module.", module=actor_class.__name__)
         actor = dask_client.submit(  # type: ignore[no-untyped-call]
             actor_class,
@@ -109,7 +114,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
         # Register actor deployment in shared memory
         ActorRegistry.update(str(actor), str(worker))
 
-        return RPCClient(actor, actor_class)
+        return cast("ModuleProxy", RPCClient(actor, actor_class))
 
     def check_worker_memory() -> None:
         """Check memory usage of all workers."""
@@ -225,7 +230,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
     dask_client.check_worker_memory = check_worker_memory  # type: ignore[attr-defined]
     dask_client.stop = lambda: dask_client.close()  # type: ignore[attr-defined, no-untyped-call]
     dask_client.close_all = close_all  # type: ignore[attr-defined]
-    return dask_client
+    return dask_client  # type: ignore[return-value]
 
 
 def start(n: int | None = None, memory_limit: str = "auto") -> DimosCluster:

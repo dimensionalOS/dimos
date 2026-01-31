@@ -41,6 +41,7 @@ dependencies = [
     "sortedcontainers==2.4.0",
     "pydantic",
     "python-dotenv",
+    "annotation-protocol>=1.4.0",
 
     # Multiprocess
     "dask[complete]==2025.5.1",

@@ -116,6 +116,15 @@ wheels = [
 ]
 
 [[package]]
+name = "annotation-protocol"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ea/fd/612c96531b1c1d1c06e5d79547faea3f805785d67481b350f3f6a9cf6dc5/annotation_protocol-1.4.0.tar.gz", hash = "sha256:15d846a4984339bab6cbf80a44623219b8cb06b4f4fee0f22c31a255d16900f8", size = 8470, upload-time = "2026-01-19T08:48:27.051Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/25/8b/71a5e1392dd3aca7ffeef0c3b10ea9b0e62959b5f39889702a06e11eda96/annotation_protocol-1.4.0-py3-none-any.whl", hash = "sha256:6fc66f1506f015db16fdd50fad18520cbb126a7902b27257c9fa521eb5efec60", size = 7834, upload-time = "2026-01-19T08:48:25.848Z" },
+]
+
+[[package]]
 name = "anthropic"
 version = "0.75.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1384,6 +1393,7 @@ name = "dimos"
 version = "0.0.9"
 source = { editable = "." }
 dependencies = [
+    { name = "annotation-protocol" },
     { name = "asyncio" },
     { name = "colorlog" },
     { name = "dask", extra = ["complete"] },
@@ -1615,6 +1625,7 @@ web = [
 
 [package.metadata]
 requires-dist = [
+    { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "anthropic", marker = "extra == 'agents'", specifier = ">=0.19.0" },
     { name = "asyncio", specifier = "==3.4.3" },
     { name = "bitsandbytes", marker = "sys_platform == 'linux' and extra == 'agents'", specifier = ">=0.48.2,<1.0" },
