@@ -305,7 +305,7 @@ dds = DDS()
 dds.start()
 
 received = []
-sensor_topic = Topic(name="sensors/temperature", typename=SensorReading)
+sensor_topic = Topic(name="sensors/temperature", data_type=SensorReading)
 
 dds.subscribe(sensor_topic, lambda msg, t: received.append(msg))
 dds.publish(sensor_topic, SensorReading(value=22.5))
@@ -313,8 +313,13 @@ dds.publish(sensor_topic, SensorReading(value=22.5))
 import time
 time.sleep(0.1)
 
-print(f"Received: {received[0].value}")
+print(f"Received: {received}")
 dds.stop()
+```
+
+<!--Result:-->
+```
+Received: [SensorReading(value=22.5)]
 ```
 
 ---
