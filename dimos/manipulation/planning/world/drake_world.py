@@ -317,7 +317,7 @@ class DrakeWorld(WorldSpec):
 
         body = self._plant.AddRigidBody(
             obstacle_id,
-            self._obstacles_model_instance,
+            self._obstacles_model_instance,  # type: ignore[arg-type]
         )
 
         transform = self._pose_to_rigid_transform(obstacle.pose)
@@ -335,7 +335,7 @@ class DrakeWorld(WorldSpec):
             RigidTransform(),
             shape,
             obstacle_id + "_visual",
-            diffuse_color,
+            diffuse_color,  # type: ignore[arg-type]
         )
 
         self._plant.WeldFrames(
@@ -371,7 +371,9 @@ class DrakeWorld(WorldSpec):
             shape=shape,
             name=obstacle_id,
         )
-        geometry_instance.set_illustration_properties(MakePhongIllustrationProperties(rgba_array))
+        geometry_instance.set_illustration_properties(
+            MakePhongIllustrationProperties(rgba_array)  # type: ignore[arg-type]
+        )
         geometry_instance.set_proximity_properties(proximity_props)
 
         frame_id = self._scene_graph.world_frame_id()
@@ -803,8 +805,8 @@ class DrakeWorld(WorldSpec):
 
         X_WL = self._plant.EvalBodyPoseInWorld(plant_ctx, body)
 
-        result: NDArray[np.float64] = X_WL.GetAsMatrix4()
-        return result
+        result = X_WL.GetAsMatrix4()
+        return result  # type: ignore[return-value]
 
     def get_jacobian(self, ctx: Context, robot_id: WorldRobotID) -> NDArray[np.float64]:
         """Get geometric Jacobian (6 x n_joints).
@@ -825,7 +827,7 @@ class DrakeWorld(WorldSpec):
             plant_ctx,
             JacobianWrtVariable.kQDot,
             robot_data.ee_frame,
-            np.array([0.0, 0.0, 0.0]),  # Point on end-effector
+            np.array([0.0, 0.0, 0.0]),  # type: ignore[arg-type]  # Point on end-effector
             self._plant.world_frame(),
             self._plant.world_frame(),
         )

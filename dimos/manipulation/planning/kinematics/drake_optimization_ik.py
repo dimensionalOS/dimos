@@ -178,7 +178,7 @@ class DrakeOptimizationIK:
         # Add position constraint
         ik.AddPositionConstraint(
             frameB=ee_frame,
-            p_BQ=np.array([0.0, 0.0, 0.0]),
+            p_BQ=np.array([0.0, 0.0, 0.0]),  # type: ignore[arg-type]
             frameA=plant.world_frame(),
             p_AQ_lower=target_transform.translation() - np.array([position_tolerance] * 3),
             p_AQ_upper=target_transform.translation() + np.array([position_tolerance] * 3),
@@ -227,7 +227,7 @@ class DrakeOptimizationIK:
 
         position_error, orientation_error = compute_pose_error(
             pose_to_matrix(actual_pose),
-            target_transform.GetAsMatrix4(),
+            target_transform.GetAsMatrix4(),  # type: ignore[arg-type]
         )
 
         return _create_success_result(

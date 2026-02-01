@@ -15,7 +15,7 @@
 import platform
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.core.blueprints import autoconnect
+from dimos.core.blueprints import Blueprint, autoconnect
 from dimos.core.transport import (
     pSHMTransport,
 )
@@ -24,7 +24,7 @@ from dimos.robot.foxglove_bridge import foxglove_bridge
 from dimos.visualization.rerun.bridge import rerun_bridge
 
 
-def base_blueprint():
+def base_blueprint() -> Blueprint:
     from dimos.core.global_config import GlobalConfig
 
     _config = GlobalConfig()
