@@ -114,7 +114,7 @@ class ManipulationInterface:
             task: The ManipulationTask to add
         """
         self._tasks.append(task)
-        logger.info(f"Added manipulation task: {task.get('id', 'unknown')}")
+        logger.info(f"Added manipulation task: {task.task_id or 'unknown'}")
 
     def get_manipulation_task(self, task_id: str) -> ManipulationTask | None:
         """
@@ -127,7 +127,7 @@ class ManipulationInterface:
             The task object or None if not found
         """
         for task in self._tasks:
-            if task.get("id") == task_id:
+            if task.task_id == task_id:
                 return task
         return None
 
@@ -140,25 +140,20 @@ class ManipulationInterface:
         """
         return list(self._tasks)
 
-    def update_task_status(
-        self, task_id: str, status: str, result: dict[str, Any] | None = None
-    ) -> ManipulationTask | None:
+    def update_task_result(self, task_id: str, result: dict[str, Any]) -> ManipulationTask | None:
         """
-        Update the status and result of a manipulation task.
+        Update the result of a manipulation task.
 
         Args:
             task_id: ID of the task to update
-            status: New status for the task (e.g., 'completed', 'failed')
-            result: Optional dictionary with result data
+            result: Result data from task execution
 
         Returns:
             The updated task or None if task not found
         """
         task = self.get_manipulation_task(task_id)
         if task is not None:
-            task["status"] = status
-            if result is not None:
-                task["result"] = result
+            task.result = result
             return task
         return None
 
