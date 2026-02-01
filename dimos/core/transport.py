@@ -261,21 +261,21 @@ class ROSTransport(PubSubTransport[DimosMsg]):
 
 
 class DDSTransport(PubSubTransport[T]):
-    _started: bool = False
 
     def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(DDSTopic(topic, type))
-        if not hasattr(self, "dds"):
-            self.dds = DDS(**kwargs)
+        self._started: bool = False
         self._start_lock = threading.Lock()
 
     def start(self) -> None:
-        self.dds.start()
-        self._started = True
+        with self._start_lock:
+            self.dds.start()
+            self._started = True
 
     def stop(self) -> None:
-        self.dds.stop()
-        self._started = False
+        with self._start_lock:
+            self.dds.stop()
+            self._started = False
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
         with self._start_lock:
