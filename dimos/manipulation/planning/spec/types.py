@@ -26,6 +26,9 @@ from dimos.manipulation.planning.spec.enums import (
 )
 
 if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
+
     from dimos.msgs.geometry_msgs import PoseStamped
     from dimos.msgs.sensor_msgs import JointState
 
@@ -41,6 +44,13 @@ WorldRobotID: TypeAlias = str
 
 JointPath: TypeAlias = "list[JointState]"
 """List of joint states forming a path (each waypoint has names + positions)"""
+
+# =============================================================================
+# Numeric Array Types
+# =============================================================================
+
+Jacobian: TypeAlias = "NDArray[np.float64]"
+"""6 x n Jacobian matrix (rows: [vx, vy, vz, wx, wy, wz])"""
 
 
 # =============================================================================

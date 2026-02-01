@@ -24,6 +24,7 @@ from dimos.manipulation.planning.spec.protocols import (
 from dimos.manipulation.planning.spec.types import (
     CollisionObjectMessage,
     IKResult,
+    Jacobian,
     JointPath,
     Obstacle,
     PlanningResult,
@@ -35,6 +36,7 @@ __all__ = [
     "CollisionObjectMessage",
     "IKResult",
     "IKStatus",
+    "Jacobian",
     "JointPath",
     "KinematicsSpec",
     "Obstacle",

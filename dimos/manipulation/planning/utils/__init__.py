@@ -38,14 +38,14 @@ from dimos.manipulation.planning.utils.path_utils import (
 )
 
 __all__ = [
+    # Kinematics utilities
     "check_singularity",
     "compute_error_twist",
+    # Path utilities
     "compute_path_length",
     "compute_pose_error",
-    # Kinematics utilities
     "damped_pseudoinverse",
     "get_manipulability",
-    # Path utilities
     "interpolate_path",
     "interpolate_segment",
 ]

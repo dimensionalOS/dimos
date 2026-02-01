@@ -36,9 +36,11 @@ import numpy as np
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+    from dimos.manipulation.planning.spec import Jacobian
+
 
 def damped_pseudoinverse(
-    J: NDArray[np.float64],
+    J: Jacobian,
     damping: float = 0.01,
 ) -> NDArray[np.float64]:
     """Compute damped pseudoinverse of Jacobian.
@@ -68,7 +70,7 @@ def damped_pseudoinverse(
 
 
 def check_singularity(
-    J: NDArray[np.float64],
+    J: Jacobian,
     threshold: float = 0.01,
 ) -> bool:
     """Check if Jacobian is near singularity.
@@ -92,7 +94,7 @@ def check_singularity(
     return get_manipulability(J) < threshold
 
 
-def get_manipulability(J: NDArray[np.float64]) -> float:
+def get_manipulability(J: Jacobian) -> float:
     """Compute manipulability measure.
 
     The manipulability measure w = sqrt(det(J @ J^T)) represents the
