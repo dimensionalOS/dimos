@@ -12,18 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Manipulation module for robot arm motion planning and control."""
+"""
+World Module
 
-from dimos.manipulation.manipulation_module import (
-    ManipulationModule,
-    ManipulationModuleConfig,
-    ManipulationState,
-    manipulation_module,
-)
+Contains world implementations that own the physics/collision backend.
 
-__all__ = [
-    "ManipulationModule",
-    "ManipulationModuleConfig",
-    "ManipulationState",
-    "manipulation_module",
-]
+## Implementations
+
+- DrakeWorld: Uses Drake MultibodyPlant + SceneGraph
+"""
+
+from dimos.manipulation.planning.world.drake_world import DrakeWorld
+
+__all__ = ["DrakeWorld"]
