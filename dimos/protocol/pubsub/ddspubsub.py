@@ -67,41 +67,49 @@ MessageCallback: TypeAlias = Callable[[Any, Topic], None]
 class _DDSMessageListener(Listener):
     """Listener for DataReader that dispatches messages to callbacks."""
 
-    __slots__ = ("callbacks", "topic")
+    __slots__ = ("_callbacks", "_lock", "_topic")
 
-    def __init__(self, topic: Topic, callbacks_dict: dict[Topic, list[MessageCallback]]) -> None:
+    def __init__(self, topic: Topic) -> None:
         super().__init__()
-        self.topic = topic
-        self.callbacks = callbacks_dict[topic]
+        self._topic = topic
+        self._callbacks: tuple[MessageCallback, ...] = ()
+        self._lock = threading.Lock()
+
+    def add_callback(self, callback: MessageCallback) -> None:
+        """Add a callback to the listener."""
+        with self._lock:
+            self._callbacks = (*self._callbacks, callback)
+
+    def remove_callback(self, callback: MessageCallback) -> None:
+        """Remove a callback from the listener."""
+        with self._lock:
+            self._callbacks = tuple(cb for cb in self._callbacks if cb is not callback)
 
     def on_data_available(self, reader: DDSDataReader) -> None:
         """Called when data is available on the reader."""
         try:
             samples = reader.take()
         except Exception as e:
-            logger.error(f"Error reading from topic {self.topic}: {e}")
+            logger.error(f"Error reading from topic {self._topic}: {e}")
             return
-        callbacks = self.callbacks
-        topic = self.topic
         for sample in samples:
             if sample is not None:
-                for callback in callbacks:
+                for callback in self._callbacks:
                     try:
-                        callback(sample, topic)
+                        callback(sample, self._topic)
                     except Exception as e:
-                        logger.error(f"Callback error on topic {topic}: {e}")
+                        logger.error(f"Callback error on topic {self._topic}: {e}")
 
 
 class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
     def __init__(self, qos: Qos | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._qos = qos
-        self._callbacks: dict[Topic, list[MessageCallback]] = {}
-        self._callback_lock = threading.Lock()
         self._writers: dict[Topic, DDSDataWriter[Any]] = {}
         self._writer_lock = threading.Lock()
         self._readers: dict[Topic, DDSDataReader[Any]] = {}
         self._reader_lock = threading.Lock()
+        self._listeners: dict[Topic, _DDSMessageListener] = {}
 
     @property
     def qos(self) -> Qos | None:
@@ -124,31 +132,30 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
         except Exception as e:
             logger.error(f"Error publishing to topic {topic}: {e}")
 
-    def _get_reader(self, topic: Topic) -> DDSDataReader[Any]:
-        """Get or create a DataReader for the given topic with listener."""
+    def _get_listener(self, topic: Topic) -> _DDSMessageListener:
+        """Get or create a listener and reader for the given topic."""
         with self._reader_lock:
             if topic not in self._readers:
                 dds_topic = DDSTopic(self.participant, topic.name, topic.data_type)
-                listener = _DDSMessageListener(topic, self._callbacks)
+                listener = _DDSMessageListener(topic)
                 self._readers[topic] = DDSDataReader(
                     self.participant, dds_topic, qos=self._qos, listener=listener
                 )
-            return self._readers[topic]
+                self._listeners[topic] = listener
+            return self._listeners[topic]
 
     def subscribe(self, topic: Topic, callback: MessageCallback) -> Callable[[], None]:
         """Subscribe to a DDS topic with a callback."""
-        with self._callback_lock:
-            if topic not in self._callbacks:
-                self._callbacks[topic] = []
-            self._callbacks[topic].append(callback)
-            self._get_reader(topic)
+        listener = self._get_listener(topic)
+        listener.add_callback(callback)
         return lambda: self._unsubscribe_callback(topic, callback)
 
     def _unsubscribe_callback(self, topic: Topic, callback: MessageCallback) -> None:
         """Unsubscribe a callback from a topic."""
-        with self._callback_lock:
-            if topic in self._callbacks and callback in self._callbacks[topic]:
-                self._callbacks[topic].remove(callback)
+        with self._reader_lock:
+            listener = self._listeners.get(topic)
+        if listener:
+            listener.remove_callback(callback)
 
 
 class DDS(DDSPubSubBase): ...
