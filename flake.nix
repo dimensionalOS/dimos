@@ -213,7 +213,6 @@
           export PKG_CONFIG_PATH=${lib.escapeShellArg packageConfPackagesString}
           export PYTHONPATH="$PYTHONPATH:"${lib.escapeShellArg manualPythonPackages}
           export CYCLONEDDS_HOME="${pkgs.cyclonedds}"
-          export CYCLONEDDS_URI='<CycloneDDS xmlns="https://cdds.io/config"><Domain id="any"><Internal><SocketReceiveBufferSize min="25MB" max="default"/><SocketSendBufferSize min="25MB" max="default"/><MaxParticipants>128</MaxParticipants><LeaseDuration>10s</LeaseDuration></Internal><General><MaxMessageSize>65500B</MaxMessageSize><FragmentSize>65000B</FragmentSize></General></Domain></CycloneDDS>'
           export CMAKE_PREFIX_PATH="${pkgs.cyclonedds}:$CMAKE_PREFIX_PATH"
           # CC, CFLAGS, and LDFLAGS are bascially all for `pip install pyaudio`
           export CFLAGS="$(pkg-config --cflags portaudio-2.0) $CFLAGS"

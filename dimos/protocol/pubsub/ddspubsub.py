@@ -55,10 +55,10 @@ class Topic:
     """Represents a DDS topic."""
 
     name: str
-    typename: type[IdlStruct]
+    data_type: type[IdlStruct]
 
     def __str__(self) -> str:
-        return f"{self.name}#{self.typename.__name__}"
+        return f"{self.name}#{self.data_type.__name__}"
 
 
 MessageCallback: TypeAlias = Callable[[Any, Topic], None]
@@ -93,14 +93,14 @@ class _DDSMessageListener(Listener):
 
 
 class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
-    def __init__(self, qos: Qos = HIGH_THROUGHPUT_QOS, **kwargs: Any) -> None:
+    def __init__(self, qos: Qos | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._qos = qos
         self._callbacks: dict[Topic, list[MessageCallback]] = {}
         self._callback_lock = threading.Lock()
-        self._writers: dict[Topic, DDSDataWriter] = {}
+        self._writers: dict[Topic, DDSDataWriter[Any]] = {}
         self._writer_lock = threading.Lock()
-        self._readers: dict[Topic, DDSDataReader] = {}
+        self._readers: dict[Topic, DDSDataReader[Any]] = {}
         self._reader_lock = threading.Lock()
 
     @property
@@ -108,14 +108,12 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
         """Get the QoS settings."""
         return self._qos
 
-    def _get_writer(self, topic: Topic) -> DDSDataWriter:
+    def _get_writer(self, topic: Topic) -> DDSDataWriter[Any]:
         """Get or create a DataWriter for the given topic."""
         with self._writer_lock:
             if topic not in self._writers:
-                dds_topic = DDSTopic(self.get_participant(), topic.name, topic.typename)
-                self._writers[topic] = DDSDataWriter(
-                    self.get_participant(), dds_topic, qos=self._qos
-                )
+                dds_topic = DDSTopic(self.participant, topic.name, topic.data_type)
+                self._writers[topic] = DDSDataWriter(self.participant, dds_topic, qos=self._qos)
             return self._writers[topic]
 
     def publish(self, topic: Topic, message: Any) -> None:
@@ -126,14 +124,14 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
         except Exception as e:
             logger.error(f"Error publishing to topic {topic}: {e}")
 
-    def _get_reader(self, topic: Topic) -> DDSDataReader:
+    def _get_reader(self, topic: Topic) -> DDSDataReader[Any]:
         """Get or create a DataReader for the given topic with listener."""
         with self._reader_lock:
             if topic not in self._readers:
-                dds_topic = DDSTopic(self.get_participant(), topic.name, topic.typename)
+                dds_topic = DDSTopic(self.participant, topic.name, topic.data_type)
                 listener = _DDSMessageListener(topic, self._callbacks)
                 self._readers[topic] = DDSDataReader(
-                    self.get_participant(), dds_topic, qos=self._qos, listener=listener
+                    self.participant, dds_topic, qos=self._qos, listener=listener
                 )
             return self._readers[topic]
 

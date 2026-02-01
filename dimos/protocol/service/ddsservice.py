@@ -16,15 +16,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from cyclonedds.domain import DomainParticipant
 
 from dimos.protocol.service.spec import Service
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger()
+if TYPE_CHECKING:
+    from cyclonedds.qos import Qos
 
+logger = setup_logger()
 
 _participant: DomainParticipant | None = None
 _participant_lock = threading.Lock()
@@ -35,15 +37,15 @@ class DDSConfig:
     """Configuration for DDS service."""
 
     domain_id: int = 0
-    participant: DomainParticipant | None = None
+    qos: Qos | None = None
 
 
 class DDSService(Service[DDSConfig]):
     default_config = DDSConfig
 
     def __init__(self, **kwargs: Any) -> None:
-        global _participant
         super().__init__(**kwargs)
+        global _participant, _participant_lock
 
         with _participant_lock:
             if _participant is None:
@@ -58,9 +60,13 @@ class DDSService(Service[DDSConfig]):
         """Stop the DDS service."""
         pass
 
-    def get_participant(self) -> DomainParticipant:
+    @property
+    def participant(self) -> DomainParticipant:
         """Get the DomainParticipant instance."""
         return _participant
 
 
-__all__ = ["DDSConfig", "DDSService"]
+__all__ = [
+    "DDSConfig",
+    "DDSService",
+]

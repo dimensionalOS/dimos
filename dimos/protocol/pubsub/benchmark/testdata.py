@@ -206,7 +206,7 @@ def dds_reliable_pubsub_channel() -> Generator[DDS, None, None]:
 
 def dds_msggen(size: int) -> tuple[DDSTopic, DDSBenchmarkData]:
     """Generate DDS message for benchmark."""
-    topic = DDSTopic(name="benchmark/dds", typename=DDSBenchmarkData)
+    topic = DDSTopic(name="benchmark/dds", data_type=DDSBenchmarkData)
     return (topic, DDSBenchmarkData(data=make_data_bytes(size)))
 
 
