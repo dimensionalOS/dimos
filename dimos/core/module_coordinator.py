@@ -14,23 +14,25 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos import core
 from dimos.core import DimosCluster
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleT
 from dimos.core.resource import Resource
-from dimos.core.rpc_client import RPCClient
 from dimos.core.worker_manager import WorkerManager
 
+if TYPE_CHECKING:
+    from dimos.core.rpc_client import ModuleProxy
 
-class ModuleCoordinator(Resource):
+
+class ModuleCoordinator(Resource):  # type: ignore[misc]
     _client: DimosCluster | WorkerManager | None = None
     _global_config: GlobalConfig
     _n: int | None = None
     _memory_limit: str = "auto"
-    _deployed_modules: dict[type[Module], RPCClient] = {}
+    _deployed_modules: dict[type[Module], "ModuleProxy"] = {}
 
     def __init__(
         self,
@@ -54,24 +56,24 @@ class ModuleCoordinator(Resource):
 
         self._client.close_all()  # type: ignore[union-attr]
 
-    def deploy(self, module_class: type[ModuleT], *args: Any, **kwargs: Any) -> RPCClient:
+    def deploy(self, module_class: type[ModuleT], *args, **kwargs) -> "ModuleProxy":  # type: ignore[no-untyped-def]
         if not self._client:
-            raise ValueError("Not started")
+            raise ValueError("Trying to dimos.deploy before dask client has started")
 
-        module = self._client.deploy(module_class, *args, **kwargs)  # type: ignore[union-attr]
+        module: ModuleProxy = self._client.deploy(module_class, *args, **kwargs)  # type: ignore[union-attr, attr-defined, assignment]
         self._deployed_modules[module_class] = module
         return module
 
     def deploy_parallel(
         self, module_specs: list[tuple[type[ModuleT], tuple[Any, ...], dict[str, Any]]]
-    ) -> list[RPCClient]:
+    ) -> list["ModuleProxy"]:
         if not self._client:
             raise ValueError("Not started")
 
         if isinstance(self._client, WorkerManager):
             modules = self._client.deploy_parallel(module_specs)
             for (module_class, _, _), module in zip(module_specs, modules, strict=True):
-                self._deployed_modules[module_class] = module
+                self._deployed_modules[module_class] = module  # type: ignore[assignment]
             return modules  # type: ignore[return-value]
         else:
             return [
@@ -88,8 +90,8 @@ class ModuleCoordinator(Resource):
             for module in modules:
                 module.start()
 
-    def get_instance(self, module: type[ModuleT]) -> ModuleT | None:
-        return self._deployed_modules.get(module)  # type: ignore[return-value]
+    def get_instance(self, module: type[ModuleT]) -> "ModuleProxy":
+        return self._deployed_modules.get(module)  # type: ignore[return-value, no-any-return]
 
     def loop(self) -> None:
         try:

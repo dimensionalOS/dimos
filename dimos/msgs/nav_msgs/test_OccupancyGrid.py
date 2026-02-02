@@ -26,7 +26,7 @@ from dimos.mapping.pointclouds.occupancy import general_occupancy
 from dimos.msgs.geometry_msgs import Pose
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.utils.data import get_data
 
 

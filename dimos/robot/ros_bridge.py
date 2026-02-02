@@ -37,7 +37,7 @@ except ImportError:
     QoSDurabilityPolicy = None  # type: ignore[assignment, misc]
 
 from dimos.core.resource import Resource
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(level=logging.INFO)
@@ -157,7 +157,7 @@ class ROSBridge(Resource):
             def dimos_callback(msg, _topic) -> None:  # type: ignore[no-untyped-def]
                 self._dimos_to_ros(msg, ros_publisher, topic_name)
 
-            dimos_subscription = self.lcm.subscribe(dimos_topic, dimos_callback)
+            dimos_subscription = self.lcm.subscribe(dimos_topic, dimos_callback)  # type: ignore[arg-type]
             logger.info(f"  DIMOS → ROS: Subscribing to DIMOS topic {dimos_topic_name}")
         else:
             raise ValueError(f"Invalid bridge direction: {direction}")
@@ -196,7 +196,7 @@ class ROSBridge(Resource):
             topic_name: Name of the topic for tracking
         """
         dimos_msg = dimos_type.from_ros_msg(ros_msg)  # type: ignore[attr-defined]
-        self.lcm.publish(dimos_topic, dimos_msg)
+        self.lcm.publish(dimos_topic, dimos_msg)  # type: ignore[arg-type]
 
     def _dimos_to_ros(self, dimos_msg: Any, ros_publisher, _topic_name: str) -> None:  # type: ignore[no-untyped-def]
         """Convert DIMOS message to ROS and publish.

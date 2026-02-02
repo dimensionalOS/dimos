@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
-from dimos.protocol.pubsub.lcmpubsub import (
+from dimos.protocol.pubsub.impl.lcmpubsub import (
     LCM,
     LCMPubSubBase,
     PickleLCM,

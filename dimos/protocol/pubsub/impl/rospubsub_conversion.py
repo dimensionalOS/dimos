@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from dimos.msgs import DimosMsg
-    from dimos.protocol.pubsub.rospubsub import ROSMessage
+    from dimos.protocol.pubsub.impl.rospubsub import ROSMessage
 
 
 # Complex types that need LCM roundtrip (explicit list)

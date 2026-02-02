@@ -42,6 +42,7 @@ dependencies = [
     "sortedcontainers==2.4.0",
     "pydantic",
     "python-dotenv",
+    "annotation-protocol>=1.4.0",
 
     # Multiprocess
     "dask[complete]==2025.5.1",
@@ -172,6 +173,9 @@ unitree = [
 ]
 
 manipulation = [
+    # Planning (Drake)
+    "drake>=1.40.0",
+
     # Contact Graspnet Dependencies
     "h5py>=3.7.0",
     "pyrender>=0.1.45",
@@ -185,8 +189,9 @@ manipulation = [
     "pyyaml>=6.0",
     "contact-graspnet-pytorch",
 
-    # piper arm
+    # Hardware SDKs
     "piper-sdk",
+    "xarm-python-sdk>=1.17.0",
 
     # Visualization (Optional)
     "kaleido>=0.2.1",

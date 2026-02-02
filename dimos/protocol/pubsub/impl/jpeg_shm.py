@@ -18,8 +18,8 @@ from turbojpeg import TurboJPEG  # type: ignore[import-untyped]
 
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
-from dimos.protocol.pubsub.shmpubsub import SharedMemoryPubSubBase
-from dimos.protocol.pubsub.spec import PubSubEncoderMixin
+from dimos.protocol.pubsub.encoders import PubSubEncoderMixin
+from dimos.protocol.pubsub.impl.shmpubsub import SharedMemoryPubSubBase
 
 
 class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image, bytes]):

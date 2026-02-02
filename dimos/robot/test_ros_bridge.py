@@ -37,7 +37,7 @@ except ImportError:
 from dimos.msgs.geometry_msgs import TwistStamped
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.tf2_msgs import TFMessage
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
 
 

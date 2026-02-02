@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     )
 
 try:
-    import cupy as cp  # type: ignore[import-not-found]
+    import cupy as cp  # type: ignore[import-not-found, import-untyped]
 except Exception:
     cp = None
 

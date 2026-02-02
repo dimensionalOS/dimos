@@ -1,20 +1,20 @@
 # Blueprints
 
-Blueprints (`ModuleBlueprint`) are instructions for how to initialize a `Module`.
+Blueprints (`_BlueprintAtom`) are instructions for how to initialize a `Module`.
 
-You don't typically want to run a single module, so multiple blueprints are handled together in `ModuleBlueprintSet`.
+You don't typically want to run a single module, so multiple blueprints are handled together in `Blueprint`.
 
-You create a `ModuleBlueprintSet` from a single module (say `ConnectionModule`) with:
+You create a `Blueprint` from a single module (say `ConnectionModule`) with:
 
 ```python session=blueprint-ex1
-from dimos.core.blueprints import create_module_blueprint
+from dimos.core.blueprints import Blueprint
 from dimos.core import Module, rpc
 
 class ConnectionModule(Module):
     def __init__(self, arg1, arg2, kwarg='value') -> None:
         super().__init__()
 
-blueprint = create_module_blueprint(ConnectionModule, 'arg1', 'arg2', kwarg='value')
+blueprint = Blueprint.create(ConnectionModule, 'arg1', 'arg2', kwarg='value')
 ```
 
 But the same thing can be accomplished more succinctly as:
@@ -57,7 +57,7 @@ blueprint = autoconnect(
 )
 ```
 
-`blueprint` itself is a `ModuleBlueprintSet` so you can link it with other modules:
+`blueprint` itself is a `Blueprint` so you can link it with other modules:
 
 ```python session=blueprint-ex1
 class Module4(Module):
@@ -99,7 +99,7 @@ Imagine you have this code:
 ```python session=blueprint-ex1
 from functools import partial
 
-from dimos.core.blueprints import create_module_blueprint, autoconnect
+from dimos.core.blueprints import Blueprint, autoconnect
 from dimos.core import Module, rpc, Out, In
 from dimos.msgs.sensor_msgs import Image
 
@@ -111,8 +111,8 @@ class ModuleB(Module):
     image: In[Image]
     begin_explore: In[bool]
 
-module_a = partial(create_module_blueprint, ModuleA)
-module_b = partial(create_module_blueprint, ModuleB)
+module_a = partial(Blueprint.create, ModuleA)
+module_b = partial(Blueprint.create, ModuleB)
 
 autoconnect(module_a(), module_b())
 ```
@@ -226,109 +226,56 @@ Imagine you have this code:
 ```python session=blueprint-ex3
 from dimos.core import Module, rpc
 
-class ModuleA(Module):
+class Drone(Module):
 
     @rpc
     def get_time(self) -> str:
         ...
 
-class ModuleB(Module):
-    def request_the_time(self) -> None:
+class HelperModule(Module):
+    def set_alarm_clock(self) -> None:
         ...
 ```
 
 And you want to call `ModuleA.get_time` in `ModuleB.request_the_time`.
 
-To do this, you can request a link to the method you want to call in `rpc_calls`. Calling `get_time_rcp` will call the original `ModuleA.get_time`.
+To do this, you can request a module reference.
 
 ```python session=blueprint-ex3
 from dimos.core import Module, rpc
 
-class ModuleB(Module):
-    rpc_calls: list[str] = [
-        "ModuleA.get_time",
-    ]
+class HelperModule(Module):
+    drone_module: Drone
 
-    def request_the_time(self) -> None:
-        get_time_rpc = self.get_rpc_calls("ModuleA.get_time")
-        print(get_time_rpc())
+    def set_alarm_clock(self) -> None:
+        print(self.drone_module.get_time_rpc())
 ```
 
-You can also request multiple methods at a time:
+But what if we want `HelperModule` to work for more than just `Drone`? For that we can use a spec.
 
 ```python session=blueprint-ex3
-class ModuleB(Module):
-    def request_the_time(self) -> None:
-        method1_rpc, method2_rpc = self.get_rpc_calls("ModuleX.m1", "ModuleX.m2")
-```
+from dimos.spec.utils import Spec
+from typing import Protocol
 
-## Alternative RPC calls
+class Drone(Module):
+    def get_time(self) -> str:
+        return "1:00 PM"
 
-There is an alternative way of receiving RPC methods. It is useful when you want to perform an action at the time you receive the RPC methods.
+class Car(Module):
+    def get_time(self) -> str:
+        return "2:00 PM"
 
-You can use it by defining a method like `set_<class_name>_<method_name>`:
-
-```python session=blueprint-ex3
-from dimos.core import Module, rpc
-from dimos.core.rpc_client import RpcCall
-
-class ModuleB(Module):
-    @rpc # Note that it has to be an rpc method.
-    def set_ModuleA_get_time(self, rpc_call: RpcCall) -> None:
-        self._get_time = rpc_call
-        self._get_time.set_rpc(self.rpc)
-
-    def request_the_time(self) -> None:
-        print(self._get_time())
-```
-
-Note that `RpcCall.rpc` does not serialize, so you have to set it to the one from the module with `rpc_call.set_rpc(self.rpc)`
-
-## Calling an interface
-
-In the previous examples, you can only call methods in a module called `ModuleA`. But what if you want to deploy an alternative module in your blueprint?
-
-You can do so by extracting the common interface as an `ABC` (abstract base class) and linking to the `ABC` instead one particular class.
-
-```python session=blueprint-ex3
-from abc import ABC, abstractmethod
-from dimos.core.blueprints import autoconnect
-from dimos.core import Module, rpc
-
-class TimeInterface(ABC):
-    @abstractmethod
-    def get_time(self): ...
-
-class ProperTime(Module, TimeInterface):
-    def get_time(self):
-        return "13:00"
-
-class BadTime(TimeInterface):
-    def get_time(self):
-        return "01:00 PM"
-
+# Your Spec
+class AnyModuleWithGetTime(Spec, Protocol):
+    def get_time(self) -> str: ...
 
 class ModuleB(Module):
-    rpc_calls: list[str] = [
-        "TimeInterface.get_time", # TimeInterface instead of ProperTime or BadTime
-    ]
+    device: AnyModuleWithGetTime
 
     def request_the_time(self) -> None:
-        get_time_rpc = self.get_rpc_calls("TimeInterface.get_time")
-        print(get_time_rpc())
+        # autoconnect() will automatically find whatever module has a get_time() method
+        print(self.device.get_time())
 ```
-
-The actual method that you get in `get_time_rpc` depends on which module is deployed. If you deploy `ProperTime`, you get `ProperTime.get_time`:
-
-```python session=blueprint-ex3
-blueprint = autoconnect(
-    ProperTime.blueprint(),
-    # get_rpc_calls("TimeInterface.get_time") returns ProperTime.get_time
-    ModuleB.blueprint(),
-)
-```
-
-If both are deployed, the blueprint will throw an error because it's ambiguous.
 
 ## Defining skills
 

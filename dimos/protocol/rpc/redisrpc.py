@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.protocol.pubsub.redispubsub import Redis
+from dimos.protocol.pubsub.impl.redispubsub import Redis
 from dimos.protocol.rpc.pubsubrpc import PubSubRPCMixin
 
 

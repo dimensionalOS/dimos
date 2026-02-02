@@ -25,7 +25,7 @@ import numpy as np
 import rerun as rr
 
 try:
-    import cupy as cp  # type: ignore[import-not-found]
+    import cupy as cp  # type: ignore[import-not-found, import-untyped]
 
     HAS_CUDA = True
 except Exception:  # pragma: no cover - optional dependency
@@ -35,7 +35,7 @@ except Exception:  # pragma: no cover - optional dependency
 # NVRTC defaults to C++11; libcu++ in recent CUDA requires at least C++17.
 if HAS_CUDA:
     try:
-        import cupy.cuda.compiler as _cupy_compiler  # type: ignore[import-not-found]
+        import cupy.cuda.compiler as _cupy_compiler  # type: ignore[import-not-found, import-untyped]
 
         if not getattr(_cupy_compiler, "_dimos_force_cxx17", False):
             _orig_compile_using_nvrtc = _cupy_compiler.compile_using_nvrtc

@@ -17,7 +17,8 @@ from collections.abc import Callable
 from typing import Any
 
 from dimos.protocol import encode
-from dimos.protocol.pubsub.spec import PubSub, PubSubEncoderMixin
+from dimos.protocol.pubsub.encoders import PubSubEncoderMixin
+from dimos.protocol.pubsub.spec import PubSub
 
 
 class Memory(PubSub[str, Any]):

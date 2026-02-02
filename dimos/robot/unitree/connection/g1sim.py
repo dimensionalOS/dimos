@@ -83,7 +83,7 @@ class G1SimConnection(Module):
 
         # Publish camera_link transform
         camera_link = Transform(
-            translation=Vector3(0.3, 0.0, 0.0),
+            translation=Vector3(0.05, 0.0, 0.6),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
             frame_id="base_link",
             child_frame_id="camera_link",

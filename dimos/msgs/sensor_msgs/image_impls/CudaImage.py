@@ -30,8 +30,8 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
 )
 
 try:
-    import cupy as cp  # type: ignore[import-not-found]
-    from cupyx.scipy import (  # type: ignore[import-not-found]
+    import cupy as cp  # type: ignore[import-not-found, import-untyped]
+    from cupyx.scipy import (  # type: ignore[import-not-found, import-untyped]
         ndimage as cndimage,
         signal as csignal,
     )

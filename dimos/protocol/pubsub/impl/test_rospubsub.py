@@ -23,7 +23,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.protocol.pubsub.rospubsub import DimosROS, ROSTopic
+from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 
 # Add msg_name to LCM PointStamped for testing nested message conversion
 PointStamped.msg_name = "geometry_msgs.PointStamped"
