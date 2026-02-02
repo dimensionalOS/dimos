@@ -98,7 +98,7 @@ class _DDSMessageListener(Listener):
                     try:
                         callback(sample, self._topic)
                     except Exception as e:
-                        logger.error(f"Callback error on topic {self._topic}: {e}")
+                        logger.error(f"Callback error on topic {self._topic}: {e}", exc_info=True)
 
 
 class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
