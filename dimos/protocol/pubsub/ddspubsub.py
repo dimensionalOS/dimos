@@ -90,7 +90,7 @@ class _DDSMessageListener(Listener):
         try:
             samples = reader.take()
         except Exception as e:
-            logger.error(f"Error reading from topic {self._topic}: {e}")
+            logger.error(f"Error reading from topic {self._topic}: {e}", exc_info=True)
             return
         for sample in samples:
             if sample is not None:
