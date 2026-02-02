@@ -33,10 +33,6 @@ from dimos.protocol.pubsub.impl.jpeg_shm import JpegSharedMemory
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
-from dimos.protocol.pubsub.jpeg_shm import JpegSharedMemory
-from dimos.protocol.pubsub.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
-from dimos.protocol.pubsub.rospubsub import DimosROS, ROSTopic
-from dimos.protocol.pubsub.shmpubsub import BytesSharedMemory, PickleSharedMemory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
