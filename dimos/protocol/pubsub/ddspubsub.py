@@ -130,7 +130,7 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
         try:
             writer.write(message)
         except Exception as e:
-            logger.error(f"Error publishing to topic {topic}: {e}")
+            logger.error(f"Error publishing to topic {topic}: {e}, exc_info=True")
 
     def _get_listener(self, topic: Topic) -> _DDSMessageListener:
         """Get or create a listener and reader for the given topic."""
