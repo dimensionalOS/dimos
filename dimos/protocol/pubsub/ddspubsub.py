@@ -101,7 +101,7 @@ class _DDSMessageListener(Listener):
                         logger.error(f"Callback error on topic {self._topic}: {e}", exc_info=True)
 
 
-class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
+class DDS(DDSService, PubSub[Topic, Any]):
     def __init__(self, qos: Qos | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._qos = qos
@@ -158,14 +158,10 @@ class DDSPubSubBase(DDSService, PubSub[Topic, Any]):
             listener.remove_callback(callback)
 
 
-class DDS(DDSPubSubBase): ...
-
-
 __all__ = [
     "DDS",
     "HIGH_THROUGHPUT_QOS",
     "RELIABLE_QOS",
-    "DDSPubSubBase",
     "MessageCallback",
     "Policy",
     "Qos",

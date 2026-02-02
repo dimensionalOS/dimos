@@ -264,7 +264,7 @@ class DDSTransport(PubSubTransport[T]):
     def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(DDSTopic(topic, type))
         self._started: bool = False
-        self._start_lock = threading.Lock()
+        self._start_lock = threading.RLock()
 
     def start(self) -> None:
         with self._start_lock:

@@ -54,11 +54,12 @@ class DDSService(Service[DDSConfig]):
 
     def start(self) -> None:
         """Start the DDS service."""
-        pass
+        super().start()
 
     def stop(self) -> None:
         """Stop the DDS service."""
-        pass
+        super().stop()
+
 
     @property
     def participant(self) -> DomainParticipant:
