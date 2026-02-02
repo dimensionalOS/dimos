@@ -45,24 +45,30 @@ class DDSService(Service[DDSConfig]):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        global _participant, _participant_lock
 
+    def start(self) -> None:
+        """Start the DDS service."""
+        global _participant
         with _participant_lock:
             if _participant is None:
                 _participant = DomainParticipant(self.config.domain_id)
                 logger.info(f"DDS service started with Cyclone DDS domain {self.config.domain_id}")
-
-    def start(self) -> None:
-        """Start the DDS service."""
         super().start()
 
     def stop(self) -> None:
         """Stop the DDS service."""
+        global _participant
+        with _participant_lock:
+            if _participant is not None:
+                _participant = None
+                logger.info("DDS service stopped")
         super().stop()
 
     @property
     def participant(self) -> DomainParticipant:
         """Get the DomainParticipant instance."""
+        if _participant is None:
+            raise RuntimeError("DomainParticipant not initialized")
         return _participant
 
 

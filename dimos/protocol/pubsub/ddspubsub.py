@@ -157,6 +157,15 @@ class DDS(DDSService, PubSub[Topic, Any]):
         if listener:
             listener.remove_callback(callback)
 
+    def stop(self) -> None:
+        """Stop the DDS service and clean up resources."""
+        with self._reader_lock:
+            self._readers.clear()
+            self._listeners.clear()
+        with self._writer_lock:
+            self._writers.clear()
+        super().stop()
+
 
 __all__ = [
     "DDS",
