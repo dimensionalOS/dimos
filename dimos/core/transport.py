@@ -28,7 +28,7 @@ from typing import (
 
 from dimos.core.stream import In, Out, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
-from dimos.protocol.pubsub.ddspubsub import Topic as DDSTopic
+from dimos.protocol.pubsub.ddspubsub import DDS, Topic as DDSTopic
 from dimos.protocol.pubsub.impl.jpeg_shm import JpegSharedMemory
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
@@ -267,6 +267,7 @@ class ROSTransport(PubSubTransport[DimosMsg]):
 class DDSTransport(PubSubTransport[T]):
     def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(DDSTopic(topic, type))
+        self.dds = DDS(**kwargs)
         self._started: bool = False
         self._start_lock = threading.RLock()
 
