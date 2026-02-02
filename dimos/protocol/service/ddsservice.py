@@ -60,7 +60,6 @@ class DDSService(Service[DDSConfig]):
         """Stop the DDS service."""
         super().stop()
 
-
     @property
     def participant(self) -> DomainParticipant:
         """Get the DomainParticipant instance."""
