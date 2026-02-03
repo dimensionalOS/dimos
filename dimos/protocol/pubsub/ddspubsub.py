@@ -85,7 +85,7 @@ class _DDSMessageListener(Listener):
         with self._lock:
             self._callbacks = tuple(cb for cb in self._callbacks if cb is not callback)
 
-    def on_data_available(self, reader: DDSDataReader) -> None:
+    def on_data_available(self, reader: DDSDataReader[Any]) -> None:
         """Called when data is available on the reader."""
         try:
             samples = reader.take()

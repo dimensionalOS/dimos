@@ -187,7 +187,7 @@ testcases.append(
 class DDSBenchmarkData(IdlStruct):
     """DDS message type for benchmarking with variable-size byte payload."""
 
-    data: sequence[uint8]
+    data: sequence[uint8]  # type: ignore[type-arg]
 
 
 @contextmanager
@@ -211,7 +211,7 @@ def dds_reliable_pubsub_channel() -> Generator[DDS, None, None]:
 def dds_msggen(size: int) -> tuple[DDSTopic, DDSBenchmarkData]:
     """Generate DDS message for benchmark."""
     topic = DDSTopic(name="benchmark/dds", data_type=DDSBenchmarkData)
-    return (topic, DDSBenchmarkData(data=make_data_bytes(size)))
+    return (topic, DDSBenchmarkData(data=list(make_data_bytes(size))))
 
 
 testcases.append(
