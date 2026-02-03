@@ -1,5 +1,3 @@
-# DRAFT PR TEMPLATE IN PROGRESS - DO NOT USE IT YET
-
 ## Pull Request Summary
 
 ### Short Description
