@@ -60,6 +60,7 @@ class DDSService(Service[DDSConfig]):
         global _participant
         with _participant_lock:
             if _participant is not None:
+                _participant.close()
                 _participant = None
                 logger.info("DDS service stopped")
         super().stop()

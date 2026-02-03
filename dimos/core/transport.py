@@ -269,25 +269,27 @@ class DDSTransport(PubSubTransport[T]):
 
     def start(self) -> None:
         with self._start_lock:
-            self.dds.start()
-            self._started = True
+            if not self._started:
+                self.dds.start()
+                self._started = True
 
     def stop(self) -> None:
         with self._start_lock:
-            self.dds.stop()
-            self._started = False
+            if self._started:
+                self.dds.stop()
+                self._started = False
 
-    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+    def broadcast(self, _, msg) -> None:
         with self._start_lock:
             if not self._started:
                 self.start()
-        self.dds.publish(self.topic, msg)
+            self.dds.publish(self.topic, msg)
 
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
         with self._start_lock:
             if not self._started:
                 self.start()
-        return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
+            return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
 
 
 class ZenohTransport(PubSubTransport[T]): ...
