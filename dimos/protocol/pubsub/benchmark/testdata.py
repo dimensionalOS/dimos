@@ -14,12 +14,21 @@
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from cyclonedds.idl import IdlStruct
+from cyclonedds.idl.types import sequence, uint8
 import numpy as np
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.benchmark.type import Case
+from dimos.protocol.pubsub.impl.ddspubsub import (
+    DDS,
+    HIGH_THROUGHPUT_QOS,
+    RELIABLE_QOS,
+    Topic as DDSTopic,
+)
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.memory import Memory
 from dimos.protocol.pubsub.impl.shmpubsub import (
@@ -170,6 +179,52 @@ testcases.append(
     Case(
         pubsub_context=shm_lcm_pubsub_channel,
         msg_gen=lcm_msggen,  # Reuse the LCM message generator
+    )
+)
+
+
+@dataclass
+class DDSBenchmarkData(IdlStruct):
+    """DDS message type for benchmarking with variable-size byte payload."""
+
+    data: sequence[uint8]  # type: ignore[type-arg]
+
+
+@contextmanager
+def dds_high_throughput_pubsub_channel() -> Generator[DDS, None, None]:
+    """DDS with HIGH_THROUGHPUT_QOS - BestEffort, optimized for speed."""
+    dds_pubsub = DDS(qos=HIGH_THROUGHPUT_QOS)
+    dds_pubsub.start()
+    yield dds_pubsub
+    dds_pubsub.stop()
+
+
+@contextmanager
+def dds_reliable_pubsub_channel() -> Generator[DDS, None, None]:
+    """DDS with RELIABLE_QOS - guaranteed delivery."""
+    dds_pubsub = DDS(qos=RELIABLE_QOS)
+    dds_pubsub.start()
+    yield dds_pubsub
+    dds_pubsub.stop()
+
+
+def dds_msggen(size: int) -> tuple[DDSTopic, DDSBenchmarkData]:
+    """Generate DDS message for benchmark."""
+    topic = DDSTopic(name="benchmark/dds", data_type=DDSBenchmarkData)
+    return (topic, DDSBenchmarkData(data=list(make_data_bytes(size))))  # type: ignore[arg-type]
+
+
+testcases.append(
+    Case(
+        pubsub_context=dds_high_throughput_pubsub_channel,
+        msg_gen=dds_msggen,
+    )
+)
+
+testcases.append(
+    Case(
+        pubsub_context=dds_reliable_pubsub_channel,
+        msg_gen=dds_msggen,
     )
 )
 

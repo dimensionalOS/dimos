@@ -148,6 +148,7 @@ if __name__ == "__main__":
 ```
 
 <!--Result:-->
+
 ```
 Initialized dimos local cluster with 2 workers, memory limit: auto
 2026-01-24T13:17:50.190559Z [info     ] Deploying module.                                            [dimos/core/__init__.py] module=CameraModule
@@ -286,6 +287,45 @@ shm.stop()
 <!--Result:-->
 ```
 Received: [{'data': [1, 2, 3]}]
+```
+
+### DDS Transport
+
+For network communication, DDS uses the Data Distribution Service (DDS) protocol:
+
+```python session=dds_demo ansi=false
+from dataclasses import dataclass
+from cyclonedds.idl import IdlStruct
+from dimos.protocol.pubsub.ddspubsub import (
+    DDS,
+    HIGH_THROUGHPUT_QOS,
+    RELIABLE_QOS,
+    Topic as DDSTopic,
+)
+
+@dataclass
+class SensorReading(IdlStruct):
+    value: float
+
+dds = DDS()
+dds.start()
+
+received = []
+sensor_topic = Topic(name="sensors/temperature", data_type=SensorReading)
+
+dds.subscribe(sensor_topic, lambda msg, t: received.append(msg))
+dds.publish(sensor_topic, SensorReading(value=22.5))
+
+import time
+time.sleep(0.1)
+
+print(f"Received: {received}")
+dds.stop()
+```
+
+<!--Result:-->
+```
+Received: [SensorReading(value=22.5)]
 ```
 
 ---
