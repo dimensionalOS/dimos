@@ -152,7 +152,7 @@ from dimos.core import In, Module, Out, rpc
 from dimos.core.blueprints import autoconnect
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
+from dimos.msgs.sensor_msgs.Image import ImageFormat
 
 class RobotConnection(Module):
     cmd_vel: In[Twist]

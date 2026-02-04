@@ -104,7 +104,7 @@ class RawROS(PubSub[RawROSTopic, Any]):
         if qos is not None:
             self._qos = qos
         else:
-            self._qos = QoSProfile(
+            self._qos = QoSProfile(  # type: ignore[no-untyped-call]
                 # Haven't noticed any difference between BEST_EFFORT and RELIABLE for local comms in our tests
                 # ./bin/dev python -m pytest -svm tool -k ros dimos/protocol/pubsub/benchmark/test_benchmark.py
                 #
@@ -120,7 +120,7 @@ class RawROS(PubSub[RawROSTopic, Any]):
         if self._spin_thread is not None:
             return
 
-        if not rclpy.ok():
+        if not rclpy.ok():  # type: ignore[attr-defined]
             rclpy.init()
 
         self._stop_event.clear()
@@ -160,7 +160,7 @@ class RawROS(PubSub[RawROSTopic, Any]):
                 self._node.destroy_publisher(publisher)
 
         if self._node:
-            self._node.destroy_node()
+            self._node.destroy_node()  # type: ignore[no-untyped-call]
             self._node = None
 
         self._executor = None

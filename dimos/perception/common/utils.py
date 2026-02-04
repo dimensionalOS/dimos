@@ -70,8 +70,6 @@ __all__ = [
     "project_3d_points_to_2d_cpu",
     "project_3d_points_to_2d_cuda",
     "rectify_image",
-    "rectify_image_cpu",
-    "rectify_image_cuda",
     "setup_logger",
     "torch",
     "yaml",
@@ -190,150 +188,13 @@ def load_camera_info_opencv(yaml_path: str) -> tuple[np.ndarray, np.ndarray]:  #
     return K, dist
 
 
-def rectify_image_cpu(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarray) -> Image:  # type: ignore[type-arg]
+def rectify_image(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarray) -> Image:  # type: ignore[type-arg]
     """CPU rectification using OpenCV. Preserves backend by caller.
 
     Returns an Image with numpy or cupy data depending on caller choice.
     """
-    src = _to_numpy(image.data)  # type: ignore[no-untyped-call]
-    rect = cv2.undistort(src, camera_matrix, dist_coeffs)
-    # Caller decides whether to convert back to GPU.
+    rect = cv2.undistort(image.data, camera_matrix, dist_coeffs)
     return Image(data=rect, format=image.format, frame_id=image.frame_id, ts=image.ts)
-
-
-def rectify_image_cuda(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarray) -> Image:  # type: ignore[type-arg]
-    """GPU rectification using CuPy bilinear sampling.
-
-    Generates an undistorted output grid and samples from the distorted source.
-    Falls back to CPU if CUDA not available.
-    """
-    if not _HAS_CUDA or cp is None or not image.is_cuda:
-        return rectify_image_cpu(image, camera_matrix, dist_coeffs)
-
-    xp = cp
-
-    # Source (distorted) image on device
-    src = image.data
-    if src.ndim not in (2, 3):
-        raise ValueError("Unsupported image rank for rectification")
-    H, W = int(src.shape[0]), int(src.shape[1])
-
-    # Extract intrinsics and distortion as float64
-    K = xp.asarray(camera_matrix, dtype=xp.float64)
-    dist = xp.asarray(dist_coeffs, dtype=xp.float64).reshape(-1)
-    fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
-    k1 = dist[0] if dist.size > 0 else 0.0
-    k2 = dist[1] if dist.size > 1 else 0.0
-    p1 = dist[2] if dist.size > 2 else 0.0
-    p2 = dist[3] if dist.size > 3 else 0.0
-    k3 = dist[4] if dist.size > 4 else 0.0
-
-    # Build undistorted target grid (pixel coords)
-    u = xp.arange(W, dtype=xp.float64)
-    v = xp.arange(H, dtype=xp.float64)
-    uu, vv = xp.meshgrid(u, v, indexing="xy")
-
-    # Convert to normalized undistorted coords
-    xu = (uu - cx) / fx
-    yu = (vv - cy) / fy
-
-    # Apply forward distortion model to get distorted normalized coords
-    r2 = xu * xu + yu * yu
-    r4 = r2 * r2
-    r6 = r4 * r2
-    radial = 1.0 + k1 * r2 + k2 * r4 + k3 * r6
-    delta_x = 2.0 * p1 * xu * yu + p2 * (r2 + 2.0 * xu * xu)
-    delta_y = p1 * (r2 + 2.0 * yu * yu) + 2.0 * p2 * xu * yu
-    xd = xu * radial + delta_x
-    yd = yu * radial + delta_y
-
-    # Back to pixel coordinates in the source (distorted) image
-    us = fx * xd + cx
-    vs = fy * yd + cy
-
-    # Bilinear sample from src at (vs, us)
-    def _bilinear_sample_cuda(img, x_src, y_src):  # type: ignore[no-untyped-def]
-        h, w = int(img.shape[0]), int(img.shape[1])
-        # Base integer corners (not clamped)
-        x0i = xp.floor(x_src).astype(xp.int32)
-        y0i = xp.floor(y_src).astype(xp.int32)
-        x1i = x0i + 1
-        y1i = y0i + 1
-
-        # Masks for in-bounds neighbors (BORDER_CONSTANT behavior)
-        m00 = (x0i >= 0) & (x0i < w) & (y0i >= 0) & (y0i < h)
-        m10 = (x1i >= 0) & (x1i < w) & (y0i >= 0) & (y0i < h)
-        m01 = (x0i >= 0) & (x0i < w) & (y1i >= 0) & (y1i < h)
-        m11 = (x1i >= 0) & (x1i < w) & (y1i >= 0) & (y1i < h)
-
-        # Clamp indices for safe gather, but multiply contributions by masks
-        x0 = xp.clip(x0i, 0, w - 1)
-        y0 = xp.clip(y0i, 0, h - 1)
-        x1 = xp.clip(x1i, 0, w - 1)
-        y1 = xp.clip(y1i, 0, h - 1)
-
-        # Weights
-        wx = (x_src - x0i).astype(xp.float64)
-        wy = (y_src - y0i).astype(xp.float64)
-        w00 = (1.0 - wx) * (1.0 - wy)
-        w10 = wx * (1.0 - wy)
-        w01 = (1.0 - wx) * wy
-        w11 = wx * wy
-
-        # Cast masks for arithmetic
-        m00f = m00.astype(xp.float64)
-        m10f = m10.astype(xp.float64)
-        m01f = m01.astype(xp.float64)
-        m11f = m11.astype(xp.float64)
-
-        if img.ndim == 2:
-            Ia = img[y0, x0].astype(xp.float64)
-            Ib = img[y0, x1].astype(xp.float64)
-            Ic = img[y1, x0].astype(xp.float64)
-            Id = img[y1, x1].astype(xp.float64)
-            out = w00 * m00f * Ia + w10 * m10f * Ib + w01 * m01f * Ic + w11 * m11f * Id
-        else:
-            Ia = img[y0, x0].astype(xp.float64)
-            Ib = img[y0, x1].astype(xp.float64)
-            Ic = img[y1, x0].astype(xp.float64)
-            Id = img[y1, x1].astype(xp.float64)
-            # Expand weights and masks for channel broadcasting
-            w00e = (w00 * m00f)[..., None]
-            w10e = (w10 * m10f)[..., None]
-            w01e = (w01 * m01f)[..., None]
-            w11e = (w11 * m11f)[..., None]
-            out = w00e * Ia + w10e * Ib + w01e * Ic + w11e * Id
-
-        # Cast back to original dtype with clipping for integers
-        if img.dtype == xp.uint8:
-            out = xp.clip(xp.rint(out), 0, 255).astype(xp.uint8)
-        elif img.dtype == xp.uint16:
-            out = xp.clip(xp.rint(out), 0, 65535).astype(xp.uint16)
-        elif img.dtype == xp.int16:
-            out = xp.clip(xp.rint(out), -32768, 32767).astype(xp.int16)
-        else:
-            out = out.astype(img.dtype, copy=False)
-        return out
-
-    rect = _bilinear_sample_cuda(src, us, vs)  # type: ignore[no-untyped-call]
-    return Image(data=rect, format=image.format, frame_id=image.frame_id, ts=image.ts)
-
-
-def rectify_image(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarray) -> Image:  # type: ignore[type-arg]
-    """
-    Rectify (undistort) an image using camera calibration parameters.
-
-    Args:
-        image: Input Image object to rectify
-        camera_matrix: 3x3 camera intrinsic matrix (K)
-        dist_coeffs: Distortion coefficients array
-
-    Returns:
-        Image: Rectified Image object with same format and metadata
-    """
-    if image.is_cuda and _HAS_CUDA:
-        return rectify_image_cuda(image, camera_matrix, dist_coeffs)
-    return rectify_image_cpu(image, camera_matrix, dist_coeffs)
 
 
 def project_3d_points_to_2d_cuda(

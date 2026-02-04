@@ -14,7 +14,7 @@
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -211,13 +211,21 @@ from dimos.protocol.pubsub.impl.rospubsub import (
     ROSTopic,
 )
 
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
 if ROS_AVAILABLE:
-    from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
-    from sensor_msgs.msg import Image as ROSImage
+    from rclpy.qos import (  # type: ignore[no-untyped-call]
+        QoSDurabilityPolicy,
+        QoSHistoryPolicy,
+        QoSProfile,
+        QoSReliabilityPolicy,
+    )
+    from sensor_msgs.msg import Image as ROSImage  # type: ignore[attr-defined,no-untyped-call]
 
     @contextmanager
     def ros_best_effort_pubsub_channel() -> Generator[RawROS, None, None]:
-        qos = QoSProfile(
+        qos = QoSProfile(  # type: ignore[no-untyped-call]
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             history=QoSHistoryPolicy.KEEP_LAST,
             durability=QoSDurabilityPolicy.VOLATILE,
@@ -230,7 +238,7 @@ if ROS_AVAILABLE:
 
     @contextmanager
     def ros_reliable_pubsub_channel() -> Generator[RawROS, None, None]:
-        qos = QoSProfile(
+        qos = QoSProfile(  # type: ignore[no-untyped-call]
             reliability=QoSReliabilityPolicy.RELIABLE,
             history=QoSHistoryPolicy.KEEP_LAST,
             durability=QoSDurabilityPolicy.VOLATILE,
@@ -245,21 +253,21 @@ if ROS_AVAILABLE:
         import numpy as np
 
         # Create image data
-        data = np.frombuffer(make_data_bytes(size), dtype=np.uint8).reshape(-1)
-        padded_size = ((len(data) + 2) // 3) * 3
-        data = np.pad(data, (0, padded_size - len(data)))  # type: ignore[assignment]
-        pixels = len(data) // 3
+        raw_data: NDArray[np.uint8] = np.frombuffer(make_data_bytes(size), dtype=np.uint8)
+        padded_size = ((len(raw_data) + 2) // 3) * 3
+        padded_data: NDArray[np.uint8] = np.pad(raw_data, (0, padded_size - len(raw_data)))
+        pixels = len(padded_data) // 3
         height = max(1, int(pixels**0.5))
         width = pixels // height
-        data = data[: height * width * 3]  # type: ignore[assignment]
+        final_data: NDArray[np.uint8] = padded_data[: height * width * 3]
 
         # Create ROS Image message
-        msg = ROSImage()
+        msg = ROSImage()  # type: ignore[no-untyped-call]
         msg.height = height
         msg.width = width
         msg.encoding = "rgb8"
         msg.step = width * 3
-        msg.data = data.tobytes()
+        msg.data = bytes(final_data)
 
         topic = RawROSTopic(topic="/benchmark/ros", ros_type=ROSImage)
         return (topic, msg)
@@ -280,7 +288,7 @@ if ROS_AVAILABLE:
 
     @contextmanager
     def dimos_ros_best_effort_pubsub_channel() -> Generator[DimosROS, None, None]:
-        qos = QoSProfile(
+        qos = QoSProfile(  # type: ignore[no-untyped-call]
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             history=QoSHistoryPolicy.KEEP_LAST,
             durability=QoSDurabilityPolicy.VOLATILE,
@@ -293,7 +301,7 @@ if ROS_AVAILABLE:
 
     @contextmanager
     def dimos_ros_reliable_pubsub_channel() -> Generator[DimosROS, None, None]:
-        qos = QoSProfile(
+        qos = QoSProfile(  # type: ignore[no-untyped-call]
             reliability=QoSReliabilityPolicy.RELIABLE,
             history=QoSHistoryPolicy.KEEP_LAST,
             durability=QoSDurabilityPolicy.VOLATILE,

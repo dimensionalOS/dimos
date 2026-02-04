@@ -15,7 +15,7 @@
 import inspect
 from typing import Any, Protocol, runtime_checkable
 
-from annotation_protocol import AnnotationProtocol  # type: ignore[import-untyped]
+from annotation_protocol import AnnotationProtocol
 from typing_extensions import is_protocol
 
 

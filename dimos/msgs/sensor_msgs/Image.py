@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass, field
+from enum import Enum
 import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
@@ -24,16 +26,9 @@ from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
+import rerun as rr
 from turbojpeg import TurboJPEG  # type: ignore[import-untyped]
 
-from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
-    HAS_CUDA,
-    HAS_NVIMGCODEC,
-    NVIMGCODEC_LAST_USED,
-    ImageFormat,
-)
-from dimos.msgs.sensor_msgs.image_impls.CudaImage import CudaImage
-from dimos.msgs.sensor_msgs.image_impls.NumpyImage import NumpyImage
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
 from dimos.utils.reactive import quality_barrier
 
@@ -42,19 +37,44 @@ if TYPE_CHECKING:
 
     from reactivex.observable import Observable
 
-    from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
-        AbstractImage,
-    )
-
-try:
-    import cupy as cp  # type: ignore[import-not-found, import-untyped]
-except Exception:
-    cp = None
-
 try:
     from sensor_msgs.msg import Image as ROSImage  # type: ignore[attr-defined]
 except ImportError:
     ROSImage = None  # type: ignore[assignment, misc]
+
+
+class ImageFormat(Enum):
+    BGR = "BGR"
+    RGB = "RGB"
+    RGBA = "RGBA"
+    BGRA = "BGRA"
+    GRAY = "GRAY"
+    GRAY16 = "GRAY16"
+    DEPTH = "DEPTH"
+    DEPTH16 = "DEPTH16"
+
+
+def _format_to_rerun(data: np.ndarray, fmt: ImageFormat) -> Any:  # type: ignore[type-arg]
+    """Convert image data to Rerun archetype based on format."""
+    match fmt:
+        case ImageFormat.RGB:
+            return rr.Image(data, color_model="RGB")
+        case ImageFormat.RGBA:
+            return rr.Image(data, color_model="RGBA")
+        case ImageFormat.BGR:
+            return rr.Image(data, color_model="BGR")
+        case ImageFormat.BGRA:
+            return rr.Image(data, color_model="BGRA")
+        case ImageFormat.GRAY:
+            return rr.Image(data, color_model="L")
+        case ImageFormat.GRAY16:
+            return rr.Image(data, color_model="L")
+        case ImageFormat.DEPTH:
+            return rr.DepthImage(data)
+        case ImageFormat.DEPTH16:
+            return rr.DepthImage(data)
+        case _:
+            raise ValueError(f"Unsupported format for Rerun: {fmt}")
 
 
 class AgentImageMessage(TypedDict):
@@ -66,108 +86,104 @@ class AgentImageMessage(TypedDict):
     data: str  # Base64 encoded image data
 
 
+@dataclass
 class Image(Timestamped):
+    """Simple NumPy-based image container."""
+
     msg_name = "sensor_msgs.Image"
 
-    def __init__(  # type: ignore[no-untyped-def]
-        self,
-        impl: AbstractImage | None = None,
-        *,
-        data=None,
-        format: ImageFormat | None = None,
-        frame_id: str | None = None,
-        ts: float | None = None,
-    ) -> None:
-        """Construct an Image facade.
+    data: np.ndarray[Any, np.dtype[Any]] = field(
+        default_factory=lambda: np.zeros((1, 1, 3), dtype=np.uint8)
+    )
+    format: ImageFormat = field(default=ImageFormat.BGR)
+    frame_id: str = field(default="")
+    ts: float = field(default_factory=time.time)
 
-        Usage:
-        - Image(impl=<AbstractImage>)
-        - Image(data=<ndarray | cupy.ndarray>, format=ImageFormat.RGB, frame_id=str, ts=float)
-
-        Notes:
-        - When constructed from `data`, uses CudaImage if `data` is a CuPy array and CUDA is available; otherwise NumpyImage.
-        - `format` defaults to ImageFormat.RGB; `frame_id` defaults to ""; `ts` defaults to `time.time()`.
-        """
-        # Disallow mixing impl with raw kwargs
-        if impl is not None and any(x is not None for x in (data, format, frame_id, ts)):
-            raise TypeError(
-                "Provide either 'impl' or ('data', 'format', 'frame_id', 'ts'), not both"
-            )
-
-        if impl is not None:
-            self._impl = impl
-            return
-
-        # Raw constructor path
-        if data is None:
-            raise TypeError("'data' is required when constructing Image without 'impl'")
-        fmt = format if format is not None else ImageFormat.BGR
-        fid = frame_id if frame_id is not None else ""
-        tstamp = ts if ts is not None else time.time()
-
-        # Detect CuPy array without a hard dependency
-        is_cu = False
-        try:
-            import cupy as _cp
-
-            is_cu = isinstance(data, _cp.ndarray)
-        except Exception:
-            is_cu = False
-
-        if is_cu and HAS_CUDA:
-            self._impl = CudaImage(data, fmt, fid, tstamp)
-        else:
-            self._impl = NumpyImage(np.asarray(data), fmt, fid, tstamp)
+    def __post_init__(self) -> None:
+        if not isinstance(self.data, np.ndarray):
+            self.data = np.asarray(self.data)
+        if self.data.ndim < 2:
+            raise ValueError("Image requires a 2D/3D NumPy array")
 
     def __str__(self) -> str:
-        dev = "cuda" if self.is_cuda else "cpu"
         return (
             f"Image(shape={self.shape}, format={self.format.value}, dtype={self.dtype}, "
-            f"dev={dev}, ts={to_human_readable(self.ts)})"
+            f"ts={to_human_readable(self.ts)})"
         )
 
-    @classmethod
-    def from_impl(cls, impl: AbstractImage) -> Image:
-        return cls(impl)
+    def __repr__(self) -> str:
+        return f"Image(shape={self.shape}, format={self.format.value}, dtype={self.dtype}, frame_id='{self.frame_id}', ts={self.ts})"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Image):
+            return False
+        return (
+            np.array_equal(self.data, other.data)
+            and self.format == other.format
+            and self.frame_id == other.frame_id
+            and abs(self.ts - other.ts) < 1e-6
+        )
+
+    def __len__(self) -> int:
+        return int(self.height * self.width)
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {"data": self.data, "format": self.format, "frame_id": self.frame_id, "ts": self.ts}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.data = state.get("data", np.zeros((1, 1, 3), dtype=np.uint8))
+        self.format = state.get("format", ImageFormat.BGR)
+        self.frame_id = state.get("frame_id", "")
+        self.ts = state.get("ts", time.time())
+
+    @property
+    def height(self) -> int:
+        return int(self.data.shape[0])
+
+    @property
+    def width(self) -> int:
+        return int(self.data.shape[1])
+
+    @property
+    def channels(self) -> int:
+        if self.data.ndim == 2:
+            return 1
+        if self.data.ndim == 3:
+            return int(self.data.shape[2])
+        raise ValueError("Invalid image dimensions")
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return tuple(self.data.shape)
+
+    @property
+    def dtype(self) -> np.dtype[Any]:
+        return self.data.dtype
+
+    def copy(self) -> Image:
+        return Image(data=self.data.copy(), format=self.format, frame_id=self.frame_id, ts=self.ts)
 
     @classmethod
-    def from_numpy(  # type: ignore[no-untyped-def]
+    def from_numpy(
         cls,
         np_image: np.ndarray,  # type: ignore[type-arg]
         format: ImageFormat = ImageFormat.BGR,
-        to_cuda: bool = False,
-        **kwargs,
+        frame_id: str = "",
+        ts: float | None = None,
     ) -> Image:
-        if kwargs.pop("to_gpu", False):
-            to_cuda = True
-        if to_cuda and HAS_CUDA:
-            return cls(
-                CudaImage(
-                    np_image if hasattr(np_image, "shape") else np.asarray(np_image),
-                    format,
-                    kwargs.get("frame_id", ""),
-                    kwargs.get("ts", time.time()),
-                )
-            )
         return cls(
-            NumpyImage(
-                np.asarray(np_image),
-                format,
-                kwargs.get("frame_id", ""),
-                kwargs.get("ts", time.time()),
-            )
+            data=np.asarray(np_image),
+            format=format,
+            frame_id=frame_id,
+            ts=ts if ts is not None else time.time(),
         )
 
     @classmethod
-    def from_file(  # type: ignore[no-untyped-def]
+    def from_file(
         cls,
         filepath: str | os.PathLike[str],
         format: ImageFormat = ImageFormat.RGB,
-        to_cuda: bool = False,
-        **kwargs,
     ) -> Image:
-        if kwargs.pop("to_gpu", False):
-            to_cuda = True
         arr = cv2.imread(str(filepath), cv2.IMREAD_UNCHANGED)
         if arr is None:
             raise ValueError(f"Could not load image from {filepath}")
@@ -179,156 +195,143 @@ class Image(Timestamped):
             detected = ImageFormat.BGRA  # OpenCV default
         else:
             detected = format
-        return cls(CudaImage(arr, detected) if to_cuda and HAS_CUDA else NumpyImage(arr, detected))
+        return cls(data=arr, format=detected)
 
     @classmethod
-    def from_opencv(  # type: ignore[no-untyped-def]
+    def from_opencv(
         cls,
         cv_image: np.ndarray,  # type: ignore[type-arg]
         format: ImageFormat = ImageFormat.BGR,
-        **kwargs,
+        frame_id: str = "",
+        ts: float | None = None,
     ) -> Image:
         """Construct from an OpenCV image (NumPy array)."""
         return cls(
-            NumpyImage(cv_image, format, kwargs.get("frame_id", ""), kwargs.get("ts", time.time()))
-        )
-
-    @classmethod
-    def from_depth(  # type: ignore[no-untyped-def]
-        cls, depth_data, frame_id: str = "", ts: float | None = None, to_cuda: bool = False
-    ) -> Image:
-        arr = np.asarray(depth_data)
-        if arr.dtype != np.float32:
-            arr = arr.astype(np.float32)
-        impl = (
-            CudaImage(arr, ImageFormat.DEPTH, frame_id, time.time() if ts is None else ts)
-            if to_cuda and HAS_CUDA
-            else NumpyImage(arr, ImageFormat.DEPTH, frame_id, time.time() if ts is None else ts)
-        )
-        return cls(impl)
-
-    # Delegation
-    @property
-    def is_cuda(self) -> bool:
-        return self._impl.is_cuda
-
-    @property
-    def data(self):  # type: ignore[no-untyped-def]
-        return self._impl.data
-
-    @data.setter
-    def data(self, value) -> None:  # type: ignore[no-untyped-def]
-        # Preserve backend semantics: ensure array type matches implementation
-        if isinstance(self._impl, NumpyImage):
-            self._impl.data = np.asarray(value)
-        elif isinstance(self._impl, CudaImage):
-            if cp is None:
-                raise RuntimeError("CuPy not available to set CUDA image data")
-            self._impl.data = cp.asarray(value)
-        else:
-            self._impl.data = value
-
-    @property
-    def format(self) -> ImageFormat:
-        return self._impl.format
-
-    @format.setter
-    def format(self, value) -> None:  # type: ignore[no-untyped-def]
-        if isinstance(value, ImageFormat):
-            self._impl.format = value
-        elif isinstance(value, str):
-            try:
-                self._impl.format = ImageFormat[value]
-            except KeyError as e:
-                raise ValueError(f"Invalid ImageFormat: {value}") from e
-        else:
-            raise TypeError("format must be ImageFormat or str name")
-
-    @property
-    def frame_id(self) -> str:
-        return self._impl.frame_id
-
-    @frame_id.setter
-    def frame_id(self, value: str) -> None:
-        self._impl.frame_id = str(value)
-
-    @property
-    def ts(self) -> float:
-        return self._impl.ts
-
-    @ts.setter
-    def ts(self, value: float) -> None:
-        self._impl.ts = float(value)
-
-    @property
-    def height(self) -> int:
-        return self._impl.height
-
-    @property
-    def width(self) -> int:
-        return self._impl.width
-
-    @property
-    def channels(self) -> int:
-        return self._impl.channels
-
-    @property
-    def shape(self):  # type: ignore[no-untyped-def]
-        return self._impl.shape
-
-    @property
-    def dtype(self):  # type: ignore[no-untyped-def]
-        return self._impl.dtype
-
-    def copy(self) -> Image:
-        return Image(self._impl.copy())
-
-    def to_cpu(self) -> Image:
-        if isinstance(self._impl, NumpyImage):
-            return self.copy()
-
-        data = self._impl.data.get()  # CuPy array to NumPy
-
-        return Image(
-            NumpyImage(
-                data,
-                self._impl.format,
-                self._impl.frame_id,
-                self._impl.ts,
-            )
-        )
-
-    def to_cupy(self) -> Image:
-        if isinstance(self._impl, CudaImage):
-            return self.copy()
-        return Image(
-            CudaImage(
-                np.asarray(self._impl.data), self._impl.format, self._impl.frame_id, self._impl.ts
-            )
+            data=cv_image,
+            format=format,
+            frame_id=frame_id,
+            ts=ts if ts is not None else time.time(),
         )
 
     def to_opencv(self) -> np.ndarray:  # type: ignore[type-arg]
-        return self._impl.to_opencv()
+        """Convert to OpenCV BGR format."""
+        arr = self.data
+        if self.format == ImageFormat.BGR:
+            return arr
+        if self.format == ImageFormat.RGB:
+            return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+        if self.format == ImageFormat.RGBA:
+            return cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
+        if self.format == ImageFormat.BGRA:
+            return cv2.cvtColor(arr, cv2.COLOR_BGRA2BGR)
+        if self.format in (
+            ImageFormat.GRAY,
+            ImageFormat.GRAY16,
+            ImageFormat.DEPTH,
+            ImageFormat.DEPTH16,
+        ):
+            return arr
+        raise ValueError(f"Unsupported format: {self.format}")
 
     def as_numpy(self) -> np.ndarray:  # type: ignore[type-arg]
-        """Get image data as numpy array in RGB format."""
-        return np.asarray(self.data)
+        """Get image data as numpy array."""
+        return self.data
 
     def to_rgb(self) -> Image:
-        return Image(self._impl.to_rgb())
+        if self.format == ImageFormat.RGB:
+            return self.copy()
+        arr = self.data
+        if self.format == ImageFormat.BGR:
+            return Image(
+                data=cv2.cvtColor(arr, cv2.COLOR_BGR2RGB),
+                format=ImageFormat.RGB,
+                frame_id=self.frame_id,
+                ts=self.ts,
+            )
+        if self.format == ImageFormat.RGBA:
+            return self.copy()  # RGBA contains RGB + alpha
+        if self.format == ImageFormat.BGRA:
+            rgba = cv2.cvtColor(arr, cv2.COLOR_BGRA2RGBA)
+            return Image(data=rgba, format=ImageFormat.RGBA, frame_id=self.frame_id, ts=self.ts)
+        if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH16):
+            gray8 = (arr / 256).astype(np.uint8) if self.format != ImageFormat.GRAY else arr
+            rgb = cv2.cvtColor(gray8, cv2.COLOR_GRAY2RGB)
+            return Image(data=rgb, format=ImageFormat.RGB, frame_id=self.frame_id, ts=self.ts)
+        return self.copy()
 
     def to_bgr(self) -> Image:
-        return Image(self._impl.to_bgr())
+        if self.format == ImageFormat.BGR:
+            return self.copy()
+        arr = self.data
+        if self.format == ImageFormat.RGB:
+            return Image(
+                data=cv2.cvtColor(arr, cv2.COLOR_RGB2BGR),
+                format=ImageFormat.BGR,
+                frame_id=self.frame_id,
+                ts=self.ts,
+            )
+        if self.format == ImageFormat.RGBA:
+            return Image(
+                data=cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR),
+                format=ImageFormat.BGR,
+                frame_id=self.frame_id,
+                ts=self.ts,
+            )
+        if self.format == ImageFormat.BGRA:
+            return Image(
+                data=cv2.cvtColor(arr, cv2.COLOR_BGRA2BGR),
+                format=ImageFormat.BGR,
+                frame_id=self.frame_id,
+                ts=self.ts,
+            )
+        if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH16):
+            gray8 = (arr / 256).astype(np.uint8) if self.format != ImageFormat.GRAY else arr
+            return Image(
+                data=cv2.cvtColor(gray8, cv2.COLOR_GRAY2BGR),
+                format=ImageFormat.BGR,
+                frame_id=self.frame_id,
+                ts=self.ts,
+            )
+        return self.copy()
 
     def to_grayscale(self) -> Image:
-        return Image(self._impl.to_grayscale())
+        if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH):
+            return self.copy()
+        if self.format == ImageFormat.BGR:
+            return Image(
+                data=cv2.cvtColor(self.data, cv2.COLOR_BGR2GRAY),
+                format=ImageFormat.GRAY,
+                frame_id=self.frame_id,
+                ts=self.ts,
+            )
+        if self.format == ImageFormat.RGB:
+            return Image(
+                data=cv2.cvtColor(self.data, cv2.COLOR_RGB2GRAY),
+                format=ImageFormat.GRAY,
+                frame_id=self.frame_id,
+                ts=self.ts,
+            )
+        if self.format in (ImageFormat.RGBA, ImageFormat.BGRA):
+            code = cv2.COLOR_RGBA2GRAY if self.format == ImageFormat.RGBA else cv2.COLOR_BGRA2GRAY
+            return Image(
+                data=cv2.cvtColor(self.data, code),
+                format=ImageFormat.GRAY,
+                frame_id=self.frame_id,
+                ts=self.ts,
+            )
+        raise ValueError(f"Unsupported format: {self.format}")
 
     def to_rerun(self) -> Any:
         """Convert to rerun Image format."""
-        return self._impl.to_rerun()
+        return _format_to_rerun(self.data, self.format)
 
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> Image:
-        return Image(self._impl.resize(width, height, interpolation))
+        return Image(
+            data=cv2.resize(self.data, (width, height), interpolation=interpolation),
+            format=self.format,
+            frame_id=self.frame_id,
+            ts=self.ts,
+        )
 
     def resize_to_fit(
         self, max_width: int, max_height: int, interpolation: int = cv2.INTER_LINEAR
@@ -349,29 +352,48 @@ class Image(Timestamped):
         return self.resize(new_width, new_height, interpolation), scale
 
     def crop(self, x: int, y: int, width: int, height: int) -> Image:
-        return Image(self._impl.crop(x, y, width, height))  # type: ignore[attr-defined]
+        """Crop the image to the specified region.
+
+        Args:
+            x: Starting x coordinate (left edge)
+            y: Starting y coordinate (top edge)
+            width: Width of the cropped region
+            height: Height of the cropped region
+
+        Returns:
+            A new Image containing the cropped region
+        """
+        img_height, img_width = self.data.shape[:2]
+
+        # Clamp the crop region to image bounds
+        x = max(0, min(x, img_width))
+        y = max(0, min(y, img_height))
+        x_end = min(x + width, img_width)
+        y_end = min(y + height, img_height)
+
+        # Perform the crop using array slicing
+        if self.data.ndim == 2:
+            cropped_data = self.data[y:y_end, x:x_end]
+        else:
+            cropped_data = self.data[y:y_end, x:x_end, :]
+
+        return Image(data=cropped_data, format=self.format, frame_id=self.frame_id, ts=self.ts)
 
     @property
     def sharpness(self) -> float:
         """Return sharpness score."""
-        return self._impl.sharpness()
-
-    def to_depth_meters(self) -> Image:
-        """Return a depth image normalized to meters as float32."""
-        depth_cv = self.to_opencv()
-        fmt = self.format
-
-        if fmt == ImageFormat.DEPTH16:
-            depth_cv = depth_cv.astype(np.float32) / 1000.0
-            fmt = ImageFormat.DEPTH
-        elif depth_cv.dtype != np.float32:
-            depth_cv = depth_cv.astype(np.float32)
-            fmt = ImageFormat.DEPTH if fmt == ImageFormat.DEPTH else fmt
-
-        return Image.from_numpy(depth_cv, format=fmt, frame_id=self.frame_id, ts=self.ts)
+        gray = self.to_grayscale()
+        sx = cv2.Sobel(gray.data, cv2.CV_32F, 1, 0, ksize=5)
+        sy = cv2.Sobel(gray.data, cv2.CV_32F, 0, 1, ksize=5)
+        magnitude = cv2.magnitude(sx, sy)
+        mean_mag = float(magnitude.mean())
+        if mean_mag <= 0:
+            return 0.0
+        return float(np.clip((np.log10(mean_mag + 1) - 1.7) / 2.0, 0.0, 1.0))
 
     def save(self, filepath: str) -> bool:
-        return self._impl.save(filepath)
+        arr = self.to_opencv()
+        return cv2.imwrite(filepath, arr)
 
     def to_base64(
         self,
@@ -455,27 +477,25 @@ class Image(Timestamped):
         return msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
-    def lcm_decode(cls, data: bytes, **kwargs) -> Image:  # type: ignore[no-untyped-def]
+    def lcm_decode(cls, data: bytes, **kwargs: Any) -> Image:
         msg = LCMImage.lcm_decode(data)
         fmt, dtype, channels = _parse_lcm_encoding(msg.encoding)
-        arr = np.frombuffer(msg.data, dtype=dtype)
+        arr: np.ndarray[Any, Any] = np.frombuffer(msg.data, dtype=dtype)
         if channels == 1:
             arr = arr.reshape((msg.height, msg.width))
         else:
             arr = arr.reshape((msg.height, msg.width, channels))
         return cls(
-            NumpyImage(
-                arr,
-                fmt,
-                msg.header.frame_id if hasattr(msg, "header") else "",
-                (
-                    msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
-                    if hasattr(msg, "header")
-                    and hasattr(msg.header, "stamp")
-                    and msg.header.stamp.sec > 0
-                    else time.time()
-                ),
-            )
+            data=arr,
+            format=fmt,
+            frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
+            ts=(
+                msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
+                if hasattr(msg, "header")
+                and hasattr(msg.header, "stamp")
+                and msg.header.stamp.sec > 0
+                else time.time()
+            ),
         )
 
     def lcm_jpeg_encode(self, quality: int = 75, frame_id: str | None = None) -> bytes:
@@ -524,7 +544,7 @@ class Image(Timestamped):
         return msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
-    def lcm_jpeg_decode(cls, data: bytes, **kwargs) -> Image:  # type: ignore[no-untyped-def]
+    def lcm_jpeg_decode(cls, data: bytes, **kwargs: Any) -> Image:
         """Decode an LCM Image message with JPEG-compressed data.
 
         Args:
@@ -543,35 +563,17 @@ class Image(Timestamped):
         bgr_array = jpeg.decode(msg.data)
 
         return cls(
-            NumpyImage(
-                bgr_array,
-                ImageFormat.BGR,
-                msg.header.frame_id if hasattr(msg, "header") else "",
-                (
-                    msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
-                    if hasattr(msg, "header")
-                    and hasattr(msg.header, "stamp")
-                    and msg.header.stamp.sec > 0
-                    else time.time()
-                ),
-            )
+            data=bgr_array,
+            format=ImageFormat.BGR,
+            frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
+            ts=(
+                msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
+                if hasattr(msg, "header")
+                and hasattr(msg.header, "stamp")
+                and msg.header.stamp.sec > 0
+                else time.time()
+            ),
         )
-
-    # PnP wrappers
-    def solve_pnp(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return self._impl.solve_pnp(*args, **kwargs)  # type: ignore[attr-defined]
-
-    def solve_pnp_ransac(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return self._impl.solve_pnp_ransac(*args, **kwargs)  # type: ignore[attr-defined]
-
-    def solve_pnp_batch(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return self._impl.solve_pnp_batch(*args, **kwargs)  # type: ignore[attr-defined]
-
-    def create_csrt_tracker(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return self._impl.create_csrt_tracker(*args, **kwargs)  # type: ignore[attr-defined]
-
-    def csrt_update(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return self._impl.csrt_update(*args, **kwargs)  # type: ignore[attr-defined]
 
     @classmethod
     def from_ros_msg(cls, ros_msg: ROSImage) -> Image:
@@ -635,7 +637,7 @@ class Image(Timestamped):
         )
 
     @staticmethod
-    def _parse_encoding(encoding: str) -> dict:  # type: ignore[type-arg]
+    def _parse_encoding(encoding: str) -> dict[str, Any]:
         """Translate ROS encoding strings into format metadata."""
         encoding_map = {
             "mono8": {"format": ImageFormat.GRAY, "dtype": np.uint8, "channels": 1},
@@ -658,44 +660,9 @@ class Image(Timestamped):
 
         raise ValueError(f"Unsupported encoding: {encoding}")
 
-    def __repr__(self) -> str:
-        dev = "cuda" if self.is_cuda else "cpu"
-        return f"Image(shape={self.shape}, format={self.format.value}, dtype={self.dtype}, dev={dev}, frame_id='{self.frame_id}', ts={self.ts})"
 
-    def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
-        if not isinstance(other, Image):
-            return False
-        return (
-            np.array_equal(self.data, other.data)
-            and self.format == other.format
-            and self.frame_id == other.frame_id
-            and abs(self.ts - other.ts) < 1e-6
-        )
-
-    def __len__(self) -> int:
-        return int(self.height * self.width)
-
-    def __getstate__(self):  # type: ignore[no-untyped-def]
-        return {"data": self.data, "format": self.format, "frame_id": self.frame_id, "ts": self.ts}
-
-    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        self.__init__(  # type: ignore[misc]
-            data=state.get("data"),
-            format=state.get("format"),
-            frame_id=state.get("frame_id"),
-            ts=state.get("ts"),
-        )
-
-
-# Re-exports for tests
-HAS_CUDA = HAS_CUDA
-ImageFormat = ImageFormat
-NVIMGCODEC_LAST_USED = NVIMGCODEC_LAST_USED
-HAS_NVIMGCODEC = HAS_NVIMGCODEC
 __all__ = [
-    "HAS_CUDA",
-    "HAS_NVIMGCODEC",
-    "NVIMGCODEC_LAST_USED",
+    "Image",
     "ImageFormat",
     "sharpness_barrier",
     "sharpness_window",
@@ -704,27 +671,29 @@ __all__ = [
 
 def sharpness_window(target_frequency: float, source: Observable[Image]) -> Observable[Image]:
     """Emit the sharpest Image seen within each sliding time window."""
+    from reactivex.scheduler import ThreadPoolScheduler
+
     if target_frequency <= 0:
         raise ValueError("target_frequency must be positive")
 
     window = TimestampedBufferCollection(1.0 / target_frequency)  # type: ignore[var-annotated]
     source.subscribe(window.add)
 
-    thread_scheduler = ThreadPoolScheduler(max_workers=1)  # type: ignore[name-defined]
+    thread_scheduler = ThreadPoolScheduler(max_workers=1)
 
-    def find_best(*_args):  # type: ignore[no-untyped-def]
+    def find_best(*_args: Any) -> Image | None:
         if not window._items:
             return None
-        return max(window._items, key=lambda img: img.sharpness)
+        return max(window._items, key=lambda img: img.sharpness)  # type: ignore[no-any-return]
 
-    return rx.interval(1.0 / target_frequency).pipe(
+    return rx.interval(1.0 / target_frequency).pipe(  # type: ignore[misc]
         ops.observe_on(thread_scheduler),
         ops.map(find_best),
         ops.filter(lambda img: img is not None),
     )
 
 
-def sharpness_barrier(target_frequency: float):  # type: ignore[no-untyped-def]
+def sharpness_barrier(target_frequency: float) -> Any:
     """Select the sharpest Image within each time window."""
     if target_frequency <= 0:
         raise ValueError("target_frequency must be positive")
@@ -760,7 +729,7 @@ def _get_lcm_encoding(fmt: ImageFormat, dtype: np.dtype) -> str:  # type: ignore
     raise ValueError(f"Unsupported LCM encoding for fmt={fmt}, dtype={dtype}")
 
 
-def _parse_lcm_encoding(enc: str):  # type: ignore[no-untyped-def]
+def _parse_lcm_encoding(enc: str) -> tuple[ImageFormat, type, int]:
     m = {
         "mono8": (ImageFormat.GRAY, np.uint8, 1),
         "mono16": (ImageFormat.GRAY16, np.uint16, 1),

@@ -529,7 +529,7 @@ def main() -> None:
 
         watch_paths = args.paths if args.paths else [str(root / "docs")]
 
-        class MarkdownHandler(FileSystemEventHandler):
+        class MarkdownHandler(FileSystemEventHandler):  # type: ignore[misc]
             def on_modified(self, event: Any) -> None:
                 if not event.is_directory and event.src_path.endswith(".md"):
                     process_file(Path(event.src_path))

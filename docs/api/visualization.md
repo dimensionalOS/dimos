@@ -283,7 +283,7 @@ These pull `rerun` into the message layer by returning Rerun archetypes.
   - **What**: `PointCloud2.to_rerun()` returns `rr.Points3D(...)` or `rr.Boxes3D(...)` depending on mode.
 
 - **Image/DepthImage formatting**
-  - **File**: [`dimos/msgs/sensor_msgs/image_impls/AbstractImage.py`](/dimos/msgs/sensor_msgs/image_impls/AbstractImage.py)
+  - **File**: [`dimos/msgs/sensor_msgs/Image.py`](/dimos/msgs/sensor_msgs/Image.py)
   - **What**: Helpers that construct `rr.Image(...)` / `rr.DepthImage(...)` with appropriate color model.
 
 - **OccupancyGrid → image/mesh/points**

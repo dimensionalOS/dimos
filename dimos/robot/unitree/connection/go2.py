@@ -35,7 +35,7 @@ from dimos.msgs.geometry_msgs import (
     Vector3,
 )
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
-from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
+from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Output
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection

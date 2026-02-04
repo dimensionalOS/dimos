@@ -22,6 +22,7 @@ from dimos.core import In, Out, rpc
 from dimos.core.skill_module import SkillModule
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
+from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
@@ -179,7 +180,15 @@ class ObjectSceneRegistrationModule(SkillModule):
             return
 
         color_image = color_msg
-        depth_image = depth_msg.to_depth_meters()
+        # Convert depth to meters (float32)
+        depth_cv = depth_msg.to_opencv()
+        if depth_msg.format == ImageFormat.DEPTH16:
+            depth_cv = depth_cv.astype(np.float32) / 1000.0
+        elif depth_cv.dtype != np.float32:
+            depth_cv = depth_cv.astype(np.float32)
+        depth_image = Image(
+            data=depth_cv, format=ImageFormat.DEPTH, frame_id=depth_msg.frame_id, ts=depth_msg.ts
+        )
 
         # Run 2D detection
         detections_2d: ImageDetections2D[Any] = self._detector.process_image(color_image)
