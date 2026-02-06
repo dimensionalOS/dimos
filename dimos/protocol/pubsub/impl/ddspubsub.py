@@ -35,21 +35,6 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-# High-throughput QoS preset
-HIGH_THROUGHPUT_QOS = Qos(
-    Policy.Reliability.BestEffort,
-    Policy.History.KeepLast(depth=1),
-    Policy.Durability.Volatile,
-)
-
-# Reliable QoS preset
-RELIABLE_QOS = Qos(
-    Policy.Reliability.Reliable(max_blocking_time=0),
-    Policy.History.KeepLast(depth=5000),
-    Policy.Durability.Volatile,
-)
-
-
 @dataclass(frozen=True)
 class Topic:
     """Represents a DDS topic."""
@@ -169,8 +154,6 @@ class DDS(DDSService, PubSub[Topic, Any]):
 
 __all__ = [
     "DDS",
-    "HIGH_THROUGHPUT_QOS",
-    "RELIABLE_QOS",
     "MessageCallback",
     "Policy",
     "Qos",

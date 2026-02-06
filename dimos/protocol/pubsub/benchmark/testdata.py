@@ -25,8 +25,6 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.benchmark.type import Case
 from dimos.protocol.pubsub.impl.ddspubsub import (
     DDS,
-    HIGH_THROUGHPUT_QOS,
-    RELIABLE_QOS,
     Topic as DDSTopic,
 )
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
@@ -192,7 +190,12 @@ class DDSBenchmarkData(IdlStruct):
 
 @contextmanager
 def dds_high_throughput_pubsub_channel() -> Generator[DDS, None, None]:
-    """DDS with HIGH_THROUGHPUT_QOS - BestEffort, optimized for speed."""
+    """DDS with high-throughput QoS preset."""
+    HIGH_THROUGHPUT_QOS = Qos(
+        Policy.Reliability.BestEffort,
+        Policy.History.KeepLast(depth=1),
+        Policy.Durability.Volatile,
+    )
     dds_pubsub = DDS(qos=HIGH_THROUGHPUT_QOS)
     dds_pubsub.start()
     yield dds_pubsub
@@ -201,7 +204,12 @@ def dds_high_throughput_pubsub_channel() -> Generator[DDS, None, None]:
 
 @contextmanager
 def dds_reliable_pubsub_channel() -> Generator[DDS, None, None]:
-    """DDS with RELIABLE_QOS - guaranteed delivery."""
+    """DDS with reliable QoS preset."""
+    RELIABLE_QOS = Qos(
+        Policy.Reliability.Reliable(max_blocking_time=0),
+        Policy.History.KeepLast(depth=5000),
+        Policy.Durability.Volatile,
+    )
     dds_pubsub = DDS(qos=RELIABLE_QOS)
     dds_pubsub.start()
     yield dds_pubsub
