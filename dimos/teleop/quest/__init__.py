@@ -35,6 +35,8 @@ from dimos.teleop.quest.quest_types import (
 )
 
 __all__ = [
+    # Extensions
+    "ArmTeleop",
     # Base module
     "Hand",
     # Types
@@ -43,12 +45,10 @@ __all__ = [
     "QuestTeleopConfig",
     "QuestTeleopModule",
     "ThumbstickState",
-    # Extensions
-    "ArmTeleop",
     "TwistTeleopModule",
     "VisualizingTeleopModule",
-    "quest_teleop_module",
     "arm_teleop_module",
+    "quest_teleop_module",
     "twist_teleop_module",
     "visualizing_teleop_module",
 ]

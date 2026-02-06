@@ -21,7 +21,6 @@ from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.teleop.quest.quest_extensions import arm_teleop_module, visualizing_teleop_module
 from dimos.teleop.quest.quest_types import QuestButtons
 
-
 # -----------------------------------------------------------------------------
 # Quest Teleop Blueprints
 # -----------------------------------------------------------------------------
@@ -31,12 +30,8 @@ arm_teleop = autoconnect(
     arm_teleop_module(),
 ).transports(
     {
-        ("left_controller_output", PoseStamped): LCMTransport(
-            "/teleop/left_delta", PoseStamped
-        ),
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/teleop/right_delta", PoseStamped
-        ),
+        ("left_controller_output", PoseStamped): LCMTransport("/teleop/left_delta", PoseStamped),
+        ("right_controller_output", PoseStamped): LCMTransport("/teleop/right_delta", PoseStamped),
         ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
     }
 )
@@ -46,12 +41,8 @@ arm_teleop_visualizing = autoconnect(
     visualizing_teleop_module(),
 ).transports(
     {
-        ("left_controller_output", PoseStamped): LCMTransport(
-            "/teleop/left_delta", PoseStamped
-        ),
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/teleop/right_delta", PoseStamped
-        ),
+        ("left_controller_output", PoseStamped): LCMTransport("/teleop/left_delta", PoseStamped),
+        ("right_controller_output", PoseStamped): LCMTransport("/teleop/right_delta", PoseStamped),
         ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
     }
 )
