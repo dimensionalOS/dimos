@@ -282,6 +282,7 @@ drone = [
 ]
 
 dds = [
+    "dimos[dev]",
     "cyclonedds>=0.10.5",
 ]
 

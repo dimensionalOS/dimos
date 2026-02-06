@@ -18,7 +18,13 @@ from dataclasses import dataclass
 import threading
 from typing import TYPE_CHECKING, Any
 
-from cyclonedds.domain import DomainParticipant
+try:
+    from cyclonedds.domain import DomainParticipant
+
+    DDS_AVAILABLE = True
+except ImportError:
+    DDS_AVAILABLE = False
+    DomainParticipant = None  # type: ignore[assignment, misc]
 
 from dimos.protocol.service.spec import Service
 from dimos.utils.logging_config import setup_logger
