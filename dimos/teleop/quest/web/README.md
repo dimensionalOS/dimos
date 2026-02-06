@@ -14,9 +14,8 @@ Deno server that bridges WebSocket and LCM:
 ### static/index.html
 
 WebXR client running on Quest 3:
-- Captures controller poses at set frequency (depends on refresh rate)
+- Captures controller poses at ~80Hz
 - Sends PoseStamped and Joy messages via WebSocket
-- X button (hold) engages teleoperation
 
 ## Running
 
