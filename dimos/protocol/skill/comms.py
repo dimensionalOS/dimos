@@ -14,12 +14,12 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Generic, TypeVar
 
-from dimos.protocol.pubsub.lcmpubsub import PickleLCM
-from dimos.protocol.service import Service  # type: ignore[attr-defined]
-from dimos.protocol.skill.type import SkillMsg
+from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic as LCMTopic
+from dimos.protocol.service import Service
+from dimos.protocol.skill.type import MsgType, SkillMsg
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -32,10 +32,10 @@ if TYPE_CHECKING:
 
 class SkillCommsSpec:
     @abstractmethod
-    def publish(self, msg: SkillMsg) -> None: ...  # type: ignore[type-arg]
+    def publish(self, msg: SkillMsg[MsgType]) -> None: ...
 
     @abstractmethod
-    def subscribe(self, cb: Callable[[SkillMsg], None]) -> None: ...  # type: ignore[type-arg]
+    def subscribe(self, cb: Callable[[SkillMsg[MsgType]], None]) -> None: ...
 
     @abstractmethod
     def start(self) -> None: ...
@@ -56,10 +56,10 @@ class PubSubCommsConfig(Generic[TopicT, MsgT]):
 
 
 # implementation of the SkillComms using any standard PubSub mechanism
-class PubSubComms(Service[PubSubCommsConfig], SkillCommsSpec):  # type: ignore[type-arg]
-    default_config: type[PubSubCommsConfig] = PubSubCommsConfig  # type: ignore[type-arg]
+class PubSubComms(Service[PubSubCommsConfig[TopicT, MsgT]], SkillCommsSpec, Generic[TopicT, MsgT]):
+    default_config: type[PubSubCommsConfig[TopicT, MsgT]] = PubSubCommsConfig  # type: ignore[assignment]
 
-    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         pubsub_config = getattr(self.config, "pubsub", None)
         if pubsub_config is not None:
@@ -79,21 +79,21 @@ class PubSubComms(Service[PubSubCommsConfig], SkillCommsSpec):  # type: ignore[t
     def stop(self) -> None:
         self.pubsub.stop()
 
-    def publish(self, msg: SkillMsg) -> None:  # type: ignore[type-arg]
+    def publish(self, msg: SkillMsg[MsgType]) -> None:
         self.pubsub.publish(self.config.topic, msg)
 
-    def subscribe(self, cb: Callable[[SkillMsg], None]) -> None:  # type: ignore[type-arg]
+    def subscribe(self, cb: Callable[[SkillMsg[MsgType]], None]) -> None:
         self.pubsub.subscribe(self.config.topic, lambda msg, topic: cb(msg))
 
 
 @dataclass
-class LCMCommsConfig(PubSubCommsConfig[str, SkillMsg]):  # type: ignore[type-arg]
-    topic: str = "/skill"
-    pubsub: type[PubSub] | PubSub | None = PickleLCM  # type: ignore[type-arg]
+class LCMCommsConfig(PubSubCommsConfig[LCMTopic, SkillMsg[MsgType]]):
+    topic: LCMTopic = field(default_factory=lambda: LCMTopic("/skill"))
+    pubsub: type[PickleLCM] = PickleLCM
     # lcm needs to be started only if receiving
     # skill comms are broadcast only in modules so we don't autostart
     autostart: bool = False
 
 
-class LCMSkillComms(PubSubComms):
+class LCMSkillComms(PubSubComms[LCMTopic, SkillMsg[MsgType]]):
     default_config: type[LCMCommsConfig] = LCMCommsConfig

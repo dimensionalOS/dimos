@@ -25,7 +25,7 @@ from langchain_core.messages import (
 )
 
 from dimos.protocol.pubsub import lcm  # type: ignore[attr-defined]
-from dimos.protocol.pubsub.lcmpubsub import PickleLCM
+from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM
 
 
 def test_publish_messages() -> None:

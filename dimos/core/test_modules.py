@@ -89,13 +89,10 @@ def is_module_subclass(
     target_classes = {
         "Module",
         "ModuleBase",
-        "DaskModule",
         "dimos.core.Module",
         "dimos.core.ModuleBase",
-        "dimos.core.DaskModule",
         "dimos.core.module.Module",
         "dimos.core.module.ModuleBase",
-        "dimos.core.module.DaskModule",
     }
 
     def find_qualified_name(base: str, context_module: str | None = None) -> str:
@@ -291,7 +288,7 @@ def get_all_module_subclasses():
     filtered_results = []
     for class_name, filepath, has_start, has_stop, forbidden_methods in results:
         # Skip base module classes themselves
-        if class_name in ("Module", "ModuleBase", "DaskModule", "SkillModule"):
+        if class_name in ("Module", "ModuleBase", "SkillModule"):
             continue
 
         # Skip test-only modules (those defined in test_ files)

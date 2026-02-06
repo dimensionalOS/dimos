@@ -2,11 +2,11 @@ import argparse
 import glob
 import os
 
-from contact_graspnet_pytorch import config_utils  # type: ignore[import-not-found]
-from contact_graspnet_pytorch.contact_grasp_estimator import (  # type: ignore[import-not-found]
+from contact_graspnet_pytorch import config_utils  # type: ignore[import-not-found, import-untyped]
+from contact_graspnet_pytorch.contact_grasp_estimator import (  # type: ignore[import-not-found, import-untyped]
     GraspEstimator,
 )
-from contact_graspnet_pytorch.data import (  # type: ignore[import-not-found]
+from contact_graspnet_pytorch.data import (  # type: ignore[import-not-found, import-untyped]
     load_available_input_data,
 )
 import numpy as np

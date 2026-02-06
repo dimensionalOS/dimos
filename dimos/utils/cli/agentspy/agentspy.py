@@ -29,7 +29,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, RichLog
 
-from dimos.protocol.pubsub.lcmpubsub import PickleLCM
+from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM
 from dimos.utils.cli import theme
 
 # Type alias for all message types we might receive

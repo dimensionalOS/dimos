@@ -22,7 +22,7 @@ from typing import TypeVar
 
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.tf2_msgs import TFMessage
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.lcmservice import Service  # type: ignore[attr-defined]
 from dimos.types.timestamped import TimestampedCollection

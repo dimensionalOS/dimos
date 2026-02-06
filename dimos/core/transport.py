@@ -27,10 +27,10 @@ from typing import (
 
 from dimos.core.stream import In, Out, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
-from dimos.protocol.pubsub.jpeg_shm import JpegSharedMemory
-from dimos.protocol.pubsub.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
-from dimos.protocol.pubsub.rospubsub import DimosROS, ROSTopic
-from dimos.protocol.pubsub.shmpubsub import BytesSharedMemory, PickleSharedMemory
+from dimos.protocol.pubsub.impl.jpeg_shm import JpegSharedMemory
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
+from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
+from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -73,7 +73,7 @@ class pLCMTransport(PubSubTransport[T]):
     ) -> Callable[[], None]:
         if not self._started:
             self.start()
-        return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
+        return self.lcm.subscribe(LCMTopic(self.topic), lambda msg, topic: callback(msg))
 
     def start(self) -> None:
         self.lcm.start()
@@ -112,7 +112,7 @@ class LCMTransport(PubSubTransport[T]):
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
         if not self._started:
             self.start()
-        return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
+        return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value, arg-type]
 
 
 class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]

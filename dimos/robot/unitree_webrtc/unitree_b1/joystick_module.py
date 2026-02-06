@@ -53,7 +53,7 @@ class JoystickModule(Module):
         super().start()
 
         try:
-            import pygame
+            import pygame  # noqa: F401
         except ImportError:
             print("ERROR: pygame not installed. Install with: pip install pygame")
             return False

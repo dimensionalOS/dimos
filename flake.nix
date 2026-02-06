@@ -224,7 +224,7 @@
           fi
 
           [ -f "$PROJECT_ROOT/motd" ] && cat "$PROJECT_ROOT/motd"
-          [ -f "$PROJECT_ROOT/.pre-commit-config.yaml" ] && pre-commit install --install-hooks
+          [ -f "$PROJECT_ROOT/.pre-commit-config.yaml" ] && [ ! -f "$PROJECT_ROOT/.git/hooks/pre-commit" ] && pre-commit install --install-hooks
         '';
         devShells = {
           # basic shell (blends with your current environment)

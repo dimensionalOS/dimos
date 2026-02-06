@@ -89,7 +89,7 @@ voxel_mapper(voxel_size=0.1),   # 10cm voxels
 
 ## How to use Rerun on `dev` (and the TF/entity nuances)
 
-Rerun on `dev` is **module-driven**: modules decide what to log, and `ModuleBlueprintSet.build()` sets up the shared viewer + default layout.
+Rerun on `dev` is **module-driven**: modules decide what to log, and `Blueprint.build()` sets up the shared viewer + default layout.
 
 ### Rerun lifecycle (what happens automatically vs what modules must do)
 
@@ -200,7 +200,7 @@ This appendix is an **inventory of every current Rerun touchpoint** in the repos
 - **Blueprint composition and server init during build**
   - **File**: [`dimos/core/blueprints.py`](/dimos/core/blueprints.py)
   - **What**:
-    - Calls `init_rerun_server()` during `ModuleBlueprintSet.build()` when backend is Rerun.
+    - Calls `init_rerun_server()` during `Blueprint.build()` when backend is Rerun.
     - Collects per-module `rerun_views()` panels and composes a default `rrb.Blueprint(...)`.
     - Sends the blueprint via `rr.send_blueprint(...)`.
 
@@ -222,7 +222,7 @@ This appendix is an **inventory of every current Rerun touchpoint** in the repos
 
 - **`tf_rerun()` helper (composed blueprint)**
   - **File**: [`dimos/dashboard/tf_rerun_module.py`](/dimos/dashboard/tf_rerun_module.py)
-  - **What**: Returns a `ModuleBlueprintSet` that composes `TFRerunModule` + `RerunSceneWiringModule` via `autoconnect(...)`. Blueprints add one line (`tf_rerun(...)`) to get both TF polling and scene wiring.
+  - **What**: Returns a `Blueprint` that composes `TFRerunModule` + `RerunSceneWiringModule` via `autoconnect(...)`. Blueprints add one line (`tf_rerun(...)`) to get both TF polling and scene wiring.
 
 - **TF message → Rerun entity mapping**
   - **File**: [`dimos/msgs/tf2_msgs/TFMessage.py`](/dimos/msgs/tf2_msgs/TFMessage.py)
@@ -283,7 +283,7 @@ These pull `rerun` into the message layer by returning Rerun archetypes.
   - **What**: `PointCloud2.to_rerun()` returns `rr.Points3D(...)` or `rr.Boxes3D(...)` depending on mode.
 
 - **Image/DepthImage formatting**
-  - **File**: [`dimos/msgs/sensor_msgs/image_impls/AbstractImage.py`](/dimos/msgs/sensor_msgs/image_impls/AbstractImage.py)
+  - **File**: [`dimos/msgs/sensor_msgs/Image.py`](/dimos/msgs/sensor_msgs/Image.py)
   - **What**: Helpers that construct `rr.Image(...)` / `rr.DepthImage(...)` with appropriate color model.
 
 - **OccupancyGrid → image/mesh/points**

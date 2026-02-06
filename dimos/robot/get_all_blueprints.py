@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.blueprints import ModuleBlueprintSet
+from dimos.core.blueprints import Blueprint
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 
 
-def get_blueprint_by_name(name: str) -> ModuleBlueprintSet:
+def get_blueprint_by_name(name: str) -> Blueprint:
     if name not in all_blueprints:
         raise ValueError(f"Unknown blueprint set name: {name}")
     module_path, attr = all_blueprints[name].split(":")
@@ -24,7 +24,7 @@ def get_blueprint_by_name(name: str) -> ModuleBlueprintSet:
     return getattr(module, attr)  # type: ignore[no-any-return]
 
 
-def get_module_by_name(name: str) -> ModuleBlueprintSet:
+def get_module_by_name(name: str) -> Blueprint:
     if name not in all_modules:
         raise ValueError(f"Unknown module name: {name}")
     python_module = __import__(all_modules[name], fromlist=[name])

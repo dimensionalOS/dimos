@@ -243,7 +243,7 @@ class CameraModule(Module):
 
 The sharpness score (0.0 to 1.0) is computed using Sobel edge detection:
 
-from [`NumpyImage.py`](/dimos/msgs/sensor_msgs/image_impls/NumpyImage.py)
+from [`Image.py`](/dimos/msgs/sensor_msgs/Image.py)
 
 ```python session=qb
 import cv2

@@ -18,7 +18,7 @@ This module provides a centralized control coordinator that replaces
 per-driver/per-controller loops with a single deterministic tick-based system.
 
 Features:
-- Single tick loop (read → compute → arbitrate → route → write)
+- Single tick loop (read -> compute -> arbitrate -> route -> write)
 - Per-joint arbitration (highest priority wins)
 - Mode conflict detection
 - Partial command support (hold last value)
@@ -27,15 +27,15 @@ Features:
 Example:
     >>> from dimos.control import ControlCoordinator
     >>> from dimos.control.tasks import JointTrajectoryTask, JointTrajectoryTaskConfig
-    >>> from dimos.hardware.manipulators.xarm import XArmBackend
+    >>> from dimos.hardware.manipulators.xarm import XArmAdapter
     >>>
     >>> # Create coordinator
     >>> coord = ControlCoordinator(tick_rate=100.0)
     >>>
     >>> # Add hardware
-    >>> backend = XArmBackend(ip="192.168.1.185", dof=7)
-    >>> backend.connect()
-    >>> coord.add_hardware("left_arm", backend)
+    >>> adapter = XArmAdapter(ip="192.168.1.185", dof=7)
+    >>> adapter.connect()
+    >>> coord.add_hardware("left_arm", adapter)
     >>>
     >>> # Add task
     >>> joints = [f"left_arm_joint{i+1}" for i in range(7)]
@@ -63,10 +63,7 @@ from dimos.control.coordinator import (
     TaskConfig,
     control_coordinator,
 )
-from dimos.control.hardware_interface import (
-    BackendHardwareInterface,
-    HardwareInterface,
-)
+from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import (
     ControlMode,
     ControlTask,
@@ -78,8 +75,8 @@ from dimos.control.task import (
 from dimos.control.tick_loop import TickLoop
 
 __all__ = [
-    # Hardware interface
-    "BackendHardwareInterface",
+    # Connected hardware
+    "ConnectedHardware",
     # Coordinator
     "ControlCoordinator",
     "ControlCoordinatorConfig",
@@ -89,7 +86,6 @@ __all__ = [
     "CoordinatorState",
     "HardwareComponent",
     "HardwareId",
-    "HardwareInterface",
     "HardwareType",
     "JointCommandOutput",
     "JointName",

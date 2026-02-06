@@ -16,11 +16,11 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
+from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 from dimos.protocol.service.lcmservice import (
     _DEFAULT_LCM_URL,
     LCMConfig,
     LCMService,
-    Topic,
     autoconf,
 )
 from dimos.protocol.service.system_configurator import (

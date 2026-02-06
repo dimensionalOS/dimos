@@ -27,7 +27,7 @@ logger = setup_logger()
 
 def query_for_one_position(vl_model: VlModel, map_image: MapImage, query: str) -> LatLon | None:
     full_query = f"{_PROLOGUE} {query} {_JSON} If there's a match return the x, y coordinates from the image. Example: `[123, 321]`. If there's no match return `null`."
-    response = vl_model.query(map_image.image.data, full_query)
+    response = vl_model.query(map_image.image, full_query)
     coords = tuple(map(int, re.findall(r"\d+", response)))
     if len(coords) != 2:
         return None
@@ -42,7 +42,7 @@ def query_for_one_position_and_context(
     my_location = f"I'm currently at x={x}, y={y}."
     full_query = f"{_PROLOGUE} {my_location} {query} {_JSON} If there's a match return the x, y coordinates from the image and what is there. Example response: `{example}`. If there's no match return `null`."
     logger.info(f"Qwen query: `{full_query}`")
-    response = vl_model.query(map_image.image.data, full_query)
+    response = vl_model.query(map_image.image, full_query)
 
     try:
         doc = extract_json_from_llm_response(response)

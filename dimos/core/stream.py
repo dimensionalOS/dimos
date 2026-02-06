@@ -255,7 +255,7 @@ class In(Stream[T], ObservableMixin[T]):
 
 
 # representation of input outside of module
-# used for configuring connections, setting a transport
+# used for configuring streams, setting a transport
 class RemoteIn(RemoteStream[T]):
     def connect(self, other: RemoteOut[T]) -> None:
         return self.owner.connect_stream(self.name, other).result()  # type: ignore[no-any-return, union-attr]

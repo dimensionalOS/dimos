@@ -22,8 +22,9 @@ from typing import Any
 
 import lcm
 
+from dimos.msgs import DimosMsg
 from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.protocol.service.lcmservice import LCMMsg, LCMService
+from dimos.protocol.service.lcmservice import LCMService
 
 
 class LcmSpy(LCMService):
@@ -155,7 +156,7 @@ class LcmSpy(LCMService):
     def wait_for_message_result(
         self,
         topic: str,
-        type: type[LCMMsg],
+        type: type[DimosMsg],
         predicate: Callable[[Any], bool],
         fail_message: str,
         timeout: float = 30.0,

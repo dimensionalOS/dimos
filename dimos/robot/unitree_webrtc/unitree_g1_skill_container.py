@@ -63,8 +63,8 @@ _MODE_COMMANDS: dict[str, tuple[int, str]] = {
 
 class UnitreeG1SkillContainer(SkillModule):
     rpc_calls: list[str] = [
-        "G1ConnectionModule.move",
-        "G1ConnectionModule.publish_request",
+        "G1Connection.move",
+        "G1Connection.publish_request",
     ]
 
     @rpc
@@ -90,23 +90,27 @@ class UnitreeG1SkillContainer(SkillModule):
             duration: How long to move (seconds)
         """
 
-        move_rpc = self.get_rpc_calls("G1ConnectionModule.move")
+        move_rpc = self.get_rpc_calls("G1Connection.move")
         twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
         move_rpc(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 
     @skill()
     def execute_arm_command(self, command_name: str) -> str:
-        return self._execute_g1_command(_ARM_COMMANDS, 7106, command_name)
+        return self._execute_g1_command(_ARM_COMMANDS, 7106, "rt/api/arm/request", command_name)
 
     @skill()
     def execute_mode_command(self, command_name: str) -> str:
-        return self._execute_g1_command(_MODE_COMMANDS, 7101, command_name)
+        return self._execute_g1_command(_MODE_COMMANDS, 7101, "rt/api/sport/request", command_name)
 
     def _execute_g1_command(
-        self, command_dict: dict[str, tuple[int, str]], api_id: int, command_name: str
+        self,
+        command_dict: dict[str, tuple[int, str]],
+        api_id: int,
+        topic: str,
+        command_name: str,
     ) -> str:
-        publish_request_rpc = self.get_rpc_calls("G1ConnectionModule.publish_request")
+        publish_request_rpc = self.get_rpc_calls("G1Connection.publish_request")
 
         if command_name not in command_dict:
             suggestions = difflib.get_close_matches(
@@ -117,9 +121,7 @@ class UnitreeG1SkillContainer(SkillModule):
         id_, _ = command_dict[command_name]
 
         try:
-            publish_request_rpc(
-                "rt/api/sport/request", {"api_id": api_id, "parameter": {"data": id_}}
-            )
+            publish_request_rpc(topic, {"api_id": api_id, "parameter": {"data": id_}})
             return f"'{command_name}' command executed successfully."
         except Exception as e:
             logger.error(f"Failed to execute {command_name}: {e}")

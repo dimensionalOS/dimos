@@ -319,7 +319,7 @@ Received 2 messages:
   {'temperature': 23.0}
 ```
 
-See [`memory.py`](/dimos/protocol/pubsub/memory.py) for the complete source.
+See [`memory.py`](/dimos/protocol/pubsub/impl/memory.py) for the complete source.
 
 ---
 

@@ -38,7 +38,7 @@ from dimos.core import rpc
 from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs import Pose, Transform, Twist
 from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
+from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.robot.unitree_webrtc.type.lidar import RawLidarMsg, pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.unitree_webrtc.type.odometry import Odometry

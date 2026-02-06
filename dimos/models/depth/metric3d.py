@@ -78,7 +78,10 @@ class Metric3D(LocalModel):
         try:
             if isinstance(img, str):
                 print(f"Image type string: {type(img)}")
-                self.rgb_origin = cv2.imread(img)[:, :, ::-1]
+                img_data = cv2.imread(img)
+                if img_data is None:
+                    raise ValueError(f"Failed to load image from {img}")
+                self.rgb_origin = img_data[:, :, ::-1]
             else:
                 # print(f"Image type not string: {type(img)}, cv2 conversion assumed to be handled. If not, this will throw an error")
                 self.rgb_origin = img
@@ -172,11 +175,13 @@ class Metric3D(LocalModel):
 
     def eval_predicted_depth(self, depth_file, pred_depth) -> None:  # type: ignore[no-untyped-def]
         if depth_file is not None:
-            gt_depth = cv2.imread(depth_file, -1)
-            gt_depth = gt_depth / self.gt_depth_scale  # type: ignore[assignment]
-            gt_depth = torch.from_numpy(gt_depth).float().to(self.device)  # type: ignore[assignment]
+            gt_depth_np = cv2.imread(depth_file, -1)
+            if gt_depth_np is None:
+                raise ValueError(f"Failed to load depth file from {depth_file}")
+            gt_depth_scaled = gt_depth_np / self.gt_depth_scale
+            gt_depth = torch.from_numpy(gt_depth_scaled).float().to(self.device)
             assert gt_depth.shape == pred_depth.shape
 
-            mask = gt_depth > 1e-8
-            abs_rel_err = (torch.abs(pred_depth[mask] - gt_depth[mask]) / gt_depth[mask]).mean()
+            mask = gt_depth > 1e-8  # type: ignore[operator]
+            abs_rel_err = (torch.abs(pred_depth[mask] - gt_depth[mask]) / gt_depth[mask]).mean()  # type: ignore[index]
             print("abs_rel_err:", abs_rel_err.item())

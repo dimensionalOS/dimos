@@ -54,6 +54,7 @@ yolo11n.pt
 # symlink one of .envrc.* if you'd like to use
 .envrc
 .claude
+**/CLAUDE.md
 .direnv/
 
 /logs

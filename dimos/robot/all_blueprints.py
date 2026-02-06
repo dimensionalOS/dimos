@@ -17,12 +17,16 @@
 
 all_blueprints = {
     "coordinator-basic": "dimos.control.blueprints:coordinator_basic",
+    "coordinator-cartesian-ik-mock": "dimos.control.blueprints:coordinator_cartesian_ik_mock",
+    "coordinator-cartesian-ik-piper": "dimos.control.blueprints:coordinator_cartesian_ik_piper",
+    "coordinator-combined-xarm6": "dimos.control.blueprints:coordinator_combined_xarm6",
     "coordinator-dual-mock": "dimos.control.blueprints:coordinator_dual_mock",
     "coordinator-dual-xarm": "dimos.control.blueprints:coordinator_dual_xarm",
-    "coordinator-highfreq-mock": "dimos.control.blueprints:coordinator_highfreq_mock",
     "coordinator-mock": "dimos.control.blueprints:coordinator_mock",
     "coordinator-piper": "dimos.control.blueprints:coordinator_piper",
     "coordinator-piper-xarm": "dimos.control.blueprints:coordinator_piper_xarm",
+    "coordinator-teleop-xarm6": "dimos.control.blueprints:coordinator_teleop_xarm6",
+    "coordinator-velocity-xarm6": "dimos.control.blueprints:coordinator_velocity_xarm6",
     "coordinator-xarm6": "dimos.control.blueprints:coordinator_xarm6",
     "coordinator-xarm7": "dimos.control.blueprints:coordinator_xarm7",
     "demo-camera": "dimos.hardware.sensors.camera.module:demo_camera",
@@ -34,6 +38,7 @@ all_blueprints = {
     "demo-skill": "dimos.agents.skills.demo_skill:demo_skill",
     "arm-teleop": "dimos.teleop.blueprints:arm_teleop",
     "arm-teleop-visualizing": "dimos.teleop.blueprints:arm_teleop_visualizing",
+    "dual-xarm6-planner": "dimos.manipulation.manipulation_blueprints:dual_xarm6_planner",
     "unitree-g1": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:unitree_g1",
     "unitree-g1-agentic": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:unitree_g1_agentic",
     "unitree-g1-agentic-sim": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:unitree_g1_agentic_sim",
@@ -55,6 +60,8 @@ all_blueprints = {
     "unitree-go2-spatial": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_spatial",
     "unitree-go2-temporal-memory": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_temporal_memory",
     "unitree-go2-vlm-stream-test": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:unitree_go2_vlm_stream_test",
+    "xarm6-planner-only": "dimos.manipulation.manipulation_blueprints:xarm6_planner_only",
+    "xarm7-planner-coordinator": "dimos.manipulation.manipulation_blueprints:xarm7_planner_coordinator",
 }
 
 
@@ -67,7 +74,7 @@ all_modules = {
     "demo_robot": "dimos.agents.skills.demo_robot",
     "depth_module": "dimos.robot.unitree_webrtc.depth_module",
     "detection3d_module": "dimos.perception.detection.module3D",
-    "detectionDB_module": "dimos.perception.detection.moduleDB",
+    "detection_db_module": "dimos.perception.detection.moduleDB",
     "foxglove_bridge": "dimos.robot.foxglove_bridge",
     "g1_connection": "dimos.robot.unitree.connection.g1",
     "g1_sim_connection": "dimos.robot.unitree.connection.g1sim",
@@ -79,6 +86,7 @@ all_modules = {
     "joint_trajectory_controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller",
     "keyboard_teleop": "dimos.robot.unitree_webrtc.keyboard_teleop",
     "llm_agent": "dimos.agents.agent",
+    "manipulation_module": "dimos.manipulation.manipulation_module",
     "mapper": "dimos.robot.unitree_webrtc.type.map",
     "navigation_skill": "dimos.agents.skills.navigation",
     "object_scene_registration_module": "dimos.perception.object_scene_registration",

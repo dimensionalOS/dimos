@@ -16,7 +16,7 @@
 
 This file defines:
 1. Shared enums and dataclasses used by all arms
-2. ManipulatorBackend Protocol that backends must implement
+2. ManipulatorAdapter Protocol that adapters must implement
 
 Note: No ABC for drivers. Each arm implements its own driver
 with full control over threading and logic.
@@ -84,12 +84,12 @@ def default_base_transform() -> Transform:
 
 
 # ============================================================================
-# BACKEND PROTOCOL
+# ADAPTER PROTOCOL
 # ============================================================================
 
 
 @runtime_checkable
-class ManipulatorBackend(Protocol):
+class ManipulatorAdapter(Protocol):
     """Protocol for hardware-specific IO.
 
     Implement this per vendor SDK. All methods use SI units:
@@ -255,7 +255,7 @@ __all__ = [
     "ControlMode",
     "DriverStatus",
     "JointLimits",
-    "ManipulatorBackend",
+    "ManipulatorAdapter",
     "ManipulatorInfo",
     "default_base_transform",
 ]
