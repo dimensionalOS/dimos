@@ -19,62 +19,82 @@ This module contains various subclasses of QuestTeleopModule that customize
 output formats or add additional functionality.
 
 Available subclasses:
+    - ToggleEngageTeleopModule: Press X to toggle engage (instead of hold)
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
-    - VisualizingTeleopModule: Adds Rerun visualization
+    - VisualizingTeleopModule: Adds Rerun visualization (uses toggle engage)
 """
 
+from typing import Any
+
 from dimos.core import Out
-from dimos.msgs.geometry_msgs import PoseStamped, Twist
+from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
 from dimos.teleop.quest.quest_teleop_module import Hand, QuestTeleopModule
 from dimos.teleop.utils.teleop_visualization import (
     init_rerun_visualization,
+    visualize_buttons,
     visualize_pose,
-    visualize_trigger_value,
 )
 
 
 class TwistTeleopModule(QuestTeleopModule):
-    """Quest teleop that outputs Twist instead of PoseStamped.
-
-    Converts pose deltas to velocity commands by treating position as
-    linear velocity and orientation (converted to euler) as angular velocity.
-
+    """Quest teleop that outputs TwistStamped instead of PoseStamped.
     Outputs:
-        - left_twist: Twist (linear + angular velocity)
-        - right_twist: Twist (linear + angular velocity)
+        - left_twist: TwistStamped (linear + angular velocity)
+        - right_twist: TwistStamped (linear + angular velocity)
         - buttons: QuestButtons (inherited)
-
-    Note: Inherited left_controller_delta and right_controller_delta
-    still exist but are not published to (dormant).
     """
 
-    left_twist: Out[Twist]
-    right_twist: Out[Twist]
+    left_twist: Out[TwistStamped]
+    right_twist: Out[TwistStamped]
 
-    def _publish_pose(self, hand: Hand, pose: PoseStamped) -> None:
-        """Convert PoseStamped to Twist and publish."""
-        twist = Twist(
-            linear=pose.position,
-            angular=pose.orientation,  # Quaternion -> euler via Twist dispatch
+    def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
+        """Convert PoseStamped to TwistStamped and publish."""
+        twist = TwistStamped(
+            ts=output_msg.ts,
+            frame_id=output_msg.frame_id,
+            linear=output_msg.position,
+            angular=output_msg.orientation.to_euler(),
         )
-
         if hand == Hand.LEFT:
             self.left_twist.publish(twist)
         else:
             self.right_twist.publish(twist)
 
 
-class VisualizingTeleopModule(QuestTeleopModule):
+class ArmTeleop(QuestTeleopModule):
+    """Quest teleop with toggle-based engage.
+    Press X button once to engage, press again to disengage.
+    Outputs:
+        - left_controller_output: PoseStamped (inherited)
+        - right_controller_output: PoseStamped (inherited)
+        - buttons: QuestButtons (inherited)
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._prev_x_pressed = False
+
+    def _handle_engage(self) -> None:
+        """Toggle engage state on X button rising edge."""
+        left = self._controllers.get(Hand.LEFT)
+        if left is None:
+            return
+        x_pressed = left.primary
+
+        # Rising edge detection: was not pressed, now pressed
+        if x_pressed and not self._prev_x_pressed:
+            if self._is_engaged:
+                self.disengage()
+            else:
+                self.engage()
+        self._prev_x_pressed = x_pressed
+
+
+class VisualizingTeleopModule(ArmTeleop):
     """Quest teleop with Rerun visualization.
 
     Adds visualization of controller poses and trigger values to Rerun.
     Useful for debugging and development.
-
-    Outputs:
-        - left_controller_delta: PoseStamped (inherited)
-        - right_controller_delta: PoseStamped (inherited)
-        - buttons: QuestButtons (inherited)
-        - Rerun visualization of poses and triggers
     """
 
     def start(self) -> None:
@@ -93,19 +113,28 @@ class VisualizingTeleopModule(QuestTeleopModule):
                 visualize_pose(current_pose, label)
 
                 controller = self._controllers.get(hand)
-                trigger_value = controller.trigger if controller else 0.0
-                visualize_trigger_value(trigger_value, label)
+                if controller:
+                    visualize_buttons(
+                        label,
+                        primary=controller.primary,
+                        secondary=controller.secondary,
+                        grip=controller.grip,
+                        trigger=controller.trigger,
+                    )
 
         return output_pose
 
 
 # Module blueprints for easy instantiation
 twist_teleop_module = TwistTeleopModule.blueprint
+arm_teleop_module = ArmTeleop.blueprint
 visualizing_teleop_module = VisualizingTeleopModule.blueprint
 
 __all__ = [
+    "ArmTeleop",
     "TwistTeleopModule",
     "VisualizingTeleopModule",
+    "arm_teleop_module",
     "twist_teleop_module",
     "visualizing_teleop_module",
 ]
