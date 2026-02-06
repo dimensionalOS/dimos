@@ -59,43 +59,47 @@ class QuestController:
 
     @classmethod
     def from_joy(cls, joy: Joy, is_left: bool = True) -> "QuestController":
-        """Create QuestController from Joy message."""
-        controller = cls(is_left=is_left)
+        """Create QuestController from Joy message.
 
+        Raises:
+            ValueError: If Joy message doesn't have expected Quest controller format.
+        """
         buttons = joy.buttons or []
         axes = joy.axes or []
 
-        if len(buttons) >= 7:
-            controller.trigger = float(buttons[0])
-            controller.grip = float(buttons[1])
-            controller.touchpad = bool(buttons[2])
-            controller.thumbstick_press = bool(buttons[3])
-            controller.primary = bool(buttons[4])
-            controller.secondary = bool(buttons[5])
-            controller.menu = bool(buttons[6])
+        if len(buttons) < 7:
+            raise ValueError(f"Expected 7 buttons, got {len(buttons)}")
+        if len(axes) < 2:
+            raise ValueError(f"Expected 2 axes, got {len(axes)}")
 
-        if len(axes) >= 2:
-            controller.thumbstick = ThumbstickState(
-                x=float(axes[0]),
-                y=float(axes[1]),
-            )
-
-        return controller
+        return cls(
+            is_left=is_left,
+            trigger=float(buttons[0]),
+            grip=float(buttons[1]),
+            touchpad=buttons[2] > 0.5,
+            thumbstick_press=buttons[3] > 0.5,
+            primary=buttons[4] > 0.5,
+            secondary=buttons[5] > 0.5,
+            menu=buttons[6] > 0.5,
+            thumbstick=ThumbstickState(x=float(axes[0]), y=float(axes[1])),
+        )
 
     # Convenience aliases
     @property
     def x(self) -> bool:
         return self.primary
+
     @property
     def y(self) -> bool:
         return self.secondary
+
     @property
     def a(self) -> bool:
         return self.primary
+
     @property
     def b(self) -> bool:
         return self.secondary
-
 
 
 class QuestButtons(UInt32):
@@ -168,4 +172,4 @@ class QuestButtons(UInt32):
         return buttons
 
 
-__all__ = ["QuestController", "QuestButtons", "ThumbstickState"]
+__all__ = ["QuestButtons", "QuestController", "ThumbstickState"]

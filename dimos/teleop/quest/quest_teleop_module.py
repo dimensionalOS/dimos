@@ -20,13 +20,11 @@ Receives VR controller tracking data via LCM from Deno bridge,
 transforms from WebXR to robot frame, computes deltas, and publishes PoseStamped commands.
 """
 
-import threading
-import time
 from dataclasses import dataclass
 from enum import IntEnum
+import threading
+import time
 from typing import Any
-
-from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
@@ -72,8 +70,8 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
     vr_right_joy: In[Joy]
 
     # Outputs: delta poses for each controller
-    left_controller_delta: Out[PoseStamped]
-    right_controller_delta: Out[PoseStamped]
+    left_controller_output: Out[PoseStamped]
+    right_controller_output: Out[PoseStamped]
     buttons: Out[QuestButtons]
 
     # -------------------------------------------------------------------------
@@ -85,18 +83,9 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
         # Engage state
         self._is_engaged = False
-        self._initial_poses: dict[Hand, PoseStamped | None] = {
-            Hand.LEFT: None,
-            Hand.RIGHT: None,
-        }
-        self._current_poses: dict[Hand, PoseStamped | None] = {
-            Hand.LEFT: None,
-            Hand.RIGHT: None,
-        }
-        self._controllers: dict[Hand, QuestController | None] = {
-            Hand.LEFT: None,
-            Hand.RIGHT: None,
-        }
+        self._initial_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
+        self._current_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
+        self._controllers: dict[Hand, QuestController | None] = {Hand.LEFT: None, Hand.RIGHT: None}
         self._lock = threading.Lock()
 
         # Control loop
@@ -122,7 +111,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         ]
         for stream, handler in subscriptions:
             if stream and stream.transport:
-                self._disposables.add(Disposable(stream.subscribe(handler)))
+                self._disposables.add(stream.observable().subscribe(handler))
 
         self._start_control_loop()
         logger.info("Quest Teleoperation Module started")
@@ -136,7 +125,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
     @rpc
     def engage(self) -> bool:
-        """Engage teleoperation by capturing current poses as reference."""
+        """Engage teleoperation"""
         logger.info("Engaging...")
 
         for hand in Hand:
@@ -172,7 +161,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         }
 
     # -------------------------------------------------------------------------
-    # Private Internal Methods
+    # Callbacks and Control Loop
     # -------------------------------------------------------------------------
 
     def _on_pose_cb(self, hand: Hand, pose_stamped: PoseStamped) -> None:
@@ -217,15 +206,14 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
         while self._control_loop_running:
             loop_start = time.perf_counter()
-
-            # Check engage button (rising edge detection)
+            # Method to handle engage/disengage logic based on button states
             self._handle_engage()
-
+            # Method to check if we should publish commands (e.g., only when engaged)
             if self._should_publish():
                 for hand in Hand:
                     output_pose = self._get_output_pose(hand)
                     if output_pose is not None:
-                        self._publish_pose(hand, output_pose)
+                        self._publish_msg(hand, output_pose)
 
                 self._publish_button_state(
                     self._controllers.get(Hand.LEFT),
@@ -251,7 +239,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         left = self._controllers.get(Hand.LEFT)
         if left is None:
             return
-
+        # Default condition to engage: X press
         if left.primary:
             if not self._is_engaged:
                 self.engage()
@@ -262,7 +250,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
     def _should_publish(self) -> bool:
         """Check if we should publish commands.
 
-        Override to add custom conditions (e.g., safety checks, workspace limits).
+        Override to add custom conditions (e.g., if a button is continuously pressed, if trigger is pressed, or any such criteria).
         Default: Returns True if engaged.
         """
         return self._is_engaged
@@ -281,7 +269,6 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
             return None
 
         delta_pose = Pose(current_pose) - Pose(initial_pose)
-
         return PoseStamped(
             position=delta_pose.position,
             orientation=delta_pose.orientation,
@@ -289,15 +276,15 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
             frame_id=current_pose.frame_id,
         )
 
-    def _publish_pose(self, hand: Hand, pose: PoseStamped) -> None:
-        """Publish pose for a controller.
+    def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
+        """Publish message for a controller.
 
-        Override to customize pose output (e.g., convert to Twist, scale values).
+        Override to customize output (e.g., convert to Twist, scale values).
         """
         if hand == Hand.LEFT:
-            self.left_controller_delta.publish(pose)
+            self.left_controller_output.publish(output_msg)
         else:
-            self.right_controller_delta.publish(pose)
+            self.right_controller_output.publish(output_msg)
 
     def _publish_button_state(
         self,
@@ -315,4 +302,4 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
 quest_teleop_module = QuestTeleopModule.blueprint
 
-__all__ = ["Hand", "QuestTeleopModule", "QuestTeleopConfig", "quest_teleop_module"]
+__all__ = ["Hand", "QuestTeleopConfig", "QuestTeleopModule", "quest_teleop_module"]

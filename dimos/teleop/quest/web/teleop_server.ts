@@ -56,9 +56,7 @@ Deno.serve({ port: PORT, cert, key }, async (req) => {
 
     // Forward binary LCM packets from browser directly to UDP
     socket.binaryType = "arraybuffer";
-    let msgCount = 0;
     socket.onmessage = async (event) => {
-      msgCount++;
       if (event.data instanceof ArrayBuffer) {
         const packet = new Uint8Array(event.data);
         try {

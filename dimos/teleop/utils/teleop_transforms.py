@@ -17,12 +17,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
-from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 # Coordinate frame transformation from VR (WebXR) to robot frame
 # WebXR: X=right, Y=up, Z=back (towards user)
@@ -30,8 +34,8 @@ from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 VR_TO_ROBOT_FRAME: NDArray[np.float64] = np.array(
     [
         [0, 0, -1, 0],  # Robot X = -VR Z (forward)
-        [1, 0, 0, 0],  # Robot Y = +VR X (left)
-        [0, -1, 0, 0],   # Robot Z = -VR Y (up)
+        [-1, 0, 0, 0],  # Robot Y = -VR X (left)
+        [0, 1, 0, 0],  # Robot Z = +VR Y (up)
         [0, 0, 0, 1],
     ],
     dtype=np.float64,
@@ -72,4 +76,4 @@ def webxr_to_robot(
     )
 
 
-__all__ = ["webxr_to_robot", "VR_TO_ROBOT_FRAME"]
+__all__ = ["VR_TO_ROBOT_FRAME", "webxr_to_robot"]

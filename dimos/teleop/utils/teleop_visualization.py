@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import Pose
+    from dimos.core.global_config import GlobalConfig
+    from dimos.msgs.geometry_msgs import PoseStamped
 
 logger = setup_logger()
 
@@ -36,12 +37,22 @@ except ImportError:
     RERUN_AVAILABLE = False
 
 
-def init_rerun_visualization() -> bool:
-    """Initialize Rerun visualization connection."""
+def init_rerun_visualization(global_config: GlobalConfig | None = None) -> bool:
+    """Initialize Rerun visualization connection.
+
+    Args:
+        global_config: Global configuration. If provided, respects viewer_backend setting.
+    """
     if not RERUN_AVAILABLE:
         return False
+
+    # Skip if global_config says to use foxglove instead of rerun
+    if global_config and not global_config.viewer_backend.startswith("rerun"):
+        logger.debug(f"Skipping Rerun init: viewer_backend={global_config.viewer_backend}")
+        return False
+
     try:
-        connect_rerun()
+        connect_rerun(global_config=global_config)
         logger.info("Connected to Rerun for teleop visualization")
         return True
     except Exception as e:
@@ -49,21 +60,16 @@ def init_rerun_visualization() -> bool:
         return False
 
 
-def visualize_pose(pose: Pose, controller_label: str) -> None:
+def visualize_pose(pose_stamped: PoseStamped, controller_label: str) -> None:
     """Visualize controller absolute pose in Rerun.
 
     Args:
-        pose: The controller's current pose.
-        controller_label: Label for the controller (e.g., "left_vr").
+        pose_stamped: The controller's current pose.
+        controller_label: Label for the controller (e.g., "left").
     """
     if not RERUN_AVAILABLE:
         return
     try:
-        from dimos.teleop.utils.teleop_transforms import pose_to_pose_stamped
-
-        pose_stamped = pose_to_pose_stamped(
-            pose, frame_id=f"world/teleop/{controller_label}_controller"
-        )
         rr.log(
             f"world/teleop/{controller_label}_controller",
             pose_stamped.to_rerun(),  # type: ignore[no-untyped-call]
@@ -77,19 +83,29 @@ def visualize_pose(pose: Pose, controller_label: str) -> None:
         logger.debug(f"Failed to log {controller_label} controller to Rerun: {e}")
 
 
-def visualize_trigger_value(trigger_value: float, controller_label: str) -> None:
-    """Visualize trigger value in Rerun as a scalar time series.
+def visualize_buttons(
+    controller_label: str,
+    primary: bool = False,
+    secondary: bool = False,
+    grip: float = 0.0,
+    trigger: float = 0.0,
+) -> None:
+    """Visualize button states in Rerun as scalar time series.
 
     Args:
-        trigger_value: Trigger value (0.0-1.0).
-        controller_label: Label for the controller (e.g., "left_vr").
+        controller_label: Label for the controller (e.g., "left").
+        primary: X/A button state.
+        secondary: Y/B button state.
+        grip: Grip value (0.0-1.0).
+        trigger: Trigger value (0.0-1.0).
     """
     if not RERUN_AVAILABLE:
         return
     try:
-        rr.log(
-            f"world/teleop/{controller_label}_controller/trigger",
-            rr.Scalars(trigger_value),  # type: ignore[attr-defined]
-        )
+        base_path = f"world/teleop/{controller_label}_controller"
+        rr.log(f"{base_path}/primary", rr.Scalars(float(primary)))  # type: ignore[attr-defined]
+        rr.log(f"{base_path}/secondary", rr.Scalars(float(secondary)))  # type: ignore[attr-defined]
+        rr.log(f"{base_path}/grip", rr.Scalars(grip))  # type: ignore[attr-defined]
+        rr.log(f"{base_path}/trigger", rr.Scalars(trigger))  # type: ignore[attr-defined]
     except Exception as e:
-        logger.debug(f"Failed to log {controller_label} trigger to Rerun: {e}")
+        logger.debug(f"Failed to log {controller_label} buttons to Rerun: {e}")

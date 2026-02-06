@@ -12,9 +12,9 @@
         }
 
         body {
-            font-family: Arial, sans-serif;
-            background-color: #000;
-            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #fff;
+            color: #333;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -37,53 +37,53 @@
         }
 
         h1 {
-            font-size: 48px;
-            font-weight: bold;
+            font-size: 42px;
+            font-weight: 600;
             margin-bottom: 40px;
-            color: #fff;
+            color: #28283b;
         }
 
         #status {
-            font-size: 32px;
-            font-weight: bold;
-            color: #ff8c00;
-            padding: 15px 30px;
-            background-color: #000;
-            border: 2px solid #ff8c00;
-            border-radius: 8px;
-            margin-bottom: 20px;
+            font-size: 28px;
+            font-weight: 500;
+            color: #0077b6;
+            padding: 16px 32px;
+            background-color: #fff;
+            border: 2px solid #0077b6;
+            border-radius: 12px;
+            margin-bottom: 24px;
             min-width: 300px;
             text-align: center;
         }
 
         button {
-            padding: 25px 50px;
-            font-size: 28px;
-            font-weight: bold;
+            padding: 20px 48px;
+            font-size: 24px;
+            font-weight: 600;
             color: white;
-            background-color: #ff8c00;
+            background-color: #0077b6;
             border: none;
-            border-radius: 8px;
+            border-radius: 12px;
             cursor: pointer;
-            transition: background-color 0.3s;
+            transition: background-color 0.2s;
         }
 
         button:hover {
-            background-color: #ff6600;
+            background-color: #005f8a;
         }
 
         button:disabled {
-            background-color: #666;
+            background-color: #adb5bd;
             cursor: not-allowed;
         }
 
         button.disconnect {
-            background-color: #dc3545;
-            margin-top: 20px;
+            background-color: #6c757d;
+            margin-top: 16px;
         }
 
         button.disconnect:hover {
-            background-color: #c82333;
+            background-color: #545b62;
         }
 
         #canvas {
@@ -102,7 +102,7 @@
 </head>
 <body>
     <div id="ui">
-        <h1>Quest 3 VR Teleop</h1>
+        <h1>DimOS Quest-3 Teleop</h1>
         <div id="status">Ready to connect</div>
         <button id="connectBtn" onclick="connect()">Connect</button>
         <button id="disconnectBtn" class="disconnect hidden" onclick="disconnect()">Disconnect</button>
@@ -126,9 +126,6 @@
         let lastSendTime = 0;
         const sendInterval = 1000 / 80; // ~80Hz target
 
-        // Teleop state
-        let teleopActive = false;
-        let lastXButtonState = { left: false, right: false };
 
         // UI elements
         const statusEl = document.getElementById('status');
@@ -153,17 +150,14 @@
                     setStatus('Server connected');
                     resolve();
                 };
-
                 ws.onerror = (error) => {
                     setStatus('WebSocket error');
                     console.error('WebSocket error:', error);
                     reject(error);
                 };
-
                 ws.onclose = () => {
                     setStatus('WebSocket closed');
                 };
-
                 ws.onmessage = () => {};
             });
         }
@@ -174,48 +168,15 @@
                 xrCompatible: true,
                 alpha: true
             });
-
             if (!gl) {
                 throw new Error('WebGL not supported');
             }
-
             gl.clearColor(0, 0, 0, 0); // Transparent background for passthrough
         }
 
-        // Check for X button press (calibration toggle)
-        function checkButtonPresses(frame) {
-            for (const inputSource of frame.session.inputSources) {
-                if (inputSource.gamepad && inputSource.handedness) {
-                    const handedness = inputSource.handedness;
-                    const gamepad = inputSource.gamepad;
-
-                    // X button is button[4] on Quest controllers
-                    const xButtonPressed = gamepad.buttons[4]?.pressed || false;
-
-                    // Detect button press (rising edge)
-                    if (xButtonPressed && !lastXButtonState[handedness]) {
-                        toggleTeleop();
-                    }
-
-                    lastXButtonState[handedness] = xButtonPressed;
-                }
-            }
-        }
-
-        function toggleTeleop() {
-            if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-            teleopActive = !teleopActive;
-            const msg = new std_msgs.Bool({ data: teleopActive });
-            const packet = encodePacket("/vr_teleop_enable#std_msgs.Bool", msg);
-            ws.send(packet);
-            setStatus(teleopActive ? 'Teleop ACTIVE - Move controllers' : 'Teleop STOPPED');
-        }
 
         // Send raw controller tracking data (no processing - done in Python)
         function processTracking(frame) {
-            checkButtonPresses(frame);
-
             // Rate limit tracking data
             const now = performance.now();
             if (now - lastSendTime < sendInterval) {
@@ -241,7 +202,7 @@
                 const nowMs = Date.now();
                 const poseStamped = new geometry_msgs.PoseStamped({
                     header: new std_msgs.Header({
-                        stamp: { sec: Math.floor(nowMs / 1000), nsec: (nowMs % 1000) * 1_000_000 },
+                        stamp: new std_msgs.Time({ sec: Math.floor(nowMs / 1000), nsec: (nowMs % 1000) * 1_000_000 }),
                         frame_id: "vr_origin"
                     }),
                     pose: new geometry_msgs.Pose({
@@ -281,16 +242,19 @@
                     // [4] = X/A button
                     // [5] = Y/B button
                     // [6] = menu (if exposed)
+                    // Note: Joy.buttons expects int32[], so we send 0 or 1
                     const buttons = [];
                     for (let i = 0; i < gamepad.buttons.length; i++) {
-                        buttons.push(gamepad.buttons[i]?.value ?? 0.0);
+                        buttons.push(gamepad.buttons[i]?.pressed ? 1 : 0);
                     }
 
                     const joyMsg = new sensor_msgs.Joy({
                         header: new std_msgs.Header({
-                            stamp: { sec: Math.floor(nowMs / 1000), nsec: (nowMs % 1000) * 1_000_000 },
+                            stamp: new std_msgs.Time({ sec: Math.floor(nowMs / 1000), nsec: (nowMs % 1000) * 1_000_000 }),
                             frame_id: handedness
                         }),
+                        axes_length: axes.length,
+                        buttons_length: buttons.length,
                         axes: axes,
                         buttons: buttons
                     });
@@ -322,7 +286,6 @@
             try {
                 setStatus('Initializing WebGL...');
                 initGL();
-
                 setStatus('Requesting VR session...');
 
                 // Try immersive-ar first (true passthrough), fall back to immersive-vr
@@ -353,7 +316,7 @@
                 // Get reference space
                 xrRefSpace = await session.requestReferenceSpace('local-floor');
 
-                setStatus('VR active - Press X to calibrate');
+                setStatus('VR active');
 
                 // Session event handlers
                 session.addEventListener('end', () => {
