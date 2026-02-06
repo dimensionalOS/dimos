@@ -16,5 +16,6 @@ from .Bool import Bool
 from .Header import Header
 from .Int8 import Int8
 from .Int32 import Int32
+from .UInt32 import UInt32
 
-__all__ = ["Bool", "Header", "Int8", "Int32"]
+__all__ = ["Bool", "Header", "Int8", "Int32", "UInt32"]

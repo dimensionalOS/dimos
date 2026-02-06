@@ -15,8 +15,10 @@
 """Quest teleoperation module."""
 
 from dimos.teleop.quest.quest_extensions import (
+    ArmTeleop,
     TwistTeleopModule,
     VisualizingTeleopModule,
+    arm_teleop_module,
     twist_teleop_module,
     visualizing_teleop_module,
 )
@@ -35,16 +37,18 @@ from dimos.teleop.quest.quest_types import (
 __all__ = [
     # Base module
     "Hand",
-    "QuestTeleopConfig",
-    "QuestTeleopModule",
-    "quest_teleop_module",
-    # Extensions
-    "TwistTeleopModule",
-    "VisualizingTeleopModule",
-    "twist_teleop_module",
-    "visualizing_teleop_module",
     # Types
     "QuestButtons",
     "QuestController",
+    "QuestTeleopConfig",
+    "QuestTeleopModule",
     "ThumbstickState",
+    # Extensions
+    "ArmTeleop",
+    "TwistTeleopModule",
+    "VisualizingTeleopModule",
+    "quest_teleop_module",
+    "arm_teleop_module",
+    "twist_teleop_module",
+    "visualizing_teleop_module",
 ]
