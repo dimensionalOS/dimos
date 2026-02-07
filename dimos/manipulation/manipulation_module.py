@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from dimos.core.rpc_client import RPCClient
     from dimos.msgs.geometry_msgs import Pose, PoseArray
     from dimos.msgs.sensor_msgs import PointCloud2
+    from dimos.perception.detection.type.detection3d.object import Object as DetObject
 
 logger = setup_logger()
 
