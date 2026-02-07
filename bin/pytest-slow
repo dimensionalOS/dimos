@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-. .venv/bin/
+. .venv/bin/activate
 
 skip_string="tool or module or neverending or mujoco or tofix"
 # on macOS skip GPU
