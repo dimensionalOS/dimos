@@ -15,18 +15,15 @@
 
 """Quest teleop module extensions and subclasses.
 
-This module contains various subclasses of QuestTeleopModule that customize
-output formats or add additional functionality.
-
 Available subclasses:
-    - ToggleEngageTeleopModule: Press X to toggle engage (instead of hold)
+    - ArmTeleopModule: Per-hand toggle engage (X/A press to toggle)
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
     - VisualizingTeleopModule: Adds Rerun visualization (uses toggle engage)
 """
 
 from typing import Any
 
-from dimos.core import Out
+from dimos.core import Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
 from dimos.teleop.quest.quest_teleop_module import Hand, QuestTeleopModule
 from dimos.teleop.utils.teleop_visualization import (
@@ -61,42 +58,42 @@ class TwistTeleopModule(QuestTeleopModule):
             self.right_twist.publish(twist)
 
 
-class ArmTeleop(QuestTeleopModule):
-    """Quest teleop with toggle-based engage.
-    Press X button once to engage, press again to disengage.
-    Outputs:
-        - left_controller_output: PoseStamped (inherited)
-        - right_controller_output: PoseStamped (inherited)
-        - buttons: QuestButtons (inherited)
+class ArmTeleopModule(QuestTeleopModule):
+    """Quest teleop with per-hand toggle engage.
+
+    Each controller's primary button (X for left, A for right)
+    toggles that hand's engage state independently.
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._prev_x_pressed = False
+        self._prev_primary: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
 
     def _handle_engage(self) -> None:
-        """Toggle engage state on X button rising edge."""
-        left = self._controllers.get(Hand.LEFT)
-        if left is None:
-            return
-        x_pressed = left.primary
+        """Toggle per-hand engage on primary button rising edge."""
+        with self._lock:
+            for hand in Hand:
+                controller = self._controllers.get(hand)
+                if controller is None:
+                    continue
 
-        # Rising edge detection: was not pressed, now pressed
-        if x_pressed and not self._prev_x_pressed:
-            if self._is_engaged:
-                self.disengage()
-            else:
-                self.engage()
-        self._prev_x_pressed = x_pressed
+                pressed = controller.primary
+                if pressed and not self._prev_primary[hand]:
+                    if self._is_engaged[hand]:
+                        self.disengage(hand)
+                    else:
+                        self.engage(hand)
+                self._prev_primary[hand] = pressed
 
 
-class VisualizingTeleopModule(ArmTeleop):
+class VisualizingTeleopModule(ArmTeleopModule):
     """Quest teleop with Rerun visualization.
 
     Adds visualization of controller poses and trigger values to Rerun.
     Useful for debugging and development.
     """
 
+    @rpc
     def start(self) -> None:
         """Start module and initialize Rerun visualization."""
         super().start()
@@ -107,12 +104,13 @@ class VisualizingTeleopModule(ArmTeleop):
         output_pose = super()._get_output_pose(hand)
 
         if output_pose is not None:
-            current_pose = self._current_poses.get(hand)
+            with self._lock:
+                current_pose = self._current_poses.get(hand)
+                controller = self._controllers.get(hand)
             if current_pose is not None:
                 label = "left" if hand == Hand.LEFT else "right"
                 visualize_pose(current_pose, label)
 
-                controller = self._controllers.get(hand)
                 if controller:
                     visualize_buttons(
                         label,
@@ -121,17 +119,16 @@ class VisualizingTeleopModule(ArmTeleop):
                         grip=controller.grip,
                         trigger=controller.trigger,
                     )
-
         return output_pose
 
 
 # Module blueprints for easy instantiation
 twist_teleop_module = TwistTeleopModule.blueprint
-arm_teleop_module = ArmTeleop.blueprint
+arm_teleop_module = ArmTeleopModule.blueprint
 visualizing_teleop_module = VisualizingTeleopModule.blueprint
 
 __all__ = [
-    "ArmTeleop",
+    "ArmTeleopModule",
     "TwistTeleopModule",
     "VisualizingTeleopModule",
     "arm_teleop_module",

@@ -28,10 +28,10 @@ from typing import Any
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
-from dimos.msgs.geometry_msgs import Pose, PoseStamped
+from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Joy
 from dimos.teleop.base import TeleopProtocol
-from dimos.teleop.quest.quest_types import QuestButtons, QuestController
+from dimos.teleop.quest.quest_types import QuestButtons, QuestControllerState
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.utils.logging_config import setup_logger
 
@@ -43,6 +43,17 @@ class Hand(IntEnum):
 
     LEFT = 0
     RIGHT = 1
+
+
+@dataclass
+class QuestTeleopStatus:
+    """Current teleoperation status."""
+
+    left_engaged: bool
+    right_engaged: bool
+    left_pose: PoseStamped | None
+    right_pose: PoseStamped | None
+    buttons: QuestButtons
 
 
 @dataclass
@@ -81,12 +92,15 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
-        # Engage state
-        self._is_engaged = False
+        # Engage state (per-hand)
+        self._is_engaged: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
         self._initial_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
         self._current_poses: dict[Hand, PoseStamped | None] = {Hand.LEFT: None, Hand.RIGHT: None}
-        self._controllers: dict[Hand, QuestController | None] = {Hand.LEFT: None, Hand.RIGHT: None}
-        self._lock = threading.Lock()
+        self._controllers: dict[Hand, QuestControllerState | None] = {
+            Hand.LEFT: None,
+            Hand.RIGHT: None,
+        }
+        self._lock = threading.RLock()
 
         # Control loop
         self._control_loop_thread: threading.Thread | None = None
@@ -124,41 +138,46 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         super().stop()
 
     @rpc
-    def engage(self) -> bool:
-        """Engage teleoperation"""
-        logger.info("Engaging...")
+    def engage(self, hand: Hand | None = None) -> bool:
+        """Engage teleoperation for a hand. If hand is None, engage both."""
+        hands = [hand] if hand is not None else list(Hand)
 
-        for hand in Hand:
-            pose = self._current_poses.get(hand)
-            if pose is None:
-                logger.error(f"Engage failed: {hand.name.lower()} controller has no data")
-                return False
-            self._initial_poses[hand] = pose
+        with self._lock:
+            for h in hands:
+                pose = self._current_poses.get(h)
+                if pose is None:
+                    logger.error(f"Engage failed: {h.name.lower()} controller has no data")
+                    return False
+                self._initial_poses[h] = pose
+                self._is_engaged[h] = True
 
-        self._is_engaged = True
-        logger.info("Engaged.")
+        for h in hands:
+            logger.info(f"{h.name} engaged.")
         return True
 
     @rpc
-    def disengage(self) -> None:
-        """Disengage teleoperation."""
-        self._is_engaged = False
-        logger.info("Disengaged.")
+    def disengage(self, hand: Hand | None = None) -> None:
+        """Disengage teleoperation for a hand. If hand is None, disengage both."""
+        hands = [hand] if hand is not None else list(Hand)
+        with self._lock:
+            for h in hands:
+                self._is_engaged[h] = False
+        for h in hands:
+            logger.info(f"{h.name} disengaged.")
 
     @rpc
-    def get_status(self) -> dict[str, Any]:
+    def get_status(self) -> QuestTeleopStatus:
         """Get current teleoperation status."""
-        left = self._controllers.get(Hand.LEFT)
-        right = self._controllers.get(Hand.RIGHT)
-        return {
-            "is_engaged": self._is_engaged,
-            "left_has_data": self._current_poses.get(Hand.LEFT) is not None,
-            "right_has_data": self._current_poses.get(Hand.RIGHT) is not None,
-            "left_trigger": left.trigger if left else 0.0,
-            "right_trigger": right.trigger if right else 0.0,
-            "left_grip": left.grip if left else 0.0,
-            "right_grip": right.grip if right else 0.0,
-        }
+        with self._lock:
+            left = self._controllers.get(Hand.LEFT)
+            right = self._controllers.get(Hand.RIGHT)
+            return QuestTeleopStatus(
+                left_engaged=self._is_engaged[Hand.LEFT],
+                right_engaged=self._is_engaged[Hand.RIGHT],
+                left_pose=self._current_poses.get(Hand.LEFT),
+                right_pose=self._current_poses.get(Hand.RIGHT),
+                buttons=QuestButtons.from_controllers(left, right),
+            )
 
     # -------------------------------------------------------------------------
     # Callbacks and Control Loop
@@ -172,9 +191,9 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
             self._current_poses[hand] = robot_pose_stamped
 
     def _on_joy_cb(self, hand: Hand, msg: Joy) -> None:
-        """Callback for Joy message, parsing into QuestController."""
+        """Callback for Joy message, parsing into QuestControllerState."""
         is_left = hand == Hand.LEFT
-        controller = QuestController.from_joy(msg, is_left=is_left)
+        controller = QuestControllerState.from_joy(msg, is_left=is_left)
         with self._lock:
             self._controllers[hand] = controller
 
@@ -206,19 +225,24 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
         while self._control_loop_running:
             loop_start = time.perf_counter()
-            # Method to handle engage/disengage logic based on button states
-            self._handle_engage()
-            # Method to check if we should publish commands (e.g., only when engaged)
-            if self._should_publish():
+            try:
+                self._handle_engage()
+
                 for hand in Hand:
+                    if not self._should_publish(hand):
+                        continue
                     output_pose = self._get_output_pose(hand)
                     if output_pose is not None:
                         self._publish_msg(hand, output_pose)
 
-                self._publish_button_state(
-                    self._controllers.get(Hand.LEFT),
-                    self._controllers.get(Hand.RIGHT),
-                )
+                # Always publish buttons regardless of engage state,
+                # so UI/listeners can react to button presses (e.g., trigger engage).
+                with self._lock:
+                    left = self._controllers.get(Hand.LEFT)
+                    right = self._controllers.get(Hand.RIGHT)
+                self._publish_button_state(left, right)
+            except Exception:
+                logger.exception("Error in teleop control loop")
 
             elapsed = time.perf_counter() - loop_start
             sleep_time = period - elapsed
@@ -230,30 +254,31 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
     # -------------------------------------------------------------------------
 
     def _handle_engage(self) -> None:
-        """Check for engage button press and toggle engage state.
+        """Check for engage button press and update per-hand engage state.
 
-        Override to customize which button triggers engage, use
-        different detection logic (e.g., hold detection), or add haptic feedback.
-        Default: Left controller X button (primary) toggles engage.
+        Override to customize which button triggers engage.
+        Default: Each controller's primary button (X/A) hold engages that hand.
         """
-        left = self._controllers.get(Hand.LEFT)
-        if left is None:
-            return
-        # Default condition to engage: X press
-        if left.primary:
-            if not self._is_engaged:
-                self.engage()
-        else:
-            if self._is_engaged:
-                self.disengage()
+        with self._lock:
+            for hand in Hand:
+                controller = self._controllers.get(hand)
+                if controller is None:
+                    continue
+                if controller.primary:
+                    if not self._is_engaged[hand]:
+                        self.engage(hand)
+                else:
+                    if self._is_engaged[hand]:
+                        self.disengage(hand)
 
-    def _should_publish(self) -> bool:
-        """Check if we should publish commands.
+    def _should_publish(self, hand: Hand) -> bool:
+        """Check if we should publish commands for a hand.
 
-        Override to add custom conditions (e.g., if a button is continuously pressed, if trigger is pressed, or any such criteria).
-        Default: Returns True if engaged.
+        Override to add custom conditions.
+        Default: Returns True if the hand is engaged.
         """
-        return self._is_engaged
+        with self._lock:
+            return self._is_engaged[hand]
 
     def _get_output_pose(self, hand: Hand) -> PoseStamped | None:
         """Get the pose to publish for a controller.
@@ -262,16 +287,17 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         apply scaling, add filtering).
         Default: Computes delta from initial pose.
         """
-        current_pose = self._current_poses.get(hand)
-        initial_pose = self._initial_poses.get(hand)
+        with self._lock:
+            current_pose = self._current_poses.get(hand)
+            initial_pose = self._initial_poses.get(hand)
 
         if current_pose is None or initial_pose is None:
             return None
 
-        delta_pose = Pose(current_pose) - Pose(initial_pose)
+        delta = current_pose - initial_pose
         return PoseStamped(
-            position=delta_pose.position,
-            orientation=delta_pose.orientation,
+            position=delta.position,
+            orientation=delta.orientation,
             ts=current_pose.ts,
             frame_id=current_pose.frame_id,
         )
@@ -288,8 +314,8 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
     def _publish_button_state(
         self,
-        left: QuestController | None,
-        right: QuestController | None,
+        left: QuestControllerState | None,
+        right: QuestControllerState | None,
     ) -> None:
         """Publish button states for both controllers.
 
@@ -302,4 +328,10 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
 quest_teleop_module = QuestTeleopModule.blueprint
 
-__all__ = ["Hand", "QuestTeleopConfig", "QuestTeleopModule", "quest_teleop_module"]
+__all__ = [
+    "Hand",
+    "QuestTeleopConfig",
+    "QuestTeleopModule",
+    "QuestTeleopStatus",
+    "quest_teleop_module",
+]
