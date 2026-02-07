@@ -19,6 +19,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import rerun as rr
+
+from dimos.dashboard.rerun_init import connect_rerun
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -27,27 +30,15 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-try:
-    import rerun as rr
-
-    from dimos.dashboard.rerun_init import connect_rerun
-
-    RERUN_AVAILABLE = True
-except ImportError:
-    RERUN_AVAILABLE = False
-
 
 def init_rerun_visualization(global_config: GlobalConfig | None = None) -> bool:
-    """Initialize Rerun visualization connection.
+    """Initialize Rerun visualization connection."""
+    if global_config is None:
+        from dimos.core.global_config import GlobalConfig as GC
 
-    Args:
-        global_config: Global configuration. If provided, respects viewer_backend setting.
-    """
-    if not RERUN_AVAILABLE:
-        return False
+        global_config = GC()
 
-    # Skip if global_config says to use foxglove instead of rerun
-    if global_config and not global_config.viewer_backend.startswith("rerun"):
+    if not global_config.viewer_backend.startswith("rerun"):
         logger.debug(f"Skipping Rerun init: viewer_backend={global_config.viewer_backend}")
         return False
 
@@ -67,18 +58,9 @@ def visualize_pose(pose_stamped: PoseStamped, controller_label: str) -> None:
         pose_stamped: The controller's current pose.
         controller_label: Label for the controller (e.g., "left").
     """
-    if not RERUN_AVAILABLE:
-        return
     try:
-        rr.log(
-            f"world/teleop/{controller_label}_controller",
-            pose_stamped.to_rerun(),  # type: ignore[no-untyped-call]
-        )
-        # Log 3D axes to visualize controller orientation (X=red, Y=green, Z=blue)
-        rr.log(
-            f"world/teleop/{controller_label}_controller/axes",
-            rr.TransformAxes3D(0.10),  # type: ignore[attr-defined]
-        )
+        rr.log(f"world/teleop/{controller_label}_controller", pose_stamped.to_rerun())  # type: ignore[no-untyped-call]
+        rr.log(f"world/teleop/{controller_label}_controller/axes", rr.TransformAxes3D(0.10))  # type: ignore[attr-defined]
     except Exception as e:
         logger.debug(f"Failed to log {controller_label} controller to Rerun: {e}")
 
@@ -99,8 +81,6 @@ def visualize_buttons(
         grip: Grip value (0.0-1.0).
         trigger: Trigger value (0.0-1.0).
     """
-    if not RERUN_AVAILABLE:
-        return
     try:
         base_path = f"world/teleop/{controller_label}_controller"
         rr.log(f"{base_path}/primary", rr.Scalars(float(primary)))  # type: ignore[attr-defined]
@@ -109,3 +89,6 @@ def visualize_buttons(
         rr.log(f"{base_path}/trigger", rr.Scalars(trigger))  # type: ignore[attr-defined]
     except Exception as e:
         logger.debug(f"Failed to log {controller_label} buttons to Rerun: {e}")
+
+
+__all__ = ["init_rerun_visualization", "visualize_buttons", "visualize_pose"]

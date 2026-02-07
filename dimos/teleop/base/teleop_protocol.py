@@ -13,14 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Teleoperation Protocol.
+"""Teleoperation specifications: Protocol.
 
 Defines the interface that all teleoperation modules must implement.
 No implementation - just method signatures.
 """
 
 from typing import Any, Protocol, runtime_checkable
+
+# ============================================================================
+# TELEOP PROTOCOL
+# ============================================================================
 
 
 @runtime_checkable
@@ -31,6 +34,8 @@ class TeleopProtocol(Protocol):
     No state or implementation here - just the contract.
     """
 
+    # --- Lifecycle ---
+
     def start(self) -> None:
         """Start the teleoperation module."""
         ...
@@ -39,14 +44,15 @@ class TeleopProtocol(Protocol):
         """Stop the teleoperation module."""
         ...
 
-    def engage(self) -> bool:
-        """Engage teleoperation. Returns True on success."""
+    # --- Engage / Disengage ---
+
+    def engage(self, hand: Any = None) -> bool:
+        """Engage teleoperation. Hand type is device-specific (e.g., Hand enum for Quest)."""
         ...
 
-    def disengage(self) -> None:
-        """Disengage teleoperation."""
+    def disengage(self, hand: Any = None) -> None:
+        """Disengage teleoperation. Hand type is device-specific."""
         ...
 
-    def get_status(self) -> dict[str, Any]:
-        """Get current teleoperation status."""
-        ...
+
+__all__ = ["TeleopProtocol"]

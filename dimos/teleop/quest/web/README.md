@@ -53,15 +53,17 @@ Quest Browser                    Deno Server                    Python
 
 Quest controller data is packed into Joy messages:
 
-**Buttons** (indices 0-6):
-- 0: trigger (analog 0.0-1.0)
-- 1: grip (analog 0.0-1.0)
+**Axes** (indices 0-3):
+- 0: thumbstick X (-1.0 to 1.0)
+- 1: thumbstick Y (-1.0 to 1.0)
+- 2: trigger (analog 0.0-1.0)
+- 3: grip (analog 0.0-1.0)
+
+**Buttons** (indices 0-6, digital 0 or 1):
+- 0: trigger (pressed)
+- 1: grip (pressed)
 - 2: touchpad
 - 3: thumbstick press
 - 4: X/A (primary)
 - 5: Y/B (secondary)
 - 6: menu
-
-**Axes** (indices 0-1):
-- 0: thumbstick X
-- 1: thumbstick Y

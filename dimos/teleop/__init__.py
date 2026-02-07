@@ -14,6 +14,6 @@
 
 """Teleoperation modules for DimOS."""
 
-from dimos.teleop.blueprints import arm_teleop, arm_teleop_visualizing
+from dimos.teleop.base import TeleopProtocol
 
-__all__ = ["arm_teleop", "arm_teleop_visualizing"]
+__all__ = ["TeleopProtocol"]

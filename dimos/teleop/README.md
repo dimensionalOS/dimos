@@ -1,0 +1,71 @@
+# Teleop Stack
+
+Teleoperation modules for DimOS. Currently supports Meta Quest 3 VR controllers.
+
+## Architecture
+
+```
+Quest Browser (WebXR)
+    │
+    │  PoseStamped + Joy via WebSocket
+    ▼
+Deno Bridge (teleop_server.ts)
+    │
+    │  LCM topics
+    ▼
+QuestTeleopModule
+    │  WebXR → robot frame transform
+    │  Delta pose computation
+    │  Button state packing
+    ▼
+PoseStamped / TwistStamped / QuestButtons outputs
+```
+
+## Modules
+
+### QuestTeleopModule
+Base teleop module. Hold X button to engage, release to disengage. Outputs delta PoseStamped from initial pose.
+
+### ArmTeleopModule
+Toggle-based engage — press X once to engage, press again to disengage.
+
+### TwistTeleopModule
+Outputs TwistStamped (linear + angular velocity) instead of PoseStamped.
+
+### VisualizingTeleopModule
+Adds Rerun visualization for debugging. Extends ArmTeleopModule (toggle engage).
+
+## Subclassing
+
+`QuestTeleopModule` is designed for extension. Override these methods:
+
+| Method | Purpose |
+|--------|---------|
+| `_handle_engage()` | Customize engage/disengage logic |
+| `_should_publish()` | Add conditions for when to publish |
+| `_get_output_pose()` | Customize pose computation |
+| `_publish_msg()` | Change output format |
+| `_publish_button_state()` | Change button output |
+
+## File Structure
+
+```
+teleop/
+├── base/
+│   └── teleop_protocol.py      # TeleopProtocol interface
+├── quest/
+│   ├── quest_teleop_module.py   # Base Quest teleop module
+│   ├── quest_extensions.py      # ArmTeleop, TwistTeleop, VisualizingTeleop
+│   ├── quest_types.py           # QuestControllerState, QuestButtons
+│   └── web/                     # Deno bridge + WebXR client
+│       ├── teleop_server.ts
+│       └── static/index.html
+├── utils/
+│   ├── teleop_transforms.py     # WebXR → robot frame math
+│   └── teleop_visualization.py  # Rerun visualization helpers
+└── blueprints.py                # Module blueprints for easy instantiation
+```
+
+## Quick Start
+
+See [Quest Web README](quest/web/README.md) for running the Deno bridge and connecting the Quest headset.

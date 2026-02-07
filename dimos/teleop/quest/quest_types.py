@@ -30,37 +30,34 @@ class ThumbstickState:
 
 
 @dataclass
-class QuestController:
+class QuestControllerState:
     """Parsed Quest controller state from Joy message.
 
-    Quest controller button indices:
+    Axes layout:
+        0: thumbstick X, 1: thumbstick Y, 2: trigger (analog), 3: grip (analog)
+    Button indices (digital, 0 or 1):
         0: trigger, 1: grip, 2: touchpad, 3: thumbstick,
         4: X/A, 5: Y/B, 6: menu
-
-    Quest controller axes:
-        0: thumbstick X, 1: thumbstick Y
     """
 
     is_left: bool = True
-
     # Analog values (0.0-1.0)
     trigger: float = 0.0
     grip: float = 0.0
-
     # Digital buttons
     touchpad: bool = False
     thumbstick_press: bool = False
     primary: bool = False  # X on left, A on right
     secondary: bool = False  # Y on left, B on right
     menu: bool = False
-
     # Thumbstick axes
     thumbstick: ThumbstickState = field(default_factory=ThumbstickState)
 
     @classmethod
-    def from_joy(cls, joy: Joy, is_left: bool = True) -> "QuestController":
-        """Create QuestController from Joy message.
-
+    def from_joy(cls, joy: Joy, is_left: bool = True) -> "QuestControllerState":
+        """Create QuestControllerState from Joy message.
+        Expected axes: [thumbstick_x, thumbstick_y, trigger_analog, grip_analog]
+        Expected buttons: [trigger, grip, touchpad, thumbstick, X/A, Y/B, menu]
         Raises:
             ValueError: If Joy message doesn't have expected Quest controller format.
         """
@@ -69,13 +66,13 @@ class QuestController:
 
         if len(buttons) < 7:
             raise ValueError(f"Expected 7 buttons, got {len(buttons)}")
-        if len(axes) < 2:
-            raise ValueError(f"Expected 2 axes, got {len(axes)}")
+        if len(axes) < 4:
+            raise ValueError(f"Expected 4 axes, got {len(axes)}")
 
         return cls(
             is_left=is_left,
-            trigger=float(buttons[0]),
-            grip=float(buttons[1]),
+            trigger=float(axes[2]),
+            grip=float(axes[3]),
             touchpad=buttons[2] > 0.5,
             thumbstick_press=buttons[3] > 0.5,
             primary=buttons[4] > 0.5,
@@ -84,27 +81,9 @@ class QuestController:
             thumbstick=ThumbstickState(x=float(axes[0]), y=float(axes[1])),
         )
 
-    # Convenience aliases
-    @property
-    def x(self) -> bool:
-        return self.primary
-
-    @property
-    def y(self) -> bool:
-        return self.secondary
-
-    @property
-    def a(self) -> bool:
-        return self.primary
-
-    @property
-    def b(self) -> bool:
-        return self.secondary
-
 
 class QuestButtons(UInt32):
     """Packed button states for both Quest controllers in a single UInt32.
-
     Bit layout:
         Left (bits 0-6): trigger, grip, touchpad, thumbstick, X, Y, menu
         Right (bits 8-14): trigger, grip, touchpad, thumbstick, A, B, menu
@@ -145,10 +124,10 @@ class QuestButtons(UInt32):
     @classmethod
     def from_controllers(
         cls,
-        left: "QuestController | None",
-        right: "QuestController | None",
+        left: "QuestControllerState | None",
+        right: "QuestControllerState | None",
     ) -> "QuestButtons":
-        """Create QuestButtons from two QuestController instances."""
+        """Create QuestButtons from two QuestControllerState instances."""
         buttons = cls()
 
         if left:
@@ -172,4 +151,4 @@ class QuestButtons(UInt32):
         return buttons
 
 
-__all__ = ["QuestButtons", "QuestController", "ThumbstickState"]
+__all__ = ["QuestButtons", "QuestControllerState", "ThumbstickState"]
