@@ -76,8 +76,6 @@ class TestControlCoordinatorE2E:
         """Test that coordinator executes a trajectory via RPC."""
         # Save topics
         lcm_spy.save_topic("/coordinator/joint_state#sensor_msgs.JointState")
-        lcm_spy.save_topic("/rpc/ControlCoordinator/execute_trajectory/res")
-        lcm_spy.save_topic("/rpc/ControlCoordinator/get_trajectory_status/res")
 
         # Start coordinator
         start_blueprint("coordinator-mock")
@@ -111,8 +109,8 @@ class TestControlCoordinatorE2E:
                 ],
             )
 
-            # Execute trajectory
-            result = client.execute_trajectory("traj_arm", trajectory)
+            # Execute trajectory via task_invoke
+            result = client.task_invoke("traj_arm", "execute", {"trajectory": trajectory})
             assert result is True
 
             # Poll for completion
@@ -121,8 +119,8 @@ class TestControlCoordinatorE2E:
             completed = False
 
             while time.time() - start_time < timeout:
-                status = client.get_trajectory_status("traj_arm")
-                if status is not None and status.state == TrajectoryState.COMPLETED.name:
+                state = client.task_invoke("traj_arm", "get_state")
+                if state is not None and state == TrajectoryState.COMPLETED:
                     completed = True
                     break
                 time.sleep(0.1)
@@ -190,19 +188,19 @@ class TestControlCoordinatorE2E:
                 ],
             )
 
-            # Start trajectory
-            result = client.execute_trajectory("traj_arm", trajectory)
+            # Start trajectory via task_invoke
+            result = client.task_invoke("traj_arm", "execute", {"trajectory": trajectory})
             assert result is True
 
             # Wait a bit then cancel
             time.sleep(0.5)
-            cancel_result = client.cancel_trajectory("traj_arm")
+            cancel_result = client.task_invoke("traj_arm", "cancel")
             assert cancel_result is True
 
             # Check status is ABORTED
-            status = client.get_trajectory_status("traj_arm")
-            assert status is not None
-            assert status.state == TrajectoryState.ABORTED.name
+            state = client.task_invoke("traj_arm", "get_state")
+            assert state is not None
+            assert state == TrajectoryState.ABORTED
         finally:
             client.stop_rpc_client()
 
@@ -244,18 +242,23 @@ class TestControlCoordinatorE2E:
                 ],
             )
 
-            # Execute both
-            assert client.execute_trajectory("traj_left", left_trajectory) is True
-            assert client.execute_trajectory("traj_right", right_trajectory) is True
+            # Execute both via task_invoke
+            assert (
+                client.task_invoke("traj_left", "execute", {"trajectory": left_trajectory}) is True
+            )
+            assert (
+                client.task_invoke("traj_right", "execute", {"trajectory": right_trajectory})
+                is True
+            )
 
             # Wait for completion
             time.sleep(1.0)
 
             # Both should complete
-            left_status = client.get_trajectory_status("traj_left")
-            right_status = client.get_trajectory_status("traj_right")
+            left_state = client.task_invoke("traj_left", "get_state")
+            right_state = client.task_invoke("traj_right", "get_state")
 
-            assert left_status.state == TrajectoryState.COMPLETED.name
-            assert right_status.state == TrajectoryState.COMPLETED.name
+            assert left_state == TrajectoryState.COMPLETED
+            assert right_state == TrajectoryState.COMPLETED
         finally:
             client.stop_rpc_client()
