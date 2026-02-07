@@ -29,6 +29,11 @@ Usage in modules:
             rr.log("my/entity", my_data.to_rerun())
 """
 
-from dimos.dashboard.rerun_init import connect_rerun, init_rerun_server, shutdown_rerun
+import lazy_loader as lazy
 
-__all__ = ["connect_rerun", "init_rerun_server", "shutdown_rerun"]
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "rerun_init": ["connect_rerun", "init_rerun_server", "shutdown_rerun"],
+    },
+)

@@ -49,52 +49,34 @@ Example:
     >>> coord.start()
 """
 
-from dimos.control.components import (
-    HardwareComponent,
-    HardwareId,
-    HardwareType,
-    JointName,
-    JointState,
-    make_joints,
-)
-from dimos.control.coordinator import (
-    ControlCoordinator,
-    ControlCoordinatorConfig,
-    TaskConfig,
-    control_coordinator,
-)
-from dimos.control.hardware_interface import ConnectedHardware
-from dimos.control.task import (
-    ControlMode,
-    ControlTask,
-    CoordinatorState,
-    JointCommandOutput,
-    JointStateSnapshot,
-    ResourceClaim,
-)
-from dimos.control.tick_loop import TickLoop
+import lazy_loader as lazy
 
-__all__ = [
-    # Connected hardware
-    "ConnectedHardware",
-    # Coordinator
-    "ControlCoordinator",
-    "ControlCoordinatorConfig",
-    "ControlMode",
-    # Task protocol and types
-    "ControlTask",
-    "CoordinatorState",
-    "HardwareComponent",
-    "HardwareId",
-    "HardwareType",
-    "JointCommandOutput",
-    "JointName",
-    "JointState",
-    "JointStateSnapshot",
-    "ResourceClaim",
-    "TaskConfig",
-    # Tick loop
-    "TickLoop",
-    "control_coordinator",
-    "make_joints",
-]
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "components": [
+            "HardwareComponent",
+            "HardwareId",
+            "HardwareType",
+            "JointName",
+            "JointState",
+            "make_joints",
+        ],
+        "coordinator": [
+            "ControlCoordinator",
+            "ControlCoordinatorConfig",
+            "TaskConfig",
+            "control_coordinator",
+        ],
+        "hardware_interface": ["ConnectedHardware"],
+        "task": [
+            "ControlMode",
+            "ControlTask",
+            "CoordinatorState",
+            "JointCommandOutput",
+            "JointStateSnapshot",
+            "ResourceClaim",
+        ],
+        "tick_loop": ["TickLoop"],
+    },
+)

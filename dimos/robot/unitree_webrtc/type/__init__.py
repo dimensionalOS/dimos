@@ -15,4 +15,19 @@
 
 """Compatibility re-exports for legacy dimos.robot.unitree_webrtc.type.* imports."""
 
-from dimos.robot.unitree.type import *  # noqa: F403
+import importlib
+
+__all__ = []
+
+
+def __getattr__(name: str):  # type: ignore[no-untyped-def]
+    module = importlib.import_module("dimos.robot.unitree.type")
+    try:
+        return getattr(module, name)
+    except AttributeError as exc:
+        raise AttributeError(f"No {__name__} attribute {name}") from exc
+
+
+def __dir__() -> list[str]:
+    module = importlib.import_module("dimos.robot.unitree.type")
+    return [name for name in dir(module) if not name.startswith("_")]
