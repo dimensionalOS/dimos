@@ -46,6 +46,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.core.rpc_client import RPCClient
     from dimos.msgs.geometry_msgs import Pose
+    from dimos.perception.detection.type.detection3d.object import Object as DetObject
 
 logger = setup_logger()
 
@@ -95,6 +96,9 @@ class ManipulationModule(Module):
     # Input: Joint state from coordinator (for world sync)
     joint_state: In[JointState]
 
+    # Input: Objects from perception (for obstacle integration)
+    objects: In[list[DetObject]]
+
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
 
@@ -118,6 +122,10 @@ class ManipulationModule(Module):
         # Coordinator integration (lazy initialized)
         self._coordinator_client: RPCClient | None = None
 
+        # TF publishing thread
+        self._tf_stop_event = threading.Event()
+        self._tf_thread: threading.Thread | None = None
+
         logger.info("ManipulationModule initialized")
 
     @rpc
@@ -132,6 +140,11 @@ class ManipulationModule(Module):
         if self.joint_state is not None:
             self.joint_state.subscribe(self._on_joint_state)
             logger.info("Subscribed to joint_state port")
+
+        # Subscribe to objects port for perception obstacle integration
+        if self.objects is not None:
+            self.objects.observable().subscribe(self._on_objects)  # type: ignore[no-untyped-call]
+            logger.info("Subscribed to objects port (async)")
 
         logger.info("ManipulationModule started")
 
@@ -157,6 +170,9 @@ class ManipulationModule(Module):
         for _, (robot_id, _, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
 
+        # Start obstacle monitor for perception integration
+        self._world_monitor.start_obstacle_monitor()
+
         if self.config.enable_viz:
             self._world_monitor.start_visualization_thread(rate_hz=10.0)
             if url := self._world_monitor.get_visualization_url():
@@ -164,6 +180,16 @@ class ManipulationModule(Module):
 
         self._planner = create_planner(name=self.config.planner_name)
         self._kinematics = create_kinematics(name=self.config.kinematics_name)
+
+        # Start TF publishing thread if any robot has tf_extra_links
+        if any(c.tf_extra_links for _, c, _ in self._robots.values()):
+            _ = self.tf  # Eager init — lazy init blocks in Dask workers
+            self._tf_stop_event.clear()
+            self._tf_thread = threading.Thread(
+                target=self._tf_publish_loop, name="ManipTFThread", daemon=True
+            )
+            self._tf_thread.start()
+            logger.info("TF publishing thread started")
 
     def _get_default_robot_name(self) -> RobotName | None:
         """Get default robot name (first robot if only one, else None)."""
@@ -209,6 +235,47 @@ class ManipulationModule(Module):
             import traceback
 
             logger.error(traceback.format_exc())
+
+    def _on_objects(self, objects: list[DetObject]) -> None:
+        """Callback when objects received from perception (runs on RxPY thread pool)."""
+        try:
+            if self._world_monitor is not None:
+                self._world_monitor.on_objects(objects)
+        except Exception as e:
+            logger.error(f"Exception in _on_objects: {e}")
+
+    def _tf_publish_loop(self) -> None:
+        """Publish TF transforms at 10Hz for EE and extra links."""
+        from dimos.msgs.geometry_msgs import Transform
+
+        period = 0.1  # 10Hz
+        while not self._tf_stop_event.is_set():
+            try:
+                if self._world_monitor is None:
+                    break
+                transforms: list[Transform] = []
+                for robot_id, config, _ in self._robots.values():
+                    # Publish world → EE
+                    ee_pose = self._world_monitor.get_ee_pose(robot_id)
+                    if ee_pose is not None:
+                        ee_tf = Transform.from_pose(config.end_effector_link, ee_pose)
+                        ee_tf.frame_id = "world"
+                        transforms.append(ee_tf)
+
+                    # Publish world → each extra link
+                    for link_name in config.tf_extra_links:
+                        link_pose = self._world_monitor.get_link_pose(robot_id, link_name)
+                        if link_pose is not None:
+                            link_tf = Transform.from_pose(link_name, link_pose)
+                            link_tf.frame_id = "world"
+                            transforms.append(link_tf)
+
+                if transforms:
+                    self.tf.publish(*transforms)
+            except Exception as e:
+                logger.debug(f"TF publish error: {e}")
+
+            self._tf_stop_event.wait(period)
 
     # =========================================================================
     # RPC Methods
@@ -653,6 +720,49 @@ class ManipulationModule(Module):
         return self._world_monitor.remove_obstacle(obstacle_id)
 
     # =========================================================================
+    # Perception RPC Methods
+    # =========================================================================
+
+    @rpc
+    def refresh_obstacles(self, min_duration: float = 0.0) -> int:
+        """Refresh perception obstacles from cache. Returns count added.
+
+        Args:
+            min_duration: Minimum seconds an object must have been seen
+        """
+        if self._world_monitor is None:
+            return 0
+        return self._world_monitor.refresh_obstacles(min_duration)
+
+    @rpc
+    def clear_perception_obstacles(self) -> int:
+        """Remove all perception obstacles. Returns count removed."""
+        if self._world_monitor is None:
+            return 0
+        return self._world_monitor.clear_perception_obstacles()
+
+    @rpc
+    def get_perception_status(self) -> dict[str, int]:
+        """Get perception obstacle status (cached/added counts)."""
+        if self._world_monitor is None:
+            return {"cached": 0, "added": 0}
+        return self._world_monitor.get_perception_status()
+
+    @rpc
+    def list_cached_detections(self) -> list[dict[str, object]]:
+        """List cached detections from perception."""
+        if self._world_monitor is None:
+            return []
+        return self._world_monitor.list_cached_detections()
+
+    @rpc
+    def list_added_obstacles(self) -> list[dict[str, object]]:
+        """List perception obstacles currently in the planning world."""
+        if self._world_monitor is None:
+            return []
+        return self._world_monitor.list_added_obstacles()
+
+    # =========================================================================
     # Gripper RPC Methods
     # =========================================================================
 
@@ -726,6 +836,12 @@ class ManipulationModule(Module):
     def stop(self) -> None:
         """Stop the manipulation module."""
         logger.info("Stopping ManipulationModule")
+
+        # Stop TF thread
+        if self._tf_thread is not None:
+            self._tf_stop_event.set()
+            self._tf_thread.join(timeout=1.0)
+            self._tf_thread = None
 
         # Stop world monitor (includes visualization thread)
         if self._world_monitor is not None:
