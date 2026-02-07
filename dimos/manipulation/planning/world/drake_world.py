@@ -48,6 +48,7 @@ try:
         AddContactMaterial,
         Box,
         CollisionFilterDeclaration,
+        Convex,
         Cylinder,
         GeometryInstance,
         GeometrySet,
@@ -400,19 +401,8 @@ class DrakeWorld(WorldSpec):
         rgba = Rgba(*obstacle.color)
 
         # Create Drake shape and add to Meshcat
-        shape: Box | Sphere | Cylinder
-        if obstacle.obstacle_type == ObstacleType.BOX:
-            shape = Box(*obstacle.dimensions)
-        elif obstacle.obstacle_type == ObstacleType.SPHERE:
-            shape = Sphere(obstacle.dimensions[0])
-        elif obstacle.obstacle_type == ObstacleType.CYLINDER:
-            shape = Cylinder(obstacle.dimensions[0], obstacle.dimensions[1])
-        else:
-            logger.warning(f"Cannot visualize obstacle type: {obstacle.obstacle_type}")
-            return
-
-        # Use Drake's Meshcat.SetObject with shape and color
-        self._meshcat.SetObject(path, shape, rgba)
+        drake_shape = self._create_shape(obstacle)
+        self._meshcat.SetObject(path, drake_shape, rgba)
         self._meshcat.SetTransform(path, transform)
 
     def _pose_to_rigid_transform(self, pose: PoseStamped) -> Any:
@@ -431,6 +421,10 @@ class DrakeWorld(WorldSpec):
             return Sphere(obstacle.dimensions[0])
         elif obstacle.obstacle_type == ObstacleType.CYLINDER:
             return Cylinder(obstacle.dimensions[0], obstacle.dimensions[1])
+        elif obstacle.obstacle_type == ObstacleType.MESH:
+            if not obstacle.mesh_path:
+                raise ValueError("MESH obstacle requires mesh_path")
+            return Convex(obstacle.mesh_path)
         else:
             raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
 
