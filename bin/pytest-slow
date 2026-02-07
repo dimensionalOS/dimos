@@ -4,7 +4,7 @@ set -euo pipefail
 
 . .venv/bin/activate
 
-skip_string="tool or module or neverending or mujoco or tofix"
+skip_string="tool or module or neverending or mujoco"
 # on macOS skip GPU
 if [ "$(uname)" = "Darwin" ]; then
     skip_string="$skip_string or gpu"
