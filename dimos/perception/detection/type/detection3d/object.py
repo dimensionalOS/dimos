@@ -122,7 +122,8 @@ class Object(Detection3D):
     def agent_encode(self) -> dict[str, Any]:
         """Encode for agent consumption."""
         return {
-            "id": self.track_id,
+            "object_id": self.object_id,
+            "track_id": self.track_id,
             "name": self.name,
             "detections": self.detections_count,
             "last_seen": f"{round(time.time() - self.ts)}s ago",
@@ -303,7 +304,7 @@ def aggregate_pointclouds(objects: list[Object]) -> PointCloud2:
     all_points = []
     all_colors = []
 
-    for _i, obj in enumerate(objects):
+    for obj in objects:
         points, colors = obj.pointcloud.as_numpy()
         if len(points) == 0:
             continue
@@ -361,3 +362,6 @@ def to_detection3d_array(objects: list[Object]) -> Detection3DArray:
         array.detections.append(obj.to_detection3d_msg())
 
     return array
+
+
+__all__ = ["Object", "aggregate_pointclouds", "to_detection3d_array"]

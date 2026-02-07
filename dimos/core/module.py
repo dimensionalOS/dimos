@@ -450,6 +450,17 @@ class Module(ModuleBase[ModuleConfigT]):
         stream._transport = transport
         return True
 
+    @rpc
+    def configure_stream(self, stream_name: str, topic: str) -> bool:
+        """Configure a stream's transport by topic. Called by DockerModule for stream wiring."""
+        from dimos.core.transport import pLCMTransport
+
+        stream = getattr(self, stream_name, None)
+        if not isinstance(stream, (Out, In)):
+            return False
+        stream._transport = pLCMTransport(topic)
+        return True
+
     # called from remote
     def connect_stream(self, input_name: str, remote_stream: RemoteOut[T]):  # type: ignore[no-untyped-def]
         input_stream = getattr(self, input_name, None)

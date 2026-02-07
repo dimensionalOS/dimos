@@ -100,6 +100,16 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
         *args,
         **kwargs,
     ) -> ModuleProxy:
+        from dimos.core.docker_runner import DockerModule, is_docker_module
+
+        # Check if this module should run in Docker (based on its default_config)
+        if is_docker_module(actor_class):
+            logger.info("Deploying module in Docker.", module=actor_class.__name__)
+            dm = DockerModule(actor_class, *args, **kwargs)
+            dm.start()  # Explicit start - follows create -> configure -> start lifecycle
+            dask_client._docker_modules.append(dm)  # type: ignore[attr-defined]
+            return dm  # type: ignore[return-value]
+
         logger.info("Deploying module.", module=actor_class.__name__)
         actor = dask_client.submit(  # type: ignore[no-untyped-call]
             actor_class,
@@ -175,6 +185,14 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             return
         dask_client._closed = True  # type: ignore[attr-defined]
 
+        # Stop all Docker modules (in reverse order of deployment)
+        for dm in reversed(dask_client._docker_modules):  # type: ignore[attr-defined]
+            try:
+                dm.stop()
+            except Exception:
+                pass
+        dask_client._docker_modules.clear()  # type: ignore[attr-defined]
+
         # Stop all SharedMemory transports before closing Dask
         # This prevents the "leaked shared_memory objects" warning and hangs
         try:
@@ -226,6 +244,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
         # This is needed, solves race condition in CI thread check
         time.sleep(0.1)
 
+    dask_client._docker_modules = []  # type: ignore[attr-defined]
     dask_client.deploy = deploy  # type: ignore[attr-defined]
     dask_client.check_worker_memory = check_worker_memory  # type: ignore[attr-defined]
     dask_client.stop = lambda: dask_client.close()  # type: ignore[attr-defined, no-untyped-call]

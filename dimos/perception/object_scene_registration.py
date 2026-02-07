@@ -15,8 +15,10 @@
 import time
 from typing import Any
 
+import cv2
 import numpy as np
 from numpy.typing import NDArray
+import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.core import In, Out, rpc
 from dimos.core.skill_module import SkillModule
@@ -56,6 +58,8 @@ class ObjectSceneRegistrationModule(SkillModule):
     _detector: Yoloe2DDetector | None = None
     _camera_info: CameraInfo | None = None
     _object_db: ObjectDB
+    _latest_depth_image: Image | None = None
+    _latest_camera_transform: Any = None
 
     def __init__(
         self,
@@ -128,9 +132,96 @@ class ObjectSceneRegistrationModule(SkillModule):
         """Get track_ids of all permanent objects."""
         return [obj.track_id for obj in self._object_db.get_all_objects()]
 
+    @rpc
+    def get_detected_objects(self) -> list[dict[str, Any]]:
+        """Get all detected objects with object_id (UUID) and name."""
+        return [obj.agent_encode() for obj in self._object_db.get_all_objects()]
+
+    @rpc
+    def get_object_pointcloud_by_name(self, name: str) -> PointCloud2 | None:
+        """Get pointcloud for an object by class name."""
+        objects = self._object_db.find_by_name(name)
+        return objects[0].pointcloud if objects else None
+
+    @rpc
+    def get_object_pointcloud_by_object_id(self, object_id: str) -> PointCloud2 | None:
+        """Get pointcloud for an object by its stable object_id (searches all objects)."""
+        obj = self._object_db.find_by_object_id(object_id)
+        if obj is None:
+            logger.warning(f"No object found with object_id='{object_id}'")
+            return None
+        pc = obj.pointcloud
+        num_points = len(pc.pointcloud.points) if pc else 0
+        logger.info(f"Found object '{object_id}' ({obj.name}) with {num_points} points")
+        return pc
+
+    def _get_object_mask(self, object_id: str) -> NDArray[np.uint8] | None:
+        """Get dilated mask for an object by ID."""
+        for obj in self._object_db.get_all_objects():
+            if obj.object_id != object_id:
+                continue
+            if obj.mask is None:
+                return None
+
+            mask = obj.mask.astype(np.uint8)
+            if mask.max() == 1:
+                mask = (mask * 255).astype(np.uint8)
+
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+            return cv2.dilate(mask, kernel).astype(np.uint8)
+
+        return None
+
+    @rpc
+    def get_full_scene_pointcloud(
+        self,
+        exclude_object_id: str | None = None,
+        depth_trunc: float = 2.0,
+        voxel_size: float = 0.01,
+    ) -> PointCloud2 | None:
+        """Get full scene pointcloud from depth, including table/surfaces for collision filtering."""
+        if self._latest_depth_image is None or self._camera_info is None:
+            return None
+
+        depth_cv = self._latest_depth_image.to_opencv()
+        h, w = depth_cv.shape[:2]
+
+        # Zero out excluded object's depth
+        if exclude_object_id:
+            exclude_mask = self._get_object_mask(exclude_object_id)
+            if exclude_mask is not None:
+                depth_cv = depth_cv.copy()
+                depth_cv[exclude_mask > 0] = 0
+
+        # Build pointcloud from depth
+        fx, fy = self._camera_info.K[0], self._camera_info.K[4]
+        cx, cy = self._camera_info.K[2], self._camera_info.K[5]
+        intrinsic = o3d.camera.PinholeCameraIntrinsic(w, h, fx, fy, cx, cy)
+
+        depth_o3d = o3d.geometry.Image(depth_cv.astype(np.float32))
+        pcd = o3d.geometry.PointCloud.create_from_depth_image(
+            depth_o3d, intrinsic, depth_scale=1.0, depth_trunc=depth_trunc
+        )
+
+        if len(pcd.points) < 100:
+            return None
+
+        pcd = pcd.voxel_down_sample(voxel_size)
+
+        pc = PointCloud2(
+            pcd,
+            frame_id=self._latest_depth_image.frame_id,
+            ts=self._latest_depth_image.ts,
+        )
+
+        if self._latest_camera_transform is not None:
+            pc = pc.transform(self._latest_camera_transform)
+
+        return pc
+
     @skill()
     def detect(self, *prompts: str) -> str:
-        """Detect objects matching the given text prompts. Returns track_ids after 2 seconds of detection.
+        """Detect objects matching the given text prompts.
 
         Do NOT call this tool multiple times for one query. Pass all objects in a single call.
         For example, to detect a cup and mouse, call detect("cup", "mouse") not detect("cup") then detect("mouse").
@@ -139,11 +230,11 @@ class ObjectSceneRegistrationModule(SkillModule):
             prompts (str): Text descriptions of objects to detect (e.g., "person", "car", "dog")
 
         Returns:
-            str: A message containing the track_ids of detected objects
+            str: Detected objects with their object_id (stable UUID) and name.
 
         Example:
             detect("person", "car", "dog")
-            detect("person")
+            detect("cup")
         """
         if not prompts:
             return "No prompts provided."
@@ -153,10 +244,12 @@ class ObjectSceneRegistrationModule(SkillModule):
         self._detector.set_prompts(text=list(prompts))
         time.sleep(2.0)
 
-        track_ids = self.get_object_track_ids()
-        if not track_ids:
+        detected = self.get_detected_objects()
+        if not detected:
             return "No objects detected."
-        return f"Detected objects with track_ids: {track_ids}"
+
+        obj_list = [f"  - {obj['name']} (object_id='{obj['object_id']}')" for obj in detected]
+        return f"Detected {len(detected)} object(s):\n" + "\n".join(obj_list)
 
     @skill()
     def select(self, track_id: int) -> str:
@@ -216,6 +309,9 @@ class ObjectSceneRegistrationModule(SkillModule):
         if self._camera_info is None:
             return
 
+        # Cache depth image for full scene pointcloud generation
+        self._latest_depth_image = depth_image
+
         # Look up transform from camera frame to target frame (e.g., map)
         camera_transform = None
         if self._target_frame != color_image.frame_id:
@@ -228,6 +324,9 @@ class ObjectSceneRegistrationModule(SkillModule):
             if camera_transform is None:
                 logger.warning("Failed to lookup transform from camera frame to target frame")
                 return
+
+        # Cache camera transform for full scene pointcloud
+        self._latest_camera_transform = camera_transform
 
         objects = Object.from_2d_to_list(
             detections_2d=detections_2d,

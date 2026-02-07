@@ -282,6 +282,26 @@ drone = [
     "pymavlink"
 ]
 
+# Minimal dependencies for Docker modules that communicate with the DimOS host
+docker = [
+    "dimos-lcm",
+    "numpy>=1.26.4",
+    "scipy>=1.15.1",
+    "reactivex",
+    "dask[distributed]==2025.5.1",
+    "plum-dispatch==2.5.7",
+    "structlog>=25.5.0,<26",
+    "pydantic",
+    "pydantic-settings>=2.11.0,<3",
+    "typer>=0.19.2,<1",
+    "opencv-python-headless",
+    "lcm",
+    "sortedcontainers",
+    "PyTurboJPEG",
+    "rerun-sdk",
+    "open3d"
+]
+
 base = [
     "dimos[agents,web,perception,visualization,sim]",
 ]
