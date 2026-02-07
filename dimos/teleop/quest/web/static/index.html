@@ -224,25 +224,26 @@
                 // Send Joy message with all buttons and axes
                 const gamepad = inputSource.gamepad;
                 if (gamepad) {
-                    // Quest controller axes:
+                    // Axes layout:
                     // [0] = thumbstick X (-1 to 1)
                     // [1] = thumbstick Y (-1 to 1)
-                    // [2] = touchpad X (if available)
-                    // [3] = touchpad Y (if available)
-                    const axes = [];
-                    for (let i = 0; i < gamepad.axes.length; i++) {
-                        axes.push(gamepad.axes[i] ?? 0.0);
-                    }
+                    // [2] = trigger (analog 0.0-1.0)
+                    // [3] = grip (analog 0.0-1.0)
+                    const axes = [
+                        gamepad.axes[0] ?? 0.0,
+                        gamepad.axes[1] ?? 0.0,
+                        gamepad.buttons[0]?.value ?? 0.0,
+                        gamepad.buttons[1]?.value ?? 0.0,
+                    ];
 
-                    // Quest controller buttons (value 0.0-1.0):
-                    // [0] = trigger (analog)
-                    // [1] = grip/squeeze (analog)
+                    // Buttons layout (int32, 0 or 1):
+                    // [0] = trigger (digital)
+                    // [1] = grip (digital)
                     // [2] = touchpad press
                     // [3] = thumbstick press
                     // [4] = X/A button
                     // [5] = Y/B button
                     // [6] = menu (if exposed)
-                    // Note: Joy.buttons expects int32[], so we send 0 or 1
                     const buttons = [];
                     for (let i = 0; i < gamepad.buttons.length; i++) {
                         buttons.push(gamepad.buttons[i]?.pressed ? 1 : 0);
