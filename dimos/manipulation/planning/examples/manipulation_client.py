@@ -261,6 +261,47 @@ class ManipulationClient:
         return cast("bool", self._call("close_gripper", robot_name=robot_name))
 
     # =========================================================================
+    # Perception Methods
+    # =========================================================================
+
+    def perception(self) -> dict[str, int] | None:
+        """Get perception status (cached/added counts)."""
+        return cast("dict[str, int] | None", self._call("get_perception_status"))
+
+    def detections(self) -> list[dict[str, object]] | None:
+        """List cached detections from perception."""
+        result = cast("list[dict[str, object]] | None", self._call("list_cached_detections"))
+        if result:
+            for i, det in enumerate(result):
+                center = cast("list[float]", det.get("center", [0, 0, 0]))
+                print(
+                    f"  [{i}] {det.get('name', '?'):12s}  "
+                    f"center=({center[0]:+.3f}, {center[1]:+.3f}, {center[2]:+.3f})  "
+                    f"dur={det.get('duration', 0)}s  "
+                    f"{'[IN WORLD]' if det.get('in_world') else ''}"
+                )
+        return result
+
+    def obstacles(self) -> list[dict[str, object]] | None:
+        """List perception obstacles currently in the planning world."""
+        return cast("list[dict[str, object]] | None", self._call("list_added_obstacles"))
+
+    def refresh(self, min_duration: float = 0.0) -> int | None:
+        """Refresh perception obstacles from cache.
+
+        Args:
+            min_duration: Minimum seconds an object must have been seen
+        """
+        result = cast("int | None", self._call("refresh_obstacles", min_duration))
+        if result is not None:
+            print(f"Refreshed: {result} obstacles added to planning world")
+        return result
+
+    def clear_perception(self) -> int | None:
+        """Remove all perception obstacles."""
+        return cast("int | None", self._call("clear_perception_obstacles"))
+
+    # =========================================================================
     # Utility Methods
     # =========================================================================
 
@@ -331,6 +372,12 @@ def main() -> None:
         "get_gripper": c.get_gripper,
         "open_gripper": c.open_gripper,
         "close_gripper": c.close_gripper,
+        # Perception methods
+        "perception": c.perception,
+        "detections": c.detections,
+        "obstacles": c.obstacles,
+        "refresh": c.refresh,
+        "clear_perception": c.clear_perception,
         # Utility methods
         "collision": c.collision,
         "reset": c.reset,
@@ -368,6 +415,14 @@ Gripper:
   close_gripper()             # Close gripper fully
   set_gripper(0.05)           # Set gripper position (meters)
   get_gripper()               # Get gripper position (meters)
+
+Perception:
+  perception()                # Get status (cached/added counts)
+  detections()                # List cached detections
+  refresh()                   # Snapshot detections as obstacles
+  refresh(5)                  # Only objects seen >= 5 seconds
+  obstacles()                 # List obstacles in planning world
+  clear_perception()          # Remove all perception obstacles
 
 Utility:
   collision([0.1, ...])   # Check if config is collision-free
