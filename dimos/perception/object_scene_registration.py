@@ -32,6 +32,7 @@ from dimos.perception.detection.objectDB import ObjectDB
 from dimos.perception.detection.type import ImageDetections2D
 from dimos.perception.detection.type.detection3d.object import (
     Object,
+    Object as DetObject,
     aggregate_pointclouds,
     to_detection3d_array,
 )
@@ -52,6 +53,7 @@ class ObjectSceneRegistrationModule(SkillModule):
 
     detections_2d: Out[Detection2DArray]
     detections_3d: Out[Detection3DArray]
+    objects: Out[list[DetObject]]
     overlay: Out[ImageAnnotations]
     pointcloud: Out[PointCloud2]
 
@@ -343,6 +345,7 @@ class ObjectSceneRegistrationModule(SkillModule):
 
         detections_3d = to_detection3d_array(objects)
         self.detections_3d.publish(detections_3d)
+        self.objects.publish(objects)
 
         objects_for_pc = self._object_db.get_objects()
         aggregated_pc = aggregate_pointclouds(objects_for_pc)
