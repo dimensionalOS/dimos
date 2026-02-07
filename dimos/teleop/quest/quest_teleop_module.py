@@ -26,6 +26,8 @@ import threading
 import time
 from typing import Any
 
+from reactivex.disposable import Disposable
+
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import PoseStamped
@@ -124,8 +126,8 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
             (self.vr_right_joy, lambda msg: self._on_joy_cb(Hand.RIGHT, msg)),
         ]
         for stream, handler in subscriptions:
-            if stream and stream.transport:
-                self._disposables.add(stream.observable().subscribe(handler))
+            if stream and stream.transport:  # type: ignore[attr-defined]
+                self._disposables.add(Disposable(stream.subscribe(handler)))  # type: ignore[attr-defined]
 
         self._start_control_loop()
         logger.info("Quest Teleoperation Module started")
