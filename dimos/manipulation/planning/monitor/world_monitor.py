@@ -213,11 +213,11 @@ class WorldMonitor:
         if self._obstacle_monitor is not None and isinstance(objects, list):
             self._obstacle_monitor.on_objects(objects)
 
-    def refresh_obstacles(self, min_duration: float = 0.0) -> int:
-        """Refresh perception obstacles from cache. Returns count added."""
+    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, object]]:
+        """Refresh perception obstacles from cache. Returns list of added obstacles."""
         if self._obstacle_monitor is not None:
             return self._obstacle_monitor.refresh_obstacles(min_duration)
-        return 0
+        return []
 
     def clear_perception_obstacles(self) -> int:
         """Remove all perception obstacles. Returns count removed."""

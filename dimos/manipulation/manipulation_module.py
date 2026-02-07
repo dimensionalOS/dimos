@@ -41,12 +41,12 @@ from dimos.manipulation.planning.monitor import WorldMonitor
 # These must be imported at runtime (not TYPE_CHECKING) for In/Out port creation
 from dimos.msgs.sensor_msgs import JointState
 from dimos.msgs.trajectory_msgs import JointTrajectory
+from dimos.perception.detection.type.detection3d.object import Object as DetObject  # noqa: TC001
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import RPCClient
     from dimos.msgs.geometry_msgs import Pose
-    from dimos.perception.detection.type.detection3d.object import Object as DetObject
 
 logger = setup_logger()
 
@@ -645,7 +645,10 @@ class ManipulationModule(Module):
         )
 
         self._state = ManipulationState.EXECUTING
-        if client.execute_trajectory(config.coordinator_task_name, translated):
+        result = client.task_invoke(
+            config.coordinator_task_name, "execute", {"trajectory": translated}
+        )
+        if result:
             logger.info("Trajectory accepted")
             self._state = ManipulationState.COMPLETED
             return True
@@ -724,14 +727,10 @@ class ManipulationModule(Module):
     # =========================================================================
 
     @rpc
-    def refresh_obstacles(self, min_duration: float = 0.0) -> int:
-        """Refresh perception obstacles from cache. Returns count added.
-
-        Args:
-            min_duration: Minimum seconds an object must have been seen
-        """
+    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, object]]:
+        """Refresh perception obstacles. Returns the list of obstacles added."""
         if self._world_monitor is None:
-            return 0
+            return []
         return self._world_monitor.refresh_obstacles(min_duration)
 
     @rpc
