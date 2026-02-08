@@ -42,6 +42,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     import numpy as np
+    from numpy.typing import NDArray
 
 logger = setup_logger()
 
@@ -137,7 +138,7 @@ def _process_xacro(
 ) -> str:
     """Process xacro file to URDF."""
     try:
-        import xacro  # type: ignore[import-not-found]
+        import xacro  # type: ignore[import-not-found,import-untyped]
     except ImportError:
         raise ImportError(
             "xacro is required for processing .xacro files. Install with: pip install xacro"
@@ -276,7 +277,7 @@ def _convert_meshes(urdf_content: str, output_dir: Path) -> str:
 
 
 def pointcloud_to_convex_hull_obj(
-    points: np.ndarray,
+    points: NDArray[np.float64],
     output_path: Path | str | None = None,
     *,
     voxel_size: float = 0.005,
