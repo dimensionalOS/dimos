@@ -215,7 +215,13 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
     def _on_joy(self, hand: Hand, joy: Joy) -> None:
         """Callback for Joy message, parsing into QuestControllerState."""
         is_left = hand == Hand.LEFT
-        controller = QuestControllerState.from_joy(joy, is_left=is_left)
+        try:
+            controller = QuestControllerState.from_joy(joy, is_left=is_left)
+        except ValueError:
+            logger.warning(
+                f"Malformed Joy for {hand.name}: axes={len(joy.axes or [])}, buttons={len(joy.buttons or [])}"
+            )
+            return
         with self._lock:
             self._controllers[hand] = controller
 
@@ -245,8 +251,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         """Main control loop: compute deltas and publish at fixed rate.
 
         Holds self._lock for the entire iteration so overridable methods
-        don't need to acquire it themselves. Callbacks and @rpc methods
-        still lock independently since they run on other threads.
+        don't need to acquire it themselves.
         """
         period = 1.0 / self.config.control_loop_hz
 
@@ -278,9 +283,6 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
     # -------------------------------------------------------------------------
     # Control Loop Internals
-    #
-    # Called with self._lock held by the control loop.
-    # Do NOT acquire self._lock in overrides.
     # -------------------------------------------------------------------------
 
     def _handle_engage(self) -> None:
