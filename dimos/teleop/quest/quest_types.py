@@ -142,6 +142,7 @@ class QuestButtons(UInt32):
         right: "QuestControllerState | None",
     ) -> "QuestButtons":
         """Create QuestButtons from two QuestControllerState instances."""
+        # Safe: cls() calls UInt32.__init__ which sets self.data = 0 before bit ops.
         buttons = cls()
 
         if left:

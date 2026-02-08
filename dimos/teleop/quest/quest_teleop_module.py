@@ -132,14 +132,14 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         }
         connected = []
         for name, (stream, handler) in input_streams.items():
-            if stream and stream.transport:  # type: ignore[attr-defined]
-                self._disposables.add(Disposable(stream.subscribe(handler)))  # type: ignore[attr-defined]
-                connected.append(name)
+            if not (stream and stream.transport):  # type: ignore[attr-defined]
+                logger.warning(f"Stream '{name}' has no transport — skipping")
+                continue
+            self._disposables.add(Disposable(stream.subscribe(handler)))  # type: ignore[attr-defined]
+            connected.append(name)
 
         if connected:
             logger.info(f"Subscribed to: {', '.join(connected)}")
-        else:
-            logger.warning("No input streams connected — module will not receive controller data")
 
         self._start_control_loop()
         logger.info("Quest Teleoperation Module started")
