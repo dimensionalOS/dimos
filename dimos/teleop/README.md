@@ -15,8 +15,7 @@ Deno Bridge (teleop_server.ts)
     ▼
 QuestTeleopModule
     │  WebXR → robot frame transform
-    │  Delta pose computation
-    │  Button state packing
+    │  Pose computation + button state packing
     ▼
 PoseStamped / TwistStamped / QuestButtons outputs
 ```
@@ -24,10 +23,10 @@ PoseStamped / TwistStamped / QuestButtons outputs
 ## Modules
 
 ### QuestTeleopModule
-Base teleop module. Hold X button to engage, release to disengage. Outputs delta PoseStamped from initial pose.
+Base teleop module. Gets controller data, computes output poses, and publishes them. Default engage: hold primary button (X/A). Subclass to customize.
 
 ### ArmTeleopModule
-Toggle-based engage — press X once to engage, press again to disengage.
+Toggle-based engage — press primary button once to engage, press again to disengage.
 
 ### TwistTeleopModule
 Outputs TwistStamped (linear + angular velocity) instead of PoseStamped.

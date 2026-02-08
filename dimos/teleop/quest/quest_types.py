@@ -16,6 +16,7 @@
 """Quest controller types with nice API for parsing Joy messages."""
 
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from dimos.msgs.sensor_msgs import Joy
 from dimos.msgs.std_msgs import UInt32
@@ -45,6 +46,9 @@ class QuestControllerState:
         4: X/A, 5: Y/B, 6: menu
     """
 
+    EXPECTED_AXES: ClassVar[int] = 4
+    EXPECTED_BUTTONS: ClassVar[int] = 7
+
     is_left: bool = True
     # Analog values (0.0-1.0)
     trigger: float = 0.0
@@ -69,10 +73,10 @@ class QuestControllerState:
         buttons = joy.buttons or []
         axes = joy.axes or []
 
-        if len(buttons) < 7:
-            raise ValueError(f"Expected 7 buttons, got {len(buttons)}")
-        if len(axes) < 4:
-            raise ValueError(f"Expected 4 axes, got {len(axes)}")
+        if len(buttons) < cls.EXPECTED_BUTTONS:
+            raise ValueError(f"Expected {cls.EXPECTED_BUTTONS} buttons, got {len(buttons)}")
+        if len(axes) < cls.EXPECTED_AXES:
+            raise ValueError(f"Expected {cls.EXPECTED_AXES} axes, got {len(axes)}")
 
         return cls(
             is_left=is_left,
