@@ -24,7 +24,7 @@ import time
 
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core import In, Module, Out, rpc  # type: ignore[attr-defined]
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs import Int32
@@ -87,7 +87,7 @@ class B1ConnectionModule(Module):
         self.watchdog_running = False
         self.timeout_active = False
 
-    @rpc
+    @rpc  # type: ignore[untyped-decorator]
     def start(self) -> None:
         """Start the connection and subscribe to command streams."""
 
@@ -123,7 +123,7 @@ class B1ConnectionModule(Module):
         self.watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)  # type: ignore[assignment]
         self.watchdog_thread.start()  # type: ignore[attr-defined]
 
-    @rpc
+    @rpc  # type: ignore[untyped-decorator]
     def stop(self) -> None:
         """Stop the connection and send stop commands."""
 
@@ -208,7 +208,7 @@ class B1ConnectionModule(Module):
             logger.info(f"[TEST] Received mode change: {mode_msg.data}")
         self.set_mode(mode_msg.data)
 
-    @rpc
+    @rpc  # type: ignore[untyped-decorator]
     def set_mode(self, mode: int) -> bool:
         """Set robot mode (0=idle, 1=stand, 2=walk, 6=recovery)."""
         self.current_mode = mode
@@ -320,31 +320,31 @@ class B1ConnectionModule(Module):
                 if self.watchdog_running:
                     logger.error(f"Watchdog error: {e}")
 
-    @rpc
+    @rpc  # type: ignore[untyped-decorator]
     def idle(self) -> bool:
         """Set robot to idle mode."""
         self.set_mode(RobotMode.IDLE)
         return True
 
-    @rpc
+    @rpc  # type: ignore[untyped-decorator]
     def pose(self) -> bool:
         """Set robot to stand/pose mode for reaching ground objects with manipulator."""
         self.set_mode(RobotMode.STAND)
         return True
 
-    @rpc
+    @rpc  # type: ignore[untyped-decorator]
     def walk(self) -> bool:
         """Set robot to walk mode."""
         self.set_mode(RobotMode.WALK)
         return True
 
-    @rpc
+    @rpc  # type: ignore[untyped-decorator]
     def recovery(self) -> bool:
         """Set robot to recovery mode."""
         self.set_mode(RobotMode.RECOVERY)
         return True
 
-    @rpc
+    @rpc  # type: ignore[untyped-decorator]
     def move(self, twist_stamped: TwistStamped, duration: float = 0.0) -> bool:
         """Direct RPC method for sending TwistStamped commands.
 
@@ -391,10 +391,10 @@ class MockB1ConnectionModule(B1ConnectionModule):
             self.packet_count += 1
             time.sleep(0.020)
 
-    @rpc
+    @rpc  # type: ignore[untyped-decorator]
     def start(self) -> None:
         super().start()
 
-    @rpc
+    @rpc  # type: ignore[untyped-decorator]
     def stop(self) -> None:
         super().stop()

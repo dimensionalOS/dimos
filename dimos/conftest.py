@@ -64,7 +64,7 @@ def dimos_cluster():
     try:
         yield dimos
     finally:
-        dimos.stop()
+        dimos.stop()  # type: ignore[attr-defined]
 
 
 @pytest.hookimpl()

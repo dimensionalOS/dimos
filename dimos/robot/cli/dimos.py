@@ -15,7 +15,7 @@
 from enum import Enum
 import inspect
 import sys
-from typing import Any, Optional, get_args, get_origin
+from typing import Any, get_args, get_origin
 
 import typer
 
@@ -44,7 +44,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
         # Handle Optional types
         # Check for Optional/Union with None
-        if get_origin(field_type) is type(Optional[str]):  # noqa: UP045
+        if get_origin(field_type) is type(str | None):
             inner_types = get_args(field_type)
             if len(inner_types) == 2 and type(None) in inner_types:
                 # It's Optional[T], get the actual type T
@@ -68,7 +68,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
                     f"--{cli_option_name}/--no-{cli_option_name}",
                     help=f"Override {field_name} in GlobalConfig",
                 ),
-                annotation=Optional[bool],  # noqa: UP045
+                annotation=bool | None,
             )
         else:
             # For non-boolean fields, use regular option
@@ -80,7 +80,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
                     f"--{cli_option_name}",
                     help=f"Override {field_name} in GlobalConfig",
                 ),
-                annotation=Optional[actual_type],  # noqa: UP045
+                annotation=actual_type | None,
             )
         params.append(param)
 

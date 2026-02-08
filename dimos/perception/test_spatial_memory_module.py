@@ -135,15 +135,15 @@ class TestSpatialMemoryModule:
 
             # Deploy modules
             # Video replay module
-            video_module = dimos.deploy(VideoReplayModule, video_path)
+            video_module = dimos.deploy(VideoReplayModule, video_path)  # type: ignore[attr-defined]
             video_module.video_out.transport = core.LCMTransport("/test_video", Image)
 
             # Odometry replay module
-            odom_module = dimos.deploy(OdometryReplayModule, odom_path)
+            odom_module = dimos.deploy(OdometryReplayModule, odom_path)  # type: ignore[attr-defined]
             odom_module.odom_out.transport = core.LCMTransport("/test_odom", Odometry)
 
             # Spatial memory module
-            spatial_memory = dimos.deploy(
+            spatial_memory = dimos.deploy(  # type: ignore[attr-defined]
                 SpatialMemory,
                 collection_name="test_spatial_memory",
                 embedding_model="clip",

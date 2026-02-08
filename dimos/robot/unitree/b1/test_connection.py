@@ -39,10 +39,10 @@ class TestB1Connection:
         conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
-        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
-        conn.send_thread.start()
-        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)
-        conn.watchdog_thread.start()
+        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)  # type: ignore[assignment]
+        conn.send_thread.start()  # type: ignore[attr-defined]
+        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)  # type: ignore[assignment]
+        conn.watchdog_thread.start()  # type: ignore[attr-defined]
 
         # Send a forward command
         twist_stamped = TwistStamped(
@@ -71,8 +71,8 @@ class TestB1Connection:
 
         conn.running = False
         conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
+        conn.send_thread.join(timeout=0.5)  # type: ignore[attr-defined]
+        conn.watchdog_thread.join(timeout=0.5)  # type: ignore[attr-defined]
         conn._close_module()
 
     def test_watchdog_resets_on_new_command(self) -> None:
@@ -80,10 +80,10 @@ class TestB1Connection:
         conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
-        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
-        conn.send_thread.start()
-        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)
-        conn.watchdog_thread.start()
+        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)  # type: ignore[assignment]
+        conn.send_thread.start()  # type: ignore[attr-defined]
+        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)  # type: ignore[assignment]
+        conn.watchdog_thread.start()  # type: ignore[attr-defined]
 
         # Send first command
         twist1 = TwistStamped(
@@ -119,8 +119,8 @@ class TestB1Connection:
 
         conn.running = False
         conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
+        conn.send_thread.join(timeout=0.5)  # type: ignore[attr-defined]
+        conn.watchdog_thread.join(timeout=0.5)  # type: ignore[attr-defined]
         conn._close_module()
 
     def test_watchdog_thread_efficiency(self) -> None:
@@ -128,10 +128,10 @@ class TestB1Connection:
         conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
-        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
-        conn.send_thread.start()
-        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)
-        conn.watchdog_thread.start()
+        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)  # type: ignore[assignment]
+        conn.send_thread.start()  # type: ignore[attr-defined]
+        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)  # type: ignore[assignment]
+        conn.watchdog_thread.start()  # type: ignore[attr-defined]
 
         # Count threads before sending commands
         initial_thread_count = threading.active_count()
@@ -153,8 +153,8 @@ class TestB1Connection:
 
         conn.running = False
         conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
+        conn.send_thread.join(timeout=0.5)  # type: ignore[attr-defined]
+        conn.watchdog_thread.join(timeout=0.5)  # type: ignore[attr-defined]
         conn._close_module()
 
     def test_watchdog_with_send_loop_blocking(self) -> None:
@@ -171,13 +171,13 @@ class TestB1Connection:
             # Then run normally
             original_send_loop()
 
-        conn._send_loop = blocking_send_loop
+        conn._send_loop = blocking_send_loop  # type: ignore[method-assign]
         conn.running = True
         conn.watchdog_running = True
-        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
-        conn.send_thread.start()
-        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)
-        conn.watchdog_thread.start()
+        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)  # type: ignore[assignment]
+        conn.send_thread.start()  # type: ignore[attr-defined]
+        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)  # type: ignore[assignment]
+        conn.watchdog_thread.start()  # type: ignore[attr-defined]
 
         # Send command
         twist = TwistStamped(
@@ -200,8 +200,8 @@ class TestB1Connection:
         block_event.set()
         conn.running = False
         conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
+        conn.send_thread.join(timeout=0.5)  # type: ignore[attr-defined]
+        conn.watchdog_thread.join(timeout=0.5)  # type: ignore[attr-defined]
         conn._close_module()
 
     def test_continuous_commands_prevent_timeout(self) -> None:
@@ -209,10 +209,10 @@ class TestB1Connection:
         conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
-        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
-        conn.send_thread.start()
-        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)
-        conn.watchdog_thread.start()
+        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)  # type: ignore[assignment]
+        conn.send_thread.start()  # type: ignore[attr-defined]
+        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)  # type: ignore[assignment]
+        conn.watchdog_thread.start()  # type: ignore[attr-defined]
 
         # Send commands continuously for 500ms (should prevent timeout)
         start = time.time()
@@ -235,8 +235,8 @@ class TestB1Connection:
 
         conn.running = False
         conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
+        conn.send_thread.join(timeout=0.5)  # type: ignore[attr-defined]
+        conn.watchdog_thread.join(timeout=0.5)  # type: ignore[attr-defined]
         conn._close_module()
 
     def test_watchdog_timing_accuracy(self) -> None:
@@ -244,10 +244,10 @@ class TestB1Connection:
         conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
-        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
-        conn.send_thread.start()
-        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)
-        conn.watchdog_thread.start()
+        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)  # type: ignore[assignment]
+        conn.send_thread.start()  # type: ignore[attr-defined]
+        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)  # type: ignore[assignment]
+        conn.watchdog_thread.start()  # type: ignore[attr-defined]
 
         # Send command and record time
         start_time = time.time()
@@ -276,8 +276,8 @@ class TestB1Connection:
 
         conn.running = False
         conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
+        conn.send_thread.join(timeout=0.5)  # type: ignore[attr-defined]
+        conn.watchdog_thread.join(timeout=0.5)  # type: ignore[attr-defined]
         conn._close_module()
 
     def test_mode_changes_with_watchdog(self) -> None:
@@ -285,10 +285,10 @@ class TestB1Connection:
         conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
-        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
-        conn.send_thread.start()
-        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)
-        conn.watchdog_thread.start()
+        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)  # type: ignore[assignment]
+        conn.send_thread.start()  # type: ignore[attr-defined]
+        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)  # type: ignore[assignment]
+        conn.watchdog_thread.start()  # type: ignore[attr-defined]
 
         # Give threads time to initialize
         time.sleep(0.05)
@@ -319,8 +319,8 @@ class TestB1Connection:
 
         conn.running = False
         conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
+        conn.send_thread.join(timeout=0.5)  # type: ignore[attr-defined]
+        conn.watchdog_thread.join(timeout=0.5)  # type: ignore[attr-defined]
         conn._close_module()
 
     def test_watchdog_stops_movement_when_commands_stop(self) -> None:
@@ -328,10 +328,10 @@ class TestB1Connection:
         conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
-        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
-        conn.send_thread.start()
-        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)
-        conn.watchdog_thread.start()
+        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)  # type: ignore[assignment]
+        conn.send_thread.start()  # type: ignore[attr-defined]
+        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)  # type: ignore[assignment]
+        conn.watchdog_thread.start()  # type: ignore[attr-defined]
 
         # Simulate sending movement commands for a while
         for _i in range(5):
@@ -377,8 +377,8 @@ class TestB1Connection:
 
         conn.running = False
         conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
+        conn.send_thread.join(timeout=0.5)  # type: ignore[attr-defined]
+        conn.watchdog_thread.join(timeout=0.5)  # type: ignore[attr-defined]
         conn._close_module()
 
     def test_rapid_command_thread_safety(self) -> None:
@@ -386,16 +386,16 @@ class TestB1Connection:
         conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
-        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
-        conn.send_thread.start()
-        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)
-        conn.watchdog_thread.start()
+        conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)  # type: ignore[assignment]
+        conn.send_thread.start()  # type: ignore[attr-defined]
+        conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)  # type: ignore[assignment]
+        conn.watchdog_thread.start()  # type: ignore[attr-defined]
 
         # Count initial threads
         initial_threads = threading.active_count()
 
         # Send commands from multiple threads rapidly
-        def send_commands(thread_id) -> None:
+        def send_commands(thread_id) -> None:  # type: ignore[no-untyped-def]
             for _i in range(10):
                 twist = TwistStamped(
                     ts=time.time(),
@@ -426,6 +426,6 @@ class TestB1Connection:
 
         conn.running = False
         conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
+        conn.send_thread.join(timeout=0.5)  # type: ignore[attr-defined]
+        conn.watchdog_thread.join(timeout=0.5)  # type: ignore[attr-defined]
         conn._close_module()

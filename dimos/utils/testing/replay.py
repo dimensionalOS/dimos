@@ -19,7 +19,7 @@ from pathlib import Path
 import pickle
 import re
 import time
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from reactivex import (
     from_iterable,
@@ -64,7 +64,7 @@ class SensorReplay(Generic[T]):
             data = pickle.load(f)
             if self.autocast:
                 return self.autocast(data)
-            return data
+            return cast("T", data)
 
     def first(self) -> T | None:
         try:
@@ -136,7 +136,7 @@ class SensorStorage(Generic[T]):
 
     def consume_stream(self, observable: Observable[T | Any]) -> None:
         """Consume an observable stream of sensor data without saving."""
-        return observable.subscribe(self.save_one)  # type: ignore[arg-type, return-value]
+        observable.subscribe(self.save_one)  # type: ignore[arg-type]
 
     def save_stream(self, observable: Observable[T | Any]) -> Observable[int]:
         """Save an observable stream of sensor data to pickle files."""
@@ -176,8 +176,15 @@ class TimedSensorStorage(SensorStorage[T]):
         return super().save_one((time.time(), frame))
 
 
-class TimedSensorReplay(SensorReplay[T]):
-    def load_one(self, name: int | str | Path) -> T:
+U = TypeVar("U")
+
+
+class TimedSensorReplay(SensorReplay[tuple[float, U]]):
+    def __init__(self, name: str, autocast: Callable[[Any], U] | None = None) -> None:
+        super().__init__(name, autocast=None)
+        self._timed_autocast = autocast
+
+    def load_one(self, name: int | str | Path) -> tuple[float, U]:
         if isinstance(name, int):
             full_path = self.root_dir / f"/{name:03d}.pickle"
         elif isinstance(name, Path):
@@ -187,11 +194,11 @@ class TimedSensorReplay(SensorReplay[T]):
 
         with open(full_path, "rb") as f:
             data = pickle.load(f)
-            if self.autocast:
-                return (data[0], self.autocast(data[1]))
-            return data
+            if self._timed_autocast:
+                return (data[0], self._timed_autocast(data[1]))
+            return cast("tuple[float, U]", data)
 
-    def find_closest(self, timestamp: float, tolerance: float | None = None) -> T | None:
+    def find_closest(self, timestamp: float, tolerance: float | None = None) -> U | None:
         """Find the frame closest to the given timestamp.
 
         Args:
@@ -222,7 +229,7 @@ class TimedSensorReplay(SensorReplay[T]):
 
     def find_closest_seek(
         self, relative_seconds: float, tolerance: float | None = None
-    ) -> T | None:
+    ) -> U | None:
         """Find the frame closest to a time relative to the start.
 
         Args:
@@ -295,23 +302,28 @@ class TimedSensorReplay(SensorReplay[T]):
         duration: float | None = None,
         from_timestamp: float | None = None,
         loop: bool = False,
-    ) -> Iterator[tuple[float, T] | Any]:
+    ) -> Iterator[tuple[float, U]]:
         """Iterate with absolute timestamps, with optional seek and duration."""
-        first_ts = None
+        first_ts: float | None = None
         if (seek is not None) or (duration is not None):
             first_ts = self.first_timestamp()
             if first_ts is None:
                 return
 
         if seek is not None:
-            from_timestamp = first_ts + seek  # type: ignore[operator]
+            if first_ts is None:
+                return
+            from_timestamp = first_ts + seek
 
-        end_timestamp = None
+        end_timestamp: float | None = None
         if duration is not None:
-            end_timestamp = (from_timestamp if from_timestamp else first_ts) + duration  # type: ignore[operator]
+            base = from_timestamp if from_timestamp is not None else first_ts
+            if base is None:
+                return
+            end_timestamp = base + duration
 
         while True:
-            for ts, data in super().iterate():  # type: ignore[misc]
+            for ts, data in super().iterate():
                 if from_timestamp is None or ts >= from_timestamp:
                     if end_timestamp is not None and ts >= end_timestamp:
                         break
@@ -326,7 +338,7 @@ class TimedSensorReplay(SensorReplay[T]):
         duration: float | None = None,
         from_timestamp: float | None = None,
         loop: bool = False,
-    ) -> Observable[T | Any]:
+    ) -> Observable[U]:
         def _subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
             from reactivex.disposable import CompositeDisposable, Disposable
 
@@ -353,6 +365,7 @@ class TimedSensorReplay(SensorReplay[T]):
             observer.on_next(first_data)
 
             # Pre-load next message
+            next_message: tuple[float, U] | None
             try:
                 next_message = next(iterator)
             except StopIteration:

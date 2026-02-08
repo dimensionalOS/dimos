@@ -25,7 +25,7 @@ os.environ["SDL_VIDEODRIVER"] = "x11"
 
 import time
 
-from dimos.core import Module, Out, rpc
+from dimos.core import Module, Out, rpc  # type: ignore[attr-defined]
 from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
 from dimos.msgs.std_msgs import Int32
 
@@ -46,7 +46,7 @@ class JoystickModule(Module):
         self.running = False
         self.current_mode = 0  # Start in IDLE mode for safety
 
-    @rpc
+    @rpc  # type: ignore[untyped-decorator]
     def start(self) -> bool:
         """Initialize pygame and start control loop."""
 
@@ -68,7 +68,7 @@ class JoystickModule(Module):
 
         return True
 
-    @rpc
+    @rpc  # type: ignore[untyped-decorator]
     def stop(self) -> None:
         """Stop the joystick module."""
 
