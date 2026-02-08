@@ -11,7 +11,7 @@ const clients = new Set<WebSocket>();
 
 // Resolve paths relative to script location
 const scriptDir = dirname(fromFileUrl(import.meta.url));
-const certsDir = join(scriptDir, "../../../assets/teleop_certs");
+const certsDir = join(scriptDir, "../../../../assets/teleop_certs");
 const certPath = join(certsDir, "cert.pem");
 const keyPath = join(certsDir, "key.pem");
 
