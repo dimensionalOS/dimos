@@ -14,6 +14,7 @@ def is_manipulation_installed() -> bool:
         return False
 
 @pytest.mark.integration
+@pytest.mark.gpu
 @pytest.mark.skipif(not is_manipulation_installed(),
                    reason="This test requires 'pip install .[manipulation]' to be run")
 def test_contact_graspnet_inference() -> None:
