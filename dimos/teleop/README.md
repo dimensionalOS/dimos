@@ -46,6 +46,12 @@ Adds Rerun visualization for debugging. Extends ArmTeleopModule (toggle engage).
 | `_publish_msg()` | Change output format |
 | `_publish_button_state()` | Change button output |
 
+### Rules for subclasses
+
+- **Do not acquire `self._lock` in overrides.** The control loop already holds it.
+  Access `self._controllers`, `self._current_poses`, `self._is_engaged`, etc. directly.
+- **Keep overrides fast** — they run inside the control loop at `control_loop_hz`.
+
 ## File Structure
 
 ```

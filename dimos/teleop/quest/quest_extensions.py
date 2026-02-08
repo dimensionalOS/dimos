@@ -21,11 +21,12 @@ Available subclasses:
     - VisualizingTeleopModule: Adds Rerun visualization (uses toggle engage)
 """
 
+from dataclasses import dataclass
 from typing import Any
 
 from dimos.core import Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
-from dimos.teleop.quest.quest_teleop_module import Hand, QuestTeleopModule
+from dimos.teleop.quest.quest_teleop_module import Hand, QuestTeleopConfig, QuestTeleopModule
 from dimos.teleop.utils.teleop_visualization import (
     init_rerun_visualization,
     visualize_buttons,
@@ -33,25 +34,41 @@ from dimos.teleop.utils.teleop_visualization import (
 )
 
 
+@dataclass
+class TwistTeleopConfig(QuestTeleopConfig):
+    """Configuration for TwistTeleopModule."""
+
+    linear_scale: float = 1.0
+    angular_scale: float = 1.0
+
+
 # Example implementation to show how to extend QuestTeleopModule for different teleop behaviors and outputs.
 class TwistTeleopModule(QuestTeleopModule):
     """Quest teleop that outputs TwistStamped instead of PoseStamped.
+
+    Config:
+        - linear_scale: Scale factor for linear (position) values. Default 1.0.
+        - angular_scale: Scale factor for angular (orientation) values. Default 1.0.
+
     Outputs:
         - left_twist: TwistStamped (linear + angular velocity)
         - right_twist: TwistStamped (linear + angular velocity)
         - buttons: QuestButtons (inherited)
     """
 
+    default_config = TwistTeleopConfig
+
     left_twist: Out[TwistStamped]
     right_twist: Out[TwistStamped]
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
-        """Convert PoseStamped to TwistStamped and publish."""
+        """Convert PoseStamped to TwistStamped, apply scaling, and publish."""
+        cfg: TwistTeleopConfig = self.config  # type: ignore[assignment]
         twist = TwistStamped(
             ts=output_msg.ts,
             frame_id=output_msg.frame_id,
-            linear=output_msg.position,
-            angular=output_msg.orientation.to_euler(),
+            linear=output_msg.position * cfg.linear_scale,
+            angular=output_msg.orientation.to_euler() * cfg.angular_scale,
         )
         if hand == Hand.LEFT:
             self.left_twist.publish(twist)
@@ -77,19 +94,18 @@ class ArmTeleopModule(QuestTeleopModule):
 
     def _handle_engage(self) -> None:
         """Toggle per-hand engage on primary button rising edge."""
-        with self._lock:
-            for hand in Hand:
-                controller = self._controllers.get(hand)
-                if controller is None:
-                    continue
+        for hand in Hand:
+            controller = self._controllers.get(hand)
+            if controller is None:
+                continue
 
-                pressed = controller.primary
-                if pressed and not self._prev_primary[hand]:
-                    if self._is_engaged[hand]:
-                        self.disengage(hand)
-                    else:
-                        self.engage(hand)
-                self._prev_primary[hand] = pressed
+            pressed = controller.primary
+            if pressed and not self._prev_primary[hand]:
+                if self._is_engaged[hand]:
+                    self.disengage(hand)
+                else:
+                    self.engage(hand)
+            self._prev_primary[hand] = pressed
 
 
 class VisualizingTeleopModule(ArmTeleopModule):
@@ -115,9 +131,8 @@ class VisualizingTeleopModule(ArmTeleopModule):
         output_pose = super()._get_output_pose(hand)
 
         if output_pose is not None:
-            with self._lock:
-                current_pose = self._current_poses.get(hand)
-                controller = self._controllers.get(hand)
+            current_pose = self._current_poses.get(hand)
+            controller = self._controllers.get(hand)
             if current_pose is not None:
                 label = "left" if hand == Hand.LEFT else "right"
                 visualize_pose(current_pose, label)
