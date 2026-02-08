@@ -36,8 +36,12 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+from typing import TYPE_CHECKING
 
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    import numpy as np
 
 logger = setup_logger()
 
@@ -299,7 +303,7 @@ def pointcloud_to_convex_hull_obj(
         return None
 
     try:
-        import open3d as o3d
+        import open3d as o3d  # type: ignore[import-untyped]
     except ImportError:
         logger.warning("open3d not installed, cannot compute convex hull")
         return None
