@@ -33,6 +33,7 @@ from dimos.teleop.utils.teleop_visualization import (
 )
 
 
+# Example implementation to show how to extend QuestTeleopModule for different teleop behaviors and outputs.
 class TwistTeleopModule(QuestTeleopModule):
     """Quest teleop that outputs TwistStamped instead of PoseStamped.
     Outputs:
@@ -63,6 +64,11 @@ class ArmTeleopModule(QuestTeleopModule):
 
     Each controller's primary button (X for left, A for right)
     toggles that hand's engage state independently.
+
+    Outputs:
+        - left_controller_output: PoseStamped (inherited)
+        - right_controller_output: PoseStamped (inherited)
+        - buttons: QuestButtons (inherited)
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -91,6 +97,11 @@ class VisualizingTeleopModule(ArmTeleopModule):
 
     Adds visualization of controller poses and trigger values to Rerun.
     Useful for debugging and development.
+
+    Outputs:
+        - left_controller_output: PoseStamped (inherited)
+        - right_controller_output: PoseStamped (inherited)
+        - buttons: QuestButtons (inherited)
     """
 
     @rpc

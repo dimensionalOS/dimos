@@ -37,7 +37,6 @@ def init_rerun_visualization(global_config: GlobalConfig | None = None) -> bool:
         from dimos.core.global_config import GlobalConfig as GC
 
         global_config = GC()
-
     if not global_config.viewer_backend.startswith("rerun"):
         logger.debug(f"Skipping Rerun init: viewer_backend={global_config.viewer_backend}")
         return False
@@ -52,12 +51,7 @@ def init_rerun_visualization(global_config: GlobalConfig | None = None) -> bool:
 
 
 def visualize_pose(pose_stamped: PoseStamped, controller_label: str) -> None:
-    """Visualize controller absolute pose in Rerun.
-
-    Args:
-        pose_stamped: The controller's current pose.
-        controller_label: Label for the controller (e.g., "left").
-    """
+    """Visualize controller absolute pose in Rerun."""
     try:
         rr.log(f"world/teleop/{controller_label}_controller", pose_stamped.to_rerun())  # type: ignore[no-untyped-call]
         rr.log(f"world/teleop/{controller_label}_controller/axes", rr.TransformAxes3D(0.10))  # type: ignore[attr-defined]
@@ -72,15 +66,7 @@ def visualize_buttons(
     grip: float = 0.0,
     trigger: float = 0.0,
 ) -> None:
-    """Visualize button states in Rerun as scalar time series.
-
-    Args:
-        controller_label: Label for the controller (e.g., "left").
-        primary: X/A button state.
-        secondary: Y/B button state.
-        grip: Grip value (0.0-1.0).
-        trigger: Trigger value (0.0-1.0).
-    """
+    """Visualize button states in Rerun as scalar time series."""
     try:
         base_path = f"world/teleop/{controller_label}_controller"
         rr.log(f"{base_path}/primary", rr.Scalars(float(primary)))  # type: ignore[attr-defined]

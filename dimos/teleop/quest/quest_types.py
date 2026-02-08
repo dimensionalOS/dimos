@@ -31,7 +31,12 @@ class ThumbstickState:
 
 @dataclass
 class QuestControllerState:
-    """Parsed Quest controller state from Joy message.
+    """Parsed Quest controller state from Joy message with no data loss.
+
+    Preserves full-fidelity analog values (trigger, grip as floats, thumbstick axes)
+    from the raw Joy message in a readable format. Use this when you need analog
+    precision (e.g., proportional grip control). Subclasses can publish this
+    alongside QuestButtons for float access.
 
     Axes layout:
         0: thumbstick X, 1: thumbstick Y, 2: trigger (analog), 3: grip (analog)
@@ -84,6 +89,11 @@ class QuestControllerState:
 
 class QuestButtons(UInt32):
     """Packed button states for both Quest controllers in a single UInt32.
+
+    All values are collapsed to bools for lightweight transport. Analog values
+    (trigger, grip) are thresholded at 0.5. If you need the original float
+    values, access them from QuestControllerState and publish them in a subclass.
+
     Bit layout:
         Left (bits 0-6): trigger, grip, touchpad, thumbstick, X, Y, menu
         Right (bits 8-14): trigger, grip, touchpad, thumbstick, A, B, menu

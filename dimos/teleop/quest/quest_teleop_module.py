@@ -68,10 +68,15 @@ class QuestTeleopConfig(ModuleConfig):
 class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
     """Quest Teleoperation Module for Meta Quest controllers.
 
-    Subscribes to controller data from Deno bridge, transforms WebXR→robot frame,
-    computes deltas from initial pose, and publishes PoseStamped commands.
+    Gets controller data from Deno bridge, computes output poses, and publishes them. Subclass to customize pose
+    computation, output format, and engage behavior.
 
     Implements TeleopProtocol.
+
+    Outputs:
+        - left_controller_output: PoseStamped (output pose for left hand)
+        - right_controller_output: PoseStamped (output pose for right hand)
+        - buttons: QuestButtons (button states for both controllers)
     """
 
     default_config = QuestTeleopConfig
@@ -258,7 +263,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
     def _handle_engage(self) -> None:
         """Check for engage button press and update per-hand engage state.
 
-        Override to customize which button triggers engage.
+        Override to customize which button/action triggers engage.
         Default: Each controller's primary button (X/A) hold engages that hand.
         """
         with self._lock:
