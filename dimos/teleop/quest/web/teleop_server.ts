@@ -1,13 +1,12 @@
 #!/usr/bin/env -S deno run --allow-net --allow-read --allow-run --allow-write --unstable-net
 
-// LCM to WebSocket Bridge for Robot Control
-// Forwards robot pose to browser, receives twist commands from browser
+// WebSocket to LCM Bridge for Quest VR Teleop
+// Forwards controller data from browser to LCM
 
 import { LCM } from "jsr:@dimos/lcm";
 import { dirname, fromFileUrl, join } from "jsr:@std/path";
 
 const PORT = 8443;
-const clients = new Set<WebSocket>();
 
 // Resolve paths relative to script location
 const scriptDir = dirname(fromFileUrl(import.meta.url));
@@ -53,9 +52,8 @@ Deno.serve({ port: PORT, cert, key }, async (req) => {
 
   if (req.headers.get("upgrade") === "websocket") {
     const { socket, response } = Deno.upgradeWebSocket(req);
-    socket.onopen = () => { console.log("Client connected"); clients.add(socket); };
-    socket.onclose = () => { console.log("Client disconnected"); clients.delete(socket); };
-    socket.onerror = () => clients.delete(socket);
+    socket.onopen = () => console.log("Client connected");
+    socket.onclose = () => console.log("Client disconnected");
 
     // Forward binary LCM packets from browser directly to UDP
     socket.binaryType = "arraybuffer";
@@ -82,14 +80,5 @@ Deno.serve({ port: PORT, cert, key }, async (req) => {
 });
 
 console.log(`Server: https://localhost:${PORT}`);
-
-// Forward all raw packets to browser (we are decoding LCM directly in the browser)
-lcm.subscribePacket((packet) => {
-  for (const client of clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(packet);
-    }
-  }
-});
 
 await lcm.run();

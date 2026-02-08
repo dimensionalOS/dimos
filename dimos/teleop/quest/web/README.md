@@ -9,13 +9,13 @@ WebXR client and server for Quest 3 VR teleoperation.
 Deno server that bridges WebSocket and LCM:
 - Serves WebXR client over HTTPS (required for Quest)
 - Forwards controller data from browser to LCM
-- Forwards LCM packets to browser
 
 ### static/index.html
 
 WebXR client running on Quest 3:
 - Captures controller poses at ~80Hz
 - Sends PoseStamped and Joy messages via WebSocket
+- Requires internet connection (loads `@dimos/msgs` from CDN at runtime)
 
 ## Running
 
@@ -38,8 +38,6 @@ Quest Browser                    Deno Server                    Python
     │── PoseStamped (right) ───────→ │── vr_right_pose ──────────→ │
     │── Joy (left controller) ─────→ │── vr_left_joy ────────────→ │
     │── Joy (right controller) ────→ │── vr_right_joy ───────────→ │
-    │                                │                             │
-    │←─────────────────── LCM packets (subscribePacket) ──────────│
 ```
 
 ## LCM Topics
