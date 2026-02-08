@@ -389,6 +389,7 @@ markers = [
     "lcm: tests that run actual LCM bus (can't execute in CI)",
     "module: tests that need to run directly as modules",
     "gpu: tests that require GPU",
+    "cuda: tests which require CUDA (specifically CUDA not just GPU acceleration)",
     "tofix: temporarily disabled test",
     "e2e: end to end tests",
     "integration: slower integration tests",
