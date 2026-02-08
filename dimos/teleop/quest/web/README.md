@@ -19,8 +19,10 @@ WebXR client running on Quest 3:
 
 ## Running
 
+From the repository root (`dimos/`):
+
 ```bash
-deno run --allow-net --allow-read --allow-run --allow-write --unstable-net dimos/teleop/quest/web/teleop_server.ts
+./dimos/teleop/quest/web/teleop_server.ts
 ```
 
 Server starts at `https://localhost:8443`
