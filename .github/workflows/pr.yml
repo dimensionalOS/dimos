@@ -5,6 +5,8 @@ on:
 
 permissions:
   contents: write
+  packages: write
+  pull-requests: read
   workflows: write
 
 jobs:
