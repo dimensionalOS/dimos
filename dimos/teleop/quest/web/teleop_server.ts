@@ -45,6 +45,9 @@ async function ensureCerts(): Promise<{ cert: string; key: string }> {
 
 const { cert, key } = await ensureCerts();
 
+const lcm = new LCM();
+await lcm.start();
+
 Deno.serve({ port: PORT, cert, key }, async (req) => {
   const url = new URL(req.url);
 
@@ -79,9 +82,6 @@ Deno.serve({ port: PORT, cert, key }, async (req) => {
 });
 
 console.log(`Server: https://localhost:${PORT}`);
-
-const lcm = new LCM();
-await lcm.start();
 
 // Forward all raw packets to browser (we are decoding LCM directly in the browser)
 lcm.subscribePacket((packet) => {

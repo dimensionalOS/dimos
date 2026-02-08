@@ -102,9 +102,9 @@ class ArmTeleopModule(QuestTeleopModule):
             pressed = controller.primary
             if pressed and not self._prev_primary[hand]:
                 if self._is_engaged[hand]:
-                    self.disengage(hand)
+                    self._disengage(hand)
                 else:
-                    self.engage(hand)
+                    self._engage(hand)
             self._prev_primary[hand] = pressed
 
 

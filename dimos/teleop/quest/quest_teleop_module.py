@@ -154,29 +154,37 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
     @rpc
     def engage(self, hand: Hand | None = None) -> bool:
         """Engage teleoperation for a hand. If hand is None, engage both."""
-        hands = [hand] if hand is not None else list(Hand)
-
         with self._lock:
-            for h in hands:
-                pose = self._current_poses.get(h)
-                if pose is None:
-                    logger.error(f"Engage failed: {h.name.lower()} controller has no data")
-                    return False
-                self._initial_poses[h] = pose
-                self._is_engaged[h] = True
-
-        for h in hands:
-            logger.info(f"{h.name} engaged.")
-        return True
+            return self._engage(hand)
 
     @rpc
     def disengage(self, hand: Hand | None = None) -> None:
         """Disengage teleoperation for a hand. If hand is None, disengage both."""
-        hands = [hand] if hand is not None else list(Hand)
         with self._lock:
-            for h in hands:
-                self._is_engaged[h] = False
+            self._disengage(hand)
+
+    # -------------------------------------------------------------------------
+    # Internal engage/disengage (assumes lock is held)
+    # -------------------------------------------------------------------------
+
+    def _engage(self, hand: Hand | None = None) -> bool:
+        """Engage a hand. Assumes self._lock is held."""
+        hands = [hand] if hand is not None else list(Hand)
         for h in hands:
+            pose = self._current_poses.get(h)
+            if pose is None:
+                logger.error(f"Engage failed: {h.name.lower()} controller has no data")
+                return False
+            self._initial_poses[h] = pose
+            self._is_engaged[h] = True
+            logger.info(f"{h.name} engaged.")
+        return True
+
+    def _disengage(self, hand: Hand | None = None) -> None:
+        """Disengage a hand. Assumes self._lock is held."""
+        hands = [hand] if hand is not None else list(Hand)
+        for h in hands:
+            self._is_engaged[h] = False
             logger.info(f"{h.name} disengaged.")
 
     @rpc
@@ -287,10 +295,10 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
                 continue
             if controller.primary:
                 if not self._is_engaged[hand]:
-                    self.engage(hand)
+                    self._engage(hand)
             else:
                 if self._is_engaged[hand]:
-                    self.disengage(hand)
+                    self._disengage(hand)
 
     def _should_publish(self, hand: Hand) -> bool:
         """Check if we should publish commands for a hand.
