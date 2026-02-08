@@ -42,4 +42,3 @@ CLA: /CLA.md
 ### One-command PR verification (required)
 ```bash
 ./scripts/test_pr.sh
-
