@@ -15,6 +15,7 @@
 
 """Teleop blueprints for testing and deployment."""
 
+from dimos.control.blueprints import coordinator_cartesian_ik_xarm6
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
@@ -48,4 +49,24 @@ arm_teleop_visualizing = autoconnect(
 )
 
 
-__all__ = ["arm_teleop", "arm_teleop_visualizing"]
+# -----------------------------------------------------------------------------
+# Teleop wired to Coordinator (right controller -> arm)
+# -----------------------------------------------------------------------------
+# Combined blueprint: teleop + xarm6 CartesianIK coordinator
+# Usage: dimos run arm-teleop-xarm6
+
+arm_teleop_xarm6 = autoconnect(
+    arm_teleop_module(),
+    coordinator_cartesian_ik_xarm6
+).transports(
+    {
+        # Teleop outputs -> coordinator inputs (same channel for pub/sub)
+        ("right_controller_output", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
+    }
+)
+
+
+__all__ = ["arm_teleop", "arm_teleop_visualizing", "arm_teleop_xarm6"]
