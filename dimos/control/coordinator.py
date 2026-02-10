@@ -44,6 +44,7 @@ from dimos.msgs.geometry_msgs import (
 from dimos.msgs.sensor_msgs import (
     JointState,  # noqa: TC001 - needed at runtime for Out[JointState]
 )
+from dimos.teleop.quest.quest_types import QuestButtons  # noqa: TC001 - needed for teleop buttons
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -145,6 +146,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     # Uses frame_id as task name for routing
     cartesian_command: In[PoseStamped]
 
+    # Input: Teleop buttons for engage/disengage signaling
+    buttons: In[QuestButtons]
+
     config: ControlCoordinatorConfig
     default_config = ControlCoordinatorConfig
 
@@ -168,6 +172,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         # Subscription handles for streaming commands
         self._joint_command_unsub: Callable[[], None] | None = None
         self._cartesian_command_unsub: Callable[[], None] | None = None
+        self._buttons_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -464,11 +469,14 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 logger.warning(f"Cartesian command for unknown task: {task_name}")
                 return
 
-            # Route to CartesianIKTask
-            if hasattr(task, "set_target_pose"):
-                task.set_target_pose(msg, t_now)  # type: ignore[attr-defined]
-            else:
-                logger.warning(f"Task {task_name} does not support set_target_pose")
+            task.set_target_pose(msg, t_now)  # type: ignore[attr-defined]
+
+    def _on_buttons(self, msg: QuestButtons) -> None:
+        """Forward button state to all tasks that accept it."""
+        with self._task_lock:
+            for task in self._tasks.values():
+                if hasattr(task, "on_buttons"):
+                    task.on_buttons(msg)  # type: ignore[attr-defined]
 
     @rpc
     def task_invoke(
@@ -559,6 +567,16 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             except Exception as e:
                 logger.warning(f"Could not subscribe to cartesian_command: {e}")
 
+            # Also subscribe to buttons for engage/disengage
+            try:
+                if self.buttons.transport:
+                    self._buttons_unsub = self.buttons.subscribe(
+                        self._on_buttons
+                    )
+                    logger.info("Subscribed to buttons for engage/disengage")
+            except Exception as e:
+                logger.debug(f"Could not subscribe to buttons: {e}")
+
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
 
     @rpc
@@ -573,6 +591,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         if self._cartesian_command_unsub:
             self._cartesian_command_unsub()
             self._cartesian_command_unsub = None
+        if self._buttons_unsub:
+            self._buttons_unsub()
+            self._buttons_unsub = None
 
         if self._tick_loop:
             self._tick_loop.stop()
