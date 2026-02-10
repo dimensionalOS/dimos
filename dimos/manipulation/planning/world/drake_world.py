@@ -996,6 +996,7 @@ class DrakeWorld(WorldSpec):
                 for joint_state in path:
                     positions = np.array(joint_state.position, dtype=np.float64)
                     with self._lock:
+                        assert self._plant_context is not None
                         self._set_preview_positions(self._plant_context, robot_id, positions)
                     self.publish_visualization()
                     time.sleep(dt)
@@ -1005,6 +1006,12 @@ class DrakeWorld(WorldSpec):
 
         # Submit to viz thread so ForcedPublish runs on the Meshcat creator thread
         self._on_viz_thread(_do_animate)
+
+    def close(self) -> None:
+        """Shut down the viz executor thread."""
+        if self._viz_executor is not None:
+            self._viz_executor.shutdown(wait=False)
+            self._viz_executor = None
 
     # ============= Direct Access (use with caution) =============
 

@@ -178,6 +178,8 @@ class WorldMonitor:
 
             logger.info("All monitors stopped")
 
+        self._world.close()
+
     # ============= Message Handlers =============
 
     def on_joint_state(self, msg: JointState, robot_id: WorldRobotID | None = None) -> None:
