@@ -49,7 +49,7 @@ class Topic:
 MessageCallback: TypeAlias = Callable[[Any, Topic], None]
 
 
-class _DDSMessageListener(Listener):
+class _DDSMessageListener(Listener):  # type: ignore[misc]
     """Listener for DataReader that dispatches messages to callbacks."""
 
     __slots__ = ("_callbacks", "_lock", "_topic")

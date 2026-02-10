@@ -192,7 +192,7 @@ if DDS_AVAILABLE:
     )
 
     @dataclass
-    class DDSBenchmarkData(IdlStruct):
+    class DDSBenchmarkData(IdlStruct):  # type: ignore[misc]
         """DDS message type for benchmarking with variable-size byte payload."""
 
         data: sequence[uint8]  # type: ignore[type-arg]
