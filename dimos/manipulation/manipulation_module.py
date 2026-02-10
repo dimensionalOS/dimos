@@ -382,6 +382,15 @@ class ManipulationModule(Module):
         self._error_message = msg
         return False
 
+    def _dismiss_preview(self, robot_id: WorldRobotID) -> None:
+        """Hide the preview ghost if the world supports it."""
+        if self._world_monitor is None:
+            return
+        world = self._world_monitor.world
+        if hasattr(world, "hide_preview"):
+            world.hide_preview(robot_id)  # type: ignore[attr-defined]
+            world.publish_visualization()
+
     @rpc
     def plan_to_pose(self, pose: Pose, robot_name: RobotName | None = None) -> bool:
         """Plan motion to pose. Use preview_path() then execute().
@@ -442,6 +451,7 @@ class ManipulationModule(Module):
     ) -> bool:
         """Plan path from current position to goal, store result."""
         assert self._world_monitor and self._planner  # guaranteed by _begin_planning
+        self._dismiss_preview(robot_id)
         start = self._world_monitor.get_current_joint_state(robot_id)
         if start is None:
             return self._fail("No joint state")
