@@ -26,7 +26,6 @@ CRITICAL: Uses t_now from CoordinatorState, never calls time.time()
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -40,7 +39,6 @@ from dimos.control.task import (
     JointCommandOutput,
     ResourceClaim,
 )
-from dimos.teleop.quest.quest_types import QuestButtons
 from dimos.manipulation.planning.kinematics.pinocchio_ik import (
     PinocchioIK,
     PinocchioIKConfig,
@@ -50,9 +48,12 @@ from dimos.manipulation.planning.kinematics.pinocchio_ik import (
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from numpy.typing import NDArray
 
     from dimos.msgs.geometry_msgs import Pose, PoseStamped
+    from dimos.teleop.quest.quest_types import QuestButtons
 
 logger = setup_logger()
 
@@ -84,7 +85,7 @@ class TeleopIKTaskConfig:
     ik_eps: float = 1e-4
     ik_damp: float = 1e-2
     ik_dt: float = 1.0
-    
+
     max_joint_delta_deg: float = 20.0  # ~500°/s at 100Hz
     max_velocity: float = 10.0
 
@@ -145,9 +146,7 @@ class TeleopIKTask(ControlTask):
             dt=config.ik_dt,
             max_velocity=config.max_velocity,
         )
-        self._ik = PinocchioIK.from_model_path(
-            config.model_path, config.ee_joint_id, ik_config
-        )
+        self._ik = PinocchioIK.from_model_path(config.model_path, config.ee_joint_id, ik_config)
 
         # Validate DOF matches joint names
         if self._ik.nq != self._num_joints:
@@ -306,9 +305,7 @@ class TeleopIKTask(ControlTask):
             joints: Joints that were preempted
         """
         if joints & self._joint_names:
-            logger.warning(
-                f"TeleopIKTask {self._name} preempted by {by_task} on joints {joints}"
-            )
+            logger.warning(f"TeleopIKTask {self._name} preempted by {by_task} on joints {joints}")
 
     # =========================================================================
     # Task-specific methods
@@ -423,8 +420,7 @@ class TeleopIKTask(ControlTask):
         q_current = self._get_current_joints(state)
         if q_current is None:
             logger.warning(
-                f"TeleopIKTask {self._name}: cannot capture initial pose, "
-                "joint state unavailable"
+                f"TeleopIKTask {self._name}: cannot capture initial pose, joint state unavailable"
             )
             return False
 

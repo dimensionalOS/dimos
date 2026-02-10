@@ -198,9 +198,7 @@ class PinocchioIK:
             if final_err < cfg.eps:
                 return q, True, final_err
 
-            J = pinocchio.computeJointJacobian(
-                self._model, self._data, q, self._ee_joint_id
-            )
+            J = pinocchio.computeJointJacobian(self._model, self._data, q, self._ee_joint_id)
             J = -np.dot(pinocchio.Jlog6(iMd.inverse()), J)
             v = -J.T.dot(solve(J.dot(J.T) + cfg.damp * np.eye(6), err))
 
@@ -217,9 +215,7 @@ class PinocchioIK:
     # Forward Kinematics
     # =========================================================================
 
-    def forward_kinematics(
-        self, joint_positions: NDArray[np.floating[Any]]
-    ) -> pinocchio.SE3:
+    def forward_kinematics(self, joint_positions: NDArray[np.floating[Any]]) -> pinocchio.SE3:
         """Compute end-effector pose from joint positions.
 
         Args:
@@ -250,9 +246,7 @@ class PinocchioIK:
         """
         position = np.array([pose.x, pose.y, pose.z])
         quat = pose.orientation
-        rotation = pinocchio.Quaternion(
-            quat.w, quat.x, quat.y, quat.z
-        ).toRotationMatrix()
+        rotation = pinocchio.Quaternion(quat.w, quat.x, quat.y, quat.z).toRotationMatrix()
         return pinocchio.SE3(rotation, position)
 
     @staticmethod
@@ -269,9 +263,7 @@ class PinocchioIK:
             KeyError: If required keys are missing
         """
         position = np.array([pose["x"], pose["y"], pose["z"]])
-        rotation = pinocchio.rpy.rpyToMatrix(
-            pose["roll"], pose["pitch"], pose["yaw"]
-        )
+        rotation = pinocchio.rpy.rpyToMatrix(pose["roll"], pose["pitch"], pose["yaw"])
         return pinocchio.SE3(rotation, position)
 
 

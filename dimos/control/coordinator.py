@@ -570,9 +570,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             # Also subscribe to buttons for engage/disengage
             try:
                 if self.buttons.transport:
-                    self._buttons_unsub = self.buttons.subscribe(
-                        self._on_buttons
-                    )
+                    self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
                     logger.info("Subscribed to buttons for engage/disengage")
             except Exception as e:
                 logger.debug(f"Could not subscribe to buttons: {e}")

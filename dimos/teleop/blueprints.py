@@ -55,10 +55,7 @@ arm_teleop_visualizing = autoconnect(
 # Combined blueprint: teleop + xarm6 CartesianIK coordinator
 # Usage: dimos run arm-teleop-xarm6
 
-arm_teleop_xarm6 = autoconnect(
-    arm_teleop_module(),
-    coordinator_cartesian_ik_xarm6
-).transports(
+arm_teleop_xarm6 = autoconnect(arm_teleop_module(), coordinator_cartesian_ik_xarm6).transports(
     {
         # Teleop outputs -> coordinator inputs (same channel for pub/sub)
         ("right_controller_output", PoseStamped): LCMTransport(

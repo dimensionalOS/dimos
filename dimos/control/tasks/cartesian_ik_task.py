@@ -24,12 +24,10 @@ CRITICAL: Uses t_now from CoordinatorState, never calls time.time()
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 import threading
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-import pinocchio  # type: ignore[import-untyped]
 
 from dimos.control.task import (
     ControlMode,
@@ -47,7 +45,10 @@ from dimos.manipulation.planning.kinematics.pinocchio_ik import (
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from numpy.typing import NDArray
+    import pinocchio
 
     from dimos.msgs.geometry_msgs import Pose, PoseStamped
 
@@ -141,9 +142,7 @@ class CartesianIKTask(ControlTask):
             dt=config.ik_dt,
             max_velocity=config.max_velocity,
         )
-        self._ik = PinocchioIK.from_model_path(
-            config.model_path, config.ee_joint_id, ik_config
-        )
+        self._ik = PinocchioIK.from_model_path(config.model_path, config.ee_joint_id, ik_config)
 
         # Validate DOF matches joint names
         if self._ik.nq != self._num_joints:
