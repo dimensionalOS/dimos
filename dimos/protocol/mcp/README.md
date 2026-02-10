@@ -4,16 +4,21 @@ Expose DimOS robot skills to Claude Code via Model Context Protocol.
 
 ## Setup
 
+```bash
+uv pip install 'dimos[base,unitree]'
+```
+
 Add to Claude Code (one command):
 ```bash
 claude mcp add --transport stdio dimos --scope project -- python -m dimos.protocol.mcp
 ```
 
+
 ## Usage
 
 **Terminal 1** - Start DimOS:
 ```bash
-dimos --replay run unitree-go2-agentic
+uv run dimos run unitree-go2-agentic-mcp
 ```
 
 **Claude Code** - Use robot skills:
