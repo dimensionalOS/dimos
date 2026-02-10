@@ -106,6 +106,50 @@ class _ObstacleData:
     source_id: Any  # SourceId
 
 
+class _ThreadSafeMeshcat:
+    """Wraps Drake Meshcat so all calls run on the creator thread.
+
+    Drake throws SystemExit from non-creator threads for every Meshcat operation.
+    This class creates a single-thread executor, constructs Meshcat on it,
+    and proxies all calls through it.
+    """
+
+    def __init__(self) -> None:
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="meshcat")
+        self._thread = self._executor.submit(current_thread).result()
+        self._inner: Meshcat = self._executor.submit(Meshcat).result()
+
+    def _call(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        if current_thread() is self._thread:
+            return fn(*args, **kwargs)
+        return self._executor.submit(fn, *args, **kwargs).result()
+
+    # --- Meshcat proxies ---
+
+    def SetObject(self, *args: Any, **kwargs: Any) -> Any:
+        return self._call(self._inner.SetObject, *args, **kwargs)
+
+    def SetTransform(self, *args: Any, **kwargs: Any) -> Any:
+        return self._call(self._inner.SetTransform, *args, **kwargs)
+
+    def SetProperty(self, *args: Any, **kwargs: Any) -> Any:
+        return self._call(self._inner.SetProperty, *args, **kwargs)
+
+    def Delete(self, *args: Any, **kwargs: Any) -> Any:
+        return self._call(self._inner.Delete, *args, **kwargs)
+
+    def web_url(self) -> str:
+        result: str = self._call(self._inner.web_url)
+        return result
+
+    def forced_publish(self, visualizer: Any, viz_ctx: Any) -> None:
+        """Run MeshcatVisualizer.ForcedPublish on the creator thread."""
+        self._call(visualizer.ForcedPublish, viz_ctx)
+
+    def close(self) -> None:
+        self._executor.shutdown(wait=False)
+
+
 class DrakeWorld(WorldSpec):
     """Drake implementation of WorldSpec with MultibodyPlant, SceneGraph, optional Meshcat."""
 
@@ -129,17 +173,11 @@ class DrakeWorld(WorldSpec):
         # with the same URDF (e.g., 4 XArm6 arms all have model name "UF_ROBOT")
         self._parser.SetAutoRenaming(True)
 
-        # Visualization — all Meshcat calls must happen on the thread that created
-        # the Meshcat instance (Drake enforces thread affinity via SystemExit).
-        # A single-thread executor ensures every viz call runs on that thread.
-        self._viz_executor: ThreadPoolExecutor | None = None
-        self._viz_thread: Any = None  # Thread object for re-entrancy detection
-        self._meshcat: Meshcat | None = None
+        # Visualization — wrapped to enforce Drake's thread affinity
+        self._meshcat: _ThreadSafeMeshcat | None = None
         self._meshcat_visualizer: MeshcatVisualizer | None = None
         if enable_viz:
-            self._viz_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="meshcat")
-            self._viz_thread = self._viz_executor.submit(current_thread).result()
-            self._meshcat = self._viz_executor.submit(Meshcat).result()
+            self._meshcat = _ThreadSafeMeshcat()
 
         # Create model instance for obstacles
         self._obstacles_model_instance = self._plant.AddModelInstance("obstacles")
@@ -420,8 +458,8 @@ class DrakeWorld(WorldSpec):
 
         # Create Drake shape and add to Meshcat
         drake_shape = self._create_shape(obstacle)
-        self._on_viz_thread(self._meshcat.SetObject, path, drake_shape, rgba)
-        self._on_viz_thread(self._meshcat.SetTransform, path, transform)
+        self._meshcat.SetObject(path, drake_shape, rgba)
+        self._meshcat.SetTransform(path, transform)
 
     def _pose_to_rigid_transform(self, pose: PoseStamped) -> Any:
         """Convert PoseStamped to Drake RigidTransform."""
@@ -463,7 +501,7 @@ class DrakeWorld(WorldSpec):
             # Also remove from Meshcat
             if self._meshcat is not None:
                 path = f"obstacles/{obstacle_id}"
-                self._on_viz_thread(self._meshcat.Delete, path)
+                self._meshcat.Delete(path)
 
             del self._obstacles[obstacle_id]
             logger.debug(f"Removed obstacle '{obstacle_id}'")
@@ -482,7 +520,7 @@ class DrakeWorld(WorldSpec):
             if self._meshcat is not None:
                 path = f"obstacles/{obstacle_id}"
                 transform = self._pose_to_rigid_transform(pose)
-                self._on_viz_thread(self._meshcat.SetTransform, path, transform)
+                self._meshcat.SetTransform(path, transform)
 
             # Note: SceneGraph geometry pose is fixed after registration
             # Meshcat is updated for visualization, but collision checking
@@ -581,7 +619,7 @@ class DrakeWorld(WorldSpec):
                 self._meshcat_visualizer = MeshcatVisualizer.AddToBuilder(
                     self._builder,
                     self._scene_graph,
-                    self._meshcat,
+                    self._meshcat._inner,
                     params,
                 )
 
@@ -907,34 +945,21 @@ class DrakeWorld(WorldSpec):
 
     # ============= Visualization =============
 
-    def _on_viz_thread(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
-        """Run fn on the Meshcat creator thread. Re-entrant safe."""
-        if self._viz_executor is None or current_thread() is self._viz_thread:
-            return fn(*args, **kwargs)
-        return self._viz_executor.submit(fn, *args, **kwargs).result()
-
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""
         if self._meshcat is not None:
-            url: str = self._on_viz_thread(self._meshcat.web_url)
-            return url
+            return self._meshcat.web_url()
         return None
 
     def publish_visualization(self, ctx: Context | None = None) -> None:
-        """Publish current state to visualization.
-
-        Args:
-            ctx: Context to publish. Uses live context if None.
-        """
-        if self._meshcat_visualizer is None:
+        """Publish current state to visualization."""
+        if self._meshcat_visualizer is None or self._meshcat is None:
             return
-
         if ctx is None:
             ctx = self._live_context
-
         if ctx is not None:
             viz_ctx = self._diagram.GetSubsystemContext(self._meshcat_visualizer, ctx)
-            self._on_viz_thread(self._meshcat_visualizer.ForcedPublish, viz_ctx)
+            self._meshcat.forced_publish(self._meshcat_visualizer, viz_ctx)
 
     def _set_preview_positions(
         self, plant_ctx: Context, robot_id: WorldRobotID, positions: NDArray[np.float64]
@@ -957,7 +982,7 @@ class DrakeWorld(WorldSpec):
         if robot_data is None or robot_data.preview_model_instance is None:
             return
         model_name = self._plant.GetModelInstanceName(robot_data.preview_model_instance)
-        self._on_viz_thread(self._meshcat.SetProperty, f"visualizer/{model_name}", "visible", True)
+        self._meshcat.SetProperty(f"visualizer/{model_name}", "visible", True)
 
     def hide_preview(self, robot_id: WorldRobotID) -> None:
         """Hide the preview (yellow ghost) robot in Meshcat."""
@@ -967,7 +992,7 @@ class DrakeWorld(WorldSpec):
         if robot_data is None or robot_data.preview_model_instance is None:
             return
         model_name = self._plant.GetModelInstanceName(robot_data.preview_model_instance)
-        self._on_viz_thread(self._meshcat.SetProperty, f"visualizer/{model_name}", "visible", False)
+        self._meshcat.SetProperty(f"visualizer/{model_name}", "visible", False)
 
     def animate_path(
         self,
@@ -999,10 +1024,9 @@ class DrakeWorld(WorldSpec):
             time.sleep(dt)
 
     def close(self) -> None:
-        """Shut down the viz executor thread."""
-        if self._viz_executor is not None:
-            self._viz_executor.shutdown(wait=False)
-            self._viz_executor = None
+        """Shut down the viz thread."""
+        if self._meshcat is not None:
+            self._meshcat.close()
 
     # ============= Direct Access (use with caution) =============
 
