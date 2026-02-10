@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cartesian control task with internal Pinocchio IK solver.
+"""Teleop cartesian control task with internal Pinocchio IK solver.
 
-Accepts streaming cartesian poses (e.g., from teleoperation, visual servoing)
-and computes inverse kinematics internally to output joint commands.
+Accepts streaming cartesian delta poses from teleoperation and computes
+inverse kinematics internally to output joint commands. Deltas are applied
+relative to the EE pose captured at engage time.
+
 Participates in joint-level arbitration.
 
 CRITICAL: Uses t_now from CoordinatorState, never calls time.time()
@@ -29,7 +31,6 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from numpy.linalg import norm, solve
 import pinocchio  # type: ignore[import-untyped]
 
 from dimos.control.task import (
@@ -38,6 +39,13 @@ from dimos.control.task import (
     CoordinatorState,
     JointCommandOutput,
     ResourceClaim,
+)
+from dimos.teleop.quest.quest_types import QuestButtons
+from dimos.manipulation.planning.kinematics.pinocchio_ik import (
+    PinocchioIK,
+    PinocchioIKConfig,
+    check_joint_delta,
+    get_worst_joint_delta,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -50,8 +58,8 @@ logger = setup_logger()
 
 
 @dataclass
-class CartesianIKTaskConfig:
-    """Configuration for cartesian IK task.
+class TeleopIKTaskConfig:
+    """Configuration for teleop IK task.
 
     Attributes:
         joint_names: List of joint names this task controls (must match model DOF)
@@ -76,26 +84,27 @@ class CartesianIKTaskConfig:
     ik_eps: float = 1e-4
     ik_damp: float = 1e-2
     ik_dt: float = 1.0
+    
     max_joint_delta_deg: float = 20.0  # ~500°/s at 100Hz
     max_velocity: float = 10.0
 
 
-class CartesianIKTask(ControlTask):
-    """Cartesian control task with internal Pinocchio IK solver.
+class TeleopIKTask(ControlTask):
+    """Teleop cartesian control task with internal Pinocchio IK solver.
 
-    Accepts streaming cartesian poses via set_target_pose() and computes IK
-    internally to output joint commands. Uses current joint state from
-    CoordinatorState as IK warm-start for fast convergence.
+    Accepts streaming cartesian delta poses via set_target_pose() and computes IK
+    internally to output joint commands. Deltas are applied relative to the EE pose
+    captured at engage time (first compute or explicit capture_initial_pose call).
 
-    Unlike CartesianServoTask (which bypasses joint arbitration), this task
-    outputs JointCommandOutput and participates in joint-level arbitration.
+    Uses current joint state from CoordinatorState as IK warm-start for fast convergence.
+    Outputs JointCommandOutput and participates in joint-level arbitration.
 
     Example:
         >>> from dimos.utils.data import get_data
         >>> piper_path = get_data("piper_description")
-        >>> task = CartesianIKTask(
-        ...     name="cartesian_arm",
-        ...     config=CartesianIKTaskConfig(
+        >>> task = TeleopIKTask(
+        ...     name="teleop_arm",
+        ...     config=TeleopIKTaskConfig(
         ...         joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
         ...         model_path=piper_path / "mujoco_model" / "piper_no_gripper_description.xml",
         ...         ee_joint_id=6,
@@ -106,21 +115,21 @@ class CartesianIKTask(ControlTask):
         >>> coordinator.add_task(task)
         >>> task.start()
         >>>
-        >>> # From teleop callback or other source:
-        >>> task.set_target_pose(pose_stamped, t_now=time.perf_counter())
+        >>> # From teleop callback:
+        >>> task.set_target_pose(delta_pose, t_now=time.perf_counter())
     """
 
-    def __init__(self, name: str, config: CartesianIKTaskConfig) -> None:
-        """Initialize cartesian IK task.
+    def __init__(self, name: str, config: TeleopIKTaskConfig) -> None:
+        """Initialize teleop IK task.
 
         Args:
             name: Unique task name
             config: Task configuration
         """
         if not config.joint_names:
-            raise ValueError(f"CartesianIKTask '{name}' requires at least one joint")
+            raise ValueError(f"TeleopIKTask '{name}' requires at least one joint")
         if not config.model_path:
-            raise ValueError(f"CartesianIKTask '{name}' requires model_path for IK solver")
+            raise ValueError(f"TeleopIKTask '{name}' requires model_path for IK solver")
 
         self._name = name
         self._config = config
@@ -128,23 +137,22 @@ class CartesianIKTask(ControlTask):
         self._joint_names_list = list(config.joint_names)
         self._num_joints = len(config.joint_names)
 
-        # Load Pinocchio model
-        model_path = Path(config.model_path)
-        if not model_path.exists():
-            raise FileNotFoundError(f"Model file not found: {model_path}")
-
-        if model_path.suffix == ".xml":
-            self._model = pinocchio.buildModelFromMJCF(str(model_path))
-        else:
-            self._model = pinocchio.buildModelFromUrdf(str(model_path))
-
-        self._data = self._model.createData()
-        self._ee_joint_id = config.ee_joint_id
+        # Create IK solver from model
+        ik_config = PinocchioIKConfig(
+            max_iter=config.ik_max_iter,
+            eps=config.ik_eps,
+            damp=config.ik_damp,
+            dt=config.ik_dt,
+            max_velocity=config.max_velocity,
+        )
+        self._ik = PinocchioIK.from_model_path(
+            config.model_path, config.ee_joint_id, ik_config
+        )
 
         # Validate DOF matches joint names
-        if self._model.nq != self._num_joints:
+        if self._ik.nq != self._num_joints:
             logger.warning(
-                f"CartesianIKTask {name}: model DOF ({self._model.nq}) != "
+                f"TeleopIKTask {name}: model DOF ({self._ik.nq}) != "
                 f"joint_names count ({self._num_joints})"
             )
 
@@ -160,8 +168,11 @@ class CartesianIKTask(ControlTask):
         # Cache last successful IK solution for warm-starting
         self._last_q_solution: NDArray[np.floating[Any]] | None = None
 
+        # Button edge detection
+        self._prev_engage = False
+
         logger.info(
-            f"CartesianIKTask {name} initialized with model: {model_path}, "
+            f"TeleopIKTask {name} initialized with model: {config.model_path}, "
             f"ee_joint_id={config.ee_joint_id}, joints={config.joint_names}"
         )
 
@@ -201,7 +212,7 @@ class CartesianIKTask(ControlTask):
                 time_since_update = state.t_now - self._last_update_time
                 if time_since_update > self._config.timeout:
                     logger.warning(
-                        f"CartesianIKTask {self._name} timed out "
+                        f"TeleopIKTask {self._name} timed out "
                         f"(no update for {time_since_update:.3f}s)"
                     )
                     self._active = False
@@ -213,17 +224,17 @@ class CartesianIKTask(ControlTask):
         if self._initial_ee_pose is None:
             q_current = self._get_current_joints(state)
             if q_current is None:
-                logger.debug(f"CartesianIKTask {self._name}: cannot capture initial pose")
+                logger.debug(f"TeleopIKTask {self._name}: cannot capture initial pose")
                 return None
 
-            pinocchio.forwardKinematics(self._model, self._data, q_current)
+            initial_pose = self._ik.forward_kinematics(q_current)
             with self._lock:
-                self._initial_ee_pose = self._data.oMi[self._ee_joint_id].copy()
+                self._initial_ee_pose = initial_pose
             logger.info(
-                f"CartesianIKTask {self._name}: captured initial EE pose at "
-                f"[{self._initial_ee_pose.translation[0]:.3f}, "
-                f"{self._initial_ee_pose.translation[1]:.3f}, "
-                f"{self._initial_ee_pose.translation[2]:.3f}]"
+                f"TeleopIKTask {self._name}: captured initial EE pose at "
+                f"[{initial_pose.translation[0]:.3f}, "
+                f"{initial_pose.translation[1]:.3f}, "
+                f"{initial_pose.translation[2]:.3f}]"
             )
 
         # Apply delta to initial pose: target = initial + delta
@@ -236,36 +247,34 @@ class CartesianIKTask(ControlTask):
         # Get current joint positions for IK warm-start
         q_current = self._get_current_joints(state)
         if q_current is None:
-            logger.debug(f"CartesianIKTask {self._name}: missing joint state for IK warm-start")
+            logger.debug(f"TeleopIKTask {self._name}: missing joint state for IK warm-start")
             return None
 
         # Compute IK
-        q_solution, converged, final_error = self._solve_ik(target_pose, q_current)
+        q_solution, converged, final_error = self._ik.solve(target_pose, q_current)
 
         # Use the solution even if it didn't fully converge - the safety clamp
         # will handle any large jumps. This prevents the arm from "sticking"
         # when near singularities or workspace boundaries.
         if not converged:
             logger.debug(
-                f"CartesianIKTask {self._name}: IK did not converge "
+                f"TeleopIKTask {self._name}: IK did not converge "
                 f"(error={final_error:.4f}), using partial solution"
             )
 
-        # Safety check: reject if joint delta too large
-        if not self._safety_check(q_solution, q_current):
+        # Safety check: reject if any joint delta exceeds limit
+        if not check_joint_delta(q_solution, q_current, self._config.max_joint_delta_deg):
+            worst_idx, worst_deg = get_worst_joint_delta(q_solution, q_current)
+            logger.warning(
+                f"TeleopIKTask {self._name}: rejecting motion - "
+                f"joint {self._joint_names_list[worst_idx]} delta "
+                f"{worst_deg:.1f}° exceeds limit {self._config.max_joint_delta_deg}°"
+            )
             return None
 
         # Cache solution for next warm-start
         with self._lock:
             self._last_q_solution = q_solution.copy()
-
-        # DEBUG: Print FK'd EE pose instead of sending commands to arm
-        ee_pose = self.forward_kinematics(q_solution)
-        logger.info(
-            f"CartesianIKTask {self._name}: EE pose "
-            f"[{ee_pose.translation[0]:.4f}, {ee_pose.translation[1]:.4f}, {ee_pose.translation[2]:.4f}]"
-        )
-        # return None  # Don't send commands to hardware
 
         return JointCommandOutput(
             joint_names=self._joint_names_list,
@@ -289,72 +298,6 @@ class CartesianIKTask(ControlTask):
             positions.append(pos)
         return np.array(positions)
 
-    def _solve_ik(
-        self,
-        target_pose: pinocchio.SE3,
-        q_init: NDArray[np.floating[Any]],
-    ) -> tuple[NDArray[np.floating[Any]], bool, float]:
-        """Solve IK using damped least-squares (Levenberg-Marquardt).
-
-        Args:
-            target_pose: Target end-effector pose as SE3
-            q_init: Initial joint configuration (warm-start)
-
-        Returns:
-            Tuple of (joint_angles, converged, final_error)
-        """
-        q = q_init.copy()
-        final_err = float("inf")
-
-        for _ in range(self._config.ik_max_iter):
-            pinocchio.forwardKinematics(self._model, self._data, q)
-            iMd = self._data.oMi[self._ee_joint_id].actInv(target_pose)
-
-            err = pinocchio.log(iMd).vector
-            final_err = float(norm(err))
-            if final_err < self._config.ik_eps:
-                return q, True, final_err
-
-            J = pinocchio.computeJointJacobian(self._model, self._data, q, self._ee_joint_id)
-            J = -np.dot(pinocchio.Jlog6(iMd.inverse()), J)
-            v = -J.T.dot(solve(J.dot(J.T) + self._config.ik_damp * np.eye(6), err))
-
-            # Clamp velocity to prevent explosion near singularities
-            v_norm = norm(v)
-            if v_norm > self._config.max_velocity:
-                v = v * (self._config.max_velocity / v_norm)
-
-            q = pinocchio.integrate(self._model, q, v * self._config.ik_dt)
-
-        return q, False, final_err
-
-    def _safety_check(
-        self, q_new: NDArray[np.floating[Any]], q_current: NDArray[np.floating[Any]]
-    ) -> bool:
-        """Check if IK solution is safe to execute.
-
-        Args:
-            q_new: Proposed joint positions from IK
-            q_current: Current joint positions
-
-        Returns:
-            True if safe, False if motion should be rejected
-        """
-        max_delta_rad = np.radians(self._config.max_joint_delta_deg)
-        joint_deltas = q_new - q_current
-
-        if np.any(np.abs(joint_deltas) > max_delta_rad):
-            worst_joint = int(np.argmax(np.abs(joint_deltas)))
-            logger.warning(
-                f"CartesianIKTask {self._name}: rejecting motion - "
-                f"joint {self._joint_names_list[worst_joint]} delta "
-                f"{np.degrees(joint_deltas[worst_joint]):.1f}° exceeds limit "
-                f"{self._config.max_joint_delta_deg}°"
-            )
-            return False
-
-        return True
-
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         """Handle preemption by higher-priority task.
 
@@ -364,12 +307,33 @@ class CartesianIKTask(ControlTask):
         """
         if joints & self._joint_names:
             logger.warning(
-                f"CartesianIKTask {self._name} preempted by {by_task} on joints {joints}"
+                f"TeleopIKTask {self._name} preempted by {by_task} on joints {joints}"
             )
 
     # =========================================================================
     # Task-specific methods
     # =========================================================================
+
+    def on_buttons(self, msg: QuestButtons) -> None:
+        """Handle engage/disengage from button state.
+
+        Uses left X button with rising/falling edge detection:
+        - Rising edge: reset initial pose so next compute() recaptures
+        - Falling edge: clear task (stop tracking)
+        """
+        engage = msg.left_x
+
+        if engage and not self._prev_engage:
+            # Rising edge: prepare for new tracking session
+            logger.info(f"TeleopIKTask {self._name}: engage")
+            with self._lock:
+                self._initial_ee_pose = None
+        elif not engage and self._prev_engage:
+            # Falling edge: stop tracking
+            logger.info(f"TeleopIKTask {self._name}: disengage")
+            self.clear()
+
+        self._prev_engage = engage
 
     def set_target_pose(self, pose: Pose | PoseStamped, t_now: float) -> bool:
         """Set target end-effector pose from delta.
@@ -377,7 +341,7 @@ class CartesianIKTask(ControlTask):
         Treats incoming pose as a delta from the initial EE pose. The initial pose
         is automatically captured on the first compute() call after activation.
 
-        Call this from your teleop callback, visual servoing, or other input source.
+        Call this from your teleop callback.
 
         Args:
             pose: Delta pose from teleop (position offset + orientation delta)
@@ -386,7 +350,7 @@ class CartesianIKTask(ControlTask):
         Returns:
             True if accepted
         """
-        delta_se3 = self._pose_to_se3(pose)
+        delta_se3 = PinocchioIK.pose_to_se3(pose)
 
         with self._lock:
             self._target_pose = delta_se3  # Store delta, will apply to initial in compute()
@@ -412,12 +376,10 @@ class CartesianIKTask(ControlTask):
         required_keys = {"x", "y", "z", "roll", "pitch", "yaw"}
         if not required_keys.issubset(pose.keys()):
             missing = required_keys - set(pose.keys())
-            logger.warning(f"CartesianIKTask {self._name}: missing pose keys {missing}")
+            logger.warning(f"TeleopIKTask {self._name}: missing pose keys {missing}")
             return False
 
-        position = np.array([pose["x"], pose["y"], pose["z"]])
-        rotation = pinocchio.rpy.rpyToMatrix(pose["roll"], pose["pitch"], pose["yaw"])
-        target_se3 = pinocchio.SE3(rotation, position)
+        target_se3 = PinocchioIK.pose_dict_to_se3(pose)
 
         with self._lock:
             self._target_pose = target_se3
@@ -426,36 +388,17 @@ class CartesianIKTask(ControlTask):
 
         return True
 
-    def _pose_to_se3(self, pose: Pose | PoseStamped) -> pinocchio.SE3:
-        """Convert a Pose message to pinocchio SE3.
-
-        Uses quaternion directly to avoid Euler angle conversion issues.
-        """
-        # Handle both Pose and PoseStamped
-        if hasattr(pose, "position"):
-            # Assume Pose or PoseStamped with position/orientation attributes
-            position = np.array([pose.x, pose.y, pose.z])
-            quat = pose.orientation
-            rotation = pinocchio.Quaternion(quat.w, quat.x, quat.y, quat.z).toRotationMatrix()
-        else:
-            # Assume it has x, y, z directly
-            position = np.array([pose.x, pose.y, pose.z])
-            quat = pose.orientation
-            rotation = pinocchio.Quaternion(quat.w, quat.x, quat.y, quat.z).toRotationMatrix()
-
-        return pinocchio.SE3(rotation, position)
-
     def start(self) -> None:
         """Activate the task (start accepting and outputting commands)."""
         with self._lock:
             self._active = True
-        logger.info(f"CartesianIKTask {self._name} started")
+        logger.info(f"TeleopIKTask {self._name} started")
 
     def stop(self) -> None:
         """Deactivate the task (stop outputting commands)."""
         with self._lock:
             self._active = False
-        logger.info(f"CartesianIKTask {self._name} stopped")
+        logger.info(f"TeleopIKTask {self._name} stopped")
 
     def clear(self) -> None:
         """Clear current target, initial pose, and deactivate."""
@@ -463,7 +406,7 @@ class CartesianIKTask(ControlTask):
             self._target_pose = None
             self._initial_ee_pose = None
             self._active = False
-        logger.info(f"CartesianIKTask {self._name} cleared")
+        logger.info(f"TeleopIKTask {self._name} cleared")
 
     def capture_initial_pose(self, state: CoordinatorState) -> bool:
         """Capture current EE pose as the initial/base pose for delta mode.
@@ -480,19 +423,18 @@ class CartesianIKTask(ControlTask):
         q_current = self._get_current_joints(state)
         if q_current is None:
             logger.warning(
-                f"CartesianIKTask {self._name}: cannot capture initial pose, "
+                f"TeleopIKTask {self._name}: cannot capture initial pose, "
                 "joint state unavailable"
             )
             return False
 
-        pinocchio.forwardKinematics(self._model, self._data, q_current)
-        initial_pose = self._data.oMi[self._ee_joint_id].copy()
+        initial_pose = self._ik.forward_kinematics(q_current)
 
         with self._lock:
             self._initial_ee_pose = initial_pose
 
         logger.info(
-            f"CartesianIKTask {self._name}: captured initial EE pose at "
+            f"TeleopIKTask {self._name}: captured initial EE pose at "
             f"[{initial_pose.translation[0]:.3f}, {initial_pose.translation[1]:.3f}, "
             f"{initial_pose.translation[2]:.3f}]"
         )
@@ -518,8 +460,7 @@ class CartesianIKTask(ControlTask):
         if q_current is None:
             return None
 
-        pinocchio.forwardKinematics(self._model, self._data, q_current)
-        return self._data.oMi[self._ee_joint_id].copy()
+        return self._ik.forward_kinematics(q_current)
 
     def forward_kinematics(self, joint_positions: NDArray[np.floating[Any]]) -> pinocchio.SE3:
         """Compute end-effector pose from joint positions.
@@ -530,11 +471,10 @@ class CartesianIKTask(ControlTask):
         Returns:
             End-effector pose as SE3
         """
-        pinocchio.forwardKinematics(self._model, self._data, joint_positions)
-        return self._data.oMi[self._ee_joint_id].copy()
+        return self._ik.forward_kinematics(joint_positions)
 
 
 __all__ = [
-    "CartesianIKTask",
-    "CartesianIKTaskConfig",
+    "TeleopIKTask",
+    "TeleopIKTaskConfig",
 ]
