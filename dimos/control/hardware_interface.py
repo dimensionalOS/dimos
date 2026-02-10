@@ -71,6 +71,11 @@ class ConnectedHardware:
         self._current_mode: ControlMode | None = None
 
     @property
+    def adapter(self) -> ManipulatorAdapter:
+        """The underlying hardware adapter."""
+        return self._adapter
+
+    @property
     def hardware_id(self) -> HardwareId:
         """Unique ID for this hardware."""
         return self._component.hardware_id

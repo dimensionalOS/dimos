@@ -224,6 +224,43 @@ class ManipulationClient:
         return cast("bool", self._call("remove_obstacle", obstacle_id))
 
     # =========================================================================
+    # Gripper Methods
+    # =========================================================================
+
+    def set_gripper(self, position: float, robot_name: str | None = None) -> bool:
+        """Set gripper position in meters.
+
+        Args:
+            position: Gripper position in meters
+            robot_name: Robot to control (required if multiple robots configured)
+        """
+        return cast("bool", self._call("set_gripper", position, robot_name=robot_name))
+
+    def get_gripper(self, robot_name: str | None = None) -> float | None:
+        """Get gripper position in meters.
+
+        Args:
+            robot_name: Robot to query (required if multiple robots configured)
+        """
+        return cast("float | None", self._call("get_gripper", robot_name=robot_name))
+
+    def open_gripper(self, robot_name: str | None = None) -> bool:
+        """Open gripper fully.
+
+        Args:
+            robot_name: Robot to control (required if multiple robots configured)
+        """
+        return cast("bool", self._call("open_gripper", robot_name=robot_name))
+
+    def close_gripper(self, robot_name: str | None = None) -> bool:
+        """Close gripper fully.
+
+        Args:
+            robot_name: Robot to control (required if multiple robots configured)
+        """
+        return cast("bool", self._call("close_gripper", robot_name=robot_name))
+
+    # =========================================================================
     # Utility Methods
     # =========================================================================
 
@@ -289,6 +326,11 @@ def main() -> None:
         "sphere": c.sphere,
         "cylinder": c.cylinder,
         "remove": c.remove,
+        # Gripper methods
+        "set_gripper": c.set_gripper,
+        "get_gripper": c.get_gripper,
+        "open_gripper": c.open_gripper,
+        "close_gripper": c.close_gripper,
         # Utility methods
         "collision": c.collision,
         "reset": c.reset,
@@ -320,6 +362,12 @@ Obstacles:
   sphere("name", x, y, z, radius)                   # Add sphere
   cylinder("name", x, y, z, radius, length)         # Add cylinder
   remove("obstacle_id")                             # Remove obstacle
+
+Gripper:
+  open_gripper()              # Open gripper fully
+  close_gripper()             # Close gripper fully
+  set_gripper(0.05)           # Set gripper position (meters)
+  get_gripper()               # Get gripper position (meters)
 
 Utility:
   collision([0.1, ...])   # Check if config is collision-free

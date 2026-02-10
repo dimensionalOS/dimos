@@ -351,8 +351,9 @@ class XArmAdapter(ManipulatorAdapter):
         if not self._arm:
             return False
 
+        self._arm.set_gripper_enable(True)
         pos_mm = position * M_TO_MM
-        code: int = self._arm.set_gripper_position(pos_mm)
+        code: int = self._arm.set_gripper_position(pos_mm, wait=True)
         return code == 0
 
     # =========================================================================

@@ -502,6 +502,38 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             return getattr(task, method)(**kwargs)
 
     # =========================================================================
+    # Gripper
+    # =========================================================================
+
+    @rpc
+    def set_gripper_position(self, hardware_id: str, position: float) -> bool:
+        """Set gripper position on a specific hardware device.
+
+        Args:
+            hardware_id: ID of the hardware with the gripper
+            position: Gripper position in meters
+        """
+        with self._hardware_lock:
+            hw = self._hardware.get(hardware_id)
+            if hw is None:
+                logger.warning(f"Hardware '{hardware_id}' not found for gripper command")
+                return False
+            return hw.adapter.write_gripper_position(position)
+
+    @rpc
+    def get_gripper_position(self, hardware_id: str) -> float | None:
+        """Get gripper position from a specific hardware device.
+
+        Args:
+            hardware_id: ID of the hardware with the gripper
+        """
+        with self._hardware_lock:
+            hw = self._hardware.get(hardware_id)
+            if hw is None:
+                return None
+            return hw.adapter.read_gripper_position()
+
+    # =========================================================================
     # Lifecycle
     # =========================================================================
 

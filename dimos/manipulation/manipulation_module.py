@@ -514,7 +514,9 @@ class ManipulationModule(Module):
 
     def _get_coordinator_client(self) -> RPCClient | None:
         """Get or create coordinator RPC client (lazy init)."""
-        if not any(c.coordinator_task_name for _, c, _ in self._robots.values()):
+        if not any(
+            c.coordinator_task_name or c.gripper_hardware_id for _, c, _ in self._robots.values()
+        ):
             return None
         if self._coordinator_client is None:
             from dimos.control.coordinator import ControlCoordinator
@@ -649,6 +651,76 @@ class ManipulationModule(Module):
         if self._world_monitor is None:
             return False
         return self._world_monitor.remove_obstacle(obstacle_id)
+
+    # =========================================================================
+    # Gripper RPC Methods
+    # =========================================================================
+
+    def _get_gripper_hardware_id(self, robot_name: RobotName | None = None) -> str | None:
+        """Get gripper hardware ID for a robot."""
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return None
+        _, _, config, _ = robot
+        if not config.gripper_hardware_id:
+            logger.warning(f"No gripper_hardware_id configured for '{config.name}'")
+            return None
+        return config.gripper_hardware_id
+
+    @rpc
+    def set_gripper(self, position: float, robot_name: RobotName | None = None) -> bool:
+        """Set gripper position in meters.
+
+        Args:
+            position: Gripper position in meters
+            robot_name: Robot to control (required if multiple robots configured)
+        """
+        hw_id = self._get_gripper_hardware_id(robot_name)
+        if hw_id is None:
+            return False
+        client = self._get_coordinator_client()
+        if client is None:
+            logger.error("No coordinator client for gripper control")
+            return False
+        return bool(client.set_gripper_position(hw_id, position))
+
+    @rpc
+    def get_gripper(self, robot_name: RobotName | None = None) -> float | None:
+        """Get gripper position in meters.
+
+        Args:
+            robot_name: Robot to query (required if multiple robots configured)
+        """
+        hw_id = self._get_gripper_hardware_id(robot_name)
+        if hw_id is None:
+            return None
+        client = self._get_coordinator_client()
+        if client is None:
+            return None
+        result = client.get_gripper_position(hw_id)
+        return float(result) if result is not None else None
+
+    @rpc
+    def open_gripper(self, robot_name: RobotName | None = None) -> bool:
+        """Open gripper fully (0.85m opening).
+
+        Args:
+            robot_name: Robot to control (required if multiple robots configured)
+        """
+        return bool(self.set_gripper(0.85, robot_name))
+
+    @rpc
+    def close_gripper(self, robot_name: RobotName | None = None) -> bool:
+        """Close gripper fully.
+
+        Args:
+            robot_name: Robot to control (required if multiple robots configured)
+        """
+        return bool(self.set_gripper(0.0, robot_name))
+
+    # =========================================================================
+    # Lifecycle
+    # =========================================================================
 
     @rpc
     def stop(self) -> None:
