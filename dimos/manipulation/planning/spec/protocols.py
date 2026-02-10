@@ -178,6 +178,10 @@ class WorldSpec(Protocol):
         """Animate a path in visualization."""
         ...
 
+    def close(self) -> None:
+        """Release visualization resources."""
+        ...
+
 
 @runtime_checkable
 class KinematicsSpec(Protocol):
