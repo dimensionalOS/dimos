@@ -977,8 +977,7 @@ class DrakeWorld(WorldSpec):
     ) -> None:
         """Animate a path using the preview (yellow ghost) robot.
 
-        The live robot stays in place while the preview robot shows the planned path.
-        The entire animation runs on the Meshcat thread to satisfy Drake's thread affinity.
+        The preview stays visible after animation completes.
         """
         if self._meshcat is None or len(path) < 2:
             return
@@ -987,25 +986,17 @@ class DrakeWorld(WorldSpec):
         if robot_data is None or robot_data.preview_model_instance is None:
             return
 
-        def _do_animate() -> None:
-            import time
+        import time
 
-            self.show_preview(robot_id)
-            dt = duration / (len(path) - 1)
-            try:
-                for joint_state in path:
-                    positions = np.array(joint_state.position, dtype=np.float64)
-                    with self._lock:
-                        assert self._plant_context is not None
-                        self._set_preview_positions(self._plant_context, robot_id, positions)
-                    self.publish_visualization()
-                    time.sleep(dt)
-            finally:
-                self.hide_preview(robot_id)
-                self.publish_visualization()
-
-        # Submit to viz thread so ForcedPublish runs on the Meshcat creator thread
-        self._on_viz_thread(_do_animate)
+        self.show_preview(robot_id)
+        dt = duration / (len(path) - 1)
+        for joint_state in path:
+            positions = np.array(joint_state.position, dtype=np.float64)
+            with self._lock:
+                assert self._plant_context is not None
+                self._set_preview_positions(self._plant_context, robot_id, positions)
+            self.publish_visualization()
+            time.sleep(dt)
 
     def close(self) -> None:
         """Shut down the viz executor thread."""
