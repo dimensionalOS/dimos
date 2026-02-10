@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Any
@@ -52,6 +52,7 @@ try:
         Cylinder,
         GeometryInstance,
         GeometrySet,
+        IllustrationProperties,
         MakePhongIllustrationProperties,
         Meshcat,
         MeshcatVisualizer,
@@ -59,6 +60,7 @@ try:
         ProximityProperties,
         Rgba,
         Role,
+        RoleAssign,
         SceneGraph,
         Sphere,
     )
@@ -89,6 +91,8 @@ class _RobotData:
     joint_indices: list[int]  # Indices into plant's position vector
     ee_frame: Any  # BodyFrame for end-effector
     base_frame: Any  # BodyFrame for base
+    preview_model_instance: Any = None  # ModelInstanceIndex for preview (yellow) robot
+    preview_joint_indices: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -167,6 +171,12 @@ class DrakeWorld(WorldSpec):
             ).body_frame()
             base_frame = self._plant.GetBodyByName(config.base_link, model_instance).body_frame()
 
+            # Load a second copy of the URDF as the preview (yellow ghost) robot
+            preview_model_instance = None
+            if self._enable_viz:
+                preview_model_instance = self._load_urdf(config)
+                self._weld_base_if_needed(config, preview_model_instance)
+
             self._robots[robot_id] = _RobotData(
                 robot_id=robot_id,
                 config=config,
@@ -174,6 +184,7 @@ class DrakeWorld(WorldSpec):
                 joint_indices=[],
                 ee_frame=ee_frame,
                 base_frame=base_frame,
+                preview_model_instance=preview_model_instance,
             )
 
             logger.info(f"Added robot '{robot_id}' ({config.name})")
@@ -479,6 +490,35 @@ class DrakeWorld(WorldSpec):
             for obs_id in obstacle_ids:
                 self.remove_obstacle(obs_id)
 
+    # ============= Preview Robot Setup =============
+
+    def _set_preview_colors(self) -> None:
+        """Set all preview robot visual geometries to yellow/semi-transparent."""
+        source_id = self._plant.get_source_id()
+        preview_color = Rgba(1.0, 0.8, 0.0, 0.4)
+
+        for robot_data in self._robots.values():
+            if robot_data.preview_model_instance is None:
+                continue
+            for body_idx in self._plant.GetBodyIndices(robot_data.preview_model_instance):
+                body = self._plant.get_body(body_idx)
+                for geom_id in self._plant.GetVisualGeometriesForBody(body):
+                    props = IllustrationProperties()
+                    props.AddProperty("phong", "diffuse", preview_color)
+                    self._scene_graph.AssignRole(source_id, geom_id, props, RoleAssign.kReplace)
+
+    def _remove_preview_collision_roles(self) -> None:
+        """Remove proximity (collision) role from all preview robot geometries."""
+        source_id = self._plant.get_source_id()
+
+        for robot_data in self._robots.values():
+            if robot_data.preview_model_instance is None:
+                continue
+            for body_idx in self._plant.GetBodyIndices(robot_data.preview_model_instance):
+                body = self._plant.get_body(body_idx)
+                for geom_id in self._plant.GetCollisionGeometriesForBody(body):
+                    self._scene_graph.RemoveRole(source_id, geom_id, Role.kProximity)
+
     # ============= Lifecycle =============
 
     def finalize(self) -> None:
@@ -491,7 +531,7 @@ class DrakeWorld(WorldSpec):
             # Finalize plant
             self._plant.Finalize()
 
-            # Compute joint indices for each robot
+            # Compute joint indices for each robot (live + preview)
             for robot_id, robot_data in self._robots.items():
                 joint_indices: list[int] = []
                 for joint_name in robot_data.config.joint_names:
@@ -502,8 +542,27 @@ class DrakeWorld(WorldSpec):
                 robot_data.joint_indices = joint_indices
                 logger.debug(f"Robot '{robot_id}' joint indices: {joint_indices}")
 
+                # Compute preview joint indices
+                if robot_data.preview_model_instance is not None:
+                    preview_indices: list[int] = []
+                    for joint_name in robot_data.config.joint_names:
+                        joint = self._plant.GetJointByName(
+                            joint_name, robot_data.preview_model_instance
+                        )
+                        start_idx = joint.position_start()
+                        num_positions = joint.num_positions()
+                        preview_indices.extend(range(start_idx, start_idx + num_positions))
+                    robot_data.preview_joint_indices = preview_indices
+                    logger.debug(f"Robot '{robot_id}' preview joint indices: {preview_indices}")
+
             # Setup collision filters
             self._setup_collision_filters()
+
+            # Remove collision roles from preview robots (visual-only)
+            self._remove_preview_collision_roles()
+
+            # Set preview robots to yellow/semi-transparent
+            self._set_preview_colors()
 
             # Register obstacle source for dynamic obstacles
             self._obstacle_source_id = self._scene_graph.RegisterSource("dynamic_obstacles")
@@ -539,6 +598,9 @@ class DrakeWorld(WorldSpec):
                 self._meshcat_visualizer.ForcedPublish(
                     self._diagram.GetSubsystemContext(self._meshcat_visualizer, self._live_context)
                 )
+                # Hide all preview robots initially
+                for robot_id in self._robots:
+                    self.hide_preview(robot_id)
 
     @property
     def is_finalized(self) -> bool:
@@ -864,13 +926,48 @@ class DrakeWorld(WorldSpec):
                 self._diagram.GetSubsystemContext(self._meshcat_visualizer, ctx)
             )
 
+    def _set_preview_positions(
+        self, plant_ctx: Context, robot_id: WorldRobotID, positions: NDArray[np.float64]
+    ) -> None:
+        """Set preview robot positions in a plant context."""
+        robot_data = self._robots.get(robot_id)
+        if robot_data is None or robot_data.preview_model_instance is None:
+            return
+
+        full_positions = self._plant.GetPositions(plant_ctx).copy()
+        for i, idx in enumerate(robot_data.preview_joint_indices):
+            full_positions[idx] = positions[i]
+        self._plant.SetPositions(plant_ctx, full_positions)
+
+    def show_preview(self, robot_id: WorldRobotID) -> None:
+        """Show the preview (yellow ghost) robot in Meshcat."""
+        if self._meshcat is None:
+            return
+        robot_data = self._robots.get(robot_id)
+        if robot_data is None or robot_data.preview_model_instance is None:
+            return
+        model_name = self._plant.GetModelInstanceName(robot_data.preview_model_instance)
+        self._meshcat.SetProperty(f"visualizer/{model_name}", "visible", True)
+
+    def hide_preview(self, robot_id: WorldRobotID) -> None:
+        """Hide the preview (yellow ghost) robot in Meshcat."""
+        if self._meshcat is None:
+            return
+        robot_data = self._robots.get(robot_id)
+        if robot_data is None or robot_data.preview_model_instance is None:
+            return
+        model_name = self._plant.GetModelInstanceName(robot_data.preview_model_instance)
+        self._meshcat.SetProperty(f"visualizer/{model_name}", "visible", False)
+
     def animate_path(
         self,
         robot_id: WorldRobotID,
         path: JointPath,
         duration: float = 3.0,
     ) -> None:
-        """Animate a path in Meshcat visualization.
+        """Animate a path using the preview (yellow ghost) robot.
+
+        The live robot stays in place while the preview robot shows the planned path.
 
         Args:
             robot_id: Robot to animate
@@ -882,22 +979,24 @@ class DrakeWorld(WorldSpec):
         if self._meshcat is None or len(path) < 2:
             return
 
-        # Capture current states of all OTHER robots so they don't snap to zero
-        other_robot_states: dict[WorldRobotID, JointState] = {}
-        for rid, _robot_data in self._robots.items():
-            if rid != robot_id:
-                other_robot_states[rid] = self.get_joint_state(self.get_live_context(), rid)
+        robot_data = self._robots.get(robot_id)
+        if robot_data is None or robot_data.preview_model_instance is None:
+            return
+
+        self.show_preview(robot_id)
 
         dt = duration / (len(path) - 1)
-        for joint_state in path:
-            with self.scratch_context() as ctx:
-                # Restore other robots to their current states
-                for rid, state in other_robot_states.items():
-                    self.set_joint_state(ctx, rid, state)
-                # Set animated robot's state
-                self.set_joint_state(ctx, robot_id, joint_state)
-                self.publish_visualization(ctx)
-            time.sleep(dt)
+        try:
+            for joint_state in path:
+                positions = np.array(joint_state.position, dtype=np.float64)
+                with self._lock:
+                    self._set_preview_positions(self._plant_context, robot_id, positions)
+                # Publish live context — renders both live (current) and preview (animated)
+                self.publish_visualization()
+                time.sleep(dt)
+        finally:
+            self.hide_preview(robot_id)
+            self.publish_visualization()
 
     # ============= Direct Access (use with caution) =============
 
