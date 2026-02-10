@@ -104,7 +104,7 @@ uv sync --extra cpu --extra dev
 # CUDA install
 uv sync --extra cuda --extra dev
 
-# Jetson Jetpack 6.2 (Python 3.10 only)
+# Jetson Jetpack 6.2 with CUDA 12.6 (Python >=3.10)
 uv sync --extra jetson-jp6-cuda126 --extra dev
 
 # Copy and configure environment variables
