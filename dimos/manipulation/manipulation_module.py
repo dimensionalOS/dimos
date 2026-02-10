@@ -492,7 +492,7 @@ class ManipulationModule(Module):
             return False
 
         # Interpolate and animate
-        interpolated = interpolate_path(planned_path, resolution=0.02)
+        interpolated = interpolate_path(planned_path, resolution=0.1)
         self._world_monitor.world.animate_path(robot_id, interpolated, duration)
         return True
 
