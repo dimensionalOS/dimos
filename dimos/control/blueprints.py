@@ -35,6 +35,8 @@ from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import JointState
+from dimos.teleop.quest.quest_types import QuestButtons
+
 
 # =============================================================================
 # Single Arm Blueprints
@@ -399,6 +401,14 @@ def _get_piper_model_path() -> str:
     return str(piper_path / "mujoco_model" / "piper_no_gripper_description.xml")
 
 
+def _get_xarm6_model_path() -> str:
+    """Get path to xarm6 URDF model for IK solver."""
+    from dimos.utils.data import get_data
+
+    xarm_path = get_data("xarm_description")
+    return str(xarm_path / "urdf" / "xarm6.urdf")
+
+
 # Mock 6-DOF arm with CartesianIK
 coordinator_cartesian_ik_mock = control_coordinator(
     tick_rate=100.0,
@@ -467,6 +477,136 @@ coordinator_cartesian_ik_piper = control_coordinator(
 
 
 # =============================================================================
+# Teleop IK Blueprints (VR teleoperation with internal Pinocchio IK)
+# =============================================================================
+
+# Single XArm6 with TeleopIK
+coordinator_teleop_xarm6 = control_coordinator(
+    tick_rate=100.0,
+    publish_joint_state=True,
+    joint_state_frame_id="coordinator",
+    hardware=[
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            adapter_type="xarm",
+            address="192.168.1.210",
+            auto_enable=True,
+        ),
+    ],
+    tasks=[
+        TaskConfig(
+            name="teleop_xarm",
+            type="teleop_ik",
+            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
+            priority=10,
+            model_path=_get_xarm6_model_path(),
+            ee_joint_id=6,
+            hand="right",
+        ),
+    ],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
+    }
+)
+
+# Single Piper with TeleopIK
+coordinator_teleop_piper = control_coordinator(
+    tick_rate=100.0,
+    publish_joint_state=True,
+    joint_state_frame_id="coordinator",
+    hardware=[
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            adapter_type="piper",
+            address="can0",
+            auto_enable=True,
+        ),
+    ],
+    tasks=[
+        TaskConfig(
+            name="teleop_piper",
+            type="teleop_ik",
+            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
+            priority=10,
+            model_path=_get_piper_model_path(),
+            ee_joint_id=6,
+            hand="left",
+        ),
+    ],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
+    }
+)
+
+# Dual arm teleop: XArm6 + Piper with TeleopIK
+coordinator_teleop_dual = control_coordinator(
+    tick_rate=100.0,
+    publish_joint_state=True,
+    joint_state_frame_id="coordinator",
+    hardware=[
+        HardwareComponent(
+            hardware_id="xarm_arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("xarm_arm", 6),
+            adapter_type="xarm",
+            address="192.168.1.210",
+            auto_enable=True,
+        ),
+        HardwareComponent(
+            hardware_id="piper_arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("piper_arm", 6),
+            adapter_type="piper",
+            address="can0",
+            auto_enable=True,
+        ),
+    ],
+    tasks=[
+        TaskConfig(
+            name="teleop_xarm",
+            type="teleop_ik",
+            joint_names=[f"xarm_arm_joint{i + 1}" for i in range(6)],
+            priority=10,
+            model_path=_get_xarm6_model_path(),
+            ee_joint_id=6,
+            hand="left",
+        ),
+        TaskConfig(
+            name="teleop_piper",
+            type="teleop_ik",
+            joint_names=[f"piper_arm_joint{i + 1}" for i in range(6)],
+            priority=10,
+            model_path=_get_piper_model_path(),
+            ee_joint_id=6,
+            hand="right",
+        ),
+    ],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
+    }
+)
+
+
+# =============================================================================
 # Raw Blueprints (for programmatic setup)
 # =============================================================================
 
@@ -493,6 +633,10 @@ __all__ = [
     "coordinator_cartesian_ik_piper",
     # Streaming control
     "coordinator_combined_xarm6",
+    # Teleop IK
+    "coordinator_teleop_dual",
+    "coordinator_teleop_piper",
+    "coordinator_teleop_xarm6",
     # Dual arm
     "coordinator_dual_mock",
     "coordinator_dual_xarm",

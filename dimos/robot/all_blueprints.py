@@ -17,7 +17,10 @@
 
 all_blueprints = {
     "arm-teleop": "dimos.teleop.blueprints:arm_teleop",
+    "arm-teleop-dual": "dimos.teleop.blueprints:arm_teleop_dual",
+    "arm-teleop-piper": "dimos.teleop.blueprints:arm_teleop_piper",
     "arm-teleop-visualizing": "dimos.teleop.blueprints:arm_teleop_visualizing",
+    "arm-teleop-xarm6": "dimos.teleop.blueprints:arm_teleop_xarm6",
     "coordinator-basic": "dimos.control.blueprints:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.control.blueprints:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.control.blueprints:coordinator_cartesian_ik_piper",
@@ -27,6 +30,8 @@ all_blueprints = {
     "coordinator-mock": "dimos.control.blueprints:coordinator_mock",
     "coordinator-piper": "dimos.control.blueprints:coordinator_piper",
     "coordinator-piper-xarm": "dimos.control.blueprints:coordinator_piper_xarm",
+    "coordinator-teleop-dual": "dimos.control.blueprints:coordinator_teleop_dual",
+    "coordinator-teleop-piper": "dimos.control.blueprints:coordinator_teleop_piper",
     "coordinator-teleop-xarm6": "dimos.control.blueprints:coordinator_teleop_xarm6",
     "coordinator-velocity-xarm6": "dimos.control.blueprints:coordinator_velocity_xarm6",
     "coordinator-xarm6": "dimos.control.blueprints:coordinator_xarm6",
