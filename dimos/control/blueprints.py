@@ -405,7 +405,7 @@ def _get_xarm6_model_path() -> str:
     from dimos.utils.data import get_data
 
     xarm_path = get_data("xarm_description")
-    return str(xarm_path / "urdf" / "xarm6.urdf")
+    return str(xarm_path / "urdf" / "xarm6" / "xarm6.urdf")
 
 
 # Mock 6-DOF arm with CartesianIK
