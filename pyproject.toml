@@ -411,4 +411,5 @@ ignore = [
     "*/package-lock.json",
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
+    "dimos/manipulation/manipulation_module.py",
 ]
