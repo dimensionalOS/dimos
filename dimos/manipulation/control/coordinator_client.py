@@ -123,20 +123,25 @@ class CoordinatorClient:
         return self._rpc.get_joint_positions() or {}
 
     def get_trajectory_status(self, task_name: str) -> dict[str, Any]:
-        """Get status of a trajectory task."""
-        return self._rpc.get_trajectory_status(task_name) or {}
+        """Get status of a trajectory task via task_invoke."""
+        result = self._rpc.task_invoke(task_name, "get_status", {})
+        if isinstance(result, dict):
+            return result
+        return {}
 
     # =========================================================================
-    # Trajectory execution (RPC calls)
+    # Trajectory execution (via task_invoke)
     # =========================================================================
 
     def execute_trajectory(self, task_name: str, trajectory: JointTrajectory) -> bool:
-        """Execute a trajectory on a task."""
-        return self._rpc.execute_trajectory(task_name, trajectory) or False
+        """Execute a trajectory on a task via task_invoke."""
+        result = self._rpc.task_invoke(task_name, "execute", {"trajectory": trajectory})
+        return bool(result)
 
     def cancel_trajectory(self, task_name: str) -> bool:
-        """Cancel an active trajectory."""
-        return self._rpc.cancel_trajectory(task_name) or False
+        """Cancel an active trajectory via task_invoke."""
+        result = self._rpc.task_invoke(task_name, "cancel", {})
+        return bool(result)
 
     # =========================================================================
     # Task selection and setup
