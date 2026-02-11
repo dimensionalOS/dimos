@@ -70,6 +70,7 @@ all_blueprints = {
     "unitree-go2-temporal-memory": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_temporal_memory:unitree_go2_temporal_memory",
     "unitree-go2-vlm-stream-test": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_vlm_stream_test:unitree_go2_vlm_stream_test",
     "xarm-perception": "dimos.manipulation.manipulation_blueprints:xarm_perception",
+    "xarm-perception-agent": "dimos.manipulation.manipulation_blueprints:xarm_perception_agent",
     "xarm6-planner-only": "dimos.manipulation.manipulation_blueprints:xarm6_planner_only",
     "xarm7-planner-coordinator": "dimos.manipulation.manipulation_blueprints:xarm7_planner_coordinator",
     "xarm7-trajectory-sim": "dimos.simulation.sim_blueprints:xarm7_trajectory_sim",
