@@ -66,20 +66,21 @@ class TaskConfig:
 
     Attributes:
         name: Task name (e.g., "traj_arm")
-        type: Task type ("trajectory", "servo", "velocity", "cartesian_ik")
+        type: Task type ("trajectory", "servo", "velocity", "cartesian_ik", "teleop_ik")
         joint_names: List of joint names this task controls
         priority: Task priority (higher wins arbitration)
-        model_path: Path to URDF/MJCF for IK solver (cartesian_ik only)
-        ee_joint_id: End-effector joint ID in model (cartesian_ik only)
+        model_path: Path to URDF/MJCF for IK solver (cartesian_ik/teleop_ik only)
+        ee_joint_id: End-effector joint ID in model (cartesian_ik/teleop_ik only)
     """
 
     name: str
     type: str = "trajectory"
     joint_names: list[str] = field(default_factory=lambda: [])
     priority: int = 10
-    # Cartesian IK specific
+    # Cartesian IK / Teleop IK specific
     model_path: str | None = None
     ee_joint_id: int = 6
+    hand: str = ""  # teleop_ik only: "left" or "right" controller
 
 
 @dataclass
@@ -278,6 +279,23 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                     model_path=cfg.model_path,
                     ee_joint_id=cfg.ee_joint_id,
                     priority=cfg.priority,
+                ),
+            )
+
+        elif task_type == "teleop_ik":
+            from dimos.control.tasks.teleop_task import TeleopIKTask, TeleopIKTaskConfig
+
+            if cfg.model_path is None:
+                raise ValueError(f"TeleopIKTask '{cfg.name}' requires model_path in TaskConfig")
+
+            return TeleopIKTask(
+                cfg.name,
+                TeleopIKTaskConfig(
+                    joint_names=cfg.joint_names,
+                    model_path=cfg.model_path,
+                    ee_joint_id=cfg.ee_joint_id,
+                    priority=cfg.priority,
+                    hand=cfg.hand,
                 ),
             )
 
@@ -583,7 +601,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 logger.warning(f"Could not subscribe to joint_command: {e}")
 
         # Subscribe to cartesian commands if any cartesian_ik tasks configured
-        has_cartesian_ik = any(t.type == "cartesian_ik" for t in self.config.tasks)
+        has_cartesian_ik = any(t.type in ("cartesian_ik", "teleop_ik") for t in self.config.tasks)
         if has_cartesian_ik:
             try:
                 if self.cartesian_command.transport:

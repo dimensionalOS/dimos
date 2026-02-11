@@ -42,8 +42,6 @@ from dimos.control.task import (
 from dimos.manipulation.planning.kinematics.pinocchio_ik import (
     PinocchioIK,
     PinocchioIKConfig,
-    check_joint_delta,
-    get_worst_joint_delta,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -86,8 +84,9 @@ class TeleopIKTaskConfig:
     ik_damp: float = 1e-2
     ik_dt: float = 1.0
 
-    max_joint_delta_deg: float = 20.0  # ~500°/s at 100Hz
-    max_velocity: float = 10.0
+    max_joint_delta_deg: float = 5.0  # ~500°/s at 100Hz
+    max_velocity: float = 5.0
+    hand: str = ""  # "left" or "right" — which controller's primary button to listen to
 
 
 class TeleopIKTask(ControlTask):
@@ -160,6 +159,7 @@ class TeleopIKTask(ControlTask):
         self._target_pose: pinocchio.SE3 | None = None
         self._last_update_time: float = 0.0
         self._active = False
+        self._engaged = False  # Controlled by on_buttons toggle; gates set_target_pose
 
         # Initial EE pose (captured when tracking starts, used for delta mode)
         self._initial_ee_pose: pinocchio.SE3 | None = None
@@ -167,8 +167,8 @@ class TeleopIKTask(ControlTask):
         # Cache last successful IK solution for warm-starting
         self._last_q_solution: NDArray[np.floating[Any]] | None = None
 
-        # Button edge detection
-        self._prev_engage = False
+        # Rising edge detection for primary button (engage/disengage toggle)
+        self._prev_primary: bool = False
 
         logger.info(
             f"TeleopIKTask {name} initialized with model: {config.model_path}, "
@@ -261,23 +261,18 @@ class TeleopIKTask(ControlTask):
                 f"(error={final_error:.4f}), using partial solution"
             )
 
-        # Safety check: reject if any joint delta exceeds limit
-        if not check_joint_delta(q_solution, q_current, self._config.max_joint_delta_deg):
-            worst_idx, worst_deg = get_worst_joint_delta(q_solution, q_current)
-            logger.warning(
-                f"TeleopIKTask {self._name}: rejecting motion - "
-                f"joint {self._joint_names_list[worst_idx]} delta "
-                f"{worst_deg:.1f}° exceeds limit {self._config.max_joint_delta_deg}°"
-            )
-            return None
-
         # Cache solution for next warm-start
         with self._lock:
             self._last_q_solution = q_solution.copy()
 
+        positions = q_solution.flatten().tolist()
+        # degrees = [f"{np.degrees(p):.1f}" for p in positions]
+        # logger.info(f"TeleopIKTask {self._name}: {dict(zip(self._joint_names_list, degrees))}")
+        # return None
+        # TODO: uncomment when joint values look good
         return JointCommandOutput(
             joint_names=self._joint_names_list,
-            positions=q_solution.flatten().tolist(),
+            positions=positions,
             mode=ControlMode.SERVO_POSITION,
         )
 
@@ -311,26 +306,42 @@ class TeleopIKTask(ControlTask):
     # Task-specific methods
     # =========================================================================
 
-    def on_buttons(self, msg: QuestButtons) -> None:
-        """Handle engage/disengage from button state.
+    def engage(self) -> None:
+        """Prepare for new tracking session.
 
-        Uses left X button with rising/falling edge detection:
-        - Rising edge: reset initial pose so next compute() recaptures
-        - Falling edge: clear task (stop tracking)
+        Resets initial EE pose so next compute() recaptures from current position.
+        Called via on_buttons when primary button toggles to engaged.
         """
-        engage = msg.left_x
+        logger.info(f"TeleopIKTask {self._name}: engage")
+        with self._lock:
+            self._engaged = True
+            self._initial_ee_pose = None
 
-        if engage and not self._prev_engage:
-            # Rising edge: prepare for new tracking session
-            logger.info(f"TeleopIKTask {self._name}: engage")
-            with self._lock:
-                self._initial_ee_pose = None
-        elif not engage and self._prev_engage:
-            # Falling edge: stop tracking
-            logger.info(f"TeleopIKTask {self._name}: disengage")
-            self.clear()
+    def disengage(self) -> None:
+        """Stop tracking. Called via on_buttons when primary button toggles to disengaged."""
+        logger.info(f"TeleopIKTask {self._name}: disengage")
+        self.clear()
 
-        self._prev_engage = engage
+    def on_buttons(self, msg: QuestButtons) -> None:
+        """Toggle engage/disengage on primary button rising edge.
+
+        Checks only the button matching self._config.hand (left_x or right_a).
+        If hand is not set, listens to both.
+        """
+        hand = self._config.hand
+        if hand == "left":
+            primary = msg.left_x
+        elif hand == "right":
+            primary = msg.right_a
+        else:
+            primary = msg.left_x or msg.right_a
+
+        if primary and not self._prev_primary:
+            if self._engaged:
+                self.disengage()
+            else:
+                self.engage()
+        self._prev_primary = primary
 
     def set_target_pose(self, pose: Pose | PoseStamped, t_now: float) -> bool:
         """Set target end-effector pose from delta.
@@ -403,6 +414,7 @@ class TeleopIKTask(ControlTask):
             self._target_pose = None
             self._initial_ee_pose = None
             self._active = False
+            self._engaged = False
         logger.info(f"TeleopIKTask {self._name} cleared")
 
     def capture_initial_pose(self, state: CoordinatorState) -> bool:
@@ -436,38 +448,11 @@ class TeleopIKTask(ControlTask):
         )
         return True
 
-    def is_tracking(self) -> bool:
-        """Check if actively receiving and outputting commands."""
-        with self._lock:
-            return self._active and self._target_pose is not None
 
-    def get_current_ee_pose(self, state: CoordinatorState) -> pinocchio.SE3 | None:
-        """Get current end-effector pose via forward kinematics.
 
-        Useful for getting initial pose before starting tracking.
 
-        Args:
-            state: Current coordinator state
 
-        Returns:
-            Current EE pose as SE3, or None if joint state unavailable
-        """
-        q_current = self._get_current_joints(state)
-        if q_current is None:
-            return None
 
-        return self._ik.forward_kinematics(q_current)
-
-    def forward_kinematics(self, joint_positions: NDArray[np.floating[Any]]) -> pinocchio.SE3:
-        """Compute end-effector pose from joint positions.
-
-        Args:
-            joint_positions: Joint angles in radians
-
-        Returns:
-            End-effector pose as SE3
-        """
-        return self._ik.forward_kinematics(joint_positions)
 
 
 __all__ = [
