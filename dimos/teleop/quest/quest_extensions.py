@@ -24,15 +24,17 @@ Available subclasses:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from dimos.core import Out
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
 from dimos.teleop.quest.quest_teleop_module import Hand, QuestTeleopConfig, QuestTeleopModule
 from dimos.teleop.utils.teleop_visualization import (
     visualize_buttons,
     visualize_pose,
 )
+
+if TYPE_CHECKING:
+    from dimos.core import Out
 
 
 @dataclass
@@ -112,9 +114,7 @@ class ArmTeleopModule(QuestTeleopModule):
         super().__init__(*args, **kwargs)
         self._prev_primary: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
         cfg: ArmTeleopConfig = self.config  # type: ignore[assignment]
-        self._task_names: dict[Hand, str] = {
-            Hand[k.upper()]: v for k, v in cfg.task_names.items()
-        }
+        self._task_names: dict[Hand, str] = {Hand[k.upper()]: v for k, v in cfg.task_names.items()}
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Stamp frame_id with task name and publish."""

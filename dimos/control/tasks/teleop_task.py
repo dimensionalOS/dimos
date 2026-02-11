@@ -449,12 +449,6 @@ class TeleopIKTask(ControlTask):
         return True
 
 
-
-
-
-
-
-
 __all__ = [
     "TeleopIKTask",
     "TeleopIKTaskConfig",

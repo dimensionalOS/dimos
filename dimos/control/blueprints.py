@@ -37,7 +37,6 @@ from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import JointState
 from dimos.teleop.quest.quest_types import QuestButtons
 
-
 # =============================================================================
 # Single Arm Blueprints
 # =============================================================================
@@ -633,10 +632,6 @@ __all__ = [
     "coordinator_cartesian_ik_piper",
     # Streaming control
     "coordinator_combined_xarm6",
-    # Teleop IK
-    "coordinator_teleop_dual",
-    "coordinator_teleop_piper",
-    "coordinator_teleop_xarm6",
     # Dual arm
     "coordinator_dual_mock",
     "coordinator_dual_xarm",
@@ -644,6 +639,10 @@ __all__ = [
     "coordinator_mock",
     "coordinator_piper",
     "coordinator_piper_xarm",
+    # Teleop IK
+    "coordinator_teleop_dual",
+    "coordinator_teleop_piper",
+    "coordinator_teleop_xarm6",
     "coordinator_teleop_xarm6",
     "coordinator_velocity_xarm6",
     "coordinator_xarm6",

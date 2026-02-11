@@ -104,4 +104,10 @@ arm_teleop_dual = autoconnect(
 )
 
 
-__all__ = ["arm_teleop", "arm_teleop_dual", "arm_teleop_piper", "arm_teleop_visualizing", "arm_teleop_xarm6"]
+__all__ = [
+    "arm_teleop",
+    "arm_teleop_dual",
+    "arm_teleop_piper",
+    "arm_teleop_visualizing",
+    "arm_teleop_xarm6",
+]
