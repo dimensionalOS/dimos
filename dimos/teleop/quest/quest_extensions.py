@@ -16,12 +16,14 @@
 """Quest teleop module extensions and subclasses.
 
 Available subclasses:
-    - ArmTeleopModule: Per-hand toggle engage (X/A press to toggle)
+    - ArmTeleopModule: Per-hand toggle engage (X/A press to toggle), task name routing
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
     - VisualizingTeleopModule: Adds Rerun visualization (uses toggle engage)
 """
 
-from dataclasses import dataclass
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 from typing import Any
 
 from dimos.core import Out
@@ -75,11 +77,28 @@ class TwistTeleopModule(QuestTeleopModule):
             self.right_twist.publish(twist)
 
 
+@dataclass
+class ArmTeleopConfig(QuestTeleopConfig):
+    """Configuration for ArmTeleopModule.
+
+    Attributes:
+        task_names: Mapping of Hand -> coordinator task name. Used to set
+            frame_id on output PoseStamped so the coordinator routes each
+            hand's commands to the correct TeleopIKTask.
+    """
+
+    task_names: dict[str, str] = field(default_factory=dict)
+
+
 class ArmTeleopModule(QuestTeleopModule):
-    """Quest teleop with per-hand toggle engage.
+    """Quest teleop with per-hand toggle engage and task name routing.
 
     Each controller's primary button (X for left, A for right)
     toggles that hand's engage state independently.
+
+    When task_names is configured, output PoseStamped messages have their
+    frame_id set to the task name, enabling the coordinator to route
+    each hand's commands to the correct TeleopIKTask.
 
     Outputs:
         - left_controller_output: PoseStamped (inherited)
@@ -87,9 +106,27 @@ class ArmTeleopModule(QuestTeleopModule):
         - buttons: QuestButtons (inherited)
     """
 
+    default_config = ArmTeleopConfig
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._prev_primary: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
+        cfg: ArmTeleopConfig = self.config  # type: ignore[assignment]
+        self._task_names: dict[Hand, str] = {
+            Hand[k.upper()]: v for k, v in cfg.task_names.items()
+        }
+
+    def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
+        """Stamp frame_id with task name and publish."""
+        task_name = self._task_names.get(hand)
+        if task_name:
+            output_msg = PoseStamped(
+                position=output_msg.position,
+                orientation=output_msg.orientation,
+                ts=output_msg.ts,
+                frame_id=task_name,
+            )
+        super()._publish_msg(hand, output_msg)
 
     def _handle_engage(self) -> None:
         """Toggle per-hand engage on primary button rising edge."""
@@ -147,6 +184,7 @@ arm_teleop_module = ArmTeleopModule.blueprint
 visualizing_teleop_module = VisualizingTeleopModule.blueprint
 
 __all__ = [
+    "ArmTeleopConfig",
     "ArmTeleopModule",
     "TwistTeleopModule",
     "VisualizingTeleopModule",
