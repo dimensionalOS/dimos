@@ -24,3 +24,7 @@ Closes DIM-XXX
 ## How to Test
 
 <!-- MUST be reproducible. If this section is weak, reviewers can't approve confidently. -->
+
+## CLA
+
+- [ ] I have read and approved the [Contributor License Agreement](https://github.com/dimensionalOS/dimos/blob/main/CLA.md).
