@@ -214,6 +214,8 @@ class TeleopIKTask(ControlTask):
 
         # Apply delta to initial pose: target = initial + delta
         with self._lock:
+            if self._initial_ee_pose is None:
+                return None
             target_pose = pinocchio.SE3(
                 delta_pose.rotation @ self._initial_ee_pose.rotation,
                 self._initial_ee_pose.translation + delta_pose.translation,
@@ -277,7 +279,6 @@ class TeleopIKTask(ControlTask):
 
         Checks only the button matching self._config.hand (left_x or right_a).
         If hand is not set, listens to both.
-        Also stores button state for future gripper control.
         """
         hand = self._config.hand
         if hand == "left":
