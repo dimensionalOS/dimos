@@ -124,9 +124,9 @@ class CoordinatorClient:
 
     def get_trajectory_status(self, task_name: str) -> dict[str, Any]:
         """Get status of a trajectory task via task_invoke."""
-        result = self._rpc.task_invoke(task_name, "get_status", {})
-        if isinstance(result, dict):
-            return result
+        result = self._rpc.task_invoke(task_name, "get_state", {})
+        if result is not None:
+            return {"state": int(result), "task": task_name}
         return {}
 
     # =========================================================================
