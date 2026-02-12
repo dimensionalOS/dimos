@@ -487,7 +487,10 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 logger.warning(f"Cartesian command for unknown task: {task_name}")
                 return
 
-            task.on_cartesian_command(msg, t_now)  # type: ignore[attr-defined]
+            if hasattr(task, "on_cartesian_command"):
+                task.on_cartesian_command(msg, t_now)  # type: ignore[attr-defined]
+            else:
+                logger.warning(f"Task {task_name} does not support on_cartesian_command")
 
     def _on_buttons(self, msg: QuestButtons) -> None:
         """Forward button state to all tasks that accept it."""
