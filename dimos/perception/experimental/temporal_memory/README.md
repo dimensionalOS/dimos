@@ -30,3 +30,6 @@ Notes
 - Evidence is extracted in sliding windows, so queries can refer to recent or past entities.
 - Distance estimation can run in the background to enrich graph relations.
 - If you want a different output directory, set `TemporalMemoryConfig(output_dir=...)`.
+
+To visualize, run
+` ` and open in `localhost:8080` in your browser.

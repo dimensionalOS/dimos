@@ -227,6 +227,61 @@ class EntityGraphDB:
             "metadata": json.loads(row["metadata"]) if row["metadata"] else None,
         }
 
+    def update_entity(
+        self,
+        entity_id: str,
+        descriptor: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        """
+        Update an entity's descriptor and/or metadata.
+
+        Args:
+            entity_id: Entity ID to update
+            descriptor: New descriptor (optional)
+            metadata: New metadata dict (optional, will merge with existing)
+
+        Returns:
+            True if entity was updated, False if not found
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # Get existing entity
+        cursor.execute("SELECT metadata FROM entities WHERE entity_id = ?", (entity_id,))
+        row = cursor.fetchone()
+        if row is None:
+            return False
+
+        # Merge metadata if provided
+        existing_metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+        if metadata:
+            existing_metadata.update(metadata)
+
+        # Update descriptor and/or metadata
+        updates = []
+        params: list[Any] = []
+
+        if descriptor is not None:
+            updates.append("descriptor = ?")
+            params.append(descriptor)
+
+        if metadata is not None:
+            updates.append("metadata = ?")
+            params.append(json.dumps(existing_metadata))
+
+        if not updates:
+            return True  # Nothing to update
+
+        params.append(entity_id)
+        cursor.execute(
+            f"UPDATE entities SET {', '.join(updates)} WHERE entity_id = ?",
+            params,
+        )
+        conn.commit()
+        logger.debug(f"Updated entity {entity_id}")
+        return True
+
     def get_all_entities(self, entity_type: str | None = None) -> list[dict[str, Any]]:
         """Get all entities, optionally filtered by type."""
         conn = self._get_connection()

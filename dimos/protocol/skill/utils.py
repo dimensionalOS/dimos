@@ -32,6 +32,14 @@ def interpret_tool_call_args(
         return args["args"], args["kwargs"]
     if args.keys() == {"kwargs"}:
         return [], args["kwargs"]
+
+    # Check if all keys are numeric strings (e.g., {'0': 'value', '1': 'value2'})
+    # This happens when the agent returns positional args as a dict with index keys
+    if args and all(key.isdigit() for key in args.keys()):
+        # Convert to positional args list, sorted by index
+        sorted_items = sorted(args.items(), key=lambda x: int(x[0]))
+        return [v for _, v in sorted_items], {}
+
     if args.keys() != {"args"}:
         return [], args
 

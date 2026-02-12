@@ -54,6 +54,7 @@ from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.module3D import Detection3DModule, detection3d_module
 from dimos.perception.detection.moduleDB import ObjectDBModule, detection_db_module
 from dimos.perception.detection.person_tracker import PersonTracker, person_tracker_module
+from dimos.perception.experimental.temporal_memory import TemporalMemoryConfig, temporal_memory
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
@@ -265,4 +266,9 @@ unitree_g1_full = autoconnect(
     unitree_g1_shm,
     _agentic_skills,
     keyboard_teleop(),
+    temporal_memory(
+        config=TemporalMemoryConfig(
+            clear_memory_on_start=True,
+        ),
+    ),
 )

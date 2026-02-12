@@ -250,6 +250,24 @@ def build_query_prompt(
 - If the context says entities were present but you don't see them in the current frame, mention both: what was recently detected AND what you currently see
 - For duration questions, use the 'duration_s' field from 'entity_timestamps' if available
 
+**Entity Renaming:**
+If the user asks to rename an entity (e.g., "rename the person in the brown jacket to john" or "call that person john"), you should:
+1. Identify which entity they're referring to based on the descriptor
+2. If there are multiple possible matches, list them and ask for clarification (DO NOT rename if ambiguous)
+3. If there's exactly one clear match, output a rename command in this format at the END of your response:
+
+RENAME_ENTITY: entity_id="E1" new_name="stash"
+
+Examples:
+- User: "rename the person in the brown jacket to john"
+  - If E8 is "person wearing brown jacket" → answer normally, then add: RENAME_ENTITY: entity_id="E8" new_name="john", so it'll be "john, person in brown jacket" instead of "unknown entity..."
+  - If both E8 and E9 are wearing brown jackets → respond: "I found multiple entities wearing brown jackets: E8 (person in light brown jacket) and E9 (person in dark brown jacket). Which one did you mean?"
+
+- User: "call that laptop 'work computer'"
+  - If E5 is "silver laptop" → answer normally, then add: RENAME_ENTITY: entity_id="E5" new_name="work computer"
+
+**Important:** Only output RENAME_ENTITY if you're certain which entity the user means. When in doubt, ask for clarification and list the possible matches.
+
 Provide a concise answer.
 """
     return prompt

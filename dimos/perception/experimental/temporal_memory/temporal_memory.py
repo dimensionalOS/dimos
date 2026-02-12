@@ -25,17 +25,24 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import threading
 import time
 from typing import Any
 
 from reactivex import Subject, interval
 from reactivex.disposable import Disposable
+import rerun as rr
+import rerun.blueprint as rrb
 
 from dimos.agents import skill
 from dimos.core import In, rpc
+
+# Add these imports near the top with other imports
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleConfig
 from dimos.core.skill_module import SkillModule
+from dimos.dashboard.rerun_init import connect_rerun
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
@@ -112,12 +119,16 @@ class TemporalMemory(SkillModule):
     color_image: In[Image]
 
     def __init__(
-        self, vlm: VlModel | None = None, config: TemporalMemoryConfig | None = None
+        self,
+        vlm: VlModel | None = None,
+        config: TemporalMemoryConfig | None = None,
+        global_config: GlobalConfig | None = None,
     ) -> None:
         super().__init__()
 
         self._vlm = vlm  # Can be None for blueprint usage
         self.config: TemporalMemoryConfig = config or TemporalMemoryConfig()
+        self._global_config = global_config  # Store it
 
         # single lock protects all state
         self._state_lock = threading.Lock()
@@ -202,12 +213,23 @@ class TemporalMemory(SkillModule):
     def start(self) -> None:
         super().start()
 
+        # Connect to Rerun if backend is Rerun
+        if self._global_config and self._global_config.viewer_backend.startswith("rerun"):
+            connect_rerun(global_config=self._global_config)
+
         with self._state_lock:
             self._stopped = False
             if self._video_start_wall_time is None:
                 self._video_start_wall_time = time.time()
 
         def on_frame(image: Image) -> None:
+            # Log image to Rerun if enabled
+            if self._global_config and self._global_config.viewer_backend.startswith("rerun"):
+                try:
+                    rr.log("world/temporal_memory/camera/rgb", image.to_rerun())
+                except Exception as e:
+                    logger.debug(f"Failed to log image to Rerun: {e}")
+
             with self._state_lock:
                 video_start = self._video_start_wall_time
                 if video_start is None:
@@ -539,7 +561,25 @@ class TemporalMemory(SkillModule):
         # query vlm (slow, outside lock)
         try:
             answer_text = self.vlm.query(latest_frame, prompt)
-            return answer_text.strip()
+            answer_text = answer_text.strip()
+
+            # Check for rename commands in the response
+            rename_pattern = r'RENAME_ENTITY:\s*entity_id="([^"]+)"\s+new_name="([^"]+)"'
+            matches = re.findall(rename_pattern, answer_text)
+
+            if matches:
+                # Execute renames
+                for entity_id, new_name in matches:
+                    success = self.rename_entity(entity_id=entity_id, new_name=new_name)
+                    if success:
+                        logger.info(f"Renamed entity {entity_id} to '{new_name}' via query")
+                    else:
+                        logger.warning(f"Failed to rename entity {entity_id} to '{new_name}'")
+
+                # Remove rename commands from response
+                answer_text = re.sub(rename_pattern, "", answer_text).strip()
+
+            return answer_text
         except Exception as e:
             logger.error(f"query failed: {e}", exc_info=True)
             return f"error: {e}"
@@ -590,6 +630,53 @@ class TemporalMemory(SkillModule):
         if not self._graph_db:
             return {"stats": {}, "entities": [], "recent_relations": []}
         return self._graph_db.get_summary()
+
+    @rpc
+    def rename_entity(
+        self, entity_id: str, new_name: str | None = None, new_descriptor: str | None = None
+    ) -> bool:
+        """Rename or update an entity's descriptor based on human input.
+
+        Args:
+            entity_id: Entity ID to rename (e.g., "E8")
+            new_name: Optional name to store in metadata (e.g., "stash")
+            new_descriptor: Optional new descriptor (e.g., "stash (person wearing brown jacket)")
+
+        Returns:
+            True if entity was updated, False if not found
+        """
+        if not self._graph_db:
+            return False
+
+        metadata = {}
+        if new_name:
+            metadata["name"] = new_name
+            # If no descriptor provided, update it to include the name
+            if new_descriptor is None:
+                entity = self._graph_db.get_entity(entity_id)
+                if entity:
+                    old_desc = entity.get("descriptor", "")
+                    new_descriptor = f"{new_name} ({old_desc})"
+
+        success = self._graph_db.update_entity(
+            entity_id=entity_id,
+            descriptor=new_descriptor,
+            metadata=metadata if metadata else None,
+        )
+
+        # Also update the entity roster in state
+        if success:
+            with self._state_lock:
+                roster = self._state.get("entity_roster", [])
+                for entity in roster:
+                    if entity.get("id") == entity_id:
+                        if new_descriptor:
+                            entity["descriptor"] = new_descriptor
+                        if new_name:
+                            entity["name"] = new_name
+                        break
+
+        return success
 
     @rpc
     def save_state(self) -> bool:
@@ -658,6 +745,16 @@ class TemporalMemory(SkillModule):
         except Exception as e:
             logger.error(f"save frames failed: {e}", exc_info=True)
             return False
+
+    @classmethod
+    def rerun_views(cls) -> list[Any]:  # type: ignore[no-untyped-def]
+        """Return Rerun view blueprints for temporal memory camera visualization."""
+        return [
+            rrb.Spatial2DView(
+                name="Temporal Memory Camera",
+                origin="world/temporal_memory/camera/rgb",
+            ),
+        ]
 
 
 temporal_memory = TemporalMemory.blueprint
