@@ -539,9 +539,7 @@ class DrakeWorld(WorldSpec):
 
     def _set_preview_colors(self) -> None:
         """Set all preview robot visual geometries to yellow/semi-transparent."""
-        source_id = self._plant.get_source_id()
-        if source_id is None:
-            return
+        source_id: Any = self._plant.get_source_id()
         preview_color = Rgba(1.0, 0.8, 0.0, 0.4)
 
         for robot_data in self._robots.values():
@@ -556,7 +554,7 @@ class DrakeWorld(WorldSpec):
 
     def _remove_preview_collision_roles(self) -> None:
         """Remove proximity (collision) role from all preview robot geometries."""
-        source_id = self._plant.get_source_id()
+        source_id: Any = self._plant.get_source_id()  # SourceId
 
         for robot_data in self._robots.values():
             if robot_data.preview_model_instance is None:
