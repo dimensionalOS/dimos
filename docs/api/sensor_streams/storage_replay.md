@@ -159,7 +159,7 @@ replay.stream(
 
 ## Usage: Stub Connections for Testing
 
-A common pattern is creating replay-based connection stubs for testing without hardware. From [`robot/unitree/connection/go2.py`](/dimos/robot/unitree/connection/go2.py#L83):
+A common pattern is creating replay-based connection stubs for testing without hardware. From [`robot/unitree/go2/connection.py`](/dimos/robot/unitree/go2/connection.py#L83):
 
 This is a bit primitive. We'd like to write a higher-order API for recording full module I/O for any module, but this is a work in progress at the moment.
 

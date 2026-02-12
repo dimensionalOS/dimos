@@ -784,7 +784,7 @@ class ManipulationModule(Module):
         if not config.gripper_hardware_id:
             logger.warning(f"No gripper_hardware_id configured for '{config.name}'")
             return None
-        return config.gripper_hardware_id
+        return str(config.gripper_hardware_id)
 
     @rpc
     def set_gripper(self, position: float, robot_name: RobotName | None = None) -> bool:

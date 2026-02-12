@@ -42,6 +42,7 @@ dependencies = [
     "pydantic",
     "python-dotenv",
     "annotation-protocol>=1.4.0",
+    "lazy_loader",
 
     # Multiprocess
     "dask[complete]==2025.5.1",

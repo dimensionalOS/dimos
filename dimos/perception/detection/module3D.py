@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+from typing import TYPE_CHECKING, Any
+
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
@@ -21,19 +23,23 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos import spec
-from dimos.agents import skill  # type: ignore[attr-defined]
-from dimos.core import DimosCluster, In, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.module2D import Detection2DModule
-from dimos.perception.detection.type import (
-    ImageDetections2D,
-    ImageDetections3DPC,
-)
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d import Detection3DPC
+from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
+from dimos.protocol.skill.skill import skill
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
+
+if TYPE_CHECKING:
+    from dask.distributed import Client as DimosCluster
+else:
+    DimosCluster = Any
 
 
 class Detection3DModule(Detection2DModule):

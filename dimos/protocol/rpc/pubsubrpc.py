@@ -81,7 +81,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     def __getstate__(self) -> dict[str, Any]:
         state: dict[str, Any]
         if hasattr(super(), "__getstate__"):
-            state = super().__getstate__()  # type: ignore[assignment]
+            state = super().__getstate__()  # type: ignore[assignment, misc]
         else:
             state = self.__dict__.copy()
 

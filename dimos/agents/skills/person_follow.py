@@ -75,7 +75,7 @@ class PersonFollowSkillContainer(SkillModule):
 
         # Use MuJoCo camera intrinsics in simulation mode
         if self._global_config.simulation:
-            from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+            from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
             camera_info = MujocoConnection.camera_info_static
 

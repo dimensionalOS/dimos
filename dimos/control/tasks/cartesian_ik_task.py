@@ -248,10 +248,11 @@ class CartesianIKTask(ControlTask):
             if pos is None:
                 # Fallback to last solution
                 if self._last_q_solution is not None:
-                    return self._last_q_solution.copy()
+                    result: NDArray[np.floating[Any]] = self._last_q_solution.copy()
+                    return result
                 return None
             positions.append(pos)
-        return np.array(positions)
+        return np.array(positions, dtype=np.float64)
 
     def _solve_ik(
         self,

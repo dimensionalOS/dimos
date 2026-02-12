@@ -17,7 +17,7 @@
 import numpy as np
 
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.robot.unitree_webrtc.type.lidar import pointcloud2_from_webrtc_lidar
+from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.utils.testing import SensorReplay
 
 

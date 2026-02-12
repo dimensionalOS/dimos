@@ -465,7 +465,7 @@ class Image(Timestamped):
         channels = 1 if self.data.ndim == 2 else self.data.shape[2]
         msg.step = self.width * self.dtype.itemsize * channels
 
-        view = memoryview(np.ascontiguousarray(self.data)).cast("B")
+        view = memoryview(np.ascontiguousarray(self.data)).cast("B")  # type: ignore[arg-type]
         msg.data_length = len(view)
         msg.data = view
 

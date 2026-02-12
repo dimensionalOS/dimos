@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any, Union
 if TYPE_CHECKING:
     from dimos.protocol.skill.skill import SkillContainer
 
-from langchain.chat_models.base import _SUPPORTED_PROVIDERS
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -45,8 +44,31 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-# Dynamically create ModelProvider enum from LangChain's supported providers
-_providers = {provider.upper(): provider for provider in _SUPPORTED_PROVIDERS}
+# FIXME: I dont see a stable (and dynamic) way to get these, this is only for type-hints and Paul's PR should replace this in a couple of days (this is a stop-gap change to get CI passing)
+_providers = [
+    "ANTHROPIC",
+    "AZURE_AI",
+    "AZURE_OPENAI",
+    "BEDROCK",
+    "BEDROCK_CONVERSE",
+    "COHERE",
+    "DEEPSEEK",
+    "FIREWORKS",
+    "GOOGLE_ANTHROPIC_VERTEX",
+    "GOOGLE_GENAI",
+    "GOOGLE_VERTEXAI",
+    "GROQ",
+    "HUGGINGFACE",
+    "IBM",
+    "MISTRALAI",
+    "NVIDIA",
+    "OLLAMA",
+    "OPENAI",
+    "PERPLEXITY",
+    "TOGETHER",
+    "UPSTAGE",
+    "XAI",
+]
 Provider = Enum("Provider", _providers, type=str)  # type: ignore[misc]
 
 

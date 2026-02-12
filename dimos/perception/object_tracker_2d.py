@@ -29,9 +29,12 @@ from dimos_lcm.vision_msgs import (
     Pose2D,
 )
 import numpy as np
+from numpy.typing import NDArray
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, ModuleConfig, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
@@ -289,9 +292,9 @@ class ObjectTracker2D(Module[ObjectTracker2DConfig]):
         viz_msg = Image.from_numpy(viz_copy, format=ImageFormat.RGB)
         self.tracked_overlay.publish(viz_msg)
 
-    def _draw_visualization(self, image: np.ndarray, bbox: list[int]) -> np.ndarray:  # type: ignore[type-arg]
+    def _draw_visualization(self, image: NDArray[np.uint8], bbox: list[int]) -> NDArray[np.uint8]:  # type: ignore[type-arg]
         """Draw tracking visualization."""
-        viz_image = image.copy()
+        viz_image: NDArray[np.uint8] = image.copy()  # type: ignore[type-arg]
         x1, y1, x2, y2 = bbox
         cv2.rectangle(viz_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
         cv2.putText(viz_image, "TRACKING", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)

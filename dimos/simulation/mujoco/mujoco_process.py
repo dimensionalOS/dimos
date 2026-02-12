@@ -63,7 +63,8 @@ class MockController:
             self._command[0] = linear[0]  # forward/backward
             self._command[1] = linear[1]  # left/right
             self._command[2] = angular[2]  # rotation
-        return self._command.copy()
+        result: NDArray[Any] = self._command.copy()
+        return result
 
     def stop(self) -> None:
         """Stop method to satisfy InputController protocol."""

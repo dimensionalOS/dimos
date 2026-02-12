@@ -23,8 +23,10 @@ import pyrealsense2 as rs  # type: ignore[import-not-found]
 import reactivex as rx
 from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
-from dimos.core import Module, ModuleConfig, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,

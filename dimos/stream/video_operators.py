@@ -231,7 +231,7 @@ class VideoOperators:
                     _, buffer = cv2.imencode(".jpg", image)
                     if buffer is None:
                         raise ValueError("Failed to encode image")
-                    base64_image = base64.b64encode(buffer).decode("utf-8")
+                    base64_image = base64.b64encode(buffer.tobytes()).decode("utf-8")
                     return base64_image, (width, height)
                 except Exception as e:
                     raise e

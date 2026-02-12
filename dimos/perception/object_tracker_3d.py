@@ -283,7 +283,7 @@ class ObjectTracker3D(ObjectTracker2D):
         """Draw Re-ID feature matches on visualization."""
         import cv2
 
-        viz_image = image.copy()
+        viz_image: np.ndarray = image.copy()  # type: ignore[type-arg]
         x1, y1, _x2, _y2 = self.last_roi_bbox  # type: ignore[attr-defined]
 
         # Draw keypoints

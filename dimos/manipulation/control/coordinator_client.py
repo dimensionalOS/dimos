@@ -49,7 +49,9 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.rpc_client import RPCClient
-from dimos.manipulation.planning import JointTrajectoryGenerator
+from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
+    JointTrajectoryGenerator,
+)
 
 if TYPE_CHECKING:
     from dimos.msgs.trajectory_msgs import JointTrajectory

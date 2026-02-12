@@ -32,13 +32,14 @@ from typing import Any
 from reactivex import Subject, interval
 from reactivex.disposable import Disposable
 
-from dimos.agents import skill
-from dimos.core import In, rpc
+from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.skill_module import SkillModule
+from dimos.core.stream import In
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
+from dimos.protocol.skill.skill import skill
 
 from . import temporal_utils as tu
 from .clip_filter import (

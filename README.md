@@ -148,11 +148,9 @@ Modules are subsystems on a robot that operate autonomously and communicate with
 
 ```py
 import threading, time, numpy as np
-from dimos.core import In, Module, Out, rpc
-from dimos.core.blueprints import autoconnect
+from dimos.core import In, Module, Out, rpc, autoconnect
 from dimos.msgs.geometry_msgs import Twist
-from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.sensor_msgs.Image import ImageFormat
+from dimos.msgs.sensor_msgs import Image, ImageFormat
 
 class RobotConnection(Module):
     cmd_vel: In[Twist]
@@ -195,10 +193,9 @@ Blueprints can be composed, remapped, and have transports overridden if `autocon
 
 A blueprint example that connects the image stream from a robot to an LLM Agent for reasoning and action execution.
 ```py
-from dimos.core.blueprints import autoconnect
-from dimos.core.transport import LCMTransport
+from dimos.core import autoconnect, LCMTransport
 from dimos.msgs.sensor_msgs import Image
-from dimos.robot.unitree.connection.go2 import go2_connection
+from dimos.robot.unitree.go2.connection import go2_connection
 from dimos.agents.agent import llm_agent
 
 blueprint = autoconnect(
@@ -207,7 +204,8 @@ blueprint = autoconnect(
 ).transports({("color_image", Image): LCMTransport("/color_image", Image)})
 
 # Run the blueprint
-blueprint.build().loop()
+if __name__ == "__main__":
+    blueprint.build().loop()
 ```
 
 # Development

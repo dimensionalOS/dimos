@@ -26,7 +26,7 @@ from dimos.core import LCMTransport, start
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
-from dimos.robot.unitree.connection.go2 import GO2Connection
+from dimos.robot.unitree.go2.connection import GO2Connection
 
 
 @pytest.mark.integration

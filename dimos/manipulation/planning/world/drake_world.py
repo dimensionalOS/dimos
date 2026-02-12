@@ -480,7 +480,7 @@ class DrakeWorld(WorldSpec):
         elif obstacle.obstacle_type == ObstacleType.MESH:
             if not obstacle.mesh_path:
                 raise ValueError("MESH obstacle requires mesh_path")
-            return Convex(obstacle.mesh_path)
+            return Convex(Path(obstacle.mesh_path))
         else:
             raise ValueError(f"Unsupported obstacle type: {obstacle.obstacle_type}")
 
@@ -539,7 +539,7 @@ class DrakeWorld(WorldSpec):
 
     def _set_preview_colors(self) -> None:
         """Set all preview robot visual geometries to yellow/semi-transparent."""
-        source_id = self._plant.get_source_id()
+        source_id: Any = self._plant.get_source_id()
         preview_color = Rgba(1.0, 0.8, 0.0, 0.4)
 
         for robot_data in self._robots.values():
@@ -550,11 +550,11 @@ class DrakeWorld(WorldSpec):
                 for geom_id in self._plant.GetVisualGeometriesForBody(body):
                     props = IllustrationProperties()
                     props.AddProperty("phong", "diffuse", preview_color)
-                    self._scene_graph.AssignRole(source_id, geom_id, props, RoleAssign.kReplace)
+                    self._scene_graph.AssignRole(source_id, geom_id, props, RoleAssign.kReplace)  # type: ignore[call-overload]
 
     def _remove_preview_collision_roles(self) -> None:
         """Remove proximity (collision) role from all preview robot geometries."""
-        source_id = self._plant.get_source_id()
+        source_id: Any = self._plant.get_source_id()  # SourceId
 
         for robot_data in self._robots.values():
             if robot_data.preview_model_instance is None:
