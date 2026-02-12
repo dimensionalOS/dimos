@@ -1191,22 +1191,13 @@ class ManipulationModule(SkillModule):
         # Try GraspGen via rpc_calls if available
         try:
             generate = self.get_rpc_calls("GraspingModule.generate_grasps")
-            result_str = generate(object_name, object_id, True)
-            # If generate_grasps returned actual PoseArray via the grasps port,
-            # we need to get the poses. For now, check if it returned an error string.
-            if isinstance(result_str, str) and "No" in result_str:
-                logger.info(f"GraspGen returned: {result_str}, falling back to heuristic")
+            result = generate(object_name, object_id, True)
+            if isinstance(result, str) and "No" in result:
+                logger.info(f"GraspGen returned: {result}, falling back to heuristic")
             else:
-                # GraspGen succeeded — get poses from the grasps port or RPC
-                logger.info(f"GraspGen result: {result_str}")
-                # Try to get the grasp poses via RPC
-                try:
-                    get_grasps = self.get_rpc_calls("GraspingModule.get_latest_grasps")
-                    grasp_poses: PoseArray | None = get_grasps()
-                    if grasp_poses and len(grasp_poses.poses) > 0:
-                        return list(grasp_poses.poses)
-                except Exception:
-                    pass
+                logger.info(f"GraspGen result: {result}")
+                # GraspGen publishes to Out[PoseArray] port — grasps arrive via
+                # stream subscription, not RPC return. For now, fall through to heuristic.
         except Exception as e:
             logger.debug(f"GraspGen not available ({e}), using heuristic approach")
 
