@@ -16,9 +16,9 @@
 """Quest teleop module extensions and subclasses.
 
 Available subclasses:
-    - ArmTeleopModule: Per-hand toggle engage (X/A press to toggle), task name routing
+    - ArmTeleopModule: Per-hand press-and-hold engage (X/A hold to track), task name routing
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
-    - VisualizingTeleopModule: Adds Rerun visualization (uses toggle engage)
+    - VisualizingTeleopModule: Adds Rerun visualization (inherits press-and-hold engage)
 """
 
 from __future__ import annotations
@@ -93,10 +93,10 @@ class ArmTeleopConfig(QuestTeleopConfig):
 
 
 class ArmTeleopModule(QuestTeleopModule):
-    """Quest teleop with per-hand toggle engage and task name routing.
+    """Quest teleop with per-hand press-and-hold engage and task name routing.
 
     Each controller's primary button (X for left, A for right)
-    toggles that hand's engage state independently.
+    engages that hand while held, disengages on release.
 
     When task_names is configured, output PoseStamped messages have their
     frame_id set to the task name, enabling the coordinator to route
@@ -112,8 +112,9 @@ class ArmTeleopModule(QuestTeleopModule):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._prev_primary: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
         cfg: ArmTeleopConfig = self.config  # type: ignore[assignment]
+
+        self._prev_primary: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
         self._task_names: dict[Hand, str] = {Hand[k.upper()]: v for k, v in cfg.task_names.items()}
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
@@ -129,7 +130,7 @@ class ArmTeleopModule(QuestTeleopModule):
         super()._publish_msg(hand, output_msg)
 
     def _handle_engage(self) -> None:
-        """Toggle per-hand engage on primary button rising edge."""
+        """Press-and-hold per-hand engage: hold primary to track, release to stop."""
         for hand in Hand:
             controller = self._controllers.get(hand)
             if controller is None:
@@ -137,10 +138,9 @@ class ArmTeleopModule(QuestTeleopModule):
 
             pressed = controller.primary
             if pressed and not self._prev_primary[hand]:
-                if self._is_engaged[hand]:
-                    self._disengage(hand)
-                else:
-                    self._engage(hand)
+                self._engage(hand)
+            elif not pressed and self._prev_primary[hand]:
+                self._disengage(hand)
             self._prev_primary[hand] = pressed
 
 

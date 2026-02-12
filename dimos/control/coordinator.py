@@ -487,7 +487,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 logger.warning(f"Cartesian command for unknown task: {task_name}")
                 return
 
-            task.set_target_pose(msg, t_now)  # type: ignore[attr-defined]
+            task.on_cartesian_command(msg, t_now)  # type: ignore[attr-defined]
 
     def _on_buttons(self, msg: QuestButtons) -> None:
         """Forward button state to all tasks that accept it."""
@@ -608,10 +608,10 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                     self._cartesian_command_unsub = self.cartesian_command.subscribe(
                         self._on_cartesian_command
                     )
-                    logger.info("Subscribed to cartesian_command for CartesianIK tasks")
+                    logger.info("Subscribed to cartesian_command for CartesianIK/TeleopIK tasks")
                 else:
                     logger.warning(
-                        "CartesianIK tasks configured but no transport set for cartesian_command. "
+                        "CartesianIK/TeleopIK tasks configured but no transport set for cartesian_command. "
                         "Use task_invoke RPC or set transport via blueprint."
                     )
             except Exception as e:

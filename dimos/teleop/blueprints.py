@@ -30,7 +30,7 @@ from dimos.teleop.quest.quest_types import QuestButtons
 # Quest Teleop Blueprints
 # -----------------------------------------------------------------------------
 
-# Arm teleop with toggle-based engage
+# Arm teleop with press-and-hold engage
 arm_teleop = autoconnect(
     arm_teleop_module(),
 ).transports(
@@ -54,9 +54,10 @@ arm_teleop_visualizing = autoconnect(
 
 
 # -----------------------------------------------------------------------------
-# Teleop wired to Coordinator (right controller -> arm)
+# Teleop wired to Coordinator (TeleopIK)
 # -----------------------------------------------------------------------------
-# Combined blueprint: teleop + xarm6 CartesianIK coordinator
+
+# Single XArm6 teleop: right controller -> xarm6
 # Usage: dimos run arm-teleop-xarm6
 
 arm_teleop_xarm6 = autoconnect(

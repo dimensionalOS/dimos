@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from numpy.typing import NDArray
-    import pinocchio
+    import pinocchio  # type: ignore[import-untyped]
 
     from dimos.msgs.geometry_msgs import Pose, PoseStamped
 
@@ -89,7 +89,7 @@ class CartesianIKTaskConfig:
 class CartesianIKTask(ControlTask):
     """Cartesian control task with internal Pinocchio IK solver.
 
-    Accepts streaming cartesian poses via set_target_pose() and computes IK
+    Accepts streaming cartesian poses via on_cartesian_command() and computes IK
     internally to output joint commands. Uses current joint state from
     CoordinatorState as IK warm-start for fast convergence.
 
@@ -113,7 +113,7 @@ class CartesianIKTask(ControlTask):
         >>> task.start()
         >>>
         >>> # From teleop callback or other source:
-        >>> task.set_target_pose(pose_stamped, t_now=time.perf_counter())
+        >>> task.on_cartesian_command(pose_stamped, t_now=time.perf_counter())
     """
 
     def __init__(self, name: str, config: CartesianIKTaskConfig) -> None:
@@ -279,10 +279,8 @@ class CartesianIKTask(ControlTask):
     # Task-specific methods
     # =========================================================================
 
-    def set_target_pose(self, pose: Pose | PoseStamped, t_now: float) -> bool:
-        """Set target end-effector pose.
-
-        Call this from your teleop callback, visual servoing, or other input source.
+    def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
+        """Handle incoming cartesian command (target EE pose).
 
         Args:
             pose: Target end-effector pose (Pose or PoseStamped)
@@ -300,7 +298,7 @@ class CartesianIKTask(ControlTask):
 
         return True
 
-    def set_target_pose_dict(
+    def on_cartesian_command_dict(
         self,
         pose: dict[str, float],
         t_now: float,

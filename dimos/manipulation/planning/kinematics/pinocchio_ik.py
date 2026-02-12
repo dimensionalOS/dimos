@@ -158,7 +158,7 @@ class PinocchioIK:
     @property
     def nq(self) -> int:
         """Number of configuration variables (DOF)."""
-        return self._model.nq
+        return int(self._model.nq)
 
     @property
     def ee_joint_id(self) -> int:
