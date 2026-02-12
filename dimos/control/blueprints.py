@@ -36,6 +36,12 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import JointState
 from dimos.teleop.quest.quest_types import QuestButtons
+from dimos.utils.data import get_data
+
+_PIPER_MODEL_PATH = str(
+    get_data("piper_description") / "mujoco_model" / "piper_no_gripper_description.xml"
+)
+_XARM6_MODEL_PATH = str(get_data("xarm_description") / "urdf" / "xarm6" / "xarm6.urdf")
 
 # =============================================================================
 # Single Arm Blueprints
@@ -392,22 +398,6 @@ coordinator_combined_xarm6 = control_coordinator(
 # =============================================================================
 
 
-def _get_piper_model_path() -> str:
-    """Get path to Piper MJCF model for IK solver."""
-    from dimos.utils.data import get_data
-
-    piper_path = get_data("piper_description")
-    return str(piper_path / "mujoco_model" / "piper_no_gripper_description.xml")
-
-
-def _get_xarm6_model_path() -> str:
-    """Get path to xarm6 URDF model for IK solver."""
-    from dimos.utils.data import get_data
-
-    xarm_path = get_data("xarm_description")
-    return str(xarm_path / "urdf" / "xarm6" / "xarm6.urdf")
-
-
 # Mock 6-DOF arm with CartesianIK
 coordinator_cartesian_ik_mock = control_coordinator(
     tick_rate=100.0,
@@ -427,7 +417,7 @@ coordinator_cartesian_ik_mock = control_coordinator(
             type="cartesian_ik",
             joint_names=[f"arm_joint{i + 1}" for i in range(6)],
             priority=10,
-            model_path=_get_piper_model_path(),
+            model_path=_PIPER_MODEL_PATH,
             ee_joint_id=6,
         ),
     ],
@@ -461,7 +451,7 @@ coordinator_cartesian_ik_piper = control_coordinator(
             type="cartesian_ik",
             joint_names=[f"arm_joint{i + 1}" for i in range(6)],
             priority=10,
-            model_path=_get_piper_model_path(),
+            model_path=_PIPER_MODEL_PATH,
             ee_joint_id=6,
         ),
     ],
@@ -500,7 +490,7 @@ coordinator_teleop_xarm6 = control_coordinator(
             type="teleop_ik",
             joint_names=[f"arm_joint{i + 1}" for i in range(6)],
             priority=10,
-            model_path=_get_xarm6_model_path(),
+            model_path=_XARM6_MODEL_PATH,
             ee_joint_id=6,
             hand="right",
         ),
@@ -536,7 +526,7 @@ coordinator_teleop_piper = control_coordinator(
             type="teleop_ik",
             joint_names=[f"arm_joint{i + 1}" for i in range(6)],
             priority=10,
-            model_path=_get_piper_model_path(),
+            model_path=_PIPER_MODEL_PATH,
             ee_joint_id=6,
             hand="left",
         ),
@@ -580,7 +570,7 @@ coordinator_teleop_dual = control_coordinator(
             type="teleop_ik",
             joint_names=[f"xarm_arm_joint{i + 1}" for i in range(6)],
             priority=10,
-            model_path=_get_xarm6_model_path(),
+            model_path=_XARM6_MODEL_PATH,
             ee_joint_id=6,
             hand="left",
         ),
@@ -589,7 +579,7 @@ coordinator_teleop_dual = control_coordinator(
             type="teleop_ik",
             joint_names=[f"piper_arm_joint{i + 1}" for i in range(6)],
             priority=10,
-            model_path=_get_piper_model_path(),
+            model_path=_PIPER_MODEL_PATH,
             ee_joint_id=6,
             hand="right",
         ),

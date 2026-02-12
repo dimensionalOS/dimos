@@ -114,7 +114,6 @@ class ArmTeleopModule(QuestTeleopModule):
         super().__init__(*args, **kwargs)
         cfg: ArmTeleopConfig = self.config  # type: ignore[assignment]
 
-        self._prev_primary: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
         self._task_names: dict[Hand, str] = {Hand[k.upper()]: v for k, v in cfg.task_names.items()}
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
@@ -128,20 +127,6 @@ class ArmTeleopModule(QuestTeleopModule):
                 frame_id=task_name,
             )
         super()._publish_msg(hand, output_msg)
-
-    def _handle_engage(self) -> None:
-        """Press-and-hold per-hand engage: hold primary to track, release to stop."""
-        for hand in Hand:
-            controller = self._controllers.get(hand)
-            if controller is None:
-                continue
-
-            pressed = controller.primary
-            if pressed and not self._prev_primary[hand]:
-                self._engage(hand)
-            elif not pressed and self._prev_primary[hand]:
-                self._disengage(hand)
-            self._prev_primary[hand] = pressed
 
 
 class VisualizingTeleopModule(ArmTeleopModule):

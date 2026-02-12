@@ -38,7 +38,6 @@ from dimos.control.task import (
 )
 from dimos.manipulation.planning.kinematics.pinocchio_ik import (
     PinocchioIK,
-    PinocchioIKConfig,
     check_joint_delta,
     get_worst_joint_delta,
 )
@@ -65,12 +64,7 @@ class CartesianIKTaskConfig:
         ee_joint_id: End-effector joint ID in the kinematic chain
         priority: Priority for arbitration (higher wins)
         timeout: If no command received for this many seconds, go inactive (0 = never)
-        ik_max_iter: Maximum IK solver iterations
-        ik_eps: IK convergence threshold (error norm in meters)
-        ik_damp: IK damping factor for singularity handling (higher = more stable)
-        ik_dt: IK integration step size
         max_joint_delta_deg: Maximum allowed joint change per tick (safety limit)
-        max_velocity: Max joint velocity per IK iteration (rad/s)
     """
 
     joint_names: list[str]
@@ -78,12 +72,7 @@ class CartesianIKTaskConfig:
     ee_joint_id: int
     priority: int = 10
     timeout: float = 0.5
-    ik_max_iter: int = 100
-    ik_eps: float = 1e-4
-    ik_damp: float = 1e-2
-    ik_dt: float = 1.0
     max_joint_delta_deg: float = 15.0  # ~1500°/s at 100Hz
-    max_velocity: float = 2.0
 
 
 class CartesianIKTask(ControlTask):
@@ -135,14 +124,7 @@ class CartesianIKTask(ControlTask):
         self._num_joints = len(config.joint_names)
 
         # Create IK solver from model
-        ik_config = PinocchioIKConfig(
-            max_iter=config.ik_max_iter,
-            eps=config.ik_eps,
-            damp=config.ik_damp,
-            dt=config.ik_dt,
-            max_velocity=config.max_velocity,
-        )
-        self._ik = PinocchioIK.from_model_path(config.model_path, config.ee_joint_id, ik_config)
+        self._ik = PinocchioIK.from_model_path(config.model_path, config.ee_joint_id)
 
         # Validate DOF matches joint names
         if self._ik.nq != self._num_joints:

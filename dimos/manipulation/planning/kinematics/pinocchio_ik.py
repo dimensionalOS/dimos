@@ -123,14 +123,12 @@ class PinocchioIK:
         cls,
         model_path: str | Path,
         ee_joint_id: int,
-        config: PinocchioIKConfig | None = None,
     ) -> PinocchioIK:
         """Create solver by loading a URDF or MJCF file.
 
         Args:
             model_path: Path to URDF (.urdf) or MJCF (.xml) file
             ee_joint_id: End-effector joint ID in the kinematic chain
-            config: Solver configuration (uses defaults if None)
 
         Returns:
             Configured PinocchioIK instance
@@ -148,7 +146,7 @@ class PinocchioIK:
             model = pinocchio.buildModelFromUrdf(str(path))
 
         data = model.createData()
-        return cls(model, data, ee_joint_id, config)
+        return cls(model, data, ee_joint_id)
 
     @property
     def model(self) -> pinocchio.Model:
@@ -233,17 +231,8 @@ class PinocchioIK:
 
     @staticmethod
     def pose_to_se3(pose: Pose | PoseStamped) -> pinocchio.SE3:
-        """Convert a DimOS Pose or PoseStamped to pinocchio SE3.
+        """Convert Pose or PoseStamped to pinocchio SE3"""
 
-        Uses quaternion directly to avoid Euler angle conversion issues.
-
-        Args:
-            pose: Pose or PoseStamped message with position (x, y, z)
-                  and orientation (quaternion)
-
-        Returns:
-            pinocchio.SE3 representation
-        """
         position = np.array([pose.x, pose.y, pose.z])
         quat = pose.orientation
         rotation = pinocchio.Quaternion(quat.w, quat.x, quat.y, quat.z).toRotationMatrix()
@@ -251,17 +240,8 @@ class PinocchioIK:
 
     @staticmethod
     def pose_dict_to_se3(pose: dict[str, float]) -> pinocchio.SE3:
-        """Convert a pose dict with RPY to pinocchio SE3.
+        """Convert a pose dict with RPY to pinocchio SE3"""
 
-        Args:
-            pose: Dict with keys {x, y, z, roll, pitch, yaw} in meters/radians
-
-        Returns:
-            pinocchio.SE3 representation
-
-        Raises:
-            KeyError: If required keys are missing
-        """
         position = np.array([pose["x"], pose["y"], pose["z"]])
         rotation = pinocchio.rpy.rpyToMatrix(pose["roll"], pose["pitch"], pose["yaw"])
         return pinocchio.SE3(rotation, position)
