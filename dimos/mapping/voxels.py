@@ -21,13 +21,10 @@ import open3d.core as o3c  # type: ignore[import-untyped]
 from reactivex import interval, operators as ops
 from reactivex.disposable import Disposable
 from reactivex.subject import Subject
-import rerun as rr
-import rerun.blueprint as rrb
 
 from dimos.core import In, Module, Out, rpc
-from dimos.core.global_config import GlobalConfig
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleConfig
-from dimos.dashboard.rerun_init import connect_rerun
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.utils.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
@@ -54,29 +51,9 @@ class VoxelGridMapper(Module):
     lidar: In[PointCloud2]
     global_map: Out[PointCloud2]
 
-    @classmethod
-    def rerun_views(cls):  # type: ignore[no-untyped-def]
-        """Return Rerun view blueprints for voxel map visualization."""
-        return [
-            rrb.TimeSeriesView(
-                name="Voxel Pipeline (ms)",
-                origin="/metrics/voxel_map",
-                contents=[
-                    "+ /metrics/voxel_map/extract_ms",
-                    "+ /metrics/voxel_map/transport_ms",
-                    "+ /metrics/voxel_map/publish_ms",
-                ],
-            ),
-            rrb.TimeSeriesView(
-                name="Voxel Count",
-                origin="/metrics/voxel_map",
-                contents=["+ /metrics/voxel_map/voxel_count"],
-            ),
-        ]
-
-    def __init__(self, global_config: GlobalConfig | None = None, **kwargs: object) -> None:
+    def __init__(self, cfg: GlobalConfig = global_config, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        self._global_config = global_config or GlobalConfig()
+        self._global_config = cfg
 
         dev = (
             o3c.Device(self.config.device)
@@ -100,17 +77,10 @@ class VoxelGridMapper(Module):
         self._voxel_hashmap = self.vbg.hashmap()
         self._key_dtype = self._voxel_hashmap.key_tensor().dtype
         self._latest_frame_ts: float = 0.0
-        # Monotonic timestamp of last received frame (for accurate latency in replay)
-        self._latest_frame_rx_monotonic: float | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
-
-        # Only start Rerun logging if Rerun backend is selected
-        if self._global_config.viewer_backend.startswith("rerun"):
-            connect_rerun(global_config=self._global_config)
-            logger.info("VoxelGridMapper: Rerun logging enabled (sync)")
 
         # Subject to trigger publishing, with backpressure to drop if busy
         self._publish_trigger: Subject[None] = Subject()
@@ -136,52 +106,13 @@ class VoxelGridMapper(Module):
         super().stop()
 
     def _on_frame(self, frame: PointCloud2) -> None:
-        # Track receipt time with monotonic clock (works correctly in replay)
-        self._latest_frame_rx_monotonic = time.monotonic()
         self.add_frame(frame)
         if self.config.publish_interval == 0:
             self._publish_trigger.on_next(None)
 
     def publish_global_map(self) -> None:
-        # Snapshot monotonic timestamp once (won't be overwritten during slow publish)
-        rx_monotonic = self._latest_frame_rx_monotonic
-
-        start_total = time.perf_counter()
-
-        # 1. Extract pointcloud from GPU hashmap
-        t1 = time.perf_counter()
         pc = self.get_global_pointcloud2()
-        extract_ms = (time.perf_counter() - t1) * 1000
-
-        # 2. Publish to downstream (NO auto-logging - fast!)
-        t2 = time.perf_counter()
         self.global_map.publish(pc)
-        publish_ms = (time.perf_counter() - t2) * 1000
-        # 3. Synchronous Rerun logging (no queues/threads).
-        if self._global_config.viewer_backend.startswith("rerun"):
-            try:
-                rr.log(
-                    "world/map",
-                    pc.to_rerun(
-                        mode="boxes",
-                        size=self.config.voxel_size,
-                        colormap="turbo",
-                    ),
-                )
-            except Exception as e:
-                logger.warning(f"Rerun logging error: {e}")
-
-        # Log detailed timing breakdown to Rerun
-        total_ms = (time.perf_counter() - start_total) * 1000
-        rr.log("metrics/voxel_map/publish_ms", rr.Scalars(total_ms))
-        rr.log("metrics/voxel_map/extract_ms", rr.Scalars(extract_ms))
-        rr.log("metrics/voxel_map/transport_ms", rr.Scalars(publish_ms))
-        rr.log("metrics/voxel_map/voxel_count", rr.Scalars(float(len(pc))))
-
-        # Log pipeline latency (time from frame receipt to publish complete)
-        if rx_monotonic is not None:
-            latency_ms = (time.monotonic() - rx_monotonic) * 1000
-            rr.log("metrics/voxel_map/latency_ms", rr.Scalars(latency_ms))
 
     def size(self) -> int:
         return self._voxel_hashmap.size()  # type: ignore[no-any-return]

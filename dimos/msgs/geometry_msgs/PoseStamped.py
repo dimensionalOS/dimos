@@ -16,18 +16,13 @@ from __future__ import annotations
 
 import math
 import time
-from typing import BinaryIO, TypeAlias
+from typing import TYPE_CHECKING, BinaryIO, TypeAlias
+
+if TYPE_CHECKING:
+    from rerun._baseclasses import Archetype
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
-
-try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
-        PoseStamped as ROSPoseStamped,
-    )
-except ImportError:
-    ROSPoseStamped = None  # type: ignore[assignment, misc]
 from plum import dispatch
-import rerun as rr
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
@@ -87,12 +82,14 @@ class PoseStamped(Pose, Timestamped):
             f"euler=[{math.degrees(self.roll):.1f}, {math.degrees(self.pitch):.1f}, {math.degrees(self.yaw):.1f}])"
         )
 
-    def to_rerun(self):  # type: ignore[no-untyped-def]
+    def to_rerun(self) -> Archetype:
         """Convert to rerun Transform3D format.
 
         Returns a Transform3D that can be logged to Rerun to position
         child entities in the transform hierarchy.
         """
+        import rerun as rr
+
         return rr.Transform3D(
             translation=[self.x, self.y, self.z],
             rotation=rr.Quaternion(
@@ -107,6 +104,8 @@ class PoseStamped(Pose, Timestamped):
 
     def to_rerun_arrow(self, length: float = 0.5):  # type: ignore[no-untyped-def]
         """Convert to rerun Arrows3D format for visualization."""
+        import rerun as rr
+
         origin = [[self.x, self.y, self.z]]
         forward = self.orientation.rotate_vector(Vector3(length, 0, 0))
         vector = [[forward.x, forward.y, forward.z]]
@@ -139,44 +138,3 @@ class PoseStamped(Pose, Timestamped):
             translation=local_translation,
             rotation=relative_rotation,
         )
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSPoseStamped) -> PoseStamped:  # type: ignore[override]
-        """Create a PoseStamped from a ROS geometry_msgs/PoseStamped message.
-
-        Args:
-            ros_msg: ROS PoseStamped message
-
-        Returns:
-            PoseStamped instance
-        """
-        # Convert timestamp from ROS header
-        ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
-
-        # Convert pose
-        pose = Pose.from_ros_msg(ros_msg.pose)
-
-        return cls(
-            ts=ts,
-            frame_id=ros_msg.header.frame_id,
-            position=pose.position,
-            orientation=pose.orientation,
-        )
-
-    def to_ros_msg(self) -> ROSPoseStamped:  # type: ignore[override]
-        """Convert to a ROS geometry_msgs/PoseStamped message.
-
-        Returns:
-            ROS PoseStamped message
-        """
-        ros_msg = ROSPoseStamped()  # type: ignore[no-untyped-call]
-
-        # Set header
-        ros_msg.header.frame_id = self.frame_id
-        ros_msg.header.stamp.sec = int(self.ts)
-        ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1_000_000_000)
-
-        # Set pose
-        ros_msg.pose = Pose.to_ros_msg(self)
-
-        return ros_msg

@@ -25,5 +25,6 @@ __all__ = [
     "Detection2DPerson",
     "Detection2DPoint",
     "Detection2DSeg",
+    "Filter2D",
     "ImageDetections2D",
 ]

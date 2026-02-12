@@ -17,7 +17,7 @@ from functools import cached_property
 
 from PIL import Image as PILImage
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as functional
 from transformers import CLIPModel as HFCLIPModel, CLIPProcessor  # type: ignore[import-untyped]
 
 from dimos.models.base import HuggingFaceModel
@@ -64,7 +64,7 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
             image_features = self._model.get_image_features(**inputs)
 
             if self.config.normalize:
-                image_features = F.normalize(image_features, dim=-1)
+                image_features = functional.normalize(image_features, dim=-1)
 
         # Create embeddings (keep as torch.Tensor on device)
         embeddings = []
@@ -86,7 +86,7 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
             text_features = self._model.get_text_features(**inputs)
 
             if self.config.normalize:
-                text_features = F.normalize(text_features, dim=-1)
+                text_features = functional.normalize(text_features, dim=-1)
 
         # Create embeddings (keep as torch.Tensor on device)
         embeddings = []

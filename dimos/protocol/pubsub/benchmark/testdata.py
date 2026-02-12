@@ -14,15 +14,19 @@
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.benchmark.type import Case
-from dimos.protocol.pubsub.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
-from dimos.protocol.pubsub.memory import Memory
-from dimos.protocol.pubsub.shmpubsub import BytesSharedMemory, LCMSharedMemory, PickleSharedMemory
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
+from dimos.protocol.pubsub.impl.memory import Memory
+from dimos.protocol.pubsub.impl.shmpubsub import (
+    BytesSharedMemory,
+    LCMSharedMemory,
+    PickleSharedMemory,
+)
 
 
 def make_data_bytes(size: int) -> bytes:
@@ -171,7 +175,7 @@ testcases.append(
 
 
 try:
-    from dimos.protocol.pubsub.redispubsub import Redis
+    from dimos.protocol.pubsub.impl.redispubsub import Redis
 
     @contextmanager
     def redis_pubsub_channel() -> Generator[Redis, None, None]:
@@ -199,15 +203,29 @@ except (ConnectionError, ImportError):
     print("Redis not available")
 
 
-from dimos.protocol.pubsub.rospubsub import ROS_AVAILABLE, DimosROS, RawROS, RawROSTopic, ROSTopic
+from dimos.protocol.pubsub.impl.rospubsub import (
+    ROS_AVAILABLE,
+    DimosROS,
+    RawROS,
+    RawROSTopic,
+    ROSTopic,
+)
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 if ROS_AVAILABLE:
-    from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
-    from sensor_msgs.msg import Image as ROSImage
+    from rclpy.qos import (  # type: ignore[no-untyped-call]
+        QoSDurabilityPolicy,
+        QoSHistoryPolicy,
+        QoSProfile,
+        QoSReliabilityPolicy,
+    )
+    from sensor_msgs.msg import Image as ROSImage  # type: ignore[attr-defined,no-untyped-call]
 
     @contextmanager
     def ros_best_effort_pubsub_channel() -> Generator[RawROS, None, None]:
-        qos = QoSProfile(
+        qos = QoSProfile(  # type: ignore[no-untyped-call]
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             history=QoSHistoryPolicy.KEEP_LAST,
             durability=QoSDurabilityPolicy.VOLATILE,
@@ -220,7 +238,7 @@ if ROS_AVAILABLE:
 
     @contextmanager
     def ros_reliable_pubsub_channel() -> Generator[RawROS, None, None]:
-        qos = QoSProfile(
+        qos = QoSProfile(  # type: ignore[no-untyped-call]
             reliability=QoSReliabilityPolicy.RELIABLE,
             history=QoSHistoryPolicy.KEEP_LAST,
             durability=QoSDurabilityPolicy.VOLATILE,
@@ -235,21 +253,21 @@ if ROS_AVAILABLE:
         import numpy as np
 
         # Create image data
-        data = np.frombuffer(make_data_bytes(size), dtype=np.uint8).reshape(-1)
-        padded_size = ((len(data) + 2) // 3) * 3
-        data = np.pad(data, (0, padded_size - len(data)))
-        pixels = len(data) // 3
+        raw_data: NDArray[np.uint8] = np.frombuffer(make_data_bytes(size), dtype=np.uint8)
+        padded_size = ((len(raw_data) + 2) // 3) * 3
+        padded_data: NDArray[np.uint8] = np.pad(raw_data, (0, padded_size - len(raw_data)))
+        pixels = len(padded_data) // 3
         height = max(1, int(pixels**0.5))
         width = pixels // height
-        data = data[: height * width * 3]
+        final_data: NDArray[np.uint8] = padded_data[: height * width * 3]
 
         # Create ROS Image message
-        msg = ROSImage()
+        msg = ROSImage()  # type: ignore[no-untyped-call]
         msg.height = height
         msg.width = width
         msg.encoding = "rgb8"
         msg.step = width * 3
-        msg.data = data.tobytes()
+        msg.data = bytes(final_data)
 
         topic = RawROSTopic(topic="/benchmark/ros", ros_type=ROSImage)
         return (topic, msg)
@@ -270,7 +288,7 @@ if ROS_AVAILABLE:
 
     @contextmanager
     def dimos_ros_best_effort_pubsub_channel() -> Generator[DimosROS, None, None]:
-        qos = QoSProfile(
+        qos = QoSProfile(  # type: ignore[no-untyped-call]
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             history=QoSHistoryPolicy.KEEP_LAST,
             durability=QoSDurabilityPolicy.VOLATILE,
@@ -283,7 +301,7 @@ if ROS_AVAILABLE:
 
     @contextmanager
     def dimos_ros_reliable_pubsub_channel() -> Generator[DimosROS, None, None]:
-        qos = QoSProfile(
+        qos = QoSProfile(  # type: ignore[no-untyped-call]
             reliability=QoSReliabilityPolicy.RELIABLE,
             history=QoSHistoryPolicy.KEEP_LAST,
             durability=QoSDurabilityPolicy.VOLATILE,

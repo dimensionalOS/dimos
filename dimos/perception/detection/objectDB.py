@@ -44,10 +44,10 @@ class ObjectDB:
 
     def __init__(
         self,
-        distance_threshold: float = 0.1,
+        distance_threshold: float = 0.2,
         min_detections_for_permanent: int = 6,
         pending_ttl_s: float = 5.0,
-        track_id_ttl_s: float = 2.0,
+        track_id_ttl_s: float = 5.0,
     ) -> None:
         self._distance_threshold = distance_threshold
         self._min_detections = min_detections_for_permanent
@@ -138,6 +138,15 @@ class ObjectDB:
         """Find all permanent objects with matching name."""
         with self._lock:
             return [obj for obj in self._objects.values() if obj.name == name]
+
+    def find_by_object_id(self, object_id: str) -> Object | None:
+        """Find an object by its object_id (searches pending and permanent)."""
+        with self._lock:
+            if object_id in self._objects:
+                return self._objects[object_id]
+            if object_id in self._pending_objects:
+                return self._pending_objects[object_id]
+            return None
 
     def find_nearest(
         self,

@@ -60,11 +60,11 @@ class PersonFollowSkillContainer(SkillModule):
     def __init__(
         self,
         camera_info: CameraInfo,
-        global_config: GlobalConfig,
+        cfg: GlobalConfig,
         use_3d_navigation: bool = False,
     ) -> None:
         super().__init__()
-        self._global_config: GlobalConfig = global_config
+        self._global_config: GlobalConfig = cfg
         self._use_3d_navigation: bool = use_3d_navigation
         self._latest_image: Image | None = None
         self._latest_pointcloud: PointCloud2 | None = None

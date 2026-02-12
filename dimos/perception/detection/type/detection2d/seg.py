@@ -183,8 +183,10 @@ class Detection2DSeg(Detection2DBBox):
             approx = cv2.approxPolyDP(contour, epsilon, True)
 
             points = []
-            for pt in approx:
-                points.append(Point2(x=float(pt[0][0]), y=float(pt[0][1])))
+            for i in range(len(approx)):
+                x_coord = float(approx[i, 0, 0])
+                y_coord = float(approx[i, 0, 1])
+                points.append(Point2(x=x_coord, y=y_coord))
 
             if len(points) < 3:
                 continue

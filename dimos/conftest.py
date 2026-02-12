@@ -18,6 +18,29 @@ import threading
 import pytest
 
 
+def _has_cuda():
+    try:
+        import torch
+    except Exception:
+        return False
+
+    try:
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+@pytest.hookimpl()
+def pytest_collection_modifyitems(config, items):
+    if not _has_cuda():
+        skip_marker = pytest.mark.skip(
+            reason="CUDA is not available (torch.cuda.is_available() returned False)"
+        )
+        for item in items:
+            if item.get_closest_marker("cuda"):
+                item.add_marker(skip_marker)
+
+
 @pytest.fixture
 def event_loop():
     loop = asyncio.new_event_loop()

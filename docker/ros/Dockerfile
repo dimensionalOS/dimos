@@ -43,9 +43,6 @@ RUN apt-get install -y \
     qtbase5-dev-tools \
     supervisor
 
-# Install specific numpy version first
-RUN pip install 'numpy<2.0.0'
-
 # Add ROS2 apt repository
 RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null
@@ -87,5 +84,3 @@ RUN rosdep update
 
 # Source ROS2 and workspace in bashrc
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> /root/.bashrc
-
-# Trigger docker workflow rerun 1

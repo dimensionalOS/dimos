@@ -23,8 +23,8 @@ from typing import Any
 import pytest
 
 from dimos.msgs.geometry_msgs import Vector3
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
-from dimos.protocol.pubsub.memory import Memory
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.impl.memory import Memory
 
 
 @contextmanager
@@ -44,7 +44,7 @@ testdata: list[tuple[Callable[[], Any], Any, list[Any]]] = [
 ]
 
 try:
-    from dimos.protocol.pubsub.redispubsub import Redis
+    from dimos.protocol.pubsub.impl.redispubsub import Redis
 
     @contextmanager
     def redis_context() -> Generator[Redis, None, None]:
@@ -70,7 +70,7 @@ try:
         QoSReliabilityPolicy,
     )
 
-    from dimos.protocol.pubsub.rospubsub import RawROS, RawROSTopic
+    from dimos.protocol.pubsub.impl.rospubsub import RawROS, RawROSTopic
 
     # Use RELIABLE QoS with larger depth for testing
     _test_qos = QoSProfile(
@@ -124,7 +124,7 @@ testdata.append(
 )
 
 
-from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
+from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
 
 
 @contextmanager

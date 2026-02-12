@@ -21,7 +21,7 @@ from reactivex import interval
 from reactivex.disposable import Disposable
 
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
-from dimos.core.global_config import GlobalConfig
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.mapping.pointclouds.accumulators.general import GeneralPointCloudAccumulator
 from dimos.mapping.pointclouds.accumulators.protocol import PointCloudAccumulator
 from dimos.mapping.pointclouds.occupancy import general_occupancy
@@ -46,7 +46,7 @@ class Map(Module):
         global_publish_interval: float | None = None,
         min_height: float = 0.10,
         max_height: float = 0.5,
-        global_config: GlobalConfig | None = None,
+        cfg: GlobalConfig = global_config,
         **kwargs,
     ) -> None:
         self.voxel_size = voxel_size
@@ -54,7 +54,7 @@ class Map(Module):
         self.global_publish_interval = global_publish_interval
         self.min_height = min_height
         self.max_height = max_height
-        self._global_config = global_config or GlobalConfig()
+        self._global_config = cfg
         self._point_cloud_accumulator = GeneralPointCloudAccumulator(
             self.voxel_size, self._global_config
         )

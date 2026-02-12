@@ -28,6 +28,7 @@ from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs import Int32
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 from .b1_command import B1Command
@@ -52,11 +53,17 @@ class B1ConnectionModule(Module):
     internally converts to B1Command format, and sends UDP packets at 50Hz.
     """
 
-    cmd_vel: In[TwistStamped]  # Timestamped velocity commands from ROS
-    mode_cmd: In[Int32]  # Mode changes
-    odom_in: In[Odometry]  # External odometry from ROS SLAM/lidar
+    # LCM ports (inter-module communication)
+    cmd_vel: In[TwistStamped]
+    mode_cmd: In[Int32]
+    odom_in: In[Odometry]
 
-    odom_pose: Out[PoseStamped]  # Converted pose for internal use
+    odom_pose: Out[PoseStamped]
+
+    # ROS In ports (receiving from ROS via ROSTransport)
+    ros_cmd_vel: In[TwistStamped]
+    ros_odom_in: In[Odometry]
+    ros_tf: In[TFMessage]
 
     def __init__(  # type: ignore[no-untyped-def]
         self, ip: str = "192.168.12.1", port: int = 9090, test_mode: bool = False, *args, **kwargs
@@ -109,6 +116,17 @@ class B1ConnectionModule(Module):
             self._disposables.add(Disposable(unsub))
         if self.odom_in:
             unsub = self.odom_in.subscribe(self._publish_odom_pose)
+            self._disposables.add(Disposable(unsub))
+
+        # Subscribe to ROS In ports
+        if self.ros_cmd_vel:
+            unsub = self.ros_cmd_vel.subscribe(self.handle_twist_stamped)
+            self._disposables.add(Disposable(unsub))
+        if self.ros_odom_in:
+            unsub = self.ros_odom_in.subscribe(self._publish_odom_pose)
+            self._disposables.add(Disposable(unsub))
+        if self.ros_tf:
+            unsub = self.ros_tf.subscribe(self._on_ros_tf)
             self._disposables.add(Disposable(unsub))
 
         # Start threads
@@ -283,6 +301,10 @@ class B1ConnectionModule(Module):
                 orientation=msg.pose.pose.orientation,
             )
             self.odom_pose.publish(pose_stamped)
+
+    def _on_ros_tf(self, msg: TFMessage) -> None:
+        """Forward ROS TF messages to the module's TF tree."""
+        self.tf.publish(*msg.transforms)
 
     def _watchdog_loop(self) -> None:
         """Single watchdog thread that monitors command freshness."""

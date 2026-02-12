@@ -29,6 +29,8 @@ def test_foxglove_bridge_import() -> None:
     """Test that the foxglove bridge can be imported successfully."""
     try:
         from dimos_lcm.foxglove_bridge import FoxgloveBridge
+
+        assert FoxgloveBridge is not None
     except ImportError as e:
         pytest.fail(f"Failed to import foxglove bridge: {e}")
 

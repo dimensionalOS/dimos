@@ -20,7 +20,7 @@ from typing import Any, Optional, get_args, get_origin
 import typer
 
 from dimos.core.blueprints import autoconnect
-from dimos.core.global_config import GlobalConfig
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.protocol import pubsub
 from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.cli.topic import topic_echo, topic_send
@@ -113,6 +113,7 @@ def run(
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
+    global_config.update(**cli_config_overrides)
     pubsub.lcm.autoconf()  # type: ignore[attr-defined]
     blueprint = get_blueprint_by_name(robot_type.value)
 
@@ -128,9 +129,9 @@ def run(
 def show_config(ctx: typer.Context) -> None:
     """Show current config settings and their values."""
     cli_config_overrides: dict[str, Any] = ctx.obj
-    config = GlobalConfig().model_copy(update=cli_config_overrides)
+    global_config.update(**cli_config_overrides)
 
-    for field_name, value in config.model_dump().items():
+    for field_name, value in global_config.model_dump().items():
         typer.echo(f"{field_name}: {value}")
 
 
@@ -199,6 +200,21 @@ def send(
     message_expr: str = typer.Argument(..., help="Python expression for the message"),
 ) -> None:
     topic_send(topic, message_expr)
+
+
+@main.command(name="rerun-bridge")
+def rerun_bridge_cmd(
+    viewer_mode: str = typer.Option(
+        "native", help="Viewer mode: native (desktop), web (browser), none (headless)"
+    ),
+    memory_limit: str = typer.Option(
+        "25%", help="Memory limit for Rerun viewer (e.g., '4GB', '16GB', '25%')"
+    ),
+) -> None:
+    """Launch the Rerun visualization bridge."""
+    from dimos.visualization.rerun.bridge import run_bridge
+
+    run_bridge(viewer_mode=viewer_mode, memory_limit=memory_limit)
 
 
 if __name__ == "__main__":

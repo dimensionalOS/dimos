@@ -20,7 +20,6 @@ import os
 import platform
 import threading
 import traceback
-from typing import Protocol, runtime_checkable
 
 import lcm
 
@@ -79,34 +78,12 @@ class LCMConfig:
             self.url = _DEFAULT_LCM_URL
 
 
-@runtime_checkable
-class LCMMsg(Protocol):
-    msg_name: str
-
-    @classmethod
-    def lcm_decode(cls, data: bytes) -> LCMMsg:
-        """Decode bytes into an LCM message instance."""
-        ...
-
-    def lcm_encode(self) -> bytes:
-        """Encode this message instance into bytes."""
-        ...
-
-
-@dataclass
-class Topic:
-    topic: str = ""
-    lcm_type: type[LCMMsg] | None = None
-
-    def __str__(self) -> str:
-        if self.lcm_type is None:
-            return self.topic
-        return f"{self.topic}#{self.lcm_type.msg_name}"
-
-
 _LCM_LOOP_TIMEOUT = 50
 
 
+# this class just sets up cpp LCM instance
+# and runs its handle loop in a thread
+# higher order stuff is done by pubsub/impl/lcmpubsub.py
 class LCMService(Service[LCMConfig]):
     default_config = LCMConfig
     l: lcm.LCM | None

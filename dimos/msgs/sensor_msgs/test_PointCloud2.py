@@ -15,25 +15,10 @@
 
 
 import numpy as np
-import pytest
-
-try:
-    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, PointField as ROSPointField
-    from std_msgs.msg import Header as ROSHeader
-except ImportError:
-    ROSPointCloud2 = None
-    ROSPointField = None
-    ROSHeader = None
 
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.utils.testing import SensorReplay
-
-# Try to import ROS types for testing
-try:
-    ROS_AVAILABLE = True
-except ImportError:
-    ROS_AVAILABLE = False
 
 
 def test_lcm_encode_decode() -> None:
@@ -95,141 +80,6 @@ def test_lcm_encode_decode() -> None:
     print(f"  - Mean: {decoded_points.mean(axis=0)}")
 
     print("✓ LCM encode/decode test passed - all properties preserved!")
-
-
-@pytest.mark.ros
-def test_ros_conversion() -> None:
-    """Test ROS message conversion preserves pointcloud data."""
-    if not ROS_AVAILABLE:
-        print("ROS packages not available - skipping ROS conversion test")
-        return
-
-    print("\nTesting ROS PointCloud2 conversion...")
-
-    # Create a simple test point cloud
-    import open3d as o3d
-
-    points = np.array(
-        [
-            [1.0, 2.0, 3.0],
-            [4.0, 5.0, 6.0],
-            [-1.0, -2.0, -3.0],
-            [0.5, 0.5, 0.5],
-        ],
-        dtype=np.float32,
-    )
-
-    pc = o3d.geometry.PointCloud()
-    pc.points = o3d.utility.Vector3dVector(points)
-
-    # Create DIMOS PointCloud2
-    original = PointCloud2(
-        pointcloud=pc,
-        frame_id="test_frame",
-        ts=1234567890.123456,
-    )
-
-    # Test 1: Convert to ROS and back
-    ros_msg = original.to_ros_msg()
-    converted = PointCloud2.from_ros_msg(ros_msg)
-
-    # Check points are preserved
-    original_points, _ = original.as_numpy()
-    converted_points, _ = converted.as_numpy()
-
-    assert len(original_points) == len(converted_points), (
-        f"Point count mismatch: {len(original_points)} vs {len(converted_points)}"
-    )
-
-    np.testing.assert_allclose(
-        original_points,
-        converted_points,
-        rtol=1e-6,
-        atol=1e-6,
-        err_msg="Points don't match after ROS conversion",
-    )
-    print(f"✓ Points preserved: {len(converted_points)} points match")
-
-    # Check metadata
-    assert original.frame_id == converted.frame_id, (
-        f"Frame ID mismatch: '{original.frame_id}' vs '{converted.frame_id}'"
-    )
-    print(f"✓ Frame ID preserved: '{converted.frame_id}'")
-
-    assert abs(original.ts - converted.ts) < 1e-6, (
-        f"Timestamp mismatch: {original.ts} vs {converted.ts}"
-    )
-    print(f"✓ Timestamp preserved: {converted.ts}")
-
-    # Test 2: Create ROS message directly and convert to DIMOS
-    ros_msg2 = ROSPointCloud2()
-    ros_msg2.header = ROSHeader()
-    ros_msg2.header.frame_id = "ros_test_frame"
-    ros_msg2.header.stamp.sec = 1234567890
-    ros_msg2.header.stamp.nanosec = 123456000
-
-    # Set up point cloud data
-    ros_msg2.height = 1
-    ros_msg2.width = 3
-    ros_msg2.fields = [
-        ROSPointField(name="x", offset=0, datatype=ROSPointField.FLOAT32, count=1),
-        ROSPointField(name="y", offset=4, datatype=ROSPointField.FLOAT32, count=1),
-        ROSPointField(name="z", offset=8, datatype=ROSPointField.FLOAT32, count=1),
-    ]
-    ros_msg2.is_bigendian = False
-    ros_msg2.point_step = 12
-    ros_msg2.row_step = 36
-
-    # Pack test points
-    test_points = np.array(
-        [
-            [1.0, 2.0, 3.0],
-            [4.0, 5.0, 6.0],
-            [7.0, 8.0, 9.0],
-        ],
-        dtype=np.float32,
-    )
-    ros_msg2.data = test_points.tobytes()
-    ros_msg2.is_dense = True
-
-    # Convert to DIMOS
-    dimos_pc = PointCloud2.from_ros_msg(ros_msg2)
-
-    assert dimos_pc.frame_id == "ros_test_frame", (
-        f"Frame ID not preserved: expected 'ros_test_frame', got '{dimos_pc.frame_id}'"
-    )
-
-    decoded_points, _ = dimos_pc.as_numpy()
-    assert len(decoded_points) == 3, (
-        f"Wrong number of points: expected 3, got {len(decoded_points)}"
-    )
-
-    np.testing.assert_allclose(
-        test_points,
-        decoded_points,
-        rtol=1e-6,
-        atol=1e-6,
-        err_msg="Points from ROS message don't match",
-    )
-    print("✓ ROS to DIMOS conversion works correctly")
-
-    # Test 3: Empty point cloud
-    empty_pc = PointCloud2(
-        pointcloud=o3d.geometry.PointCloud(),
-        frame_id="empty_frame",
-        ts=1234567890.0,
-    )
-
-    empty_ros = empty_pc.to_ros_msg()
-    assert empty_ros.width == 0, "Empty cloud should have width 0"
-    assert empty_ros.height == 0, "Empty cloud should have height 0"
-    assert len(empty_ros.data) == 0, "Empty cloud should have no data"
-
-    empty_converted = PointCloud2.from_ros_msg(empty_ros)
-    assert len(empty_converted) == 0, "Empty cloud conversion failed"
-    print("✓ Empty point cloud handling works")
-
-    print("\n✓ All ROS conversion tests passed!")
 
 
 def test_bounding_box_intersects() -> None:
@@ -307,5 +157,4 @@ def test_bounding_box_intersects() -> None:
 
 if __name__ == "__main__":
     test_lcm_encode_decode()
-    test_ros_conversion()
     test_bounding_box_intersects()

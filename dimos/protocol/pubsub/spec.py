@@ -17,15 +17,75 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-import pickle
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
 
 MsgT = TypeVar("MsgT")
 TopicT = TypeVar("TopicT")
-EncodingT = TypeVar("EncodingT")
+MsgT_co = TypeVar("MsgT_co", covariant=True)
+TopicT_co = TypeVar("TopicT_co", covariant=True)
 
 
-class PubSub(Generic[TopicT, MsgT], ABC):
+class PubSubBaseMixin(Generic[TopicT, MsgT]):
+    """Mixin class providing sugar methods for PubSub implementations.
+    Depends on the basic publish and subscribe methods being implemented.
+    """
+
+    def subscribe(
+        self, topic: TopicT, callback: Callable[[MsgT, TopicT], None]
+    ) -> Callable[[], None]:
+        """Subscribe to a topic. Implemented by subclasses."""
+        raise NotImplementedError
+
+    @dataclass(slots=True)
+    class _Subscription:
+        _bus: "PubSubBaseMixin[Any, Any]"
+        _topic: Any
+        _cb: Callable[[Any, Any], None]
+        _unsubscribe_fn: Callable[[], None]
+
+        def unsubscribe(self) -> None:
+            self._unsubscribe_fn()
+
+        def __enter__(self) -> "PubSubBaseMixin._Subscription":
+            return self
+
+        def __exit__(self, *exc: Any) -> None:
+            self.unsubscribe()
+
+    def sub(self, topic: TopicT, cb: Callable[[MsgT, TopicT], None]) -> "_Subscription":
+        unsubscribe_fn = self.subscribe(topic, cb)
+        return self._Subscription(self, topic, cb, unsubscribe_fn)
+
+    async def aiter(self, topic: TopicT, *, max_pending: int | None = None) -> AsyncIterator[MsgT]:
+        q: asyncio.Queue[MsgT] = asyncio.Queue(maxsize=max_pending or 0)
+
+        def _cb(msg: MsgT, topic: TopicT) -> None:
+            q.put_nowait(msg)
+
+        unsubscribe_fn = self.subscribe(topic, _cb)
+        try:
+            while True:
+                yield await q.get()
+        finally:
+            unsubscribe_fn()
+
+    @asynccontextmanager
+    async def queue(
+        self, topic: TopicT, *, max_pending: int | None = None
+    ) -> AsyncIterator[asyncio.Queue[MsgT]]:
+        q: asyncio.Queue[MsgT] = asyncio.Queue(maxsize=max_pending or 0)
+
+        def _queue_cb(msg: MsgT, topic: TopicT) -> None:
+            q.put_nowait(msg)
+
+        unsubscribe_fn = self.subscribe(topic, _queue_cb)
+        try:
+            yield q
+        finally:
+            unsubscribe_fn()
+
+
+class PubSub(PubSubBaseMixin[TopicT, MsgT], ABC):
     """Abstract base class for pub/sub implementations with sugar methods."""
 
     @abstractmethod
@@ -40,111 +100,92 @@ class PubSub(Generic[TopicT, MsgT], ABC):
         """Subscribe to a topic with a callback. returns unsubscribe function"""
         ...
 
-    @dataclass(slots=True)
-    class _Subscription:
-        _bus: "PubSub[Any, Any]"
-        _topic: Any
-        _cb: Callable[[Any, Any], None]
-        _unsubscribe_fn: Callable[[], None]
 
-        def unsubscribe(self) -> None:
-            self._unsubscribe_fn()
+# AllPubSub and DiscoveryPubSub are complementary mixins:
+#
+# AllPubsub supports subscribing to all topics (Redis, LCM, MQTT)
+# DiscoveryPubSub supports discovering new topics (ROS)
+#
+# These capabilities are orthogonal but they can implement one another.
+# Implementations should subclass whichever matches their native capability.
+# The other method will be synthesized automatically.
+#
+# - AllPubSub: Native support for subscribing to all topics at once.
+#   Provides a default subscribe_new_topics() by tracking seen topics.
+#
+# - DiscoveryPubSub: Native support for discovering new topics as they appear.
+#   Provides a default subscribe_all() by subscribing to each discovered topic.
+class AllPubSub(PubSub[TopicT, MsgT], ABC):
+    """Mixin for PubSub that supports subscribing to all topics.
 
-        # context-manager helper
-        def __enter__(self):  # type: ignore[no-untyped-def]
-            return self
-
-        def __exit__(self, *exc) -> None:  # type: ignore[no-untyped-def]
-            self.unsubscribe()
-
-    # public helper: returns disposable object
-    def sub(self, topic: TopicT, cb: Callable[[MsgT, TopicT], None]) -> "_Subscription":
-        unsubscribe_fn = self.subscribe(topic, cb)
-        return self._Subscription(self, topic, cb, unsubscribe_fn)
-
-    # async iterator
-    async def aiter(self, topic: TopicT, *, max_pending: int | None = None) -> AsyncIterator[MsgT]:
-        q: asyncio.Queue[MsgT] = asyncio.Queue(maxsize=max_pending or 0)
-
-        def _cb(msg: MsgT, topic: TopicT) -> None:
-            q.put_nowait(msg)
-
-        unsubscribe_fn = self.subscribe(topic, _cb)
-        try:
-            while True:
-                yield await q.get()
-        finally:
-            unsubscribe_fn()
-
-        # async context manager returning a queue
-
-    @asynccontextmanager
-    async def queue(self, topic: TopicT, *, max_pending: int | None = None):  # type: ignore[no-untyped-def]
-        q: asyncio.Queue[MsgT] = asyncio.Queue(maxsize=max_pending or 0)
-
-        def _queue_cb(msg: MsgT, topic: TopicT) -> None:
-            q.put_nowait(msg)
-
-        unsubscribe_fn = self.subscribe(topic, _queue_cb)
-        try:
-            yield q
-        finally:
-            unsubscribe_fn()
-
-
-class PubSubEncoderMixin(Generic[TopicT, MsgT, EncodingT], ABC):
-    """Mixin that encodes messages before publishing and decodes them after receiving.
-
-    Usage: Just specify encoder and decoder as a subclass:
-
-    class MyPubSubWithJSON(PubSubEncoderMixin, MyPubSub):
-        def encoder(msg, topic):
-            json.dumps(msg).encode('utf-8')
-        def decoder(msg, topic):
-            data: json.loads(data.decode('utf-8'))
+    Subclass from this if you support native subscribe-all (e.g. MQTT #, Redis *).
+    Provides a default subscribe_new_topics() implementation.
     """
 
     @abstractmethod
-    def encode(self, msg: MsgT, topic: TopicT) -> EncodingT: ...
+    def subscribe_all(self, callback: Callable[[MsgT, TopicT], Any]) -> Callable[[], None]:
+        """Subscribe to all topics."""
+        ...
+
+    def subscribe_new_topics(self, callback: Callable[[TopicT], Any]) -> Callable[[], None]:
+        """Discover new topics by tracking seen topics from subscribe_all."""
+        import threading
+
+        seen: set[TopicT] = set()
+        lock = threading.Lock()
+
+        def on_msg(msg: MsgT, topic: TopicT) -> None:
+            with lock:
+                if topic not in seen:
+                    seen.add(topic)
+                    callback(topic)
+
+        return self.subscribe_all(on_msg)
+
+
+# This is for ros for now
+class DiscoveryPubSub(PubSub[TopicT, MsgT], ABC):
+    """Mixin for PubSub that supports discovery of topics.
+
+    Subclass from this if you support topic discovery (e.g. MQTT, Redis, NATS, RabbitMQ).
+    """
 
     @abstractmethod
-    def decode(self, msg: EncodingT, topic: TopicT) -> MsgT: ...
+    def subscribe_new_topics(self, callback: Callable[[TopicT], Any]) -> Callable[[], None]:
+        """Get notified when new topics are discovered."""
+        ...
 
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(*args, **kwargs)
-        self._encode_callback_map: dict = {}  # type: ignore[type-arg]
+    def subscribe_all(self, callback: Callable[[MsgT, TopicT], Any]) -> Callable[[], None]:
+        """Subscribe to all topics by subscribing to each discovered topic."""
+        import threading
 
-    def publish(self, topic: TopicT, message: MsgT) -> None:
-        """Encode the message and publish it."""
-        if getattr(self, "_stop_event", None) is not None and self._stop_event.is_set():  # type: ignore[attr-defined]
-            return
-        encoded_message = self.encode(message, topic)
-        if encoded_message is None:
-            return
-        super().publish(topic, encoded_message)  # type: ignore[misc]
+        subscriptions: list[Callable[[], None]] = []
+        lock = threading.Lock()
 
-    def subscribe(
-        self, topic: TopicT, callback: Callable[[MsgT, TopicT], None]
-    ) -> Callable[[], None]:
-        """Subscribe with automatic decoding."""
+        def on_new_topic(topic: TopicT) -> None:
+            unsub = self.subscribe(topic, callback)
+            with lock:
+                subscriptions.append(unsub)
 
-        def wrapper_cb(encoded_data: EncodingT, topic: TopicT) -> None:
-            decoded_message = self.decode(encoded_data, topic)
-            callback(decoded_message, topic)
+        discovery_unsub = self.subscribe_new_topics(on_new_topic)
 
-        return super().subscribe(topic, wrapper_cb)  # type: ignore[misc, no-any-return]
+        def unsubscribe_all() -> None:
+            discovery_unsub()
+            with lock:
+                subs = subscriptions.copy()
+            for unsub in subs:
+                unsub()
+
+        return unsubscribe_all
 
 
-class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT, bytes]):
-    def encode(self, msg: MsgT, *_: TopicT) -> bytes:  # type: ignore[return]
-        try:
-            return pickle.dumps(msg)
-        except Exception as e:
-            print("Pickle encoding error:", e)
-            import traceback
+@runtime_checkable
+class SubscribeAllCapable(Protocol[MsgT_co, TopicT_co]):
+    """Protocol for pubsubs that support subscribe_all.
 
-            traceback.print_exc()
-            print("Tried to pickle:", msg)
+    Both AllPubSub (native) and DiscoveryPubSub (synthesized) satisfy this.
+    """
 
-    def decode(self, msg: bytes, _: TopicT) -> MsgT:
-        return pickle.loads(msg)  # type: ignore[no-any-return]
+    def subscribe_all(self, callback: Callable[[Any, Any], Any]) -> Callable[[], None]:
+        """Subscribe to all messages on all topics."""
+        ...

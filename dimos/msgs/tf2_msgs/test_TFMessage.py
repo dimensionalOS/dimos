@@ -12,15 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-
-try:
-    from geometry_msgs.msg import TransformStamped as ROSTransformStamped
-    from tf2_msgs.msg import TFMessage as ROSTFMessage
-except ImportError:
-    ROSTransformStamped = None
-    ROSTFMessage = None
-
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
@@ -70,6 +61,38 @@ def test_tfmessage_add_transform() -> None:
     assert msg[0] == tf
 
 
+def test_tfmessage_tree() -> None:
+    """Test adding transforms to TFMessage."""
+    msg = TFMessage()
+
+    msg.add_transform(
+        Transform(
+            translation=Vector3(1, 2, 0.5), frame_id="world", child_frame_id="robot", ts=200.0
+        )
+    )
+    msg.add_transform(
+        Transform(
+            translation=Vector3(0.1, 0, 1.0), frame_id="robot", child_frame_id="camera", ts=200.0
+        )
+    )
+    msg.add_transform(
+        Transform(
+            translation=Vector3(0.2, 0, 0.2), frame_id="robot", child_frame_id="lidar", ts=200.0
+        )
+    )
+    msg.add_transform(
+        Transform(
+            translation=Vector3(0.05, 0, 0.0),
+            frame_id="lidar",
+            child_frame_id="lidar_scanner",
+            ts=200.0,
+        )
+    )
+
+    assert len(msg) == 4
+    print(msg)
+
+
 def test_tfmessage_lcm_encode_decode() -> None:
     """Test encoding TFMessage to LCM bytes."""
     # Create transforms
@@ -115,155 +138,3 @@ def test_tfmessage_lcm_encode_decode() -> None:
     assert ts2.child_frame_id == "target"
     assert ts2.transform.rotation.z == 0.707
     assert ts2.transform.rotation.w == 0.707
-
-
-@pytest.mark.ros
-def test_tfmessage_from_ros_msg() -> None:
-    """Test creating a TFMessage from a ROS TFMessage message."""
-
-    ros_msg = ROSTFMessage()
-
-    # Add first transform
-    tf1 = ROSTransformStamped()
-    tf1.header.frame_id = "world"
-    tf1.header.stamp.sec = 123
-    tf1.header.stamp.nanosec = 456000000
-    tf1.child_frame_id = "robot"
-    tf1.transform.translation.x = 1.0
-    tf1.transform.translation.y = 2.0
-    tf1.transform.translation.z = 3.0
-    tf1.transform.rotation.x = 0.0
-    tf1.transform.rotation.y = 0.0
-    tf1.transform.rotation.z = 0.0
-    tf1.transform.rotation.w = 1.0
-    ros_msg.transforms.append(tf1)
-
-    # Add second transform
-    tf2 = ROSTransformStamped()
-    tf2.header.frame_id = "robot"
-    tf2.header.stamp.sec = 124
-    tf2.header.stamp.nanosec = 567000000
-    tf2.child_frame_id = "sensor"
-    tf2.transform.translation.x = 4.0
-    tf2.transform.translation.y = 5.0
-    tf2.transform.translation.z = 6.0
-    tf2.transform.rotation.x = 0.0
-    tf2.transform.rotation.y = 0.0
-    tf2.transform.rotation.z = 0.707
-    tf2.transform.rotation.w = 0.707
-    ros_msg.transforms.append(tf2)
-
-    # Convert to TFMessage
-    tfmsg = TFMessage.from_ros_msg(ros_msg)
-
-    assert len(tfmsg) == 2
-
-    # Check first transform
-    assert tfmsg[0].frame_id == "world"
-    assert tfmsg[0].child_frame_id == "robot"
-    assert tfmsg[0].ts == 123.456
-    assert tfmsg[0].translation.x == 1.0
-    assert tfmsg[0].translation.y == 2.0
-    assert tfmsg[0].translation.z == 3.0
-    assert tfmsg[0].rotation.w == 1.0
-
-    # Check second transform
-    assert tfmsg[1].frame_id == "robot"
-    assert tfmsg[1].child_frame_id == "sensor"
-    assert tfmsg[1].ts == 124.567
-    assert tfmsg[1].translation.x == 4.0
-    assert tfmsg[1].translation.y == 5.0
-    assert tfmsg[1].translation.z == 6.0
-    assert tfmsg[1].rotation.z == 0.707
-    assert tfmsg[1].rotation.w == 0.707
-
-
-@pytest.mark.ros
-def test_tfmessage_to_ros_msg() -> None:
-    """Test converting a TFMessage to a ROS TFMessage message."""
-    # Create transforms
-    tf1 = Transform(
-        translation=Vector3(1.0, 2.0, 3.0),
-        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        frame_id="map",
-        child_frame_id="base_link",
-        ts=123.456,
-    )
-    tf2 = Transform(
-        translation=Vector3(7.0, 8.0, 9.0),
-        rotation=Quaternion(0.1, 0.2, 0.3, 0.9),
-        frame_id="base_link",
-        child_frame_id="lidar",
-        ts=125.789,
-    )
-
-    tfmsg = TFMessage(tf1, tf2)
-
-    # Convert to ROS message
-    ros_msg = tfmsg.to_ros_msg()
-
-    assert isinstance(ros_msg, ROSTFMessage)
-    assert len(ros_msg.transforms) == 2
-
-    # Check first transform
-    assert ros_msg.transforms[0].header.frame_id == "map"
-    assert ros_msg.transforms[0].child_frame_id == "base_link"
-    assert ros_msg.transforms[0].header.stamp.sec == 123
-    assert ros_msg.transforms[0].header.stamp.nanosec == 456000000
-    assert ros_msg.transforms[0].transform.translation.x == 1.0
-    assert ros_msg.transforms[0].transform.translation.y == 2.0
-    assert ros_msg.transforms[0].transform.translation.z == 3.0
-    assert ros_msg.transforms[0].transform.rotation.w == 1.0
-
-    # Check second transform
-    assert ros_msg.transforms[1].header.frame_id == "base_link"
-    assert ros_msg.transforms[1].child_frame_id == "lidar"
-    assert ros_msg.transforms[1].header.stamp.sec == 125
-    assert ros_msg.transforms[1].header.stamp.nanosec == 789000000
-    assert ros_msg.transforms[1].transform.translation.x == 7.0
-    assert ros_msg.transforms[1].transform.translation.y == 8.0
-    assert ros_msg.transforms[1].transform.translation.z == 9.0
-    assert ros_msg.transforms[1].transform.rotation.x == 0.1
-    assert ros_msg.transforms[1].transform.rotation.y == 0.2
-    assert ros_msg.transforms[1].transform.rotation.z == 0.3
-    assert ros_msg.transforms[1].transform.rotation.w == 0.9
-
-
-@pytest.mark.ros
-def test_tfmessage_ros_roundtrip() -> None:
-    """Test round-trip conversion between TFMessage and ROS TFMessage."""
-    # Create transforms with various properties
-    tf1 = Transform(
-        translation=Vector3(1.5, 2.5, 3.5),
-        rotation=Quaternion(0.15, 0.25, 0.35, 0.85),
-        frame_id="odom",
-        child_frame_id="base_footprint",
-        ts=100.123,
-    )
-    tf2 = Transform(
-        translation=Vector3(0.1, 0.2, 0.3),
-        rotation=Quaternion(0.0, 0.0, 0.383, 0.924),
-        frame_id="base_footprint",
-        child_frame_id="camera",
-        ts=100.456,
-    )
-
-    original = TFMessage(tf1, tf2)
-
-    # Convert to ROS and back
-    ros_msg = original.to_ros_msg()
-    restored = TFMessage.from_ros_msg(ros_msg)
-
-    assert len(restored) == len(original)
-
-    for orig_tf, rest_tf in zip(original, restored, strict=False):
-        assert rest_tf.frame_id == orig_tf.frame_id
-        assert rest_tf.child_frame_id == orig_tf.child_frame_id
-        assert rest_tf.ts == orig_tf.ts
-        assert rest_tf.translation.x == orig_tf.translation.x
-        assert rest_tf.translation.y == orig_tf.translation.y
-        assert rest_tf.translation.z == orig_tf.translation.z
-        assert rest_tf.rotation.x == orig_tf.rotation.x
-        assert rest_tf.rotation.y == orig_tf.rotation.y
-        assert rest_tf.rotation.z == orig_tf.rotation.z
-        assert rest_tf.rotation.w == orig_tf.rotation.w

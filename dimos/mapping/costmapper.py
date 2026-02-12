@@ -16,13 +16,10 @@ from dataclasses import asdict, dataclass, field
 import time
 
 from reactivex import operators as ops
-import rerun as rr
-import rerun.blueprint as rrb
 
 from dimos.core import In, Module, Out, rpc
-from dimos.core.global_config import GlobalConfig
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleConfig
-from dimos.dashboard.rerun_init import connect_rerun
 from dimos.mapping.pointclouds.occupancy import (
     OCCUPANCY_ALGOS,
     HeightCostConfig,
@@ -48,65 +45,16 @@ class CostMapper(Module):
     global_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
 
-    @classmethod
-    def rerun_views(cls):  # type: ignore[no-untyped-def]
-        """Return Rerun view blueprints for costmap visualization."""
-        return [
-            rrb.Spatial2DView(
-                name="Costmap",
-                origin="world/nav/costmap/image",
-            ),
-            rrb.TimeSeriesView(
-                name="Costmap (ms)",
-                origin="/metrics/costmap",
-                contents=["+ /metrics/costmap/calc_ms"],
-            ),
-        ]
-
-    def __init__(self, global_config: GlobalConfig | None = None, **kwargs: object) -> None:
+    def __init__(self, cfg: GlobalConfig = global_config, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        self._global_config = global_config or GlobalConfig()
+        self._global_config = cfg
 
     @rpc
     def start(self) -> None:
         super().start()
 
-        # Only start Rerun logging if Rerun backend is selected
-        if self._global_config.viewer_backend.startswith("rerun"):
-            connect_rerun(global_config=self._global_config)
-            logger.info("CostMapper: Rerun logging enabled (sync)")
-
         def _publish_costmap(grid: OccupancyGrid, calc_time_ms: float, rx_monotonic: float) -> None:
-            # Publish to downstream first.
             self.global_costmap.publish(grid)
-
-            # Synchronous Rerun logging (no queues/threads).
-            if self._global_config.viewer_backend.startswith("rerun"):
-                try:
-                    # 2D image panel
-                    rr.log(
-                        "world/nav/costmap/image",
-                        grid.to_rerun(
-                            mode="image",
-                            colormap="RdBu_r",
-                        ),
-                    )
-
-                    # 3D floor overlay (mesh)
-                    rr.log(
-                        "world/nav/costmap/floor",
-                        grid.to_rerun(
-                            mode="mesh",
-                            colormap=None,  # grayscale / foxglove-style
-                            z_offset=0.07,
-                        ),
-                    )
-
-                    rr.log("metrics/costmap/calc_ms", rr.Scalars(calc_time_ms))
-                    latency_ms = (time.monotonic() - rx_monotonic) * 1000
-                    rr.log("metrics/costmap/latency_ms", rr.Scalars(latency_ms))
-                except Exception as e:
-                    logger.warning(f"Rerun logging error: {e}")
 
         def _calculate_and_time(
             msg: PointCloud2,

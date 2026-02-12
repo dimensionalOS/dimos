@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 import numpy as np
 import pytest
 
@@ -6,12 +8,22 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
 
 
+@contextmanager
+def skip_xformers_unsupported():
+    try:
+        yield
+    except NotImplementedError as e:
+        if "memory_efficient_attention" in str(e):
+            pytest.skip(f"xformers not supported on this GPU: {e}")
+        raise
+
+
 @pytest.fixture
 def sample_intrinsics() -> list[float]:
     """Sample camera intrinsics [fx, fy, cx, cy]."""
     return [500.0, 500.0, 320.0, 240.0]
 
-
+@pytest.mark.cuda
 @pytest.mark.gpu
 def test_metric3d_init(sample_intrinsics: list[float]) -> None:
     """Test Metric3D initialization."""
@@ -30,7 +42,6 @@ def test_metric3d_update_intrinsic(sample_intrinsics: list[float]) -> None:
     model.update_intrinsic(new_intrinsics)
     assert model.intrinsic == new_intrinsics
 
-
 @pytest.mark.gpu
 def test_metric3d_update_intrinsic_invalid(sample_intrinsics: list[float]) -> None:
     """Test that invalid intrinsics raise an error."""
@@ -40,6 +51,7 @@ def test_metric3d_update_intrinsic_invalid(sample_intrinsics: list[float]) -> No
         model.update_intrinsic([1.0, 2.0])  # Only 2 values
 
 
+@pytest.mark.cuda
 @pytest.mark.gpu
 def test_metric3d_infer_depth(sample_intrinsics: list[float]) -> None:
     """Test depth inference on a sample image."""
@@ -51,7 +63,8 @@ def test_metric3d_infer_depth(sample_intrinsics: list[float]) -> None:
     rgb_array = image.data
 
     # Run inference
-    depth_map = model.infer_depth(rgb_array)
+    with skip_xformers_unsupported():
+        depth_map = model.infer_depth(rgb_array)
 
     # Verify output
     assert isinstance(depth_map, np.ndarray)
@@ -65,6 +78,7 @@ def test_metric3d_infer_depth(sample_intrinsics: list[float]) -> None:
     model.stop()
 
 
+@pytest.mark.cuda
 @pytest.mark.gpu
 def test_metric3d_multiple_inferences(sample_intrinsics: list[float]) -> None:
     """Test multiple depth inferences."""
@@ -77,7 +91,8 @@ def test_metric3d_multiple_inferences(sample_intrinsics: list[float]) -> None:
     # Run multiple inferences
     depths = []
     for _ in range(3):
-        depth = model.infer_depth(rgb_array)
+        with skip_xformers_unsupported():
+            depth = model.infer_depth(rgb_array)
         depths.append(depth)
 
     # Results should be consistent

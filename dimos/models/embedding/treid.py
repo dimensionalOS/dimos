@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import warnings
 from dataclasses import dataclass
 from functools import cached_property
 
 import torch
-import torch.nn.functional as F
+import torch.nn.functional as functional
+
+warnings.filterwarnings("ignore", message="Cython evaluation.*unavailable", category=UserWarning)
 from torchreid import utils as torchreid_utils
 
 from dimos.models.base import LocalModel
@@ -70,7 +73,7 @@ class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding], LocalModel):
                 features_tensor = torch.from_numpy(features).to(self.config.device)
 
             if self.config.normalize:
-                features_tensor = F.normalize(features_tensor, dim=-1)
+                features_tensor = functional.normalize(features_tensor, dim=-1)
 
         # Create embeddings (keep as torch.Tensor on device)
         embeddings = []

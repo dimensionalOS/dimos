@@ -17,41 +17,12 @@
 
 from dimos_lcm.std_msgs import Bool as LCMBool
 
-try:
-    from std_msgs.msg import Bool as ROSBool  # type: ignore[attr-defined]
-except ImportError:
-    ROSBool = None  # type: ignore[assignment, misc]
-
 
 class Bool(LCMBool):  # type: ignore[misc]
-    """ROS-compatible Bool message."""
+    """Bool message."""
 
     msg_name = "std_msgs.Bool"
 
     def __init__(self, data: bool = False) -> None:
         """Initialize Bool with data value."""
         self.data = data
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSBool) -> "Bool":
-        """Create a Bool from a ROS std_msgs/Bool message.
-
-        Args:
-            ros_msg: ROS Bool message
-
-        Returns:
-            Bool instance
-        """
-        return cls(data=ros_msg.data)
-
-    def to_ros_msg(self) -> ROSBool:
-        """Convert to a ROS std_msgs/Bool message.
-
-        Returns:
-            ROS Bool message
-        """
-        if ROSBool is None:
-            raise ImportError("ROS std_msgs not available")
-        ros_msg = ROSBool()  # type: ignore[no-untyped-call]
-        ros_msg.data = bool(self.data)
-        return ros_msg

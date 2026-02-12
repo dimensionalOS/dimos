@@ -22,13 +22,6 @@ from dimos_lcm.geometry_msgs import (
 import numpy as np
 from plum import dispatch
 
-try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
-        TwistWithCovariance as ROSTwistWithCovariance,
-    )
-except ImportError:
-    ROSTwistWithCovariance = None  # type: ignore[assignment, misc]
-
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
 
@@ -197,33 +190,3 @@ class TwistWithCovariance(LCMTwistWithCovariance):  # type: ignore[misc]
             angular=[lcm_msg.twist.angular.x, lcm_msg.twist.angular.y, lcm_msg.twist.angular.z],
         )
         return cls(twist, lcm_msg.covariance)
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSTwistWithCovariance) -> TwistWithCovariance:
-        """Create a TwistWithCovariance from a ROS geometry_msgs/TwistWithCovariance message.
-
-        Args:
-            ros_msg: ROS TwistWithCovariance message
-
-        Returns:
-            TwistWithCovariance instance
-        """
-
-        twist = Twist.from_ros_msg(ros_msg.twist)
-        return cls(twist, list(ros_msg.covariance))
-
-    def to_ros_msg(self) -> ROSTwistWithCovariance:
-        """Convert to a ROS geometry_msgs/TwistWithCovariance message.
-
-        Returns:
-            ROS TwistWithCovariance message
-        """
-
-        ros_msg = ROSTwistWithCovariance()  # type: ignore[no-untyped-call]
-        ros_msg.twist = self.twist.to_ros_msg()
-        # ROS expects list, not numpy array
-        if isinstance(self.covariance, np.ndarray):  # type: ignore[has-type]
-            ros_msg.covariance = self.covariance.tolist()  # type: ignore[has-type]
-        else:
-            ros_msg.covariance = list(self.covariance)  # type: ignore[has-type]
-        return ros_msg

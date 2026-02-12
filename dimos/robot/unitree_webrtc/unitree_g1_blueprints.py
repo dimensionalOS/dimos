@@ -52,7 +52,7 @@ from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
 from dimos.navigation.rosnav import ros_nav
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.module3D import Detection3DModule, detection3d_module
-from dimos.perception.detection.moduleDB import ObjectDBModule, detectionDB_module
+from dimos.perception.detection.moduleDB import ObjectDBModule, detection_db_module
 from dimos.perception.detection.person_tracker import PersonTracker, person_tracker_module
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
@@ -68,7 +68,7 @@ _basic_no_nav = (
     autoconnect(
         camera_module(
             transform=Transform(
-                translation=Vector3(0.05, 0.0, 0.0),
+                translation=Vector3(0.05, 0.0, 0.6),  # height of camera on G1 robot
                 rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
                 frame_id="sensor",
                 child_frame_id="camera_link",
@@ -190,7 +190,7 @@ unitree_g1_detection = (
             camera_info=zed.CameraInfo.SingleWebcam,
             detector=YoloPersonDetector,
         ),
-        detectionDB_module(
+        detection_db_module(
             camera_info=zed.CameraInfo.SingleWebcam,
             filter=lambda det: det.class_id == 0,  # Filter for person class only
         ),

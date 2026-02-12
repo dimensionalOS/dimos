@@ -311,7 +311,16 @@ got 4
 
 ## Creating Observables
 
-### From callback-based APIs
+There are two common callback patterns in APIs. Use the appropriate helper:
+
+| Pattern | Example | Helper |
+|---------|---------|--------|
+| Register/unregister with same callback | `sensor.register(cb)` / `sensor.unregister(cb)` | `callback_to_observable` |
+| Subscribe returns unsub function | `unsub = pubsub.subscribe(cb)` | `to_observable` |
+
+### From register/unregister APIs
+
+Use `callback_to_observable` when the API has separate register and unregister functions that take the same callback reference:
 
 ```python session=create
 import reactivex as rx
@@ -350,6 +359,44 @@ print("callbacks after dispose:", len(sensor._callbacks))
 <!--Result:-->
 ```
 received: ['reading_1', 'reading_2']
+callbacks after dispose: 0
+```
+
+### From subscribe-returns-unsub APIs
+
+Use `to_observable` when the subscribe function returns an unsubscribe callable:
+
+```python session=create
+from dimos.utils.reactive import to_observable
+
+class MockPubSub:
+    def __init__(self):
+        self._callbacks = []
+    def subscribe(self, cb):
+        self._callbacks.append(cb)
+        return lambda: self._callbacks.remove(cb)  # returns unsub function
+    def publish(self, value):
+        for cb in self._callbacks:
+            cb(value)
+
+pubsub = MockPubSub()
+
+obs = to_observable(pubsub.subscribe)
+
+received = []
+sub = obs.subscribe(lambda x: received.append(x))
+
+pubsub.publish("msg_1")
+pubsub.publish("msg_2")
+print("received:", received)
+
+sub.dispose()
+print("callbacks after dispose:", len(pubsub._callbacks))
+```
+
+<!--Result:-->
+```
+received: ['msg_1', 'msg_2']
 callbacks after dispose: 0
 ```
 

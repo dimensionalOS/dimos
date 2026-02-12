@@ -3,6 +3,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import signal
 import time
+from typing import TYPE_CHECKING, cast
 
 from dask.distributed import Client, LocalCluster
 from rich.console import Console
@@ -24,6 +25,10 @@ from dimos.protocol.rpc.spec import RPCSpec
 from dimos.protocol.tf import LCMTF, TF, PubSubTF, TFConfig, TFSpec
 from dimos.utils.actor_registry import ActorRegistry
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    # Avoid runtime import to prevent circular import; ruff's TC001 would otherwise move it.
+    from dimos.core.rpc_client import ModuleProxy
 
 logger = setup_logger()
 
@@ -48,6 +53,7 @@ __all__ = [
     "TFSpec",
     "Transport",
     "ZenohTransport",
+    "colors",
     "pLCMTransport",
     "pSHMTransport",
     "rpc",
@@ -68,7 +74,7 @@ class CudaCleanupPlugin:
             import sys
 
             if "cupy" in sys.modules:
-                import cupy as cp  # type: ignore[import-not-found]
+                import cupy as cp  # type: ignore[import-not-found, import-untyped]
 
                 # Clear memory pools
                 mempool = cp.get_default_memory_pool()
@@ -90,10 +96,20 @@ DimosCluster = Client
 
 def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
     def deploy(  # type: ignore[no-untyped-def]
-        actor_class,
+        actor_class: type[Module],
         *args,
         **kwargs,
-    ):
+    ) -> ModuleProxy:
+        from dimos.core.docker_runner import DockerModule, is_docker_module
+
+        # Check if this module should run in Docker (based on its default_config)
+        if is_docker_module(actor_class):
+            logger.info("Deploying module in Docker.", module=actor_class.__name__)
+            dm = DockerModule(actor_class, *args, **kwargs)
+            dm.start()  # Explicit start - follows create -> configure -> start lifecycle
+            dask_client._docker_modules.append(dm)  # type: ignore[attr-defined]
+            return dm  # type: ignore[return-value]
+
         logger.info("Deploying module.", module=actor_class.__name__)
         actor = dask_client.submit(  # type: ignore[no-untyped-call]
             actor_class,
@@ -108,7 +124,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
         # Register actor deployment in shared memory
         ActorRegistry.update(str(actor), str(worker))
 
-        return RPCClient(actor, actor_class)
+        return cast("ModuleProxy", RPCClient(actor, actor_class))
 
     def check_worker_memory() -> None:
         """Check memory usage of all workers."""
@@ -169,12 +185,20 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             return
         dask_client._closed = True  # type: ignore[attr-defined]
 
+        # Stop all Docker modules (in reverse order of deployment)
+        for dm in reversed(dask_client._docker_modules):  # type: ignore[attr-defined]
+            try:
+                dm.stop()
+            except Exception:
+                pass
+        dask_client._docker_modules.clear()  # type: ignore[attr-defined]
+
         # Stop all SharedMemory transports before closing Dask
         # This prevents the "leaked shared_memory objects" warning and hangs
         try:
             import gc
 
-            from dimos.protocol.pubsub import shmpubsub
+            from dimos.protocol.pubsub.impl import shmpubsub
 
             for obj in gc.get_objects():
                 if isinstance(obj, shmpubsub.SharedMemoryPubSubBase):
@@ -220,11 +244,12 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
         # This is needed, solves race condition in CI thread check
         time.sleep(0.1)
 
+    dask_client._docker_modules = []  # type: ignore[attr-defined]
     dask_client.deploy = deploy  # type: ignore[attr-defined]
     dask_client.check_worker_memory = check_worker_memory  # type: ignore[attr-defined]
     dask_client.stop = lambda: dask_client.close()  # type: ignore[attr-defined, no-untyped-call]
     dask_client.close_all = close_all  # type: ignore[attr-defined]
-    return dask_client
+    return dask_client  # type: ignore[return-value]
 
 
 def start(n: int | None = None, memory_limit: str = "auto") -> DimosCluster:

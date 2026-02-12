@@ -15,7 +15,7 @@
 
 """
 NavBot class for navigation-related functionality.
-Encapsulates ROS bridge and topic remapping for Unitree robots.
+Encapsulates ROS transport and topic remapping for Unitree robots.
 """
 
 from collections.abc import Generator
@@ -24,40 +24,25 @@ import logging
 import threading
 import time
 
-from geometry_msgs.msg import (  # type: ignore[attr-defined]
-    PointStamped as ROSPointStamped,
-    PoseStamped as ROSPoseStamped,
-    TwistStamped as ROSTwistStamped,
-)
-from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined]
-import rclpy
-from rclpy.node import Node
 from reactivex import operators as ops
 from reactivex.subject import Subject
-from sensor_msgs.msg import (  # type: ignore[attr-defined]
-    Joy as ROSJoy,
-    PointCloud2 as ROSPointCloud2,
-)
-from std_msgs.msg import (  # type: ignore[attr-defined]
-    Bool as ROSBool,
-    Int8 as ROSInt8,
-)
-from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
 
 from dimos import spec
 from dimos.agents import Reducer, Stream, skill  # type: ignore[attr-defined]
-from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
+from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.module import ModuleConfig
+from dimos.core.transport import ROSTransport
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
     Transform,
     Twist,
+    TwistStamped,
     Vector3,
 )
 from dimos.msgs.nav_msgs import Path
-from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.msgs.std_msgs import Bool
+from dimos.msgs.sensor_msgs import Joy, PointCloud2
+from dimos.msgs.std_msgs import Bool, Int8
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.utils.logging_config import setup_logger
@@ -81,6 +66,7 @@ class ROSNav(
     config: Config
     default_config = Config
 
+    # Existing ports (default LCM/pSHM transport)
     goal_req: In[PoseStamped]
 
     pointcloud: Out[PointCloud2]
@@ -90,12 +76,26 @@ class ROSNav(
     path_active: Out[Path]
     cmd_vel: Out[Twist]
 
+    # ROS In ports (receiving from ROS topics via ROSTransport)
+    ros_goal_reached: In[Bool]
+    ros_cmd_vel: In[TwistStamped]
+    ros_way_point: In[PoseStamped]
+    ros_registered_scan: In[PointCloud2]
+    ros_global_pointcloud: In[PointCloud2]
+    ros_path: In[Path]
+    ros_tf: In[TFMessage]
+
+    # ROS Out ports (publishing to ROS topics via ROSTransport)
+    ros_goal_pose: Out[PoseStamped]
+    ros_cancel_goal: Out[Bool]
+    ros_soft_stop: Out[Int8]
+    ros_joy: Out[Joy]
+
     # Using RxPY Subjects for reactive data flow instead of storing state
     _local_pointcloud_subject: Subject  # type: ignore[type-arg]
     _global_pointcloud_subject: Subject  # type: ignore[type-arg]
 
     _current_position_running: bool = False
-    _spin_thread: threading.Thread | None = None
     _goal_reach: bool | None = None
 
     # Navigation state tracking for NavigationInterface
@@ -117,39 +117,7 @@ class ROSNav(
         self._navigation_state = NavigationState.IDLE
         self._goal_reached = False
 
-        if not rclpy.ok():  # type: ignore[attr-defined]
-            rclpy.init()
-
-        self._node = Node("navigation_module")
-
-        # ROS2 Publishers
-        self.goal_pose_pub = self._node.create_publisher(ROSPoseStamped, "/goal_pose", 10)
-        self.cancel_goal_pub = self._node.create_publisher(ROSBool, "/cancel_goal", 10)
-        self.soft_stop_pub = self._node.create_publisher(ROSInt8, "/stop", 10)
-        self.joy_pub = self._node.create_publisher(ROSJoy, "/joy", 10)
-
-        # ROS2 Subscribers
-        self.goal_reached_sub = self._node.create_subscription(
-            ROSBool, "/goal_reached", self._on_ros_goal_reached, 10
-        )
-        self.cmd_vel_sub = self._node.create_subscription(
-            ROSTwistStamped, "/cmd_vel", self._on_ros_cmd_vel, 10
-        )
-        self.goal_waypoint_sub = self._node.create_subscription(
-            ROSPointStamped, "/way_point", self._on_ros_goal_waypoint, 10
-        )
-        self.registered_scan_sub = self._node.create_subscription(
-            ROSPointCloud2, "/registered_scan", self._on_ros_registered_scan, 10
-        )
-
-        self.global_pointcloud_sub = self._node.create_subscription(
-            ROSPointCloud2, "/terrain_map_ext", self._on_ros_global_pointcloud, 10
-        )
-
-        self.path_sub = self._node.create_subscription(ROSPath, "/path", self._on_ros_path, 10)
-        self.tf_sub = self._node.create_subscription(ROSTFMessage, "/tf", self._on_ros_tf, 10)
-
-        logger.info("NavigationModule initialized with ROS2 node")
+        logger.info("NavigationModule initialized")
 
     @rpc
     def start(self) -> None:
@@ -157,8 +125,7 @@ class ROSNav(
 
         self._disposables.add(
             self._local_pointcloud_subject.pipe(
-                ops.sample(1.0 / self.config.local_pointcloud_freq),  # Sample at desired frequency
-                ops.map(lambda msg: PointCloud2.from_ros_msg(msg)),  # type: ignore[arg-type]
+                ops.sample(1.0 / self.config.local_pointcloud_freq),
             ).subscribe(
                 on_next=self.pointcloud.publish,
                 on_error=lambda e: logger.error(f"Lidar stream error: {e}"),
@@ -167,64 +134,49 @@ class ROSNav(
 
         self._disposables.add(
             self._global_pointcloud_subject.pipe(
-                ops.sample(1.0 / self.config.global_pointcloud_freq),  # Sample at desired frequency
-                ops.map(lambda msg: PointCloud2.from_ros_msg(msg)),  # type: ignore[arg-type]
+                ops.sample(1.0 / self.config.global_pointcloud_freq),
             ).subscribe(
                 on_next=self.global_pointcloud.publish,
                 on_error=lambda e: logger.error(f"Map stream error: {e}"),
             )
         )
 
-        # Create and start the spin thread for ROS2 node spinning
-        self._spin_thread = threading.Thread(
-            target=self._spin_node, daemon=True, name="ROS2SpinThread"
-        )
-        self._spin_thread.start()
+        # Subscribe to ROS In ports
+        self.ros_goal_reached.subscribe(self._on_ros_goal_reached)
+        self.ros_cmd_vel.subscribe(self._on_ros_cmd_vel)
+        self.ros_way_point.subscribe(self._on_ros_goal_waypoint)
+        self.ros_registered_scan.subscribe(self._on_ros_registered_scan)
+        self.ros_global_pointcloud.subscribe(self._on_ros_global_pointcloud)
+        self.ros_path.subscribe(self._on_ros_path)
+        self.ros_tf.subscribe(self._on_ros_tf)
 
         self.goal_req.subscribe(self._on_goal_pose)
-        logger.info("NavigationModule started with ROS2 spinning and RxPY streams")
+        logger.info("NavigationModule started with ROS transport and RxPY streams")
 
-    def _spin_node(self) -> None:
-        while self._running and rclpy.ok():  # type: ignore[attr-defined]
-            try:
-                rclpy.spin_once(self._node, timeout_sec=0.1)
-            except Exception as e:
-                if self._running:
-                    logger.error(f"ROS2 spin error: {e}")
-
-    def _on_ros_goal_reached(self, msg: ROSBool) -> None:
+    def _on_ros_goal_reached(self, msg: Bool) -> None:
         self._goal_reach = msg.data
         if msg.data:
             with self._state_lock:
                 self._goal_reached = True
                 self._navigation_state = NavigationState.IDLE
 
-    def _on_ros_goal_waypoint(self, msg: ROSPointStamped) -> None:
-        dimos_pose = PoseStamped(
-            ts=time.time(),
-            frame_id=msg.header.frame_id,
-            position=Vector3(msg.point.x, msg.point.y, msg.point.z),
-            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
-        )
-        self.goal_active.publish(dimos_pose)
+    def _on_ros_goal_waypoint(self, msg: PoseStamped) -> None:
+        self.goal_active.publish(msg)
 
-    def _on_ros_cmd_vel(self, msg: ROSTwistStamped) -> None:
-        self.cmd_vel.publish(Twist.from_ros_msg(msg.twist))
+    def _on_ros_cmd_vel(self, msg: TwistStamped) -> None:
+        self.cmd_vel.publish(Twist(linear=msg.linear, angular=msg.angular))
 
-    def _on_ros_registered_scan(self, msg: ROSPointCloud2) -> None:
+    def _on_ros_registered_scan(self, msg: PointCloud2) -> None:
         self._local_pointcloud_subject.on_next(msg)
 
-    def _on_ros_global_pointcloud(self, msg: ROSPointCloud2) -> None:
+    def _on_ros_global_pointcloud(self, msg: PointCloud2) -> None:
         self._global_pointcloud_subject.on_next(msg)
 
-    def _on_ros_path(self, msg: ROSPath) -> None:
-        dimos_path = Path.from_ros_msg(msg)
-        dimos_path.frame_id = "base_link"
-        self.path_active.publish(dimos_path)
+    def _on_ros_path(self, msg: Path) -> None:
+        msg.frame_id = "base_link"
+        self.path_active.publish(msg)
 
-    def _on_ros_tf(self, msg: ROSTFMessage) -> None:
-        ros_tf = TFMessage.from_ros_msg(msg)
-
+    def _on_ros_tf(self, msg: TFMessage) -> None:
         map_to_world_tf = Transform(
             translation=Vector3(0.0, 0.0, 0.0),
             rotation=euler_to_quaternion(Vector3(0.0, 0.0, 0.0)),
@@ -236,7 +188,7 @@ class ROSNav(
         self.tf.publish(
             self.config.sensor_to_base_link_transform.now(),
             map_to_world_tf,
-            *ros_tf.transforms,
+            *msg.transforms,
         )
 
     def _on_goal_pose(self, msg: PoseStamped) -> None:
@@ -247,31 +199,11 @@ class ROSNav(
             self.stop()
 
     def _set_autonomy_mode(self) -> None:
-        joy_msg = ROSJoy()  # type: ignore[no-untyped-call]
-        joy_msg.axes = [
-            0.0,  # axis 0
-            0.0,  # axis 1
-            -1.0,  # axis 2
-            0.0,  # axis 3
-            1.0,  # axis 4
-            1.0,  # axis 5
-            0.0,  # axis 6
-            0.0,  # axis 7
-        ]
-        joy_msg.buttons = [
-            0,  # button 0
-            0,  # button 1
-            0,  # button 2
-            0,  # button 3
-            0,  # button 4
-            0,  # button 5
-            0,  # button 6
-            1,  # button 7 - controls autonomy mode
-            0,  # button 8
-            0,  # button 9
-            0,  # button 10
-        ]
-        self.joy_pub.publish(joy_msg)
+        joy_msg = Joy(
+            axes=[0.0, 0.0, -1.0, 0.0, 1.0, 1.0, 0.0, 0.0],
+            buttons=[0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+        )
+        self.ros_joy.publish(joy_msg)
         logger.info("Setting autonomy mode via Joy message")
 
     @skill(stream=Stream.passive, reducer=Reducer.latest)  # type: ignore[arg-type]
@@ -347,19 +279,14 @@ class ROSNav(
         self._set_autonomy_mode()
 
         # Enable soft stop (0 = enable)
-        soft_stop_msg = ROSInt8()  # type: ignore[no-untyped-call]
-        soft_stop_msg.data = 0
-        self.soft_stop_pub.publish(soft_stop_msg)
-
-        ros_pose = pose.to_ros_msg()
-        self.goal_pose_pub.publish(ros_pose)
+        self.ros_soft_stop.publish(Int8(data=0))
+        self.ros_goal_pose.publish(pose)
 
         # Wait for goal to be reached
         start_time = time.time()
         while time.time() - start_time < timeout:
             if self._goal_reach is not None:
-                soft_stop_msg.data = 2
-                self.soft_stop_pub.publish(soft_stop_msg)
+                self.ros_soft_stop.publish(Int8(data=2))
                 return self._goal_reach
             time.sleep(0.1)
 
@@ -377,13 +304,8 @@ class ROSNav(
         """
         logger.info("Stopping navigation")
 
-        cancel_msg = ROSBool()  # type: ignore[no-untyped-call]
-        cancel_msg.data = True
-        self.cancel_goal_pub.publish(cancel_msg)
-
-        soft_stop_msg = ROSInt8()  # type: ignore[no-untyped-call]
-        soft_stop_msg.data = 2
-        self.soft_stop_pub.publish(soft_stop_msg)
+        self.ros_cancel_goal.publish(Bool(data=True))
+        self.ros_soft_stop.publish(Int8(data=2))
 
         with self._state_lock:
             self._navigation_state = NavigationState.IDLE
@@ -463,12 +385,6 @@ class ROSNav(
             self._local_pointcloud_subject.on_completed()
             self._global_pointcloud_subject.on_completed()
 
-            if self._spin_thread and self._spin_thread.is_alive():
-                self._spin_thread.join(timeout=1.0)
-
-            if hasattr(self, "_node") and self._node:
-                self._node.destroy_node()  # type: ignore[no-untyped-call]
-
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
         finally:
@@ -481,12 +397,28 @@ ros_nav = ROSNav.blueprint
 def deploy(dimos: DimosCluster):  # type: ignore[no-untyped-def]
     nav = dimos.deploy(ROSNav)  # type: ignore[attr-defined]
 
-    nav.pointcloud.transport = pSHMTransport("/lidar")
-    nav.global_pointcloud.transport = pSHMTransport("/map")
+    # Existing ports on LCM transports
+    nav.pointcloud.transport = LCMTransport("/lidar", PointCloud2)
+    nav.global_pointcloud.transport = LCMTransport("/map", PointCloud2)
     nav.goal_req.transport = LCMTransport("/goal_req", PoseStamped)
     nav.goal_active.transport = LCMTransport("/goal_active", PoseStamped)
     nav.path_active.transport = LCMTransport("/path_active", Path)
     nav.cmd_vel.transport = LCMTransport("/cmd_vel", Twist)
+
+    # ROS In transports (receiving from ROS navigation stack)
+    nav.ros_goal_reached.transport = ROSTransport("/goal_reached", Bool)
+    nav.ros_cmd_vel.transport = ROSTransport("/cmd_vel", TwistStamped)
+    nav.ros_way_point.transport = ROSTransport("/way_point", PoseStamped)
+    nav.ros_registered_scan.transport = ROSTransport("/registered_scan", PointCloud2)
+    nav.ros_global_pointcloud.transport = ROSTransport("/terrain_map_ext", PointCloud2)
+    nav.ros_path.transport = ROSTransport("/path", Path)
+    nav.ros_tf.transport = ROSTransport("/tf", TFMessage)
+
+    # ROS Out transports (publishing to ROS navigation stack)
+    nav.ros_goal_pose.transport = ROSTransport("/goal_pose", PoseStamped)
+    nav.ros_cancel_goal.transport = ROSTransport("/cancel_goal", Bool)
+    nav.ros_soft_stop.transport = ROSTransport("/stop", Int8)
+    nav.ros_joy.transport = ROSTransport("/joy", Joy)
 
     nav.start()
     return nav

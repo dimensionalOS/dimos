@@ -17,7 +17,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from io import BytesIO
 import struct
-from typing import BinaryIO, TypeAlias
+from typing import TYPE_CHECKING, BinaryIO, TypeAlias
+
+if TYPE_CHECKING:
+    import rerun as rr
 
 from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
 import numpy as np
@@ -111,6 +114,11 @@ class Quaternion(LCMQuaternion):  # type: ignore[misc]
     def to_radians(self) -> Vector3:
         """Radians representation of the quaternion (x, y, z, w)."""
         return self.to_euler()
+
+    def to_rerun(self) -> rr.Quaternion:
+        import rerun as rr
+
+        return rr.Quaternion(xyzw=[self.x, self.y, self.z, self.w])
 
     @classmethod
     def from_euler(cls, vector: Vector3) -> Quaternion:

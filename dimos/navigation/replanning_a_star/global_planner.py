@@ -28,7 +28,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.replanning_a_star.goal_validator import find_safe_goal
 from dimos.navigation.replanning_a_star.local_planner import LocalPlanner, StopMessage
@@ -156,8 +155,8 @@ class GlobalPlanner(Resource):
         return self._local_planner.cmd_vel
 
     @property
-    def debug_navigation(self) -> Subject[Image]:
-        return self._local_planner.debug_navigation
+    def navigation_costmap(self) -> Subject[OccupancyGrid]:
+        return self._local_planner.navigation_costmap
 
     def _thread_entrypoint(self) -> None:
         """Monitor if the robot is stuck, veers off track, or stopped navigating."""

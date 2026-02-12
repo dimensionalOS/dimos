@@ -1,4 +1,5 @@
 from dimos.msgs.geometry_msgs.Pose import Pose, PoseLike, to_pose
+from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.PoseWithCovarianceStamped import PoseWithCovarianceStamped
@@ -14,6 +15,7 @@ from dimos.msgs.geometry_msgs.WrenchStamped import WrenchStamped
 
 __all__ = [
     "Pose",
+    "PoseArray",
     "PoseLike",
     "PoseStamped",
     "PoseWithCovariance",

@@ -1,6 +1,6 @@
 # Manipulator Drivers
 
-This module provides manipulator arm drivers using the **B-lite architecture**: Protocol-only with injectable backends.
+This module provides manipulator arm drivers: Protocol-only with injectable adapters.
 
 ## Architecture Overview
 
@@ -14,35 +14,32 @@ This module provides manipulator arm drivers using the **B-lite architecture**: 
 └─────────────────────┬───────────────────────────────────────┘
                       │ uses
 ┌─────────────────────▼───────────────────────────────────────┐
-│              Backend (implements Protocol)                   │
+│              Adapter (implements Protocol)                   │
 │  - Handles SDK communication                                 │
 │  - Unit conversions (radians ↔ vendor units)                │
-│  - Swappable: XArmBackend, PiperBackend, MockBackend        │
+│  - Swappable: XArmAdapter, PiperAdapter, MockAdapter        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Key Benefits
 
-- **Testable**: Inject `MockBackend` for unit tests without hardware
+- **Testable**: Inject `MockAdapter` for unit tests without hardware
 - **Flexible**: Each arm controls its own threading/timing
 - **Simple**: No ABC inheritance required - just implement the Protocol
-- **Type-safe**: Full type checking via `ManipulatorBackend` Protocol
+- **Type-safe**: Full type checking via `ManipulatorAdapter` Protocol
 
 ## Directory Structure
 
 ```
 manipulators/
-├── spec.py              # ManipulatorBackend Protocol + shared types
+├── spec.py              # ManipulatorAdapter Protocol + shared types
+├── registry.py          # Adapter registry with auto-discovery
 ├── mock/
-│   └── backend.py       # MockBackend for testing
+│   └── adapter.py       # MockAdapter for testing
 ├── xarm/
-│   ├── backend.py       # XArmBackend (SDK wrapper)
-│   ├── arm.py           # XArm driver module
-│   └── blueprints.py    # Pre-configured blueprints
+│   ├── adapter.py       # XArmAdapter (SDK wrapper)
 └── piper/
-    ├── backend.py       # PiperBackend (SDK wrapper)
-    ├── arm.py           # Piper driver module
-    └── blueprints.py    # Pre-configured blueprints
+    ├── adapter.py       # PiperAdapter (SDK wrapper)
 ```
 
 ## Quick Start
@@ -71,20 +68,20 @@ coordinator.loop()
 ### Testing Without Hardware
 
 ```python
-from dimos.hardware.manipulators.mock import MockBackend
+from dimos.hardware.manipulators.mock import MockAdapter
 from dimos.hardware.manipulators.xarm import XArm
 
-arm = XArm(backend=MockBackend(dof=6))
+arm = XArm(adapter=MockAdapter(dof=6))
 arm.start()  # No hardware needed!
 arm.move_joint([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])
 ```
 
 ## Adding a New Arm
 
-1. **Create the backend** (`backend.py`):
+1. **Create the adapter** (`adapter.py`):
 
 ```python
-class MyArmBackend:  # No inheritance needed - just match the Protocol
+class MyArmAdapter:  # No inheritance needed - just match the Protocol
     def __init__(self, ip: str = "192.168.1.100", dof: int = 6) -> None:
         self._ip = ip
         self._dof = dof
@@ -100,16 +97,16 @@ class MyArmBackend:  # No inheritance needed - just match the Protocol
 
 ```python
 from dimos.core import Module, ModuleConfig, In, Out, rpc
-from .backend import MyArmBackend
+from .adapter import MyArmAdapter
 
 class MyArm(Module[MyArmConfig]):
     joint_state: Out[JointState]
     robot_state: Out[RobotState]
     joint_position_command: In[JointCommand]
 
-    def __init__(self, backend=None, **kwargs):
+    def __init__(self, adapter=None, **kwargs):
         super().__init__(**kwargs)
-        self.backend = backend or MyArmBackend(
+        self.adapter = adapter or MyArmAdapter(
             ip=self.config.ip,
             dof=self.config.dof,
         )
@@ -118,9 +115,9 @@ class MyArm(Module[MyArmConfig]):
 
 3. **Create blueprints** (`blueprints.py`) for common configurations.
 
-## ManipulatorBackend Protocol
+## ManipulatorAdapter Protocol
 
-All backends must implement these core methods:
+All adapters must implement these core methods:
 
 | Category | Methods |
 |----------|---------|
@@ -138,7 +135,7 @@ Optional methods (return `None`/`False` if unsupported):
 
 ## Unit Conventions
 
-All backends convert to/from SI units:
+All adapters convert to/from SI units:
 
 | Quantity | Unit |
 |----------|------|
@@ -147,17 +144,3 @@ All backends convert to/from SI units:
 | Torque | Nm |
 | Position | meters |
 | Force | Newtons |
-
-## Available Blueprints
-
-### XArm
-- `xarm_servo` - Basic servo control (6-DOF)
-- `xarm5_servo`, `xarm7_servo` - 5/7-DOF variants
-- `xarm_trajectory` - Driver + trajectory controller
-- `xarm_cartesian` - Driver + cartesian controller
-
-### Piper
-- `piper_servo` - Basic servo control
-- `piper_servo_gripper` - With gripper support
-- `piper_trajectory` - Driver + trajectory controller
-- `piper_left`, `piper_right` - Dual arm configurations

@@ -21,7 +21,7 @@ import time
 import typer
 
 from dimos.core.transport import LCMTransport, pLCMTransport
-from dimos.protocol.pubsub.lcmpubsub import LCMPubSubBase
+from dimos.protocol.pubsub.impl.lcmpubsub import LCMPubSubBase
 
 _modules_to_try = [
     "dimos.msgs.geometry_msgs",

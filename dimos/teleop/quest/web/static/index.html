@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quest 3 VR Teleop</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #fff;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #ui {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+        }
+
+        h1 {
+            font-size: 42px;
+            font-weight: 600;
+            margin-bottom: 40px;
+            color: #28283b;
+        }
+
+        #status {
+            font-size: 28px;
+            font-weight: 500;
+            color: #0077b6;
+            padding: 16px 32px;
+            background-color: #fff;
+            border: 2px solid #0077b6;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            min-width: 300px;
+            text-align: center;
+        }
+
+        button {
+            padding: 20px 48px;
+            font-size: 24px;
+            font-weight: 600;
+            color: white;
+            background-color: #0077b6;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: #005f8a;
+        }
+
+        button:disabled {
+            background-color: #adb5bd;
+            cursor: not-allowed;
+        }
+
+        button.disconnect {
+            background-color: #6c757d;
+            margin-top: 16px;
+        }
+
+        button.disconnect:hover {
+            background-color: #545b62;
+        }
+
+        #canvas {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h1>DimOS Quest-3 Teleop</h1>
+        <div id="status">Ready to connect</div>
+        <button id="connectBtn" onclick="connect()">Connect</button>
+        <button id="disconnectBtn" class="disconnect hidden" onclick="disconnect()">Disconnect</button>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script type="module">
+        // Global error handler
+        window.onerror = (msg, url, line, col, error) => {
+            console.error(`[ERROR] ${msg} at ${url}:${line}:${col}`, error);
+            document.getElementById('status').textContent = `Error: ${msg}`;
+        };
+
+        import { encodePacket, geometry_msgs, std_msgs, sensor_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
+
+        // WebSocket and VR state
+        let ws = null;
+        let xrSession = null;
+        let xrRefSpace = null;
+        let gl = null;
+        let lastSendTime = 0;
+        const sendInterval = 1000 / 80; // ~80Hz target
+
+
+        // UI elements
+        const statusEl = document.getElementById('status');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const canvas = document.getElementById('canvas');
+
+        function setStatus(msg) {
+            statusEl.textContent = msg;
+        }
+
+        // WebSocket setup (LCM bridge)
+        function setupWebSocket() {
+            return new Promise((resolve, reject) => {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}`;
+
+                setStatus('Connecting to server...');
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    setStatus('Server connected');
+                    resolve();
+                };
+                ws.onerror = (error) => {
+                    setStatus('WebSocket error');
+                    console.error('WebSocket error:', error);
+                    reject(error);
+                };
+                ws.onclose = () => {
+                    setStatus('WebSocket closed');
+                };
+            });
+        }
+
+        // Initialize WebGL
+        function initGL() {
+            gl = canvas.getContext('webgl', {
+                xrCompatible: true,
+                alpha: true
+            });
+            if (!gl) {
+                throw new Error('WebGL not supported');
+            }
+            gl.clearColor(0, 0, 0, 0); // Transparent background for passthrough
+        }
+
+
+        // Send raw controller tracking data (no processing - done in Python)
+        function processTracking(frame) {
+            // Rate limit tracking data
+            const now = performance.now();
+            if (now - lastSendTime < sendInterval) {
+                return;
+            }
+            lastSendTime = now;
+
+            // Process input sources (controllers)
+            for (const inputSource of frame.session.inputSources) {
+                const trackingSpace = inputSource.gripSpace || inputSource.targetRaySpace;
+                if (!trackingSpace) continue;
+
+                const handedness = inputSource.handedness;
+                if (handedness !== 'left' && handedness !== 'right') continue;
+
+                const pose = frame.getPose(trackingSpace, xrRefSpace);
+                if (!pose) continue;
+
+                // Send raw pose directly from WebXR - no processing
+                const pos = pose.transform.position;
+                const rot = pose.transform.orientation;
+
+                const nowMs = Date.now();
+                const poseStamped = new geometry_msgs.PoseStamped({
+                    header: new std_msgs.Header({
+                        stamp: new std_msgs.Time({ sec: Math.floor(nowMs / 1000), nsec: (nowMs % 1000) * 1_000_000 }),
+                        frame_id: "vr_origin"
+                    }),
+                    pose: new geometry_msgs.Pose({
+                        position: new geometry_msgs.Point({ x: pos.x, y: pos.y, z: pos.z }),
+                        orientation: new geometry_msgs.Quaternion({ x: rot.x, y: rot.y, z: rot.z, w: rot.w })
+                    })
+                });
+
+                const channel = handedness === 'left'
+                    ? "/vr_left_pose#geometry_msgs.PoseStamped"
+                    : "/vr_right_pose#geometry_msgs.PoseStamped";
+
+                const packet = encodePacket(channel, poseStamped);
+
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(packet);
+                }
+
+                // Send Joy message with all buttons and axes
+                const gamepad = inputSource.gamepad;
+                if (gamepad) {
+                    // Axes layout:
+                    // [0] = thumbstick X (-1 to 1)
+                    // [1] = thumbstick Y (-1 to 1)
+                    // [2] = trigger (analog 0.0-1.0)
+                    // [3] = grip (analog 0.0-1.0)
+                    const axes = [
+                        gamepad.axes[0] ?? 0.0,
+                        gamepad.axes[1] ?? 0.0,
+                        gamepad.buttons[0]?.value ?? 0.0,
+                        gamepad.buttons[1]?.value ?? 0.0,
+                    ];
+
+                    // Buttons layout (int32, 0 or 1):
+                    // [0] = trigger (digital)
+                    // [1] = grip (digital)
+                    // [2] = touchpad press
+                    // [3] = thumbstick press
+                    // [4] = X/A button
+                    // [5] = Y/B button
+                    // [6] = menu (if exposed)
+                    const buttons = [];
+                    for (let i = 0; i < gamepad.buttons.length; i++) {
+                        buttons.push(gamepad.buttons[i]?.pressed ? 1 : 0);
+                    }
+
+                    const joyMsg = new sensor_msgs.Joy({
+                        header: new std_msgs.Header({
+                            stamp: new std_msgs.Time({ sec: Math.floor(nowMs / 1000), nsec: (nowMs % 1000) * 1_000_000 }),
+                            frame_id: handedness
+                        }),
+                        axes_length: axes.length,
+                        buttons_length: buttons.length,
+                        axes: axes,
+                        buttons: buttons
+                    });
+
+                    const joyChannel = handedness === 'left'
+                        ? "/vr_left_joy#sensor_msgs.Joy"
+                        : "/vr_right_joy#sensor_msgs.Joy";
+                    const joyPacket = encodePacket(joyChannel, joyMsg);
+
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(joyPacket);
+                    }
+                }
+            }
+        }
+
+        // VR render loop
+        function onXRFrame(time, frame) {
+            if (!xrSession) return;
+            xrSession.requestAnimationFrame(onXRFrame);
+            // Process and send tracking data
+            processTracking(frame);
+            // Render (minimal for passthrough)
+            gl.clear(gl.COLOR_BUFFER_BIT);
+        }
+
+        // Start VR session with passthrough
+        async function startVR() {
+            try {
+                setStatus('Initializing WebGL...');
+                initGL();
+                setStatus('Requesting VR session...');
+
+                // Try immersive-ar first (true passthrough), fall back to immersive-vr
+                let session = null;
+                try {
+                    session = await navigator.xr.requestSession('immersive-ar', {
+                        requiredFeatures: ['local-floor'],
+                        optionalFeatures: ['hand-tracking']
+                    });
+                    console.log('Started immersive-ar session (passthrough)');
+                } catch (arError) {
+                    console.log('immersive-ar not available, trying immersive-vr');
+                    session = await navigator.xr.requestSession('immersive-vr', {
+                        requiredFeatures: ['local-floor'],
+                        optionalFeatures: ['hand-tracking']
+                    });
+                    console.log('Started immersive-vr session');
+                }
+
+                xrSession = session;
+
+                // Setup WebGL layer
+                const glLayer = new XRWebGLLayer(session, gl);
+                await session.updateRenderState({
+                    baseLayer: glLayer
+                });
+
+                // Get reference space
+                xrRefSpace = await session.requestReferenceSpace('local-floor');
+
+                setStatus('VR active');
+
+                // Session event handlers
+                session.addEventListener('end', () => {
+                    setStatus('VR session ended');
+                    xrSession = null;
+                    disconnect();
+                });
+
+                // Start render loop
+                session.requestAnimationFrame(onXRFrame);
+
+            } catch (error) {
+                setStatus('VR failed: ' + error.message);
+                console.error('VR session error:', error);
+                throw error;
+            }
+        }
+
+        // Connect button handler
+        window.connect = async function() {
+            try {
+                connectBtn.disabled = true;
+
+                // Check WebXR support
+                if (!navigator.xr) {
+                    throw new Error('WebXR not supported. Use Quest 3 browser.');
+                }
+
+                // Setup WebSocket
+                await setupWebSocket();
+
+                // Start VR
+                await startVR();
+
+                // Update UI
+                connectBtn.classList.add('hidden');
+                disconnectBtn.classList.remove('hidden');
+
+            } catch (error) {
+                setStatus('Connection failed');
+                console.error('Connection error:', error);
+                connectBtn.disabled = false;
+            }
+        };
+
+        // Disconnect button handler
+        window.disconnect = async function() {
+            setStatus('Disconnecting...');
+
+            if (xrSession) {
+                await xrSession.end().catch(console.error);
+                xrSession = null;
+            }
+
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+
+            // Update UI
+            connectBtn.classList.remove('hidden');
+            connectBtn.disabled = false;
+            disconnectBtn.classList.add('hidden');
+            setStatus('Disconnected');
+        };
+
+        // Check WebXR availability on load
+        window.addEventListener('load', async () => {
+            if (!navigator.xr) {
+                setStatus('WebXR not available');
+                connectBtn.disabled = true;
+                return;
+            }
+
+            try {
+                // Check for AR (passthrough) or VR support
+                const arSupported = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+                const vrSupported = await navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
+
+                if (!arSupported && !vrSupported) {
+                    setStatus('VR/AR not supported');
+                    connectBtn.disabled = true;
+                }
+            } catch (error) {
+                console.error('WebXR check failed:', error);
+            }
+        });
+    </script>
+</body>
+</html>

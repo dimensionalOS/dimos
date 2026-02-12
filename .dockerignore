@@ -43,7 +43,7 @@ build/
 .env.local
 .env.*.local
 
-# Large data files
+# Large data files (LFS archives only)
 data/*
 !data/.lfs/
 

@@ -23,11 +23,9 @@ from reactivex import Subject
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
-from dimos.mapping.occupancy.visualize_path import visualize_path
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs import Path
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.base import NavigationState
 from dimos.navigation.replanning_a_star.controllers import Controller, PController
 from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
@@ -47,7 +45,7 @@ logger = setup_logger()
 class LocalPlanner(Resource):
     cmd_vel: Subject[Twist]
     stopped_navigating: Subject[StopMessage]
-    debug_navigation: Subject[Image]
+    navigation_costmap: Subject[OccupancyGrid]
 
     _thread: Thread | None = None
     _path: Path | None = None
@@ -68,15 +66,15 @@ class LocalPlanner(Resource):
     _speed: float = 0.55
     _control_frequency: float = 10
     _orientation_tolerance: float = 0.35
-    _debug_navigation_interval: float = 1.0
-    _debug_navigation_last: float = 0.0
+    _navigation_costmap_interval: float = 1.0
+    _navigation_costmap_last: float = 0.0
 
     def __init__(
         self, global_config: GlobalConfig, navigation_map: NavigationMap, goal_tolerance: float
     ) -> None:
         self.cmd_vel = Subject()
         self.stopped_navigating = Subject()
-        self.debug_navigation = Subject()
+        self.navigation_costmap = Subject()
 
         self._pose_index = 0
         self._lock = RLock()
@@ -195,7 +193,7 @@ class LocalPlanner(Resource):
                 path_clearance.update_costmap(self._navigation_map.binary_costmap)
                 path_clearance.update_pose_index(self._pose_index)
 
-            self._send_debug_navigation(path, path_clearance)
+            self._send_navigation_costmap(path, path_clearance)
 
             if path_clearance.is_obstacle_ahead():
                 logger.info("Obstacle detected ahead, stopping local planner.")
@@ -313,51 +311,14 @@ class LocalPlanner(Resource):
             self._pose_index = 0
             self._controller.reset_errors()
 
-    def _send_debug_navigation(self, path: Path, path_clearance: PathClearance) -> None:
+    def _send_navigation_costmap(self, path: Path, path_clearance: PathClearance) -> None:
         if "DEBUG_NAVIGATION" not in os.environ:
             return
 
         now = time.time()
-        if now - self._debug_navigation_last < self._debug_navigation_interval:
+        if now - self._navigation_costmap_last < self._navigation_costmap_interval:
             return
 
-        self._debug_navigation_last = now
+        self._navigation_costmap_last = now
 
-        self.debug_navigation.on_next(self._make_debug_navigation_image(path, path_clearance))
-
-    def _make_debug_navigation_image(self, path: Path, path_clearance: PathClearance) -> Image:
-        scale = 8
-        image = visualize_path(
-            self._navigation_map.gradient_costmap,
-            path,
-            self._global_config.robot_width,
-            self._global_config.robot_rotation_diameter,
-            2,
-            scale,
-        )
-        image.data = np.flipud(image.data)
-
-        # Add path mask.
-        mask = path_clearance.mask
-        scaled_mask = np.repeat(np.repeat(mask, scale, axis=0), scale, axis=1)
-        scaled_mask = np.flipud(scaled_mask)
-        white = np.array([255, 255, 255], dtype=np.int16)
-        image.data[scaled_mask] = (image.data[scaled_mask].astype(np.int16) * 3 + white * 7) // 10
-
-        with self._lock:
-            current_odom = self._current_odom
-
-        # Draw robot position.
-        if current_odom is not None:
-            grid_pos = self._navigation_map.gradient_costmap.world_to_grid(current_odom.position)
-            x = int(grid_pos.x * scale)
-            y = image.data.shape[0] - 1 - int(grid_pos.y * scale)
-            radius = 8
-            for dy in range(-radius, radius + 1):
-                for dx in range(-radius, radius + 1):
-                    if dx * dx + dy * dy <= radius * radius:
-                        py, px = y + dy, x + dx
-                        if 0 <= py < image.data.shape[0] and 0 <= px < image.data.shape[1]:
-                            image.data[py, px] = [255, 255, 255]
-
-        return image
+        self.navigation_costmap.on_next(self._navigation_map.gradient_costmap)

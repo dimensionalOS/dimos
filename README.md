@@ -6,7 +6,7 @@
 
 <br>
 
-[![Discord](https://img.shields.io/discord/1341146487186391173?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/8m6HMArf)
+[![Discord](https://img.shields.io/discord/1341146487186391173?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/dimos)
 [![Stars](https://img.shields.io/github/stars/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/stargazers)
 [![Forks](https://img.shields.io/github/forks/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/fork)
 [![Contributors](https://img.shields.io/github/contributors/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/graphs/contributors)
@@ -71,9 +71,9 @@ Supported/tested matrix:
 | Platform | Status | Tested | Required System deps |
 | --- | --- | --- | --- |
 | Linux | supported | Ubuntu 22.04, 24.04 | See below |
-| macOS | experimental beta | not CI-tested | `brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python` |
+| macOS | experimental beta | not CI-tested | `brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python; export ARCHFLAGS="-arch $(uname -m)"` |
 
-Note: macOS is usable but expect inconsistent/flaky behavior (rather than hard errors/crashes).
+Note: macOS is usable but expect inconsistent/flaky behavior (rather than hard errors/crashes). Setting `ARCHFLAGS` is likely optional, but some systems it is required to avoid a `clang` error.
 
 ```sh
 sudo apt-get update
@@ -152,7 +152,7 @@ from dimos.core import In, Module, Out, rpc
 from dimos.core.blueprints import autoconnect
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
+from dimos.msgs.sensor_msgs.Image import ImageFormat
 
 class RobotConnection(Module):
     cmd_vel: In[Twist]
@@ -189,7 +189,7 @@ if __name__ == "__main__":
 ### Blueprints
 
 Blueprints are how robots are constructed on Dimensional; instructions for how to construct and wire modules. You compose them with
-`autoconnect(...)`, which connects streams by `(name, type)` and returns a `ModuleBlueprintSet`.
+`autoconnect(...)`, which connects streams by `(name, type)` and returns a `Blueprint`.
 
 Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `In[]` and `Out[]` message types.
 

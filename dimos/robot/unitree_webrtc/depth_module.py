@@ -50,7 +50,7 @@ class DepthModule(Module):
     def __init__(  # type: ignore[no-untyped-def]
         self,
         gt_depth_scale: float = 0.5,
-        global_config: GlobalConfig | None = None,
+        cfg: GlobalConfig | None = None,
         **kwargs,
     ) -> None:
         """
@@ -78,8 +78,8 @@ class DepthModule(Module):
         self._processing_thread: threading.Thread | None = None
         self._stop_processing = threading.Event()
 
-        if global_config:
-            if global_config.simulation:
+        if cfg:
+            if cfg.simulation:
                 self.gt_depth_scale = 1.0
 
     @rpc

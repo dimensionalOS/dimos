@@ -31,21 +31,14 @@ from typing import TYPE_CHECKING, BinaryIO
 
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
-try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
-        TransformStamped as ROSTransformStamped,
-    )
-    from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
-except ImportError:
-    ROSTFMessage = None  # type: ignore[assignment, misc]
-    ROSTransformStamped = None  # type: ignore[assignment, misc]
-
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from dimos.visualization.rerun.bridge import RerunMulti
 
 
 class TFMessage:
@@ -125,42 +118,12 @@ class TFMessage:
     def __str__(self) -> str:
         lines = [f"TFMessage with {len(self.transforms)} transforms:"]
         for i, transform in enumerate(self.transforms):
-            lines.append(f"  [{i}] {transform.frame_id} @ {transform.ts:.3f}")
+            lines.append(
+                f"  [{i}] {transform.frame_id} → {transform.child_frame_id} @ {transform.ts:.3f}"
+            )
         return "\n".join(lines)
 
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSTFMessage) -> TFMessage:
-        """Create a TFMessage from a ROS tf2_msgs/TFMessage message.
-
-        Args:
-            ros_msg: ROS TFMessage message
-
-        Returns:
-            TFMessage instance
-        """
-        transforms = []
-        for ros_transform_stamped in ros_msg.transforms:
-            # Convert from ROS TransformStamped to our Transform
-            transform = Transform.from_ros_transform_stamped(ros_transform_stamped)
-            transforms.append(transform)
-
-        return cls(*transforms)
-
-    def to_ros_msg(self) -> ROSTFMessage:
-        """Convert to a ROS tf2_msgs/TFMessage message.
-
-        Returns:
-            ROS TFMessage message
-        """
-        ros_msg = ROSTFMessage()  # type: ignore[no-untyped-call]
-
-        # Convert each Transform to ROS TransformStamped
-        for transform in self.transforms:
-            ros_msg.transforms.append(transform.to_ros_transform_stamped())
-
-        return ros_msg
-
-    def to_rerun(self):  # type: ignore[no-untyped-def]
+    def to_rerun(self) -> RerunMulti:
         """Convert to a list of rerun Transform3D archetypes.
 
         Returns a list of tuples (entity_path, Transform3D) for each transform
@@ -176,8 +139,8 @@ class TFMessage:
             for path, transform in tf_msg.to_rerun():
                 rr.log(path, transform)
         """
-        results = []
+        results: RerunMulti = []
         for transform in self.transforms:
             entity_path = f"world/tf/{transform.child_frame_id}"
-            results.append((entity_path, transform.to_rerun()))  # type: ignore[no-untyped-call]
+            results.append((entity_path, transform.to_rerun()))
         return results

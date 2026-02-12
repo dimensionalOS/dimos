@@ -18,7 +18,7 @@ Centralized control coordinator that replaces per-driver/per-controller
 loops with a single deterministic tick-based system.
 
 Features:
-- Single tick loop (read → compute → arbitrate → route → write)
+- Single tick loop (read -> compute -> arbitrate -> route -> write)
 - Per-joint arbitration (highest priority wins)
 - Mode conflict detection
 - Partial command support (hold last value)
@@ -32,20 +32,24 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.control.components import HardwareComponent
-from dimos.control.hardware_interface import BackendHardwareInterface, HardwareInterface
+from dimos.control.components import HardwareComponent, HardwareId, JointName, TaskName
+from dimos.control.hardware_interface import ConnectedHardware
 from dimos.control.task import ControlTask
 from dimos.control.tick_loop import TickLoop
-from dimos.core import Module, Out, rpc
+from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
+from dimos.msgs.geometry_msgs import (
+    PoseStamped,  # noqa: TC001 - needed at runtime for In[PoseStamped]
+)
 from dimos.msgs.sensor_msgs import (
     JointState,  # noqa: TC001 - needed at runtime for Out[JointState]
 )
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.hardware.manipulators.spec import ManipulatorBackend
+    from collections.abc import Callable
+
+    from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
 logger = setup_logger()
 
@@ -61,30 +65,20 @@ class TaskConfig:
 
     Attributes:
         name: Task name (e.g., "traj_arm")
-        type: Task type ("trajectory")
+        type: Task type ("trajectory", "servo", "velocity", "cartesian_ik")
         joint_names: List of joint names this task controls
         priority: Task priority (higher wins arbitration)
+        model_path: Path to URDF/MJCF for IK solver (cartesian_ik only)
+        ee_joint_id: End-effector joint ID in model (cartesian_ik only)
     """
 
     name: str
     type: str = "trajectory"
     joint_names: list[str] = field(default_factory=lambda: [])
     priority: int = 10
-
-
-@dataclass
-class TaskStatus:
-    """Status of a control task.
-
-    Attributes:
-        active: Whether the task is currently active
-        state: Task state name (e.g., "IDLE", "RUNNING", "DONE")
-        progress: Task progress from 0.0 to 1.0
-    """
-
-    active: bool
-    state: str | None = None
-    progress: float | None = None
+    # Cartesian IK specific
+    model_path: str | None = None
+    ee_joint_id: int = 6
 
 
 @dataclass
@@ -132,17 +126,24 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
     Example:
         >>> from dimos.control import ControlCoordinator
-        >>> from dimos.hardware.manipulators.xarm import XArmBackend
+        >>> from dimos.hardware.manipulators.xarm import XArmAdapter
         >>>
         >>> orch = ControlCoordinator(tick_rate=100.0)
-        >>> backend = XArmBackend(ip="192.168.1.185", dof=7)
-        >>> backend.connect()
-        >>> orch.add_hardware("left_arm", backend, joint_prefix="left")
+        >>> adapter = XArmAdapter(ip="192.168.1.185", dof=7)
+        >>> adapter.connect()
+        >>> orch.add_hardware("left_arm", adapter, joint_prefix="left")
         >>> orch.start()
     """
 
     # Output: Aggregated joint state for external consumers
     joint_state: Out[JointState]
+
+    # Input: Streaming joint commands for real-time control
+    joint_command: In[JointState]
+
+    # Input: Streaming cartesian commands for CartesianIKTask
+    # Uses frame_id as task name for routing
+    cartesian_command: In[PoseStamped]
 
     config: ControlCoordinatorConfig
     default_config = ControlCoordinatorConfig
@@ -150,19 +151,23 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
-        # Hardware interfaces (keyed by hardware_id)
-        self._hardware: dict[str, HardwareInterface] = {}
+        # Connected hardware (keyed by hardware_id)
+        self._hardware: dict[HardwareId, ConnectedHardware] = {}
         self._hardware_lock = threading.Lock()
 
         # Joint -> hardware mapping (built when hardware added)
-        self._joint_to_hardware: dict[str, str] = {}
+        self._joint_to_hardware: dict[JointName, HardwareId] = {}
 
         # Registered tasks
-        self._tasks: dict[str, ControlTask] = {}
+        self._tasks: dict[TaskName, ControlTask] = {}
         self._task_lock = threading.Lock()
 
         # Tick loop (created on start)
         self._tick_loop: TickLoop | None = None
+
+        # Subscription handles for streaming commands
+        self._joint_command_unsub: Callable[[], None] | None = None
+        self._cartesian_command_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -193,41 +198,30 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             raise
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
-        """Connect and add a single hardware backend."""
-        backend = self._create_backend(component)
+        """Connect and add a single hardware adapter."""
+        adapter = self._create_adapter(component)
 
-        if not backend.connect():
-            raise RuntimeError(f"Failed to connect to {component.backend_type} backend")
+        if not adapter.connect():
+            raise RuntimeError(f"Failed to connect to {component.adapter_type} adapter")
 
         try:
-            if component.auto_enable and hasattr(backend, "write_enable"):
-                backend.write_enable(True)
+            if component.auto_enable and hasattr(adapter, "write_enable"):
+                adapter.write_enable(True)
 
-            self.add_hardware(backend, component)
+            self.add_hardware(adapter, component)
         except Exception:
-            backend.disconnect()
+            adapter.disconnect()
             raise
 
-    def _create_backend(self, component: HardwareComponent) -> ManipulatorBackend:
-        """Create a manipulator backend from component config."""
-        dof = len(component.joints)
-        match component.backend_type.lower():
-            case "mock":
-                from dimos.hardware.manipulators.mock import MockBackend
+    def _create_adapter(self, component: HardwareComponent) -> ManipulatorAdapter:
+        """Create a manipulator adapter from component config."""
+        from dimos.hardware.manipulators.registry import adapter_registry
 
-                return MockBackend(dof=dof)
-            case "xarm":
-                if component.address is None:
-                    raise ValueError("address (IP) is required for xarm backend")
-                from dimos.hardware.manipulators.xarm import XArmBackend
-
-                return XArmBackend(ip=component.address, dof=dof)
-            case "piper":
-                from dimos.hardware.manipulators.piper import PiperBackend
-
-                return PiperBackend(can_port=component.address or "can0", dof=dof)
-            case _:
-                raise ValueError(f"Unknown backend type: {component.backend_type}")
+        return adapter_registry.create(
+            component.adapter_type,
+            dof=len(component.joints),
+            address=component.address,
+        )
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
         """Create a control task from config."""
@@ -244,6 +238,44 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 ),
             )
 
+        elif task_type == "servo":
+            from dimos.control.tasks import JointServoTask, JointServoTaskConfig
+
+            return JointServoTask(
+                cfg.name,
+                JointServoTaskConfig(
+                    joint_names=cfg.joint_names,
+                    priority=cfg.priority,
+                ),
+            )
+
+        elif task_type == "velocity":
+            from dimos.control.tasks import JointVelocityTask, JointVelocityTaskConfig
+
+            return JointVelocityTask(
+                cfg.name,
+                JointVelocityTaskConfig(
+                    joint_names=cfg.joint_names,
+                    priority=cfg.priority,
+                ),
+            )
+
+        elif task_type == "cartesian_ik":
+            from dimos.control.tasks import CartesianIKTask, CartesianIKTaskConfig
+
+            if cfg.model_path is None:
+                raise ValueError(f"CartesianIKTask '{cfg.name}' requires model_path in TaskConfig")
+
+            return CartesianIKTask(
+                cfg.name,
+                CartesianIKTaskConfig(
+                    joint_names=cfg.joint_names,
+                    model_path=cfg.model_path,
+                    ee_joint_id=cfg.ee_joint_id,
+                    priority=cfg.priority,
+                ),
+            )
+
         else:
             raise ValueError(f"Unknown task type: {task_type}")
 
@@ -254,26 +286,26 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     @rpc
     def add_hardware(
         self,
-        backend: ManipulatorBackend,
+        adapter: ManipulatorAdapter,
         component: HardwareComponent,
     ) -> bool:
-        """Register a hardware backend with the coordinator."""
+        """Register a hardware adapter with the coordinator."""
         with self._hardware_lock:
             if component.hardware_id in self._hardware:
                 logger.warning(f"Hardware {component.hardware_id} already registered")
                 return False
 
-            interface = BackendHardwareInterface(
-                backend=backend,
+            connected = ConnectedHardware(
+                adapter=adapter,
                 component=component,
             )
-            self._hardware[component.hardware_id] = interface
+            self._hardware[component.hardware_id] = connected
 
-            for joint_name in interface.joint_names:
+            for joint_name in connected.joint_names:
                 self._joint_to_hardware[joint_name] = component.hardware_id
 
             logger.info(
-                f"Added hardware {component.hardware_id} with joints: {interface.joint_names}"
+                f"Added hardware {component.hardware_id} with joints: {connected.joint_names}"
             )
             return True
 
@@ -353,7 +385,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             return True
 
     @rpc
-    def remove_task(self, task_name: str) -> bool:
+    def remove_task(self, task_name: TaskName) -> bool:
         """Remove a task by name."""
         with self._task_lock:
             if task_name in self._tasks:
@@ -363,7 +395,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             return False
 
     @rpc
-    def get_task(self, task_name: str) -> ControlTask | None:
+    def get_task(self, task_name: TaskName) -> ControlTask | None:
         """Get a task by name."""
         with self._task_lock:
             return self._tasks.get(task_name)
@@ -381,65 +413,117 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             return [name for name, task in self._tasks.items() if task.is_active()]
 
     # =========================================================================
-    # Trajectory Execution (RPC)
+    # Streaming Control
+    # =========================================================================
+
+    def _on_joint_command(self, msg: JointState) -> None:
+        """Route incoming JointState to streaming tasks by joint name.
+
+        Routes position data to servo tasks and velocity data to velocity tasks.
+        Each task only receives data for joints it claims.
+        """
+        if not msg.name:
+            return
+
+        t_now = time.perf_counter()
+        incoming_joints = set(msg.name)
+
+        with self._task_lock:
+            for task in self._tasks.values():
+                claimed_joints = task.claim().joints
+
+                # Skip if no overlap between incoming and claimed joints
+                if not (claimed_joints & incoming_joints):
+                    continue
+
+                # Route to servo tasks (position control)
+                if hasattr(task, "set_target_by_name") and msg.position:
+                    positions_by_name = dict(zip(msg.name, msg.position, strict=False))
+                    task.set_target_by_name(positions_by_name, t_now)  # type: ignore[attr-defined]
+
+                # Route to velocity tasks (velocity control)
+                elif hasattr(task, "set_velocities_by_name") and msg.velocity:
+                    velocities_by_name = dict(zip(msg.name, msg.velocity, strict=False))
+                    task.set_velocities_by_name(velocities_by_name, t_now)  # type: ignore[attr-defined]
+
+    def _on_cartesian_command(self, msg: PoseStamped) -> None:
+        """Route incoming PoseStamped to CartesianIKTask by task name.
+
+        Uses frame_id as the target task name for routing.
+        """
+        task_name = msg.frame_id
+        if not task_name:
+            logger.warning("Received cartesian_command with empty frame_id (task name)")
+            return
+
+        t_now = time.perf_counter()
+
+        with self._task_lock:
+            task = self._tasks.get(task_name)
+            if task is None:
+                logger.warning(f"Cartesian command for unknown task: {task_name}")
+                return
+
+            # Route to CartesianIKTask
+            if hasattr(task, "set_target_pose"):
+                task.set_target_pose(msg, t_now)  # type: ignore[attr-defined]
+            else:
+                logger.warning(f"Task {task_name} does not support set_target_pose")
+
+    @rpc
+    def task_invoke(
+        self, task_name: TaskName, method: str, kwargs: dict[str, Any] | None = None
+    ) -> Any:
+        """Invoke a method on a task. Pass t_now=None to auto-inject current time."""
+        with self._task_lock:
+            task = self._tasks.get(task_name)
+            if task is None:
+                logger.warning(f"Task {task_name} not found")
+                return None
+
+            if not hasattr(task, method):
+                logger.warning(f"Task {task_name} has no method {method}")
+                return None
+
+            kwargs = kwargs or {}
+
+            # Auto-inject t_now if requested (None means "use current time")
+            if "t_now" in kwargs and kwargs["t_now"] is None:
+                kwargs["t_now"] = time.perf_counter()
+
+            return getattr(task, method)(**kwargs)
+
+    # =========================================================================
+    # Gripper
     # =========================================================================
 
     @rpc
-    def execute_trajectory(self, task_name: str, trajectory: JointTrajectory) -> bool:
-        """Execute a trajectory on a named task."""
-        with self._task_lock:
-            task = self._tasks.get(task_name)
-            if task is None:
-                logger.warning(f"Task {task_name} not found")
-                return False
+    def set_gripper_position(self, hardware_id: str, position: float) -> bool:
+        """Set gripper position on a specific hardware device.
 
-            if not hasattr(task, "execute"):
-                logger.warning(f"Task {task_name} doesn't support execute()")
+        Args:
+            hardware_id: ID of the hardware with the gripper
+            position: Gripper position in meters
+        """
+        with self._hardware_lock:
+            hw = self._hardware.get(hardware_id)
+            if hw is None:
+                logger.warning(f"Hardware '{hardware_id}' not found for gripper command")
                 return False
-
-            logger.info(
-                f"Executing trajectory on {task_name}: "
-                f"{len(trajectory.points)} points, duration={trajectory.duration:.3f}s"
-            )
-            return task.execute(trajectory)  # type: ignore[attr-defined,no-any-return]
+            return hw.adapter.write_gripper_position(position)
 
     @rpc
-    def get_trajectory_status(self, task_name: str) -> TaskStatus | None:
-        """Get the status of a trajectory task."""
-        with self._task_lock:
-            task = self._tasks.get(task_name)
-            if task is None:
+    def get_gripper_position(self, hardware_id: str) -> float | None:
+        """Get gripper position from a specific hardware device.
+
+        Args:
+            hardware_id: ID of the hardware with the gripper
+        """
+        with self._hardware_lock:
+            hw = self._hardware.get(hardware_id)
+            if hw is None:
                 return None
-
-            state: str | None = None
-            if hasattr(task, "get_state"):
-                task_state: TrajectoryState = task.get_state()  # type: ignore[attr-defined]
-                state = (
-                    task_state.name if isinstance(task_state, TrajectoryState) else str(task_state)
-                )
-
-            progress: float | None = None
-            if hasattr(task, "get_progress"):
-                t_now = time.perf_counter()
-                progress = task.get_progress(t_now)  # type: ignore[attr-defined]
-
-            return TaskStatus(active=task.is_active(), state=state, progress=progress)
-
-    @rpc
-    def cancel_trajectory(self, task_name: str) -> bool:
-        """Cancel an active trajectory on a task."""
-        with self._task_lock:
-            task = self._tasks.get(task_name)
-            if task is None:
-                logger.warning(f"Task {task_name} not found")
-                return False
-
-            if not hasattr(task, "cancel"):
-                logger.warning(f"Task {task_name} doesn't support cancel()")
-                return False
-
-            logger.info(f"Cancelling trajectory on {task_name}")
-            return task.cancel()  # type: ignore[attr-defined,no-any-return]
+            return hw.adapter.read_gripper_position()
 
     # =========================================================================
     # Lifecycle
@@ -473,6 +557,40 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         )
         self._tick_loop.start()
 
+        # Subscribe to joint commands if any streaming tasks configured
+        streaming_types = ("servo", "velocity")
+        has_streaming = any(t.type in streaming_types for t in self.config.tasks)
+        if has_streaming:
+            # Only subscribe if transport is configured
+            try:
+                if self.joint_command.transport:
+                    self._joint_command_unsub = self.joint_command.subscribe(self._on_joint_command)
+                    logger.info("Subscribed to joint_command for streaming tasks")
+                else:
+                    logger.warning(
+                        "Streaming tasks configured but no transport set for joint_command. "
+                        "Use task_invoke RPC or set transport via blueprint."
+                    )
+            except Exception as e:
+                logger.warning(f"Could not subscribe to joint_command: {e}")
+
+        # Subscribe to cartesian commands if any cartesian_ik tasks configured
+        has_cartesian_ik = any(t.type == "cartesian_ik" for t in self.config.tasks)
+        if has_cartesian_ik:
+            try:
+                if self.cartesian_command.transport:
+                    self._cartesian_command_unsub = self.cartesian_command.subscribe(
+                        self._on_cartesian_command
+                    )
+                    logger.info("Subscribed to cartesian_command for CartesianIK tasks")
+                else:
+                    logger.warning(
+                        "CartesianIK tasks configured but no transport set for cartesian_command. "
+                        "Use task_invoke RPC or set transport via blueprint."
+                    )
+            except Exception as e:
+                logger.warning(f"Could not subscribe to cartesian_command: {e}")
+
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
 
     @rpc
@@ -480,10 +598,18 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         """Stop the coordinator."""
         logger.info("Stopping ControlCoordinator...")
 
+        # Unsubscribe from streaming commands
+        if self._joint_command_unsub:
+            self._joint_command_unsub()
+            self._joint_command_unsub = None
+        if self._cartesian_command_unsub:
+            self._cartesian_command_unsub()
+            self._cartesian_command_unsub = None
+
         if self._tick_loop:
             self._tick_loop.stop()
 
-        # Disconnect all hardware backends
+        # Disconnect all hardware adapters
         with self._hardware_lock:
             for hw_id, interface in self._hardware.items():
                 try:

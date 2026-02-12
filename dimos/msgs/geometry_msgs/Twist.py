@@ -17,15 +17,6 @@ from __future__ import annotations
 from dimos_lcm.geometry_msgs import Twist as LCMTwist
 from plum import dispatch
 
-try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
-        Twist as ROSTwist,
-        Vector3 as ROSVector3,
-    )
-except ImportError:
-    ROSTwist = None  # type: ignore[assignment, misc]
-    ROSVector3 = None  # type: ignore[assignment, misc]
-
 # Import Quaternion at runtime for beartype compatibility
 # (beartype needs to resolve forward references at runtime)
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -107,33 +98,6 @@ class Twist(LCMTwist):  # type: ignore[misc]
             False if twist is zero, True otherwise
         """
         return not self.is_zero()
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSTwist) -> Twist:
-        """Create a Twist from a ROS geometry_msgs/Twist message.
-
-        Args:
-            ros_msg: ROS Twist message
-
-        Returns:
-            Twist instance
-        """
-
-        linear = Vector3(ros_msg.linear.x, ros_msg.linear.y, ros_msg.linear.z)
-        angular = Vector3(ros_msg.angular.x, ros_msg.angular.y, ros_msg.angular.z)
-        return cls(linear, angular)
-
-    def to_ros_msg(self) -> ROSTwist:
-        """Convert to a ROS geometry_msgs/Twist message.
-
-        Returns:
-            ROS Twist message
-        """
-
-        ros_msg = ROSTwist()  # type: ignore[no-untyped-call]
-        ros_msg.linear = ROSVector3(x=self.linear.x, y=self.linear.y, z=self.linear.z)  # type: ignore[no-untyped-call]
-        ros_msg.angular = ROSVector3(x=self.angular.x, y=self.angular.y, z=self.angular.z)  # type: ignore[no-untyped-call]
-        return ros_msg
 
 
 __all__ = ["Quaternion", "Twist"]

@@ -28,8 +28,8 @@ from typing import (
 )
 
 from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
-from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
-from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
+from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
+from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
 from dimos.protocol.rpc.spec import Args, RPCSpec

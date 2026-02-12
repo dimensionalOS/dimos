@@ -19,14 +19,12 @@ from typing import Any, Protocol
 
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
-import rerun as rr
 import rerun.blueprint as rrb
 
 from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
-from dimos.core.global_config import GlobalConfig
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.skill_module import SkillModule
-from dimos.dashboard.rerun_init import connect_rerun
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
@@ -35,7 +33,7 @@ from dimos.msgs.geometry_msgs import (
     Vector3,
 )
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
-from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
+from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Output
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
@@ -171,11 +169,11 @@ class GO2Connection(SkillModule, spec.Camera, spec.Pointcloud):
     def __init__(  # type: ignore[no-untyped-def]
         self,
         ip: str | None = None,
-        global_config: GlobalConfig | None = None,
+        cfg: GlobalConfig = global_config,
         *args,
         **kwargs,
     ) -> None:
-        self._global_config = global_config or GlobalConfig()
+        self._global_config = cfg
 
         ip = ip if ip is not None else self._global_config.robot_ip
 
@@ -210,15 +208,9 @@ class GO2Connection(SkillModule, spec.Camera, spec.Pointcloud):
 
         self.connection.start()
 
-        # Connect this worker process to Rerun if it will log sensor data.
-        if self._global_config.viewer_backend.startswith("rerun"):
-            connect_rerun(global_config=self._global_config)
-
         def onimage(image: Image) -> None:
             self.color_image.publish(image)
             self._latest_video_frame = image
-            if self._global_config.viewer_backend.startswith("rerun"):
-                rr.log("world/robot/camera/rgb", image.to_rerun())
 
         self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
         self._disposables.add(self.connection.odom_stream().subscribe(self._publish_tf))

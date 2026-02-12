@@ -17,7 +17,7 @@
 import json
 from typing import Any
 
-from dimos.protocol.pubsub.memory import Memory, MemoryWithJSONEncoder
+from dimos.protocol.pubsub.impl.memory import Memory, MemoryWithJSONEncoder
 
 
 def test_json_encoded_pubsub() -> None:

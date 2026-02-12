@@ -1,0 +1,31 @@
+{
+  "transform_id": "EEF_TO_COLOR_OPT",
+  "parent_frame": "eef",
+  "child_frame": "camera_color_optical_frame",
+  "direction": "T_parent_child",
+  "units": {
+    "translation": "meters",
+    "angles": "radians"
+  },
+  "translation_m": {
+    "x": 0.067052239,
+    "y": -0.0311387575,
+    "z": 0.021611456
+  },
+  "rotation_rpy_rad": {
+    "roll": -0.004202176,
+    "pitch": -0.00848499,
+    "yaw": 1.5898775,
+    "convention": "R = Rz(yaw) * Ry(pitch) * Rx(roll)"
+  },
+  "rotation_quat_wxyz": {
+    "w": 0.7003270047,
+    "x": 0.0015569323,
+    "y": -0.0044709112,
+    "z": 0.7138064706
+  },
+  "notes": [
+    "This is an extrinsic transform from end-effector frame to RealSense color optical frame.",
+    "Keep quaternion as the source of truth; use RPY mainly for debugging/printing."
+  ]
+}

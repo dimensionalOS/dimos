@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
 REPO_ROOT=$(git rev-parse --show-toplevel)
 REL_PATH=$(realpath --relative-to="$REPO_ROOT" "$(pwd)")
-IMAGE="ghcr.io/dimensionalos/dev"
-IMAGE_NAME="$IMAGE:dev"
+IMAGE="ghcr.io/dimensionalos/ros-dev"
+IMAGE_TAG="$IMAGE:dev"
 
 image_exists() {
-    docker image inspect "${IMAGE_NAME}" &>/dev/null
+    docker image inspect "${IMAGE_TAG}" &>/dev/null
 }
 
 image_pull() {
-    docker pull "$IMAGE_NAME"
+    docker pull "$IMAGE_TAG"
 }
 
 ensure_image_downloaded() {
     if ! image_exists "$1"; then
-        echo "Image ${IMAGE_NAME} not found. Pulling..."
+        echo "Image ${IMAGE_TAG} not found. Pulling..."
         image_pull "$1"
     fi
 }
 
 check_image_running() {
-    if docker ps -q --filter "ancestor=${IMAGE_NAME}" | grep -q .; then
+    if docker ps -q --filter "ancestor=${IMAGE_TAG}" | grep -q .; then
         return 0
     else
         return 1
@@ -28,16 +28,16 @@ check_image_running() {
 }
 
 stop_image() {
-    if check_image_running ${IMAGE_NAME}; then
-        echo "Stopping containers from image ${IMAGE_NAME}..."
-        docker stop $(docker ps -q --filter "ancestor=${IMAGE_NAME}")
+    if check_image_running ${IMAGE_TAG}; then
+        echo "Stopping containers from image ${IMAGE_TAG}..."
+        docker stop $(docker ps -q --filter "ancestor=${IMAGE_TAG}")
     else
-        echo "No containers from image ${IMAGE_NAME} are running."
+        echo "No containers from image ${IMAGE_TAG} are running."
     fi
 }
 
 
-get_tag() {
+get_branch_tag() {
     local branch_name
     branch_name=$(git rev-parse --abbrev-ref HEAD)
 
@@ -58,16 +58,16 @@ get_tag() {
 
 build_image() {
     local image_tag
-    image_tag=$(get_tag)
+    image_tag=$(get_branch_tag)
 
     docker build \
         --build-arg GIT_COMMIT=$(git rev-parse --short HEAD) \
         --build-arg GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD) \
-        -t "ghcr.io/dimensionalos/dev:${image_tag}" -f docker/dev/Dockerfile .
+        -t "ghcr.io/dimensionalos/ros-dev:${image_tag}" -f docker/dev/Dockerfile .
 }
 
 remove_image() {
-    local tag=$(get_tag)
+    local tag=$(get_branch_tag)
     docker rm -f "dimos-dev-${tag}" 2>/dev/null || true
 }
 
@@ -141,7 +141,7 @@ else
             shift
             ;;
         pull)
-            docker pull ghcr.io/dimensionalos/dev:dev
+            docker pull "${IMAGE_TAG}"
             shift
             ;;
         *)

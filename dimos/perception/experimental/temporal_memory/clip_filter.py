@@ -14,7 +14,7 @@
 
 """CLIP-based frame filtering for selecting diverse frames from video windows."""
 
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 
@@ -38,7 +38,7 @@ def _get_image_data(image: Image) -> np.ndarray[Any, Any]:
     """Extract numpy array from Image."""
     if not hasattr(image, "data"):
         raise AttributeError(f"Image missing .data attribute: {type(image)}")
-    return cast("np.ndarray[Any, Any]", image.data)
+    return image.data
 
 
 if CLIP_AVAILABLE:
