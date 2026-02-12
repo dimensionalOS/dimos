@@ -17,7 +17,7 @@ from dimos.core import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped, Transform
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.protocol.tf import TF
-from dimos.robot.unitree.connection import go2
+from dimos.robot.unitree.go2 import connection
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import Moment, SensorMoment
 
@@ -43,14 +43,14 @@ class Go2Moment(Moment):
         # back and forth through time and foxglove doesn't get confused
         odom = self.odom.value
         odom.ts = time.time()
-        return go2.GO2Connection._odom_to_tf(odom)
+        return connection.GO2Connection._odom_to_tf(odom)
 
     def publish(self) -> None:
         t = TF()
         t.publish(*self.transforms)
         t.stop()
 
-        camera_info = go2._camera_info_static()
+        camera_info = connection._camera_info_static()
         camera_info.ts = time.time()
         camera_info_transport: LCMTransport[CameraInfo] = LCMTransport("/camera_info", CameraInfo)
         camera_info_transport.publish(camera_info)

@@ -60,11 +60,11 @@ class PersonFollowSkillContainer(SkillModule):
     def __init__(
         self,
         camera_info: CameraInfo,
-        global_config: GlobalConfig,
+        cfg: GlobalConfig,
         use_3d_navigation: bool = False,
     ) -> None:
         super().__init__()
-        self._global_config: GlobalConfig = global_config
+        self._global_config: GlobalConfig = cfg
         self._use_3d_navigation: bool = use_3d_navigation
         self._latest_image: Image | None = None
         self._latest_pointcloud: PointCloud2 | None = None
@@ -75,7 +75,7 @@ class PersonFollowSkillContainer(SkillModule):
 
         # Use MuJoCo camera intrinsics in simulation mode
         if self._global_config.simulation:
-            from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+            from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
             camera_info = MujocoConnection.camera_info_static
 

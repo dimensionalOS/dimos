@@ -66,7 +66,8 @@ def damped_pseudoinverse(
     """
     JJT = J @ J.T
     I = np.eye(JJT.shape[0])
-    return J.T @ np.linalg.inv(JJT + damping**2 * I)
+    result: NDArray[np.float64] = J.T @ np.linalg.inv(JJT + damping**2 * I)
+    return result
 
 
 def check_singularity(

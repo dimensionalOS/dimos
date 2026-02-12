@@ -56,6 +56,7 @@ class ManipulationClient:
         self._rpc = LCMRPC()
         self._rpc.start()
         self._module = "ManipulationModule"
+        self._cached_detections: list[dict[str, object]] = []
         print("Connected to ManipulationModule via LCM RPC")
 
     def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
@@ -261,6 +262,104 @@ class ManipulationClient:
         return cast("bool", self._call("close_gripper", robot_name=robot_name))
 
     # =========================================================================
+    # Perception Methods
+    # =========================================================================
+
+    def perception(self) -> dict[str, int] | None:
+        """Get perception status (cached/added counts)."""
+        return cast("dict[str, int] | None", self._call("get_perception_status"))
+
+    def detections(self) -> list[dict[str, object]] | None:
+        """List cached detections from perception."""
+        result = cast("list[dict[str, object]] | None", self._call("list_cached_detections"))
+        if result:
+            for i, det in enumerate(result):
+                center = cast("list[float]", det.get("center", [0, 0, 0]))
+                print(
+                    f"  [{i}] {det.get('name', '?'):12s}  "
+                    f"center=({center[0]:+.3f}, {center[1]:+.3f}, {center[2]:+.3f})  "
+                    f"dur={det.get('duration', 0)}s  "
+                    f"{'[IN WORLD]' if det.get('in_world') else ''}"
+                )
+        return result
+
+    def obstacles(self) -> list[dict[str, object]] | None:
+        """List perception obstacles currently in the planning world."""
+        return cast("list[dict[str, object]] | None", self._call("list_added_obstacles"))
+
+    def refresh(self, min_duration: float = 0.0) -> list[dict[str, object]]:
+        """Refresh perception obstacles and snapshot locally."""
+        result = self._call("refresh_obstacles", min_duration)
+        self._cached_detections = result or []
+        print(f"Refreshed: {len(self._cached_detections)} obstacles in world")
+        return self._cached_detections
+
+    def clear_perception(self) -> int | None:
+        """Remove all perception obstacles."""
+        return cast("int | None", self._call("clear_perception_obstacles"))
+
+    def goto_object(
+        self,
+        target: str | int,
+        dx: float = 0.0,
+        dy: float = 0.0,
+        dz: float = 0.0,
+        robot_name: str | None = None,
+    ) -> bool:
+        """Plan to a detected object's position with offset.
+
+        Args:
+            target: Object index (int), object_id (str), or class name (str)
+            dx, dy, dz: Offset from object center in meters
+            robot_name: Robot to plan for
+        """
+        dets = self._cached_detections
+        if not dets:
+            print("No cached detections. Run refresh() first.")
+            return False
+
+        # Match by index, object_id, or class name
+        match: dict[str, object] | None = None
+        if isinstance(target, int):
+            if 0 <= target < len(dets):
+                match = dets[target]
+            else:
+                print(f"Index {target} out of range (0-{len(dets) - 1})")
+                return False
+        else:
+            # Try object_id first, then class name
+            for det in dets:
+                if det.get("object_id") == target:
+                    match = det
+                    break
+            if match is None:
+                for det in dets:
+                    if str(det.get("name", "")).lower() == target.lower():
+                        match = det
+                        break
+            if match is None:
+                # Partial match
+                for det in dets:
+                    if target.lower() in str(det.get("name", "")).lower():
+                        match = det
+                        break
+
+        if match is None:
+            print(f"No object matching '{target}'. Available:")
+            for i, det in enumerate(dets):
+                print(f"  [{i}] {det.get('name', '?')}")
+            return False
+
+        center = cast("list[float]", match.get("center", [0, 0, 0]))
+        x, y, z = center[0] + dx, center[1] + dy, center[2] + dz
+        print(
+            f"Going to '{match.get('name')}' at "
+            f"({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f}) "
+            f"+ offset ({dx}, {dy}, {dz})"
+        )
+        return self.plan_pose(x, y, z, robot_name=robot_name)
+
+    # =========================================================================
     # Utility Methods
     # =========================================================================
 
@@ -331,6 +430,13 @@ def main() -> None:
         "get_gripper": c.get_gripper,
         "open_gripper": c.open_gripper,
         "close_gripper": c.close_gripper,
+        # Perception methods
+        "perception": c.perception,
+        "detections": c.detections,
+        "obstacles": c.obstacles,
+        "refresh": c.refresh,
+        "clear_perception": c.clear_perception,
+        "goto_object": c.goto_object,
         # Utility methods
         "collision": c.collision,
         "reset": c.reset,
@@ -368,6 +474,16 @@ Gripper:
   close_gripper()             # Close gripper fully
   set_gripper(0.05)           # Set gripper position (meters)
   get_gripper()               # Get gripper position (meters)
+
+Perception:
+  perception()                # Get status (cached/added counts)
+  detections()                # List cached detections
+  refresh()                   # Snapshot detections as obstacles
+  refresh(5)                  # Only objects seen >= 5 seconds
+  obstacles()                 # List obstacles in planning world
+  clear_perception()          # Remove all perception obstacles
+  goto_object("cup")          # Plan to object by name
+  goto_object(0, dz=0.1)     # Plan to object by index with Z offset
 
 Utility:
   collision([0.1, ...])   # Check if config is collision-free

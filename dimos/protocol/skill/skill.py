@@ -16,7 +16,7 @@ import asyncio
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ParamSpec, TypeVar, cast
 
 # from dimos.core.core import rpc
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
@@ -57,7 +57,11 @@ from dimos.protocol.skill.type import (
 #                         the average of all values is returned to the agent
 
 
-def rpc(fn: Callable[..., Any]) -> Callable[..., Any]:
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def rpc(fn: Callable[P, R]) -> Callable[P, R]:
     fn.__rpc__ = True  # type: ignore[attr-defined]
     return fn
 
@@ -68,16 +72,16 @@ def skill(
     ret: Return = Return.call_agent,
     output: Output = Output.standard,
     hide_skill: bool = False,
-) -> Callable:  # type: ignore[type-arg]
-    def decorator(f: Callable[..., Any]) -> Any:
-        def wrapper(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    def decorator(f: Callable[P, R]) -> Callable[P, R]:
+        def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> R:
             skill = f"{f.__name__}"
 
             call_id = kwargs.get("call_id", None)
             if call_id:
                 del kwargs["call_id"]
 
-                return self.call_skill(call_id, skill, args, kwargs)
+                return cast("R", self.call_skill(call_id, skill, args, kwargs))  # type: ignore[attr-defined]
                 # def run_function():
                 #    return self.call_skill(call_id, skill, args, kwargs)
                 #
@@ -108,7 +112,7 @@ def skill(
         wrapper._skill_config = skill_config  # type: ignore[attr-defined]
         wrapper.__name__ = f.__name__  # Preserve original function name
         wrapper.__doc__ = f.__doc__  # Preserve original docstring
-        return wrapper
+        return cast("Callable[P, R]", wrapper)
 
     return decorator
 

@@ -1,18 +1,12 @@
-from dimos.agents.agent import Agent, deploy
-from dimos.agents.spec import AgentSpec
-from dimos.agents.vlm_agent import VLMAgent
-from dimos.agents.vlm_stream_tester import VlmStreamTester
-from dimos.protocol.skill.skill import skill
-from dimos.protocol.skill.type import Output, Reducer, Stream
+import lazy_loader as lazy
 
-__all__ = [
-    "Agent",
-    "AgentSpec",
-    "Output",
-    "Reducer",
-    "Stream",
-    "VLMAgent",
-    "VlmStreamTester",
-    "deploy",
-    "skill",
-]
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "agent": ["Agent", "deploy"],
+        "spec": ["AgentSpec"],
+        "vlm_agent": ["VLMAgent"],
+        "vlm_stream_tester": ["VlmStreamTester"],
+        "_skill_exports": ["skill", "Output", "Reducer", "Stream"],
+    },
+)

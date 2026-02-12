@@ -21,11 +21,6 @@ from dimos_lcm.nav_msgs import Odometry as LCMOdometry
 import numpy as np
 from plum import dispatch
 
-try:
-    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined]
-except ImportError:
-    ROSOdometry = None  # type: ignore[assignment, misc]
-
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -328,54 +323,3 @@ class Odometry(LCMOdometry, Timestamped):  # type: ignore[misc]
             pose=pose_with_cov,
             twist=twist_with_cov,
         )
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSOdometry) -> Odometry:
-        """Create an Odometry from a ROS nav_msgs/Odometry message.
-
-        Args:
-            ros_msg: ROS Odometry message
-
-        Returns:
-            Odometry instance
-        """
-
-        # Convert timestamp from ROS header
-        ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
-
-        # Convert pose and twist with covariance
-        pose_with_cov = PoseWithCovariance.from_ros_msg(ros_msg.pose)
-        twist_with_cov = TwistWithCovariance.from_ros_msg(ros_msg.twist)
-
-        return cls(
-            ts=ts,
-            frame_id=ros_msg.header.frame_id,
-            child_frame_id=ros_msg.child_frame_id,
-            pose=pose_with_cov,
-            twist=twist_with_cov,
-        )
-
-    def to_ros_msg(self) -> ROSOdometry:
-        """Convert to a ROS nav_msgs/Odometry message.
-
-        Returns:
-            ROS Odometry message
-        """
-
-        ros_msg = ROSOdometry()  # type: ignore[no-untyped-call]
-
-        # Set header
-        ros_msg.header.frame_id = self.frame_id
-        ros_msg.header.stamp.sec = int(self.ts)
-        ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1_000_000_000)
-
-        # Set child frame ID
-        ros_msg.child_frame_id = self.child_frame_id
-
-        # Set pose with covariance
-        ros_msg.pose = self.pose.to_ros_msg()
-
-        # Set twist with covariance
-        ros_msg.twist = self.twist.to_ros_msg()
-
-        return ros_msg

@@ -20,13 +20,15 @@ from dimos_lcm.foxglove_msgs.Point2 import Point2
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.core import In, Module, ModuleConfig, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
 from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
 from dimos.perception.detection.reid.type import IDSystem
-from dimos.perception.detection.type import ImageDetections2D
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.types.timestamped import align_timestamped, to_ros_stamp
 from dimos.utils.reactive import backpressure
 

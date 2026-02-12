@@ -155,6 +155,12 @@ class WorldSpec(Protocol):
         """Get end-effector pose."""
         ...
 
+    def get_link_pose(
+        self, ctx: Any, robot_id: WorldRobotID, link_name: str
+    ) -> NDArray[np.float64]:
+        """Get link pose as 4x4 homogeneous transform."""
+        ...
+
     def get_jacobian(self, ctx: Any, robot_id: WorldRobotID) -> NDArray[np.float64]:
         """Get end-effector Jacobian (6 x n_joints)."""
         ...
@@ -170,6 +176,10 @@ class WorldSpec(Protocol):
 
     def animate_path(self, robot_id: WorldRobotID, path: JointPath, duration: float = 3.0) -> None:
         """Animate a path in visualization."""
+        ...
+
+    def close(self) -> None:
+        """Release visualization resources."""
         ...
 
 

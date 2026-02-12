@@ -12,21 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_lcm.geometry_msgs import TwistWithCovariance as LCMTwistWithCovariance
 import numpy as np
 import pytest
-
-try:
-    from geometry_msgs.msg import (
-        Twist as ROSTwist,
-        TwistWithCovariance as ROSTwistWithCovariance,
-        Vector3 as ROSVector3,
-    )
-except ImportError:
-    ROSTwist = None
-    ROSTwistWithCovariance = None
-    ROSVector3 = None
-
-from dimos_lcm.geometry_msgs import TwistWithCovariance as LCMTwistWithCovariance
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
@@ -35,10 +23,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 def test_twist_with_covariance_default_init() -> None:
     """Test that default initialization creates a zero twist with zero covariance."""
-    if ROSVector3 is None:
-        pytest.skip("ROS not available")
-    if ROSTwistWithCovariance is None:
-        pytest.skip("ROS not available")
     twist_cov = TwistWithCovariance()
 
     # Twist should be zero
@@ -315,57 +299,6 @@ def test_twist_with_covariance_lcm_encode_decode() -> None:
     assert isinstance(decoded, TwistWithCovariance)
     assert isinstance(decoded.twist, Twist)
     assert isinstance(decoded.covariance, np.ndarray)
-
-
-@pytest.mark.ros
-def test_twist_with_covariance_from_ros_msg() -> None:
-    """Test creating from ROS message."""
-    ros_msg = ROSTwistWithCovariance()
-    ros_msg.twist.linear = ROSVector3(x=1.0, y=2.0, z=3.0)
-    ros_msg.twist.angular = ROSVector3(x=0.1, y=0.2, z=0.3)
-    ros_msg.covariance = [float(i) for i in range(36)]
-
-    twist_cov = TwistWithCovariance.from_ros_msg(ros_msg)
-
-    assert twist_cov.twist.linear.x == 1.0
-    assert twist_cov.twist.linear.y == 2.0
-    assert twist_cov.twist.linear.z == 3.0
-    assert twist_cov.twist.angular.x == 0.1
-    assert twist_cov.twist.angular.y == 0.2
-    assert twist_cov.twist.angular.z == 0.3
-    assert np.array_equal(twist_cov.covariance, np.arange(36))
-
-
-@pytest.mark.ros
-def test_twist_with_covariance_to_ros_msg() -> None:
-    """Test converting to ROS message."""
-    twist = Twist(Vector3(1.0, 2.0, 3.0), Vector3(0.1, 0.2, 0.3))
-    covariance = np.arange(36, dtype=float)
-    twist_cov = TwistWithCovariance(twist, covariance)
-
-    ros_msg = twist_cov.to_ros_msg()
-
-    assert isinstance(ros_msg, ROSTwistWithCovariance)
-    assert ros_msg.twist.linear.x == 1.0
-    assert ros_msg.twist.linear.y == 2.0
-    assert ros_msg.twist.linear.z == 3.0
-    assert ros_msg.twist.angular.x == 0.1
-    assert ros_msg.twist.angular.y == 0.2
-    assert ros_msg.twist.angular.z == 0.3
-    assert list(ros_msg.covariance) == list(range(36))
-
-
-@pytest.mark.ros
-def test_twist_with_covariance_ros_roundtrip() -> None:
-    """Test round-trip conversion with ROS messages."""
-    twist = Twist(Vector3(1.5, 2.5, 3.5), Vector3(0.15, 0.25, 0.35))
-    covariance = np.random.rand(36)
-    original = TwistWithCovariance(twist, covariance)
-
-    ros_msg = original.to_ros_msg()
-    restored = TwistWithCovariance.from_ros_msg(ros_msg)
-
-    assert restored == original
 
 
 def test_twist_with_covariance_zero_covariance() -> None:

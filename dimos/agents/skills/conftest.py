@@ -21,7 +21,7 @@ from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillConta
 from dimos.agents.skills.gps_nav_skill import GpsNavSkillContainer
 from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.agents.system_prompt import SYSTEM_PROMPT
-from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
+from dimos.robot.unitree.unitree_skill_container import UnitreeSkillContainer
 
 
 @pytest.fixture(autouse=True)

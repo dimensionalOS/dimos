@@ -14,18 +14,6 @@
 # limitations under the License.
 
 
-import pytest
-
-try:
-    from sensor_msgs.msg import Joy as ROSJoy
-    from std_msgs.msg import Header as ROSHeader
-
-    ROS_AVAILABLE = True
-except ImportError:
-    ROSJoy = None
-    ROSHeader = None
-    ROS_AVAILABLE = False
-
 from dimos.msgs.sensor_msgs.Joy import Joy
 
 
@@ -163,38 +151,6 @@ def test_string_representation() -> None:
     assert "[1, 0, 1, 0, 0, 1]" in repr_str
 
     print("✓ Joy string representation test passed")
-
-
-@pytest.mark.ros
-def test_ros_conversion() -> None:
-    """Test conversion to/from ROS Joy messages."""
-    print("Testing Joy ROS conversion...")
-
-    # Create a ROS Joy message
-    ros_msg = ROSJoy()
-    ros_msg.header = ROSHeader()
-    ros_msg.header.stamp.sec = 1234567890
-    ros_msg.header.stamp.nanosec = 123456789
-    ros_msg.header.frame_id = "ros_gamepad"
-    ros_msg.axes = [0.25, -0.75, 0.0, 1.0, -1.0]
-    ros_msg.buttons = [1, 1, 0, 0, 1, 0, 1, 0]
-
-    # Convert from ROS
-    joy = Joy.from_ros_msg(ros_msg)
-    assert abs(joy.ts - 1234567890.123456789) < 1e-9
-    assert joy.frame_id == "ros_gamepad"
-    assert joy.axes == [0.25, -0.75, 0.0, 1.0, -1.0]
-    assert joy.buttons == [1, 1, 0, 0, 1, 0, 1, 0]
-
-    # Convert back to ROS
-    ros_msg2 = joy.to_ros_msg()
-    assert ros_msg2.header.frame_id == "ros_gamepad"
-    assert ros_msg2.header.stamp.sec == 1234567890
-    assert abs(ros_msg2.header.stamp.nanosec - 123456789) < 100  # Allow small rounding
-    assert list(ros_msg2.axes) == [0.25, -0.75, 0.0, 1.0, -1.0]
-    assert list(ros_msg2.buttons) == [1, 1, 0, 0, 1, 0, 1, 0]
-
-    print("✓ Joy ROS conversion test passed")
 
 
 def test_edge_cases() -> None:

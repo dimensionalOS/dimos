@@ -264,9 +264,8 @@ class TestReplayMode(unittest.TestCase):
 
                 try:
                     # Start should use Fake classes
-                    result = module.start()
+                    module.start()
 
-                    self.assertTrue(result)
                     mock_fake_conn.assert_called_once_with("replay")
                     mock_fake_video.assert_called_once()
                 finally:
@@ -380,20 +379,19 @@ class TestReplayMode(unittest.TestCase):
 
             try:
                 print("\n[TEST] Starting connection module in replay mode...")
-                result = module.start()
+                module.start()
 
                 # Give time for messages to process
                 import time
 
                 time.sleep(0.1)
 
-                print(f"\n[TEST] Module started: {result}")
+                print("\n[TEST] Module started")
                 print(f"[TEST] Total odom messages published: {len(published_odom)}")
                 print(f"[TEST] Total video frames published: {len(published_video)}")
                 print(f"[TEST] Total status messages published: {len(published_status)}")
 
                 # Verify module started and is processing messages
-                self.assertTrue(result)
                 self.assertIsNotNone(module.connection)
                 self.assertIsNotNone(module.video_stream)
 
@@ -877,8 +875,7 @@ class TestDroneStatusAndTelemetry(unittest.TestCase):
         module.movecmd = MagicMock()
 
         # Start module
-        result = module.start()
-        self.assertTrue(result)
+        module.start()
 
         # Give time for processing
         time.sleep(0.2)

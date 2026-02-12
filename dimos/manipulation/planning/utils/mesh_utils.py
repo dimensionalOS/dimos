@@ -36,8 +36,13 @@ from pathlib import Path
 import re
 import shutil
 import tempfile
+from typing import TYPE_CHECKING
 
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
 
 logger = setup_logger()
 
@@ -133,7 +138,7 @@ def _process_xacro(
 ) -> str:
     """Process xacro file to URDF."""
     try:
-        import xacro  # type: ignore[import-not-found]
+        import xacro  # type: ignore[import-not-found,import-untyped]
     except ImportError:
         raise ImportError(
             "xacro is required for processing .xacro files. Install with: pip install xacro"
@@ -269,6 +274,77 @@ def _convert_meshes(urdf_content: str, output_dir: Path) -> str:
             return match.group(0)
 
     return re.sub(pattern, convert_mesh, urdf_content)
+
+
+def pointcloud_to_convex_hull_obj(
+    points: NDArray[np.float64],
+    output_path: Path | str | None = None,
+    *,
+    voxel_size: float = 0.005,
+    min_points: int = 4,
+) -> str | None:
+    """Compute convex hull from point cloud and save as OBJ file.
+
+    Points are centered at origin so the mesh is in local frame.
+    The caller sets the obstacle pose to place it in the world.
+
+    Args:
+        points: Nx3 numpy array of 3D points (world frame)
+        output_path: Where to save OBJ. If None, uses a temp file.
+        voxel_size: Downsample voxel size in meters (0 to skip)
+        min_points: Minimum points required for convex hull
+
+    Returns:
+        Path to OBJ file, or None if hull computation fails
+    """
+    import numpy as np
+
+    if points.shape[0] < min_points:
+        logger.warning(f"Too few points ({points.shape[0]}) for convex hull")
+        return None
+
+    try:
+        import open3d as o3d  # type: ignore[import-untyped]
+    except ImportError:
+        logger.warning("open3d not installed, cannot compute convex hull")
+        return None
+
+    # Center at origin so mesh is in local frame
+    centered = points - points.mean(axis=0)
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(centered.astype(np.float64))
+
+    if voxel_size > 0 and len(pcd.points) > 100:
+        pcd = pcd.voxel_down_sample(voxel_size)
+
+    if len(pcd.points) < min_points:
+        logger.warning(f"Too few points after downsample ({len(pcd.points)})")
+        return None
+
+    try:
+        hull, _ = pcd.compute_convex_hull()
+    except Exception as e:
+        logger.warning(f"Convex hull computation failed: {e}")
+        return None
+
+    if output_path is None:
+        hull_dir = _CACHE_DIR / "convex_hulls"
+        hull_dir.mkdir(parents=True, exist_ok=True)
+        output_path = hull_dir / f"hull_{id(points):x}.obj"
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        o3d.io.write_triangle_mesh(str(output_path), hull)
+        logger.debug(
+            f"Convex hull: {len(hull.vertices)} verts, {len(hull.triangles)} faces -> {output_path}"
+        )
+        return str(output_path)
+    except Exception as e:
+        logger.warning(f"Failed to write convex hull OBJ: {e}")
+        return None
 
 
 def clear_cache() -> None:

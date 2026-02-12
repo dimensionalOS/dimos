@@ -203,7 +203,7 @@ class SpatialMemory(SkillModule):
 
         # Start periodic processing using interval
         unsub = interval(self._process_interval).subscribe(lambda _: self._process_frame())  # type: ignore[assignment]
-        self._disposables.add(Disposable(unsub))
+        self._disposables.add(unsub)
 
     @rpc
     def stop(self) -> None:

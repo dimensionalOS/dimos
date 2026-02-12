@@ -18,12 +18,6 @@ import time
 from typing import TypeAlias
 
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
-
-try:
-    from sensor_msgs.msg import Joy as ROSJoy  # type: ignore[attr-defined]
-except ImportError:
-    ROSJoy = None  # type: ignore[assignment, misc]
-
 from plum import dispatch
 
 from dimos.types.timestamped import Timestamped
@@ -140,42 +134,3 @@ class Joy(Timestamped):
             and self.buttons == other.buttons
             and self.frame_id == other.frame_id
         )
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSJoy) -> Joy:
-        """Create a Joy from a ROS sensor_msgs/Joy message.
-
-        Args:
-            ros_msg: ROS Joy message
-
-        Returns:
-            Joy instance
-        """
-        # Convert timestamp from ROS header
-        ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
-
-        return cls(
-            ts=ts,
-            frame_id=ros_msg.header.frame_id,
-            axes=list(ros_msg.axes),
-            buttons=list(ros_msg.buttons),
-        )
-
-    def to_ros_msg(self) -> ROSJoy:
-        """Convert to a ROS sensor_msgs/Joy message.
-
-        Returns:
-            ROS Joy message
-        """
-        ros_msg = ROSJoy()  # type: ignore[no-untyped-call]
-
-        # Set header
-        ros_msg.header.frame_id = self.frame_id
-        ros_msg.header.stamp.sec = int(self.ts)
-        ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1_000_000_000)
-
-        # Set axes and buttons
-        ros_msg.axes = self.axes
-        ros_msg.buttons = self.buttons
-
-        return ros_msg

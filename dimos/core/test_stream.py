@@ -25,7 +25,7 @@ from dimos.core import (
 )
 from dimos.core.testing import MockRobotClient, dimos
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.robot.unitree_webrtc.type.odometry import Odometry
+from dimos.robot.unitree.type.odometry import Odometry
 
 assert dimos
 

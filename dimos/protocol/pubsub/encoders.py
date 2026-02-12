@@ -105,7 +105,9 @@ class LCMTopicProto(Protocol):
 class LCMEncoderMixin(PubSubEncoderMixin[LCMTopicProto, DimosMsg, bytes]):
     """Encoder mixin for DimosMsg using LCM binary encoding."""
 
-    def encode(self, msg: DimosMsg, _: LCMTopicProto) -> bytes:
+    def encode(self, msg: DimosMsg | bytes, _: LCMTopicProto) -> bytes:
+        if isinstance(msg, bytes):
+            return msg
         return msg.lcm_encode()
 
     def decode(self, msg: bytes, topic: LCMTopicProto) -> DimosMsg:

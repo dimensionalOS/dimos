@@ -257,18 +257,20 @@ class TestExecute:
         assert module.execute() is False
 
     def test_execute_success(self, robot_config, simple_trajectory):
-        """Successful execute calls coordinator."""
+        """Successful execute calls coordinator via task_invoke."""
         module = _make_module()
         module._robots = {"test_arm": ("id", robot_config, MagicMock())}
         module._planned_trajectories = {"test_arm": simple_trajectory}
 
         mock_client = MagicMock()
-        mock_client.execute_trajectory.return_value = True
+        mock_client.task_invoke.return_value = True
         module._coordinator_client = mock_client
 
         assert module.execute() is True
         assert module._state == ManipulationState.COMPLETED
-        mock_client.execute_trajectory.assert_called_once()
+        mock_client.task_invoke.assert_called_once_with(
+            "traj_arm", "execute", {"trajectory": simple_trajectory}
+        )
 
     def test_execute_rejected(self, robot_config, simple_trajectory):
         """Rejected execution sets FAULT state."""
@@ -277,7 +279,7 @@ class TestExecute:
         module._planned_trajectories = {"test_arm": simple_trajectory}
 
         mock_client = MagicMock()
-        mock_client.execute_trajectory.return_value = False
+        mock_client.task_invoke.return_value = False
         module._coordinator_client = mock_client
 
         assert module.execute() is False

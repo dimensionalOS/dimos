@@ -1,16 +1,13 @@
-from dimos.models.vl.base import Captioner, VlModel
-from dimos.models.vl.florence import Florence2Model
-from dimos.models.vl.moondream import MoondreamVlModel
-from dimos.models.vl.moondream_hosted import MoondreamHostedVlModel
-from dimos.models.vl.openai import OpenAIVlModel
-from dimos.models.vl.qwen import QwenVlModel
+import lazy_loader as lazy
 
-__all__ = [
-    "Captioner",
-    "Florence2Model",
-    "MoondreamHostedVlModel",
-    "MoondreamVlModel",
-    "OpenAIVlModel",
-    "QwenVlModel",
-    "VlModel",
-]
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "base": ["Captioner", "VlModel"],
+        "florence": ["Florence2Model"],
+        "moondream": ["MoondreamVlModel"],
+        "moondream_hosted": ["MoondreamHostedVlModel"],
+        "openai": ["OpenAIVlModel"],
+        "qwen": ["QwenVlModel"],
+    },
+)

@@ -39,15 +39,25 @@ class ActorFuture:
 class Actor:
     """Proxy that forwards method calls to the worker process."""
 
-    def __init__(self, conn: Connection, module_class: type[ModuleT], worker_id: int) -> None:
+    def __init__(
+        self, conn: Connection | None, module_class: type[ModuleT], worker_id: int
+    ) -> None:
         self._conn = conn
         self._cls = module_class
         self._worker_id = worker_id
 
+    def __reduce__(self) -> tuple[type, tuple[None, type, int]]:
+        """Exclude the connection when pickling - it can't be used in other processes."""
+        return (Actor, (None, self._cls, self._worker_id))
+
     def _send_request_to_worker(self, request: dict[str, Any]) -> Any:
+        if self._conn is None:
+            raise RuntimeError("Actor connection not available - cannot send requests")
         self._conn.send(request)
         response = self._conn.recv()
         if response.get("error"):
+            if "AttributeError" in response["error"]:  # TODO: better error handling
+                raise AttributeError(response["error"])
             raise RuntimeError(f"Worker error: {response['error']}")
         return response.get("result")
 
@@ -56,11 +66,12 @@ class Actor:
         result = self._send_request_to_worker({"type": "set_ref", "ref": ref})
         return ActorFuture(result)
 
-    def __getattr__(self, name: str) -> ActorFuture:
-        # Raise AttributeError for private attributes to preserve pickle compatibility.
+    def __getattr__(self, name: str) -> Any:
+        """Proxy attribute access to the worker process."""
         if name.startswith("_"):
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-        raise NotImplementedError("Should not be needed anymore.")
+
+        return self._send_request_to_worker({"type": "getattr", "name": name})
 
 
 # Global forkserver context. Using `forkserver` instead of `fork` because it
@@ -68,11 +79,17 @@ class Actor:
 _forkserver_ctx: Any = None
 
 
-def _get_forkserver_context() -> Any:
+def get_forkserver_context() -> Any:
     global _forkserver_ctx
     if _forkserver_ctx is None:
         _forkserver_ctx = mp.get_context("forkserver")
     return _forkserver_ctx
+
+
+def reset_forkserver_context() -> None:
+    """Reset the forkserver context. Used in tests to ensure clean state."""
+    global _forkserver_ctx
+    _forkserver_ctx = None
 
 
 _seq_ids = SequentialIds()
@@ -95,10 +112,10 @@ class Worker:
         self._ready: bool = False
 
     def start_process(self) -> None:
-        parent_conn, child_conn = mp.Pipe()
+        ctx = get_forkserver_context()
+        parent_conn, child_conn = ctx.Pipe()
         self._conn = parent_conn
 
-        ctx = _get_forkserver_context()
         self._process = ctx.Process(
             target=_worker_entrypoint,
             args=(child_conn, self._module_class, self._args, self._kwargs, self._worker_id),
@@ -157,6 +174,7 @@ def _worker_entrypoint(
     worker_id: int,
 ) -> None:
     instance = None
+
     try:
         instance = module_class(*args, **kwargs)
         instance.worker = worker_id
@@ -188,6 +206,9 @@ def _worker_loop(conn: Connection, instance: Any, worker_id: int) -> None:
             if req_type == "set_ref":
                 instance.ref = request.get("ref")
                 response["result"] = worker_id
+
+            elif req_type == "getattr":
+                response["result"] = getattr(instance, request["name"])
 
             elif req_type == "shutdown":
                 response["result"] = True

@@ -25,9 +25,12 @@ from dimos_lcm.vision_msgs import (
     ObjectHypothesisWithPose,
 )
 import numpy as np
+from numpy.typing import NDArray
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, ModuleConfig, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import (
     CameraInfo,
@@ -555,9 +558,9 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
                 viz_msg = Image.from_numpy(viz_image)
                 self.tracked_overlay.publish(viz_msg)
 
-    def _draw_reid_matches(self, image: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
+    def _draw_reid_matches(self, image: NDArray[np.uint8]) -> NDArray[np.uint8]:  # type: ignore[type-arg]
         """Draw REID feature matches on the image."""
-        viz_image = image.copy()
+        viz_image: NDArray[np.uint8] = image.copy()  # type: ignore[type-arg]
 
         x1, y1, _x2, _y2 = self.last_roi_bbox  # type: ignore[misc]
 

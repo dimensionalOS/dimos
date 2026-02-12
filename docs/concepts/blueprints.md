@@ -201,7 +201,7 @@ blueprint.remappings([
 
 ## Overriding global configuration.
 
-Each module can optionally take a `global_config` option in `__init__`. E.g.:
+Each module can optionally take a `cfg` option in `__init__`. E.g.:
 
 ```python session=blueprint-ex3
 from dimos.core import Module, rpc
@@ -209,7 +209,7 @@ from dimos.core.global_config import GlobalConfig
 
 class ModuleA(Module):
 
-    def __init__(self, global_config: GlobalConfig | None = None):
+    def __init__(self, cfg: GlobalConfig | None = None):
         ...
 ```
 

@@ -25,18 +25,6 @@ from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo
 from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 
-# Import ROS types
-try:
-    from sensor_msgs.msg import (  # type: ignore[attr-defined]
-        CameraInfo as ROSCameraInfo,
-        RegionOfInterest as ROSRegionOfInterest,
-    )
-    from std_msgs.msg import Header as ROSHeader  # type: ignore[attr-defined]
-
-    ROS_AVAILABLE = True
-except ImportError:
-    ROS_AVAILABLE = False
-
 from dimos.types.timestamped import Timestamped
 
 
@@ -279,89 +267,6 @@ class CameraInfo(Timestamped):
             camera_info.roi_do_rectify = msg.roi.do_rectify
 
         return camera_info
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSCameraInfo) -> CameraInfo:
-        """Create CameraInfo from ROS sensor_msgs/CameraInfo message.
-
-        Args:
-            ros_msg: ROS CameraInfo message
-
-        Returns:
-            CameraInfo instance
-        """
-        if not ROS_AVAILABLE:
-            raise ImportError("ROS packages not available. Cannot convert from ROS message.")
-
-        # Extract timestamp
-        ts = ros_msg.header.stamp.sec + ros_msg.header.stamp.nanosec / 1e9
-
-        camera_info = cls(
-            height=ros_msg.height,
-            width=ros_msg.width,
-            distortion_model=ros_msg.distortion_model,
-            D=list(ros_msg.d),
-            K=list(ros_msg.k),
-            R=list(ros_msg.r),
-            P=list(ros_msg.p),
-            binning_x=ros_msg.binning_x,
-            binning_y=ros_msg.binning_y,
-            frame_id=ros_msg.header.frame_id,
-            ts=ts,
-        )
-
-        # Set ROI
-        camera_info.roi_x_offset = ros_msg.roi.x_offset
-        camera_info.roi_y_offset = ros_msg.roi.y_offset
-        camera_info.roi_height = ros_msg.roi.height
-        camera_info.roi_width = ros_msg.roi.width
-        camera_info.roi_do_rectify = ros_msg.roi.do_rectify
-
-        return camera_info
-
-    def to_ros_msg(self) -> ROSCameraInfo:
-        """Convert to ROS sensor_msgs/CameraInfo message.
-
-        Returns:
-            ROS CameraInfo message
-        """
-        if not ROS_AVAILABLE:
-            raise ImportError("ROS packages not available. Cannot convert to ROS message.")
-
-        ros_msg = ROSCameraInfo()  # type: ignore[no-untyped-call]
-
-        # Set header
-        ros_msg.header = ROSHeader()  # type: ignore[no-untyped-call]
-        ros_msg.header.frame_id = self.frame_id
-        ros_msg.header.stamp.sec = int(self.ts)
-        ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1e9)
-
-        # Image dimensions
-        ros_msg.height = self.height
-        ros_msg.width = self.width
-
-        # Distortion model and coefficients
-        ros_msg.distortion_model = self.distortion_model
-        ros_msg.d = self.D
-
-        # Camera matrices (all row-major)
-        ros_msg.k = self.K
-        ros_msg.r = self.R
-        ros_msg.p = self.P
-
-        # Binning
-        ros_msg.binning_x = self.binning_x
-        ros_msg.binning_y = self.binning_y
-
-        # ROI
-        ros_msg.roi = ROSRegionOfInterest()  # type: ignore[no-untyped-call]
-        ros_msg.roi.x_offset = self.roi_x_offset
-        ros_msg.roi.y_offset = self.roi_y_offset
-        ros_msg.roi.height = self.roi_height
-        ros_msg.roi.width = self.roi_width
-        ros_msg.roi.do_rectify = self.roi_do_rectify
-
-        return ros_msg
 
     def __repr__(self) -> str:
         """String representation."""

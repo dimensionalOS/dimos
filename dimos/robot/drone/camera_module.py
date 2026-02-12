@@ -98,11 +98,11 @@ class DroneCameraModule(Module):
         logger.info(f"DroneCameraModule initialized with intrinsics: {camera_intrinsics}")
 
     @rpc
-    def start(self) -> bool:
+    def start(self) -> None:
         """Start the camera module."""
         if self._running:
             logger.warning("Camera module already running")
-            return True
+            return
 
         # Start processing thread for depth (which will init Metric3D and handle video)
         self._running = True
@@ -111,7 +111,7 @@ class DroneCameraModule(Module):
         self._processing_thread.start()
 
         logger.info("Camera module started")
-        return True
+        return
 
     def _on_video_frame(self, frame: Image) -> None:
         """Handle incoming video frame."""

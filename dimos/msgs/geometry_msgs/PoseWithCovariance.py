@@ -22,13 +22,6 @@ from dimos_lcm.geometry_msgs import (
 import numpy as np
 from plum import dispatch
 
-try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
-        PoseWithCovariance as ROSPoseWithCovariance,
-    )
-except ImportError:
-    ROSPoseWithCovariance = None  # type: ignore[assignment, misc]
-
 from dimos.msgs.geometry_msgs.Pose import Pose, PoseConvertable
 
 if TYPE_CHECKING:
@@ -201,33 +194,3 @@ class PoseWithCovariance(LCMPoseWithCovariance):  # type: ignore[misc]
             ],
         )
         return cls(pose, lcm_msg.covariance)
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSPoseWithCovariance) -> PoseWithCovariance:
-        """Create a PoseWithCovariance from a ROS geometry_msgs/PoseWithCovariance message.
-
-        Args:
-            ros_msg: ROS PoseWithCovariance message
-
-        Returns:
-            PoseWithCovariance instance
-        """
-
-        pose = Pose.from_ros_msg(ros_msg.pose)
-        return cls(pose, list(ros_msg.covariance))
-
-    def to_ros_msg(self) -> ROSPoseWithCovariance:
-        """Convert to a ROS geometry_msgs/PoseWithCovariance message.
-
-        Returns:
-            ROS PoseWithCovariance message
-        """
-
-        ros_msg = ROSPoseWithCovariance()  # type: ignore[no-untyped-call]
-        ros_msg.pose = self.pose.to_ros_msg()
-        # ROS expects list, not numpy array
-        if isinstance(self.covariance, np.ndarray):  # type: ignore[has-type]
-            ros_msg.covariance = self.covariance.tolist()  # type: ignore[has-type]
-        else:
-            ros_msg.covariance = list(self.covariance)  # type: ignore[has-type]
-        return ros_msg

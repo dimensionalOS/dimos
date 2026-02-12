@@ -23,13 +23,6 @@ from dimos_lcm.geometry_msgs import (
 import numpy as np
 from plum import dispatch
 
-try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
-        TwistWithCovarianceStamped as ROSTwistWithCovarianceStamped,
-    )
-except ImportError:
-    ROSTwistWithCovarianceStamped = None  # type: ignore[assignment, misc]
-
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
 from dimos.msgs.geometry_msgs.Vector3 import VectorConvertable
@@ -123,51 +116,3 @@ class TwistWithCovarianceStamped(TwistWithCovariance, Timestamped):
             f"angular=[{self.angular.x:.3f}, {self.angular.y:.3f}, {self.angular.z:.3f}], "
             f"cov_trace={np.trace(self.covariance_matrix):.3f})"
         )
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSTwistWithCovarianceStamped) -> TwistWithCovarianceStamped:  # type: ignore[override]
-        """Create a TwistWithCovarianceStamped from a ROS geometry_msgs/TwistWithCovarianceStamped message.
-
-        Args:
-            ros_msg: ROS TwistWithCovarianceStamped message
-
-        Returns:
-            TwistWithCovarianceStamped instance
-        """
-
-        # Convert timestamp from ROS header
-        ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
-
-        # Convert twist with covariance
-        twist_with_cov = TwistWithCovariance.from_ros_msg(ros_msg.twist)
-
-        return cls(
-            ts=ts,
-            frame_id=ros_msg.header.frame_id,
-            twist=twist_with_cov.twist,
-            covariance=twist_with_cov.covariance,  # type: ignore[has-type]
-        )
-
-    def to_ros_msg(self) -> ROSTwistWithCovarianceStamped:  # type: ignore[override]
-        """Convert to a ROS geometry_msgs/TwistWithCovarianceStamped message.
-
-        Returns:
-            ROS TwistWithCovarianceStamped message
-        """
-
-        ros_msg = ROSTwistWithCovarianceStamped()  # type: ignore[no-untyped-call]
-
-        # Set header
-        ros_msg.header.frame_id = self.frame_id
-        ros_msg.header.stamp.sec = int(self.ts)
-        ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1_000_000_000)
-
-        # Set twist with covariance
-        ros_msg.twist.twist = self.twist.to_ros_msg()
-        # ROS expects list, not numpy array
-        if isinstance(self.covariance, np.ndarray):  # type: ignore[has-type]
-            ros_msg.twist.covariance = self.covariance.tolist()  # type: ignore[has-type]
-        else:
-            ros_msg.twist.covariance = list(self.covariance)  # type: ignore[has-type]
-
-        return ros_msg

@@ -15,25 +15,6 @@
 import time
 
 import numpy as np
-import pytest
-
-try:
-    from builtin_interfaces.msg import Time as ROSTime
-    from geometry_msgs.msg import (
-        Twist as ROSTwist,
-        TwistWithCovariance as ROSTwistWithCovariance,
-        TwistWithCovarianceStamped as ROSTwistWithCovarianceStamped,
-        Vector3 as ROSVector3,
-    )
-    from std_msgs.msg import Header as ROSHeader
-except ImportError:
-    ROSTwistWithCovarianceStamped = None
-    ROSTwist = None
-    ROSHeader = None
-    ROSTime = None
-    ROSTwistWithCovariance = None
-    ROSVector3 = None
-
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
@@ -43,18 +24,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 def test_twist_with_covariance_stamped_default_init() -> None:
     """Test default initialization."""
-    if ROSVector3 is None:
-        pytest.skip("ROS not available")
-    if ROSTwistWithCovariance is None:
-        pytest.skip("ROS not available")
-    if ROSTime is None:
-        pytest.skip("ROS not available")
-    if ROSHeader is None:
-        pytest.skip("ROS not available")
-    if ROSTwist is None:
-        pytest.skip("ROS not available")
-    if ROSTwistWithCovarianceStamped is None:
-        pytest.skip("ROS not available")
     twist_cov_stamped = TwistWithCovarianceStamped()
 
     # Should have current timestamp
@@ -191,97 +160,6 @@ def test_twist_with_covariance_stamped_lcm_encode_decode() -> None:
     assert np.array_equal(decoded.covariance, covariance)
 
 
-@pytest.mark.ros
-def test_twist_with_covariance_stamped_from_ros_msg() -> None:
-    """Test creating from ROS message."""
-    ros_msg = ROSTwistWithCovarianceStamped()
-
-    # Set header
-    ros_msg.header = ROSHeader()
-    ros_msg.header.stamp = ROSTime()
-    ros_msg.header.stamp.sec = 1234567890
-    ros_msg.header.stamp.nanosec = 123456000
-    ros_msg.header.frame_id = "laser"
-
-    # Set twist with covariance
-    ros_msg.twist = ROSTwistWithCovariance()
-    ros_msg.twist.twist = ROSTwist()
-    ros_msg.twist.twist.linear = ROSVector3(x=1.0, y=2.0, z=3.0)
-    ros_msg.twist.twist.angular = ROSVector3(x=0.1, y=0.2, z=0.3)
-    ros_msg.twist.covariance = [float(i) for i in range(36)]
-
-    twist_cov_stamped = TwistWithCovarianceStamped.from_ros_msg(ros_msg)
-
-    assert twist_cov_stamped.ts == 1234567890.123456
-    assert twist_cov_stamped.frame_id == "laser"
-    assert twist_cov_stamped.twist.linear.x == 1.0
-    assert twist_cov_stamped.twist.linear.y == 2.0
-    assert twist_cov_stamped.twist.linear.z == 3.0
-    assert twist_cov_stamped.twist.angular.x == 0.1
-    assert twist_cov_stamped.twist.angular.y == 0.2
-    assert twist_cov_stamped.twist.angular.z == 0.3
-    assert np.array_equal(twist_cov_stamped.covariance, np.arange(36))
-
-
-@pytest.mark.ros
-def test_twist_with_covariance_stamped_to_ros_msg() -> None:
-    """Test converting to ROS message."""
-    ts = 1234567890.567890
-    frame_id = "imu"
-    twist = Twist(Vector3(1.0, 2.0, 3.0), Vector3(0.1, 0.2, 0.3))
-    covariance = np.arange(36, dtype=float)
-
-    twist_cov_stamped = TwistWithCovarianceStamped(
-        ts=ts, frame_id=frame_id, twist=twist, covariance=covariance
-    )
-
-    ros_msg = twist_cov_stamped.to_ros_msg()
-
-    assert isinstance(ros_msg, ROSTwistWithCovarianceStamped)
-    assert ros_msg.header.frame_id == frame_id
-    assert ros_msg.header.stamp.sec == 1234567890
-    assert abs(ros_msg.header.stamp.nanosec - 567890000) < 100  # Allow small rounding error
-
-    assert ros_msg.twist.twist.linear.x == 1.0
-    assert ros_msg.twist.twist.linear.y == 2.0
-    assert ros_msg.twist.twist.linear.z == 3.0
-    assert ros_msg.twist.twist.angular.x == 0.1
-    assert ros_msg.twist.twist.angular.y == 0.2
-    assert ros_msg.twist.twist.angular.z == 0.3
-    assert list(ros_msg.twist.covariance) == list(range(36))
-
-
-@pytest.mark.ros
-def test_twist_with_covariance_stamped_ros_roundtrip() -> None:
-    """Test round-trip conversion with ROS messages."""
-    ts = 2147483647.987654  # Max int32 value for ROS Time.sec
-    frame_id = "robot_base"
-    twist = Twist(Vector3(1.5, 2.5, 3.5), Vector3(0.15, 0.25, 0.35))
-    covariance = np.random.rand(36)
-
-    original = TwistWithCovarianceStamped(
-        ts=ts, frame_id=frame_id, twist=twist, covariance=covariance
-    )
-
-    ros_msg = original.to_ros_msg()
-    restored = TwistWithCovarianceStamped.from_ros_msg(ros_msg)
-
-    # Check timestamp (loses some precision in conversion)
-    assert abs(restored.ts - ts) < 1e-6
-    assert restored.frame_id == frame_id
-
-    # Check twist
-    assert restored.twist.linear.x == original.twist.linear.x
-    assert restored.twist.linear.y == original.twist.linear.y
-    assert restored.twist.linear.z == original.twist.linear.z
-    assert restored.twist.angular.x == original.twist.angular.x
-    assert restored.twist.angular.y == original.twist.angular.y
-    assert restored.twist.angular.z == original.twist.angular.z
-
-    # Check covariance
-    assert np.allclose(restored.covariance, original.covariance)
-
-
 def test_twist_with_covariance_stamped_zero_timestamp() -> None:
     """Test that zero timestamp gets replaced with current time."""
     twist_cov_stamped = TwistWithCovarianceStamped(ts=0.0)
@@ -352,24 +230,6 @@ def test_twist_with_covariance_stamped_sec_nsec() -> None:
         assert abs(ns - 999999999) < 10
     else:
         assert ns == 0
-
-
-@pytest.mark.ros
-@pytest.mark.parametrize(
-    "frame_id",
-    ["", "map", "odom", "base_link", "cmd_vel", "sensor/velocity/front"],
-)
-def test_twist_with_covariance_stamped_frame_ids(frame_id) -> None:
-    """Test various frame ID values."""
-    twist_cov_stamped = TwistWithCovarianceStamped(frame_id=frame_id)
-    assert twist_cov_stamped.frame_id == frame_id
-
-    # Test roundtrip through ROS
-    ros_msg = twist_cov_stamped.to_ros_msg()
-    assert ros_msg.header.frame_id == frame_id
-
-    restored = TwistWithCovarianceStamped.from_ros_msg(ros_msg)
-    assert restored.frame_id == frame_id
 
 
 def test_twist_with_covariance_stamped_different_covariances() -> None:

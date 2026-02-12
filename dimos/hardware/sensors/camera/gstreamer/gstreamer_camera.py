@@ -22,7 +22,9 @@ import time
 
 import numpy as np
 
-from dimos.core import Module, ModuleConfig, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
 

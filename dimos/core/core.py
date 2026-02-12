@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from typing import (
     TYPE_CHECKING,
-    Any,
     TypeVar,
 )
 
@@ -30,7 +29,12 @@ if TYPE_CHECKING:
 register_picklers()
 T = TypeVar("T")
 
+from typing import ParamSpec, TypeVar
 
-def rpc(fn: Callable[..., Any]) -> Callable[..., Any]:
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def rpc(fn: Callable[P, R]) -> Callable[P, R]:
     fn.__rpc__ = True  # type: ignore[attr-defined]
     return fn

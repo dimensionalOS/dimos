@@ -15,8 +15,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+
+if TYPE_CHECKING:
+    from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 
 class IDSystem(ABC):

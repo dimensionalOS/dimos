@@ -23,13 +23,6 @@ from dimos_lcm.geometry_msgs import (
 import numpy as np
 from plum import dispatch
 
-try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
-        PoseWithCovarianceStamped as ROSPoseWithCovarianceStamped,
-    )
-except ImportError:
-    ROSPoseWithCovarianceStamped = None  # type: ignore[assignment, misc]
-
 from dimos.msgs.geometry_msgs.Pose import Pose, PoseConvertable
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.types.timestamped import Timestamped
@@ -115,51 +108,3 @@ class PoseWithCovarianceStamped(PoseWithCovariance, Timestamped):
             f"euler=[{self.roll:.3f}, {self.pitch:.3f}, {self.yaw:.3f}], "
             f"cov_trace={np.trace(self.covariance_matrix):.3f})"
         )
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSPoseWithCovarianceStamped) -> PoseWithCovarianceStamped:  # type: ignore[override]
-        """Create a PoseWithCovarianceStamped from a ROS geometry_msgs/PoseWithCovarianceStamped message.
-
-        Args:
-            ros_msg: ROS PoseWithCovarianceStamped message
-
-        Returns:
-            PoseWithCovarianceStamped instance
-        """
-
-        # Convert timestamp from ROS header
-        ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
-
-        # Convert pose with covariance
-        pose_with_cov = PoseWithCovariance.from_ros_msg(ros_msg.pose)
-
-        return cls(
-            ts=ts,
-            frame_id=ros_msg.header.frame_id,
-            pose=pose_with_cov.pose,
-            covariance=pose_with_cov.covariance,  # type: ignore[has-type]
-        )
-
-    def to_ros_msg(self) -> ROSPoseWithCovarianceStamped:  # type: ignore[override]
-        """Convert to a ROS geometry_msgs/PoseWithCovarianceStamped message.
-
-        Returns:
-            ROS PoseWithCovarianceStamped message
-        """
-
-        ros_msg = ROSPoseWithCovarianceStamped()  # type: ignore[no-untyped-call]
-
-        # Set header
-        ros_msg.header.frame_id = self.frame_id
-        ros_msg.header.stamp.sec = int(self.ts)
-        ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1_000_000_000)
-
-        # Set pose with covariance
-        ros_msg.pose.pose = self.pose.to_ros_msg()
-        # ROS expects list, not numpy array
-        if isinstance(self.covariance, np.ndarray):  # type: ignore[has-type]
-            ros_msg.pose.covariance = self.covariance.tolist()  # type: ignore[has-type]
-        else:
-            ros_msg.pose.covariance = list(self.covariance)  # type: ignore[has-type]
-
-        return ros_msg

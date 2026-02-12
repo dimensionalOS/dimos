@@ -20,13 +20,6 @@ from typing import BinaryIO, TypeAlias
 from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
 from plum import dispatch
 
-try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
-        TwistStamped as ROSTwistStamped,
-    )
-except ImportError:
-    ROSTwistStamped = None  # type: ignore[assignment, misc]
-
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import VectorConvertable
 from dimos.types.timestamped import Timestamped
@@ -75,46 +68,3 @@ class TwistStamped(Twist, Timestamped):
             f"TwistStamped(linear=[{self.linear.x:.3f}, {self.linear.y:.3f}, {self.linear.z:.3f}], "
             f"angular=[{self.angular.x:.3f}, {self.angular.y:.3f}, {self.angular.z:.3f}])"
         )
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSTwistStamped) -> TwistStamped:  # type: ignore[override]
-        """Create a TwistStamped from a ROS geometry_msgs/TwistStamped message.
-
-        Args:
-            ros_msg: ROS TwistStamped message
-
-        Returns:
-            TwistStamped instance
-        """
-
-        # Convert timestamp from ROS header
-        ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
-
-        # Convert twist
-        twist = Twist.from_ros_msg(ros_msg.twist)
-
-        return cls(
-            ts=ts,
-            frame_id=ros_msg.header.frame_id,
-            linear=twist.linear,
-            angular=twist.angular,
-        )
-
-    def to_ros_msg(self) -> ROSTwistStamped:  # type: ignore[override]
-        """Convert to a ROS geometry_msgs/TwistStamped message.
-
-        Returns:
-            ROS TwistStamped message
-        """
-
-        ros_msg = ROSTwistStamped()  # type: ignore[no-untyped-call]
-
-        # Set header
-        ros_msg.header.frame_id = self.frame_id
-        ros_msg.header.stamp.sec = int(self.ts)
-        ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1_000_000_000)
-
-        # Set twist
-        ros_msg.twist = Twist.to_ros_msg(self)
-
-        return ros_msg

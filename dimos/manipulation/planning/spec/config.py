@@ -74,6 +74,8 @@ class RobotModelConfig:
     joint_name_mapping: dict[str, str] = field(default_factory=dict)
     coordinator_task_name: str | None = None
     gripper_hardware_id: str | None = None
+    # TF publishing for extra links (e.g., camera mount)
+    tf_extra_links: list[str] = field(default_factory=list)
 
     def get_urdf_joint_name(self, coordinator_name: str) -> str:
         """Translate coordinator joint name to URDF joint name."""

@@ -17,17 +17,21 @@ Deployment helpers for TemporalMemory module.
 """
 
 import os
+from typing import TYPE_CHECKING
 
-from dimos import spec
-from dimos.core import DimosCluster
+from dimos.core._dask_exports import DimosCluster
 from dimos.models.vl.base import VlModel
+from dimos.spec import Camera as CameraSpec
 
 from .temporal_memory import TemporalMemory, TemporalMemoryConfig
+
+if TYPE_CHECKING:
+    from dimos.msgs.sensor_msgs import Image
 
 
 def deploy(
     dimos: DimosCluster,
-    camera: spec.Camera,
+    camera: CameraSpec,
     vlm: VlModel | None = None,
     config: TemporalMemoryConfig | None = None,
 ) -> TemporalMemory:
@@ -52,7 +56,7 @@ def deploy(
     if camera.color_image.transport is None:
         from dimos.core.transport import JpegShmTransport
 
-        transport = JpegShmTransport("/temporal_memory/color_image")
+        transport: JpegShmTransport[Image] = JpegShmTransport("/temporal_memory/color_image")
         camera.color_image.transport = transport
 
     temporal_memory.color_image.connect(camera.color_image)

@@ -24,7 +24,9 @@ import logging
 from dimos_lcm.sensor_msgs import CameraInfo
 import numpy as np
 
-from dimos.core import Module, ModuleConfig, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.std_msgs import Header

@@ -14,9 +14,14 @@
 
 """Generic drone module for MAVLink-based drones."""
 
-from .camera_module import DroneCameraModule
-from .connection_module import DroneConnectionModule
-from .drone import Drone
-from .mavlink_connection import MavlinkConnection
+import lazy_loader as lazy
 
-__all__ = ["Drone", "DroneCameraModule", "DroneConnectionModule", "MavlinkConnection"]
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "camera_module": ["DroneCameraModule"],
+        "connection_module": ["DroneConnectionModule"],
+        "drone": ["Drone"],
+        "mavlink_connection": ["MavlinkConnection"],
+    },
+)

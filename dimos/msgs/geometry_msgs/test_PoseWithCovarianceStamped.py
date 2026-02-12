@@ -15,27 +15,6 @@
 import time
 
 import numpy as np
-import pytest
-
-try:
-    from builtin_interfaces.msg import Time as ROSTime
-    from geometry_msgs.msg import (
-        Point as ROSPoint,
-        Pose as ROSPose,
-        PoseWithCovariance as ROSPoseWithCovariance,
-        PoseWithCovarianceStamped as ROSPoseWithCovarianceStamped,
-        Quaternion as ROSQuaternion,
-    )
-    from std_msgs.msg import Header as ROSHeader
-except ImportError:
-    ROSHeader = None
-    ROSPoseWithCovarianceStamped = None
-    ROSPose = None
-    ROSQuaternion = None
-    ROSPoint = None
-    ROSTime = None
-    ROSPoseWithCovariance = None
-
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
@@ -44,20 +23,6 @@ from dimos.msgs.geometry_msgs.PoseWithCovarianceStamped import PoseWithCovarianc
 
 def test_pose_with_covariance_stamped_default_init() -> None:
     """Test default initialization."""
-    if ROSPoseWithCovariance is None:
-        pytest.skip("ROS not available")
-    if ROSTime is None:
-        pytest.skip("ROS not available")
-    if ROSPoint is None:
-        pytest.skip("ROS not available")
-    if ROSQuaternion is None:
-        pytest.skip("ROS not available")
-    if ROSPose is None:
-        pytest.skip("ROS not available")
-    if ROSPoseWithCovarianceStamped is None:
-        pytest.skip("ROS not available")
-    if ROSHeader is None:
-        pytest.skip("ROS not available")
     pose_cov_stamped = PoseWithCovarianceStamped()
 
     # Should have current timestamp
@@ -180,98 +145,6 @@ def test_pose_with_covariance_stamped_lcm_encode_decode() -> None:
     assert np.array_equal(decoded.covariance, covariance)
 
 
-@pytest.mark.ros
-def test_pose_with_covariance_stamped_from_ros_msg() -> None:
-    """Test creating from ROS message."""
-    ros_msg = ROSPoseWithCovarianceStamped()
-
-    # Set header
-    ros_msg.header = ROSHeader()
-    ros_msg.header.stamp = ROSTime()
-    ros_msg.header.stamp.sec = 1234567890
-    ros_msg.header.stamp.nanosec = 123456000
-    ros_msg.header.frame_id = "laser"
-
-    # Set pose with covariance
-    ros_msg.pose = ROSPoseWithCovariance()
-    ros_msg.pose.pose = ROSPose()
-    ros_msg.pose.pose.position = ROSPoint(x=1.0, y=2.0, z=3.0)
-    ros_msg.pose.pose.orientation = ROSQuaternion(x=0.1, y=0.2, z=0.3, w=0.9)
-    ros_msg.pose.covariance = [float(i) for i in range(36)]
-
-    pose_cov_stamped = PoseWithCovarianceStamped.from_ros_msg(ros_msg)
-
-    assert pose_cov_stamped.ts == 1234567890.123456
-    assert pose_cov_stamped.frame_id == "laser"
-    assert pose_cov_stamped.pose.position.x == 1.0
-    assert pose_cov_stamped.pose.position.y == 2.0
-    assert pose_cov_stamped.pose.position.z == 3.0
-    assert pose_cov_stamped.pose.orientation.x == 0.1
-    assert pose_cov_stamped.pose.orientation.y == 0.2
-    assert pose_cov_stamped.pose.orientation.z == 0.3
-    assert pose_cov_stamped.pose.orientation.w == 0.9
-    assert np.array_equal(pose_cov_stamped.covariance, np.arange(36))
-
-
-@pytest.mark.ros
-def test_pose_with_covariance_stamped_to_ros_msg() -> None:
-    """Test converting to ROS message."""
-    ts = 1234567890.567890
-    frame_id = "imu"
-    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
-    covariance = np.arange(36, dtype=float)
-
-    pose_cov_stamped = PoseWithCovarianceStamped(
-        ts=ts, frame_id=frame_id, pose=pose, covariance=covariance
-    )
-
-    ros_msg = pose_cov_stamped.to_ros_msg()
-
-    assert isinstance(ros_msg, ROSPoseWithCovarianceStamped)
-    assert ros_msg.header.frame_id == frame_id
-    assert ros_msg.header.stamp.sec == 1234567890
-    assert abs(ros_msg.header.stamp.nanosec - 567890000) < 100  # Allow small rounding error
-
-    assert ros_msg.pose.pose.position.x == 1.0
-    assert ros_msg.pose.pose.position.y == 2.0
-    assert ros_msg.pose.pose.position.z == 3.0
-    assert ros_msg.pose.pose.orientation.x == 0.1
-    assert ros_msg.pose.pose.orientation.y == 0.2
-    assert ros_msg.pose.pose.orientation.z == 0.3
-    assert ros_msg.pose.pose.orientation.w == 0.9
-    assert list(ros_msg.pose.covariance) == list(range(36))
-
-
-@pytest.mark.ros
-def test_pose_with_covariance_stamped_ros_roundtrip() -> None:
-    """Test round-trip conversion with ROS messages."""
-    ts = 2147483647.987654  # Max int32 value for ROS Time.sec
-    frame_id = "robot_base"
-    pose = Pose(1.5, 2.5, 3.5, 0.15, 0.25, 0.35, 0.85)
-    covariance = np.random.rand(36)
-
-    original = PoseWithCovarianceStamped(ts=ts, frame_id=frame_id, pose=pose, covariance=covariance)
-
-    ros_msg = original.to_ros_msg()
-    restored = PoseWithCovarianceStamped.from_ros_msg(ros_msg)
-
-    # Check timestamp (loses some precision in conversion)
-    assert abs(restored.ts - ts) < 1e-6
-    assert restored.frame_id == frame_id
-
-    # Check pose
-    assert restored.pose.position.x == original.pose.position.x
-    assert restored.pose.position.y == original.pose.position.y
-    assert restored.pose.position.z == original.pose.position.z
-    assert restored.pose.orientation.x == original.pose.orientation.x
-    assert restored.pose.orientation.y == original.pose.orientation.y
-    assert restored.pose.orientation.z == original.pose.orientation.z
-    assert restored.pose.orientation.w == original.pose.orientation.w
-
-    # Check covariance
-    assert np.allclose(restored.covariance, original.covariance)
-
-
 def test_pose_with_covariance_stamped_zero_timestamp() -> None:
     """Test that zero timestamp gets replaced with current time."""
     pose_cov_stamped = PoseWithCovarianceStamped(ts=0.0)
@@ -328,24 +201,6 @@ def test_pose_with_covariance_stamped_sec_nsec() -> None:
         assert abs(ns - 999999999) < 10
     else:
         assert ns == 0
-
-
-@pytest.mark.ros
-@pytest.mark.parametrize(
-    "frame_id",
-    ["", "map", "odom", "base_link", "camera_optical_frame", "sensor/lidar/front"],
-)
-def test_pose_with_covariance_stamped_frame_ids(frame_id) -> None:
-    """Test various frame ID values."""
-    pose_cov_stamped = PoseWithCovarianceStamped(frame_id=frame_id)
-    assert pose_cov_stamped.frame_id == frame_id
-
-    # Test roundtrip through ROS
-    ros_msg = pose_cov_stamped.to_ros_msg()
-    assert ros_msg.header.frame_id == frame_id
-
-    restored = PoseWithCovarianceStamped.from_ros_msg(ros_msg)
-    assert restored.frame_id == frame_id
 
 
 def test_pose_with_covariance_stamped_different_covariances() -> None:

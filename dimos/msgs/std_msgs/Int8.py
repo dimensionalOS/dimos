@@ -21,41 +21,12 @@ from typing import ClassVar
 
 from dimos_lcm.std_msgs import Int8 as LCMInt8
 
-try:
-    from std_msgs.msg import Int8 as ROSInt8  # type: ignore[attr-defined]
-except ImportError:
-    ROSInt8 = None  # type: ignore[assignment, misc]
-
 
 class Int8(LCMInt8):  # type: ignore[misc]
-    """ROS-compatible Int32 message."""
+    """Int8 message."""
 
     msg_name: ClassVar[str] = "std_msgs.Int8"
 
     def __init__(self, data: int = 0) -> None:
         """Initialize Int8 with data value."""
         self.data = data
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSInt8) -> "Int8":
-        """Create a Bool from a ROS std_msgs/Bool message.
-
-        Args:
-            ros_msg: ROS Int8 message
-
-        Returns:
-            Int8 instance
-        """
-        return cls(data=ros_msg.data)
-
-    def to_ros_msg(self) -> ROSInt8:
-        """Convert to a ROS std_msgs/Bool message.
-
-        Returns:
-            ROS Int8 message
-        """
-        if ROSInt8 is None:
-            raise ImportError("ROS std_msgs not available")
-        ros_msg = ROSInt8()  # type: ignore[no-untyped-call]
-        ros_msg.data = self.data
-        return ros_msg

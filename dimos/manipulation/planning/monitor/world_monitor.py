@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.manipulation.planning.factory import create_world
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.manipulation.planning.monitor.world_state_monitor import WorldStateMonitor
+from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import JointState
 from dimos.utils.logging_config import setup_logger
 
@@ -40,7 +41,6 @@ if TYPE_CHECKING:
         WorldRobotID,
         WorldSpec,
     )
-    from dimos.msgs.geometry_msgs import PoseStamped
     from dimos.msgs.vision_msgs import Detection3D
 
 logger = setup_logger()
@@ -178,6 +178,8 @@ class WorldMonitor:
 
             logger.info("All monitors stopped")
 
+        self._world.close()
+
     # ============= Message Handlers =============
 
     def on_joint_state(self, msg: JointState, robot_id: WorldRobotID | None = None) -> None:
@@ -207,6 +209,41 @@ class WorldMonitor:
         """Handle perception detections (Detection3D from dimos.msgs.vision_msgs)."""
         if self._obstacle_monitor is not None:
             self._obstacle_monitor.on_detections(detections)
+
+    def on_objects(self, objects: object) -> None:
+        """Handle Object detections from ObjectDB (preserves object_id)."""
+        if self._obstacle_monitor is not None and isinstance(objects, list):
+            self._obstacle_monitor.on_objects(objects)
+
+    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, object]]:
+        """Refresh perception obstacles from cache. Returns list of added obstacles."""
+        if self._obstacle_monitor is not None:
+            return self._obstacle_monitor.refresh_obstacles(min_duration)
+        return []
+
+    def clear_perception_obstacles(self) -> int:
+        """Remove all perception obstacles. Returns count removed."""
+        if self._obstacle_monitor is not None:
+            return self._obstacle_monitor.clear_perception_obstacles()
+        return 0
+
+    def get_perception_status(self) -> dict[str, int]:
+        """Get perception obstacle status."""
+        if self._obstacle_monitor is not None:
+            return self._obstacle_monitor.get_perception_status()
+        return {"cached": 0, "added": 0}
+
+    def list_cached_detections(self) -> list[dict[str, object]]:
+        """List cached detections from perception."""
+        if self._obstacle_monitor is not None:
+            return self._obstacle_monitor.list_cached_detections()
+        return []
+
+    def list_added_obstacles(self) -> list[dict[str, object]]:
+        """List perception obstacles currently in the planning world."""
+        if self._obstacle_monitor is not None:
+            return self._obstacle_monitor.list_added_obstacles()
+        return []
 
     # ============= State Access =============
 
@@ -311,6 +348,38 @@ class WorldMonitor:
                 self._world.set_joint_state(ctx, robot_id, joint_state)
 
             return self._world.get_ee_pose(ctx, robot_id)
+
+    def get_link_pose(
+        self, robot_id: WorldRobotID, link_name: str, joint_state: JointState | None = None
+    ) -> PoseStamped | None:
+        """Get arbitrary link pose as PoseStamped.
+
+        Args:
+            robot_id: Robot to query
+            link_name: Name of the link in the URDF
+            joint_state: Joint state to use (uses current if None)
+        """
+        from dimos.msgs.geometry_msgs import Quaternion
+
+        with self._world.scratch_context() as ctx:
+            if joint_state is None:
+                joint_state = self.get_current_joint_state(robot_id)
+            if joint_state is not None:
+                self._world.set_joint_state(ctx, robot_id, joint_state)
+            try:
+                mat = self._world.get_link_pose(ctx, robot_id, link_name)
+            except KeyError:
+                logger.warning(f"Link '{link_name}' not found in robot '{robot_id}'")
+                return None
+
+            pos = mat[:3, 3]
+            rot = mat[:3, :3]
+            quat = Quaternion.from_rotation_matrix(rot)
+            return PoseStamped(
+                frame_id="world",
+                position=[float(pos[0]), float(pos[1]), float(pos[2])],
+                orientation=[float(quat.x), float(quat.y), float(quat.z), float(quat.w)],
+            )
 
     def get_jacobian(self, robot_id: WorldRobotID, joint_state: JointState) -> NDArray[np.float64]:
         """Get 6xN Jacobian matrix."""

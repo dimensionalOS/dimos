@@ -16,19 +16,6 @@ from dimos_lcm.geometry_msgs import PoseWithCovariance as LCMPoseWithCovariance
 import numpy as np
 import pytest
 
-try:
-    from geometry_msgs.msg import (
-        Point as ROSPoint,
-        Pose as ROSPose,
-        PoseWithCovariance as ROSPoseWithCovariance,
-        Quaternion as ROSQuaternion,
-    )
-except ImportError:
-    ROSPoseWithCovariance = None
-    ROSPose = None
-    ROSPoint = None
-    ROSQuaternion = None
-
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 
@@ -286,59 +273,6 @@ def test_pose_with_covariance_lcm_encode_decode() -> None:
     assert isinstance(decoded, PoseWithCovariance)
     assert isinstance(decoded.pose, Pose)
     assert isinstance(decoded.covariance, np.ndarray)
-
-
-@pytest.mark.ros
-def test_pose_with_covariance_from_ros_msg() -> None:
-    """Test creating from ROS message."""
-    ros_msg = ROSPoseWithCovariance()
-    ros_msg.pose.position = ROSPoint(x=1.0, y=2.0, z=3.0)
-    ros_msg.pose.orientation = ROSQuaternion(x=0.1, y=0.2, z=0.3, w=0.9)
-    ros_msg.covariance = [float(i) for i in range(36)]
-
-    pose_cov = PoseWithCovariance.from_ros_msg(ros_msg)
-
-    assert pose_cov.pose.position.x == 1.0
-    assert pose_cov.pose.position.y == 2.0
-    assert pose_cov.pose.position.z == 3.0
-    assert pose_cov.pose.orientation.x == 0.1
-    assert pose_cov.pose.orientation.y == 0.2
-    assert pose_cov.pose.orientation.z == 0.3
-    assert pose_cov.pose.orientation.w == 0.9
-    assert np.array_equal(pose_cov.covariance, np.arange(36))
-
-
-@pytest.mark.ros
-def test_pose_with_covariance_to_ros_msg() -> None:
-    """Test converting to ROS message."""
-    pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
-    covariance = np.arange(36, dtype=float)
-    pose_cov = PoseWithCovariance(pose, covariance)
-
-    ros_msg = pose_cov.to_ros_msg()
-
-    assert isinstance(ros_msg, ROSPoseWithCovariance)
-    assert ros_msg.pose.position.x == 1.0
-    assert ros_msg.pose.position.y == 2.0
-    assert ros_msg.pose.position.z == 3.0
-    assert ros_msg.pose.orientation.x == 0.1
-    assert ros_msg.pose.orientation.y == 0.2
-    assert ros_msg.pose.orientation.z == 0.3
-    assert ros_msg.pose.orientation.w == 0.9
-    assert list(ros_msg.covariance) == list(range(36))
-
-
-@pytest.mark.ros
-def test_pose_with_covariance_ros_roundtrip() -> None:
-    """Test round-trip conversion with ROS messages."""
-    pose = Pose(1.5, 2.5, 3.5, 0.15, 0.25, 0.35, 0.85)
-    covariance = np.random.rand(36)
-    original = PoseWithCovariance(pose, covariance)
-
-    ros_msg = original.to_ros_msg()
-    restored = PoseWithCovariance.from_ros_msg(ros_msg)
-
-    assert restored == original
 
 
 def test_pose_with_covariance_zero_covariance() -> None:

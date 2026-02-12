@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Basic G1 sim stack: base sensors plus sim connection and planner."""
+
+from dimos.core.blueprints import autoconnect
+from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
+from dimos.robot.unitree.g1.blueprints.primitive.uintree_g1_primitive_no_nav import (
+    uintree_g1_primitive_no_nav,
+)
+from dimos.robot.unitree.g1.sim import g1_sim_connection
+
+unitree_g1_basic_sim = autoconnect(
+    uintree_g1_primitive_no_nav,
+    g1_sim_connection(),
+    replanning_a_star_planner(),
+)
+
+__all__ = ["unitree_g1_basic_sim"]

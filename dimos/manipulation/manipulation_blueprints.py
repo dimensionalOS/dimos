@@ -27,13 +27,18 @@ Usage:
     client.execute()
 """
 
+import math
 from pathlib import Path
 
+from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
+from dimos.hardware.sensors.camera.realsense import realsense_camera
 from dimos.manipulation.manipulation_module import manipulation_module
 from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import JointState
+from dimos.perception.object_scene_registration import object_scene_registration_module
+from dimos.robot.foxglove_bridge import foxglove_bridge  # TODO: migrate to rerun
 from dimos.utils.data import get_data
 
 # =============================================================================
@@ -177,18 +182,26 @@ def _make_xarm6_config(
 def _make_xarm7_config(
     name: str = "arm",
     y_offset: float = 0.0,
+    z_offset: float = 0.0,
+    pitch: float = 0.0,
     joint_prefix: str = "",
     coordinator_task: str | None = None,
     add_gripper: bool = False,
+    gripper_hardware_id: str | None = None,
+    tf_extra_links: list[str] | None = None,
 ) -> RobotModelConfig:
     """Create XArm7 robot config.
 
     Args:
         name: Robot name in Drake world
         y_offset: Y-axis offset for base pose (for multi-arm setups)
+        z_offset: Z-axis offset for base pose (e.g., table height)
+        pitch: Base pitch angle in radians (e.g., tilted mount)
         joint_prefix: Prefix for joint name mapping (e.g., "left_" or "right_")
         coordinator_task: Task name for coordinator RPC execution
         add_gripper: Whether to add the xarm gripper
+        gripper_hardware_id: Coordinator hardware ID for gripper control
+        tf_extra_links: Additional links to publish TF for (e.g., ["link7"] for camera mount)
     """
     joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
     joint_mapping = {f"{joint_prefix}{j}": j for j in joint_names} if joint_prefix else {}
@@ -196,7 +209,8 @@ def _make_xarm7_config(
     xacro_args: dict[str, str] = {
         "dof": "7",
         "limited": "true",
-        "attach_xyz": f"0 {y_offset} 0",
+        "attach_xyz": f"0 {y_offset} {z_offset}",
+        "attach_rpy": f"0 {pitch} 0",
     }
     if add_gripper:
         xacro_args["add_gripper"] = "true"
@@ -204,7 +218,7 @@ def _make_xarm7_config(
     return RobotModelConfig(
         name=name,
         urdf_path=_get_xarm_urdf_path(),
-        base_pose=_make_base_pose(y=y_offset),
+        base_pose=_make_base_pose(y=y_offset, z=z_offset, pitch=pitch),
         joint_names=joint_names,
         end_effector_link="link_tcp" if add_gripper else "link7",
         base_link="link_base",
@@ -216,6 +230,8 @@ def _make_xarm7_config(
         max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
+        gripper_hardware_id=gripper_hardware_id,
+        tf_extra_links=tf_extra_links or [],
     )
 
 
@@ -309,10 +325,52 @@ xarm7_planner_coordinator = manipulation_module(
 )
 
 
+# XArm7 with eye-in-hand RealSense camera for perception-based manipulation
+# TF chain: world → link7 (ManipulationModule) → camera_link (RealSense)
+# Usage: dimos run coordinator-mock, then dimos run xarm-perception
+_XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
+    translation=Vector3(x=0.06693724, y=-0.0309563, z=0.00691482),
+    rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
+)
+
+xarm_perception = (
+    autoconnect(
+        manipulation_module(
+            robots=[
+                _make_xarm7_config(
+                    "arm",
+                    pitch=math.radians(45),
+                    joint_prefix="arm_",
+                    coordinator_task="traj_arm",
+                    add_gripper=True,
+                    gripper_hardware_id="arm",
+                    tf_extra_links=["link7"],
+                ),
+            ],
+            planning_timeout=10.0,
+            enable_viz=True,
+        ),
+        realsense_camera(
+            base_frame_id="link7",
+            base_transform=_XARM_PERCEPTION_CAMERA_TRANSFORM,
+        ),
+        object_scene_registration_module(target_frame="world"),
+        foxglove_bridge(),  # TODO: migrate to rerun
+    )
+    .transports(
+        {
+            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        }
+    )
+    .global_config(viewer_backend="foxglove")
+)
+
+
 __all__ = [
     "PIPER_GRIPPER_COLLISION_EXCLUSIONS",
     "XARM_GRIPPER_COLLISION_EXCLUSIONS",
     "dual_xarm6_planner",
     "xarm6_planner_only",
     "xarm7_planner_coordinator",
+    "xarm_perception",
 ]

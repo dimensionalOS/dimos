@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import multiprocessing.resource_sharer as resource_sharer
 from typing import Any
 
 from dimos.core.module import ModuleT
@@ -71,6 +70,5 @@ class WorkerManager:
 
         self._workers.clear()
         ActorRegistry.clear()
-        resource_sharer.stop()
 
         logger.info("All workers shut down")

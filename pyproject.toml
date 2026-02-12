@@ -42,6 +42,7 @@ dependencies = [
     "pydantic",
     "python-dotenv",
     "annotation-protocol>=1.4.0",
+    "lazy_loader",
 
     # Multiprocess
     "dask[complete]==2025.5.1",
@@ -125,9 +126,9 @@ visualization = [
 ]
 
 agents = [
-    "langchain>=1,<2",
+    "langchain==1.2.3",
     "langchain-chroma>=1,<2",
-    "langchain-core>=1,<2",
+    "langchain-core==1.2.3",
     "langchain-openai>=1,<2",
     "langchain-text-splitters>=1,<2",
     "langchain-huggingface>=1,<2",
@@ -387,7 +388,6 @@ markers = [
     "module: tests that need to run directly as modules",
     "gpu: tests that require GPU",
     "cuda: tests which require CUDA (specifically CUDA not just GPU acceleration)",
-    "tofix: temporarily disabled test",
     "e2e: end to end tests",
     "integration: slower integration tests",
     "neverending: they don't finish",
@@ -397,7 +397,7 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "-v -p no:warnings -ra --color=yes -m 'not (vis or exclude or tool or lcm or ros or heavy or gpu or module or tofix or e2e or integration or neverending or mujoco)'"
+addopts = "-v -p no:warnings -ra --color=yes -m 'not (vis or exclude or tool or lcm or ros or heavy or gpu or module or e2e or integration or neverending or mujoco)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

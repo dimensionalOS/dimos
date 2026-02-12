@@ -34,7 +34,9 @@ import sys
 import time
 
 from dimos import core
-from dimos.manipulation.planning import JointTrajectoryGenerator
+from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
+    JointTrajectoryGenerator,
+)
 from dimos.msgs.sensor_msgs import JointState
 from dimos.msgs.trajectory_msgs import JointTrajectory
 

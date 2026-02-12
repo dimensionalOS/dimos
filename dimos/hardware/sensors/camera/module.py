@@ -20,15 +20,18 @@ from typing import Any
 import reactivex as rx
 from reactivex import operators as ops
 
-from dimos.agents import Output, Reducer, Stream, skill
-from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.core.blueprints import autoconnect
+from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import CameraHardware
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
+from dimos.protocol.skill.skill import skill
+from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.spec import perception
 from dimos.utils.reactive import iter_observable
 

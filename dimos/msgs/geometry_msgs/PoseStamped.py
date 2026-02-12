@@ -22,13 +22,6 @@ if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
-
-try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
-        PoseStamped as ROSPoseStamped,
-    )
-except ImportError:
-    ROSPoseStamped = None  # type: ignore[assignment, misc]
 from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -145,44 +138,3 @@ class PoseStamped(Pose, Timestamped):
             translation=local_translation,
             rotation=relative_rotation,
         )
-
-    @classmethod
-    def from_ros_msg(cls, ros_msg: ROSPoseStamped) -> PoseStamped:  # type: ignore[override]
-        """Create a PoseStamped from a ROS geometry_msgs/PoseStamped message.
-
-        Args:
-            ros_msg: ROS PoseStamped message
-
-        Returns:
-            PoseStamped instance
-        """
-        # Convert timestamp from ROS header
-        ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
-
-        # Convert pose
-        pose = Pose.from_ros_msg(ros_msg.pose)
-
-        return cls(
-            ts=ts,
-            frame_id=ros_msg.header.frame_id,
-            position=pose.position,
-            orientation=pose.orientation,
-        )
-
-    def to_ros_msg(self) -> ROSPoseStamped:  # type: ignore[override]
-        """Convert to a ROS geometry_msgs/PoseStamped message.
-
-        Returns:
-            ROS PoseStamped message
-        """
-        ros_msg = ROSPoseStamped()  # type: ignore[no-untyped-call]
-
-        # Set header
-        ros_msg.header.frame_id = self.frame_id
-        ros_msg.header.stamp.sec = int(self.ts)
-        ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1_000_000_000)
-
-        # Set pose
-        ros_msg.pose = Pose.to_ros_msg(self)
-
-        return ros_msg

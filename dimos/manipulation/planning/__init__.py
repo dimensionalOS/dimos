@@ -57,55 +57,28 @@ monitor.start_state_monitor(robot_id)
 ```
 """
 
-# Factory functions
-from dimos.manipulation.planning.factory import (
-    create_kinematics,
-    create_planner,
-    create_planning_stack,
-    create_world,
-)
+import lazy_loader as lazy
 
-# Data classes and Protocols
-from dimos.manipulation.planning.spec import (
-    CollisionObjectMessage,
-    IKResult,
-    IKStatus,
-    JointPath,
-    KinematicsSpec,
-    Obstacle,
-    ObstacleType,
-    PlannerSpec,
-    PlanningResult,
-    PlanningStatus,
-    RobotModelConfig,
-    RobotName,
-    WorldRobotID,
-    WorldSpec,
+__getattr__, __dir__, __all__ = lazy.attach(
+    __name__,
+    submod_attrs={
+        "factory": ["create_kinematics", "create_planner", "create_planning_stack", "create_world"],
+        "spec": [
+            "CollisionObjectMessage",
+            "IKResult",
+            "IKStatus",
+            "JointPath",
+            "KinematicsSpec",
+            "Obstacle",
+            "ObstacleType",
+            "PlannerSpec",
+            "PlanningResult",
+            "PlanningStatus",
+            "RobotModelConfig",
+            "RobotName",
+            "WorldRobotID",
+            "WorldSpec",
+        ],
+        "trajectory_generator.joint_trajectory_generator": ["JointTrajectoryGenerator"],
+    },
 )
-
-# Trajectory generation
-from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
-    JointTrajectoryGenerator,
-)
-
-__all__ = [
-    "CollisionObjectMessage",
-    "IKResult",
-    "IKStatus",
-    "JointPath",
-    "JointTrajectoryGenerator",
-    "KinematicsSpec",
-    "Obstacle",
-    "ObstacleType",
-    "PlannerSpec",
-    "PlanningResult",
-    "PlanningStatus",
-    "RobotModelConfig",
-    "RobotName",
-    "WorldRobotID",
-    "WorldSpec",
-    "create_kinematics",
-    "create_planner",
-    "create_planning_stack",
-    "create_world",
-]

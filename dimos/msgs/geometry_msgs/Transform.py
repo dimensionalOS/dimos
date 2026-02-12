@@ -25,19 +25,6 @@ from dimos_lcm.geometry_msgs import (
     TransformStamped as LCMTransformStamped,
 )
 
-try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
-        Quaternion as ROSQuaternion,
-        Transform as ROSTransform,
-        TransformStamped as ROSTransformStamped,
-        Vector3 as ROSVector3,
-    )
-except ImportError:
-    ROSTransformStamped = None  # type: ignore[assignment, misc]
-    ROSTransform = None  # type: ignore[assignment, misc]
-    ROSVector3 = None  # type: ignore[assignment, misc]
-    ROSQuaternion = None  # type: ignore[assignment, misc]
-
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs import Header
@@ -167,70 +154,6 @@ class Transform(Timestamped):
             child_frame_id=self.frame_id,
             ts=self.ts,
         )
-
-    @classmethod
-    def from_ros_transform_stamped(cls, ros_msg: ROSTransformStamped) -> Transform:
-        """Create a Transform from a ROS geometry_msgs/TransformStamped message.
-
-        Args:
-            ros_msg: ROS TransformStamped message
-
-        Returns:
-            Transform instance
-        """
-
-        # Convert timestamp
-        ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
-
-        # Convert translation
-        translation = Vector3(
-            ros_msg.transform.translation.x,
-            ros_msg.transform.translation.y,
-            ros_msg.transform.translation.z,
-        )
-
-        # Convert rotation
-        rotation = Quaternion(
-            ros_msg.transform.rotation.x,
-            ros_msg.transform.rotation.y,
-            ros_msg.transform.rotation.z,
-            ros_msg.transform.rotation.w,
-        )
-
-        return cls(
-            translation=translation,
-            rotation=rotation,
-            frame_id=ros_msg.header.frame_id,
-            child_frame_id=ros_msg.child_frame_id,
-            ts=ts,
-        )
-
-    def to_ros_transform_stamped(self) -> ROSTransformStamped:
-        """Convert to a ROS geometry_msgs/TransformStamped message.
-
-        Returns:
-            ROS TransformStamped message
-        """
-
-        ros_msg = ROSTransformStamped()  # type: ignore[no-untyped-call]
-
-        # Set header
-        ros_msg.header.frame_id = self.frame_id
-        ros_msg.header.stamp.sec = int(self.ts)
-        ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1_000_000_000)
-
-        # Set child frame
-        ros_msg.child_frame_id = self.child_frame_id
-
-        # Set transform
-        ros_msg.transform.translation = ROSVector3(  # type: ignore[no-untyped-call]
-            x=self.translation.x, y=self.translation.y, z=self.translation.z
-        )
-        ros_msg.transform.rotation = ROSQuaternion(  # type: ignore[no-untyped-call]
-            x=self.rotation.x, y=self.rotation.y, z=self.rotation.z, w=self.rotation.w
-        )
-
-        return ros_msg
 
     def __neg__(self) -> Transform:
         """Unary minus operator returns the inverse transform."""

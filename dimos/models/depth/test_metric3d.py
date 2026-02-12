@@ -1,9 +1,21 @@
+from contextlib import contextmanager
+
 import numpy as np
 import pytest
 
 from dimos.models.depth.metric3d import Metric3D
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
+
+
+@contextmanager
+def skip_xformers_unsupported():
+    try:
+        yield
+    except NotImplementedError as e:
+        if "memory_efficient_attention" in str(e):
+            pytest.skip(f"xformers not supported on this GPU: {e}")
+        raise
 
 
 @pytest.fixture
@@ -51,7 +63,8 @@ def test_metric3d_infer_depth(sample_intrinsics: list[float]) -> None:
     rgb_array = image.data
 
     # Run inference
-    depth_map = model.infer_depth(rgb_array)
+    with skip_xformers_unsupported():
+        depth_map = model.infer_depth(rgb_array)
 
     # Verify output
     assert isinstance(depth_map, np.ndarray)
@@ -78,7 +91,8 @@ def test_metric3d_multiple_inferences(sample_intrinsics: list[float]) -> None:
     # Run multiple inferences
     depths = []
     for _ in range(3):
-        depth = model.infer_depth(rgb_array)
+        with skip_xformers_unsupported():
+            depth = model.infer_depth(rgb_array)
         depths.append(depth)
 
     # Results should be consistent
