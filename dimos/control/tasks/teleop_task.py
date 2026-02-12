@@ -84,7 +84,7 @@ class TeleopIKTask(ControlTask):
 
     Accepts streaming cartesian delta poses via on_cartesian_command() and computes IK
     internally to output joint commands. Deltas are applied relative to the EE pose
-    captured at engage time (first compute or explicit capture_initial_pose call).
+    captured at engage time (first compute).
 
     Uses current joint state from CoordinatorState as IK warm-start for fast convergence.
     Outputs JointCommandOutput and participates in joint-level arbitration.
@@ -143,10 +143,8 @@ class TeleopIKTask(ControlTask):
         self._last_update_time: float = 0.0
         self._active = False
 
-        # Initial EE pose for delta application, cached last solution for IK warm-start
+        # Initial EE pose for delta application
         self._initial_ee_pose: pinocchio.SE3 | None = None
-        self._last_q_solution: NDArray[np.floating[Any]] | None = None
-        self._buttons: QuestButtons | None = None
         self._prev_primary: bool = False
 
         logger.info(
@@ -200,7 +198,10 @@ class TeleopIKTask(ControlTask):
             delta_pose = self._target_pose
 
         # Capture initial EE pose if not set (first command after engage)
-        if self._initial_ee_pose is None:
+        with self._lock:
+            need_capture = self._initial_ee_pose is None
+
+        if need_capture:
             q_current = self._get_current_joints(state)
             if q_current is None:
                 logger.debug(
@@ -240,10 +241,6 @@ class TeleopIKTask(ControlTask):
             )
             return None
 
-        # Cache solution for next warm-start
-        with self._lock:
-            self._last_q_solution = q_solution.copy()
-
         positions = q_solution.flatten().tolist()
         return JointCommandOutput(
             joint_names=self._joint_names_list,
@@ -252,17 +249,11 @@ class TeleopIKTask(ControlTask):
         )
 
     def _get_current_joints(self, state: CoordinatorState) -> NDArray[np.floating[Any]] | None:
-        """Get current joint positions from coordinator state.
-
-        Falls back to last IK solution if joint state unavailable.
-        """
+        """Get current joint positions from coordinator state."""
         positions = []
         for joint_name in self._joint_names_list:
             pos = state.joints.get_position(joint_name)
             if pos is None:
-                # Fallback to last solution
-                if self._last_q_solution is not None:
-                    return self._last_q_solution.copy()
                 return None
             positions.append(pos)
         return np.array(positions)
@@ -288,8 +279,6 @@ class TeleopIKTask(ControlTask):
         If hand is not set, listens to both.
         Also stores button state for future gripper control.
         """
-        self._buttons = msg
-
         hand = self._config.hand
         if hand == "left":
             primary = msg.left_x
@@ -333,26 +322,6 @@ class TeleopIKTask(ControlTask):
         with self._lock:
             self._active = False
         logger.info(f"TeleopIKTask {self._name} stopped")
-
-    def capture_initial_pose(self, state: CoordinatorState) -> bool:
-        """Capture current EE pose as the initial/base pose for delta mode"""
-
-        q_current = self._get_current_joints(state)
-        if q_current is None:
-            logger.warning(
-                f"TeleopIKTask {self._name}: cannot capture initial pose, joint state unavailable"
-            )
-            return False
-
-        initial_pose = self._ik.forward_kinematics(q_current)
-        with self._lock:
-            self._initial_ee_pose = initial_pose
-        logger.info(
-            f"TeleopIKTask {self._name}: captured initial EE pose at "
-            f"[{initial_pose.translation[0]:.3f}, {initial_pose.translation[1]:.3f}, "
-            f"{initial_pose.translation[2]:.3f}]"
-        )
-        return True
 
 
 __all__ = [
