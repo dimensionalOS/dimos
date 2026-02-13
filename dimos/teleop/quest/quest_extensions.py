@@ -60,18 +60,18 @@ class TwistTeleopModule(QuestTeleopModule):
     """
 
     default_config = TwistTeleopConfig
+    config: TwistTeleopConfig
 
     left_twist: Out[TwistStamped]
     right_twist: Out[TwistStamped]
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Convert PoseStamped to TwistStamped, apply scaling, and publish."""
-        cfg: TwistTeleopConfig = self.config  # type: ignore[assignment]
         twist = TwistStamped(
             ts=output_msg.ts,
             frame_id=output_msg.frame_id,
-            linear=output_msg.position * cfg.linear_scale,
-            angular=output_msg.orientation.to_euler() * cfg.angular_scale,
+            linear=output_msg.position * self.config.linear_scale,
+            angular=output_msg.orientation.to_euler() * self.config.angular_scale,
         )
         if hand == Hand.LEFT:
             self.left_twist.publish(twist)
@@ -109,12 +109,12 @@ class ArmTeleopModule(QuestTeleopModule):
     """
 
     default_config = ArmTeleopConfig
+    config: ArmTeleopConfig
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        cfg: ArmTeleopConfig = self.config  # type: ignore[assignment]
 
-        self._task_names: dict[Hand, str] = {Hand[k.upper()]: v for k, v in cfg.task_names.items()}
+        self._task_names: dict[Hand, str] = {Hand[k.upper()]: v for k, v in self.config.task_names.items()}
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Stamp frame_id with task name and publish."""
