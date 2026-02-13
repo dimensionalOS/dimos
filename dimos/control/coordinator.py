@@ -461,14 +461,14 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                     continue
 
                 # Route to servo tasks (position control)
-                if hasattr(task, "set_target_by_name") and msg.position:
+                if msg.position:
                     positions_by_name = dict(zip(msg.name, msg.position, strict=False))
-                    task.set_target_by_name(positions_by_name, t_now)  # type: ignore[attr-defined]
+                    task.set_target_by_name(positions_by_name, t_now)
 
                 # Route to velocity tasks (velocity control)
-                elif hasattr(task, "set_velocities_by_name") and msg.velocity:
+                elif msg.velocity:
                     velocities_by_name = dict(zip(msg.name, msg.velocity, strict=False))
-                    task.set_velocities_by_name(velocities_by_name, t_now)  # type: ignore[attr-defined]
+                    task.set_velocities_by_name(velocities_by_name, t_now)
 
     def _on_cartesian_command(self, msg: PoseStamped) -> None:
         """Route incoming PoseStamped to CartesianIKTask by task name.
@@ -488,17 +488,13 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 logger.warning(f"Cartesian command for unknown task: {task_name}")
                 return
 
-            if hasattr(task, "on_cartesian_command"):
-                task.on_cartesian_command(msg, t_now)  # type: ignore[attr-defined]
-            else:
-                logger.warning(f"Task {task_name} does not support on_cartesian_command")
+            task.on_cartesian_command(msg, t_now)
 
     def _on_buttons(self, msg: QuestButtons) -> None:
-        """Forward button state to all tasks that accept it."""
+        """Forward button state to all tasks."""
         with self._task_lock:
             for task in self._tasks.values():
-                if hasattr(task, "on_buttons"):
-                    task.on_buttons(msg)  # type: ignore[attr-defined]
+                task.on_buttons(msg)
 
     @rpc
     def task_invoke(

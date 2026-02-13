@@ -30,8 +30,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.control.task import (
+    BaseControlTask,
     ControlMode,
-    ControlTask,
     CoordinatorState,
     JointCommandOutput,
     ResourceClaim,
@@ -76,7 +76,7 @@ class CartesianIKTaskConfig:
     max_joint_delta_deg: float = 15.0  # ~1500°/s at 100Hz
 
 
-class CartesianIKTask(ControlTask):
+class CartesianIKTask(BaseControlTask):
     """Cartesian control task with internal Pinocchio IK solver.
 
     Accepts streaming cartesian poses via on_cartesian_command() and computes IK

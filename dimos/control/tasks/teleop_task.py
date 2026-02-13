@@ -33,8 +33,8 @@ import numpy as np
 import pinocchio  # type: ignore[import-untyped]
 
 from dimos.control.task import (
+    BaseControlTask,
     ControlMode,
-    ControlTask,
     CoordinatorState,
     JointCommandOutput,
     ResourceClaim,
@@ -80,7 +80,7 @@ class TeleopIKTaskConfig:
     hand: str = ""
 
 
-class TeleopIKTask(ControlTask):
+class TeleopIKTask(BaseControlTask):
     """Teleop cartesian control task with internal Pinocchio IK solver.
 
     Accepts streaming cartesian delta poses via on_cartesian_command() and computes IK
@@ -278,7 +278,7 @@ class TeleopIKTask(ControlTask):
     # Task-specific methods
     # =========================================================================
 
-    def on_buttons(self, msg: QuestButtons) -> None:
+    def on_buttons(self, msg: QuestButtons) -> bool:
         """Press-and-hold engage: hold primary button to track, release to stop.
 
         Checks only the button matching self._config.hand (left_x or right_a).
@@ -304,6 +304,7 @@ class TeleopIKTask(ControlTask):
                 self._target_pose = None
                 self._initial_ee_pose = None
         self._prev_primary = primary
+        return True
 
     def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
         """Handle incoming cartesian command (delta pose from teleop)"""

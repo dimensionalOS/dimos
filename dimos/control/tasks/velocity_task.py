@@ -29,8 +29,8 @@ from dataclasses import dataclass
 import threading
 
 from dimos.control.task import (
+    BaseControlTask,
     ControlMode,
-    ControlTask,
     CoordinatorState,
     JointCommandOutput,
     ResourceClaim,
@@ -57,7 +57,7 @@ class JointVelocityTaskConfig:
     zero_on_timeout: bool = True  # Send zeros to stop motion
 
 
-class JointVelocityTask(ControlTask):
+class JointVelocityTask(BaseControlTask):
     """Streaming joint velocity control for joystick/force feedback.
 
     Accepts target velocities via set_velocities() or set_velocities_by_name()
