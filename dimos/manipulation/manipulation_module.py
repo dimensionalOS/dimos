@@ -61,7 +61,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from dimos.core.rpc_client import RPCClient
-    from dimos.msgs.geometry_msgs import Pose, PoseArray
+    from dimos.msgs.geometry_msgs import Pose, PoseArray, Vector3
     from dimos.msgs.sensor_msgs import PointCloud2
     from dimos.perception.detection.type.detection3d.object import Object as DetObject
 
@@ -168,11 +168,10 @@ class ManipulationModule(SkillModule):
         # GraspGen Docker runner (lazy initialized on first generate_grasps call)
         self._graspgen: DockerRunner | None = None
         # Init joints: captured from first joint state received, used by go_init
-        self._init_joints: list[float] | None = None
-        self._init_joints_captured = False
+        self._init_joints: JointState | None = None
 
         # Last pick position: stored during pick so place_back() can return the object
-        self._last_pick_position: tuple[float, float, float] | None = None
+        self._last_pick_position: Vector3 | None = None
 
         # Snapshotted detections from the last scan_objects/refresh call.
         # The live detection cache is volatile (labels change every frame),
@@ -288,11 +287,10 @@ class ManipulationModule(SkillModule):
                 self._world_monitor.on_joint_state(msg, robot_id=None)
 
             # Capture initial joint positions on first callback
-            if not self._init_joints_captured and msg.position:
-                self._init_joints = list(msg.position)
-                self._init_joints_captured = True
+            if self._init_joints is None and msg.position:
+                self._init_joints = JointState(name=list(msg.name), position=list(msg.position))
                 logger.info(
-                    f"Init joints captured: [{', '.join(f'{j:.3f}' for j in self._init_joints)}]"
+                    f"Init joints captured: [{', '.join(f'{j:.3f}' for j in msg.position)}]"
                 )
 
         except Exception as e:
@@ -496,20 +494,18 @@ class ManipulationModule(SkillModule):
         return self._plan_path_only(robot_name, robot_id, ik.joint_state)
 
     @rpc
-    def plan_to_joints(self, joints: list[float], robot_name: RobotName | None = None) -> bool:
+    def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
         """Plan motion to joint config. Use preview_path() then execute().
 
         Args:
-            joints: Target joint configuration
+            joints: Target joint state (names + positions)
             robot_name: Robot to plan for (required if multiple robots configured)
         """
         if (r := self._begin_planning(robot_name)) is None:
             return False
         robot_name, robot_id = r
-        _, config, _ = self._robots[robot_name]
-        goal_state = JointState(name=config.joint_names, position=joints)
-        logger.info(f"Planning to joints for {robot_name}: {[f'{j:.3f}' for j in joints]}")
-        return self._plan_path_only(robot_name, robot_id, goal_state)
+        logger.info(f"Planning to joints for {robot_name}: {[f'{j:.3f}' for j in joints.position]}")
+        return self._plan_path_only(robot_name, robot_id, joints)
 
     def _plan_path_only(
         self, robot_name: RobotName, robot_id: WorldRobotID, goal: JointState
@@ -650,24 +646,23 @@ class ManipulationModule(SkillModule):
             "coordinator_task_name": config.coordinator_task_name,
             "home_joints": config.home_joints,
             "pre_grasp_offset": config.pre_grasp_offset,
-            "init_joints": self._init_joints,
+            "init_joints": list(self._init_joints.position) if self._init_joints else None,
         }
 
     @rpc
-    def get_init_joints(self) -> list[float] | None:
-        """Get the init joint positions (captured at startup or set manually)."""
+    def get_init_joints(self) -> JointState | None:
+        """Get the init joint state (captured at startup or set manually)."""
         return self._init_joints
 
     @rpc
-    def set_init_joints(self, joints: list[float]) -> bool:
-        """Set the init joint positions.
+    def set_init_joints(self, joint_state: JointState) -> bool:
+        """Set the init joint state.
 
         Args:
-            joints: New init joint configuration
+            joint_state: New init joint state (names + positions)
         """
-        self._init_joints = list(joints)
-        self._init_joints_captured = True
-        logger.info(f"Init joints set: [{', '.join(f'{j:.3f}' for j in self._init_joints)}]")
+        self._init_joints = joint_state
+        logger.info(f"Init joints set: [{', '.join(f'{j:.3f}' for j in joint_state.position)}]")
         return True
 
     @rpc
@@ -677,14 +672,19 @@ class ManipulationModule(SkillModule):
         Args:
             robot_name: Robot to capture from (required if multiple robots configured)
         """
-        current = self.get_current_joints(robot_name)
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return False
+        _, robot_id, _, _ = robot
+        if self._world_monitor is None:
+            return False
+        current = self._world_monitor.get_current_joint_state(robot_id)
         if current is None:
             logger.error("Cannot capture init joints — no current joint state")
             return False
         self._init_joints = current
-        self._init_joints_captured = True
         logger.info(
-            f"Init joints set to current: [{', '.join(f'{j:.3f}' for j in self._init_joints)}]"
+            f"Init joints set to current: [{', '.join(f'{j:.3f}' for j in current.position)}]"
         )
         return True
 
@@ -1281,8 +1281,15 @@ class ManipulationModule(SkillModule):
             yield f"Error: Invalid joints format '{joints}'. Expected comma-separated floats."
             return
 
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            yield "Error: Robot not found"
+            return
+        rname, _, config, _ = robot
+        goal = JointState(name=config.joint_names, position=joint_values)
+
         yield f"Planning motion to joints [{', '.join(f'{j:.3f}' for j in joint_values)}]..."
-        if not self.plan_to_joints(joint_values, robot_name):
+        if not self.plan_to_joints(goal, rname):
             yield "Error: Planning failed — joint configuration may be unreachable or in collision"
             return
 
@@ -1402,18 +1409,19 @@ class ManipulationModule(SkillModule):
         if robot is None:
             yield "Error: Robot not found"
             return
-        _, _, config, _ = robot
+        rname, _, config, _ = robot
 
         if config.home_joints is None:
             yield "Error: No home_joints configured for this robot"
             return
 
         yield "Opening gripper..."
-        self._set_gripper_position(0.85, robot_name)
+        self._set_gripper_position(0.85, rname)
         time.sleep(0.5)
 
+        goal = JointState(name=config.joint_names, position=config.home_joints)
         yield "Planning motion to home position..."
-        if not self.plan_to_joints(config.home_joints, robot_name):
+        if not self.plan_to_joints(goal, rname):
             yield "Error: Failed to plan path to home position"
             return
 
@@ -1437,7 +1445,7 @@ class ManipulationModule(SkillModule):
             yield "Error: No init joints captured — robot may not have reported joint state yet"
             return
 
-        yield f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in self._init_joints)}]..."
+        yield f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in self._init_joints.position)}]..."
         if not self.plan_to_joints(self._init_joints, robot_name):
             yield "Error: Failed to plan path to init position"
             return
@@ -1523,8 +1531,7 @@ class ManipulationModule(SkillModule):
                 return
 
             # Store pick position so place_back() can return the object
-            p = grasp_pose.position
-            self._last_pick_position = (p.x, p.y, p.z)
+            self._last_pick_position = grasp_pose.position
 
             yield f"Pick complete — grasped '{object_name}' successfully"
             return
@@ -1609,9 +1616,9 @@ class ManipulationModule(SkillModule):
             yield "Error: No previous pick position stored — run pick() first"
             return
 
-        x, y, z = self._last_pick_position
-        yield f"Placing back at original position ({x:.3f}, {y:.3f}, {z:.3f})..."
-        yield from self.place(x, y, z, robot_name)
+        p = self._last_pick_position
+        yield f"Placing back at original position ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})..."
+        yield from self.place(p.x, p.y, p.z, robot_name)
 
     @skill()
     def pick_and_place(
