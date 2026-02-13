@@ -14,10 +14,10 @@
 
 """Manipulation Module - Motion planning with ControlCoordinator execution.
 
-Skills are organized in tiers:
-- Tier 1 (@rpc): Low-level building blocks (plan_to_pose, execute, etc.)
-- Tier 2 (@skill): Individually testable actions (move_to_pose, open_gripper, etc.)
-- Tier 3 (@skill): Composed behaviors (pick, place, pick_and_place)
+Interface layers:
+- @rpc: Low-level building blocks (plan_to_pose, plan_to_joints, preview_path, execute)
+- @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, scan_objects, go_init)
+- @skill (long-horizon): Multi-step composed behaviors (pick, place, place_back, pick_and_place)
 """
 
 from __future__ import annotations
@@ -121,10 +121,9 @@ class ManipulationModuleConfig(ModuleConfig):
 class ManipulationModule(SkillModule):
     """Motion planning module with ControlCoordinator execution.
 
-    Provides three tiers of interface:
-    - @rpc methods: Low-level building blocks (plan, execute, obstacles)
-    - @skill methods: Agent-callable actions (move_to_pose, open_gripper, pick, place)
-    - Internal helpers: Trajectory waiting, pose construction, grasp generation
+    - @rpc: Low-level building blocks (plan, execute, obstacles)
+    - @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, scan_objects)
+    - @skill (long-horizon): Multi-step behaviors (pick, place, pick_and_place)
     """
 
     default_config = ManipulationModuleConfig
@@ -1222,7 +1221,7 @@ class ManipulationModule(SkillModule):
         return [grasp_pose]
 
     # =========================================================================
-    # Tier 2 Skills — Individually testable actions
+    # Short-Horizon Skills — Single-step actions
     # =========================================================================
 
     @skill()
@@ -1387,7 +1386,7 @@ class ManipulationModule(SkillModule):
         return "\n".join(lines)
 
     # =========================================================================
-    # Tier 3 Skills — Composed high-level behaviors
+    # Long-Horizon Skills — Multi-step composed behaviors
     # =========================================================================
 
     @skill()
