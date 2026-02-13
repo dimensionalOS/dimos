@@ -114,7 +114,9 @@ class ArmTeleopModule(QuestTeleopModule):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
-        self._task_names: dict[Hand, str] = {Hand[k.upper()]: v for k, v in self.config.task_names.items()}
+        self._task_names: dict[Hand, str] = {
+            Hand[k.upper()]: v for k, v in self.config.task_names.items()
+        }
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Stamp frame_id with task name and publish."""

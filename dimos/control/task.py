@@ -333,10 +333,10 @@ class BaseControlTask(ControlTask):
 
 
 __all__ = [
-    # Types
-    "ControlMode",
     # Protocol + Base
     "BaseControlTask",
+    # Types
+    "ControlMode",
     "ControlTask",
     "CoordinatorState",
     "JointCommandOutput",
