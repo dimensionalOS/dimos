@@ -138,11 +138,6 @@ class ManipulationModule(SkillModule):
     # Input: Objects from perception (for obstacle integration)
     objects: In[list[DetObject]]
 
-    # RPC calls for GraspGen integration (resolved at runtime if modules are deployed)
-    rpc_calls: list[str] = [
-        "GraspingModule.generate_grasps",
-    ]
-
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
 
@@ -1162,10 +1157,9 @@ class ManipulationModule(SkillModule):
     def _generate_grasps_for_pick(
         self, object_name: str, object_id: str | None = None
     ) -> list[Pose] | None:
-        """Generate grasp poses for an object via GraspingModule RPC.
+        """Generate grasp poses for an object.
 
-        Falls back to a simple top-down approach using the object's detected position
-        if GraspGen is unavailable.
+        Computes a top-down approach grasp from the object's detected position.
 
         Args:
             object_name: Name of the object
@@ -1174,20 +1168,6 @@ class ManipulationModule(SkillModule):
         Returns:
             List of grasp poses (best first), or None if object not found
         """
-        # Try GraspGen via rpc_calls if available
-        try:
-            generate = self.get_rpc_calls("GraspingModule.generate_grasps")
-            result = generate(object_name, object_id, True)
-            if isinstance(result, str) and "No" in result:
-                logger.info(f"GraspGen returned: {result}, falling back to heuristic")
-            else:
-                logger.info(f"GraspGen result: {result}")
-                # GraspGen publishes to Out[PoseArray] port — grasps arrive via
-                # stream subscription, not RPC return. For now, fall through to heuristic.
-        except Exception as e:
-            logger.debug(f"GraspGen not available ({e}), using heuristic approach")
-
-        # Fallback: compute a simple top-down grasp from the detected object position
         det = self._find_object_in_detections(object_name, object_id)
         if det is None:
             logger.warning(f"Object '{object_name}' not found in detections")
