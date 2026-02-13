@@ -84,7 +84,6 @@ class PinocchioIK:
     Loads a URDF or MJCF model and provides:
     - solve(): Damped least-squares IK from SE3 target
     - forward_kinematics(): FK from joint angles to EE pose
-    - pose_to_se3(): Convert DimOS Pose/PoseStamped messages to pinocchio.SE3
 
     Thread safety: NOT thread-safe. Each caller should use its own instance
     or protect calls with an external lock. Control tasks typically hold a
@@ -92,7 +91,7 @@ class PinocchioIK:
 
     Example:
         >>> ik = PinocchioIK.from_model_path("robot.urdf", ee_joint_id=6)
-        >>> target = ik.pose_to_se3(pose_stamped)
+        >>> target = pose_to_se3(pose_stamped)
         >>> q, converged, err = ik.solve(target, q_current)
         >>> if converged:
         ...     ee = ik.forward_kinematics(q)
@@ -225,26 +224,20 @@ class PinocchioIK:
         pinocchio.forwardKinematics(self._model, self._data, joint_positions)
         return self._data.oMi[self._ee_joint_id].copy()
 
-    # =========================================================================
-    # Pose Conversion Helpers
-    # =========================================================================
 
-    @staticmethod
-    def pose_to_se3(pose: Pose | PoseStamped) -> pinocchio.SE3:
-        """Convert Pose or PoseStamped to pinocchio SE3"""
 
-        position = np.array([pose.x, pose.y, pose.z])
-        quat = pose.orientation
-        rotation = pinocchio.Quaternion(quat.w, quat.x, quat.y, quat.z).toRotationMatrix()
-        return pinocchio.SE3(rotation, position)
+# =============================================================================
+# Pose Conversion Helpers
+# =============================================================================
 
-    @staticmethod
-    def pose_dict_to_se3(pose: dict[str, float]) -> pinocchio.SE3:
-        """Convert a pose dict with RPY to pinocchio SE3"""
 
-        position = np.array([pose["x"], pose["y"], pose["z"]])
-        rotation = pinocchio.rpy.rpyToMatrix(pose["roll"], pose["pitch"], pose["yaw"])
-        return pinocchio.SE3(rotation, position)
+def pose_to_se3(pose: Pose | PoseStamped) -> pinocchio.SE3:
+    """Convert Pose or PoseStamped to pinocchio SE3"""
+
+    position = np.array([pose.x, pose.y, pose.z])
+    quat = pose.orientation
+    rotation = pinocchio.Quaternion(quat.w, quat.x, quat.y, quat.z).toRotationMatrix()
+    return pinocchio.SE3(rotation, position)
 
 
 # =============================================================================
@@ -295,4 +288,5 @@ __all__ = [
     "PinocchioIKConfig",
     "check_joint_delta",
     "get_worst_joint_delta",
+    "pose_to_se3",
 ]
