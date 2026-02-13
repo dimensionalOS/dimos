@@ -587,43 +587,39 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         streaming_types = ("servo", "velocity")
         has_streaming = any(t.type in streaming_types for t in self.config.tasks)
         if has_streaming:
-            # Only subscribe if transport is configured
             try:
-                if self.joint_command.transport:
-                    self._joint_command_unsub = self.joint_command.subscribe(self._on_joint_command)
-                    logger.info("Subscribed to joint_command for streaming tasks")
-                else:
-                    logger.warning(
-                        "Streaming tasks configured but no transport set for joint_command. "
-                        "Use task_invoke RPC or set transport via blueprint."
-                    )
-            except Exception as e:
-                logger.warning(f"Could not subscribe to joint_command: {e}")
+                self._joint_command_unsub = self.joint_command.subscribe(self._on_joint_command)
+                logger.info("Subscribed to joint_command for streaming tasks")
+            except Exception:
+                logger.warning(
+                    "Streaming tasks configured but could not subscribe to joint_command. "
+                    "Use task_invoke RPC or set transport via blueprint."
+                )
 
         # Subscribe to cartesian commands if any cartesian_ik tasks configured
         has_cartesian_ik = any(t.type in ("cartesian_ik", "teleop_ik") for t in self.config.tasks)
         if has_cartesian_ik:
             try:
-                if self.cartesian_command.transport:
-                    self._cartesian_command_unsub = self.cartesian_command.subscribe(
-                        self._on_cartesian_command
-                    )
-                    logger.info("Subscribed to cartesian_command for CartesianIK/TeleopIK tasks")
-                else:
-                    logger.warning(
-                        "CartesianIK/TeleopIK tasks configured but no transport set for cartesian_command. "
-                        "Use task_invoke RPC or set transport via blueprint."
-                    )
-            except Exception as e:
-                logger.warning(f"Could not subscribe to cartesian_command: {e}")
+                self._cartesian_command_unsub = self.cartesian_command.subscribe(
+                    self._on_cartesian_command
+                )
+                logger.info("Subscribed to cartesian_command for CartesianIK/TeleopIK tasks")
+            except Exception:
+                logger.warning(
+                    "CartesianIK/TeleopIK tasks configured but could not subscribe to cartesian_command. "
+                    "Use task_invoke RPC or set transport via blueprint."
+                )
 
-            # Also subscribe to buttons for engage/disengage
-            try:
-                if self.buttons.transport:
-                    self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
-                    logger.info("Subscribed to buttons for engage/disengage")
-            except Exception as e:
-                logger.warning(f"Could not subscribe to buttons: {e}")
+        # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
+        has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
+        if has_teleop_ik:
+            if not self.buttons.transport:
+                raise ValueError(
+                    "TeleopIK tasks require buttons transport for engage/disengage. "
+                    "Wire buttons via blueprint."
+                )
+            self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
+            logger.info("Subscribed to buttons for engage/disengage")
 
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
 
