@@ -215,7 +215,7 @@ class WorldMonitor:
         if self._obstacle_monitor is not None and isinstance(objects, list):
             self._obstacle_monitor.on_objects(objects)
 
-    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, object]]:
+    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, Any]]:
         """Refresh perception obstacles from cache. Returns list of added obstacles."""
         if self._obstacle_monitor is not None:
             return self._obstacle_monitor.refresh_obstacles(min_duration)
@@ -233,13 +233,19 @@ class WorldMonitor:
             return self._obstacle_monitor.get_perception_status()
         return {"cached": 0, "added": 0}
 
-    def list_cached_detections(self) -> list[dict[str, object]]:
+    def get_cached_objects(self) -> list[object]:
+        """Get cached Object instances from perception."""
+        if self._obstacle_monitor is not None:
+            return self._obstacle_monitor.get_cached_objects()
+        return []
+
+    def list_cached_detections(self) -> list[dict[str, Any]]:
         """List cached detections from perception."""
         if self._obstacle_monitor is not None:
             return self._obstacle_monitor.list_cached_detections()
         return []
 
-    def list_added_obstacles(self) -> list[dict[str, object]]:
+    def list_added_obstacles(self) -> list[dict[str, Any]]:
         """List perception obstacles currently in the planning world."""
         if self._obstacle_monitor is not None:
             return self._obstacle_monitor.list_added_obstacles()

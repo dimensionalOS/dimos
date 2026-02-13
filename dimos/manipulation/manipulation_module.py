@@ -28,7 +28,7 @@ from pathlib import Path
 import math
 import threading
 import time
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core import In, Module, rpc
@@ -176,7 +176,7 @@ class ManipulationModule(SkillModule):
         # Snapshotted detections from the last scan_objects/refresh call.
         # The live detection cache is volatile (labels change every frame),
         # so pick/place use this stable snapshot instead.
-        self._detection_snapshot: list[dict[str, object]] = []
+        self._detection_snapshot: list[DetObject] = []
 
         # TF publishing thread
         self._tf_stop_event = threading.Event()
@@ -619,7 +619,7 @@ class ManipulationModule(SkillModule):
         return list(self._robots.keys())
 
     @rpc
-    def get_robot_info(self, robot_name: RobotName | None = None) -> dict[str, object] | None:
+    def get_robot_info(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
         """Get information about a robot.
 
         Args:
@@ -769,9 +769,7 @@ class ManipulationModule(SkillModule):
             return self._fail("Coordinator rejected trajectory")
 
     @rpc
-    def get_trajectory_status(
-        self, robot_name: RobotName | None = None
-    ) -> dict[str, object] | None:
+    def get_trajectory_status(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
         """Get trajectory execution status via coordinator task_invoke."""
         if (robot := self._get_robot(robot_name)) is None:
             return None
@@ -909,7 +907,7 @@ class ManipulationModule(SkillModule):
     # =========================================================================
 
     @rpc
-    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, object]]:
+    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, Any]]:
         """Refresh perception obstacles. Returns the list of obstacles added.
 
         Also snapshots the current detections so pick/place can use stable labels.
@@ -918,8 +916,8 @@ class ManipulationModule(SkillModule):
             return []
         result = self._world_monitor.refresh_obstacles(min_duration)
         # Snapshot detections at refresh time — the live cache is volatile
-        self._detection_snapshot = self._world_monitor.list_cached_detections()
-        logger.info(f"Detection snapshot: {[d.get('name') for d in self._detection_snapshot]}")
+        self._detection_snapshot = self._world_monitor.get_cached_objects()
+        logger.info(f"Detection snapshot: {[d.name for d in self._detection_snapshot]}")
         return result
 
     @rpc
@@ -937,14 +935,14 @@ class ManipulationModule(SkillModule):
         return self._world_monitor.get_perception_status()
 
     @rpc
-    def list_cached_detections(self) -> list[dict[str, object]]:
+    def list_cached_detections(self) -> list[dict[str, Any]]:
         """List cached detections from perception."""
         if self._world_monitor is None:
             return []
         return self._world_monitor.list_cached_detections()
 
     @rpc
-    def list_added_obstacles(self) -> list[dict[str, object]]:
+    def list_added_obstacles(self) -> list[dict[str, Any]]:
         """List perception obstacles currently in the planning world."""
         if self._world_monitor is None:
             return []
@@ -1143,7 +1141,7 @@ class ManipulationModule(SkillModule):
 
     def _find_object_in_detections(
         self, object_name: str, object_id: str | None = None
-    ) -> dict[str, object] | None:
+    ) -> DetObject | None:
         """Find an object in the detection snapshot by name or ID.
 
         Uses the snapshot taken during the last scan_objects/refresh call,
@@ -1154,21 +1152,19 @@ class ManipulationModule(SkillModule):
             object_id: Optional specific object ID
 
         Returns:
-            Detection dict with position info, or None
+            Matching DetObject, or None
         """
-        detections = self._detection_snapshot
-        if not detections:
+        if not self._detection_snapshot:
             logger.warning("No detection snapshot — call scan_objects() first")
             return None
 
-        for det in detections:
-            if object_id and str(det.get("object_id", "")) == str(object_id):
-                return dict(det)
-            name = str(det.get("name", "")).lower()
-            if object_name.lower() in name or name in object_name.lower():
-                return dict(det)
+        for det in self._detection_snapshot:
+            if object_id and det.object_id == object_id:
+                return det
+            if object_name.lower() in det.name.lower() or det.name.lower() in object_name.lower():
+                return det
 
-        available = [str(d.get("name", "?")) for d in detections]
+        available = [det.name for det in self._detection_snapshot]
         logger.warning(f"Object '{object_name}' not found in snapshot. Available: {available}")
         return None
 
@@ -1206,18 +1202,9 @@ class ManipulationModule(SkillModule):
             logger.warning(f"Object '{object_name}' not found in detections")
             return None
 
-        center = det.get("center")
-        if not isinstance(center, (list, tuple)) or len(center) < 3:
-            logger.warning(f"Object '{object_name}' has no position data")
-            return None
-
-        x = float(center[0])
-        y = float(center[1])
-        z = float(center[2])
-
-        # Generate a top-down grasp pose at the object centroid
-        grasp_pose = self._make_pose(x, y, z, 0.0, math.pi, 0.0)
-        logger.info(f"Heuristic grasp for '{object_name}' at ({x:.3f}, {y:.3f}, {z:.3f})")
+        c = det.center
+        grasp_pose = self._make_pose(c.x, c.y, c.z, 0.0, math.pi, 0.0)
+        logger.info(f"Heuristic grasp for '{object_name}' at ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
         return [grasp_pose]
 
     # =========================================================================
@@ -1338,16 +1325,12 @@ class ManipulationModule(SkillModule):
             f"Perception: {perception.get('cached', 0)} cached, {perception.get('added', 0)} obstacles added"
         )
 
-        detections = self.list_cached_detections()
+        detections = self._detection_snapshot
         if detections:
             lines.append(f"Detected objects ({len(detections)}):")
             for det in detections:
-                name = det.get("name", "unknown")
-                center = det.get("center")
-                if isinstance(center, (list, tuple)) and len(center) >= 3:
-                    lines.append(f"  - {name}: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})")
-                else:
-                    lines.append(f"  - {name}")
+                c = det.center
+                lines.append(f"  - {det.name}: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
         else:
             lines.append("Detected objects: none")
 
@@ -1374,18 +1357,14 @@ class ManipulationModule(SkillModule):
         """
         obstacles = self.refresh_obstacles(min_duration)
 
-        detections = self.list_cached_detections()
+        detections = self._detection_snapshot
         if not detections:
             return "No objects detected in scene"
 
         lines = [f"Detected {len(detections)} object(s):"]
         for det in detections:
-            name = det.get("name", "unknown")
-            center = det.get("center")
-            if isinstance(center, (list, tuple)) and len(center) >= 3:
-                lines.append(f"  - {name}: ({center[0]:.3f}, {center[1]:.3f}, {center[2]:.3f})")
-            else:
-                lines.append(f"  - {name}")
+            c = det.center
+            lines.append(f"  - {det.name}: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
 
         if obstacles:
             lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
