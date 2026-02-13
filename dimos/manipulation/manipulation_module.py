@@ -49,6 +49,7 @@ from dimos.manipulation.planning import (
     create_planner,
 )
 from dimos.manipulation.planning.monitor import WorldMonitor
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 
 # These must be imported at runtime (not TYPE_CHECKING) for In/Out port creation
 from dimos.msgs.sensor_msgs import JointState
@@ -1028,16 +1029,6 @@ class ManipulationModule(SkillModule):
     # Skill Helpers (internal)
     # =========================================================================
 
-    def _make_pose(
-        self, x: float, y: float, z: float, roll: float, pitch: float, yaw: float
-    ) -> Pose:
-        """Construct a Pose from position and Euler angles (radians)."""
-        from dimos.msgs.geometry_msgs import Pose, Vector3
-        from dimos.utils.transform_utils import euler_to_quaternion
-
-        orientation = euler_to_quaternion(Vector3(roll, pitch, yaw))
-        return Pose(position=Vector3(x, y, z), orientation=orientation)
-
     def _wait_for_trajectory_completion(
         self, robot_name: RobotName | None = None, timeout: float = 60.0, poll_interval: float = 0.2
     ) -> bool:
@@ -1203,7 +1194,7 @@ class ManipulationModule(SkillModule):
             return None
 
         c = det.center
-        grasp_pose = self._make_pose(c.x, c.y, c.z, 0.0, math.pi, 0.0)
+        grasp_pose = Pose(Vector3(c.x, c.y, c.z), Quaternion.from_euler(Vector3(0.0, math.pi, 0.0)))
         logger.info(f"Heuristic grasp for '{object_name}' at ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
         return [grasp_pose]
 
@@ -1236,7 +1227,7 @@ class ManipulationModule(SkillModule):
             robot_name: Robot to move (only needed for multi-arm setups).
         """
         yield f"Planning motion to ({x:.3f}, {y:.3f}, {z:.3f})..."
-        pose = self._make_pose(x, y, z, roll, pitch, yaw)
+        pose = Pose(Vector3(x, y, z), Quaternion.from_euler(Vector3(roll, pitch, yaw)))
 
         if not self.plan_to_pose(pose, robot_name):
             yield f"Error: Planning failed — pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision"
@@ -1544,7 +1535,7 @@ class ManipulationModule(SkillModule):
         pre_place_offset = config.pre_grasp_offset
 
         # Compute place pose (top-down approach)
-        place_pose = self._make_pose(x, y, z, 0.0, math.pi, 0.0)
+        place_pose = Pose(Vector3(x, y, z), Quaternion.from_euler(Vector3(0.0, math.pi, 0.0)))
         pre_place_pose = self._compute_pre_grasp_pose(place_pose, pre_place_offset)
 
         # 1. Move to pre-place
