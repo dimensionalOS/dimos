@@ -454,7 +454,7 @@ class WorldObstacleMonitor:
         from dimos.perception.detection.type.detection3d.object import Object
 
         # Step 1: snapshot eligible objects under lock (fast)
-        eligible: list[tuple[str, object]] = []
+        eligible: list[tuple[str, Object]] = []
         with self._lock:
             for oid, (obj, first_seen, last_seen) in self._object_cache.items():
                 if not isinstance(obj, Object):
@@ -464,7 +464,7 @@ class WorldObstacleMonitor:
                 eligible.append((oid, obj))
 
         # Step 2: compute obstacles OUTSIDE lock (convex hull can be slow)
-        prepared: list[tuple[str, object, Obstacle]] = []
+        prepared: list[tuple[str, Object, Obstacle]] = []
         for oid, obj in eligible:
             obstacle = self._object_to_obstacle(obj)
             prepared.append((oid, obj, obstacle))

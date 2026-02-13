@@ -42,6 +42,7 @@ if TYPE_CHECKING:
         WorldSpec,
     )
     from dimos.msgs.vision_msgs import Detection3D
+    from dimos.perception.detection.type.detection3d.object import Object
 
 logger = setup_logger()
 
@@ -233,7 +234,7 @@ class WorldMonitor:
             return self._obstacle_monitor.get_perception_status()
         return {"cached": 0, "added": 0}
 
-    def get_cached_objects(self) -> list[object]:
+    def get_cached_objects(self) -> list[Object]:
         """Get cached Object instances from perception."""
         if self._obstacle_monitor is not None:
             return self._obstacle_monitor.get_cached_objects()
