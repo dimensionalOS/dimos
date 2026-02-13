@@ -26,7 +26,6 @@ _ALIAS_MODULES = {
     "type": "dimos.robot.unitree.type",
     "unitree_g1_skill_container": "dimos.robot.unitree.g1.skill_container",
     "unitree_skill_container": "dimos.robot.unitree.unitree_skill_container",
-    "unitree_skills": "dimos.robot.unitree.unitree_skills",
 }
 
 for alias, target in _ALIAS_MODULES.items():

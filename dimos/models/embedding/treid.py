@@ -13,22 +13,20 @@
 # limitations under the License.
 
 import warnings
+
+warnings.filterwarnings("ignore", message="Cython evaluation.*unavailable", category=UserWarning)
+
 from dataclasses import dataclass
 from functools import cached_property
 
 import torch
 import torch.nn.functional as functional
-
-warnings.filterwarnings("ignore", message="Cython evaluation.*unavailable", category=UserWarning)
 from torchreid import utils as torchreid_utils
 
 from dimos.models.base import LocalModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
-
-
-class TorchReIDEmbedding(Embedding): ...
 
 
 # osnet models downloaded from https://kaiyangzhou.github.io/deep-person-reid/MODEL_ZOO.html
@@ -39,7 +37,7 @@ class TorchReIDModelConfig(EmbeddingModelConfig):
     model_name: str = "osnet_x1_0"
 
 
-class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding], LocalModel):
+class TorchReIDModel(EmbeddingModel, LocalModel):
     """TorchReID embedding model for person re-identification."""
 
     default_config = TorchReIDModelConfig
@@ -54,7 +52,7 @@ class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding], LocalModel):
             device=self.config.device,
         )
 
-    def embed(self, *images: Image) -> TorchReIDEmbedding | list[TorchReIDEmbedding]:
+    def embed(self, *images: Image) -> Embedding | list[Embedding]:
         """Embed one or more images.
 
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
@@ -79,11 +77,11 @@ class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding], LocalModel):
         embeddings = []
         for i, feat in enumerate(features_tensor):
             timestamp = images[i].ts
-            embeddings.append(TorchReIDEmbedding(vector=feat, timestamp=timestamp))
+            embeddings.append(Embedding(vector=feat, timestamp=timestamp))
 
         return embeddings[0] if len(images) == 1 else embeddings
 
-    def embed_text(self, *texts: str) -> TorchReIDEmbedding | list[TorchReIDEmbedding]:
+    def embed_text(self, *texts: str) -> Embedding | list[Embedding]:
         """Text embedding not supported for ReID models.
 
         TorchReID models are vision-only person re-identification models

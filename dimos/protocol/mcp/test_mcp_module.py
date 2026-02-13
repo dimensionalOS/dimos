@@ -16,17 +16,26 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from pathlib import Path
-import socket
-import subprocess
-import sys
+from unittest.mock import MagicMock
 
-import pytest
-
+from dimos.core.module import SkillInfo
 from dimos.protocol.mcp.mcp import MCPModule
-from dimos.protocol.skill.coordinator import SkillStateEnum
-from dimos.protocol.skill.skill import SkillContainer, skill
+
+
+def _make_mcp(skills: list[SkillInfo], call_results: dict[str, object]) -> MCPModule:
+    """Create an MCPModule with pre-populated skills and mock RPC calls."""
+    mcp = MCPModule.__new__(MCPModule)
+    mcp._skills = skills
+    mcp._rpc_calls = {}
+    for skill in skills:
+        mock_call = MagicMock()
+        if skill.func_name in call_results:
+            mock_call.return_value = call_results[skill.func_name]
+        else:
+            mock_call.return_value = None
+        mcp._rpc_calls[skill.func_name] = mock_call
+    return mcp
 
 
 def test_unitree_blueprint_has_mcp() -> None:
@@ -38,38 +47,21 @@ def test_unitree_blueprint_has_mcp() -> None:
 
 
 def test_mcp_module_request_flow() -> None:
-    class DummySkill:
-        def __init__(self) -> None:
-            self.name = "add"
-            self.hide_skill = False
-            self.schema = {"function": {"description": "", "parameters": {"type": "object"}}}
+    schema = json.dumps(
+        {
+            "type": "object",
+            "description": "Add two numbers",
+            "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}},
+            "required": ["x", "y"],
+        }
+    )
+    skills = [SkillInfo(class_name="TestSkills", func_name="add", args_schema=schema)]
 
-    class DummyState:
-        def __init__(self, content: int) -> None:
-            self.state = SkillStateEnum.completed
-            self._content = content
-
-        def content(self) -> int:
-            return self._content
-
-    class DummyCoordinator:
-        def __init__(self) -> None:
-            self._skill_state: dict[str, DummyState] = {}
-
-        def skills(self) -> dict[str, DummySkill]:
-            return {"add": DummySkill()}
-
-        def call_skill(self, call_id: str, _name: str, args: dict[str, int]) -> None:
-            self._skill_state[call_id] = DummyState(args["x"] + args["y"])
-
-        async def wait_for_updates(self) -> bool:
-            return True
-
-    mcp = MCPModule.__new__(MCPModule)
-    mcp.coordinator = DummyCoordinator()
+    mcp = _make_mcp(skills, {"add": 5})
 
     response = asyncio.run(mcp._handle_request({"method": "tools/list", "id": 1}))
     assert response["result"]["tools"][0]["name"] == "add"
+    assert response["result"]["tools"][0]["description"] == "Add two numbers"
 
     response = asyncio.run(
         mcp._handle_request(
@@ -83,128 +75,56 @@ def test_mcp_module_request_flow() -> None:
     assert response["result"]["content"][0]["text"] == "5"
 
 
-def test_mcp_module_handles_hidden_and_errors() -> None:
-    class DummySkill:
-        def __init__(self, name: str, hide_skill: bool) -> None:
-            self.name = name
-            self.hide_skill = hide_skill
-            self.schema = {"function": {"description": "", "parameters": {"type": "object"}}}
+def test_mcp_module_handles_errors() -> None:
+    schema = json.dumps({"type": "object", "properties": {}})
+    skills = [
+        SkillInfo(class_name="TestSkills", func_name="ok_skill", args_schema=schema),
+        SkillInfo(class_name="TestSkills", func_name="fail_skill", args_schema=schema),
+    ]
 
-    class DummyState:
-        def __init__(self, state: SkillStateEnum, content: str | None) -> None:
-            self.state = state
-            self._content = content
+    mcp = _make_mcp(skills, {"ok_skill": "done"})
+    mcp._rpc_calls["fail_skill"] = MagicMock(side_effect=RuntimeError("boom"))
 
-        def content(self) -> str | None:
-            return self._content
-
-    class DummyCoordinator:
-        def __init__(self) -> None:
-            self._skill_state: dict[str, DummyState] = {}
-            self._skills = {
-                "visible": DummySkill("visible", False),
-                "hidden": DummySkill("hidden", True),
-                "fail": DummySkill("fail", False),
-            }
-
-        def skills(self) -> dict[str, DummySkill]:
-            return self._skills
-
-        def call_skill(self, call_id: str, name: str, _args: dict[str, int]) -> None:
-            if name == "fail":
-                self._skill_state[call_id] = DummyState(SkillStateEnum.error, "boom")
-            elif name in self._skills:
-                self._skill_state[call_id] = DummyState(SkillStateEnum.running, None)
-
-        async def wait_for_updates(self) -> bool:
-            return True
-
-    mcp = MCPModule.__new__(MCPModule)
-    mcp.coordinator = DummyCoordinator()
-
+    # All skills listed
     response = asyncio.run(mcp._handle_request({"method": "tools/list", "id": 1}))
     tool_names = {tool["name"] for tool in response["result"]["tools"]}
-    assert "visible" in tool_names
-    assert "hidden" not in tool_names
+    assert "ok_skill" in tool_names
+    assert "fail_skill" in tool_names
 
+    # Error skill returns error text
     response = asyncio.run(
         mcp._handle_request(
-            {"method": "tools/call", "id": 2, "params": {"name": "fail", "arguments": {}}}
+            {"method": "tools/call", "id": 2, "params": {"name": "fail_skill", "arguments": {}}}
         )
     )
     assert "Error:" in response["result"]["content"][0]["text"]
+    assert "boom" in response["result"]["content"][0]["text"]
 
-
-@pytest.mark.integration
-def test_mcp_end_to_end_lcm_bridge() -> None:
-    try:
-        import lcm  # type: ignore[import-untyped]
-
-        lcm.LCM()
-    except Exception as exc:
-        if os.environ.get("CI"):
-            pytest.fail(f"LCM unavailable for MCP end-to-end test: {exc}")
-        pytest.skip("LCM unavailable for MCP end-to-end test.")
-
-    try:
-        socket.socket(socket.AF_INET, socket.SOCK_STREAM).close()
-    except PermissionError:
-        if os.environ.get("CI"):
-            pytest.fail("Socket creation not permitted in CI environment.")
-        pytest.skip("Socket creation not permitted in this environment.")
-
-    class TestSkills(SkillContainer):
-        @skill()
-        def add(self, x: int, y: int) -> int:
-            return x + y
-
-    mcp = MCPModule()
-    mcp.start()
-
-    try:
-        mcp.register_skills(TestSkills())
-
-        env = {"MCP_HOST": "127.0.0.1", "MCP_PORT": "9990"}
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "dimos.protocol.mcp"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env={**os.environ, **env},
-            text=True,
+    # Unknown skill returns not found
+    response = asyncio.run(
+        mcp._handle_request(
+            {"method": "tools/call", "id": 3, "params": {"name": "no_such", "arguments": {}}}
         )
-        try:
-            request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-            proc.stdin.write(json.dumps(request) + "\n")
-            proc.stdin.flush()
-            stdout = proc.stdout.readline()
-            assert '"tools"' in stdout
-            assert '"add"' in stdout
-        finally:
-            proc.terminate()
-            proc.wait(timeout=5)
+    )
+    assert "not found" in response["result"]["content"][0]["text"].lower()
 
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "dimos.protocol.mcp"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env={**os.environ, **env},
-            text=True,
+
+def test_mcp_module_initialize_and_unknown() -> None:
+    mcp = _make_mcp([], {})
+
+    response = asyncio.run(mcp._handle_request({"method": "initialize", "id": 1}))
+    assert response["result"]["serverInfo"]["name"] == "dimensional"
+
+    response = asyncio.run(mcp._handle_request({"method": "unknown/method", "id": 2}))
+    assert response["error"]["code"] == -32601
+
+
+def test_mcp_module_invalid_tool_name() -> None:
+    mcp = _make_mcp([], {})
+
+    response = asyncio.run(
+        mcp._handle_request(
+            {"method": "tools/call", "id": 1, "params": {"name": 123, "arguments": {}}}
         )
-        try:
-            request = {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {"name": "add", "arguments": {"x": 2, "y": 3}},
-            }
-            proc.stdin.write(json.dumps(request) + "\n")
-            proc.stdin.flush()
-            stdout = proc.stdout.readline()
-            assert "5" in stdout
-        finally:
-            proc.terminate()
-            proc.wait(timeout=5)
-    finally:
-        mcp.stop()
+    )
+    assert response["error"]["code"] == -32602

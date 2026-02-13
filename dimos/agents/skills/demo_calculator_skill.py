@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.skill_module import SkillModule
-from dimos.protocol.skill.skill import skill
+from dimos.agents.annotation import skill
+from dimos.core.module import Module
 
 
-class DemoCalculatorSkill(SkillModule):
+class DemoCalculatorSkill(Module):
     def start(self) -> None:
         super().start()
 
     def stop(self) -> None:
         super().stop()
 
-    @skill()
+    @skill
     def sum_numbers(self, n1: int, n2: int, *args: int, **kwargs: int) -> str:
         """This skill adds two numbers. Always use this tool. Never add up numbers yourself.
 

@@ -201,7 +201,7 @@ blueprint.remappings([
 
 ## Overriding global configuration.
 
-Each module can optionally take a `cfg` option in `__init__`. E.g.:
+Each module can optionally take global config as a `cfg` option in `__init__`. E.g.:
 
 ```python session=blueprint-ex3
 from dimos.core import Module, rpc
@@ -210,6 +210,7 @@ from dimos.core.global_config import GlobalConfig
 class ModuleA(Module):
 
     def __init__(self, cfg: GlobalConfig | None = None):
+        self._global_config: GlobalConfig = cfg
         ...
 ```
 
@@ -279,45 +280,19 @@ class ModuleB(Module):
 
 ## Defining skills
 
-Skills have to be registered with `AgentSpec.register_skills(self)`.
+Skills are methods on a `Module` decorated with `@skill`. The agent automatically discovers all skills from launched modules at startup.
 
 ```python session=blueprint-ex4
 from dimos.core import Module, rpc
-from dimos.core.skill_module import SkillModule
-from dimos.protocol.skill.skill import skill
-from dimos.core.rpc_client import RpcCall
+from dimos.agents.annotation import skill
 from dimos.core.global_config import GlobalConfig
 
 class SomeSkill(Module):
 
     @skill
-    def some_skill(self) -> None:
-        ...
-
-    @rpc
-    def set_AgentSpec_register_skills(self, register_skills: RpcCall) -> None:
-        register_skills.set_rpc(self.rpc)
-        register_skills(RPCClient(self, self.__class__))
-
-    # The agent is just interested in the `@skill` methods, so you'll need this if your class
-    # has things that cannot be pickled.
-    def __getstate__(self):
-        pass
-    def __setstate__(self, _state):
-        pass
-```
-
-Or, you can avoid all of this by inheriting from `SkillModule` which does the above automatically:
-
-```python session=blueprint-ex4
-from dimos.core.skill_module import SkillModule
-from dimos.protocol.skill.skill import skill
-
-class SomeSkill(SkillModule):
-
-    @skill
-    def some_skill(self) -> None:
-        ...
+    def some_skill(self) -> str:
+        """Description of the skill for the LLM."""
+        return "result"
 ```
 
 ## Building

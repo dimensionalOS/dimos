@@ -5,16 +5,14 @@
       "tool_calls": [
         {
           "name": "where_am_i",
-          "args": {
-            "args": []
-          },
-          "id": "call_uRJLockZ5JWtGWbsSL1dpHm3",
+          "args": {},
+          "id": "call_4eiRtfr8mI7SgLfR0FTjH7Pp",
           "type": "tool_call"
         }
       ]
     },
     {
-      "content": "You are on Bourbon Street.",
+      "content": "You are currently on Bourbon Street.",
       "tool_calls": []
     }
   ]

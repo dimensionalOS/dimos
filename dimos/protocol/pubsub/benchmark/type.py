@@ -263,3 +263,11 @@ class BenchmarkResults:
             fmt,
             high_is_good=False,
         )
+
+    def print_loss_heatmap(self) -> None:
+        """Print message loss percentage heatmap."""
+
+        def fmt(v: float) -> str:
+            return f"{v:.1f}%"
+
+        self._print_heatmap("Loss %", lambda r: r.loss_pct, fmt, high_is_good=False)

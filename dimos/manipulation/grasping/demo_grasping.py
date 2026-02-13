@@ -14,8 +14,7 @@
 # limitations under the License.
 from pathlib import Path
 
-from dimos.agents.agent import llm_agent
-from dimos.agents.cli.human import human_input
+from dimos.agents.agent import agent
 from dimos.core.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense import realsense_camera
 from dimos.manipulation.grasping import graspgen
@@ -45,6 +44,5 @@ demo_grasping = autoconnect(
         ],  # Grasp visualization debug standalone: python -m dimos.manipulation.grasping.visualize_grasps
     ),
     foxglove_bridge(),
-    human_input(),
-    llm_agent(),
+    agent(),
 ).global_config(viewer_backend="foxglove")

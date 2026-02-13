@@ -15,18 +15,18 @@
 import json
 from typing import Any
 
+from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.skill_module import SkillModule
+from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.mapping.google_maps.google_maps import GoogleMaps
 from dimos.mapping.types import LatLon
-from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-class GoogleMapsSkillContainer(SkillModule):
+class GoogleMapsSkillContainer(Module):
     _latest_location: LatLon | None = None
     _client: GoogleMaps
 
@@ -55,7 +55,7 @@ class GoogleMapsSkillContainer(SkillModule):
             raise ValueError("The position has not been set yet.")
         return self._latest_location
 
-    @skill()
+    @skill
     def where_am_i(self, context_radius: int = 200) -> str:
         """This skill returns information about what street/locality/city/etc
         you are in. It also gives you nearby landmarks.
@@ -81,7 +81,7 @@ class GoogleMapsSkillContainer(SkillModule):
 
         return result.model_dump_json()
 
-    @skill()
+    @skill
     def get_gps_position_for_queries(self, queries: list[str]) -> str:
         """Get the GPS position (latitude/longitude) from Google Maps for know landmarks or searchable locations.
            This includes anything that wouldn't be viewable on a physical OSM map including intersections (5th and Natoma)

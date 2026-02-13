@@ -31,7 +31,7 @@ dimos run unitree-go2-agentic
 You can dynamically connect additional modules. For example:
 
 ```bash
-dimos run unitree-go2 --extra-module llm_agent --extra-module human_input --extra-module navigation_skill
+dimos run unitree-go2 --extra-module agent --extra-module navigation_skill
 ```
 
 ## Adding your own

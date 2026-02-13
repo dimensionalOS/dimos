@@ -72,7 +72,6 @@ dependencies = [
 [project.scripts]
 lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
 foxglove-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
-skillspy = "dimos.utils.cli.skillspy.skillspy:main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"
 humancli = "dimos.utils.cli.human.humanclianim:main"
 dimos = "dimos.robot.cli.dimos:main"
@@ -174,19 +173,6 @@ manipulation = [
     # Planning (Drake)
     "drake>=1.40.0",
 
-    # Contact Graspnet Dependencies
-    "h5py>=3.7.0",
-    "pyrender>=0.1.45",
-    "trimesh>=3.22.0",
-    "python-fcl>=0.7.0.4",
-    "pyquaternion>=0.9.9",
-    "matplotlib>=3.7.1",
-    "rtree",
-    "pandas>=1.5.2",
-    "tqdm>=4.65.0",
-    "pyyaml>=6.0",
-    "contact-graspnet-pytorch",
-
     # Hardware SDKs
     "piper-sdk",
     "xarm-python-sdk>=1.17.0",
@@ -195,6 +181,10 @@ manipulation = [
     "kaleido>=0.2.1",
     "plotly>=5.9.0",
     "xacro",
+
+    # Other
+    "matplotlib>=3.7.1",
+    "pyyaml>=6.0",
 ]
 
 
@@ -254,9 +244,14 @@ dev = [
     "types-tabulate>=0.9.0.20241207,<1",
     "types-tensorflow>=2.18.0.20251008,<3",
     "types-tqdm>=4.67.0.20250809,<5",
+    "types-psycopg2>=2.9.21.20251012",
 
     # Tools
     "py-spy",
+]
+
+psql = [
+    "psycopg2-binary>=2.9.11"
 ]
 
 sim = [
@@ -303,6 +298,7 @@ docker = [
 base = [
     "dimos[agents,web,perception,visualization,sim]",
 ]
+
 
 [tool.ruff]
 line-length = 100
@@ -409,12 +405,3 @@ ignore = [
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
 ]
-
-[tool.uv]
-# Build dependencies for packages that don't declare them properly
-extra-build-dependencies = { contact-graspnet-pytorch = ["numpy"] }
-
-default-groups = []
-
-[tool.uv.sources]
-contact-graspnet-pytorch = { git = "https://github.com/dimensionalOS/contact_graspnet_pytorch.git" }

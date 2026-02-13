@@ -32,7 +32,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
     _global_config: GlobalConfig
     _n: int | None = None
     _memory_limit: str = "auto"
-    _deployed_modules: dict[type[Module], "ModuleProxy"] = {}
+    _deployed_modules: dict[type[Module], "ModuleProxy"]
 
     def __init__(
         self,
@@ -42,6 +42,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         self._n = n if n is not None else cfg.n_dask_workers
         self._memory_limit = cfg.memory_limit
         self._global_config = cfg
+        self._deployed_modules = {}
 
     def start(self) -> None:
         if self._global_config.dask:
@@ -88,6 +89,11 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         else:
             for module in modules:
                 module.start()
+
+        module_list = list(self._deployed_modules.values())
+        for module in modules:
+            if hasattr(module, "on_system_modules"):
+                module.on_system_modules(module_list)
 
     def get_instance(self, module: type[ModuleT]) -> "ModuleProxy":
         return self._deployed_modules.get(module)  # type: ignore[return-value, no-any-return]

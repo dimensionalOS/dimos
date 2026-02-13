@@ -27,15 +27,12 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
 
 
-class MobileCLIPEmbedding(Embedding): ...
-
-
 @dataclass
 class MobileCLIPModelConfig(EmbeddingModelConfig):
     model_name: str = "MobileCLIP2-S4"
 
 
-class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding], LocalModel):
+class MobileCLIPModel(EmbeddingModel, LocalModel):
     """MobileCLIP embedding model for vision-language re-identification."""
 
     default_config = MobileCLIPModelConfig
@@ -62,7 +59,7 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding], LocalModel):
     def _tokenizer(self) -> Any:
         return open_clip.get_tokenizer(self.config.model_name)
 
-    def embed(self, *images: Image) -> MobileCLIPEmbedding | list[MobileCLIPEmbedding]:
+    def embed(self, *images: Image) -> Embedding | list[Embedding]:
         """Embed one or more images.
 
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
@@ -83,11 +80,11 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding], LocalModel):
         embeddings = []
         for i, feat in enumerate(feats):
             timestamp = images[i].ts
-            embeddings.append(MobileCLIPEmbedding(vector=feat, timestamp=timestamp))
+            embeddings.append(Embedding(vector=feat, timestamp=timestamp))
 
         return embeddings[0] if len(images) == 1 else embeddings
 
-    def embed_text(self, *texts: str) -> MobileCLIPEmbedding | list[MobileCLIPEmbedding]:
+    def embed_text(self, *texts: str) -> Embedding | list[Embedding]:
         """Embed one or more text strings.
 
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
@@ -101,7 +98,7 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding], LocalModel):
         # Create embeddings (keep as torch.Tensor on device)
         embeddings = []
         for feat in feats:
-            embeddings.append(MobileCLIPEmbedding(vector=feat))
+            embeddings.append(Embedding(vector=feat))
 
         return embeddings[0] if len(texts) == 1 else embeddings
 

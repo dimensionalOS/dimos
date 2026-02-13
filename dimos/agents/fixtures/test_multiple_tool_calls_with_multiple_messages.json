@@ -1,0 +1,98 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "locate_person",
+          "args": {
+            "name": "John"
+          },
+          "id": "call_w4cTUUpojE2zRMYda93ma3io",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "register_person",
+          "args": {
+            "name": "John"
+          },
+          "id": "call_Rij2ZZHG1u2yEKALNqH4L0WH",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "locate_person",
+          "args": {
+            "name": "John"
+          },
+          "id": "call_Pr1HUeq1j2L9bYU3CsTXVmnk",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "go_to_location",
+          "args": {
+            "description": "kitchen"
+          },
+          "id": "call_F6Pw6Da2mixJ1mmhb0q4uI3F",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I have moved to the kitchen where John is located.",
+      "tool_calls": []
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "register_person",
+          "args": {
+            "name": "Jane"
+          },
+          "id": "call_52hL9l50BzPFPruLoPxigoVa",
+          "type": "tool_call"
+        },
+        {
+          "name": "locate_person",
+          "args": {
+            "name": "Jane"
+          },
+          "id": "call_0NbGZIn9BOCENTfrKvuacarZ",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "go_to_location",
+          "args": {
+            "description": "living room"
+          },
+          "id": "call_XoErhAixvK31yHOeCKiwgrKj",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I have moved to the living room where Jane is located.",
+      "tool_calls": []
+    }
+  ]
+}

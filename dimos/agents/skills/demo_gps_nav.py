@@ -13,20 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dotenv import load_dotenv
-
-from dimos.agents.agent import llm_agent
-from dimos.agents.cli.human import human_input
+from dimos.agents.agent import agent
 from dimos.agents.skills.demo_robot import demo_robot
 from dimos.agents.skills.gps_nav_skill import gps_nav_skill
 from dimos.core.blueprints import autoconnect
 
-load_dotenv()
-
-
 demo_gps_nav = autoconnect(
     demo_robot(),
     gps_nav_skill(),
-    human_input(),
-    llm_agent(),
+    agent(),
 )

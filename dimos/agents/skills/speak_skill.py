@@ -17,9 +17,9 @@ import time
 
 from reactivex import Subject
 
+from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.skill_module import SkillModule
-from dimos.protocol.skill.skill import skill
+from dimos.core.module import Module
 from dimos.stream.audio.node_output import SounddeviceAudioOutput
 from dimos.stream.audio.tts.node_openai import OpenAITTSNode, Voice
 from dimos.utils.logging_config import setup_logger
@@ -27,7 +27,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class SpeakSkill(SkillModule):
+class SpeakSkill(Module):
     _tts_node: OpenAITTSNode | None = None
     _audio_output: SounddeviceAudioOutput | None = None
     _audio_lock: threading.Lock = threading.Lock()
@@ -49,7 +49,7 @@ class SpeakSkill(SkillModule):
             self._audio_output = None
         super().stop()
 
-    @skill()
+    @skill
     def speak(self, text: str) -> str:
         """Speak text out loud through the robot's speakers.
 

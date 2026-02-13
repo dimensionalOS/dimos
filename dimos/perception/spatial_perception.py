@@ -33,7 +33,7 @@ from dimos.agents_deprecated.memory.spatial_vector_db import SpatialVectorDB
 from dimos.agents_deprecated.memory.visual_memory import VisualMemory
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core import DimosCluster, In, rpc
-from dimos.core.skill_module import SkillModule
+from dimos.core.module import Module
 from dimos.msgs.sensor_msgs import Image
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
@@ -51,7 +51,7 @@ _VISUAL_MEMORY_PATH = _SPATIAL_MEMORY_DIR / "visual_memory.pkl"
 logger = setup_logger()
 
 
-class SpatialMemory(SkillModule):
+class SpatialMemory(Module):
     """
     A Dask module for building and querying Robot spatial memory.
 

@@ -17,6 +17,7 @@ import inspect
 import sys
 from typing import Any, get_args, get_origin
 
+from dotenv import load_dotenv
 import typer
 
 from dimos.core.global_config import GlobalConfig, global_config
@@ -28,6 +29,8 @@ main = typer.Typer(
     help="Dimensional CLI",
     no_args_is_help=True,
 )
+
+load_dotenv()
 
 
 def create_dynamic_callback():  # type: ignore[no-untyped-def]
@@ -153,15 +156,6 @@ def lcmspy(ctx: typer.Context) -> None:
 
     sys.argv = ["lcmspy", *ctx.args]
     lcmspy_main()
-
-
-@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
-def skillspy(ctx: typer.Context) -> None:
-    """Skills spy tool for monitoring skills."""
-    from dimos.utils.cli.skillspy.skillspy import main as skillspy_main
-
-    sys.argv = ["skillspy", *ctx.args]
-    skillspy_main()
 
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})

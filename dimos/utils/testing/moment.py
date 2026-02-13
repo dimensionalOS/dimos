@@ -17,12 +17,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from dimos.core.resource import Resource
+from dimos.types.timestamped import Timestamped
 from dimos.utils.testing.replay import TimedSensorReplay
 
 if TYPE_CHECKING:
     from dimos.core import Transport
 
-T = TypeVar("T")
+T = TypeVar("T", bound=Timestamped)
 
 
 class SensorMoment(Generic[T], Resource):

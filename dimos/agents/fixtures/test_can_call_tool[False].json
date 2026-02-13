@@ -1,0 +1,22 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "add",
+          "args": {
+            "x": 33333,
+            "y": 100
+          },
+          "id": "call_vIdFXzNnojiCXtnEi9J2gXQN",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "33333 + 100 is 33433.",
+      "tool_calls": []
+    }
+  ]
+}

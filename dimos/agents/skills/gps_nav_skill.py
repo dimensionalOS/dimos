@@ -14,19 +14,19 @@
 
 import json
 
+from dimos.agents.annotation import skill
 from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall
-from dimos.core.skill_module import SkillModule
 from dimos.core.stream import In, Out
 from dimos.mapping.types import LatLon
 from dimos.mapping.utils.distance import distance_in_meters
-from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-class GpsNavSkillContainer(SkillModule):
+class GpsNavSkillContainer(Module):
     _latest_location: LatLon | None = None
     _max_valid_distance: int = 50000
     _set_gps_travel_goal_points: RpcCall | None = None
@@ -59,8 +59,8 @@ class GpsNavSkillContainer(SkillModule):
             raise ValueError("The position has not been set yet.")
         return self._latest_location
 
-    @skill()
-    def set_gps_travel_points(self, *points: dict[str, float]) -> str:
+    @skill
+    def set_gps_travel_points(self, points: list[dict[str, float]]) -> str:
         """Define the movement path determined by GPS coordinates. Requires at least one. You can get the coordinates by using the `get_gps_position_for_queries` skill.
 
         Example:

@@ -63,13 +63,11 @@ uv run pytest dimos
 Note, a few dependencies do not have PyPI packages and need to be installed from their Git repositories. These are only required for specific features:
 
 - **CLIP** and **detectron2**: Required for the Detic open-vocabulary object detector
-- **contact_graspnet_pytorch**: Required for robotic grasp prediction
 
 You can install them with:
 
 ```bash
 uv add git+https://github.com/openai/CLIP.git
-uv add git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git
 uv add git+https://github.com/facebookresearch/detectron2.git
 ```
 

@@ -50,7 +50,7 @@ print(CameraModule.io())
  ├─ RPC start()
  ├─ RPC stop()
  │
- ├─ Skill video_stream (stream=passive, reducer=latest_reducer, output=image)
+ ├─ Skill take_a_picture
 ```
 
 We can see that the camera module outputs two streams:
@@ -60,7 +60,7 @@ We can see that the camera module outputs two streams:
 
 It offers two RPC calls: `start()` and `stop()` (lifecycle methods).
 
-It also exposes an agentic [skill](/docs/concepts/blueprints.md#defining-skills) called `video_stream` (more on skills in the Blueprints guide).
+It also exposes an agentic [skill](/docs/concepts/blueprints.md#defining-skills) called `take_a_picture` (more on skills in the Blueprints guide).
 
 We can start this module and explore the output of its streams in real time (this will use your webcam).
 

@@ -24,14 +24,11 @@ from typing import Any
 from dimos_lcm.std_msgs import String
 from reactivex.disposable import CompositeDisposable, Disposable
 
-from dimos.core.core import rpc
-from dimos.core.module import Module
-from dimos.core.stream import In, Out
+from dimos.agents.annotation import skill
+from dimos.core import In, Module, Out, rpc
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
-from dimos.protocol.skill.skill import skill
-from dimos.protocol.skill.type import Output
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.utils.logging_config import setup_logger
@@ -269,7 +266,7 @@ class DroneConnectionModule(Module):
         """
         return self._status.copy()
 
-    @skill()
+    @skill
     def move(self, vector: Vector3, duration: float = 0.0) -> None:
         """Send movement command to drone.
 
@@ -289,7 +286,7 @@ class DroneConnectionModule(Module):
                 )
             self.connection.move(vector, duration)
 
-    @skill()
+    @skill
     def takeoff(self, altitude: float = 3.0) -> bool:
         """Takeoff to specified altitude.
 
@@ -303,7 +300,7 @@ class DroneConnectionModule(Module):
             return self.connection.takeoff(altitude)
         return False
 
-    @skill()
+    @skill
     def land(self) -> bool:
         """Land the drone.
 
@@ -314,7 +311,7 @@ class DroneConnectionModule(Module):
             return self.connection.land()
         return False
 
-    @skill()
+    @skill
     def arm(self) -> bool:
         """Arm the drone.
 
@@ -325,7 +322,7 @@ class DroneConnectionModule(Module):
             return self.connection.arm()
         return False
 
-    @skill()
+    @skill
     def disarm(self) -> bool:
         """Disarm the drone.
 
@@ -336,7 +333,7 @@ class DroneConnectionModule(Module):
             return self.connection.disarm()
         return False
 
-    @skill()
+    @skill
     def set_mode(self, mode: str) -> bool:
         """Set flight mode.
 
@@ -365,7 +362,7 @@ class DroneConnectionModule(Module):
             return self.connection.move_twist(twist, duration, lock_altitude)
         return False
 
-    @skill()
+    @skill
     def is_flying_to_target(self) -> bool:
         """Check if drone is currently flying to a GPS target.
 
@@ -376,7 +373,7 @@ class DroneConnectionModule(Module):
             return self.connection.is_flying_to_target
         return False
 
-    @skill()
+    @skill
     def fly_to(self, lat: float, lon: float, alt: float) -> str:
         """Fly drone to GPS coordinates (blocking operation).
 
@@ -392,7 +389,7 @@ class DroneConnectionModule(Module):
             return self.connection.fly_to(lat, lon, alt)
         return "Failed: No connection to drone"
 
-    @skill()
+    @skill
     def follow_object(
         self, object_description: str, duration: float = 120.0
     ) -> Generator[str, None, None]:
@@ -481,7 +478,7 @@ class DroneConnectionModule(Module):
         # Call parent stop to clean up Module infrastructure (event loop, LCM, disposables, etc.)
         super().stop()
 
-    @skill(output=Output.image)
+    @skill
     def observe(self) -> Image | None:
         """Returns the latest video frame from the drone camera. Use this skill for any visual world queries.
 

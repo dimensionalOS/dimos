@@ -38,6 +38,8 @@ class MockModel(SimpleChatModel):
     Can operate in two modes:
     1. Playback mode (default): Reads responses from a JSON file or list
     2. Record mode: Uses a real LLM and saves responses to a JSON file
+
+    Set the RECORD environment variable to enable record mode.
     """
 
     responses: list[str | AIMessage] = []
@@ -47,8 +49,7 @@ class MockModel(SimpleChatModel):
     real_model: Any | None = None
     recorded_messages: list[dict[str, Any]] = []
 
-    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        # Extract custom parameters before calling super().__init__
+    def __init__(self, **kwargs: Any) -> None:
         responses = kwargs.pop("responses", [])
         json_path = kwargs.pop("json_path", None)
         model_provider = kwargs.pop("model_provider", "openai")
@@ -63,9 +64,8 @@ class MockModel(SimpleChatModel):
         self.recorded_messages = []
 
         if self.record:
-            # Initialize real model for recording
             self.real_model = init_chat_model(model_provider=model_provider, model=model_name)
-            self.responses = []  # Initialize empty for record mode
+            self.responses = []
         elif self.json_path:
             self.responses = self._load_responses_from_json()  # type: ignore[assignment]
         elif responses:
@@ -86,7 +86,6 @@ class MockModel(SimpleChatModel):
             if isinstance(item, str):
                 responses.append(AIMessage(content=item))
             else:
-                # Reconstruct AIMessage from dict
                 msg = AIMessage(
                     content=item.get("content", ""), tool_calls=item.get("tool_calls", [])
                 )
@@ -109,7 +108,7 @@ class MockModel(SimpleChatModel):
         }
 
         with open(self.json_path, "w") as f:
-            json.dump(data, f, indent=2, default=str)
+            f.write(json.dumps(data, indent=2, default=str) + "\n")
 
     def _call(
         self,
@@ -118,7 +117,6 @@ class MockModel(SimpleChatModel):
         run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> str:
-        """Not used in _generate."""
         return ""
 
     def _generate(
@@ -129,11 +127,9 @@ class MockModel(SimpleChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         if self.record:
-            # Recording mode - use real model and save responses
             if not self.real_model:
                 raise ValueError("Real model not initialized for recording")
 
-            # Bind tools if needed
             model = self.real_model
             if self._bound_tools:
                 model = model.bind_tools(self._bound_tools)
@@ -145,12 +141,10 @@ class MockModel(SimpleChatModel):
             generation = ChatGeneration(message=result)
             return ChatResult(generations=[generation])
         else:
-            # Playback mode - use predefined responses
             if not self.responses:
-                raise ValueError("No responses available for playback. ")
+                raise ValueError("No responses available for playback.")
 
             if self.i >= len(self.responses):
-                # Don't wrap around - stay at last response
                 response = self.responses[-1]
             else:
                 response = self.responses[self.i]
@@ -171,10 +165,20 @@ class MockModel(SimpleChatModel):
         run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
-        """Stream not implemented for testing."""
         result = self._generate(messages, stop, run_manager, **kwargs)
         message = result.generations[0].message
-        chunk = AIMessageChunk(content=message.content)
+        chunk = AIMessageChunk(
+            content=message.content,
+            tool_call_chunks=[
+                {
+                    "name": tc["name"],
+                    "args": json.dumps(tc["args"]),
+                    "id": tc["id"],
+                    "index": i,
+                }
+                for i, tc in enumerate(getattr(message, "tool_calls", []))
+            ],
+        )
         yield ChatGenerationChunk(message=chunk)
 
     def bind_tools(
@@ -184,14 +188,7 @@ class MockModel(SimpleChatModel):
         tool_choice: str | None = None,
         **kwargs: Any,
     ) -> Runnable:  # type: ignore[type-arg]
-        """Store tools and return self."""
         self._bound_tools = tools
         if self.record and self.real_model:
-            # Also bind tools to the real model
             self.real_model = self.real_model.bind_tools(tools, tool_choice=tool_choice, **kwargs)
         return self
-
-    @property
-    def tools(self) -> Sequence[Any] | None:
-        """Get bound tools for inspection."""
-        return self._bound_tools

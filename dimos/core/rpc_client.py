@@ -15,14 +15,14 @@
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from dimos.protocol.rpc import LCMRPC
+from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
 class RpcCall:
-    _rpc: LCMRPC | None
+    _rpc: RPCSpec | None
     _name: str
     _remote_name: str
     _unsub_fns: list  # type: ignore[type-arg]
@@ -31,7 +31,7 @@ class RpcCall:
     def __init__(
         self,
         original_method: Callable[..., Any] | None,
-        rpc: LCMRPC,
+        rpc: RPCSpec,
         name: str,
         remote_name: str,
         unsub_fns: list,  # type: ignore[type-arg]
@@ -48,7 +48,7 @@ class RpcCall:
             self.__name__ = original_method.__name__
             self.__qualname__ = f"{self.__class__.__name__}.{original_method.__name__}"
 
-    def set_rpc(self, rpc: LCMRPC) -> None:
+    def set_rpc(self, rpc: RPCSpec) -> None:
         self._rpc = rpc
 
     def __call__(self, *args, **kwargs):  # type: ignore[no-untyped-def]

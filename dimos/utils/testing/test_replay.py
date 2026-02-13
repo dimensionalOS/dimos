@@ -23,27 +23,9 @@ from dimos.utils.data import get_data
 from dimos.utils.testing import replay
 
 
-def test_sensor_replay() -> None:
-    counter = 0
-    for message in replay.SensorReplay(name="office_lidar").iterate():
-        counter += 1
-        assert isinstance(message, dict)
-    assert counter == 500
-
-
-def test_sensor_replay_cast() -> None:
-    counter = 0
-    for message in replay.SensorReplay(
-        name="office_lidar", autocast=pointcloud2_from_webrtc_lidar
-    ).iterate():
-        counter += 1
-        assert isinstance(message, PointCloud2)
-    assert counter == 500
-
-
 def test_timed_sensor_replay() -> None:
     get_data("unitree_office_walk")
-    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom")
 
     itermsgs = []
     for msg in odom_store.iterate():
@@ -87,7 +69,7 @@ def test_iterate_ts_no_seek() -> None:
 
 def test_iterate_ts_with_from_timestamp() -> None:
     """Test iterate_ts with from_timestamp (absolute timestamp)"""
-    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom")
 
     # First get all messages to find a good seek point
     all_msgs = []
@@ -115,7 +97,7 @@ def test_iterate_ts_with_from_timestamp() -> None:
 
 def test_iterate_ts_with_relative_seek() -> None:
     """Test iterate_ts with seek (relative seconds after first timestamp)"""
-    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom")
 
     # Get first few messages to understand timing
     all_msgs = []
@@ -144,7 +126,7 @@ def test_iterate_ts_with_relative_seek() -> None:
 
 def test_stream_with_seek() -> None:
     """Test stream method with seek parameters"""
-    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom")
 
     # Test stream with relative seek
     msgs_with_seek = []
@@ -170,7 +152,7 @@ def test_stream_with_seek() -> None:
 
 def test_duration_with_loop() -> None:
     """Test duration parameter with looping in TimedSensorReplay"""
-    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom")
 
     # Collect timestamps from a small duration window
     collected_ts = []

@@ -17,6 +17,7 @@ import asyncio
 from dataclasses import dataclass
 from functools import partial
 import inspect
+import json
 import sys
 import threading
 from typing import (
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
 from typing import TypeVar
 
 from dask.distributed import Actor, get_worker
+from langchain_core.tools import tool
 from reactivex.disposable import CompositeDisposable
 
 from dimos.core import colors
@@ -49,9 +51,15 @@ from dimos.core.rpc_client import RpcCall  # noqa: TC001
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
-from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.tf import LCMTF, TFSpec
 from dimos.utils.generic import classproperty
+
+
+@dataclass(frozen=True)
+class SkillInfo:
+    class_name: str
+    func_name: str
+    args_schema: str
 
 
 def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
@@ -93,7 +101,7 @@ class ModuleConfig:
 ModuleConfigT = TypeVarExtension("ModuleConfigT", bound=ModuleConfig, default=ModuleConfig)
 
 
-class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
+class ModuleBase(Configurable[ModuleConfigT], Resource):
     _rpc: RPCSpec | None = None
     _tf: TFSpec | None = None
     _loop: asyncio.AbstractEventLoop | None = None
@@ -134,16 +142,23 @@ class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
     @rpc
     def stop(self) -> None:
         self._close_module()
-        super().stop()
 
     def _close_module(self) -> None:
         self._close_rpc()
-        if hasattr(self, "_loop") and self._loop_thread:
-            if self._loop_thread.is_alive():
-                self._loop.call_soon_threadsafe(self._loop.stop)  # type: ignore[union-attr]
-                self._loop_thread.join(timeout=2)
+
+        # Save into local variables to avoid race when stopping concurrently
+        # (from RPC and worker shutdown)
+        loop_thread = getattr(self, "_loop_thread", None)
+        loop = getattr(self, "_loop", None)
+
+        if loop_thread:
+            if loop_thread.is_alive():
+                if loop:
+                    loop.call_soon_threadsafe(loop.stop)
+                loop_thread.join(timeout=2)
             self._loop = None
             self._loop_thread = None
+
         if hasattr(self, "_tf") and self._tf is not None:
             self._tf.stop()
             self._tf = None
@@ -151,8 +166,7 @@ class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
             self._disposables.dispose()
 
     def _close_rpc(self) -> None:
-        # Using hasattr is needed because SkillCoordinator skips ModuleBase.__init__ and self.rpc is never set.
-        if hasattr(self, "rpc") and self.rpc:
+        if self.rpc:
             self.rpc.stop()  # type: ignore[attr-defined]
             self.rpc = None  # type: ignore[assignment]
 
@@ -365,6 +379,20 @@ class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
             )
         result = tuple(self._bound_rpc_calls[m] for m in methods)
         return result[0] if len(result) == 1 else result
+
+    @rpc
+    def get_skills(self) -> list[SkillInfo]:
+        skills: list[SkillInfo] = []
+        for name in dir(self):
+            attr = getattr(self, name)
+            if callable(attr) and hasattr(attr, "__skill__"):
+                schema = json.dumps(tool(attr).args_schema.model_json_schema())
+                skills.append(
+                    SkillInfo(
+                        class_name=self.__class__.__name__, func_name=name, args_schema=schema
+                    )
+                )
+        return skills
 
 
 class Module(ModuleBase[ModuleConfigT]):

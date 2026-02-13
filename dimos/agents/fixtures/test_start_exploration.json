@@ -1,0 +1,21 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "start_exploration",
+          "args": {
+            "timeout": 10
+          },
+          "id": "call_o5O7xLaI4iayDhszXblOiWVS",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I have completed the exploration for 10 seconds. If there's anything specific you would like to do next, please let me know!",
+      "tool_calls": []
+    }
+  ]
+}

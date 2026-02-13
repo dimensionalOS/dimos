@@ -105,7 +105,7 @@ def _get_repo_root() -> Path:
 
 
 @cache
-def _get_data_dir(extra_path: str | None = None) -> Path:
+def get_data_dir(extra_path: str | None = None) -> Path:
     if extra_path:
         return _get_repo_root() / "data" / extra_path
     return _get_repo_root() / "data"
@@ -113,7 +113,7 @@ def _get_data_dir(extra_path: str | None = None) -> Path:
 
 @cache
 def _get_lfs_dir() -> Path:
-    return _get_data_dir() / ".lfs"
+    return get_data_dir() / ".lfs"
 
 
 def _check_git_lfs_available() -> bool:
@@ -174,7 +174,7 @@ def _lfs_pull(file_path: Path, repo_root: Path) -> None:
 
 
 def _decompress_archive(filename: str | Path) -> Path:
-    target_dir = _get_data_dir()
+    target_dir = get_data_dir()
     filename_path = Path(filename)
     with tarfile.open(filename_path, "r:gz") as tar:
         tar.extractall(target_dir)
@@ -211,7 +211,7 @@ def _pull_lfs_archive(filename: str | Path) -> Path:
     return file_path
 
 
-def get_data(filename: str | Path) -> Path:
+def get_data(name: str | Path) -> Path:
     """
     Get the path to a test data, downloading from LFS if needed.
 
@@ -222,29 +222,43 @@ def get_data(filename: str | Path) -> Path:
     4. Download the file from LFS if it's a pointer file
     5. Return the Path object to the actual file or dir
 
+    Supports nested paths like "dataset/subdir/file.jpg" - will download and
+    decompress "dataset" archive but return the full nested path.
+
     Args:
-        filename: Name of the test file (e.g., "lidar_sample.bin")
+        name: Name of the test file or dir, optionally with nested path
+              (e.g., "lidar_sample.bin" or "dataset/frames/001.png")
 
     Returns:
-        Path: Path object to the test file
+        Path: Path object to the test file or dir
 
     Raises:
         RuntimeError: If Git LFS is not available or LFS operations fail
         FileNotFoundError: If the test file doesn't exist
 
     Usage:
-        # As string path
-        file_path = str(testFile("sample.bin"))
+        # Simple file/dir
+        file_path = get_data("sample.bin")
 
-        # As context manager for file operations
-        with testFile("sample.bin").open('rb') as f:
-            data = f.read()
+        # Nested path - downloads "dataset" archive, returns path to nested file
+        frame = get_data("dataset/frames/001.png")
     """
-    data_dir = _get_data_dir()
-    file_path = data_dir / filename
+    data_dir = get_data_dir()
+    file_path = data_dir / name
 
     # already pulled and decompressed, return it directly
     if file_path.exists():
         return file_path
 
-    return _decompress_archive(_pull_lfs_archive(filename))
+    # extract archive root (first path component) and nested path
+    path_parts = Path(name).parts
+    archive_name = path_parts[0]
+    nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
+
+    # download and decompress the archive root
+    archive_path = _decompress_archive(_pull_lfs_archive(archive_name))
+
+    # return full path including nested components
+    if nested_path:
+        return archive_path / nested_path
+    return archive_path

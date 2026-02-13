@@ -48,6 +48,7 @@ def test_tf_ros_example() -> None:
     time.sleep(0.2)
 
     end_effector_global_pose = tf.get("base_link", "end_effector")
+    assert end_effector_global_pose is not None
 
     assert end_effector_global_pose.translation.x == pytest.approx(1.366, abs=1e-3)
     assert end_effector_global_pose.translation.y == pytest.approx(0.366, abs=1e-3)
@@ -116,6 +117,7 @@ def test_tf_main() -> None:
 
     # The chain should compose: world->robot (1,2,3) + robot->sensor (0.5,0,0.2)
     # Expected translation: (1.5, 2.0, 3.2)
+    assert chain_transform is not None
     assert abs(chain_transform.translation.x - 1.5) < 0.001
     assert abs(chain_transform.translation.y - 2.0) < 0.001
     assert abs(chain_transform.translation.z - 3.2) < 0.001
@@ -163,12 +165,14 @@ def test_tf_main() -> None:
     # if you have "diagon" https://diagon.arthursonzogni.com/ installed you can draw a graph
     print(broadcaster.graph())
 
+    assert world_object is not None
     assert abs(world_object.translation.x - 1.5) < 0.001
     assert abs(world_object.translation.y - 3.0) < 0.001
     assert abs(world_object.translation.z - 3.2) < 0.001
 
     # this doesn't work atm
     robot_to_charger = broadcaster.get("robot", "charger")
+    assert robot_to_charger is not None
 
     # Expected: robot->world->charger
     print(f"robot_to_charger translation: {robot_to_charger.translation}")
@@ -196,7 +200,7 @@ class TestTBuffer:
 
         buffer.add(transform)
         assert len(buffer) == 1
-        assert buffer[0] == transform
+        assert buffer.first() == transform
 
     def test_get(self) -> None:
         buffer = TBuffer()
@@ -250,7 +254,9 @@ class TestTBuffer:
 
         # Old transform should be pruned
         assert len(buffer) == 1
-        assert buffer[0].translation.x == 2.0
+        first = buffer.first()
+        assert first is not None
+        assert first.translation.x == 2.0
 
 
 class TestMultiTBuffer:

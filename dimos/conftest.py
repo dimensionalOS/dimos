@@ -15,7 +15,10 @@
 import asyncio
 import threading
 
+from dotenv import load_dotenv
 import pytest
+
+load_dotenv()
 
 
 def _has_cuda():

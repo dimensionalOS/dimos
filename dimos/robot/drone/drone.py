@@ -20,7 +20,6 @@
 import functools
 import logging
 import os
-import time
 from typing import Any
 
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -28,8 +27,11 @@ from dimos_lcm.std_msgs import String
 from reactivex import Observable
 
 from dimos import core
+from dimos.agents.agent import agent
 from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.agents.skills.osm import OsmSkill
+from dimos.agents.web_human_input import web_input
+from dimos.core.blueprints import Blueprint, autoconnect
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
@@ -271,7 +273,8 @@ class Drone(Robot):
     @functools.cached_property
     def gps_position_stream(self) -> Observable[LatLon]:
         assert self.connection is not None
-        return self.connection.gps_location.transport.pure_observable()
+        result: Observable[LatLon] = self.connection.gps_location.transport.pure_observable()
+        return result
 
     def get_status(self) -> dict[str, Any]:
         """Get drone status.
@@ -394,6 +397,51 @@ class Drone(Robot):
         logger.info("Drone system stopped")
 
 
+DRONE_SYSTEM_PROMPT = """\
+You are controlling a DJI drone with MAVLink interface.
+You have access to drone control skills you are already flying so only run move_twist, set_mode, and fly_to.
+When the user gives commands, use the appropriate skills to control the drone.
+Always confirm actions and report results. Send fly_to commands only at above 200 meters altitude to be safe.
+Here are some GPS locations to remember
+6th and Natoma intersection: 37.78019978319006, -122.40770815020853,
+454 Natoma (Office): 37.780967465525244, -122.40688342010769
+5th and mission intersection: 37.782598539339695, -122.40649441875473
+6th and mission intersection: 37.781007204789354, -122.40868447123661"""
+
+
+def drone_agentic(
+    connection_string: str = "udp:0.0.0.0:14550",
+    video_port: int = 5600,
+    outdoor: bool = False,
+    camera_intrinsics: list[float] | None = None,
+    system_prompt: str = DRONE_SYSTEM_PROMPT,
+    model: str = "gpt-4o",
+) -> Blueprint:
+    if camera_intrinsics is None:
+        camera_intrinsics = [1000.0, 1000.0, 960.0, 540.0]
+
+    return autoconnect(
+        DroneConnectionModule.blueprint(
+            connection_string=connection_string,
+            video_port=video_port,
+            outdoor=outdoor,
+        ),
+        DroneCameraModule.blueprint(camera_intrinsics=camera_intrinsics),
+        DroneTrackingModule.blueprint(outdoor=outdoor),
+        WebsocketVisModule.blueprint(),
+        FoxgloveBridge.blueprint(),
+        GoogleMapsSkillContainer.blueprint(),
+        OsmSkill.blueprint(),
+        agent(system_prompt=system_prompt, model=model),
+        web_input(),
+    ).remappings(
+        [
+            (DroneTrackingModule, "video_input", "video"),
+            (DroneTrackingModule, "cmd_vel", "movecmd_twist"),
+        ]
+    )
+
+
 def main() -> None:
     """Main entry point for drone system."""
     import argparse
@@ -434,67 +482,13 @@ def main() -> None:
 
     pubsub.lcm.autoconf()  # type: ignore[attr-defined]
 
-    drone = Drone(connection_string=connection, video_port=video_port, outdoor=args.outdoor)
-
-    drone.start()
-
-    print("\n✓ Drone system started successfully!")
-    print("\nLCM Topics:")
-    print("  • /drone/odom           - Odometry (PoseStamped)")
-    print("  • /drone/status         - Status (String/JSON)")
-    print("  • /drone/telemetry      - Full telemetry (String/JSON)")
-    print("  • /drone/color_image    - RGB Video (Image)")
-    print("  • /drone/depth_image    - Depth estimation (Image)")
-    print("  • /drone/depth_colorized - Colorized depth (Image)")
-    print("  • /drone/camera_info    - Camera calibration")
-    print("  • /drone/cmd_vel        - Movement commands (Vector3)")
-    print("  • /drone/tracking_overlay - Object tracking visualization (Image)")
-    print("  • /drone/tracking_status - Tracking status (String/JSON)")
-
-    from dimos.agents import Agent  # type: ignore[attr-defined]
-    from dimos.agents.cli.human import HumanInput
-    from dimos.agents.spec import Model, Provider
-
-    assert drone.dimos is not None
-    human_input = drone.dimos.deploy(HumanInput)  # type: ignore[attr-defined]
-    google_maps = drone.dimos.deploy(GoogleMapsSkillContainer)  # type: ignore[attr-defined]
-    osm_skill = drone.dimos.deploy(OsmSkill)  # type: ignore[attr-defined]
-
-    google_maps.gps_location.transport = core.pLCMTransport("/gps_location")
-    osm_skill.gps_location.transport = core.pLCMTransport("/gps_location")
-
-    agent = Agent(
-        system_prompt="""You are controlling a DJI drone with MAVLink interface.
-        You have access to drone control skills you are already flying so only run move_twist, set_mode, and fly_to.
-        When the user gives commands, use the appropriate skills to control the drone.
-        Always confirm actions and report results. Send fly_to commands only at above 200 meters altitude to be safe.
-        Here are some GPS locations to remember
-        6th and Natoma intersection: 37.78019978319006, -122.40770815020853,
-        454 Natoma (Office): 37.780967465525244, -122.40688342010769
-        5th and mission intersection: 37.782598539339695, -122.40649441875473
-        6th and mission intersection: 37.781007204789354, -122.40868447123661""",
-        model=Model.GPT_4O,
-        provider=Provider.OPENAI,  # type: ignore[attr-defined]
+    blueprint = drone_agentic(
+        connection_string=connection,
+        video_port=video_port,
+        outdoor=args.outdoor,
     )
 
-    agent.register_skills(drone.connection)
-    agent.register_skills(human_input)
-    agent.register_skills(google_maps)
-    agent.register_skills(osm_skill)
-    agent.run_implicit_skill("human")
-
-    agent.start()
-    agent.loop_thread()
-
-    # Testing
-    # from dimos_lcm.geometry_msgs import Twist,Vector3
-    # twist = Twist()
-    # twist.linear = Vector3(-0.5, 0.5, 0.5)
-    # drone.connection.move_twist(twist, duration=2.0, lock_altitude=True)
-    # time.sleep(10)
-    # drone.tracking.track_object("water bottle")
-    while True:
-        time.sleep(1)
+    blueprint.build().loop()
 
 
 if __name__ == "__main__":
