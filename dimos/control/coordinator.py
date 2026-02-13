@@ -627,7 +627,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                     self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
                     logger.info("Subscribed to buttons for engage/disengage")
             except Exception as e:
-                logger.debug(f"Could not subscribe to buttons: {e}")
+                logger.warning(f"Could not subscribe to buttons: {e}")
 
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
 

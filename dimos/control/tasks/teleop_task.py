@@ -42,6 +42,7 @@ from dimos.control.task import (
 from dimos.manipulation.planning.kinematics.pinocchio_ik import (
     PinocchioIK,
     check_joint_delta,
+    pose_to_se3,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -139,7 +140,7 @@ class TeleopIKTask(ControlTask):
 
         # Thread-safe target state
         self._lock = threading.Lock()
-        self._target_pose: pinocchio.SE3 | None = None
+        self._target_pose: Pose | PoseStamped | None = None
         self._last_update_time: float = 0.0
         self._active = False
 
@@ -195,7 +196,10 @@ class TeleopIKTask(ControlTask):
                     self._active = False
                     return None
 
-            delta_pose = self._target_pose
+            raw_pose = self._target_pose
+
+        # Convert to SE3 right before use
+        delta_se3 = pose_to_se3(raw_pose)
 
         # Capture initial EE pose if not set (first command after engage)
         with self._lock:
@@ -217,8 +221,8 @@ class TeleopIKTask(ControlTask):
             if self._initial_ee_pose is None:
                 return None
             target_pose = pinocchio.SE3(
-                delta_pose.rotation @ self._initial_ee_pose.rotation,
-                self._initial_ee_pose.translation + delta_pose.translation,
+                delta_se3.rotation @ self._initial_ee_pose.rotation,
+                self._initial_ee_pose.translation + delta_se3.translation,
             )
 
         # Get current joint positions for IK warm-start
@@ -303,10 +307,8 @@ class TeleopIKTask(ControlTask):
 
     def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
         """Handle incoming cartesian command (delta pose from teleop)"""
-        delta_se3 = PinocchioIK.pose_to_se3(pose)
-
         with self._lock:
-            self._target_pose = delta_se3  # Store delta, will apply to initial in compute()
+            self._target_pose = pose  # Store raw, convert to SE3 in compute()
             self._last_update_time = t_now
             self._active = True
 

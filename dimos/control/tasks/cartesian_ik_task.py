@@ -40,6 +40,7 @@ from dimos.manipulation.planning.kinematics.pinocchio_ik import (
     PinocchioIK,
     check_joint_delta,
     get_worst_joint_delta,
+    pose_to_se3,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -135,7 +136,7 @@ class CartesianIKTask(ControlTask):
 
         # Thread-safe target state
         self._lock = threading.Lock()
-        self._target_pose: pinocchio.SE3 | None = None
+        self._target_pose: Pose | PoseStamped | None = None
         self._last_update_time: float = 0.0
         self._active = False
 
@@ -189,7 +190,10 @@ class CartesianIKTask(ControlTask):
                     self._active = False
                     return None
 
-            target_pose = self._target_pose
+            raw_pose = self._target_pose
+
+        # Convert to SE3 right before use
+        target_pose = pose_to_se3(raw_pose)
 
         # Get current joint positions for IK warm-start
         q_current = self._get_current_joints(state)
@@ -272,39 +276,8 @@ class CartesianIKTask(ControlTask):
         Returns:
             True if accepted
         """
-        target_se3 = PinocchioIK.pose_to_se3(pose)
-
         with self._lock:
-            self._target_pose = target_se3
-            self._last_update_time = t_now
-            self._active = True
-
-        return True
-
-    def on_cartesian_command_dict(
-        self,
-        pose: dict[str, float],
-        t_now: float,
-    ) -> bool:
-        """Set target from pose dict with position and RPY orientation.
-
-        Args:
-            pose: {x, y, z, roll, pitch, yaw} in meters/radians
-            t_now: Current time
-
-        Returns:
-            True if accepted, False if missing required keys
-        """
-        required_keys = {"x", "y", "z", "roll", "pitch", "yaw"}
-        if not required_keys.issubset(pose.keys()):
-            missing = required_keys - set(pose.keys())
-            logger.warning(f"CartesianIKTask {self._name}: missing pose keys {missing}")
-            return False
-
-        target_se3 = PinocchioIK.pose_dict_to_se3(pose)
-
-        with self._lock:
-            self._target_pose = target_se3
+            self._target_pose = pose  # Store raw, convert to SE3 in compute()
             self._last_update_time = t_now
             self._active = True
 
