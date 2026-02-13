@@ -5,7 +5,7 @@ Expose DimOS robot skills to Claude Code via Model Context Protocol.
 ## Setup
 
 ```bash
-uv pip install 'dimos[base,unitree]'
+uv sync --extra base --extra unitree
 ```
 
 Add to Claude Code (one command):
