@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import cast
-
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import SystemMessage
@@ -42,12 +40,9 @@ def build_llm(config: AgentConfig) -> BaseChatModel:
         )
         return ChatHuggingFace(llm=llm, model_id=config.model)
 
-    return cast(
-        "BaseChatModel",
-        init_chat_model(  # type: ignore[call-overload]
-            model_provider=config.provider.value,
-            model=config.model,
-        ),
+    return init_chat_model(  # type: ignore[call-overload]
+        model_provider=config.provider.value,
+        model=config.model,
     )
 
 
