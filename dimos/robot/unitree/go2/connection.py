@@ -192,13 +192,13 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     @rpc
     def record(self, recording_name: str) -> None:
         lidar_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/lidar")  # type: ignore[type-arg]
-        lidar_store.save_stream(self.connection.lidar_stream()).subscribe(lambda x: x)  # type: ignore[arg-type]
+        lidar_store.consume_stream(self.connection.lidar_stream())
 
         odom_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/odom")  # type: ignore[type-arg]
-        odom_store.save_stream(self.connection.odom_stream()).subscribe(lambda x: x)  # type: ignore[arg-type]
+        odom_store.consume_stream(self.connection.odom_stream())
 
         video_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/video")  # type: ignore[type-arg]
-        video_store.save_stream(self.connection.video_stream()).subscribe(lambda x: x)  # type: ignore[arg-type]
+        video_store.consume_stream(self.connection.video_stream())
 
     @rpc
     def start(self) -> None:

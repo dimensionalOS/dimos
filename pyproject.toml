@@ -244,9 +244,14 @@ dev = [
     "types-tabulate>=0.9.0.20241207,<1",
     "types-tensorflow>=2.18.0.20251008,<3",
     "types-tqdm>=4.67.0.20250809,<5",
+    "types-psycopg2>=2.9.21.20251012",
 
     # Tools
     "py-spy",
+]
+
+psql = [
+    "psycopg2-binary>=2.9.11"
 ]
 
 sim = [
@@ -293,6 +298,7 @@ docker = [
 base = [
     "dimos[agents,web,perception,visualization,sim]",
 ]
+
 
 [tool.ruff]
 line-length = 100

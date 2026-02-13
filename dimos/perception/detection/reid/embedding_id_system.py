@@ -33,7 +33,7 @@ class EmbeddingIDSystem(IDSystem):
 
     def __init__(
         self,
-        model: Callable[[], EmbeddingModel[Embedding]],
+        model: Callable[[], EmbeddingModel],
         padding: int = 0,
         similarity_threshold: float = 0.63,
         comparison_mode: Literal["max", "mean", "top_k_mean"] = "top_k_mean",

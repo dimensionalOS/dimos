@@ -20,12 +20,12 @@ from dataclasses import dataclass, field
 from functools import reduce
 from typing import TypeVar
 
-from dimos.msgs.geometry_msgs import Transform
+from dimos.memory.timeseries.inmemory import InMemoryStore
+from dimos.msgs.geometry_msgs import PoseStamped, Transform
 from dimos.msgs.tf2_msgs import TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.lcmservice import Service  # type: ignore[attr-defined]
-from dimos.types.timestamped import TimestampedCollection
 
 CONFIG = TypeVar("CONFIG")
 
@@ -52,13 +52,13 @@ class TFSpec(Service[TFConfig]):
         return set()
 
     @abstractmethod
-    def get(  # type: ignore[no-untyped-def]
+    def get(
         self,
         parent_frame: str,
         child_frame: str,
         time_point: float | None = None,
         time_tolerance: float | None = None,
-    ): ...
+    ) -> Transform | None: ...
 
     def receive_transform(self, *args: Transform) -> None: ...
 
@@ -71,64 +71,44 @@ MsgT = TypeVar("MsgT")
 TopicT = TypeVar("TopicT")
 
 
-# stores a single transform
-class TBuffer(TimestampedCollection[Transform]):
+class TBuffer(InMemoryStore[Transform]):
     def __init__(self, buffer_size: float = 10.0) -> None:
         super().__init__()
         self.buffer_size = buffer_size
 
     def add(self, transform: Transform) -> None:
-        super().add(transform)
-        self._prune_old_transforms(transform.ts)
-
-    def _prune_old_transforms(self, current_time) -> None:  # type: ignore[no-untyped-def]
-        if not self._items:
-            return
-
-        cutoff_time = current_time - self.buffer_size
-
-        while self._items and self._items[0].ts < cutoff_time:
-            self._items.pop(0)
+        self.save(transform)
+        self.prune_old(transform.ts - self.buffer_size)
 
     def get(self, time_point: float | None = None, time_tolerance: float = 1.0) -> Transform | None:
         """Get transform at specified time or latest if no time given."""
         if time_point is None:
-            # Return the latest transform
-            return self[-1] if len(self) > 0 else None
-
+            return self.last()
         return self.find_closest(time_point, time_tolerance)
 
     def __str__(self) -> str:
-        if not self._items:
+        if len(self) == 0:
             return "TBuffer(empty)"
 
-        # Get unique frame info from the transforms
-        frame_pairs = set()
-        if self._items:
-            frame_pairs.add((self._items[0].frame_id, self._items[0].child_frame_id))
-
+        first_item = self.first()
         time_range = self.time_range()
-        if time_range:
+        if time_range and first_item:
             from dimos.types.timestamped import to_human_readable
 
             start_time = to_human_readable(time_range[0])
             end_time = to_human_readable(time_range[1])
             duration = time_range[1] - time_range[0]
 
-            frame_str = (
-                f"{self._items[0].frame_id} -> {self._items[0].child_frame_id}"
-                if self._items
-                else "unknown"
-            )
+            frame_str = f"{first_item.frame_id} -> {first_item.child_frame_id}"
 
             return (
                 f"TBuffer("
                 f"{frame_str}, "
-                f"{len(self._items)} msgs, "
+                f"{len(self)} msgs, "
                 f"{duration:.2f}s [{start_time} - {end_time}])"
             )
 
-        return f"TBuffer({len(self._items)} msgs)"
+        return f"TBuffer({len(self)} msgs)"
 
 
 # stores multiple transform buffers
@@ -333,6 +313,18 @@ class PubSubTF(MultiTBuffer, TFSpec):
         time_tolerance: float | None = None,
     ) -> Transform | None:
         return super().get(parent_frame, child_frame, time_point, time_tolerance)
+
+    def get_pose(
+        self,
+        parent_frame: str,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> PoseStamped | None:
+        tf = self.get(parent_frame, child_frame, time_point, time_tolerance)
+        if not tf:
+            return None
+        return tf.to_pose()
 
     def receive_msg(self, msg: TFMessage, topic: Topic) -> None:
         self.receive_tfmessage(msg)

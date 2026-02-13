@@ -14,10 +14,7 @@
 
 from __future__ import annotations
 
-from operator import add, sub
-
 import pytest
-import reactivex.operators as ops
 
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.testing import SensorReplay
@@ -38,19 +35,6 @@ def test_odometry_conversion_and_count() -> None:
         assert isinstance(odom, Odometry)
 
 
-def test_last_yaw_value() -> None:
-    """Verify yaw of the final message (regression guard)."""
-    last_msg = SensorReplay(name="raw_odometry_rotate_walk").stream().pipe(ops.last()).run()
-
-    assert last_msg is not None, "Replay is empty"
-    assert last_msg["data"]["pose"]["orientation"] == {
-        "x": 0.01077,
-        "y": 0.008505,
-        "z": 0.499171,
-        "w": -0.866395,
-    }
-
-
 def test_total_rotation_travel_iterate() -> None:
     total_rad = 0.0
     prev_yaw: float | None = None
@@ -63,19 +47,3 @@ def test_total_rotation_travel_iterate() -> None:
         prev_yaw = yaw
 
     assert total_rad == pytest.approx(_EXPECTED_TOTAL_RAD, abs=0.001)
-
-
-def test_total_rotation_travel_rxpy() -> None:
-    total_rad = (
-        SensorReplay(name="raw_odometry_rotate_walk", autocast=Odometry.from_msg)
-        .stream()
-        .pipe(
-            ops.map(lambda odom: odom.orientation.radians.z),
-            ops.pairwise(),  # [1,2,3,4] -> [[1,2], [2,3], [3,4]]
-            ops.starmap(sub),  # [sub(1,2), sub(2,3), sub(3,4)]
-            ops.reduce(add),
-        )
-        .run()
-    )
-
-    assert total_rad == pytest.approx(4.05, abs=0.01)

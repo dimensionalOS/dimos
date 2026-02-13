@@ -26,7 +26,7 @@ def test_pull_file() -> None:
     repo_root = data._get_repo_root()
     test_file_name = "cafe.jpg"
     test_file_compressed = data._get_lfs_dir() / (test_file_name + ".tar.gz")
-    test_file_decompressed = data._get_data_dir() / test_file_name
+    test_file_decompressed = data.get_data_dir() / test_file_name
 
     # delete decompressed test file if it exists
     if test_file_decompressed.exists():
@@ -82,7 +82,7 @@ def test_pull_dir() -> None:
     repo_root = data._get_repo_root()
     test_dir_name = "ab_lidar_frames"
     test_dir_compressed = data._get_lfs_dir() / (test_dir_name + ".tar.gz")
-    test_dir_decompressed = data._get_data_dir() / test_dir_name
+    test_dir_decompressed = data.get_data_dir() / test_dir_name
 
     # delete decompressed test directory if it exists
     if test_dir_decompressed.exists():

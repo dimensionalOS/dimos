@@ -69,7 +69,7 @@ class ObservableMixin(Generic[T]):
 
     # default return is backpressured because most
     # use cases will want this by default
-    def observable(self):  # type: ignore[no-untyped-def]
+    def observable(self) -> Observable[T]:
         return backpressure(self.pure_observable())
 
 

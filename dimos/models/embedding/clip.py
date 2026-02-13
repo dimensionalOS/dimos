@@ -25,16 +25,13 @@ from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEm
 from dimos.msgs.sensor_msgs import Image
 
 
-class CLIPEmbedding(Embedding): ...
-
-
 @dataclass
 class CLIPModelConfig(HuggingFaceEmbeddingModelConfig):
     model_name: str = "openai/clip-vit-base-patch32"
     dtype: torch.dtype = torch.float32
 
 
-class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
+class CLIPModel(EmbeddingModel, HuggingFaceModel):
     """CLIP embedding model for vision-language re-identification."""
 
     default_config = CLIPModelConfig
@@ -50,7 +47,7 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
     def _processor(self) -> CLIPProcessor:
         return CLIPProcessor.from_pretrained(self.config.model_name)
 
-    def embed(self, *images: Image) -> CLIPEmbedding | list[CLIPEmbedding]:
+    def embed(self, *images: Image) -> Embedding | list[Embedding]:
         """Embed one or more images.
 
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
@@ -67,14 +64,14 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
                 image_features = functional.normalize(image_features, dim=-1)
 
         # Create embeddings (keep as torch.Tensor on device)
-        embeddings = []
+        embeddings: list[Embedding] = []
         for i, feat in enumerate(image_features):
             timestamp = images[i].ts
-            embeddings.append(CLIPEmbedding(vector=feat, timestamp=timestamp))
+            embeddings.append(Embedding(vector=feat, timestamp=timestamp))
 
         return embeddings[0] if len(images) == 1 else embeddings
 
-    def embed_text(self, *texts: str) -> CLIPEmbedding | list[CLIPEmbedding]:
+    def embed_text(self, *texts: str) -> Embedding | list[Embedding]:
         """Embed one or more text strings.
 
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
@@ -89,9 +86,9 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
                 text_features = functional.normalize(text_features, dim=-1)
 
         # Create embeddings (keep as torch.Tensor on device)
-        embeddings = []
+        embeddings: list[Embedding] = []
         for feat in text_features:
-            embeddings.append(CLIPEmbedding(vector=feat))
+            embeddings.append(Embedding(vector=feat))
 
         return embeddings[0] if len(texts) == 1 else embeddings
 
