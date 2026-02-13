@@ -4,7 +4,7 @@
 // Livox Mid-360 native module for dimos NativeModule framework.
 //
 // Publishes PointCloud2 and Imu messages on LCM topics received via CLI args.
-// Usage: ./mid360_native --pointcloud <topic> --imu <topic> [--host_ip <ip>] [--lidar_ip <ip>] ...
+// Usage: ./mid360_native --lidar <topic> --imu <topic> [--host_ip <ip>] [--lidar_ip <ip>] ...
 
 #include <lcm/lcm-cpp.hpp>
 
@@ -42,7 +42,7 @@ using livox_common::DATA_TYPE_CARTESIAN_LOW;
 
 static std::atomic<bool> g_running{true};
 static lcm::LCM* g_lcm = nullptr;
-static std::string g_pointcloud_topic;
+static std::string g_lidar_topic;
 static std::string g_imu_topic;
 static std::string g_frame_id = "lidar_link";
 static std::string g_imu_frame_id = "imu_link";
@@ -132,7 +132,7 @@ static void publish_pointcloud(const std::vector<float>& xyz,
         dst[3] = intensity[i];
     }
 
-    g_lcm->publish(g_pointcloud_topic, &pc);
+    g_lcm->publish(g_lidar_topic, &pc);
 }
 
 // ---------------------------------------------------------------------------
@@ -244,11 +244,11 @@ int main(int argc, char** argv) {
     dimos::NativeModule mod(argc, argv);
 
     // Required: LCM topics for ports
-    g_pointcloud_topic = mod.has("pointcloud") ? mod.topic("pointcloud") : "";
+    g_lidar_topic = mod.has("lidar") ? mod.topic("lidar") : "";
     g_imu_topic = mod.has("imu") ? mod.topic("imu") : "";
 
-    if (g_pointcloud_topic.empty()) {
-        fprintf(stderr, "Error: --pointcloud <topic> is required\n");
+    if (g_lidar_topic.empty()) {
+        fprintf(stderr, "Error: --lidar <topic> is required\n");
         return 1;
     }
 
@@ -274,7 +274,7 @@ int main(int argc, char** argv) {
     ports.host_log_data   = mod.arg_int("host_log_data_port", port_defaults.host_log_data);
 
     printf("[mid360] Starting native Livox Mid-360 module\n");
-    printf("[mid360] pointcloud topic: %s\n", g_pointcloud_topic.c_str());
+    printf("[mid360] lidar topic: %s\n", g_lidar_topic.c_str());
     printf("[mid360] imu topic: %s\n", g_imu_topic.empty() ? "(disabled)" : g_imu_topic.c_str());
     printf("[mid360] host_ip: %s  lidar_ip: %s  frequency: %.1f Hz\n",
            host_ip.c_str(), lidar_ip.c_str(), g_frequency);
