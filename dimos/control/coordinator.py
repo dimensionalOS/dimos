@@ -49,6 +49,7 @@ from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
@@ -78,7 +79,7 @@ class TaskConfig:
     joint_names: list[str] = field(default_factory=lambda: [])
     priority: int = 10
     # Cartesian IK / Teleop IK specific
-    model_path: str | None = None
+    model_path: str | Path | None = None
     ee_joint_id: int = 6
     hand: str = ""  # teleop_ik only: "left" or "right" controller
 

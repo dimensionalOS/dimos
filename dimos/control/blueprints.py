@@ -36,12 +36,10 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import JointState
 from dimos.teleop.quest.quest_types import QuestButtons
-from dimos.utils.data import get_data
+from dimos.utils.data import LfsPath
 
-_PIPER_MODEL_PATH = str(
-    get_data("piper_description") / "mujoco_model" / "piper_no_gripper_description.xml"
-)
-_XARM6_MODEL_PATH = str(get_data("xarm_description") / "urdf" / "xarm6" / "xarm6.urdf")
+_PIPER_MODEL_PATH = LfsPath("piper_description/mujoco_model/piper_no_gripper_description.xml")
+_XARM6_MODEL_PATH = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
 
 # =============================================================================
 # Single Arm Blueprints
