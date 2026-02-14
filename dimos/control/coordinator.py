@@ -44,7 +44,7 @@ from dimos.msgs.geometry_msgs import (
 from dimos.msgs.sensor_msgs import (
     JointState,  # noqa: TC001 - needed at runtime for Out[JointState]
 )
-from dimos.teleop.quest.quest_types import QuestButtons  # noqa: TC001 - needed for teleop buttons
+from dimos.teleop.quest.quest_types import Buttons  # noqa: TC001 - needed for teleop buttons
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -149,7 +149,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     cartesian_command: In[PoseStamped]
 
     # Input: Teleop buttons for engage/disengage signaling
-    buttons: In[QuestButtons]
+    buttons: In[Buttons]
 
     config: ControlCoordinatorConfig
     default_config = ControlCoordinatorConfig
@@ -490,7 +490,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
             task.on_cartesian_command(msg, t_now)
 
-    def _on_buttons(self, msg: QuestButtons) -> None:
+    def _on_buttons(self, msg: Buttons) -> None:
         """Forward button state to all tasks."""
         with self._task_lock:
             for task in self._tasks.values():

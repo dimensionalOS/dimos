@@ -33,7 +33,7 @@ from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Joy
 from dimos.teleop.base import TeleopProtocol
-from dimos.teleop.quest.quest_types import QuestButtons, QuestControllerState
+from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.utils.logging_config import setup_logger
 
@@ -55,7 +55,7 @@ class QuestTeleopStatus:
     right_engaged: bool
     left_pose: PoseStamped | None
     right_pose: PoseStamped | None
-    buttons: QuestButtons
+    buttons: Buttons
 
 
 @dataclass
@@ -76,7 +76,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
     Outputs:
         - left_controller_output: PoseStamped (output pose for left hand)
         - right_controller_output: PoseStamped (output pose for right hand)
-        - buttons: QuestButtons (button states for both controllers)
+        - buttons: Buttons (button states for both controllers)
     """
 
     default_config = QuestTeleopConfig
@@ -90,7 +90,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
     # Outputs: delta poses for each controller
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]
-    buttons: Out[QuestButtons]
+    buttons: Out[Buttons]
 
     # -------------------------------------------------------------------------
     # Initialization
@@ -198,7 +198,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
                 right_engaged=self._is_engaged[Hand.RIGHT],
                 left_pose=self._current_poses.get(Hand.LEFT),
                 right_pose=self._current_poses.get(Hand.RIGHT),
-                buttons=QuestButtons.from_controllers(left, right),
+                buttons=Buttons.from_controllers(left, right),
             )
 
     # -------------------------------------------------------------------------
@@ -351,7 +351,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         Override to customize button output format (e.g., different bit layout,
         keep analog values, add extra streams).
         """
-        buttons = QuestButtons.from_controllers(left, right)
+        buttons = Buttons.from_controllers(left, right)
         self.buttons.publish(buttons)
 
 

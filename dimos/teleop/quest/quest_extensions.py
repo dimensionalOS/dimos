@@ -56,7 +56,7 @@ class TwistTeleopModule(QuestTeleopModule):
     Outputs:
         - left_twist: TwistStamped (linear + angular velocity)
         - right_twist: TwistStamped (linear + angular velocity)
-        - buttons: QuestButtons (inherited)
+        - buttons: Buttons (inherited)
     """
 
     default_config = TwistTeleopConfig
@@ -105,7 +105,7 @@ class ArmTeleopModule(QuestTeleopModule):
     Outputs:
         - left_controller_output: PoseStamped (inherited)
         - right_controller_output: PoseStamped (inherited)
-        - buttons: QuestButtons (inherited)
+        - buttons: Buttons (inherited)
     """
 
     default_config = ArmTeleopConfig
@@ -140,7 +140,7 @@ class VisualizingTeleopModule(ArmTeleopModule):
     Outputs:
         - left_controller_output: PoseStamped (inherited)
         - right_controller_output: PoseStamped (inherited)
-        - buttons: QuestButtons (inherited)
+        - buttons: Buttons (inherited)
     """
 
     def _get_output_pose(self, hand: Hand) -> PoseStamped | None:

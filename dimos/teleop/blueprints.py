@@ -24,7 +24,7 @@ from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.teleop.quest.quest_extensions import arm_teleop_module, visualizing_teleop_module
-from dimos.teleop.quest.quest_types import QuestButtons
+from dimos.teleop.quest.quest_types import Buttons
 
 # -----------------------------------------------------------------------------
 # Quest Teleop Blueprints
@@ -37,7 +37,7 @@ arm_teleop = autoconnect(
     {
         ("left_controller_output", PoseStamped): LCMTransport("/teleop/left_delta", PoseStamped),
         ("right_controller_output", PoseStamped): LCMTransport("/teleop/right_delta", PoseStamped),
-        ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
     }
 )
 
@@ -48,7 +48,7 @@ arm_teleop_visualizing = autoconnect(
     {
         ("left_controller_output", PoseStamped): LCMTransport("/teleop/left_delta", PoseStamped),
         ("right_controller_output", PoseStamped): LCMTransport("/teleop/right_delta", PoseStamped),
-        ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
     }
 )
 
@@ -68,7 +68,7 @@ arm_teleop_xarm6 = autoconnect(
         ("right_controller_output", PoseStamped): LCMTransport(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
     }
 )
 
@@ -83,7 +83,7 @@ arm_teleop_piper = autoconnect(
         ("left_controller_output", PoseStamped): LCMTransport(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
     }
 )
 
@@ -100,7 +100,7 @@ arm_teleop_dual = autoconnect(
         ("left_controller_output", PoseStamped): LCMTransport(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
     }
 )
 
