@@ -168,16 +168,23 @@ def test_lfs_path_safe_attributes() -> None:
     assert callable(ensure_fn)
 
 
-def test_lfs_path_conversion_to_path() -> None:
-    """Test that LfsPath can be converted to regular Path."""
-    # Use a file that doesn't exist to test conversion without download
+def test_lfs_path_no_download_on_creation() -> None:
+    """Test that LfsPath construction doesn't trigger download.
+
+    Path(lfs_path) extracts internal _raw_paths (\".\") and does NOT
+    call __fspath__, so it won't trigger download. The correct way to
+    convert is Path(str(lfs_path)), which triggers __str__ -> download.
+    """
     lfs_path = LfsPath("nonexistent_file")
 
-    # Path conversion accesses internal attributes but shouldn't trigger download
-    # because Path internal attributes are in the safe list
-    converted = Path(lfs_path)
-    assert isinstance(converted, Path)
-    assert type(converted).__name__ in ("PosixPath", "WindowsPath")
+    # Construction should not trigger download
+    cache = object.__getattribute__(lfs_path, "_lfs_resolved_cache")
+    assert cache is None
+
+    # Accessing internal LfsPath attributes should not trigger download
+    filename = object.__getattribute__(lfs_path, "_lfs_filename")
+    assert filename == "nonexistent_file"
+    assert cache is None
 
 
 @pytest.mark.heavy
