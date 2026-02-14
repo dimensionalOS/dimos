@@ -119,7 +119,7 @@ class ManipulationModuleConfig(ModuleConfig):
     )
 
 
-class ManipulationModule(SkillModule):
+class ManipulationModule(Module):
     """Motion planning module with ControlCoordinator execution.
 
     - @rpc: Low-level building blocks (plan, execute, obstacles)
@@ -986,7 +986,7 @@ class ManipulationModule(SkillModule):
         result = client.get_gripper_position(hw_id)
         return float(result) if result is not None else None
 
-    @skill()
+    @skill
     def set_gripper(self, position: float, robot_name: str | None = None) -> str:
         """Set gripper to a specific opening in meters.
 
@@ -998,7 +998,7 @@ class ManipulationModule(SkillModule):
             return f"Gripper set to {position:.3f}m"
         return "Error: Failed to set gripper position"
 
-    @skill()
+    @skill
     def open_gripper(self, robot_name: str | None = None) -> str:
         """Open the robot gripper fully.
 
@@ -1009,7 +1009,7 @@ class ManipulationModule(SkillModule):
             return "Gripper opened"
         return "Error: Failed to open gripper"
 
-    @skill()
+    @skill
     def close_gripper(self, robot_name: str | None = None) -> str:
         """Close the robot gripper fully.
 
@@ -1182,7 +1182,7 @@ class ManipulationModule(SkillModule):
     # Short-Horizon Skills — Single-step actions
     # =========================================================================
 
-    @skill()
+    @skill
     def move_to_pose(
         self,
         x: float,
@@ -1219,7 +1219,7 @@ class ManipulationModule(SkillModule):
 
         yield f"Reached target pose ({x:.3f}, {y:.3f}, {z:.3f})"
 
-    @skill()
+    @skill
     def move_to_joints(
         self,
         joints: str,
@@ -1257,7 +1257,7 @@ class ManipulationModule(SkillModule):
 
         yield "Reached target joint configuration"
 
-    @skill()
+    @skill
     def get_scene_info(self, robot_name: str | None = None) -> str:
         """Get current robot state, detected objects, and scene information.
 
@@ -1315,7 +1315,7 @@ class ManipulationModule(SkillModule):
 
         return "\n".join(lines)
 
-    @skill()
+    @skill
     def scan_objects(self, min_duration: float = 1.0, robot_name: str | None = None) -> str:
         """Scan the scene and list detected objects with their 3D positions.
 
@@ -1346,7 +1346,7 @@ class ManipulationModule(SkillModule):
     # Long-Horizon Skills — Multi-step composed behaviors
     # =========================================================================
 
-    @skill()
+    @skill
     def go_home(self, robot_name: str | None = None) -> Generator[str, None, None]:
         """Move the robot to its home/observe joint configuration.
 
@@ -1381,7 +1381,7 @@ class ManipulationModule(SkillModule):
 
         yield "Reached home position"
 
-    @skill()
+    @skill
     def go_init(self, robot_name: str | None = None) -> Generator[str, None, None]:
         """Move the robot to its init position (captured at startup or set manually).
 
@@ -1406,7 +1406,7 @@ class ManipulationModule(SkillModule):
 
         yield "Reached init position"
 
-    @skill()
+    @skill
     def pick(
         self,
         object_name: str,
@@ -1488,7 +1488,7 @@ class ManipulationModule(SkillModule):
 
         yield f"Error: All {max_attempts} grasp attempts failed for '{object_name}'"
 
-    @skill()
+    @skill
     def place(
         self,
         x: float,
@@ -1553,7 +1553,7 @@ class ManipulationModule(SkillModule):
 
         yield f"Place complete — object released at ({x:.3f}, {y:.3f}, {z:.3f})"
 
-    @skill()
+    @skill
     def place_back(self, robot_name: str | None = None) -> Generator[str, None, None]:
         """Place the held object back at its original pick position.
 
@@ -1570,7 +1570,7 @@ class ManipulationModule(SkillModule):
         yield f"Placing back at original position ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})..."
         yield from self.place(p.x, p.y, p.z, robot_name)
 
-    @skill()
+    @skill
     def pick_and_place(
         self,
         object_name: str,
