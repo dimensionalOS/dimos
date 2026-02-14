@@ -32,14 +32,13 @@ from typing import Any
 from reactivex import Subject, interval
 from reactivex.disposable import Disposable
 
+from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.module import ModuleConfig
-from dimos.core.skill_module import SkillModule
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
-from dimos.protocol.skill.skill import skill
 
 from . import temporal_utils as tu
 from .clip_filter import (
@@ -101,7 +100,7 @@ class TemporalMemoryConfig(ModuleConfig):
     nearby_distance_meters: float = 5.0  # "Nearby" threshold
 
 
-class TemporalMemory(SkillModule):
+class TemporalMemory(Module):
     """
     builds temporal understanding of video streams using vlms.
 
@@ -450,7 +449,7 @@ class TemporalMemory(SkillModule):
         except Exception as e:
             logger.error(f"summary update failed: {e}", exc_info=True)
 
-    @skill()
+    @skill
     def query(self, question: str) -> str:
         """Answer a question about the video stream using temporal memory and graph knowledge.
 

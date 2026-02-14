@@ -23,6 +23,7 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos import spec
+from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
@@ -32,7 +33,6 @@ from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d import Detection3DPC
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
-from dimos.protocol.skill.skill import skill
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
 
@@ -111,7 +111,7 @@ class Detection3DModule(Detection2DModule):
         # Camera optical frame: X right, Y down, Z forward
         return Vector3(x_norm * assumed_depth, y_norm * assumed_depth, assumed_depth)
 
-    @skill()
+    @skill
     def ask_vlm(self, question: str) -> str:
         """asks a visual model about the view of the robot, for example
         is the bannana in the trunk?

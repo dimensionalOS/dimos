@@ -21,8 +21,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from dimos.core.skill_module import SkillModule
-from dimos.protocol.skill.skill import rpc, skill
+from dimos.agents.annotation import skill
+from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import quaternion_to_euler
 
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-class GraspingModule(SkillModule):
+class GraspingModule(Module):
     """Grasping skill and orchestrator module"""
 
     grasps: Out[PoseArray]
@@ -56,7 +57,7 @@ class GraspingModule(SkillModule):
         super().stop()
         logger.info("GraspingModule stopped")
 
-    @skill()
+    @skill
     def generate_grasps(
         self,
         object_name: str = "object",

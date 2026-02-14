@@ -2,8 +2,7 @@ ARG FROM_IMAGE=ghcr.io/dimensionalos/ros:dev
 FROM ${FROM_IMAGE}
 
 # Install basic requirements
-RUN apt-get update
-RUN apt-get install -y \
+RUN apt-get update && apt-get install -y \
     python-is-python3 \
     curl \
     gnupg2 \
@@ -13,7 +12,7 @@ RUN apt-get install -y \
     portaudio19-dev \
     git \
     mesa-utils \
-    libgl1-mesa-glx \
+    libgl1 \
     libgl1-mesa-dri \
     software-properties-common \
     libxcb1-dev \

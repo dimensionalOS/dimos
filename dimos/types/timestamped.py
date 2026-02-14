@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from collections import defaultdict
-from collections.abc import Iterable, Iterator
 from datetime import datetime, timezone
 from typing import Generic, TypeVar, Union
 
@@ -22,8 +21,8 @@ from reactivex.disposable import CompositeDisposable
 
 # from dimos_lcm.std_msgs import Time as ROSTime
 from reactivex.observable import Observable
-from sortedcontainers import SortedKeyList  # type: ignore[import-untyped]
 
+from dimos.memory.timeseries.inmemory import InMemoryStore
 from dimos.types.weaklist import WeakList
 from dimos.utils.logging_config import setup_logger
 
@@ -117,152 +116,29 @@ class Timestamped:
 T = TypeVar("T", bound=Timestamped)
 
 
-class TimestampedCollection(Generic[T]):
-    """A collection of timestamped objects with efficient time-based operations."""
-
-    def __init__(self, items: Iterable[T] | None = None) -> None:
-        self._items = SortedKeyList(items or [], key=lambda x: x.ts)
-
-    def add(self, item: T) -> None:
-        """Add a timestamped item to the collection."""
-        self._items.add(item)
-
-    def find_closest(self, timestamp: float, tolerance: float | None = None) -> T | None:
-        """Find the timestamped object closest to the given timestamp."""
-        if not self._items:
-            return None
-
-        # Use binary search to find insertion point
-        idx = self._items.bisect_key_left(timestamp)
-
-        # Check exact match
-        if idx < len(self._items) and self._items[idx].ts == timestamp:
-            return self._items[idx]  # type: ignore[no-any-return]
-
-        # Find candidates: item before and after
-        candidates = []
-
-        # Item before
-        if idx > 0:
-            candidates.append((idx - 1, abs(self._items[idx - 1].ts - timestamp)))
-
-        # Item after
-        if idx < len(self._items):
-            candidates.append((idx, abs(self._items[idx].ts - timestamp)))
-
-        if not candidates:
-            return None
-
-        # Find closest
-        # When distances are equal, prefer the later item (higher index)
-        closest_idx, closest_distance = min(candidates, key=lambda x: (x[1], -x[0]))
-
-        # Check tolerance if provided
-        if tolerance is not None and closest_distance > tolerance:
-            return None
-
-        return self._items[closest_idx]  # type: ignore[no-any-return]
-
-    def find_before(self, timestamp: float) -> T | None:
-        """Find the last item before the given timestamp."""
-        idx = self._items.bisect_key_left(timestamp)
-        return self._items[idx - 1] if idx > 0 else None
-
-    def find_after(self, timestamp: float) -> T | None:
-        """Find the first item after the given timestamp."""
-        idx = self._items.bisect_key_right(timestamp)
-        return self._items[idx] if idx < len(self._items) else None
-
-    def merge(self, other: "TimestampedCollection[T]") -> "TimestampedCollection[T]":
-        """Merge two timestamped collections into a new one."""
-        result = TimestampedCollection[T]()
-        result._items = SortedKeyList(self._items + other._items, key=lambda x: x.ts)
-        return result
-
-    def duration(self) -> float:
-        """Get the duration of the collection in seconds."""
-        if len(self._items) < 2:
-            return 0.0
-        return self._items[-1].ts - self._items[0].ts  # type: ignore[no-any-return]
-
-    def time_range(self) -> tuple[float, float] | None:
-        """Get the time range (start, end) of the collection."""
-        if not self._items:
-            return None
-        return (self._items[0].ts, self._items[-1].ts)
-
-    def slice_by_time(self, start: float, end: float) -> "TimestampedCollection[T]":
-        """Get a subset of items within the given time range."""
-        start_idx = self._items.bisect_key_left(start)
-        end_idx = self._items.bisect_key_right(end)
-        return TimestampedCollection(self._items[start_idx:end_idx])
-
-    @property
-    def start_ts(self) -> float | None:
-        """Get the start timestamp of the collection."""
-        return self._items[0].ts if self._items else None
-
-    @property
-    def end_ts(self) -> float | None:
-        """Get the end timestamp of the collection."""
-        return self._items[-1].ts if self._items else None
-
-    def __len__(self) -> int:
-        return len(self._items)
-
-    def __iter__(self) -> Iterator:  # type: ignore[type-arg]
-        return iter(self._items)
-
-    def __getitem__(self, idx: int) -> T:
-        return self._items[idx]  # type: ignore[no-any-return]
-
-
 PRIMARY = TypeVar("PRIMARY", bound=Timestamped)
 SECONDARY = TypeVar("SECONDARY", bound=Timestamped)
 
 
-class TimestampedBufferCollection(TimestampedCollection[T]):
-    """A timestamped collection that maintains a sliding time window, dropping old messages."""
+class TimestampedBufferCollection(InMemoryStore[T]):
+    """A sliding time window buffer backed by InMemoryStore."""
 
-    def __init__(self, window_duration: float, items: Iterable[T] | None = None) -> None:
-        """
-        Initialize with a time window duration in seconds.
-
-        Args:
-            window_duration: Maximum age of messages to keep in seconds
-            items: Optional initial items
-        """
-        super().__init__(items)
+    def __init__(self, window_duration: float) -> None:
+        super().__init__()
         self.window_duration = window_duration
 
     def add(self, item: T) -> None:
-        """Add a timestamped item and remove any items outside the time window."""
-        super().add(item)
-        self._prune_old_messages(item.ts)
-
-    def _prune_old_messages(self, current_ts: float) -> None:
-        """Remove messages older than window_duration from the given timestamp."""
-        cutoff_ts = current_ts - self.window_duration
-
-        # Find the index of the first item that should be kept
-        keep_idx = self._items.bisect_key_left(cutoff_ts)
-
-        # Remove old items
-        if keep_idx > 0:
-            del self._items[:keep_idx]
-
-    def remove_by_timestamp(self, timestamp: float) -> bool:
-        """Remove an item with the given timestamp. Returns True if item was found and removed."""
-        idx = self._items.bisect_key_left(timestamp)
-
-        if idx < len(self._items) and self._items[idx].ts == timestamp:
-            del self._items[idx]
-            return True
-        return False
+        """Add a timestamped item and prune items outside the time window."""
+        self.save(item)
+        self.prune_old(item.ts - self.window_duration)
 
     def remove(self, item: T) -> bool:
-        """Remove a timestamped item from the collection. Returns True if item was found and removed."""
-        return self.remove_by_timestamp(item.ts)
+        """Remove a timestamped item. Returns True if found and removed."""
+        return self._delete(item.ts) is not None
+
+    def remove_by_timestamp(self, timestamp: float) -> bool:
+        """Remove an item by timestamp. Returns True if found and removed."""
+        return self._delete(timestamp) is not None
 
 
 class MatchContainer(Timestamped, Generic[PRIMARY, SECONDARY]):

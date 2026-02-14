@@ -13,8 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.agent import llm_agent
-from dimos.agents.cli.human import human_input
+from dimos.agents.agent import agent
 from dimos.core.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense import realsense_camera
 from dimos.hardware.sensors.camera.zed import zed_camera
@@ -35,6 +34,5 @@ demo_object_scene_registration = autoconnect(
     camera_module,
     object_scene_registration_module(target_frame="world", prompt_mode=YoloePromptMode.LRPC),
     foxglove_bridge(),
-    human_input(),
-    llm_agent(),
+    agent(),
 ).global_config(viewer_backend="foxglove")

@@ -13,6 +13,7 @@ USE_ROUTE_PLANNER="false"
 USE_RVIZ="false"
 DEV_MODE="false"
 ROS_DISTRO="humble"
+LOCALIZATION_METHOD="${LOCALIZATION_METHOD:-arise_slam}"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --hardware)
@@ -21,6 +22,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --simulation)
             MODE="simulation"
+            shift
+            ;;
+        --bagfile)
+            MODE="bagfile"
             shift
             ;;
         --route-planner)
@@ -35,35 +40,48 @@ while [[ $# -gt 0 ]]; do
             DEV_MODE="true"
             shift
             ;;
-        --humble)
-            ROS_DISTRO="humble"
-            shift
+        --image)
+            if [ -z "$2" ] || [[ "$2" == --* ]]; then
+                echo -e "${RED}--image requires a value (humble or jazzy)${NC}"
+                exit 1
+            fi
+            ROS_DISTRO="$2"
+            shift 2
             ;;
-        --jazzy)
-            ROS_DISTRO="jazzy"
-            shift
+        --localization)
+            if [ -z "$2" ] || [[ "$2" == --* ]]; then
+                echo -e "${RED}--localization requires a value (arise_slam or fastlio)${NC}"
+                exit 1
+            fi
+            LOCALIZATION_METHOD="$2"
+            shift 2
             ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
-            echo "Options:"
-            echo "  --simulation      Start simulation container (default)"
-            echo "  --hardware        Start hardware container for real robot"
-            echo "  --route-planner   Enable FAR route planner (for hardware mode)"
-            echo "  --rviz            Launch RViz2 visualization"
-            echo "  --dev             Development mode (mount src for config editing)"
-            echo "  --humble          Use ROS 2 Humble image (default)"
-            echo "  --jazzy           Use ROS 2 Jazzy image"
-            echo "  --help, -h        Show this help message"
+            echo "Mode (mutually exclusive):"
+            echo "  --simulation              Start simulation container (default)"
+            echo "  --hardware                Start hardware container"
+            echo "  --bagfile                  Start bagfile playback container (use_sim_time=true)"
+            echo ""
+            echo "Image and localization:"
+            echo "  --image <distro>           ROS 2 distribution: humble (default), jazzy"
+            echo "  --localization <method>    SLAM method: arise_slam (default), fastlio"
+            echo ""
+            echo "Additional options:"
+            echo "  --route-planner            Enable FAR route planner (for hardware mode)"
+            echo "  --rviz                     Launch RViz2 visualization"
+            echo "  --dev                      Development mode (mount src for config editing)"
+            echo "  --help, -h                 Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                                    # Start simulation (Humble)"
-            echo "  $0 --jazzy                            # Start simulation (Jazzy)"
-            echo "  $0 --hardware                         # Start hardware (base autonomy, Humble)"
-            echo "  $0 --hardware --jazzy                 # Start hardware (Jazzy)"
-            echo "  $0 --hardware --route-planner         # Hardware with route planner"
-            echo "  $0 --hardware --route-planner --rviz  # Hardware with route planner + RViz"
-            echo "  $0 --hardware --dev                   # Hardware with src mounted for development"
+            echo "  $0 --simulation                                        # Start simulation"
+            echo "  $0 --hardware --image jazzy                            # Hardware with Jazzy"
+            echo "  $0 --hardware --localization fastlio                    # Hardware with FASTLIO2"
+            echo "  $0 --hardware --route-planner --rviz                   # Hardware with route planner + RViz"
+            echo "  $0 --hardware --dev                                    # Hardware with src mounted"
+            echo "  $0 --bagfile                                           # Bagfile playback"
+            echo "  $0 --bagfile --localization fastlio --route-planner    # Bagfile with FASTLIO2 + route planner"
             echo ""
             echo "Press Ctrl+C to stop the container"
             exit 0
@@ -77,6 +95,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 export ROS_DISTRO
+export LOCALIZATION_METHOD
+export IMAGE_TAG="${ROS_DISTRO}"
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
@@ -85,8 +105,13 @@ echo -e "${GREEN}================================================${NC}"
 echo -e "${GREEN}Starting DimOS Docker Container${NC}"
 echo -e "${GREEN}Mode: ${MODE}${NC}"
 echo -e "${GREEN}ROS Distribution: ${ROS_DISTRO}${NC}"
+echo -e "${GREEN}ROS Domain ID: ${ROS_DOMAIN_ID:-42}${NC}"
+echo -e "${GREEN}Localization: ${LOCALIZATION_METHOD}${NC}"
+echo -e "${GREEN}Image Tag: ${IMAGE_TAG}${NC}"
 echo -e "${GREEN}================================================${NC}"
 echo ""
+
+# Pull image option removed - use build.sh to build locally
 
 # Hardware-specific checks
 if [ "$MODE" = "hardware" ]; then
@@ -218,10 +243,12 @@ if [ "$MODE" = "hardware" ]; then
 
 fi
 
-# Check if the correct ROS distro image exists
-if ! docker images | grep -q "dimos_autonomy_stack.*${ROS_DISTRO}"; then
-    echo -e "${YELLOW}Docker image for ROS ${ROS_DISTRO} not found. Building...${NC}"
-    ./build.sh --${ROS_DISTRO}
+# Check if the image exists
+if ! docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^dimos_autonomy_stack:${IMAGE_TAG}$"; then
+    echo -e "${RED}Docker image dimos_autonomy_stack:${IMAGE_TAG} not found.${NC}"
+    echo -e "${YELLOW}Please build it first with:${NC}"
+    echo -e "  ./build.sh --${ROS_DISTRO}"
+    exit 1
 fi
 
 # Check for X11 display
@@ -268,6 +295,8 @@ fi
 # Set container name for reference
 if [ "$MODE" = "hardware" ]; then
     CONTAINER_NAME="dimos_hardware_container"
+elif [ "$MODE" = "bagfile" ]; then
+    CONTAINER_NAME="dimos_bagfile_container"
 else
     CONTAINER_NAME="dimos_simulation_container"
 fi
@@ -303,6 +332,27 @@ if [ "$MODE" = "hardware" ]; then
     echo ""
     echo "To enter the container from another terminal:"
     echo -e "    ${YELLOW}docker exec -it ${CONTAINER_NAME} bash${NC}"
+elif [ "$MODE" = "bagfile" ]; then
+    if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+        echo "Bagfile mode - Starting bagfile playback system WITH route planner"
+        echo ""
+        echo "The container will run (use_sim_time=true):"
+        echo "  - ROS navigation stack (system_bagfile_with_route_planner.launch)"
+        echo "  - FAR Planner for goal-based navigation"
+    else
+        echo "Bagfile mode - Starting bagfile playback system (base autonomy)"
+        echo ""
+        echo "The container will run (use_sim_time=true):"
+        echo "  - ROS navigation stack (system_bagfile.launch)"
+    fi
+    if [ "$USE_RVIZ" = "true" ]; then
+        echo "  - RViz2 visualization"
+    fi
+    echo ""
+    echo -e "${YELLOW}Remember to play bagfile with: ros2 bag play --clock <bagfile>${NC}"
+    echo ""
+    echo "To enter the container from another terminal:"
+    echo -e "    ${YELLOW}docker exec -it ${CONTAINER_NAME} bash${NC}"
 else
     echo "Simulation mode - Auto-starting ROS simulation and DimOS"
     echo ""
@@ -317,7 +367,14 @@ fi
 # Note: DISPLAY is now passed directly via environment variable
 # No need to write RUNTIME_DISPLAY to .env for local host running
 
-# Build compose command with optional dev mode
+# Create required directories
+if [ "$MODE" = "hardware" ]; then
+    mkdir -p bagfiles config logs maps
+elif [ "$MODE" = "bagfile" ]; then
+    mkdir -p bagfiles config maps
+fi
+
+# Build compose command
 COMPOSE_CMD="docker compose -f docker-compose.yml"
 if [ "$DEV_MODE" = "true" ]; then
     COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"
@@ -325,6 +382,8 @@ fi
 
 if [ "$MODE" = "hardware" ]; then
     $COMPOSE_CMD --profile hardware up
+elif [ "$MODE" = "bagfile" ]; then
+    $COMPOSE_CMD --profile bagfile up
 else
     $COMPOSE_CMD up
 fi

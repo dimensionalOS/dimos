@@ -7,7 +7,7 @@ services:
       network: host
       args:
         ROS_DISTRO: ${ROS_DISTRO:-humble}
-    image: dimos_autonomy_stack:${ROS_DISTRO:-humble}
+    image: dimos_autonomy_stack:${IMAGE_TAG:-humble}
     container_name: dimos_simulation_container
     profiles: ["", "simulation"]  # Active by default (empty profile) AND with --profile simulation
 
@@ -41,6 +41,8 @@ services:
       # DDS Configuration (FastDDS)
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
       - FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml
+      # Localization method: arise_slam (default) or fastlio
+      - LOCALIZATION_METHOD=${LOCALIZATION_METHOD:-arise_slam}
 
     # Volume mounts
     volumes:
@@ -79,7 +81,7 @@ services:
       network: host
       args:
         ROS_DISTRO: ${ROS_DISTRO:-humble}
-    image: dimos_autonomy_stack:${ROS_DISTRO:-humble}
+    image: dimos_autonomy_stack:${IMAGE_TAG:-humble}
     container_name: dimos_hardware_container
     profiles: ["hardware"]
 
@@ -121,6 +123,8 @@ services:
       # DDS Configuration (FastDDS)
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
       - FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml
+      # Localization method: arise_slam (default) or fastlio
+      - LOCALIZATION_METHOD=${LOCALIZATION_METHOD:-arise_slam}
       # Mid-360 Lidar configuration
       - LIDAR_INTERFACE=${LIDAR_INTERFACE:-}
       - LIDAR_COMPUTER_IP=${LIDAR_COMPUTER_IP:-192.168.1.5}
@@ -137,6 +141,8 @@ services:
       # Unitree robot configuration
       - UNITREE_IP=${UNITREE_IP:-192.168.12.1}
       - UNITREE_CONN=${UNITREE_CONN:-LocalAP}
+      # Map path for localization mode (e.g., /ros2_ws/maps/warehouse)
+      - MAP_PATH=${MAP_PATH:-}
 
     # Volume mounts
     volumes:
@@ -151,6 +157,8 @@ services:
       - ./bagfiles:/ros2_ws/bagfiles:rw
       # Mount config files for easy editing
       - ./config:/ros2_ws/config:rw
+      # Mount maps directory for localization
+      - ./maps:/ros2_ws/maps:rw
       # Hardware-specific volumes
       - ./logs:/ros2_ws/logs:rw
       - /etc/localtime:/etc/localtime:ro
@@ -185,12 +193,25 @@ services:
         cd /ros2_ws
         source install/setup.bash
         source /opt/dimos-venv/bin/activate
-        if [ "$USE_ROUTE_PLANNER" = "true" ]; then
-            echo "Starting real robot system WITH route planner..."
-            ros2 launch vehicle_simulator system_real_robot_with_route_planner.launch.py &
+        # Launch with SLAM method based on LOCALIZATION_METHOD
+        if [ "$LOCALIZATION_METHOD" = "fastlio" ]; then
+            echo "Using FASTLIO2 localization"
+            if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+                echo "Starting real robot system WITH route planner..."
+                ros2 launch vehicle_simulator system_real_robot_with_route_planner.launch.py use_fastlio2:=true &
+            else
+                echo "Starting real robot system (base autonomy)..."
+                ros2 launch vehicle_simulator system_real_robot.launch.py use_fastlio2:=true &
+            fi
         else
-            echo "Starting real robot system (base autonomy)..."
-            ros2 launch vehicle_simulator system_real_robot.launch.py &
+            echo "Using arise_slam localization"
+            if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+                echo "Starting real robot system WITH route planner..."
+                ros2 launch vehicle_simulator system_real_robot_with_route_planner.launch.py &
+            else
+                echo "Starting real robot system (base autonomy)..."
+                ros2 launch vehicle_simulator system_real_robot.launch.py &
+            fi
         fi
         sleep 2
         if [ "$USE_RVIZ" = "true" ]; then
@@ -221,3 +242,112 @@ services:
       - NET_ADMIN  # Network interface configuration
       - SYS_ADMIN  # System operations
       - SYS_TIME   # Time synchronization
+
+  # Bagfile profile - for bagfile playback with use_sim_time=true
+  dimos_bagfile:
+    build:
+      context: ../..
+      dockerfile: docker/navigation/Dockerfile
+      network: host
+      args:
+        ROS_DISTRO: ${ROS_DISTRO:-humble}
+    image: dimos_autonomy_stack:${IMAGE_TAG:-humble}
+    container_name: dimos_bagfile_container
+    profiles: ["bagfile"]
+
+    # Shared memory size for ROS 2 FastDDS
+    shm_size: '8gb'
+
+    # Enable interactive terminal
+    stdin_open: true
+    tty: true
+
+    # Network configuration
+    network_mode: host
+
+    # Use nvidia runtime for GPU acceleration (falls back to runc if not available)
+    runtime: ${DOCKER_RUNTIME:-nvidia}
+
+    # Environment variables
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
+      # DDS Configuration (FastDDS)
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml
+      # Localization method: arise_slam (default) or fastlio
+      - LOCALIZATION_METHOD=${LOCALIZATION_METHOD:-arise_slam}
+      # Route planner option
+      - USE_ROUTE_PLANNER=${USE_ROUTE_PLANNER:-false}
+      # RViz option
+      - USE_RVIZ=${USE_RVIZ:-false}
+      # Map path for localization mode (e.g., /ros2_ws/maps/warehouse)
+      - MAP_PATH=${MAP_PATH:-}
+
+    # Volume mounts
+    volumes:
+      # X11 socket for GUI
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/root/.Xauthority:rw
+      # Mount bagfiles directory
+      - ./bagfiles:/ros2_ws/bagfiles:rw
+      # Mount config files for easy editing
+      - ./config:/ros2_ws/config:rw
+      # Mount maps directory for localization
+      - ./maps:/ros2_ws/maps:rw
+
+    # Device access (for joystick controllers)
+    devices:
+      - /dev/input:/dev/input
+      - /dev/dri:/dev/dri
+
+    # Working directory
+    working_dir: /ros2_ws
+
+    # Command - launch bagfile system (use_sim_time=true by default in launch files)
+    command:
+      - bash
+      - -c
+      - |
+        source install/setup.bash
+        echo "Bagfile playback mode (use_sim_time=true)"
+        echo ""
+        echo "Launch files ready. Play your bagfile with:"
+        echo "  ros2 bag play --clock /ros2_ws/bagfiles/<your_bag>"
+        echo ""
+        # Launch with SLAM method based on LOCALIZATION_METHOD
+        if [ "$LOCALIZATION_METHOD" = "fastlio" ]; then
+            echo "Using FASTLIO2 localization"
+            if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+                echo "Starting bagfile system WITH route planner..."
+                ros2 launch vehicle_simulator system_bagfile_with_route_planner.launch.py use_fastlio2:=true &
+            else
+                echo "Starting bagfile system (base autonomy)..."
+                ros2 launch vehicle_simulator system_bagfile.launch.py use_fastlio2:=true &
+            fi
+        else
+            echo "Using arise_slam localization"
+            if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+                echo "Starting bagfile system WITH route planner..."
+                ros2 launch vehicle_simulator system_bagfile_with_route_planner.launch.py &
+            else
+                echo "Starting bagfile system (base autonomy)..."
+                ros2 launch vehicle_simulator system_bagfile.launch.py &
+            fi
+        fi
+        sleep 2
+        if [ "$USE_RVIZ" = "true" ]; then
+            echo "Starting RViz2..."
+            if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+                ros2 run rviz2 rviz2 -d /ros2_ws/src/ros-navigation-autonomy-stack/src/route_planner/far_planner/rviz/default.rviz &
+            else
+                ros2 run rviz2 rviz2 -d /ros2_ws/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/rviz/vehicle_simulator.rviz &
+            fi
+        fi
+        # Keep container running
+        echo ""
+        echo "Container ready. Waiting for bagfile playback..."
+        wait

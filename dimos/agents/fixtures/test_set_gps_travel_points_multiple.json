@@ -5,8 +5,19 @@
       "tool_calls": [
         {
           "name": "set_gps_travel_points",
+          "args": {},
+          "id": "call_JWgodQUZD16l2tjePmTXGX7V",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "set_gps_travel_points",
           "args": {
-            "args": [
+            "points": [
               {
                 "lat": 37.782654,
                 "lon": -122.413273
@@ -21,13 +32,13 @@
               }
             ]
           },
-          "id": "call_Q09MRMEgRnJPBOGZpM0j8sL2",
+          "id": "call_e5szuuZrTdq6deN8mUM5kusY",
           "type": "tool_call"
         }
       ]
     },
     {
-      "content": "I've successfully set the travel points and will navigate to them sequentially.",
+      "content": "The GPS travel points have been successfully set in the specified order.",
       "tool_calls": []
     }
   ]

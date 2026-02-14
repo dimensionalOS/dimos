@@ -68,6 +68,14 @@ class Data3:
     pass
 
 
+class SourceModule(Module):
+    color_image: Out[Data1]
+
+
+class TargetModule(Module):
+    remapped_data: In[Data1]
+
+
 class ModuleA(Module):
     data1: Out[Data1]
     data2: Out[Data2]
@@ -282,13 +290,6 @@ def test_that_remapping_can_resolve_conflicts() -> None:
 def test_remapping() -> None:
     """Test that remapping streams works correctly."""
     pubsub.lcm.autoconf()
-
-    # Define test modules with streams that will be remapped
-    class SourceModule(Module):
-        color_image: Out[Data1]  # Will be remapped to 'remapped_data'
-
-    class TargetModule(Module):
-        remapped_data: In[Data1]  # Receives the remapped connection
 
     # Create blueprint with remapping
     blueprint_set = autoconnect(

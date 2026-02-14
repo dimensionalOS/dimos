@@ -17,7 +17,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import time
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -90,16 +90,13 @@ class Embedding(Timestamped):
         return self
 
 
-E = TypeVar("E", bound="Embedding")
-
-
-class EmbeddingModel(ABC, Generic[E]):
+class EmbeddingModel(ABC):
     """Abstract base class for embedding models supporting vision and language."""
 
     device: str
 
     @abstractmethod
-    def embed(self, *images: Image) -> E | list[E]:
+    def embed(self, *images: Image) -> Embedding | list[Embedding]:
         """
         Embed one or more images.
         Returns single Embedding if one image, list if multiple.
@@ -107,14 +104,14 @@ class EmbeddingModel(ABC, Generic[E]):
         pass
 
     @abstractmethod
-    def embed_text(self, *texts: str) -> E | list[E]:
+    def embed_text(self, *texts: str) -> Embedding | list[Embedding]:
         """
         Embed one or more text strings.
         Returns single Embedding if one text, list if multiple.
         """
         pass
 
-    def compare_one_to_many(self, query: E, candidates: list[E]) -> torch.Tensor:
+    def compare_one_to_many(self, query: Embedding, candidates: list[Embedding]) -> torch.Tensor:
         """
         Efficiently compare one query against many candidates on GPU.
 
@@ -129,7 +126,9 @@ class EmbeddingModel(ABC, Generic[E]):
         candidate_tensors = torch.stack([c.to_torch(self.device) for c in candidates])
         return query_tensor @ candidate_tensors.T
 
-    def compare_many_to_many(self, queries: list[E], candidates: list[E]) -> torch.Tensor:
+    def compare_many_to_many(
+        self, queries: list[Embedding], candidates: list[Embedding]
+    ) -> torch.Tensor:
         """
         Efficiently compare all queries against all candidates on GPU.
 
@@ -144,7 +143,9 @@ class EmbeddingModel(ABC, Generic[E]):
         candidate_tensors = torch.stack([c.to_torch(self.device) for c in candidates])
         return query_tensors @ candidate_tensors.T
 
-    def query(self, query_emb: E, candidates: list[E], top_k: int = 5) -> list[tuple[int, float]]:
+    def query(
+        self, query_emb: Embedding, candidates: list[Embedding], top_k: int = 5
+    ) -> list[tuple[int, float]]:
         """
         Find top-k most similar candidates to query (GPU accelerated).
 
@@ -160,6 +161,5 @@ class EmbeddingModel(ABC, Generic[E]):
         top_values, top_indices = similarities.topk(k=min(top_k, len(candidates)))
         return [(idx.item(), val.item()) for idx, val in zip(top_indices, top_values, strict=False)]
 
-    def warmup(self) -> None:
-        """Optional warmup method to pre-load model."""
-        pass
+
+        ...

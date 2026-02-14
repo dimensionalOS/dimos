@@ -1,28 +1,40 @@
 # =============================================================================
-# OPTIMIZED DOCKERFILE - Multi-stage build for reduced image size
+# DimOS Navigation Docker Image
 # =============================================================================
 #
-# Key optimizations:
-# 1. Multi-stage build with ros:desktop-full base image
-# 2. Multi-stage build to discard build artifacts
-# 3. No Python ML dependencies (~14 GB saved)
-# 4. COPY dimos source for editable pip install (volume-mounted at runtime overlays it)
-# 5. Clean up build directories after compile (~800 MB saved)
-# 6. Minimal apt packages with --no-install-recommends
-# 7. DDS configuration for optimized ROS 2 communication
+# Multi-stage build for ROS 2 navigation with SLAM support.
+# Includes both arise_slam and FASTLIO2 - select at runtime via LOCALIZATION_METHOD.
 #
-# Supported ROS distributions: jazzy, humble
-# Build with: docker build --build-arg ROS_DISTRO=humble ...
+# Supported configurations:
+#   - ROS distributions: humble, jazzy
+#   - SLAM methods: arise_slam (default), fastlio (set LOCALIZATION_METHOD=fastlio)
+#
+# Build:
+#   ./build.sh --humble    # Build for ROS 2 Humble
+#   ./build.sh --jazzy     # Build for ROS 2 Jazzy
+#
+# Run:
+#   ./start.sh --hardware --route-planner                          # Uses arise_slam
+#   LOCALIZATION_METHOD=fastlio ./start.sh --hardware --route-planner  # Uses FASTLIO2
 #
 # =============================================================================
 
 # Build argument for ROS distribution (default: humble)
 ARG ROS_DISTRO=humble
+ARG TARGETARCH
+
+# -----------------------------------------------------------------------------
+# Platform-specific base images
+# - amd64: Use osrf/ros desktop-full (includes Gazebo, full GUI)
+# - arm64: Use ros-base (desktop-full not available for ARM)
+# -----------------------------------------------------------------------------
+FROM osrf/ros:${ROS_DISTRO}-desktop-full AS base-amd64
+FROM ros:${ROS_DISTRO}-ros-base AS base-arm64
 
 # -----------------------------------------------------------------------------
 # STAGE 1: Build Stage - compile all C++ dependencies
 # -----------------------------------------------------------------------------
-FROM osrf/ros:${ROS_DISTRO}-desktop-full AS builder
+FROM base-${TARGETARCH} AS builder
 
 ARG ROS_DISTRO
 ENV DEBIAN_FRONTEND=noninteractive
@@ -48,11 +60,102 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-cv-bridge \
     && rm -rf /var/lib/apt/lists/*
 
+# On arm64, ros-base doesn't include rviz2 (unlike desktop-full on amd64)
+# Install it separately for building rviz plugins
+# Note: ARG must be re-declared after FROM; placed here to maximize layer caching above
+ARG TARGETARCH
+RUN if [ "${TARGETARCH}" = "arm64" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+        ros-${ROS_DISTRO}-rviz2 \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# On arm64, build open3d from source (no Linux aarch64 wheels on PyPI)
+# Cached as a separate layer; the wheel is copied to the runtime stage
+# mkdir runs unconditionally so COPY --from=builder works on all architectures
+RUN mkdir -p /opt/open3d-wheel && \
+    PYTHON_MINOR=$(python3 -c "import sys; print(sys.version_info.minor)") && \
+    if [ "${TARGETARCH}" = "arm64" ] && [ "$PYTHON_MINOR" -ge 12 ]; then \
+        echo "Building open3d from source for arm64 + Python 3.${PYTHON_MINOR} (no PyPI wheel)..." && \
+        apt-get update && apt-get install -y --no-install-recommends \
+            python3-dev \
+            python3-pip \
+            python3-setuptools \
+            python3-wheel \
+            libblas-dev \
+            liblapack-dev \
+            libgl1-mesa-dev \
+            libglib2.0-dev \
+            libxinerama-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxi-dev \
+            gfortran \
+        && rm -rf /var/lib/apt/lists/* && \
+        cd /tmp && \
+        git clone --depth 1 --branch v0.19.0 https://github.com/isl-org/Open3D.git && \
+        cd Open3D && \
+        util/install_deps_ubuntu.sh assume-yes && \
+        mkdir build && cd build && \
+        cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_CUDA_MODULE=OFF \
+            -DBUILD_GUI=OFF \
+            -DBUILD_TENSORFLOW_OPS=OFF \
+            -DBUILD_PYTORCH_OPS=OFF \
+            -DBUILD_UNIT_TESTS=OFF \
+            -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_WEBRTC=OFF && \
+        make -j$(($(nproc) > 4 ? 4 : $(nproc))) && \
+        make pip-package -j$(($(nproc) > 4 ? 4 : $(nproc))) && \
+        mkdir -p /opt/open3d-wheel && \
+        cp lib/python_package/pip_package/open3d*.whl /opt/open3d-wheel/ && \
+        cd / && rm -rf /tmp/Open3D; \
+    fi
+
+# On arm64, build or-tools from source (pre-built binaries are x86_64 only)
+# This is cached as a separate layer since it takes significant time to build
+ENV OR_TOOLS_VERSION=9.8
+RUN if [ "${TARGETARCH}" = "arm64" ]; then \
+        echo "Building or-tools v${OR_TOOLS_VERSION} from source for arm64..." && \
+        apt-get update && apt-get install -y --no-install-recommends \
+            lsb-release \
+            wget \
+        && rm -rf /var/lib/apt/lists/* && \
+        cd /tmp && \
+        wget -q https://github.com/google/or-tools/archive/refs/tags/v${OR_TOOLS_VERSION}.tar.gz && \
+        tar xzf v${OR_TOOLS_VERSION}.tar.gz && \
+        cd or-tools-${OR_TOOLS_VERSION} && \
+        cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_DEPS=ON \
+            -DBUILD_SAMPLES=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_FLATZINC=OFF \
+            -DUSE_SCIP=OFF \
+            -DUSE_COINOR=OFF && \
+        cmake --build build --config Release -j$(($(nproc) > 4 ? 4 : $(nproc))) && \
+        cmake --install build --prefix /opt/or-tools && \
+        rm -rf /tmp/or-tools-${OR_TOOLS_VERSION} /tmp/v${OR_TOOLS_VERSION}.tar.gz; \
+    fi
+
 # Create workspace
 RUN mkdir -p ${WORKSPACE}/src
 
 # Copy autonomy stack source
 COPY docker/navigation/ros-navigation-autonomy-stack ${WORKSPACE}/src/ros-navigation-autonomy-stack
+
+# On arm64, replace pre-built x86_64 or-tools with arm64 built version
+RUN if [ "${TARGETARCH}" = "arm64" ] && [ -d "/opt/or-tools" ]; then \
+        echo "Replacing x86_64 or-tools with arm64 build..." && \
+        OR_TOOLS_DIR=${WORKSPACE}/src/ros-navigation-autonomy-stack/src/exploration_planner/tare_planner/or-tools && \
+        rm -rf ${OR_TOOLS_DIR}/lib/*.so* ${OR_TOOLS_DIR}/lib/*.a && \
+        cp -r /opt/or-tools/lib/* ${OR_TOOLS_DIR}/lib/ && \
+        rm -rf ${OR_TOOLS_DIR}/include && \
+        cp -r /opt/or-tools/include ${OR_TOOLS_DIR}/ && \
+        ldconfig; \
+    fi
 
 # Compatibility fix: In Humble, cv_bridge uses .h extension, but Jazzy uses .hpp
 # Create a symlink so code written for Jazzy works on Humble
@@ -91,22 +194,26 @@ RUN cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam 
     make -j$(nproc) && make install && ldconfig && \
     rm -rf ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam/build
 
-# Build ROS workspace (no --symlink-install for multi-stage build compatibility)
+# Build ROS workspace with both SLAM systems (no --symlink-install for multi-stage build compatibility)
 RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     cd ${WORKSPACE} && \
+    echo 'Building with both arise_slam and FASTLIO2' && \
     colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release"
 
 # -----------------------------------------------------------------------------
 # STAGE 2: Runtime Stage - minimal image for running
 # -----------------------------------------------------------------------------
 ARG ROS_DISTRO
-FROM osrf/ros:${ROS_DISTRO}-desktop-full AS runtime
+ARG TARGETARCH
+FROM base-${TARGETARCH} AS runtime
 
 ARG ROS_DISTRO
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ROS_DISTRO=${ROS_DISTRO}
 ENV WORKSPACE=/ros2_ws
 ENV DIMOS_PATH=/workspace/dimos
+# LOCALIZATION_METHOD: arise_slam (default) or fastlio
+ENV LOCALIZATION_METHOD=arise_slam
 
 # DDS Configuration - Use FastDDS (default ROS 2 middleware)
 ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
@@ -120,6 +227,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-foxglove-bridge \
     ros-${ROS_DISTRO}-rviz2 \
     ros-${ROS_DISTRO}-rqt* \
+    ros-${ROS_DISTRO}-joy \
     # DDS middleware (FastDDS is default, just ensure it's installed)
     ros-${ROS_DISTRO}-rmw-fastrtps-cpp \
     # Runtime libraries
@@ -164,8 +272,25 @@ COPY --from=builder ${WORKSPACE}/install ${WORKSPACE}/install
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/rviz
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/route_planner/far_planner/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/route_planner/far_planner/rviz
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/exploration_planner/tare_planner/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/exploration_planner/tare_planner/rviz
-COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config
+# Copy SLAM config files based on SLAM_TYPE
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config
+
+# Copy config files for both SLAM systems
+RUN --mount=from=builder,source=${WORKSPACE}/src/ros-navigation-autonomy-stack/src,target=/tmp/src \
+    echo "Copying arise_slam configs" && \
+    mkdir -p ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360 && \
+    cp -r /tmp/src/slam/arise_slam_mid360/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/ 2>/dev/null || true && \
+    echo "Copying FASTLIO2 configs" && \
+    mkdir -p ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2 && \
+    for pkg in fastlio2 localizer pgo hba; do \
+        if [ -d "/tmp/src/slam/FASTLIO2_ROS2/$pkg/config" ]; then \
+            mkdir -p ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/$pkg && \
+            cp -r /tmp/src/slam/FASTLIO2_ROS2/$pkg/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/$pkg/; \
+        fi; \
+        if [ -d "/tmp/src/slam/FASTLIO2_ROS2/$pkg/rviz" ]; then \
+            cp -r /tmp/src/slam/FASTLIO2_ROS2/$pkg/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/$pkg/; \
+        fi; \
+    done
 
 # Copy simulation shell scripts (real robot mode uses volume mount)
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/system_simulation*.sh ${WORKSPACE}/src/ros-navigation-autonomy-stack/
@@ -234,6 +359,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python3 -m venv /opt/dimos-venv && \
     /opt/dimos-venv/bin/pip install --no-cache-dir \
     pyyaml
+
+# On arm64, install open3d wheel built from source in the builder stage
+COPY --from=builder /opt/open3d-wheel /opt/open3d-wheel
+ARG TARGETARCH
+RUN if [ "${TARGETARCH}" = "arm64" ] && ls /opt/open3d-wheel/open3d*.whl 1>/dev/null 2>&1; then \
+        echo "Installing open3d from pre-built arm64 wheel..." && \
+        /opt/dimos-venv/bin/pip install --no-cache-dir /opt/open3d-wheel/open3d*.whl && \
+        rm -rf /opt/open3d-wheel; \
+    fi
 
 # Copy dimos source and install as editable package
 # The volume mount at runtime will overlay /workspace/dimos, but the editable

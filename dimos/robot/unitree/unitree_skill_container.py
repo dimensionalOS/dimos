@@ -21,16 +21,163 @@ import time
 
 from unitree_webrtc_connect.constants import RTC_TOPIC
 
+from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.skill_module import SkillModule
+from dimos.core.module import Module
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.navigation.base import NavigationState
-from dimos.protocol.skill.skill import skill
-from dimos.protocol.skill.type import Reducer, Stream
-from dimos.robot.unitree.unitree_skills import UNITREE_WEBRTC_CONTROLS
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+
+UNITREE_WEBRTC_CONTROLS: list[tuple[str, int, str]] = [
+    # ("Damp", 1001, "Lowers the robot to the ground fully."),
+    (
+        "BalanceStand",
+        1002,
+        "Activates a mode that maintains the robot in a balanced standing position.",
+    ),
+    (
+        "StandUp",
+        1004,
+        "Commands the robot to transition from a sitting or prone position to a standing posture.",
+    ),
+    (
+        "StandDown",
+        1005,
+        "Instructs the robot to move from a standing position to a sitting or prone posture.",
+    ),
+    (
+        "RecoveryStand",
+        1006,
+        "Recovers the robot to a state from which it can take more commands. Useful to run after multiple dynamic commands like front flips, Must run after skills like sit and jump and standup.",
+    ),
+    ("Sit", 1009, "Commands the robot to sit down from a standing or moving stance."),
+    (
+        "RiseSit",
+        1010,
+        "Commands the robot to rise back to a standing position from a sitting posture.",
+    ),
+    (
+        "SwitchGait",
+        1011,
+        "Switches the robot's walking pattern or style dynamically, suitable for different terrains or speeds.",
+    ),
+    ("Trigger", 1012, "Triggers a specific action or custom routine programmed into the robot."),
+    (
+        "BodyHeight",
+        1013,
+        "Adjusts the height of the robot's body from the ground, useful for navigating various obstacles.",
+    ),
+    (
+        "FootRaiseHeight",
+        1014,
+        "Controls how high the robot lifts its feet during movement, which can be adjusted for different surfaces.",
+    ),
+    (
+        "SpeedLevel",
+        1015,
+        "Sets or adjusts the speed at which the robot moves, with various levels available for different operational needs.",
+    ),
+    (
+        "Hello",
+        1016,
+        "Performs a greeting action, which could involve a wave or other friendly gesture.",
+    ),
+    ("Stretch", 1017, "Engages the robot in a stretching routine."),
+    (
+        "TrajectoryFollow",
+        1018,
+        "Directs the robot to follow a predefined trajectory, which could involve complex paths or maneuvers.",
+    ),
+    (
+        "ContinuousGait",
+        1019,
+        "Enables a mode for continuous walking or running, ideal for long-distance travel.",
+    ),
+    ("Content", 1020, "To display or trigger when the robot is happy."),
+    ("Wallow", 1021, "The robot falls onto its back and rolls around."),
+    (
+        "Dance1",
+        1022,
+        "Performs a predefined dance routine 1, programmed for entertainment or demonstration.",
+    ),
+    ("Dance2", 1023, "Performs another variant of a predefined dance routine 2."),
+    ("GetBodyHeight", 1024, "Retrieves the current height of the robot's body from the ground."),
+    (
+        "GetFootRaiseHeight",
+        1025,
+        "Retrieves the current height at which the robot's feet are being raised during movement.",
+    ),
+    (
+        "GetSpeedLevel",
+        1026,
+        "Retrieves the current speed level setting of the robot.",
+    ),
+    (
+        "SwitchJoystick",
+        1027,
+        "Switches the robot's control mode to respond to joystick input for manual operation.",
+    ),
+    (
+        "Pose",
+        1028,
+        "Commands the robot to assume a specific pose or posture as predefined in its programming.",
+    ),
+    ("Scrape", 1029, "The robot performs a scraping motion."),
+    (
+        "FrontFlip",
+        1030,
+        "Commands the robot to perform a front flip, showcasing its agility and dynamic movement capabilities.",
+    ),
+    (
+        "FrontJump",
+        1031,
+        "Instructs the robot to jump forward, demonstrating its explosive movement capabilities.",
+    ),
+    (
+        "FrontPounce",
+        1032,
+        "Commands the robot to perform a pouncing motion forward.",
+    ),
+    (
+        "WiggleHips",
+        1033,
+        "The robot performs a hip wiggling motion, often used for entertainment or demonstration purposes.",
+    ),
+    (
+        "GetState",
+        1034,
+        "Retrieves the current operational state of the robot, including its mode, position, and status.",
+    ),
+    (
+        "EconomicGait",
+        1035,
+        "Engages a more energy-efficient walking or running mode to conserve battery life.",
+    ),
+    ("FingerHeart", 1036, "Performs a finger heart gesture while on its hind legs."),
+    (
+        "Handstand",
+        1301,
+        "Commands the robot to perform a handstand, demonstrating balance and control.",
+    ),
+    (
+        "CrossStep",
+        1302,
+        "Commands the robot to perform cross-step movements.",
+    ),
+    (
+        "OnesidedStep",
+        1303,
+        "Commands the robot to perform one-sided step movements.",
+    ),
+    ("Bound", 1304, "Commands the robot to perform bounding movements."),
+    ("MoonWalk", 1305, "Commands the robot to perform a moonwalk motion."),
+    ("LeftFlip", 1042, "Executes a flip towards the left side."),
+    ("RightFlip", 1043, "Performs a flip towards the right side."),
+    ("Backflip", 1044, "Executes a backflip, a complex and dynamic maneuver."),
+]
 
 
 _UNITREE_COMMANDS = {
@@ -40,7 +187,7 @@ _UNITREE_COMMANDS = {
 }
 
 
-class UnitreeSkillContainer(SkillModule):
+class UnitreeSkillContainer(Module):
     """Container for Unitree Go2 robot skills using the new framework."""
 
     rpc_calls: list[str] = [
@@ -61,7 +208,7 @@ class UnitreeSkillContainer(SkillModule):
     def stop(self) -> None:
         super().stop()
 
-    @skill()
+    @skill
     def relative_move(self, forward: float = 0.0, left: float = 0.0, degrees: float = 0.0) -> str:
         """Move the robot relative to its current position.
 
@@ -132,7 +279,7 @@ class UnitreeSkillContainer(SkillModule):
 
         return PoseStamped(position=goal_position, orientation=goal_orientation)
 
-    @skill()
+    @skill
     def wait(self, seconds: float) -> str:
         """Wait for a specified amount of time.
 
@@ -142,15 +289,12 @@ class UnitreeSkillContainer(SkillModule):
         time.sleep(seconds)
         return f"Wait completed with length={seconds}s"
 
-    @skill(stream=Stream.passive, reducer=Reducer.latest, hide_skill=True)  # type: ignore[arg-type]
-    def current_time(self):  # type: ignore[no-untyped-def]
-        """Provides current time implicitly, don't call this skill directly."""
-        print("Starting current_time skill")
-        while True:
-            yield str(datetime.datetime.now())
-            time.sleep(1)
+    @skill
+    def current_time(self) -> str:
+        """Provides current time."""
+        return str(datetime.datetime.now())
 
-    @skill()
+    @skill
     def execute_sport_command(self, command_name: str) -> str:
         try:
             publish_request = self.get_rpc_calls("GO2Connection.publish_request")

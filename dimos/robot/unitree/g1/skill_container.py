@@ -19,10 +19,10 @@ Dynamically generates skills for G1 humanoid robot including arm controls and mo
 
 import difflib
 
+from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.skill_module import SkillModule
+from dimos.core.module import Module
 from dimos.msgs.geometry_msgs import Twist, Vector3
-from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -61,7 +61,7 @@ _MODE_COMMANDS: dict[str, tuple[int, str]] = {
 }
 
 
-class UnitreeG1SkillContainer(SkillModule):
+class UnitreeG1SkillContainer(Module):
     rpc_calls: list[str] = [
         "G1Connection.move",
         "G1Connection.publish_request",
@@ -75,7 +75,7 @@ class UnitreeG1SkillContainer(SkillModule):
     def stop(self) -> None:
         super().stop()
 
-    @skill()
+    @skill
     def move(self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0) -> str:
         """Move the robot using direct velocity commands. Determine duration required based on user distance instructions.
 
@@ -95,11 +95,11 @@ class UnitreeG1SkillContainer(SkillModule):
         move_rpc(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 
-    @skill()
+    @skill
     def execute_arm_command(self, command_name: str) -> str:
         return self._execute_g1_command(_ARM_COMMANDS, 7106, "rt/api/arm/request", command_name)
 
-    @skill()
+    @skill
     def execute_mode_command(self, command_name: str) -> str:
         return self._execute_g1_command(_MODE_COMMANDS, 7101, "rt/api/sport/request", command_name)
 

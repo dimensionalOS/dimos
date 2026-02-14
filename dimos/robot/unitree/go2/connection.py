@@ -22,9 +22,9 @@ from reactivex.observable import Observable
 import rerun.blueprint as rrb
 
 from dimos import spec
+from dimos.agents.annotation import skill
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.skill_module import SkillModule
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
@@ -34,12 +34,10 @@ from dimos.msgs.geometry_msgs import (
 )
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.sensor_msgs.Image import ImageFormat
-from dimos.protocol.skill.skill import skill
-from dimos.protocol.skill.type import Output
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
-from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
+from dimos.utils.testing.replay import TimedSensorReplay, TimedSensorStorage
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +140,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
         return {"status": "ok", "message": "Fake publish"}
 
 
-class GO2Connection(SkillModule, spec.Camera, spec.Pointcloud):
+class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     cmd_vel: In[Twist]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
@@ -194,13 +192,13 @@ class GO2Connection(SkillModule, spec.Camera, spec.Pointcloud):
     @rpc
     def record(self, recording_name: str) -> None:
         lidar_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/lidar")  # type: ignore[type-arg]
-        lidar_store.save_stream(self.connection.lidar_stream()).subscribe(lambda x: x)  # type: ignore[arg-type]
+        lidar_store.consume_stream(self.connection.lidar_stream())
 
         odom_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/odom")  # type: ignore[type-arg]
-        odom_store.save_stream(self.connection.odom_stream()).subscribe(lambda x: x)  # type: ignore[arg-type]
+        odom_store.consume_stream(self.connection.odom_stream())
 
         video_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/video")  # type: ignore[type-arg]
-        video_store.save_stream(self.connection.video_stream()).subscribe(lambda x: x)  # type: ignore[arg-type]
+        video_store.consume_stream(self.connection.video_stream())
 
     @rpc
     def start(self) -> None:
@@ -299,7 +297,7 @@ class GO2Connection(SkillModule, spec.Camera, spec.Pointcloud):
         """
         return self.connection.publish_request(topic, data)
 
-    @skill(output=Output.image)
+    @skill
     def observe(self) -> Image | None:
         """Returns the latest video frame from the robot camera. Use this skill for any visual world queries.
 

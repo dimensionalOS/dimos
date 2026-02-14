@@ -21,17 +21,14 @@ import pytest
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
 @pytest.mark.e2e
 def test_dimos_skills(lcm_spy, start_blueprint, human_input) -> None:
-    lcm_spy.save_topic("/rpc/DemoCalculatorSkill/set_AgentSpec_register_skills/res")
-    lcm_spy.save_topic("/rpc/HumanInput/start/res")
     lcm_spy.save_topic("/agent")
+    lcm_spy.save_topic("/rpc/Agent/on_system_modules/res")
     lcm_spy.save_topic("/rpc/DemoCalculatorSkill/sum_numbers/req")
     lcm_spy.save_topic("/rpc/DemoCalculatorSkill/sum_numbers/res")
 
     start_blueprint("run", "demo-skill")
 
-    lcm_spy.wait_for_saved_topic("/rpc/DemoCalculatorSkill/set_AgentSpec_register_skills/res")
-    lcm_spy.wait_for_saved_topic("/rpc/HumanInput/start/res")
-    lcm_spy.wait_for_saved_topic_content("/agent", b"AIMessage")
+    lcm_spy.wait_for_saved_topic("/rpc/Agent/on_system_modules/res")
 
     human_input("what is 52983 + 587237")
 

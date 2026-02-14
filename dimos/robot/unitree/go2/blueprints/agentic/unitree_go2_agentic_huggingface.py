@@ -13,18 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.agent import llm_agent
-from dimos.agents.spec import Provider
+from dimos.agents.agent import agent
 from dimos.core.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.agentic._common_agentic import _common_agentic
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial import unitree_go2_spatial
 
 unitree_go2_agentic_huggingface = autoconnect(
     unitree_go2_spatial,
-    llm_agent(
-        model="Qwen/Qwen2.5-1.5B-Instruct",
-        provider=Provider.HUGGINGFACE,  # type: ignore[attr-defined]
-    ),
+    agent(model="huggingface:Qwen/Qwen2.5-1.5B-Instruct"),
     _common_agentic,
 )
 

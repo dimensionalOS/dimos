@@ -1,0 +1,22 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "add",
+          "args": {
+            "x": 33333,
+            "y": 100
+          },
+          "id": "call_ZlA2HzNAuHF0H52CKQIPX9Te",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "The result of 33333 + 100 is 33433.",
+      "tool_calls": []
+    }
+  ]
+}

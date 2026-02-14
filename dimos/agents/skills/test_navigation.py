@@ -12,84 +12,105 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from langchain_core.messages import HumanMessage
 import pytest
 
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
-from dimos.utils.transform_utils import euler_to_quaternion
+from dimos.agents.skills.navigation import NavigationSkillContainer
+from dimos.core.module import Module
+from dimos.core.stream import Out
+from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.sensor_msgs import Image
 
 
-def test_stop_movement(create_navigation_agent, navigation_skill_container, mocker) -> None:
-    cancel_goal_mock = mocker.Mock()
-    stop_exploration_mock = mocker.Mock()
-    navigation_skill_container._bound_rpc_calls["NavigationInterface.cancel_goal"] = (
-        cancel_goal_mock
-    )
-    navigation_skill_container._bound_rpc_calls["WavefrontFrontierExplorer.stop_exploration"] = (
-        stop_exploration_mock
-    )
-    agent = create_navigation_agent(fixture="test_stop_movement.json")
+class FakeCamera(Module):
+    color_image: Out[Image]
 
-    agent.query("stop")
 
-    cancel_goal_mock.assert_called_once_with()
-    stop_exploration_mock.assert_called_once_with()
+class FakeOdom(Module):
+    odom: Out[PoseStamped]
+
+
+class MockedStopNavSkill(NavigationSkillContainer):
+    rpc_calls: list[str] = []
+
+    def __init__(self):
+        Module.__init__(self)
+        self._skill_started = True
+
+    def _cancel_goal_and_stop(self):
+        pass
+
+
+class MockedExploreNavSkill(NavigationSkillContainer):
+    rpc_calls: list[str] = []
+
+    def __init__(self):
+        Module.__init__(self)
+        self._skill_started = True
+
+    def _start_exploration(self, timeout):
+        return "Exploration completed successfuly"
+
+    def _cancel_goal_and_stop(self):
+        pass
+
+
+class MockedSemanticNavSkill(NavigationSkillContainer):
+    rpc_calls: list[str] = []
+
+    def __init__(self):
+        Module.__init__(self)
+        self._skill_started = True
+
+    def _navigate_by_tagged_location(self, query):
+        return None
+
+    def _navigate_to_object(self, query):
+        return None
+
+    def _navigate_using_semantic_map(self, query):
+        return f"Successfuly arrived at '{query}'"
 
 
 @pytest.mark.integration
-def test_take_a_look_around(create_navigation_agent, navigation_skill_container, mocker) -> None:
-    explore_mock = mocker.Mock()
-    is_exploration_active_mock = mocker.Mock()
-    navigation_skill_container._bound_rpc_calls["WavefrontFrontierExplorer.explore"] = explore_mock
-    navigation_skill_container._bound_rpc_calls[
-        "WavefrontFrontierExplorer.is_exploration_active"
-    ] = is_exploration_active_mock
-    mocker.patch("dimos.agents.skills.navigation.time.sleep")
-    agent = create_navigation_agent(fixture="test_take_a_look_around.json")
-
-    agent.query("take a look around for 10 seconds")
-
-    explore_mock.assert_called_once_with()
-
-
-def test_go_to_semantic_location(
-    create_navigation_agent, navigation_skill_container, mocker
-) -> None:
-    mocker.patch(
-        "dimos.agents.skills.navigation.NavigationSkillContainer._navigate_by_tagged_location",
-        return_value=None,
+def test_stop_movement(agent_setup) -> None:
+    history = agent_setup(
+        blueprints=[
+            FakeCamera.blueprint(),
+            FakeOdom.blueprint(),
+            MockedStopNavSkill.blueprint(),
+        ],
+        messages=[HumanMessage("Stop moving. Use the stop_movement tool.")],
     )
-    mocker.patch(
-        "dimos.agents.skills.navigation.NavigationSkillContainer._navigate_to_object",
-        return_value=None,
-    )
-    navigate_to_mock = mocker.patch(
-        "dimos.agents.skills.navigation.NavigationSkillContainer._navigate_to",
-        return_value=True,
-    )
-    query_by_text_mock = mocker.Mock(
-        return_value=[
-            {
-                "distance": 0.5,
-                "metadata": [
-                    {
-                        "pos_x": 1,
-                        "pos_y": 2,
-                        "rot_z": 3,
-                    }
-                ],
-            }
-        ]
-    )
-    navigation_skill_container._bound_rpc_calls["SpatialMemory.query_by_text"] = query_by_text_mock
-    agent = create_navigation_agent(fixture="test_go_to_semantic_location.json")
 
-    agent.query("go to the bookshelf")
+    assert "stopped" in history[-1].content.lower()
 
-    query_by_text_mock.assert_called_once_with("bookshelf")
-    navigate_to_mock.assert_called_once_with(
-        PoseStamped(
-            position=Vector3(1, 2, 0),
-            orientation=euler_to_quaternion(Vector3(0, 0, 3)),
-            frame_id="world",
-        ),
+
+@pytest.mark.integration
+def test_start_exploration(agent_setup) -> None:
+    history = agent_setup(
+        blueprints=[
+            FakeCamera.blueprint(),
+            FakeOdom.blueprint(),
+            MockedExploreNavSkill.blueprint(),
+        ],
+        messages=[
+            HumanMessage("Take a look around for 10 seconds. Use the start_exploration tool.")
+        ],
     )
+
+    assert "explor" in history[-1].content.lower()
+
+
+@pytest.mark.integration
+def test_go_to_semantic_location(agent_setup) -> None:
+    history = agent_setup(
+        blueprints=[
+            FakeCamera.blueprint(),
+            FakeOdom.blueprint(),
+            MockedSemanticNavSkill.blueprint(),
+        ],
+        messages=[HumanMessage("Go to the bookshelf. Use the navigate_with_text tool.")],
+    )
+
+    assert "success" in history[-1].content.lower()

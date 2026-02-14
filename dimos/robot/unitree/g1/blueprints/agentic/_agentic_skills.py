@@ -15,15 +15,13 @@
 
 """Agentic skills used by higher-level G1 blueprints."""
 
-from dimos.agents.agent import llm_agent
-from dimos.agents.cli.human import human_input
+from dimos.agents.agent import agent
 from dimos.agents.skills.navigation import navigation_skill
 from dimos.core.blueprints import autoconnect
 from dimos.robot.unitree.g1.skill_container import g1_skills
 
 _agentic_skills = autoconnect(
-    llm_agent(),
-    human_input(),
+    agent(),
     navigation_skill(),
     g1_skills(),
 )

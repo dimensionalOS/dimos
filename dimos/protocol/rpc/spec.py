@@ -41,6 +41,8 @@ class RPCClient(Protocol):
 
     def call(self, name: str, arguments: Args, cb: Callable | None) -> Callable[[], Any] | None: ...  # type: ignore[type-arg]
 
+    def call_nowait(self, name: str, arguments: Args) -> None: ...
+
     # we expect to crash if we don't get a return value after 10 seconds
     # but callers can override this timeout for extra long functions
     def call_sync(

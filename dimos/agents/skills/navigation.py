@@ -15,8 +15,11 @@
 import time
 from typing import Any
 
+from reactivex.disposable import Disposable
+
+from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.skill_module import SkillModule
+from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.models.qwen.video_query import BBox
 from dimos.models.vl.qwen import QwenVlModel
@@ -25,14 +28,13 @@ from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.visual.query import get_object_bbox_from_image
-from dimos.protocol.skill.skill import skill
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-class NavigationSkillContainer(SkillModule):
+class NavigationSkillContainer(Module):
     _latest_image: Image | None = None
     _latest_odom: PoseStamped | None = None
     _skill_started: bool = False
@@ -64,8 +66,8 @@ class NavigationSkillContainer(SkillModule):
 
     @rpc
     def start(self) -> None:
-        self._disposables.add(self.color_image.subscribe(self._on_color_image))  # type: ignore[arg-type]
-        self._disposables.add(self.odom.subscribe(self._on_odom))  # type: ignore[arg-type]
+        self._disposables.add(Disposable(self.color_image.subscribe(self._on_color_image)))
+        self._disposables.add(Disposable(self.odom.subscribe(self._on_odom)))
         self._skill_started = True
 
     @rpc
@@ -78,7 +80,7 @@ class NavigationSkillContainer(SkillModule):
     def _on_odom(self, odom: PoseStamped) -> None:
         self._latest_odom = odom
 
-    @skill()
+    @skill
     def tag_location(self, location_name: str) -> str:
         """Tag this location in the spatial memory with a name.
 
@@ -113,7 +115,7 @@ class NavigationSkillContainer(SkillModule):
         logger.info(f"Tagged {location}")
         return f"Tagged '{location_name}': ({position.x},{position.y})."
 
-    @skill()
+    @skill
     def navigate_with_text(self, query: str) -> str:
         """Navigate to a location by querying the existing semantic map using natural language.
 
@@ -297,12 +299,12 @@ class NavigationSkillContainer(SkillModule):
 
         return f"Successfuly arrived at '{query}'"
 
-    @skill()
+    @skill
     def follow_human(self, person: str) -> str:
         """Follow a specific person"""
         return "Not implemented yet."
 
-    @skill()
+    @skill
     def stop_movement(self) -> str:
         """Immediatly stop moving."""
 
@@ -329,7 +331,7 @@ class NavigationSkillContainer(SkillModule):
         cancel_goal_rpc()
         return stop_exploration_rpc()  # type: ignore[no-any-return]
 
-    @skill()
+    @skill
     def start_exploration(self, timeout: float = 240.0) -> str:
         """A skill that performs autonomous frontier exploration.
 

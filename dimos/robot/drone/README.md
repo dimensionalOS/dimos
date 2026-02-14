@@ -265,9 +265,9 @@ Connect Foxglove Studio to `ws://localhost:8765` to see:
 ## Development
 
 ### Adding New Skills
-Add to `connection_module.py` with `@skill()` decorator:
+Add to `connection_module.py` with `@skill` decorator:
 ```python
-@skill()
+@skill
 def my_skill(self, param: float) -> str:
     """Skill description for LLM."""
     # Implementation

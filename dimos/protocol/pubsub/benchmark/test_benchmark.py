@@ -82,6 +82,7 @@ def benchmark_results() -> Generator[BenchmarkResults, None, None]:
     results.print_heatmap()
     results.print_bandwidth_heatmap()
     results.print_latency_heatmap()
+    results.print_loss_heatmap()
 
 
 @pytest.mark.tool

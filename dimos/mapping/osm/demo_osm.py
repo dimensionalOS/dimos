@@ -13,20 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dotenv import load_dotenv
-
-from dimos.agents.agent import llm_agent
-from dimos.agents.cli.human import human_input
+from dimos.agents.agent import agent
 from dimos.agents.skills.demo_robot import demo_robot
 from dimos.agents.skills.osm import osm_skill
 from dimos.core.blueprints import autoconnect
 
-load_dotenv()
-
-
 demo_osm = autoconnect(
     demo_robot(),
     osm_skill(),
-    human_input(),
-    llm_agent(),
+    agent(),
 )

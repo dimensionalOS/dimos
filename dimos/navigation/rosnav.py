@@ -18,7 +18,6 @@ NavBot class for navigation-related functionality.
 Encapsulates ROS transport and topic remapping for Unitree robots.
 """
 
-from collections.abc import Generator
 from dataclasses import dataclass, field
 import logging
 import threading
@@ -28,7 +27,7 @@ from reactivex import operators as ops
 from reactivex.subject import Subject
 
 from dimos import spec
-from dimos.agents import Reducer, Stream, skill  # type: ignore[attr-defined]
+from dimos.agents.annotation import skill
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core._dask_exports import DimosCluster
 from dimos.core.core import rpc
@@ -48,8 +47,6 @@ from dimos.msgs.sensor_msgs import Joy, PointCloud2
 from dimos.msgs.std_msgs import Bool, Int8
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.base import NavigationInterface, NavigationState
-from dimos.protocol.skill.skill import skill
-from dimos.protocol.skill.type import Reducer, Stream
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 
@@ -211,21 +208,8 @@ class ROSNav(
         self.ros_joy.publish(joy_msg)
         logger.info("Setting autonomy mode via Joy message")
 
-    @skill(stream=Stream.passive, reducer=Reducer.latest)  # type: ignore[arg-type]
-    def current_position(self):  # type: ignore[no-untyped-def]
-        """passively stream the current position of the robot every second"""
-        if self._current_position_running:
-            return "already running"
-        while True:
-            self._current_position_running = True
-            time.sleep(1.0)
-            tf = self.tf.get("map", "base_link")
-            if not tf:
-                continue
-            yield f"current position {tf.translation.x}, {tf.translation.y}"
-
-    @skill(stream=Stream.call_agent, reducer=Reducer.string)  # type: ignore[untyped-decorator]
-    def goto(self, x: float, y: float):  # type: ignore[no-untyped-def]
+    @skill
+    def goto(self, x: float, y: float) -> str:
         """
         move the robot in relative coordinates
         x is forward, y is left
@@ -239,12 +223,11 @@ class ROSNav(
             ts=time.time(),
         )
 
-        yield "moving, please wait..."
         self.navigate_to(pose_to)
-        yield "arrived"
+        return "arrived"
 
-    @skill(stream=Stream.call_agent, reducer=Reducer.string)  # type: ignore[untyped-decorator]
-    def goto_global(self, x: float, y: float) -> Generator[str, None, None]:
+    @skill
+    def goto_global(self, x: float, y: float) -> str:
         """
         go to coordinates x,y in the map frame
         0,0 is your starting position
@@ -256,13 +239,9 @@ class ROSNav(
             orientation=Quaternion(0.0, 0.0, 0.0, 0.0),
         )
 
-        pos = self.tf.get("base_link", "map").translation
-
-        yield f"moving from {pos.x:.2f}, {pos.y:.2f} to {x:.2f}, {y:.2f}, please wait..."
-
         self.navigate_to(target)
 
-        yield "arrived to {x:.2f}, {y:.2f}"
+        return f"arrived to {x:.2f}, {y:.2f}"
 
     @rpc
     def navigate_to(self, pose: PoseStamped, timeout: float = 60.0) -> bool:

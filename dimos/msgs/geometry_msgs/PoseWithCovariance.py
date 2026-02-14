@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from dimos_lcm.geometry_msgs import (
     PoseWithCovariance as LCMPoseWithCovariance,
@@ -38,6 +38,7 @@ PoseWithCovarianceConvertable: TypeAlias = (
 
 class PoseWithCovariance(LCMPoseWithCovariance):  # type: ignore[misc]
     pose: Pose
+    covariance: np.ndarray[tuple[int], np.dtype[np.floating[Any]]]
     msg_name = "geometry_msgs.PoseWithCovariance"
 
     @dispatch

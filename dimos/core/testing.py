@@ -79,6 +79,5 @@ class MockRobotClient(Module):
                 self.odometry.publish(odom)
 
                 lidarmsg = next(lidariter)
-                lidarmsg.pubtime = time.perf_counter()  # type: ignore[union-attr]
                 self.lidar.publish(lidarmsg)
                 time.sleep(0.1)

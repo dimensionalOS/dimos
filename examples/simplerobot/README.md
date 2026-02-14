@@ -11,7 +11,7 @@ A minimal virtual robot for testing and development. It implements some of the s
 
 Physical robots typically publish multiple poses in a relationship as `TransformStamped` in a TF tree, while SimpleRobot publishes `PoseStamped` directly for simplicity.
 
-For details on this check [Transforms](/docs/api/transforms.md)
+For details on this check [Transforms](/docs/usage/transforms.md)
 
 ## Usage
 

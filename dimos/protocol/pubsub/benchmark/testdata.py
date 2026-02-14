@@ -14,12 +14,20 @@
 
 from collections.abc import Generator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.benchmark.type import Case
+
+try:
+    import cyclonedds as _cyclonedds  # noqa: F401
+
+    DDS_AVAILABLE = True
+except ImportError:
+    DDS_AVAILABLE = False
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.memory import Memory
 from dimos.protocol.pubsub.impl.shmpubsub import (
@@ -172,6 +180,67 @@ testcases.append(
         msg_gen=lcm_msggen,  # Reuse the LCM message generator
     )
 )
+
+if DDS_AVAILABLE:
+    from cyclonedds.idl import IdlStruct
+    from cyclonedds.idl.types import sequence, uint8
+    from cyclonedds.qos import Policy, Qos
+
+    from dimos.protocol.pubsub.impl.ddspubsub import (
+        DDS,
+        Topic as DDSTopic,
+    )
+
+    @dataclass
+    class DDSBenchmarkData(IdlStruct):  # type: ignore[misc]
+        """DDS message type for benchmarking with variable-size byte payload."""
+
+        data: sequence[uint8]  # type: ignore[type-arg]
+
+    @contextmanager
+    def dds_high_throughput_pubsub_channel() -> Generator[DDS, None, None]:
+        """DDS with high-throughput QoS preset."""
+        HIGH_THROUGHPUT_QOS = Qos(
+            Policy.Reliability.BestEffort,
+            Policy.History.KeepLast(depth=1),
+            Policy.Durability.Volatile,
+        )
+        dds_pubsub = DDS(qos=HIGH_THROUGHPUT_QOS)
+        dds_pubsub.start()
+        yield dds_pubsub
+        dds_pubsub.stop()
+
+    @contextmanager
+    def dds_reliable_pubsub_channel() -> Generator[DDS, None, None]:
+        """DDS with reliable QoS preset."""
+        RELIABLE_QOS = Qos(
+            Policy.Reliability.Reliable(max_blocking_time=0),
+            Policy.History.KeepLast(depth=5000),
+            Policy.Durability.Volatile,
+        )
+        dds_pubsub = DDS(qos=RELIABLE_QOS)
+        dds_pubsub.start()
+        yield dds_pubsub
+        dds_pubsub.stop()
+
+    def dds_msggen(size: int) -> tuple[DDSTopic, DDSBenchmarkData]:
+        """Generate DDS message for benchmark."""
+        topic = DDSTopic(name="benchmark/dds", data_type=DDSBenchmarkData)
+        return (topic, DDSBenchmarkData(data=list(make_data_bytes(size))))  # type: ignore[arg-type]
+
+    testcases.append(
+        Case(
+            pubsub_context=dds_high_throughput_pubsub_channel,
+            msg_gen=dds_msggen,
+        )
+    )
+
+    testcases.append(
+        Case(
+            pubsub_context=dds_reliable_pubsub_channel,
+            msg_gen=dds_msggen,
+        )
+    )
 
 
 try:

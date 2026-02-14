@@ -6,32 +6,15 @@
         {
           "name": "execute_sport_command",
           "args": {
-            "args": [
-              "FrontPounce"
-            ]
+            "command_name": "FrontPounce"
           },
-          "id": "call_Ukj6bCAnHQLj28RHRp697blZ",
+          "id": "call_Z7X0sJfUygGiJUUL67I64eRs",
           "type": "tool_call"
         }
       ]
     },
     {
-      "content": "",
-      "tool_calls": [
-        {
-          "name": "speak",
-          "args": {
-            "args": [
-              "I have successfully performed a front pounce."
-            ]
-          },
-          "id": "call_FR9DtqEvJ9zSY85qVD2UFrll",
-          "type": "tool_call"
-        }
-      ]
-    },
-    {
-      "content": "I have successfully performed a front pounce.",
+      "content": "The robot has successfully performed a \"FrontPounce\" action!",
       "tool_calls": []
     }
   ]

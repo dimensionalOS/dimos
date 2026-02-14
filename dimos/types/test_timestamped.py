@@ -19,11 +19,11 @@ import pytest
 from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 
+from dimos.memory.timeseries.inmemory import InMemoryStore
 from dimos.msgs.sensor_msgs import Image
 from dimos.types.timestamped import (
     Timestamped,
     TimestampedBufferCollection,
-    TimestampedCollection,
     align_timestamped,
     to_datetime,
     to_ros_stamp,
@@ -133,13 +133,20 @@ def sample_items():
     ]
 
 
+def make_store(items: list[SimpleTimestamped] | None = None) -> InMemoryStore[SimpleTimestamped]:
+    store: InMemoryStore[SimpleTimestamped] = InMemoryStore()
+    if items:
+        store.save(*items)
+    return store
+
+
 @pytest.fixture
 def collection(sample_items):
-    return TimestampedCollection(sample_items)
+    return make_store(sample_items)
 
 
 def test_empty_collection() -> None:
-    collection = TimestampedCollection()
+    collection = make_store()
     assert len(collection) == 0
     assert collection.duration() == 0.0
     assert collection.time_range() is None
@@ -147,16 +154,17 @@ def test_empty_collection() -> None:
 
 
 def test_add_items() -> None:
-    collection = TimestampedCollection()
+    collection = make_store()
     item1 = SimpleTimestamped(2.0, "two")
     item2 = SimpleTimestamped(1.0, "one")
 
-    collection.add(item1)
-    collection.add(item2)
+    collection.save(item1)
+    collection.save(item2)
 
     assert len(collection) == 2
-    assert collection[0].data == "one"  # Should be sorted by timestamp
-    assert collection[1].data == "two"
+    items = list(collection)
+    assert items[0].data == "one"  # Should be sorted by timestamp
+    assert items[1].data == "two"
 
 
 def test_find_closest(collection) -> None:
@@ -196,21 +204,13 @@ def test_find_before_after(collection) -> None:
     assert collection.find_after(7.0) is None  # Nothing after last item
 
 
-def test_merge_collections() -> None:
-    collection1 = TimestampedCollection(
-        [
-            SimpleTimestamped(1.0, "a"),
-            SimpleTimestamped(3.0, "c"),
-        ]
-    )
-    collection2 = TimestampedCollection(
-        [
-            SimpleTimestamped(2.0, "b"),
-            SimpleTimestamped(4.0, "d"),
-        ]
-    )
+def test_save_from_multiple_stores() -> None:
+    store1 = make_store([SimpleTimestamped(1.0, "a"), SimpleTimestamped(3.0, "c")])
+    store2 = make_store([SimpleTimestamped(2.0, "b"), SimpleTimestamped(4.0, "d")])
 
-    merged = collection1.merge(collection2)
+    merged = make_store()
+    merged.save(*store1)
+    merged.save(*store2)
 
     assert len(merged) == 4
     assert [item.data for item in merged] == ["a", "b", "c", "d"]
@@ -244,7 +244,7 @@ def test_iteration(collection) -> None:
 
 
 def test_single_item_collection() -> None:
-    single = TimestampedCollection([SimpleTimestamped(5.0, "only")])
+    single = make_store([SimpleTimestamped(5.0, "only")])
     assert single.duration() == 0.0
     assert single.time_range() == (5.0, 5.0)
 
@@ -264,14 +264,17 @@ def test_time_window_collection() -> None:
     # Add a message at t=4.0, should keep messages from t=2.0 onwards
     window.add(SimpleTimestamped(4.0, "msg4"))
     assert len(window) == 3  # msg1 should be dropped
-    assert window[0].data == "msg2"  # oldest is now msg2
-    assert window[-1].data == "msg4"  # newest is msg4
+    first = window.first()
+    last = window.last()
+    assert first is not None and first.data == "msg2"  # oldest is now msg2
+    assert last is not None and last.data == "msg4"  # newest is msg4
 
     # Add a message at t=5.5, should drop msg2 and msg3
     window.add(SimpleTimestamped(5.5, "msg5"))
     assert len(window) == 2  # only msg4 and msg5 remain
-    assert window[0].data == "msg4"
-    assert window[1].data == "msg5"
+    items = list(window)
+    assert items[0].data == "msg4"
+    assert items[1].data == "msg5"
 
     # Verify time range
     assert window.start_ts == 4.0

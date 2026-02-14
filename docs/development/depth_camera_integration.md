@@ -140,8 +140,8 @@ Install Foxglove from:
 ## Modules and Skills (Short Intro)
 
 - **Modules** are typed components with `In[...]` / `Out[...]` streams and `start()` / `stop()` lifecycles.
-- **Skills** are callable methods (decorated with `@skill`) exposed by `SkillModule` for agents.
+- **Skills** are callable methods (decorated with `@skill`) on any `Module`, automatically discovered by agents.
 
 Reference:
-- Modules overview: `/docs/concepts/modules.md`
-- TF fundamentals: `/docs/api/transforms.md`
+- Modules overview: `/docs/usage/modules.md`
+- TF fundamentals: `/docs/usage/transforms.md`

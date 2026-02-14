@@ -14,19 +14,23 @@
 
 from __future__ import annotations
 
-from typing import Any, TypeVar
-
-import dimos.core.colors as colors
-
-T = TypeVar("T")
-
+import threading
 from typing import (
     TYPE_CHECKING,
+    Any,
     TypeVar,
 )
 
+import dimos.core.colors as colors
 from dimos.core.stream import In, Out, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
+
+try:
+    import cyclonedds as _cyclonedds  # noqa: F401
+
+    DDS_AVAILABLE = True
+except ImportError:
+    DDS_AVAILABLE = False
 from dimos.protocol.pubsub.impl.jpeg_shm import JpegSharedMemory
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
@@ -276,6 +280,43 @@ class ROSTransport(PubSubTransport[DimosMsg]):
         if self._ros is not None:
             self._ros.stop()
             self._ros = None
+
+
+if DDS_AVAILABLE:
+    from dimos.protocol.pubsub.impl.ddspubsub import DDS, Topic as DDSTopic
+
+    class DDSTransport(PubSubTransport[T]):
+        def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            super().__init__(DDSTopic(topic, type))
+            self.dds = DDS(**kwargs)
+            self._started: bool = False
+            self._start_lock = threading.RLock()
+
+        def start(self) -> None:
+            with self._start_lock:
+                if not self._started:
+                    self.dds.start()
+                    self._started = True
+
+        def stop(self) -> None:
+            with self._start_lock:
+                if self._started:
+                    self.dds.stop()
+                    self._started = False
+
+        def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+            with self._start_lock:
+                if not self._started:
+                    self.start()
+                self.dds.publish(self.topic, msg)
+
+        def subscribe(
+            self, callback: Callable[[T], None], selfstream: Stream[T] | None = None
+        ) -> Callable[[], None]:
+            with self._start_lock:
+                if not self._started:
+                    self.start()
+                return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
 class ZenohTransport(PubSubTransport[T]): ...

@@ -36,6 +36,8 @@ all_blueprints = {
     "coordinator-velocity-xarm6": "dimos.control.blueprints:coordinator_velocity_xarm6",
     "coordinator-xarm6": "dimos.control.blueprints:coordinator_xarm6",
     "coordinator-xarm7": "dimos.control.blueprints:coordinator_xarm7",
+    "demo-agent": "dimos.agents.demo_agent:demo_agent",
+    "demo-agent-camera": "dimos.agents.demo_agent:demo_agent_camera",
     "demo-camera": "dimos.hardware.sensors.camera.module:demo_camera",
     "demo-error-on-name-conflicts": "dimos.robot.unitree.demo_error_on_name_conflicts:demo_error_on_name_conflicts",
     "demo-google-maps-skill": "dimos.agents.skills.demo_google_maps_skill:demo_google_maps_skill",
@@ -70,10 +72,12 @@ all_blueprints = {
     "xarm-perception": "dimos.manipulation.manipulation_blueprints:xarm_perception",
     "xarm6-planner-only": "dimos.manipulation.manipulation_blueprints:xarm6_planner_only",
     "xarm7-planner-coordinator": "dimos.manipulation.manipulation_blueprints:xarm7_planner_coordinator",
+    "xarm7-trajectory-sim": "dimos.simulation.sim_blueprints:xarm7_trajectory_sim",
 }
 
 
 all_modules = {
+    "agent": "dimos.agents.agent",
     "arm_teleop_module": "dimos.teleop.quest.quest_extensions",
     "camera_module": "dimos.hardware.sensors.camera.module",
     "cartesian_motion_controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller",
@@ -92,10 +96,8 @@ all_modules = {
     "google_maps_skill": "dimos.agents.skills.google_maps_skill_container",
     "gps_nav_skill": "dimos.agents.skills.gps_nav_skill",
     "grasping_module": "dimos.manipulation.grasping.grasping",
-    "human_input": "dimos.agents.cli.human",
     "joint_trajectory_controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller",
     "keyboard_teleop": "dimos.robot.unitree.keyboard_teleop",
-    "llm_agent": "dimos.agents.agent",
     "manipulation_module": "dimos.manipulation.manipulation_module",
     "mapper": "dimos.robot.unitree.type.map",
     "navigation_skill": "dimos.agents.skills.navigation",
@@ -109,6 +111,7 @@ all_modules = {
     "replanning_a_star_planner": "dimos.navigation.replanning_a_star.module",
     "rerun_bridge": "dimos.visualization.rerun.bridge",
     "ros_nav": "dimos.navigation.rosnav",
+    "simulation": "dimos.simulation.manipulators.sim_module",
     "spatial_memory": "dimos.perception.spatial_perception",
     "speak_skill": "dimos.agents.skills.speak_skill",
     "temporal_memory": "dimos.perception.experimental.temporal_memory.temporal_memory",
@@ -120,7 +123,7 @@ all_modules = {
     "vlm_stream_tester": "dimos.agents.vlm_stream_tester",
     "voxel_mapper": "dimos.mapping.voxels",
     "wavefront_frontier_explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector",
-    "web_input": "dimos.agents.cli.web",
+    "web_input": "dimos.agents.web_human_input",
     "websocket_vis": "dimos.web.websocket_vis.websocket_vis_module",
     "zed_camera": "dimos.hardware.sensors.camera.zed.camera",
 }

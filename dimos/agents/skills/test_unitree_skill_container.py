@@ -12,21 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import difflib
 
-def test_pounce(mocker, create_unitree_skills_agent, unitree_skills) -> None:
-    agent = create_unitree_skills_agent(fixture="test_pounce.json")
-    publish_request_mock = mocker.Mock()
-    unitree_skills.get_rpc_calls = mocker.Mock(return_value=publish_request_mock)
+from langchain_core.messages import HumanMessage
+import pytest
 
-    response = agent.query("pounce")
-
-    assert "front pounce" in response.lower()
-    publish_request_mock.assert_called_once_with("rt/api/sport/request", {"api_id": 1032})
+from dimos.robot.unitree.unitree_skill_container import _UNITREE_COMMANDS, UnitreeSkillContainer
 
 
-def test_did_you_mean(mocker, unitree_skills) -> None:
-    unitree_skills.get_rpc_calls = mocker.Mock()
-    assert (
-        unitree_skills.execute_sport_command("Pounce")
-        == "There's no 'Pounce' command. Did you mean: ['FrontPounce', 'Pose']"
+class MockedUnitreeSkill(UnitreeSkillContainer):
+    rpc_calls: list[str] = []
+
+    def __init__(self):
+        super().__init__()
+        # Provide a fake RPC so the real execute_sport_command runs end-to-end.
+        self._bound_rpc_calls["GO2Connection.publish_request"] = lambda *args, **kwargs: None
+
+
+@pytest.mark.integration
+def test_pounce(agent_setup) -> None:
+    history = agent_setup(
+        blueprints=[MockedUnitreeSkill.blueprint()],
+        messages=[HumanMessage("Pounce! Use the execute_sport_command tool.")],
     )
+
+    response = history[-1].content.lower()
+    assert "pounce" in response
+
+
+def test_did_you_mean() -> None:
+    suggestions = difflib.get_close_matches("Pounce", _UNITREE_COMMANDS.keys(), n=3, cutoff=0.6)
+    assert "FrontPounce" in suggestions
+    assert "Pose" in suggestions

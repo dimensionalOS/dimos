@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, BinaryIO
 if TYPE_CHECKING:
     import rerun as rr
 
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
 from dimos_lcm.geometry_msgs import (
     Transform as LCMTransform,
     TransformStamped as LCMTransformStamped,
@@ -191,7 +193,7 @@ class Transform(Timestamped):
         else:
             raise TypeError(f"Expected Pose or PoseStamped, got {type(pose).__name__}")
 
-    def to_pose(self, **kwargs) -> PoseStamped:  # type: ignore[name-defined, no-untyped-def]
+    def to_pose(self, **kwargs: object) -> PoseStamped:
         """Create a Transform from a Pose or PoseStamped.
 
         Args:
@@ -201,10 +203,10 @@ class Transform(Timestamped):
             A Transform with the same translation and rotation as the pose
         """
         # Import locally to avoid circular imports
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped as _PoseStamped
 
         # Handle both Pose and PoseStamped
-        return PoseStamped(
+        result: PoseStamped = _PoseStamped(
             **{
                 "position": self.translation,
                 "orientation": self.rotation,
@@ -212,6 +214,7 @@ class Transform(Timestamped):
             },
             **kwargs,
         )
+        return result
 
     def to_matrix(self) -> np.ndarray:  # type: ignore[name-defined]
         """Convert Transform to a 4x4 transformation matrix.

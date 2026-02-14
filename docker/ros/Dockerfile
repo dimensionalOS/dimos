@@ -14,8 +14,7 @@ ENV LANG=en_US.UTF-8
 ENV ROS_DISTRO=humble
 
 # Install basic requirements
-RUN apt-get update
-RUN apt-get install -y \
+RUN apt-get update && apt-get install -y \
     curl \
     gnupg2 \
     lsb-release \
@@ -24,7 +23,7 @@ RUN apt-get install -y \
     portaudio19-dev \
     git \
     mesa-utils \
-    libgl1-mesa-glx \
+    libgl1 \
     libgl1-mesa-dri \
     software-properties-common \
     libxcb1-dev \

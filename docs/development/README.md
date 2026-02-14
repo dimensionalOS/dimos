@@ -63,14 +63,41 @@ uv run pytest dimos
 Note, a few dependencies do not have PyPI packages and need to be installed from their Git repositories. These are only required for specific features:
 
 - **CLIP** and **detectron2**: Required for the Detic open-vocabulary object detector
-- **contact_graspnet_pytorch**: Required for robotic grasp prediction
 
 You can install them with:
 
 ```bash
 uv add git+https://github.com/openai/CLIP.git
-uv add git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git
 uv add git+https://github.com/facebookresearch/detectron2.git
+```
+
+### Optional: DDS Transport Support
+
+The `dds` extra provides DDS (Data Distribution Service) transport support via [Eclipse Cyclone DDS](https://cyclonedds.io/docs/cyclonedds-python/latest/). This requires installing system libraries before the Python package can be built.
+
+**Ubuntu/Debian:**
+
+```bash
+# Install the CycloneDDS development library
+sudo apt install cyclonedds-dev
+
+# Create a compatibility directory structure
+# (required because Ubuntu's multiarch layout doesn't match the expected CMake layout)
+sudo mkdir -p /opt/cyclonedds/{lib,bin,include}
+sudo ln -sf /usr/lib/x86_64-linux-gnu/libddsc.so* /opt/cyclonedds/lib/
+sudo ln -sf /usr/lib/x86_64-linux-gnu/libcycloneddsidl.so* /opt/cyclonedds/lib/
+sudo ln -sf /usr/bin/idlc /opt/cyclonedds/bin/
+sudo ln -sf /usr/bin/ddsperf /opt/cyclonedds/bin/
+sudo ln -sf /usr/include/dds /opt/cyclonedds/include/
+
+# Install with the dds extra
+CYCLONEDDS_HOME=/opt/cyclonedds uv pip install -e '.[dds]'
+```
+
+To install all extras including DDS:
+
+```bash
+CYCLONEDDS_HOME=/opt/cyclonedds uv sync --extra dds
 ```
 
 <!-- Enable this option once the dockerfile (ghcr.io/dimensionalos/ros-python:dev) is public and debugged! -->
@@ -266,7 +293,7 @@ You can enable a tag by selecting -m <tag_name> - these are configured in `./pyp
 - Open the PR against the `dev` branch (not `main`).
 - **No matter what, provide a few-lines that, when run, let a reviewer test the feature you added** (assuming you changed functional python code).
 - Less changed files = better.
-- If you're writing documentation, see [writing docs](/docs/development/writing_docs/README.md)
+- If you're writing documentation, see [writing docs](/docs/development/writing_docs.md)
 - If you get mypy errors, please fix them. Don't just add # type: ignore. Please first understand why mypy is complaining and try to fix it. It's only okay to ignore if the issue cannot be fixed.
 - If you made a change that is likely going to involve a debate, open the github UI and add a graphical comment on that code. Justify your choice and explain downsides of alternatives.
 - We don't require 100% test coverage, but if you're making a PR of notable python changes you should probably either have unit tests or good reason why not (ex: visualization stuff is hard to test so we don't).

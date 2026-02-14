@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from dimos_lcm.geometry_msgs import (
     TwistWithCovariance as LCMTwistWithCovariance,
@@ -35,6 +35,7 @@ TwistWithCovarianceConvertable: TypeAlias = (
 
 class TwistWithCovariance(LCMTwistWithCovariance):  # type: ignore[misc]
     twist: Twist
+    covariance: np.ndarray[tuple[int], np.dtype[np.floating[Any]]]
     msg_name = "geometry_msgs.TwistWithCovariance"
 
     @dispatch

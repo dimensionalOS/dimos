@@ -6,19 +6,19 @@
         {
           "name": "get_gps_position_for_queries",
           "args": {
-            "args": [
+            "queries": [
               "Hyde Park",
               "Regent Park",
               "Russell Park"
             ]
           },
-          "id": "call_xO0VDst53tzetEUq8mapKGS1",
+          "id": "call_KqAjbd5E9VE69YMWBINdWnkw",
           "type": "tool_call"
         }
       ]
     },
     {
-      "content": "Here are the latitude and longitude coordinates for the parks:\n\n- Hyde Park: Latitude 37.782601, Longitude -122.413201\n- Regent Park: Latitude 37.782602, Longitude -122.413202\n- Russell Park: Latitude 37.782603, Longitude -122.413203",
+      "content": "Here are the latitude and longitude coordinates for the parks you asked about:\n\n- **Hyde Park**: Latitude 37.782601, Longitude -122.413201\n- **Regent Park**: Latitude 37.782602, Longitude -122.413202\n- **Russell Park**: Latitude 37.782603, Longitude -122.413203",
       "tool_calls": []
     }
   ]

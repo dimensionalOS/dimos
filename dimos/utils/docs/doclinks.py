@@ -106,8 +106,8 @@ def build_doc_index(root: Path) -> dict[str, list[Path]]:
     """
     Build an index mapping lowercase doc names to .md file paths.
 
-    For docs/concepts/modules.md, creates entry:
-    - "modules" -> [Path("docs/concepts/modules.md")]
+    For docs/usage/modules.md, creates entry:
+    - "modules" -> [Path("docs/usage/modules.md")]
 
     Also indexes directory index files:
     - "modules" -> [Path("docs/modules/index.md")] (if modules/index.md exists)

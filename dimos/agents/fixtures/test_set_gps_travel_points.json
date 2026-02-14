@@ -1,29 +1,36 @@
 {
   "responses": [
     {
-      "content": "I understand you want me to navigate to the specified location. I will set the GPS travel point accordingly.",
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "set_gps_travel_points",
+          "args": {},
+          "id": "call_0Onzw4fDoT68BWNfZUiGlIbg",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "It seems there was an issue with the initial attempt. Let me try again by providing the correct parameter.",
       "tool_calls": [
         {
           "name": "set_gps_travel_points",
           "args": {
-            "args": [
+            "points": [
               {
                 "lat": 37.782654,
                 "lon": -122.413273
               }
             ]
           },
-          "id": "call_q6JCCYFuyAjqUgUibJHqcIMD",
+          "id": "call_b0QRHVc09ZtY8jbQaUsny7Yx",
           "type": "tool_call"
         }
       ]
     },
     {
-      "content": "I'm on my way to the specified location. Let me know if there is anything else I can assist you with!",
-      "tool_calls": []
-    },
-    {
-      "content": "I've reached the specified location. Do you need any further assistance?",
+      "content": "The GPS travel point has been successfully set to latitude: 37.782654 and longitude: -122.413273.",
       "tool_calls": []
     }
   ]

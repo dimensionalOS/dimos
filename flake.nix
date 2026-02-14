@@ -167,6 +167,7 @@
                     }
             );
           }
+          { vals.pkg=pkgs.cyclonedds; flags.ldLibraryGroup=true; flags.packageConfGroup=true; }
         ];
 
         # ------------------------------------------------------------
@@ -213,6 +214,8 @@
           export GI_TYPELIB_PATH="${giTypelibPackagesString}:$GI_TYPELIB_PATH"
           export PKG_CONFIG_PATH=${lib.escapeShellArg packageConfPackagesString}
           export PYTHONPATH="$PYTHONPATH:"${lib.escapeShellArg manualPythonPackages}
+          export CYCLONEDDS_HOME="${pkgs.cyclonedds}"
+          export CMAKE_PREFIX_PATH="${pkgs.cyclonedds}:$CMAKE_PREFIX_PATH"
           # CC, CFLAGS, and LDFLAGS are bascially all for `pip install pyaudio`
           export CFLAGS="$(pkg-config --cflags portaudio-2.0) $CFLAGS"
           export LDFLAGS="-L$(pkg-config --variable=libdir portaudio-2.0) $LDFLAGS"

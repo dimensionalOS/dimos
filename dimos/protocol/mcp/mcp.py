@@ -16,26 +16,28 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import TYPE_CHECKING, Any
-import uuid
 
 from dimos.core import Module, rpc
-from dimos.protocol.skill.coordinator import SkillCoordinator, SkillStateEnum
+from dimos.core.rpc_client import RpcCall, RPCClient
 
 if TYPE_CHECKING:
-    from dimos.protocol.skill.coordinator import SkillState
+    from dimos.core.module import SkillInfo
 
 
 class MCPModule(Module):
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    _skills: list[SkillInfo]
+    _rpc_calls: dict[str, RpcCall]
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self.coordinator = SkillCoordinator()
+        self._skills = []
+        self._rpc_calls = {}
         self._server: asyncio.AbstractServer | None = None
         self._server_future: object | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
-        self.coordinator.start()
         self._start_server()
 
     @rpc
@@ -48,12 +50,16 @@ class MCPModule(Module):
             self._server = None
         if self._server_future and hasattr(self._server_future, "cancel"):
             self._server_future.cancel()
-        self.coordinator.stop()
         super().stop()
 
     @rpc
-    def register_skills(self, container) -> None:  # type: ignore[no-untyped-def]
-        self.coordinator.register_skills(container)
+    def on_system_modules(self, modules: list[RPCClient]) -> None:
+        assert self.rpc is not None
+        self._skills = [skill for module in modules for skill in (module.get_skills() or [])]
+        self._rpc_calls = {
+            skill.func_name: RpcCall(None, self.rpc, skill.func_name, skill.class_name, [])
+            for skill in self._skills
+        }
 
     def _start_server(self, port: int = 9990) -> None:
         async def handle_client(reader, writer) -> None:  # type: ignore[no-untyped-def]
@@ -85,15 +91,16 @@ class MCPModule(Module):
             }
             return {"jsonrpc": "2.0", "id": req_id, "result": init_result}
         if method == "tools/list":
-            tools = [
-                {
-                    "name": c.name,
-                    "description": c.schema.get("function", {}).get("description", ""),
-                    "inputSchema": c.schema.get("function", {}).get("parameters", {}),
-                }
-                for c in self.coordinator.skills().values()
-                if not c.hide_skill
-            ]
+            tools = []
+            for skill in self._skills:
+                schema = json.loads(skill.args_schema)
+                tools.append(
+                    {
+                        "name": skill.func_name,
+                        "description": schema.get("description", ""),
+                        "inputSchema": schema,
+                    }
+                )
             return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": tools}}
         if method == "tools/call":
             name = params.get("name")
@@ -106,21 +113,20 @@ class MCPModule(Module):
                 }
             if not isinstance(args, dict):
                 args = {}
-            call_id = str(uuid.uuid4())
-            self.coordinator.call_skill(call_id, name, args)
-            result: SkillState | None = self.coordinator._skill_state.get(call_id)
+            rpc_call = self._rpc_calls.get(name)
+            if rpc_call is None:
+                return {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {"content": [{"type": "text", "text": "Skill not found"}]},
+                }
             try:
-                await asyncio.wait_for(self.coordinator.wait_for_updates(), timeout=5.0)
-            except asyncio.TimeoutError:
-                pass
-            if result is None:
-                text = "Skill not found"
-            elif result.state == SkillStateEnum.completed:
-                text = str(result.content()) if result.content() else "Completed"
-            elif result.state == SkillStateEnum.error:
-                text = f"Error: {result.content()}"
-            else:
-                text = f"Started ({result.state.name})"
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: rpc_call(**args)
+                )
+                text = str(result) if result is not None else "Completed"
+            except Exception as e:
+                text = f"Error: {e}"
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
