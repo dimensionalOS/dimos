@@ -135,7 +135,7 @@ class PinocchioIK:
         Raises:
             FileNotFoundError: If model file doesn't exist
         """
-        path = Path(model_path)
+        path = Path(str(model_path))
         if not path.exists():
             raise FileNotFoundError(f"Model file not found: {path}")
 
