@@ -195,12 +195,10 @@ class TeleopIKTask(BaseControlTask):
                     self._target_pose = None
                     self._active = False
                     return None
-
             raw_pose = self._target_pose
 
         # Convert to SE3 right before use
         delta_se3 = pose_to_se3(raw_pose)
-
         # Capture initial EE pose if not set (first command after engage)
         with self._lock:
             need_capture = self._initial_ee_pose is None

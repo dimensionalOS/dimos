@@ -613,11 +613,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
         has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
         if has_teleop_ik:
-            if not self.buttons.transport:
-                raise ValueError(
-                    "TeleopIK tasks require buttons transport for engage/disengage. "
-                    "Wire buttons via blueprint."
-                )
             self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
             logger.info("Subscribed to buttons for engage/disengage")
 

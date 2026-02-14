@@ -178,7 +178,6 @@ class CartesianIKTask(BaseControlTask):
         with self._lock:
             if not self._active or self._target_pose is None:
                 return None
-
             # Check timeout
             if self._config.timeout > 0:
                 time_since_update = state.t_now - self._last_update_time
@@ -189,12 +188,10 @@ class CartesianIKTask(BaseControlTask):
                     )
                     self._active = False
                     return None
-
             raw_pose = self._target_pose
 
         # Convert to SE3 right before use
         target_pose = pose_to_se3(raw_pose)
-
         # Get current joint positions for IK warm-start
         q_current = self._get_current_joints(state)
         if q_current is None:
@@ -203,10 +200,7 @@ class CartesianIKTask(BaseControlTask):
 
         # Compute IK
         q_solution, converged, final_error = self._ik.solve(target_pose, q_current)
-
-        # Use the solution even if it didn't fully converge - the safety clamp
-        # will handle any large jumps. This prevents the arm from "sticking"
-        # when near singularities or workspace boundary.
+        # Use the solution even if it didn't fully converge
         if not converged:
             logger.debug(
                 f"CartesianIKTask {self._name}: IK did not converge "
@@ -226,7 +220,6 @@ class CartesianIKTask(BaseControlTask):
         # Cache solution for next warm-start
         with self._lock:
             self._last_q_solution = q_solution.copy()
-
         return JointCommandOutput(
             joint_names=self._joint_names_list,
             positions=q_solution.flatten().tolist(),
