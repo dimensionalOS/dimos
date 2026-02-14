@@ -250,7 +250,18 @@ def get_data(name: str | Path) -> Path:
     if file_path.exists():
         return file_path
 
-    return _decompress_archive(_pull_lfs_archive(filename))
+    # extract archive root (first path component) and nested path
+    path_parts = Path(name).parts
+    archive_name = path_parts[0]
+    nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
+
+    # download and decompress the archive root
+    archive_path = _decompress_archive(_pull_lfs_archive(archive_name))
+
+    # return full path including nested components
+    if nested_path:
+        return archive_path / nested_path
+    return archive_path
 
 
 class LfsPath(type(Path())):  # type: ignore[misc]
@@ -323,15 +334,3 @@ class LfsPath(type(Path())):  # type: ignore[misc]
     def __rtruediv__(self, other: object) -> Path:
         """Reverse path division operator."""
         return other / self._ensure_downloaded()  # type: ignore[operator, return-value]
-    # extract archive root (first path component) and nested path
-    path_parts = Path(name).parts
-    archive_name = path_parts[0]
-    nested_path = Path(*path_parts[1:]) if len(path_parts) > 1 else None
-
-    # download and decompress the archive root
-    archive_path = _decompress_archive(_pull_lfs_archive(archive_name))
-
-    # return full path including nested components
-    if nested_path:
-        return archive_path / nested_path
-    return archive_path

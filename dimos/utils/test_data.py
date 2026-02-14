@@ -225,7 +225,7 @@ def test_lfs_path_with_real_file() -> None:
 def test_lfs_path_unload_and_reload() -> None:
     """Test unloading and reloading an LFS file."""
     filename = "three_paths.png"
-    data_dir = data._get_data_dir()
+    data_dir = data.get_data_dir()
     file_path = data_dir / filename
 
     # Clean up if file already exists
