@@ -22,6 +22,7 @@ jobs:
       ros:    ${{ steps.filter.outputs.ros }}
       python: ${{ steps.filter.outputs.python }}
       dev:    ${{ steps.filter.outputs.dev }}
+      navigation: ${{ steps.filter.outputs.navigation }}
       tests:  ${{ steps.filter.outputs.tests }}
       branch-tag: ${{ steps.set-tag.outputs.branch_tag }}
     steps:
@@ -51,6 +52,9 @@ jobs:
 
             dev:
               - docker/dev/**
+
+            navigation:
+              - docker/navigation/**
 
             tests:
               - dimos/**
@@ -129,6 +133,16 @@ jobs:
       from-image: ghcr.io/dimensionalos/python:${{ needs.python.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
       to-image: ghcr.io/dimensionalos/dev:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile: dev
+
+  navigation:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.navigation == 'true'
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      should-run: true
+      from-image: osrf/ros:humble-desktop-full
+      to-image: ghcr.io/dimensionalos/navigation:${{ needs.check-changes.outputs.branch-tag }}
+      dockerfile: navigation
 
   ros-dev:
     needs: [check-changes, ros-python]
