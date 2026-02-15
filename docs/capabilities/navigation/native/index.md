@@ -41,13 +41,13 @@ text "Twist" italic at (M4.x, Nav.s.y - 0.45in)
 
 ## Pipeline Steps
 
-### 1. LiDAR Frame — [`GO2Connection`](../../../../dimos/robot/unitree/go2/connection.py)
+### 1. LiDAR Frame — [`GO2Connection`](/dimos/robot/unitree/go2/connection.py)
 
 We don't connect to the LiDAR directly — instead we use Unitree's WebRTC client (via [legion's webrtc driver](https://github.com/legion1581/unitree_webrtc_connect)), which streams a heavily preprocessed 5cm voxel grid rather than raw point cloud data. This allows us to support stock, unjailbroken Go2 Air and Pro models out of the box.
 
-<img src="assets/1-lidar.png" width="50%">
+![LiDAR frame](assets/1-lidar.png)
 
-### 2. Global Voxel Map — `VoxelGridMapper`
+### 2. Global Voxel Map — [`VoxelGridMapper`](/dimos/mapping/voxels.py)
 
 The [`VoxelGridMapper`](/dimos/mapping/voxels.py) maintains a sparse 3D occupancy grid using Open3D's `VoxelBlockGrid` backed by a hash map. Each voxel is a 5cm cube by default.
 
@@ -72,7 +72,7 @@ We don't have proper loop closure and stable odometry, we trust the data go2 odo
 | `carve_columns`    | `true`    | Enable column carving (disable for append-only mapping) |
 | `publish_interval` | 0         | Seconds between map publishes (0 = every frame)         |
 
-<img src="assets/2-globalmap.png" width="50%">
+![Global map](assets/2-globalmap.png)
 
 ### 3. Global Costmap — `CostMapper`
 
@@ -100,21 +100,21 @@ class HeightCostConfig(OccupancyConfig):
 | 100  | Steep or impassable (≥15cm rise per cell in case of go2) |
 | -1   | Unknown (no observations)                                |
 
-<img src="assets/3-globalcostmap.png" width="50%">
+![Global costmap](assets/3-globalcostmap.png)
 
-### 4. Navigation Costmap — `ReplanningAStarPlanner`
+### 4. Navigation Costmap — [`ReplanningAStarPlanner`](/dimos/navigation/replanning_a_star/module.py)
 
 The planner will process the terrain gradient and compute it's own algo-relevant costmap, prioritizing safe free paths, while be willing to path aggressively through tight spaces if it has to
 
 We run the planner in a constant loop so it will dynamically react to obstacles encountered.
 
-<img src="assets/4-navcostmap.png" width="50%">
+![Navigation costmap with path](assets/4-navcostmap.png)
 
 ### 5. All Layers Combined
 
 All visualization layers shown together
 
-<img src="assets/5-all.png" width="50%">
+![All layers](assets/5-all.png)
 
 ## Blueprint Composition
 
