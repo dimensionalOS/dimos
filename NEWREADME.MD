@@ -3,13 +3,15 @@
 
 ![Dimensional](assets/dimensional-dark.svg#gh-dark-mode-only)
 ![Dimensional](assets/dimensional-light.svg#gh-light-mode-only)
-<h2>Agentic Operating System for Generalist Robotics</h2>
+<h2>Program Atoms</h2>
 
+<h3>
 [Features](#the-dimensional-framework) •
 [Installation](#installation) •
 [Documentation](#documentation) •
 [Development](#development) •
 [Contributing](#contributing)
+</h3>
 
 </div>
 
