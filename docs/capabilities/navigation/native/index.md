@@ -9,8 +9,6 @@ The Go2 navigation stack runs entirely without ROS. It uses a **column-carving v
 <details>
 <summary>diagram source</summary>
 
-<details><summary>Pikchr</summary>
-
 ```pikchr fold output=assets/go2nav_dataflow.svg
 color = white
 fill = none
@@ -41,8 +39,6 @@ text "Twist" italic at (M4.x, Nav.s.y - 0.45in)
 
 <!--Result:-->
 ![output](assets/go2nav_dataflow.svg)
-</details>
-
 ## Pipeline Steps
 
 ### 1. LiDAR Frame — [`GO2Connection`](/dimos/robot/unitree/go2/connection.py)
