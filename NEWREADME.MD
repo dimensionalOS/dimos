@@ -19,7 +19,7 @@
 
 # Intro
 
-Our goal is to provide an easy to install and run modern framework for general robotics, you should be up and running in minutes.
+Our goal is to provide an easy-to-install, modern framework for general robotics. You should be up and running in minutes.
 
 <table>
   <tr>
@@ -103,27 +103,27 @@ Our goal is to provide an easy to install and run modern framework for general r
 
 # Installation
 
-### Step 1 - System Install
+### Step 1: System Install
 
-to setup your system dependencies follow one of these:
+To set up your system dependencies, follow one of these guides:
 
 - [NixOS / General Linux](docs/installation/nix.md)
 - [macOS](docs/installation/osx.md)
 - [Ubuntu 24.04](docs/installation/ubuntu.md)
+- [Docker](docs/installation/docker.md)
 
+### Step 2: Python Install
 
-### Step 2 - Python Install
-
-We are ready to jump into Python, check specific hardware docs above to choose appropriate pip install command and a blueprint to run
+Now install the Python package. Check the [hardware docs](#hardware) above to choose the right extras and blueprint for your platform.
 
 ```sh
 pip install dimos[your_platform]
 dimos run your_platform_blueprint
 ```
 
-### Step 3 - Profit!
+### Step 3 - Profit
 
-![DimOS Demo](assets/readme/dimos_demo.gif)
+<img src="assets/readme/dimos_demo.gif" alt="DimOS Demo" width="100%">
 
 # Develop
 
@@ -139,10 +139,10 @@ dimos run your_platform_blueprint
 
 ## Multi Language Support
 
-Python is our glue and prototyping language, but we support many languages, and ROS interop
+Python is our glue and prototyping language, but we support many languages via LCM interop.
 
-check our [examples/language-interop](examples/language-interop/)
+Check our [examples/language-interop](examples/language-interop/) for C++, Lua, and TypeScript examples.
 
 ## ROS interop
 
-for researchers we can talk to ros directly via [ROS Transports](docs/api/transports.md), or we can host ROS deployments as first class Dimos Modules
+For researchers, we can talk to ROS directly via [ROS Transports](docs/api/transports.md), or host ROS deployments as first-class DimOS modules.
