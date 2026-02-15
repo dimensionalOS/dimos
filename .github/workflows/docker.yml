@@ -54,6 +54,8 @@ jobs:
               - docker/dev/**
 
             navigation:
+              - .github/workflows/_docker-build-template.yml
+              - .github/workflows/docker.yml
               - docker/navigation/**
 
             tests:
