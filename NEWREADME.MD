@@ -19,7 +19,7 @@
 
 # Intro
 
-We aim to provide an easy to install and run modern framework for robotics
+Our goal is to provide an easy to install and run modern framework for general robotics, you should be up and running in minutes.
 
 <table>
   <tr>
@@ -110,7 +110,7 @@ dimos run your_platform_blueprint
 [Blueprints](docs/api/blueprints.md) •
 [Modules](docs/api/modules.md) •
 [Transports](docs/api/transports.md) •
-[Sensor Streams](docs/api/sensor_streams/README.md) •
+[Data Streams](docs/api/data_streams/README.md) •
 [LCM](docs/api/lcm.md) •
 [Configuration](docs/api/configuration.md) •
 [Visualization](docs/api/visualization.md)
@@ -119,8 +119,8 @@ dimos run your_platform_blueprint
 
 Python is our glue and prototyping language, but we support many languages, and ROS interop
 
-check our examples/language-interop
+check our [examples/language-interop](examples/language-interop/)
 
 # ROS interop
 
-for researchers etc we can talk to ros directly via [ROS Transports](docs/api/transports.md), or we can host ROS deployments as first class Dimos Modules
+for researchers we can talk to ros directly via [ROS Transports](docs/api/transports.md), or we can host ROS deployments as first class Dimos Modules
