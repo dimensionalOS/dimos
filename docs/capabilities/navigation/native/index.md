@@ -32,8 +32,7 @@ text "PointCloud2" italic at (M2.x, Vox.n.y + 0.15in)
 M3: dot at 1/2 way between Cost.e and Nav.w invisible
 text "OccupancyGrid" italic at (M3.x, Cost.n.y + 0.15in)
 
-line dashed from Nav.s down 0.3in then left until even with Go2.s then to Go2.s
-arrow dashed from Go2.s + (0.01in, 0.01in) to Go2.s
+arrow dashed from Nav.s down 0.3in then left until even with Go2.s then to Go2.s
 M4: dot at 1/2 way between Go2.s and Nav.s invisible
 text "Twist" italic at (M4.x, Nav.s.y - 0.45in)
 ```

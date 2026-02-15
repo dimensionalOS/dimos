@@ -16,8 +16,7 @@
 <text x="112.971" y="17.28" text-anchor="middle" font-style="italic" fill="rgb(255,255,255)" dominant-baseline="central">PointCloud2</text>
 <text x="456.013" y="17.28" text-anchor="middle" font-style="italic" fill="rgb(255,255,255)" dominant-baseline="central">PointCloud2</text>
 <text x="723.462" y="17.28" text-anchor="middle" font-style="italic" fill="rgb(255,255,255)" dominant-baseline="central">OccupancyGrid</text>
-<path d="M847.492,90.288L847.492,133.488L39.5654,133.488L39.5654,90.288"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);stroke-dasharray:7.2,7.2;" />
-<polygon points="39.5654,90.288 37.9507,85.7933 44.0601,91.9027" style="fill:rgb(255,255,255)"/>
-<path d="M41.0054,88.848L40.2854,89.568"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);stroke-dasharray:7.2,7.2;" />
+<polygon points="39.5654,90.288 43.8854,101.808 35.2454,101.808" style="fill:rgb(255,255,255)"/>
+<path d="M847.492,90.288L847.492,133.488L39.5654,133.488L39.5654,96.048"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);stroke-dasharray:7.2,7.2;" />
 <text x="443.529" y="155.088" text-anchor="middle" font-style="italic" fill="rgb(255,255,255)" dominant-baseline="central">Twist</text>
 </svg>
