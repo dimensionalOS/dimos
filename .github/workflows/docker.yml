@@ -160,6 +160,7 @@ jobs:
           path: docker/navigation/ros-navigation-autonomy-stack
           fetch-depth: 1
           lfs: false
+          token: ${{ secrets.NAV_REPO_READ_TOKEN }}
 
       - uses: docker/login-action@v3
         with:
