@@ -131,10 +131,10 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
 
 To set up your system dependencies, follow one of these guides:
 
-- [NixOS / General Linux](docs/installation/nix.md)
-- [macOS](docs/installation/osx.md)
-- [Ubuntu 24.04](docs/installation/ubuntu.md)
-- [Docker](docs/installation/docker.md)
+- [NixOS / General Linux](docs/installation/nix.md) 🟩
+- [macOS](docs/installation/osx.md) 🟥
+- [Ubuntu 24.04](docs/installation/ubuntu.md) 🟩
+- [Docker](docs/installation/docker.md) 🟨
 
 ### Step 2: Python Install
 
