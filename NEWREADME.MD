@@ -21,7 +21,6 @@
 </div>
 
 
-
 <table>
   <tr>
     <td align="center" width="50%">
