@@ -21,7 +21,7 @@
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="assets/readme/nav.gif" alt="Navigation" width="100%">
+      <img src="assets/readme/navigation.gif" alt="Navigation" width="100%">
     </td>
     <td align="center" width="50%">
       <img src="assets/readme/perception.png" alt="Det" width="100%">
