@@ -35,25 +35,27 @@ Nav: box "Navigation" rad 5px fit wid 170% ht 170%
 
 ### 1. LiDAR Frame — `GO2Connection`
 
-The Livox Mid-360 LiDAR on the Go2 produces a raw 3D point cloud each frame. Points are color-coded by height — blue is ground level, red/orange are walls and obstacles.
+We don't connect to the LiDAR directly — instead we use Unitree's WebRTC client (via [legion's webrtc driver](https://github.com/legion1581/unitree_webrtc_connect)), which streams a heavily preprocessed 5cm voxel grid rather than raw point cloud data. This allows us to support stock, unjailbroken Go2 Air and Pro models out of the box.
 
 ![LiDAR frame](assets/1-lidar.png)
 
 ### 2. Global Voxel Map — `VoxelGridMapper`
 
-Each incoming frame is quantized into 3D voxels and spliced into the global map via column carving. The map grows as the robot explores, with previously visited areas updated in-place whenever the robot returns.
+Each incoming frame is spliced into the global map via column carving. The map grows as the robot explores, with previously visited areas updated in-place whenever the robot returns. We don't have proper loop closure and stable odometry, we trust the data go2 reports, which is surprisingly stable but does drift eventually.
 
 ![Global map](assets/2-globalmap.png)
 
 ### 3. Global Costmap — `CostMapper`
 
-The 3D voxel map is projected down to a 2D occupancy grid. Terrain slope is analyzed via Sobel gradients — flat areas (light) are traversable, steep height changes (dark) are obstacles.
+The 3D voxel map is projected down to a 2D occupancy grid. We map the slope of terrain in order to conclude traversability — flat areas (light) are traversable, steep height changes (dark) are obstacles.
 
 ![Global costmap](assets/3-globalcostmap.png)
 
 ### 4. Navigation Costmap — `ReplanningAStarPlanner`
 
-The planner overlays cost gradients and computes a path (green line) from the robot's position to the goal. The purple/magenta heatmap shows the inflated obstacle costs used for path planning.
+The planner will process the terrain gradient and compute it's own algo-relevant costmap, prioritizing safe free paths, while be willing to path aggressively through tight spaces if it has to
+
+We run the planner in a constant loop so it will dynamically react to obstacles encountered.
 
 ![Navigation costmap with path](assets/4-navcostmap.png)
 
