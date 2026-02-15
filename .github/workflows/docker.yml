@@ -152,10 +152,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Clone ros-navigation-autonomy-stack
-        run: |
-          git clone -b fastlio2 https://github.com/dimensionalOS/ros-navigation-autonomy-stack.git \
-            docker/navigation/ros-navigation-autonomy-stack
+      - name: Checkout ros-navigation-autonomy-stack
+        uses: actions/checkout@v4
+        with:
+          repository: dimensionalOS/ros-navigation-autonomy-stack
+          ref: fastlio2
+          path: docker/navigation/ros-navigation-autonomy-stack
+          fetch-depth: 1
+          lfs: false
 
       - uses: docker/login-action@v3
         with:
