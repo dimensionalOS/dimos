@@ -74,7 +74,7 @@ We don't have proper loop closure and stable odometry, we trust the data go2 odo
 
 ![Global map](assets/2-globalmap.png)
 
-### 3. Global Costmap — `CostMapper`
+### 3. Global Costmap — [`CostMapper`](/dimos/mapping/costmapper.py)
 
 The [`CostMapper`](/dimos/mapping/costmapper.py) converts the 3D voxel map into a 2D occupancy grid. The default algorithm (`height_cost`) maps rate of change of Z, with some smoothing.
 
