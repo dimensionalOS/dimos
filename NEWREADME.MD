@@ -92,18 +92,27 @@ Our goal is to provide an easy to install and run modern framework for general r
 
 # Installation
 
+## Step 1 - System Install
+
 to setup your system dependencies follow one of these:
 
 - [NixOS / General Linux](docs/installation/nix.md)
 - [macOS](docs/installation/osx.md)
 - [Ubuntu 24.04](docs/installation/ubuntu.md)
 
-then you are ready to jump into Python
+
+## Step 2 - Python Install
+
+We are ready to jump into Python
 
 ```sh
 pip install dimos[your_platform]
 dimos run your_platform_blueprint
 ```
+
+## Step 3 - Profit!
+
+![DimOS Demo](assets/readme/dimos_demo.gif)
 
 # API
 
