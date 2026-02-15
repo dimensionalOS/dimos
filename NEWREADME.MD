@@ -75,44 +75,44 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
 
 <table>
   <tr>
-    <td align="center" width="25%">
+    <td align="center" width="20%">
       <h3>Quadruped</h3>
       <img width="245" height="1" src="assets/readme/spacer.png">
     </td>
-    <td align="center" width="25%">
+    <td align="center" width="20%">
       <h3>Humanoid</h3>
       <img width="245" height="1" src="assets/readme/spacer.png">
     </td>
-    <td align="center" width="25%">
+    <td align="center" width="20%">
       <h3>Arm</h3>
       <img width="245" height="1" src="assets/readme/spacer.png">
     </td>
-    <td align="center" width="25%">
+    <td align="center" width="20%">
       <h3>Drone</h3>
       <img width="245" height="1" src="assets/readme/spacer.png">
     </td>
-    <td align="center" width="25%">
+    <td align="center" width="20%">
       <h3>Misc</h3>
       <img width="245" height="1" src="assets/readme/spacer.png">
     </td>
   </tr>
 
   <tr>
-    <td align="center" width="25%">
+    <td align="center" width="20%">
       <a href="docs/hardware/dog/go2/index.md">Unitree Go2 pro/air</a> <img src="https://img.shields.io/badge/stable-green?style=flat-square"><br>
     </td>
-    <td align="center" width="25%">
+    <td align="center" width="20%">
       <a href="docs/hardware/dog/go2/index.md">Unitree G1</a> <img src="https://img.shields.io/badge/alpha-orange?style=flat-square"><br>
     </td>
-    <td align="center" width="25%">
+    <td align="center" width="20%">
       <a href="docs/hardware/dog/go2/index.md">Xarm</a> <img src="https://img.shields.io/badge/beta-yellow?style=flat-square"><br>
       <a href="docs/hardware/dog/go2/index.md">Piper</a> <img src="https://img.shields.io/badge/beta-yellow?style=flat-square"><br>
     </td>
-    <td align="center" width="25%">
+    <td align="center" width="20%">
       <a href="docs/hardware/dog/go2/index.md">Mavlink</a> <img src="https://img.shields.io/badge/stable-green?style=flat-square"><br>
       <a href="docs/hardware/dog/go2/index.md">DJI SDK</a> <img src="https://img.shields.io/badge/experimental-red?style=flat-square"><br>
     </td>
-    <td align="center" width="25%">
+    <td align="center" width="20%">
       <a href="docs/hardware/force-torque/index.md">Force Torque Sensor</a> <img src="https://img.shields.io/badge/stable-green?style=flat-square"><br>
     </td>
   </tr>
