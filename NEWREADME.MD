@@ -29,7 +29,7 @@
   </tr>
   <tr>
     <td align="center" width="50%">
-      <h3>Nav</h3>
+      <h3>Navigation</h3>
       ros and non ros<br><a href="#">Watch video</a>
     </td>
     <td align="center" width="50%">
