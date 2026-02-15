@@ -7,11 +7,12 @@
 
 <big>
 
-[Features](#the-dimensional-framework) •
+[Intro](#intro) •
+[Hardware](#hardware) •
 [Installation](#installation) •
-[Documentation](#documentation) •
-[Development](#development) •
-[Contributing](#contributing)
+[Development](#develop) •
+[Multi Language](#multi-language-support) •
+[ROS](#ros-interop)
 
 </big>
 
@@ -67,19 +68,19 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
   <tr>
     <td align="center" width="25%">
       <h3>Quadruped</h3>
-      <img width="245" height="1" src="https://github.com/user-attachments/assets/00000000-0000-0000-0000-000000000000">
+      <img width="245" height="1" src="assets/readme/spacer.png">
     </td>
     <td align="center" width="25%">
       <h3>Humanoid</h3>
-      <img width="245" height="1" src="https://github.com/user-attachments/assets/00000000-0000-0000-0000-000000000000">
+      <img width="245" height="1" src="assets/readme/spacer.png">
     </td>
     <td align="center" width="25%">
       <h3>Arm</h3>
-      <img width="245" height="1" src="https://github.com/user-attachments/assets/00000000-0000-0000-0000-000000000000">
+      <img width="245" height="1" src="assets/readme/spacer.png">
     </td>
     <td align="center" width="25%">
       <h3>Drone</h3>
-      <img width="245" height="1" src="https://github.com/user-attachments/assets/00000000-0000-0000-0000-000000000000">
+      <img width="245" height="1" src="assets/readme/spacer.png">
     </td>
   </tr>
 
@@ -125,7 +126,7 @@ dimos run your_platform_blueprint
 
 <img src="assets/readme/dimos_demo.gif" alt="DimOS Demo" width="100%">
 
-# Develop
+# Development
 
 ## API
 
