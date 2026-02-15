@@ -3,7 +3,7 @@
 
 ![Dimensional](assets/dimensional-dark.svg#gh-dark-mode-only)
 ![Dimensional](assets/dimensional-light.svg#gh-light-mode-only)
-<h2>Program Atoms</h2>
+<h2>Operating System for Generalist Robotics</h2>
 
 <big>
 
