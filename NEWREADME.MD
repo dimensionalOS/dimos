@@ -111,7 +111,7 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
   </tr>
 </table>
 
-New Hardware Integration Guide
+[New Hardware Integration Guide](docs/hardware/integration_guide.md)
 
 # Installation
 
@@ -177,4 +177,4 @@ Check our language interop examples:
 
 ## ROS interop
 
-For researchers, we can talk to ROS directly via [ROS Transports](docs/api/transports.md), or host ROS deployments as first-class DimOS modules.
+For researchers, we can talk to ROS directly via [ROS Transports](docs/api/transports.md), or host dockerized ROS deployments as first-class DimOS modules, allowing you easy installation and portability
