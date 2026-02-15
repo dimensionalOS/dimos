@@ -111,6 +111,8 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
   </tr>
 </table>
 
+[New Hardware Integration Guide](docs/hardware/integration_guide.md)
+
 # Installation
 
 ### Step 1: System Install
@@ -124,7 +126,9 @@ To set up your system dependencies, follow one of these guides:
 
 ### Step 2: Python Install
 
-Now install the Python package. Check the [hardware docs](#hardware) above to choose the right extras and blueprint for your platform.
+Now install the Python package.
+
+Check the [hardware section](#hardware) above to choose the right `extras` and `blueprint` for your platform.
 
 ```sh
 pip install dimos[your_platform]
