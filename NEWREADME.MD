@@ -63,20 +63,20 @@
 <table>
   <tr>
     <td align="center" width="25%">
+      <h3><a href="docs/hardware/dog/go2/index.md">Dog</a></h3>
       <img width="200" height="1" src="">
-      <h3>Dog</h3>
     </td>
     <td align="center" width="25%">
-      <img width="200" height="1" src="">
       <h3>Humanoid</h3>
+      <img width="200" height="1" src="">
     </td>
     <td align="center" width="25%">
-      <img width="200" height="1" src="">
       <h3>Arm</h3>
+      <img width="200" height="1" src="">
     </td>
     <td align="center" width="25%">
-      <img width="200" height="1" src="">
       <h3>Drone</h3>
+      <img width="200" height="1" src="">
     </td>
   </tr>
 </table>
