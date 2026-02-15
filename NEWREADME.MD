@@ -33,11 +33,11 @@
   <tr>
     <td align="center" width="50%">
       <h3>Nav</h3>
-      ros and non ros<br><a href="#">▶ Watch video</a>
+      ros and non ros<br><a href="#">Watch video</a>
     </td>
     <td align="center" width="50%">
       <h3>Perception</h3>
-      bla bla perception<br><a href="#">▶ Watch video</a>
+      bla bla perception<br><a href="#">Watch video</a>
     </td>
   </tr>
   <tr>
@@ -51,11 +51,11 @@
   <tr>
     <td align="center" width="50%">
       <h3>Mapping</h3>
-      Voxels<br><a href="#">▶ Watch video</a>
+      Voxels<br><a href="#">Watch video</a>
     </td>
     <td align="center" width="50%">
       <h3>Agents integration</h3>
-      bla bla MCP<br><a href="https://x.com/lesh_bla/status/2014904935088062503">▶ Watch video</a>
+      bla bla MCP<br><a href="https://x.com/lesh_bla/status/2014904935088062503">Watch video</a>
     </td>
   </tr>
 </table>
