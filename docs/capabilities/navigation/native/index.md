@@ -9,8 +9,6 @@ The Go2 navigation stack runs entirely without ROS. It uses a **column-carving v
 <details>
 <summary>diagram source</summary>
 
-<details><summary>Pikchr</summary>
-
 ```pikchr fold output=assets/go2nav_dataflow.svg
 color = white
 fill = none
