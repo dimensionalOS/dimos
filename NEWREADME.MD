@@ -15,16 +15,15 @@
 ![CUDA](https://img.shields.io/badge/CUDA-supported-76B900?style=flat-square&logo=nvidia&logoColor=white)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 
-<big>
+<big><big>
 
-[Intro](#intro) •
 [Hardware](#hardware) •
 [Installation](#installation) •
 [Development](#development) •
 [Multi Language](#multi-language-support) •
 [ROS](#ros-interop)
 
-</big>
+</big></big>
 
 </div>
 
