@@ -3,46 +3,69 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Phone Teleop</title>
+    <title>DimOS Phone Teleop</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-            background: #1a1a2e;
-            color: #eee;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #fff;
+            color: #333;
             min-height: 100vh;
-            padding: 10px;
             display: flex;
             flex-direction: column;
+            align-items: center;
+            padding: 20px 16px;
         }
 
-        .panel {
-            background: rgba(20, 20, 40, 0.85);
-            border-radius: 10px;
-            padding: 12px;
-            margin-bottom: 8px;
+        h1 {
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #28283b;
         }
 
         .status-row {
             display: flex;
             gap: 8px;
             flex-wrap: wrap;
-            margin-bottom: 8px;
+            margin-bottom: 16px;
+            justify-content: center;
         }
         .status-badge {
-            font-size: 11px;
-            padding: 3px 8px;
-            border-radius: 12px;
-            background: #333;
+            font-size: 13px;
+            font-weight: 500;
+            padding: 6px 14px;
+            border-radius: 8px;
+            border: 2px solid #adb5bd;
+            color: #6c757d;
+            background: #fff;
         }
-        .status-badge.ok { background: #1b5e20; }
-        .status-badge.error { background: #b71c1c; }
+        .status-badge.ok {
+            border-color: #0077b6;
+            color: #0077b6;
+            background: #e8f4fd;
+        }
+        .status-badge.error {
+            border-color: #c0392b;
+            color: #c0392b;
+            background: #fdf0ef;
+        }
+
+        .panel {
+            width: 100%;
+            max-width: 400px;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 14px;
+            margin-bottom: 12px;
+            background: #fff;
+        }
 
         h3 {
-            font-size: 13px;
+            font-size: 14px;
             font-weight: 600;
-            margin-bottom: 6px;
-            color: #aaa;
+            margin-bottom: 8px;
+            color: #6c757d;
             text-transform: uppercase;
             letter-spacing: 0.5px;
         }
@@ -51,83 +74,98 @@
             display: grid;
             grid-template-columns: 40px 1fr 1fr 1fr;
             gap: 2px 8px;
-            font-size: 14px;
+            font-size: 15px;
             font-family: 'SF Mono', 'Menlo', monospace;
         }
-        .data-label { color: #888; }
-        .data-value { color: #4fc3f7; text-align: right; }
+        .data-label { color: #6c757d; }
+        .data-value { color: #0077b6; text-align: right; font-weight: 500; }
 
         button {
-            background: #2196F3;
+            background-color: #0077b6;
             color: white;
             border: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-size: 13px;
+            padding: 12px 28px;
+            border-radius: 12px;
+            font-size: 16px;
             font-weight: 600;
             cursor: pointer;
+            transition: background-color 0.2s;
             -webkit-tap-highlight-color: transparent;
         }
-        button:active { opacity: 0.8; }
+        button:hover { background-color: #005f8a; }
+        button:active { background-color: #004a6e; }
+
+        button.secondary {
+            background-color: #6c757d;
+        }
+        button.secondary:hover { background-color: #545b62; }
+
+        .btn-row {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            margin-bottom: 12px;
+        }
+
+        .rate-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            justify-content: center;
+            margin-top: 8px;
+        }
+        .rate-row label {
+            font-size: 13px;
+            color: #6c757d;
+        }
+        .rate-row input {
+            width: 60px;
+            border: 2px solid #e9ecef;
+            color: #333;
+            padding: 6px;
+            border-radius: 8px;
+            font-size: 13px;
+            text-align: center;
+        }
 
         .spacer { flex: 1; }
 
         #teleop-btn {
             width: 100%;
-            padding: 24px;
-            font-size: 20px;
+            max-width: 400px;
+            padding: 28px;
+            font-size: 22px;
             font-weight: 700;
-            background: #f44336;
+            background-color: #6c757d;
             border-radius: 12px;
             user-select: none;
             -webkit-user-select: none;
             touch-action: none;
         }
         #teleop-btn.active {
-            background: #4CAF50;
-        }
-
-        .rate-row {
-            display: flex;
-            gap: 6px;
-            align-items: center;
-            margin-top: 6px;
-        }
-        .rate-row label {
-            font-size: 12px;
-            color: #888;
-        }
-        .rate-row input {
-            width: 60px;
-            background: #222;
-            border: 1px solid #444;
-            color: #eee;
-            padding: 4px;
-            border-radius: 4px;
-            font-size: 12px;
+            background-color: #0077b6;
         }
     </style>
 </head>
 <body>
-    <!-- Status -->
-    <div class="panel">
-        <div class="status-row">
-            <span id="sensor-status" class="status-badge">Sensors: off</span>
-            <span id="ws-status" class="status-badge">WS: disconnected</span>
-        </div>
-        <button id="start-btn">Start Sensors</button>
+    <h1>DimOS Phone Teleop</h1>
+
+    <!-- Status Badges -->
+    <div class="status-row">
+        <span id="sensor-status" class="status-badge">Sensors: off</span>
+        <span id="ws-status" class="status-badge">WS: disconnected</span>
     </div>
 
-    <!-- Connection -->
-    <div class="panel">
-        <h3>Connection</h3>
-        <div class="status-row">
-            <button id="ws-btn">Connect</button>
-        </div>
-        <div class="rate-row">
-            <label>Rate (ms):</label>
-            <input type="number" id="ws-rate" value="50" min="16" max="1000">
-        </div>
+    <!-- Buttons -->
+    <div class="btn-row">
+        <button id="start-btn">Start Sensors</button>
+        <button id="ws-btn" class="secondary">Connect</button>
+    </div>
+
+    <!-- Rate -->
+    <div class="rate-row">
+        <label>Send rate (ms):</label>
+        <input type="number" id="ws-rate" value="50" min="16" max="1000">
     </div>
 
     <!-- Raw Sensor Data -->
@@ -151,33 +189,10 @@
         </div>
     </div>
 
-    <!-- Twist -->
-    <div class="panel">
-        <h3>Twist (cmd_vel)</h3>
-        <div class="data-grid">
-            <div class="data-label"></div>
-            <div class="data-label" style="text-align:right">X</div>
-            <div class="data-label" style="text-align:right">Y</div>
-            <div class="data-label" style="text-align:right">Z</div>
-
-            <div class="data-label">Lin</div>
-            <div class="data-value" id="tw-lx">0.000</div>
-            <div class="data-value" id="tw-ly">0.000</div>
-            <div class="data-value" id="tw-lz">0.000</div>
-
-            <div class="data-label">Ang</div>
-            <div class="data-value" id="tw-ax">0.000</div>
-            <div class="data-value" id="tw-ay">0.000</div>
-            <div class="data-value" id="tw-az">0.000</div>
-        </div>
-    </div>
-
     <div class="spacer"></div>
 
     <!-- Teleop Button -->
-    <div class="panel">
-        <button id="teleop-btn">HOLD TO TELEOP</button>
-    </div>
+    <button id="teleop-btn">HOLD TO TELEOP</button>
 
     <script type="module">
         import { encodePacket, geometry_msgs, std_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
@@ -191,28 +206,17 @@
         let orientation = { roll: 0, pitch: 0, yaw: 0 };   // from DeviceOrientation (degrees)
         let gyro = { x: 0, y: 0, z: 0 };                   // from DeviceMotion rotationRate (deg/s)
 
-        // Teleop
+        // Teleop button (sent as Bool, module handles engagement)
         let teleopActive = false;
-        let homeOrientation = null;
-
-        // Twist output
-        let twist = {
-            linear: { x: 0, y: 0, z: 0 },
-            angular: { x: 0, y: 0, z: 0 }
-        };
 
         // WebSocket
         let ws = null;
         let wsConnected = false;
         let wsSendInterval = null;
 
-        // Gain: maps degrees of tilt to m/s or rad/s
-        // 45 deg tilt -> 1.0 m/s with GAIN = 1/45
-        const LINEAR_GAIN = 1.0 / 45.0;
-        const ANGULAR_GAIN = 1.0 / 45.0;
-
-        // LCM channel for twist output
-        const TWIST_CHANNEL = "/iphone/twist#geometry_msgs.TwistStamped";
+        // LCM channels
+        const SENSOR_CHANNEL = "/phone/sensors#geometry_msgs.TwistStamped";
+        const BUTTON_CHANNEL = "/phone/button#std_msgs.Bool";
 
         // ============================================
         // DOM
@@ -261,7 +265,6 @@
 
             orientation = { roll: 0, pitch: 0, yaw: 0 };
             gyro = { x: 0, y: 0, z: 0 };
-            twist = { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } };
             updateDisplay();
         }
 
@@ -273,8 +276,6 @@
             orientation.roll = e.gamma || 0;
             orientation.pitch = e.beta || 0;
             orientation.yaw = e.alpha || 0;
-
-            computeTwist();
             updateDisplay();
         }
 
@@ -288,59 +289,19 @@
         }
 
         // ============================================
-        // Twist Computation
-        // ============================================
-        function computeTwist() {
-            if (!teleopActive || !homeOrientation) {
-                twist.linear = { x: 0, y: 0, z: 0 };
-                twist.angular = { x: 0, y: 0, z: 0 };
-                return;
-            }
-
-            // Delta from home orientation
-            const dPitch = orientation.pitch - homeOrientation.pitch;  // tilt forward/back
-            const dRoll = orientation.roll - homeOrientation.roll;     // tilt left/right
-            let dYaw = orientation.yaw - homeOrientation.yaw;          // rotate left/right
-            // Handle yaw wraparound (0-360)
-            if (dYaw > 180) dYaw -= 360;
-            if (dYaw < -180) dYaw += 360;
-
-            // Linear: tilt forward -> linear.x, tilt sideways -> linear.y
-            twist.linear = {
-                x: -dPitch * LINEAR_GAIN,   // pitch forward (negative beta) -> positive linear.x
-                y: dRoll * LINEAR_GAIN,      // roll left (negative gamma) -> positive linear.y
-                z: 0
-            };
-
-            // Angular: yaw rotation -> angular.z
-            twist.angular = {
-                x: 0,
-                y: 0,
-                z: -dYaw * ANGULAR_GAIN      // yaw left -> positive angular.z
-            };
-        }
-
-        // ============================================
-        // Teleop
+        // Teleop Button
         // ============================================
         function startTeleop() {
             if (!sensorsActive) return;
             teleopActive = true;
-            homeOrientation = { ...orientation };
             $('teleop-btn').textContent = 'TRACKING...';
             $('teleop-btn').classList.add('active');
         }
 
         function stopTeleop() {
             teleopActive = false;
-            homeOrientation = null;
-            twist = { linear: { x: 0, y: 0, z: 0 }, angular: { x: 0, y: 0, z: 0 } };
             $('teleop-btn').textContent = 'HOLD TO TELEOP';
             $('teleop-btn').classList.remove('active');
-
-            // Send zero twist
-            if (wsConnected) sendTwist();
-            updateDisplay();
         }
 
         // ============================================
@@ -349,7 +310,6 @@
         function connectWS() {
             if (wsConnected) { disconnectWS(); return; }
 
-            // Auto-derive WebSocket URL from current page host (served by Deno bridge)
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}`;
 
@@ -363,7 +323,7 @@
                     $('ws-status').className = 'status-badge ok';
                     $('ws-btn').textContent = 'Disconnect';
                     const rate = parseInt($('ws-rate').value) || 50;
-                    wsSendInterval = setInterval(sendTwist, rate);
+                    wsSendInterval = setInterval(sendData, rate);
                 };
 
                 ws.onclose = () => {
@@ -389,37 +349,41 @@
             wsConnected = false;
         }
 
-        function sendTwist() {
+        function sendData() {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
             const nowMs = Date.now();
-
-            // Build TwistStamped LCM message
-            const twistStamped = new geometry_msgs.TwistStamped({
-                header: new std_msgs.Header({
-                    stamp: new std_msgs.Time({
-                        sec: Math.floor(nowMs / 1000),
-                        nsec: (nowMs % 1000) * 1_000_000
-                    }),
-                    frame_id: "iphone"
+            const header = new std_msgs.Header({
+                stamp: new std_msgs.Time({
+                    sec: Math.floor(nowMs / 1000),
+                    nsec: (nowMs % 1000) * 1_000_000
                 }),
+                frame_id: "phone"
+            });
+
+            // --- Send raw sensors as TwistStamped ---
+            // linear = orientation (roll, pitch, yaw) in degrees
+            // angular = gyro rates (pitch, roll, yaw) in deg/s
+            const twistStamped = new geometry_msgs.TwistStamped({
+                header: header,
                 twist: new geometry_msgs.Twist({
                     linear: new geometry_msgs.Vector3({
-                        x: twist.linear.x,
-                        y: twist.linear.y,
-                        z: twist.linear.z
+                        x: orientation.roll,
+                        y: orientation.pitch,
+                        z: orientation.yaw
                     }),
                     angular: new geometry_msgs.Vector3({
-                        x: twist.angular.x,
-                        y: twist.angular.y,
-                        z: twist.angular.z
+                        x: gyro.x,
+                        y: gyro.y,
+                        z: gyro.z
                     })
                 })
             });
+            ws.send(encodePacket(SENSOR_CHANNEL, twistStamped));
 
-            // Encode as binary LCM packet and send
-            const packet = encodePacket(TWIST_CHANNEL, twistStamped);
-            ws.send(packet);
+            // --- Send teleop button as Bool ---
+            const boolMsg = new std_msgs.Bool({ data: teleopActive ? 1 : 0 });
+            ws.send(encodePacket(BUTTON_CHANNEL, boolMsg));
         }
 
         // ============================================
@@ -433,14 +397,6 @@
             $('gyro-x').textContent = gyro.x.toFixed(1);
             $('gyro-y').textContent = gyro.y.toFixed(1);
             $('gyro-z').textContent = gyro.z.toFixed(1);
-
-            $('tw-lx').textContent = twist.linear.x.toFixed(3);
-            $('tw-ly').textContent = twist.linear.y.toFixed(3);
-            $('tw-lz').textContent = twist.linear.z.toFixed(3);
-
-            $('tw-ax').textContent = twist.angular.x.toFixed(3);
-            $('tw-ay').textContent = twist.angular.y.toFixed(3);
-            $('tw-az').textContent = twist.angular.z.toFixed(3);
         }
 
         // ============================================
@@ -464,7 +420,7 @@
         $('ws-rate').addEventListener('change', function() {
             if (wsSendInterval) {
                 clearInterval(wsSendInterval);
-                wsSendInterval = setInterval(sendTwist, parseInt(this.value) || 50);
+                wsSendInterval = setInterval(sendData, parseInt(this.value) || 50);
             }
         });
 

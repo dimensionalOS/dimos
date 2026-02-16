@@ -20,7 +20,7 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import TwistStamped
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
-from dimos.teleop.iphone.iphone_extensions import (
+from dimos.teleop.phone.phone_extensions import (
     phone_go2_teleop_module,
     simple_phone_teleop_module,
 )

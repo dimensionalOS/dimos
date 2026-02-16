@@ -12,20 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""iPhone teleoperation module for DimOS."""
+"""Phone teleoperation module for DimOS."""
 
-from dimos.teleop.iphone.iphone_teleop_module import (
-    IPhoneTeleopConfig,
-    IPhoneTeleopModule,
-    VisualizingIPhoneTeleopModule,
-    iphone_teleop_module,
-    visualizing_iphone_teleop_module,
+from dimos.teleop.phone.phone_extensions import (
+    SimplePhoneTeleop,
+    simple_phone_teleop_module,
+)
+from dimos.teleop.phone.phone_teleop_module import (
+    PhoneTeleopConfig,
+    PhoneTeleopModule,
+    phone_teleop_module,
 )
 
 __all__ = [
-    "IPhoneTeleopConfig",
-    "IPhoneTeleopModule",
-    "VisualizingIPhoneTeleopModule",
-    "iphone_teleop_module",
-    "visualizing_iphone_teleop_module",
+    "PhoneTeleopConfig",
+    "PhoneTeleopModule",
+    "SimplePhoneTeleop",
+    "phone_teleop_module",
+    "simple_phone_teleop_module",
 ]
