@@ -59,8 +59,6 @@ from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-
     from dimos.core.rpc_client import RPCClient
     from dimos.msgs.geometry_msgs import Pose, PoseArray, Vector3
     from dimos.msgs.sensor_msgs import PointCloud2
@@ -1087,29 +1085,26 @@ class ManipulationModule(Module):
 
     def _preview_execute_wait(
         self, robot_name: RobotName | None = None, preview_duration: float = 0.5
-    ) -> Generator[str, None, bool]:
+    ) -> str | None:
         """Preview planned path, execute, and wait for completion.
 
-        Yields progress strings. The generator returns True on success, False on failure.
-        Caller must use ``result = yield from self._preview_execute_wait(...)`` to get the bool.
+        Returns None on success, or an error string on failure.
 
         Args:
             robot_name: Robot to operate on
             preview_duration: Duration to animate the preview in Meshcat (seconds)
         """
-        yield "Previewing trajectory..."
+        logger.info("Previewing trajectory...")
         self.preview_path(preview_duration, robot_name)
 
-        yield "Executing trajectory..."
+        logger.info("Executing trajectory...")
         if not self.execute(robot_name):
-            yield "Error: Trajectory execution failed"
-            return False
+            return "Error: Trajectory execution failed"
 
         if not self._wait_for_trajectory_completion(robot_name):
-            yield "Error: Trajectory execution timed out"
-            return False
+            return "Error: Trajectory execution timed out"
 
-        return True
+        return None
 
     def _compute_pre_grasp_pose(self, grasp_pose: Pose, offset: float = 0.10) -> Pose:
         """Compute a pre-grasp pose offset along the approach direction (local -Z).
@@ -1192,7 +1187,7 @@ class ManipulationModule(Module):
         pitch: float = 0.0,
         yaw: float = 0.0,
         robot_name: str | None = None,
-    ) -> Generator[str, None, None]:
+    ) -> str:
         """Move the robot end-effector to a target pose.
 
         Plans a collision-free trajectory and executes it.
@@ -1206,25 +1201,24 @@ class ManipulationModule(Module):
             yaw: Target yaw in radians (default 0).
             robot_name: Robot to move (only needed for multi-arm setups).
         """
-        yield f"Planning motion to ({x:.3f}, {y:.3f}, {z:.3f})..."
+        logger.info(f"Planning motion to ({x:.3f}, {y:.3f}, {z:.3f})...")
         pose = Pose(Vector3(x, y, z), Quaternion.from_euler(Vector3(roll, pitch, yaw)))
 
         if not self.plan_to_pose(pose, robot_name):
-            yield f"Error: Planning failed — pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision"
-            return
+            return f"Error: Planning failed — pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision"
 
-        ok = yield from self._preview_execute_wait(robot_name)
-        if not ok:
-            return
+        err = self._preview_execute_wait(robot_name)
+        if err:
+            return err
 
-        yield f"Reached target pose ({x:.3f}, {y:.3f}, {z:.3f})"
+        return f"Reached target pose ({x:.3f}, {y:.3f}, {z:.3f})"
 
     @skill
     def move_to_joints(
         self,
         joints: str,
         robot_name: str | None = None,
-    ) -> Generator[str, None, None]:
+    ) -> str:
         """Move the robot to a target joint configuration.
 
         Plans a collision-free trajectory and executes it.
@@ -1236,26 +1230,23 @@ class ManipulationModule(Module):
         try:
             joint_values = [float(j.strip()) for j in joints.split(",")]
         except ValueError:
-            yield f"Error: Invalid joints format '{joints}'. Expected comma-separated floats."
-            return
+            return f"Error: Invalid joints format '{joints}'. Expected comma-separated floats."
 
         robot = self._get_robot(robot_name)
         if robot is None:
-            yield "Error: Robot not found"
-            return
+            return "Error: Robot not found"
         rname, _, config, _ = robot
         goal = JointState(name=config.joint_names, position=joint_values)
 
-        yield f"Planning motion to joints [{', '.join(f'{j:.3f}' for j in joint_values)}]..."
+        logger.info(f"Planning motion to joints [{', '.join(f'{j:.3f}' for j in joint_values)}]...")
         if not self.plan_to_joints(goal, rname):
-            yield "Error: Planning failed — joint configuration may be unreachable or in collision"
-            return
+            return "Error: Planning failed — joint configuration may be unreachable or in collision"
 
-        ok = yield from self._preview_execute_wait(robot_name)
-        if not ok:
-            return
+        err = self._preview_execute_wait(robot_name)
+        if err:
+            return err
 
-        yield "Reached target joint configuration"
+        return "Reached target joint configuration"
 
     @skill
     def get_scene_info(self, robot_name: str | None = None) -> str:
@@ -1347,7 +1338,7 @@ class ManipulationModule(Module):
     # =========================================================================
 
     @skill
-    def go_home(self, robot_name: str | None = None) -> Generator[str, None, None]:
+    def go_home(self, robot_name: str | None = None) -> str:
         """Move the robot to its home/observe joint configuration.
 
         Opens the gripper and moves to the predefined home position.
@@ -1357,32 +1348,29 @@ class ManipulationModule(Module):
         """
         robot = self._get_robot(robot_name)
         if robot is None:
-            yield "Error: Robot not found"
-            return
+            return "Error: Robot not found"
         rname, _, config, _ = robot
 
         if config.home_joints is None:
-            yield "Error: No home_joints configured for this robot"
-            return
+            return "Error: No home_joints configured for this robot"
 
-        yield "Opening gripper..."
+        logger.info("Opening gripper...")
         self._set_gripper_position(0.85, rname)
         time.sleep(0.5)
 
         goal = JointState(name=config.joint_names, position=config.home_joints)
-        yield "Planning motion to home position..."
+        logger.info("Planning motion to home position...")
         if not self.plan_to_joints(goal, rname):
-            yield "Error: Failed to plan path to home position"
-            return
+            return "Error: Failed to plan path to home position"
 
-        ok = yield from self._preview_execute_wait(robot_name)
-        if not ok:
-            return
+        err = self._preview_execute_wait(robot_name)
+        if err:
+            return err
 
-        yield "Reached home position"
+        return "Reached home position"
 
     @skill
-    def go_init(self, robot_name: str | None = None) -> Generator[str, None, None]:
+    def go_init(self, robot_name: str | None = None) -> str:
         """Move the robot to its init position (captured at startup or set manually).
 
         The init position is the joint configuration the robot was in when the
@@ -1392,19 +1380,19 @@ class ManipulationModule(Module):
             robot_name: Robot to move (only needed for multi-arm setups).
         """
         if self._init_joints is None:
-            yield "Error: No init joints captured — robot may not have reported joint state yet"
-            return
+            return "Error: No init joints captured — robot may not have reported joint state yet"
 
-        yield f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in self._init_joints.position)}]..."
+        logger.info(
+            f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in self._init_joints.position)}]..."
+        )
         if not self.plan_to_joints(self._init_joints, robot_name):
-            yield "Error: Failed to plan path to init position"
-            return
+            return "Error: Failed to plan path to init position"
 
-        ok = yield from self._preview_execute_wait(robot_name)
-        if not ok:
-            return
+        err = self._preview_execute_wait(robot_name)
+        if err:
+            return err
 
-        yield "Reached init position"
+        return "Reached init position"
 
     @skill
     def pick(
@@ -1412,11 +1400,11 @@ class ManipulationModule(Module):
         object_name: str,
         object_id: str | None = None,
         robot_name: str | None = None,
-    ) -> Generator[str, None, None]:
+    ) -> str:
         """Pick up an object by name using grasp planning and motion execution.
 
-        Scans the scene, generates grasp poses (via GraspGen or heuristic fallback),
-        plans collision-free approach/grasp/retract motions, and executes them.
+        Generates grasp poses, plans collision-free approach/grasp/retract motions,
+        and executes them.
 
         Args:
             object_name: Name of the object to pick (e.g. "cup", "bottle", "can").
@@ -1425,68 +1413,63 @@ class ManipulationModule(Module):
         """
         robot = self._get_robot(robot_name)
         if robot is None:
-            yield "Error: Robot not found"
-            return
+            return "Error: Robot not found"
         rname, _, config, _ = robot
         pre_grasp_offset = config.pre_grasp_offset
 
         # 1. Generate grasps (uses already-cached detections — call scan_objects first)
-        yield f"Generating grasp poses for '{object_name}'..."
+        logger.info(f"Generating grasp poses for '{object_name}'...")
         grasp_poses = self._generate_grasps_for_pick(object_name, object_id)
         if not grasp_poses:
-            yield f"Error: No grasp poses found for '{object_name}'. Object may not be detected."
-            return
+            return f"Error: No grasp poses found for '{object_name}'. Object may not be detected."
 
-        # 3. Try each grasp candidate
+        # 2. Try each grasp candidate
         max_attempts = min(len(grasp_poses), 5)
         for i, grasp_pose in enumerate(grasp_poses[:max_attempts]):
             pre_grasp_pose = self._compute_pre_grasp_pose(grasp_pose, pre_grasp_offset)
 
-            yield f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})..."
+            logger.info(f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})...")
             if not self.plan_to_pose(pre_grasp_pose, rname):
                 logger.info(f"Grasp candidate {i + 1} approach planning failed, trying next")
                 continue  # Try next candidate
 
             # Open gripper before approach
-            yield "Opening gripper..."
+            logger.info("Opening gripper...")
             self._set_gripper_position(0.85, rname)
             time.sleep(0.5)
 
-            # 4. Preview + execute approach
-            ok = yield from self._preview_execute_wait(rname)
-            if not ok:
-                return
+            # 3. Preview + execute approach
+            err = self._preview_execute_wait(rname)
+            if err:
+                return err
 
-            # 5. Move to grasp pose
-            yield "Moving to grasp position..."
+            # 4. Move to grasp pose
+            logger.info("Moving to grasp position...")
             if not self.plan_to_pose(grasp_pose, rname):
-                yield "Error: Grasp pose planning failed"
-                return
-            ok = yield from self._preview_execute_wait(rname)
-            if not ok:
-                return
+                return "Error: Grasp pose planning failed"
+            err = self._preview_execute_wait(rname)
+            if err:
+                return err
 
-            # 6. Close gripper
-            yield "Closing gripper..."
+            # 5. Close gripper
+            logger.info("Closing gripper...")
             self._set_gripper_position(0.0, rname)
             time.sleep(1.5)  # Wait for gripper to close
 
-            # 7. Retract to pre-grasp
-            yield "Retracting with object..."
+            # 6. Retract to pre-grasp
+            logger.info("Retracting with object...")
             if not self.plan_to_pose(pre_grasp_pose, rname):
-                yield "Error: Retract planning failed"
-                return
-            ok = yield from self._preview_execute_wait(rname)
-            if not ok:
-                return
+                return "Error: Retract planning failed"
+            err = self._preview_execute_wait(rname)
+            if err:
+                return err
 
             # Store pick position so place_back() can return the object
             self._last_pick_position = grasp_pose.position
 
-            yield f"Pick complete — grasped '{object_name}' successfully"
-            return
+            return f"Pick complete — grasped '{object_name}' successfully"
 
-        yield f"Error: All {max_attempts} grasp attempts failed for '{object_name}'"
+        return f"Error: All {max_attempts} grasp attempts failed for '{object_name}'"
 
     @skill
     def place(
@@ -1495,7 +1478,7 @@ class ManipulationModule(Module):
         y: float,
         z: float,
         robot_name: str | None = None,
-    ) -> Generator[str, None, None]:
+    ) -> str:
         """Place a held object at the specified position.
 
         Plans and executes an approach, lowers to the target, releases the gripper,
@@ -1509,8 +1492,7 @@ class ManipulationModule(Module):
         """
         robot = self._get_robot(robot_name)
         if robot is None:
-            yield "Error: Robot not found"
-            return
+            return "Error: Robot not found"
         rname, _, config, _ = robot
         pre_place_offset = config.pre_grasp_offset
 
@@ -1519,42 +1501,39 @@ class ManipulationModule(Module):
         pre_place_pose = self._compute_pre_grasp_pose(place_pose, pre_place_offset)
 
         # 1. Move to pre-place
-        yield f"Planning approach to place position ({x:.3f}, {y:.3f}, {z:.3f})..."
+        logger.info(f"Planning approach to place position ({x:.3f}, {y:.3f}, {z:.3f})...")
         if not self.plan_to_pose(pre_place_pose, rname):
-            yield "Error: Pre-place approach planning failed"
-            return
+            return "Error: Pre-place approach planning failed"
 
-        ok = yield from self._preview_execute_wait(rname)
-        if not ok:
-            return
+        err = self._preview_execute_wait(rname)
+        if err:
+            return err
 
         # 2. Lower to place position
-        yield "Lowering to place position..."
+        logger.info("Lowering to place position...")
         if not self.plan_to_pose(place_pose, rname):
-            yield "Error: Place pose planning failed"
-            return
-        ok = yield from self._preview_execute_wait(rname)
-        if not ok:
-            return
+            return "Error: Place pose planning failed"
+        err = self._preview_execute_wait(rname)
+        if err:
+            return err
 
         # 3. Release
-        yield "Releasing object..."
+        logger.info("Releasing object...")
         self._set_gripper_position(0.85, rname)
         time.sleep(1.0)
 
         # 4. Retract
-        yield "Retracting..."
+        logger.info("Retracting...")
         if not self.plan_to_pose(pre_place_pose, rname):
-            yield "Error: Retract planning failed"
-            return
-        ok = yield from self._preview_execute_wait(rname)
-        if not ok:
-            return
+            return "Error: Retract planning failed"
+        err = self._preview_execute_wait(rname)
+        if err:
+            return err
 
-        yield f"Place complete — object released at ({x:.3f}, {y:.3f}, {z:.3f})"
+        return f"Place complete — object released at ({x:.3f}, {y:.3f}, {z:.3f})"
 
     @skill
-    def place_back(self, robot_name: str | None = None) -> Generator[str, None, None]:
+    def place_back(self, robot_name: str | None = None) -> str:
         """Place the held object back at its original pick position.
 
         Uses the position stored from the last successful pick operation.
@@ -1563,12 +1542,11 @@ class ManipulationModule(Module):
             robot_name: Robot to use (only needed for multi-arm setups).
         """
         if self._last_pick_position is None:
-            yield "Error: No previous pick position stored — run pick() first"
-            return
+            return "Error: No previous pick position stored — run pick() first"
 
         p = self._last_pick_position
-        yield f"Placing back at original position ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})..."
-        yield from self.place(p.x, p.y, p.z, robot_name)
+        logger.info(f"Placing back at original position ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})...")
+        return self.place(p.x, p.y, p.z, robot_name)
 
     @skill
     def pick_and_place(
@@ -1579,7 +1557,7 @@ class ManipulationModule(Module):
         place_z: float,
         object_id: str | None = None,
         robot_name: str | None = None,
-    ) -> Generator[str, None, None]:
+    ) -> str:
         """Pick up an object and place it at a target location.
 
         Combines the pick and place skills into a single end-to-end operation.
@@ -1592,21 +1570,17 @@ class ManipulationModule(Module):
             object_id: Optional unique object ID from perception.
             robot_name: Robot to use (only needed for multi-arm setups).
         """
+        logger.info(
+            f"Starting pick and place: pick '{object_name}' → place at ({place_x:.3f}, {place_y:.3f}, {place_z:.3f})"
+        )
+
         # Pick phase
-        yield f"Starting pick and place: pick '{object_name}' → place at ({place_x:.3f}, {place_y:.3f}, {place_z:.3f})"
-        for msg in self.pick(object_name, object_id, robot_name):
-            yield msg
-            # Check if pick failed
-            if msg.startswith("Error:"):
-                return
+        result = self.pick(object_name, object_id, robot_name)
+        if result.startswith("Error:"):
+            return result
 
-        # Place phase (go directly from pick retract to place — no go_init in between)
-        for msg in self.place(place_x, place_y, place_z, robot_name):
-            yield msg
-            if msg.startswith("Error:"):
-                return
-
-        yield f"Pick and place complete — '{object_name}' placed at ({place_x:.3f}, {place_y:.3f}, {place_z:.3f})"
+        # Place phase
+        return self.place(place_x, place_y, place_z, robot_name)
 
     # =========================================================================
     # Lifecycle

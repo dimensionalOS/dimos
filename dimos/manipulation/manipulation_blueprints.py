@@ -28,8 +28,7 @@ Usage:
 import math
 from pathlib import Path
 
-from dimos.agents.agent import llm_agent
-from dimos.agents.cli.human import human_input
+from dimos.agents.agent import Agent
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense import realsense_camera
@@ -394,8 +393,7 @@ After pick or place, return to init with go_init unless another action follows i
 
 xarm_perception_agent = autoconnect(
     xarm_perception,
-    llm_agent(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
-    human_input(),
+    Agent.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
 
 
