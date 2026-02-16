@@ -44,10 +44,12 @@ simple_phone_teleop = autoconnect(
 phone_go2_teleop = autoconnect(
     phone_go2_teleop_module(),
     unitree_go2_basic,
-).transports({
-    ("phone_sensors", TwistStamped): LCMTransport("/phone/sensors", TwistStamped),
-    ("phone_button", Bool): LCMTransport("/phone/button", Bool),
-})
+).transports(
+    {
+        ("phone_sensors", TwistStamped): LCMTransport("/phone/sensors", TwistStamped),
+        ("phone_button", Bool): LCMTransport("/phone/button", Bool),
+    }
+)
 
 
-__all__ = ["simple_phone_teleop", "phone_go2_teleop"]
+__all__ = ["phone_go2_teleop", "simple_phone_teleop"]

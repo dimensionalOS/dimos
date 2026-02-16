@@ -289,9 +289,9 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
             ts=current.ts,
             frame_id="phone",
             linear=Vector3(
-                x=-delta.linear.y * cfg.linear_gain,    # pitch forward -> drive forward
-                y=-delta.linear.x * cfg.linear_gain,    # roll right -> strafe right
-                z=d_yaw * cfg.linear_gain,               # yaw right -> positive z
+                x=-delta.linear.y * cfg.linear_gain,  # pitch forward -> drive forward
+                y=-delta.linear.x * cfg.linear_gain,  # roll right -> strafe right
+                z=d_yaw * cfg.linear_gain,  # yaw right -> positive z
             ),
             angular=Vector3(
                 x=current.angular.x * cfg.angular_gain,

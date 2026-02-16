@@ -72,8 +72,8 @@ simple_phone_teleop_module = SimplePhoneTeleop.blueprint
 phone_go2_teleop_module = PhoneGo2Teleop.blueprint
 
 __all__ = [
-    "SimplePhoneTeleop",
     "PhoneGo2Teleop",
-    "simple_phone_teleop_module",
+    "SimplePhoneTeleop",
     "phone_go2_teleop_module",
+    "simple_phone_teleop_module",
 ]
