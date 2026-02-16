@@ -353,6 +353,7 @@ module = [
     "dimos_lcm.*",
     "etils",
     "geometry_msgs.*",
+    "lazy_loader",
     "mujoco",
     "mujoco_playground.*",
     "nav_msgs.*",
