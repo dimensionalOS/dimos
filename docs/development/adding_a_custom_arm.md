@@ -90,14 +90,7 @@ from dimos.hardware.manipulators.spec import (
     ManipulatorInfo,
 )
 
-# ── Unit conversion constants ──────────────────────────────────────
-# Define constants for converting between your SDK's units and SI.
-# Examples:
-#   XArm uses degrees → DEG_TO_RAD = math.pi / 180
-#   Piper uses millidegrees → MILLIDEG_TO_RAD = math.pi / 180_000
-#   XArm uses mm → MM_TO_M = 0.001
-DEG_TO_RAD = math.pi / 180.0
-RAD_TO_DEG = 180.0 / math.pi
+# Unit conversion constants (if your SDK doesn't use SI units)
 MM_TO_M = 0.001
 M_TO_MM = 1000.0
 
@@ -109,13 +102,12 @@ class YourArmAdapter:
     No inheritance required — just match the method signatures in spec.py.
     """
 
-    def __init__(self, address: str, dof: int = 6, **_: object) -> None:
+    def __init__(self, address: str, dof: int = 6) -> None:
         """Initialize the adapter.
 
         Args:
             address: Connection address (IP, CAN port, serial device, etc.)
             dof: Degrees of freedom.
-            **_: Absorbs extra kwargs from the registry (important!).
         """
         if not address:
             raise ValueError("address is required for YourArmAdapter")
@@ -226,7 +218,7 @@ class YourArmAdapter:
         if not self._sdk:
             raise RuntimeError("Not connected")
         raw_positions = self._sdk.get_joint_positions()
-        return [p * DEG_TO_RAD for p in raw_positions[:self._dof]]
+        return [math.radians(p) for p in raw_positions[:self._dof]]
 
     def read_joint_velocities(self) -> list[float]:
         """Read current joint velocities in rad/s.
@@ -238,7 +230,7 @@ class YourArmAdapter:
             return [0.0] * self._dof
         # If SDK supports velocity reading:
         # raw_velocities = self._sdk.get_joint_velocities()
-        # return [v * DEG_TO_RAD for v in raw_velocities[:self._dof]]
+        # return [math.radians(v) for v in raw_velocities[:self._dof]]
         return [0.0] * self._dof
 
     def read_joint_efforts(self) -> list[float]:
@@ -289,7 +281,7 @@ class YourArmAdapter:
         """
         if not self._sdk:
             return False
-        sdk_positions = [p * RAD_TO_DEG for p in positions]
+        sdk_positions = [math.degrees(p) for p in positions]
         return self._sdk.set_joint_positions(sdk_positions)
 
     def write_joint_velocities(self, velocities: list[float]) -> bool:
@@ -299,7 +291,7 @@ class YourArmAdapter:
         """
         if not self._sdk:
             return False
-        sdk_velocities = [v * RAD_TO_DEG for v in velocities]
+        sdk_velocities = [math.degrees(v) for v in velocities]
         return self._sdk.set_joint_velocities(sdk_velocities)
 
     def write_stop(self) -> bool:
@@ -383,7 +375,6 @@ __all__ = ["YourArmAdapter"]
 
 ### Key implementation notes
 
-- **`**_: object` in `__init__`** — The registry passes all kwargs from `adapter_registry.create()`. Accept `**_` to absorb any extra keys you don't need.
 - **Unsupported features** — Return `None` for reads and `False` for writes. Never raise exceptions for optional features.
 - **Velocity/effort feedback** — If your SDK doesn't provide these, return zeros. The coordinator handles this gracefully.
 - **Lazy SDK import** — If the vendor SDK is an optional dependency, you can import it inside `connect()` instead of at module level (see Piper adapter for this pattern):
@@ -436,16 +427,17 @@ print(adapter_registry.available())  # Should include "yourarm"
 
 ## Step 3: Create Your Robot Folder and Blueprints
 
-Each robot in DimOS gets its own folder under `dimos/robot/`. This is where you define all blueprints for your arm — coordinator, planning, perception, etc. This follows the same pattern as Unitree robots (`dimos/robot/unitree_webrtc/`).
+Each robot in DimOS gets its own folder under `dimos/robot/`. This is where you define all blueprints for your arm — coordinator, planning, perception, etc. This follows the same pattern as Unitree robots (`dimos/robot/unitree/`).
 
 ### 3a. Create the robot directory
 
 ```
 dimos/robot/
-├── unitree_webrtc/          # Unitree robots (reference example)
-│   ├── __init__.py
-│   ├── unitree_go2_blueprints.py
-│   └── unitree_g1_blueprints.py
+├── unitree/                 # Unitree robots (reference example)
+│   ├── go2/
+│   │   └── blueprints/
+│   └── g1/
+│       └── blueprints/
 └── yourarm/                 # ← New directory for your robot
     ├── __init__.py
     └── blueprints.py
@@ -512,13 +504,6 @@ coordinator_yourarm = control_coordinator(
 )
 
 
-# =============================================================================
-# Exports — these become available via `dimos run <name>`
-# =============================================================================
-
-__all__ = [
-    "coordinator_yourarm",
-]
 ```
 
 ### Blueprint field reference
@@ -540,13 +525,17 @@ If you want motion planning (collision-free trajectories via Drake), you need a 
 
 ### 4a. Add your URDF
 
-Place your URDF/xacro files so they can be found via `dimos.utils.data.get_data()`. Then create helpers in your `dimos/robot/yourarm/blueprints.py`:
+Place your URDF/xacro files under LFS data so they can be resolved via `LfsPath`. `LfsPath` is a `Path` subclass that lazily downloads LFS data on first access — this avoids downloading at import time when the blueprint module is loaded.
 
 ```python
-from dimos.utils.data import get_data
+from dimos.utils.data import LfsPath
 from dimos.manipulation.manipulation_module import manipulation_module
 from dimos.manipulation.planning.spec import RobotModelConfig
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
+
+# LfsPath defers download until the path is actually accessed
+_YOURARM_URDF_PATH = LfsPath("yourarm_description/urdf/yourarm.urdf")
+_YOURARM_PACKAGE_PATH = LfsPath("yourarm_description")
 
 
 def _make_base_pose(x=0.0, y=0.0, z=0.0) -> PoseStamped:
@@ -554,16 +543,6 @@ def _make_base_pose(x=0.0, y=0.0, z=0.0) -> PoseStamped:
         position=Vector3(x=x, y=y, z=z),
         orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
     )
-
-
-def _get_yourarm_urdf_path() -> Path:
-    """Get path to YourArm URDF."""
-    return get_data("yourarm_description") / "urdf/yourarm.urdf"
-
-
-def _get_yourarm_package_paths() -> dict[str, Path]:
-    """Get package paths for xacro resolution (if using xacro)."""
-    return {"yourarm_description": get_data("yourarm_description")}
 ```
 
 ### 4b. Create a robot model config helper
@@ -589,12 +568,12 @@ def _make_yourarm_config(
 
     return RobotModelConfig(
         name=name,
-        urdf_path=_get_yourarm_urdf_path(),
+        urdf_path=_YOURARM_URDF_PATH,
         base_pose=_make_base_pose(y=y_offset),
         joint_names=joint_names,
         end_effector_link="link6",      # Last link in your URDF's kinematic chain
         base_link="base_link",          # Root link of your URDF
-        package_paths=_get_yourarm_package_paths(),
+        package_paths={"yourarm_description": _YOURARM_PACKAGE_PATH},
         xacro_args={},                  # Xacro arguments if using .xacro files
         collision_exclusion_pairs=[],   # Pairs of links that can touch (e.g., gripper fingers)
         auto_convert_meshes=True,       # Convert DAE/STL meshes for Drake
@@ -625,15 +604,6 @@ yourarm_planner = manipulation_module(
 )
 ```
 
-And add it to `__all__`:
-
-```python
-__all__ = [
-    "coordinator_yourarm",
-    "yourarm_planner",
-]
-```
-
 ### Key config fields
 
 | Field | Description |
@@ -649,10 +619,9 @@ __all__ = [
 
 ## Step 5: Register Blueprints
 
-The blueprint registry in `dimos/robot/all_blueprints.py` is **auto-generated** from `__all__` exports across the codebase. After adding your blueprints:
+The blueprint registry in `dimos/robot/all_blueprints.py` is **auto-generated** by scanning the codebase for blueprint declarations. After adding your blueprints:
 
-1. Make sure your blueprints are listed in `__all__` in `dimos/robot/yourarm/blueprints.py`
-2. Run the generation test to update the registry:
+1. Run the generation test to update the registry:
    ```bash
    pytest dimos/robot/test_all_blueprints_generation.py
    ```
