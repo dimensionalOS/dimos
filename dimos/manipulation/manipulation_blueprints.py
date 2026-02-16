@@ -175,6 +175,7 @@ def _make_xarm6_config(
         max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
+        home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
 
 
@@ -273,6 +274,7 @@ def _make_piper_config(
         max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
+        home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
 
 

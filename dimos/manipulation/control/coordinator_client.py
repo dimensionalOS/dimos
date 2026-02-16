@@ -325,26 +325,32 @@ def preview_trajectory(trajectory: JointTrajectory, joint_names: list[str]) -> N
 
 
 def wait_for_completion(client: CoordinatorClient, task_name: str, timeout: float = 60.0) -> bool:
-    """Wait for trajectory to complete with progress display."""
+    """Wait for trajectory to complete by polling task state.
+
+    TrajectoryState is an IntEnum: IDLE=0, EXECUTING=1, COMPLETED=2, ABORTED=3, FAULT=4.
+    """
     start = time.time()
-    last_progress = -1.0
+    _STATE_NAMES = {0: "IDLE", 1: "EXECUTING", 2: "COMPLETED", 3: "ABORTED", 4: "FAULT"}
 
     while time.time() - start < timeout:
         status = client.get_trajectory_status(task_name)
-        if not status.get("active", False):
-            state: str = status.get("state", "UNKNOWN")
-            print(f"\nTrajectory finished: {state}")
-            return state == "COMPLETED"
+        if not status:
+            print("\nCould not get trajectory status")
+            return False
 
-        progress = status.get("progress", 0.0)
-        if progress != last_progress:
-            bar_len = 30
-            filled = int(bar_len * progress)
-            bar = "=" * filled + "-" * (bar_len - filled)
-            print(f"\r[{bar}] {progress * 100:.1f}%", end="", flush=True)
-            last_progress = progress
+        state_val = status.get("state")
+        state_name = _STATE_NAMES.get(state_val, f"UNKNOWN({state_val})")  # type: ignore[arg-type]
 
-        time.sleep(0.05)
+        if state_val in (0, 2):  # IDLE or COMPLETED
+            print(f"\nTrajectory finished: {state_name}")
+            return True
+        if state_val in (3, 4):  # ABORTED or FAULT
+            print(f"\nTrajectory failed: {state_name}")
+            return False
+        # state_val == 1 means EXECUTING, keep polling
+        elapsed = time.time() - start
+        print(f"\r  Executing... ({elapsed:.1f}s)", end="", flush=True)
+        time.sleep(0.1)
 
     print("\nTimeout waiting for trajectory")
     return False
@@ -476,12 +482,12 @@ class CoordinatorShell:
 
     def status(self) -> None:
         """Show task status."""
+        _STATE_NAMES = {0: "IDLE", 1: "EXECUTING", 2: "COMPLETED", 3: "ABORTED", 4: "FAULT"}
         status = self._client.get_trajectory_status(self._current_task)
+        state_val = status.get("state")
+        state_name = _STATE_NAMES.get(state_val, f"UNKNOWN({state_val})")  # type: ignore[arg-type]
         print(f"\nTask: {self._current_task}")
-        print(f"  Active: {status.get('active', False)}")
-        print(f"  State: {status.get('state', 'UNKNOWN')}")
-        if "progress" in status:
-            print(f"  Progress: {status['progress'] * 100:.1f}%")
+        print(f"  State: {state_name} ({state_val})")
 
     def cancel(self) -> None:
         """Cancel active trajectory."""
