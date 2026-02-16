@@ -88,6 +88,24 @@ class Twist(LCMTwist):  # type: ignore[misc]
         """Check if this is a zero twist (no linear or angular velocity)."""
         return self.linear.is_zero() and self.angular.is_zero()
 
+    def __sub__(self, other: Twist) -> Twist:
+        """Component-wise subtraction: self - other."""
+        if not isinstance(other, Twist):
+            return NotImplemented
+        return Twist(
+            linear=self.linear - other.linear,
+            angular=self.angular - other.angular,
+        )
+
+    def __add__(self, other: Twist) -> Twist:
+        """Component-wise addition: self + other."""
+        if not isinstance(other, Twist):
+            return NotImplemented
+        return Twist(
+            linear=self.linear + other.linear,
+            angular=self.angular + other.angular,
+        )
+
     def __bool__(self) -> bool:
         """Boolean conversion for Twist.
 
