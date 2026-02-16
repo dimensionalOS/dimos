@@ -99,21 +99,21 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
 
   <tr>
     <td align="center" width="20%">
-      🟩 <a href="docs/platforms/dog/go2/index.md">Unitree Go2 pro/air</a><br>
+      🟩 <a href="docs/platforms/quadruped/go2/index.md">Unitree Go2 pro/air</a><br>
     </td>
     <td align="center" width="20%">
-      🟧 <a href="docs/platforms/dog/go2/index.md">Unitree G1</a><br>
+      🟥 <a href="docs/platforms/todo.md">Unitree G1</a><br>
     </td>
     <td align="center" width="20%">
-      🟨 <a href="docs/platforms/dog/go2/index.md">Xarm</a><br>
-      🟨 <a href="docs/platforms/dog/go2/index.md">Piper</a><br>
+      🟥 <a href="docs/platforms/todo.md">Xarm</a><br>
+      🟥 <a href="docs/platforms/todo.md">Piper</a><br>
     </td>
     <td align="center" width="20%">
-      🟧 <a href="docs/platforms/dog/go2/index.md">Mavlink</a><br>
-      🟥 <a href="docs/platforms/dog/go2/index.md">DJI SDK</a><br>
+      🟥 <a href="docs/platforms/todo.md">Mavlink</a><br>
+      🟥 <a href="docs/platforms/todo.md">DJI SDK</a><br>
     </td>
     <td align="center" width="20%">
-      🟨 <a href="docs/hardware/force-torque/index.md">Force Torque Sensor</a><br>
+      🟥 <a href="https://github.com/dimensionalOS/openFT-sensor">Force Torque Sensor</a><br>
     </td>
   </tr>
 </table>
