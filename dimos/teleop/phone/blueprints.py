@@ -13,42 +13,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Phone teleop blueprints for testing and deployment."""
-
 from dimos.core.blueprints import autoconnect
-from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import TwistStamped
-from dimos.msgs.std_msgs.Bool import Bool
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 from dimos.teleop.phone.phone_extensions import (
     phone_go2_teleop_module,
     simple_phone_teleop_module,
 )
 
-# -----------------------------------------------------------------------------
-# Phone Teleop Blueprints
-# -----------------------------------------------------------------------------
 
 # Simple phone teleop (mobile base axis filtering)
 simple_phone_teleop = autoconnect(
     simple_phone_teleop_module(),
-).transports(
-    {
-        ("phone_sensors", TwistStamped): LCMTransport("/phone/sensors", TwistStamped),
-        ("phone_button", Bool): LCMTransport("/phone/button", Bool),
-        ("twist_output", TwistStamped): LCMTransport("/teleop/twist", TwistStamped),
-    }
 )
-
+ 
 # Phone teleop wired to Unitree Go2
 phone_go2_teleop = autoconnect(
     phone_go2_teleop_module(),
     unitree_go2_basic,
-).transports(
-    {
-        ("phone_sensors", TwistStamped): LCMTransport("/phone/sensors", TwistStamped),
-        ("phone_button", Bool): LCMTransport("/phone/button", Bool),
-    }
 )
 
 
