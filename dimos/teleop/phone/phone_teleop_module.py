@@ -28,6 +28,7 @@ Raw sensor TwistStamped layout from browser:
 
 from dataclasses import dataclass
 from pathlib import Path
+import signal
 import subprocess
 import threading
 import time
@@ -37,7 +38,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
-from dimos.msgs.geometry_msgs import TwistStamped, Vector3
+from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.teleop.base import TeleopProtocol
 from dimos.utils.logging_config import setup_logger
@@ -201,7 +202,8 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
 
     def _start_server(self) -> None:
         """Launch the Deno WebSocket-to-LCM bridge server as a subprocess."""
-        if self._server_process is not None:
+        if self._server_process is not None and self._server_process.poll() is None:
+            logger.warning("Deno bridge already running", pid=self._server_process.pid)
             return
 
         script = str(self._server_script)
@@ -218,20 +220,25 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
         try:
             self._server_process = subprocess.Popen(cmd)
             logger.info(f"Deno bridge server started (pid {self._server_process.pid})")
-        except FileNotFoundError:
-            logger.error("'deno' not found in PATH — install Deno or start the server manually")
+        except OSError as e:
+            logger.error(f"Failed to start Deno bridge: {e}")
 
     def _stop_server(self) -> None:
         """Terminate the Deno bridge server subprocess."""
-        if self._server_process is None:
+        if self._server_process is None or self._server_process.poll() is not None:
+            self._server_process = None
             return
 
-        self._server_process.terminate()
+        logger.info("Stopping Deno bridge server", pid=self._server_process.pid)
+        self._server_process.send_signal(signal.SIGTERM)
         try:
             self._server_process.wait(timeout=3)
         except subprocess.TimeoutExpired:
+            logger.warning(
+                "Deno bridge did not exit, sending SIGKILL", pid=self._server_process.pid
+            )
             self._server_process.kill()
-            self._server_process.wait(timeout=1)
+            self._server_process.wait(timeout=5)
         logger.info("Deno bridge server stopped")
         self._server_process = None
 
@@ -262,11 +269,7 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
         logger.info("Control loop stopped")
 
     def _control_loop(self) -> None:
-        """Main control loop: handle engagement, compute deltas, publish twist.
-
-        Holds self._lock for the entire iteration so overridable methods
-        don't need to acquire it themselves.
-        """
+        """Main control loop: handle engagement, compute deltas, publish twist"""
         period = 1.0 / self.config.control_loop_hz
 
         while self._control_loop_running:
@@ -322,8 +325,8 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
         if current is None or home is None:
             return None
 
-        # Twist subtraction: delta.linear = orientation delta, delta.angular = gyro delta
-        delta = current - home
+        # Subtract as Twist (drops ts/frame_id, returns Twist)
+        delta: Twist = Twist(current) - Twist(home)
 
         # Handle yaw wraparound (linear.z = yaw, 0-360 degrees)
         d_yaw = delta.linear.z
@@ -351,7 +354,7 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
 
     def _publish_msg(self, output_msg: TwistStamped) -> None:
         """Publish twist command.
-
+    
         Override to customize output (e.g., apply limits, remap axes).
         """
         self.twist_output.publish(output_msg)

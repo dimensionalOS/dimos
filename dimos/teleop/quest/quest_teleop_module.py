@@ -23,6 +23,7 @@ transforms from WebXR to robot frame, computes deltas, and publishes PoseStamped
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
+import signal
 import subprocess
 import threading
 import time
@@ -239,7 +240,8 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
     def _start_server(self) -> None:
         """Launch the Deno WebSocket-to-LCM bridge server as a subprocess."""
-        if self._server_process is not None:
+        if self._server_process is not None and self._server_process.poll() is None:
+            logger.warning("Deno bridge already running", pid=self._server_process.pid)
             return
 
         script = str(self._server_script)
@@ -256,20 +258,25 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         try:
             self._server_process = subprocess.Popen(cmd)
             logger.info(f"Deno bridge server started (pid {self._server_process.pid})")
-        except FileNotFoundError:
-            logger.error("'deno' not found in PATH — install Deno or start the server manually")
+        except OSError as e:
+            logger.error(f"Failed to start Deno bridge: {e}")
 
     def _stop_server(self) -> None:
         """Terminate the Deno bridge server subprocess."""
-        if self._server_process is None:
+        if self._server_process is None or self._server_process.poll() is not None:
+            self._server_process = None
             return
 
-        self._server_process.terminate()
+        logger.info("Stopping Deno bridge server", pid=self._server_process.pid)
+        self._server_process.send_signal(signal.SIGTERM)
         try:
             self._server_process.wait(timeout=3)
         except subprocess.TimeoutExpired:
+            logger.warning(
+                "Deno bridge did not exit, sending SIGKILL", pid=self._server_process.pid
+            )
             self._server_process.kill()
-            self._server_process.wait(timeout=1)
+            self._server_process.wait(timeout=5)
         logger.info("Deno bridge server stopped")
         self._server_process = None
 
