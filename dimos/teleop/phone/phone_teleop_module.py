@@ -238,7 +238,10 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
                 "Deno bridge did not exit, sending SIGKILL", pid=self._server_process.pid
             )
             self._server_process.kill()
-            self._server_process.wait(timeout=5)
+            try:
+                self._server_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                logger.error("Deno bridge did not exit after SIGKILL")
         logger.info("Deno bridge server stopped")
         self._server_process = None
 
