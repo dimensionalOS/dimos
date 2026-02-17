@@ -107,27 +107,6 @@
             margin-bottom: 12px;
         }
 
-        .rate-row {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-            justify-content: center;
-            margin-top: 8px;
-        }
-        .rate-row label {
-            font-size: 13px;
-            color: #6c757d;
-        }
-        .rate-row input {
-            width: 60px;
-            border: 2px solid #e9ecef;
-            color: #333;
-            padding: 6px;
-            border-radius: 8px;
-            font-size: 13px;
-            text-align: center;
-        }
-
         .spacer { flex: 1; }
 
         #teleop-btn {
@@ -160,12 +139,6 @@
     <div class="btn-row">
         <button id="start-btn">Start Sensors</button>
         <button id="ws-btn" class="secondary">Connect</button>
-    </div>
-
-    <!-- Rate -->
-    <div class="rate-row">
-        <label>Send rate (ms):</label>
-        <input type="number" id="ws-rate" value="50" min="16" max="1000">
     </div>
 
     <!-- Raw Sensor Data -->
@@ -276,7 +249,6 @@
             orientation.roll = e.gamma || 0;
             orientation.pitch = e.beta || 0;
             orientation.yaw = e.alpha || 0;
-            updateDisplay();
         }
 
         function onMotion(e) {
@@ -322,8 +294,7 @@
                     $('ws-status').textContent = 'WS: connected';
                     $('ws-status').className = 'status-badge ok';
                     $('ws-btn').textContent = 'Disconnect';
-                    const rate = parseInt($('ws-rate').value) || 50;
-                    wsSendInterval = setInterval(sendData, rate);
+                    wsSendInterval = setInterval(sendData, 20);  // 50 Hz
                 };
 
                 ws.onclose = () => {
@@ -384,6 +355,8 @@
             // --- Send teleop button as Bool ---
             const boolMsg = new std_msgs.Bool({ data: teleopActive ? 1 : 0 });
             ws.send(encodePacket(BUTTON_CHANNEL, boolMsg));
+
+            updateDisplay();
         }
 
         // ============================================
@@ -416,13 +389,6 @@
         $('teleop-btn').addEventListener('pointerup', stopTeleop);
         $('teleop-btn').addEventListener('pointercancel', stopTeleop);
         $('teleop-btn').addEventListener('pointerleave', stopTeleop);
-
-        $('ws-rate').addEventListener('change', function() {
-            if (wsSendInterval) {
-                clearInterval(wsSendInterval);
-                wsSendInterval = setInterval(sendData, parseInt(this.value) || 50);
-            }
-        });
 
         updateDisplay();
     </script>

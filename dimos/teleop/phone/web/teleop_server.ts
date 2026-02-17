@@ -1,12 +1,12 @@
 #!/usr/bin/env -S deno run --allow-net --allow-read --allow-run --allow-write --unstable-net
 
-// WebSocket to LCM Bridge for iPhone Teleop
-// Forwards twist data from iPhone browser to LCM
+// WebSocket to LCM Bridge for Phone Teleop
+// Forwards twist data from Phone browser to LCM
 
 import { LCM } from "jsr:@dimos/lcm";
 import { dirname, fromFileUrl, join } from "jsr:@std/path";
 
-const PORT = 8443;
+const PORT = 8444;
 
 // Resolve paths relative to script location
 const scriptDir = dirname(fromFileUrl(import.meta.url));
@@ -47,13 +47,14 @@ const { cert, key } = await ensureCerts();
 const lcm = new LCM();
 await lcm.start();
 
+// Binds to all interfaces so the phone can reach the server over LAN.
 Deno.serve({ port: PORT, cert, key }, async (req) => {
   const url = new URL(req.url);
 
   if (req.headers.get("upgrade") === "websocket") {
     const { socket, response } = Deno.upgradeWebSocket(req);
-    socket.onopen = () => console.log("iPhone client connected");
-    socket.onclose = () => console.log("iPhone client disconnected");
+    socket.onopen = () => console.log("Phone client connected");
+    socket.onclose = () => console.log("Phone client disconnected");
 
     // Forward binary LCM packets from browser directly to UDP
     socket.binaryType = "arraybuffer";
@@ -79,6 +80,6 @@ Deno.serve({ port: PORT, cert, key }, async (req) => {
   return new Response("Not found", { status: 404 });
 });
 
-console.log(`iPhone Teleop Server: https://localhost:${PORT}`);
+console.log(`Phone Teleop Server: https://localhost:${PORT}`);
 
 await lcm.run();
