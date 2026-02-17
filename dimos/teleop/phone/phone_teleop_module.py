@@ -354,7 +354,7 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
 
     def _publish_msg(self, output_msg: TwistStamped) -> None:
         """Publish twist command.
-    
+
         Override to customize output (e.g., apply limits, remap axes).
         """
         self.twist_output.publish(output_msg)
