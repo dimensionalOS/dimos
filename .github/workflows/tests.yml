@@ -3,10 +3,6 @@ name: tests
 on:
  workflow_call:
    inputs:
-     should-run:
-       required: false
-       type: boolean
-       default: true
      dev-image:
        required: true
        type: string
@@ -20,22 +16,6 @@ permissions:
   packages: read
 
 jobs:
-
-  # cleanup:
-  #   runs-on: dimos-runner-ubuntu-2204
-  #   steps:
-  #     - name: exit early
-  #       if: ${{ !inputs.should-run }}
-  #       run: |
-  #         exit 0
-
-  #     - name: Free disk space
-  #       run: |
-  #         sudo rm -rf /opt/ghc
-  #         sudo rm -rf /usr/share/dotnet
-  #         sudo rm -rf /usr/local/share/boost
-  #         sudo rm -rf /usr/local/lib/android
-
   run-tests:
     runs-on: [self-hosted, Linux]
     container:
