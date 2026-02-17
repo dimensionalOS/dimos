@@ -38,7 +38,6 @@ class SimplePhoneTeleop(PhoneTeleopModule):
     """
 
     def _get_output_twist(self) -> TwistStamped | None:
-        """Extract mobile-base axes from raw twist."""
         raw = super()._get_output_twist()
         if raw is None:
             return None
@@ -64,7 +63,6 @@ class PhoneGo2Teleop(SimplePhoneTeleop):
 
     def _publish_msg(self, output_msg: TwistStamped) -> None:
         """Publish as Twist on cmd_vel to match GO2Connection.
-
         Intentionally bypasses the base twist_output stream — only cmd_vel is used.
         """
         self.cmd_vel.publish(Twist(linear=output_msg.linear, angular=output_msg.angular))
