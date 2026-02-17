@@ -131,6 +131,7 @@ class Agent(Module):
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
     ) -> None:
+        self.agent_idle.publish(False)
         self._history.append(message)
         pretty_print_langchain_message(message)
         self.agent.publish(message)

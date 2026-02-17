@@ -18,11 +18,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 import threading
 from typing import TYPE_CHECKING, TypeAlias
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core import In, Module, rpc
+from dimos.core.docker_runner import DockerModule as DockerRunner
 from dimos.core.module import ModuleConfig
+from dimos.manipulation.grasping.graspgen_module import GraspGenModule
 from dimos.manipulation.planning import (
     JointPath,
     JointTrajectoryGenerator,
@@ -42,11 +46,13 @@ from dimos.manipulation.planning.monitor import WorldMonitor
 from dimos.msgs.sensor_msgs import JointState
 from dimos.msgs.trajectory_msgs import JointTrajectory
 from dimos.perception.detection.type.detection3d.object import Object as DetObject  # noqa: TC001
+from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import RPCClient
-    from dimos.msgs.geometry_msgs import Pose
+    from dimos.msgs.geometry_msgs import Pose, PoseArray
+    from dimos.msgs.sensor_msgs import PointCloud2
 
 logger = setup_logger()
 
@@ -62,6 +68,10 @@ PlannedPaths: TypeAlias = dict[RobotName, JointPath]
 
 PlannedTrajectories: TypeAlias = dict[RobotName, JointTrajectory]
 """Maps robot_name -> planned trajectory"""
+
+# The host-side path (graspgen_visualization_output_path) is volume-mounted here.
+_GRASPGEN_VIZ_CONTAINER_DIR = "/output/graspgen"
+_GRASPGEN_VIZ_CONTAINER_PATH = f"{_GRASPGEN_VIZ_CONTAINER_DIR}/visualization.json"
 
 
 class ManipulationState(Enum):
@@ -83,6 +93,18 @@ class ManipulationModuleConfig(ModuleConfig):
     enable_viz: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
+
+    # GraspGen Docker settings (optional)
+    graspgen_docker_image: str = "dimos-graspgen:latest"
+    graspgen_gripper_type: str = "robotiq_2f_140"
+    graspgen_num_grasps: int = 400
+    graspgen_topk_num_grasps: int = 100
+    graspgen_grasp_threshold: float = -1.0
+    graspgen_filter_collisions: bool = False
+    graspgen_save_visualization_data: bool = False
+    graspgen_visualization_output_path: Path = field(
+        default_factory=lambda: Path.home() / ".dimos" / "graspgen" / "visualization.json"
+    )
 
 
 class ManipulationModule(Module):
@@ -121,6 +143,9 @@ class ManipulationModule(Module):
 
         # Coordinator integration (lazy initialized)
         self._coordinator_client: RPCClient | None = None
+
+        # GraspGen Docker runner (lazy initialized on first generate_grasps call)
+        self._graspgen: DockerRunner | None = None
 
         # TF publishing thread
         self._tf_stop_event = threading.Event()
@@ -678,6 +703,70 @@ class ManipulationModule(Module):
         status = client.get_trajectory_status(config.coordinator_task_name)
         return dict(status) if status else None
 
+    def _get_graspgen(self) -> DockerRunner:
+        """Get or create GraspGen Docker module (lazy init, thread-safe)."""
+        # Fast path: already initialized (no lock needed for read)
+        if self._graspgen is not None:
+            return self._graspgen
+
+        # Slow path: need to initialize (acquire lock to prevent race condition)
+        with self._lock:
+            # Double-check: another thread may have initialized while we waited for lock
+            if self._graspgen is not None:
+                return self._graspgen
+
+            # Ensure GraspGen model checkpoints are pulled from LFS
+            get_data("models_graspgen")
+
+            docker_file = (
+                DIMOS_PROJECT_ROOT
+                / "dimos"
+                / "manipulation"
+                / "grasping"
+                / "docker_context"
+                / "Dockerfile"
+            )
+
+            # Auto-mount host directory for visualization output when enabled.
+            docker_volumes: list[tuple[str, str, str]] = []
+            if self.config.graspgen_save_visualization_data:
+                host_dir = self.config.graspgen_visualization_output_path.parent
+                host_dir.mkdir(parents=True, exist_ok=True)
+                docker_volumes.append((str(host_dir), _GRASPGEN_VIZ_CONTAINER_DIR, "rw"))
+
+            graspgen = DockerRunner(
+                GraspGenModule,  # type: ignore[arg-type]
+                docker_file=docker_file,
+                docker_build_context=DIMOS_PROJECT_ROOT,
+                docker_image=self.config.graspgen_docker_image,
+                docker_env={"CI": "1"},  # skip interactive system config prompt in container
+                docker_volumes=docker_volumes,
+                gripper_type=self.config.graspgen_gripper_type,
+                num_grasps=self.config.graspgen_num_grasps,
+                topk_num_grasps=self.config.graspgen_topk_num_grasps,
+                grasp_threshold=self.config.graspgen_grasp_threshold,
+                filter_collisions=self.config.graspgen_filter_collisions,
+                save_visualization_data=self.config.graspgen_save_visualization_data,
+                visualization_output_path=_GRASPGEN_VIZ_CONTAINER_PATH,
+            )
+            graspgen.start()
+            self._graspgen = graspgen  # cache only after successful start
+            return self._graspgen
+
+    @rpc
+    def generate_grasps(
+        self,
+        pointcloud: PointCloud2,
+        scene_pointcloud: PointCloud2 | None = None,
+    ) -> PoseArray | None:
+        """Generate grasp poses for the given point cloud via GraspGen Docker module."""
+        try:
+            graspgen = self._get_graspgen()
+            return graspgen.generate_grasps(pointcloud, scene_pointcloud)  # type: ignore[no-any-return]
+        except Exception as e:
+            logger.error(f"Grasp generation failed: {e}")
+            return None
+
     @property
     def world_monitor(self) -> WorldMonitor | None:
         """Access the world monitor for advanced obstacle/world operations."""
@@ -845,6 +934,12 @@ class ManipulationModule(Module):
     def stop(self) -> None:
         """Stop the manipulation module."""
         logger.info("Stopping ManipulationModule")
+
+        # Stop GraspGen Docker container (thread-safe access to shared state)
+        with self._lock:
+            if self._graspgen is not None:
+                self._graspgen.stop()
+                self._graspgen = None
 
         # Stop TF thread
         if self._tf_thread is not None:

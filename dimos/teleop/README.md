@@ -17,7 +17,7 @@ QuestTeleopModule
     │  WebXR → robot frame transform
     │  Pose computation + button state packing
     ▼
-PoseStamped / TwistStamped / QuestButtons outputs
+PoseStamped / TwistStamped / Buttons outputs
 ```
 
 ## Modules
@@ -61,7 +61,7 @@ teleop/
 ├── quest/
 │   ├── quest_teleop_module.py   # Base Quest teleop module
 │   ├── quest_extensions.py      # ArmTeleop, TwistTeleop, VisualizingTeleop
-│   ├── quest_types.py           # QuestControllerState, QuestButtons
+│   ├── quest_types.py           # QuestControllerState, Buttons
 │   └── web/                     # Deno bridge + WebXR client
 │       ├── teleop_server.ts
 │       └── static/index.html

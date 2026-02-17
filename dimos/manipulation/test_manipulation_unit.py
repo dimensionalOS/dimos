@@ -100,6 +100,7 @@ def _make_module():
         module._planner = None
         module._kinematics = None
         module._coordinator_client = None
+        module._graspgen = None
         return module
 
 

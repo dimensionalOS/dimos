@@ -52,7 +52,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from dimos.msgs.geometry_msgs import Pose, PoseStamped
-    from dimos.teleop.quest.quest_types import QuestButtons
+    from dimos.teleop.quest.quest_types import Buttons
 
 logger = setup_logger()
 
@@ -276,19 +276,19 @@ class TeleopIKTask(BaseControlTask):
     # Task-specific methods
     # =========================================================================
 
-    def on_buttons(self, msg: QuestButtons) -> bool:
+    def on_buttons(self, msg: Buttons) -> bool:
         """Press-and-hold engage: hold primary button to track, release to stop.
 
-        Checks only the button matching self._config.hand (left_x or right_a).
+        Checks only the button matching self._config.hand (left_primary or right_primary).
         If hand is not set, listens to both.
         """
         hand = self._config.hand
         if hand == "left":
-            primary = msg.left_x
+            primary = msg.left_primary
         elif hand == "right":
-            primary = msg.right_a
+            primary = msg.right_primary
         else:
-            primary = msg.left_x or msg.right_a
+            primary = msg.left_primary or msg.right_primary
 
         if primary and not self._prev_primary:
             # Rising edge: reset initial pose so compute() recaptures

@@ -35,7 +35,7 @@ from dimos.hardware.manipulators.spec import ControlMode
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs import Pose, PoseStamped
-    from dimos.teleop.quest.quest_types import QuestButtons
+    from dimos.teleop.quest.quest_types import Buttons
 
 # =============================================================================
 # Data Types
@@ -291,7 +291,7 @@ class ControlTask(Protocol):
         """
         ...
 
-    def on_buttons(self, msg: QuestButtons) -> bool:
+    def on_buttons(self, msg: Buttons) -> bool:
         """Handle button state from teleop controllers."""
         ...
 
@@ -315,7 +315,7 @@ class BaseControlTask(ControlTask):
     in tasks that don't need them. Only override what your task uses.
     """
 
-    def on_buttons(self, msg: QuestButtons) -> bool:
+    def on_buttons(self, msg: Buttons) -> bool:
         """No-op default."""
         return False
 

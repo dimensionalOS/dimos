@@ -35,7 +35,7 @@ from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import JointState
-from dimos.teleop.quest.quest_types import QuestButtons
+from dimos.teleop.quest.quest_types import Buttons
 from dimos.utils.data import LfsPath
 
 _PIPER_MODEL_PATH = LfsPath("piper_description/mujoco_model/piper_no_gripper_description.xml")
@@ -499,7 +499,7 @@ coordinator_teleop_xarm6 = control_coordinator(
         ("cartesian_command", PoseStamped): LCMTransport(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
     }
 )
 
@@ -535,7 +535,7 @@ coordinator_teleop_piper = control_coordinator(
         ("cartesian_command", PoseStamped): LCMTransport(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
     }
 )
 
@@ -588,7 +588,7 @@ coordinator_teleop_dual = control_coordinator(
         ("cartesian_command", PoseStamped): LCMTransport(
             "/coordinator/cartesian_command", PoseStamped
         ),
-        ("buttons", QuestButtons): LCMTransport("/teleop/buttons", QuestButtons),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
     }
 )
 

@@ -61,7 +61,7 @@ class VoxelGridMapper(Module):
             else o3c.Device("CPU:0")
         )
 
-        print(f"VoxelGridMapper using device: {dev}")
+        logger.info(f"VoxelGridMapper using device: {dev}")
 
         self.vbg = o3d.t.geometry.VoxelBlockGrid(
             attr_names=("dummy",),
