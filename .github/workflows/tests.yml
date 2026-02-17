@@ -21,6 +21,7 @@ permissions:
 
 jobs:
   run-tests:
+    if: ${{ inputs.should-run }}
     runs-on: [self-hosted, Linux]
     container:
       image: ghcr.io/dimensionalos/${{ inputs.dev-image }}
