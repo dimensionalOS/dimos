@@ -69,7 +69,7 @@ class FlowBaseAdapter:
     def connect(self) -> bool:
         """Connect to FlowBase controller via Portal RPC."""
         try:
-            import portal
+            import portal  # type: ignore[import-not-found]
 
             self._client = portal.Client(self._address)
             self._connected = True
@@ -187,6 +187,7 @@ class FlowBaseAdapter:
                 "frame": "local",
             }
             with self._lock:
+                assert self._client is not None
                 self._client.set_target_velocity(command).result()
             return True
         except Exception as e:

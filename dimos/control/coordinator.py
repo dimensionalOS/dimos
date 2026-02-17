@@ -219,6 +219,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
         """Connect and add a single hardware adapter."""
+        adapter: ManipulatorAdapter | TwistBaseAdapter
         if component.hardware_type == HardwareType.BASE:
             adapter = self._create_twist_base_adapter(component)
         else:
@@ -346,9 +347,15 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 return False
 
             if component.hardware_type == HardwareType.BASE:
-                connected = ConnectedTwistBase(adapter=adapter, component=component)
+                connected: ConnectedHardware = ConnectedTwistBase(
+                    adapter=adapter,  # type: ignore[arg-type]
+                    component=component,
+                )
             else:
-                connected = ConnectedHardware(adapter=adapter, component=component)
+                connected = ConnectedHardware(
+                    adapter=adapter,  # type: ignore[arg-type]
+                    component=component,
+                )
 
             self._hardware[component.hardware_id] = connected
 

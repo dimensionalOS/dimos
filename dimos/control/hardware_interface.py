@@ -219,7 +219,7 @@ class ConnectedTwistBase(ConnectedHardware):
         if not isinstance(adapter, TwistBaseAdapterProto):
             raise TypeError("adapter must implement TwistBaseAdapter")
 
-        self._adapter = adapter
+        self._adapter: TwistBaseAdapter = adapter  # type: ignore[assignment]
         self._component = component
         self._joint_names = component.joints
 
