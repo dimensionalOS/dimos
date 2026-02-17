@@ -341,12 +341,23 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         component: HardwareComponent,
     ) -> bool:
         """Register a hardware adapter with the coordinator."""
+        from dimos.hardware.drive_trains.spec import TwistBaseAdapter as TwistBaseAdapterProto
+
+        is_base = component.hardware_type == HardwareType.BASE
+        is_twist_adapter = isinstance(adapter, TwistBaseAdapterProto)
+        if is_base != is_twist_adapter:
+            raise TypeError(
+                f"Hardware type / adapter mismatch for '{component.hardware_id}': "
+                f"hardware_type={component.hardware_type.value} but adapter is "
+                f"{'TwistBaseAdapter' if is_twist_adapter else 'ManipulatorAdapter'}"
+            )
+
         with self._hardware_lock:
             if component.hardware_id in self._hardware:
                 logger.warning(f"Hardware {component.hardware_id} already registered")
                 return False
 
-            if component.hardware_type == HardwareType.BASE:
+            if is_base:
                 connected: ConnectedHardware = ConnectedTwistBase(
                     adapter=adapter,  # type: ignore[arg-type]
                     component=component,
