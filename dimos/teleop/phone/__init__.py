@@ -15,7 +15,9 @@
 """Phone teleoperation module for DimOS."""
 
 from dimos.teleop.phone.phone_extensions import (
+    PhoneGo2Teleop,
     SimplePhoneTeleop,
+    phone_go2_teleop_module,
     simple_phone_teleop_module,
 )
 from dimos.teleop.phone.phone_teleop_module import (
@@ -25,9 +27,11 @@ from dimos.teleop.phone.phone_teleop_module import (
 )
 
 __all__ = [
+    "PhoneGo2Teleop",
     "PhoneTeleopConfig",
     "PhoneTeleopModule",
     "SimplePhoneTeleop",
+    "phone_go2_teleop_module",
     "phone_teleop_module",
     "simple_phone_teleop_module",
 ]

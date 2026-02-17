@@ -43,8 +43,8 @@ class SimplePhoneTeleop(PhoneTeleopModule):
         if raw is None:
             return None
 
-        print(f"Raw twist from phone: linear=({raw.linear.x}, {raw.linear.y}, {raw.linear.z})")
-
+        # raw.linear.z is the yaw orientation delta (already scaled by linear_gain
+        # in the base class), remapped here to angular.z for ground-robot turning.
         return TwistStamped(
             ts=raw.ts,
             frame_id="mobile_base",
@@ -63,9 +63,11 @@ class PhoneGo2Teleop(SimplePhoneTeleop):
     cmd_vel: Out[Twist]
 
     def _publish_msg(self, output_msg: TwistStamped) -> None:
-        """Publish as Twist on cmd_vel to match GO2Connection."""
+        """Publish as Twist on cmd_vel to match GO2Connection.
+
+        Intentionally bypasses the base twist_output stream — only cmd_vel is used.
+        """
         self.cmd_vel.publish(Twist(linear=output_msg.linear, angular=output_msg.angular))
-        print(f"Published cmd_vel: linear={output_msg.linear}, angular={output_msg.angular}")
 
 
 simple_phone_teleop_module = SimplePhoneTeleop.blueprint

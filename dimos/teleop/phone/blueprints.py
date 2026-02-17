@@ -29,16 +29,14 @@ from dimos.teleop.phone.phone_extensions import (
 # Phone Teleop Blueprints
 # -----------------------------------------------------------------------------
 
-_phone_input_transports = {
-    ("phone_sensors", TwistStamped): LCMTransport("/phone/sensors", TwistStamped),
-    ("phone_button", Bool): LCMTransport("/phone/button", Bool),
-    ("twist_output", TwistStamped): LCMTransport("/teleop/twist", TwistStamped),
-}
-
 # Simple phone teleop (mobile base axis filtering)
 simple_phone_teleop = autoconnect(
     simple_phone_teleop_module(),
-).transports(_phone_input_transports)
+).transports({
+    ("phone_sensors", TwistStamped): LCMTransport("/phone/sensors", TwistStamped),
+    ("phone_button", Bool): LCMTransport("/phone/button", Bool),
+    ("twist_output", TwistStamped): LCMTransport("/teleop/twist", TwistStamped),
+})
 
 # Phone teleop wired to Unitree Go2
 phone_go2_teleop = autoconnect(
