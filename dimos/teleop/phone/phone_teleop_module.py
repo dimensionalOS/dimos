@@ -27,6 +27,8 @@ Raw sensor TwistStamped layout from browser:
 """
 
 from dataclasses import dataclass
+from pathlib import Path
+import subprocess
 import threading
 import time
 from typing import Any
@@ -49,9 +51,9 @@ class PhoneTeleopConfig(ModuleConfig):
 
     control_loop_hz: float = 50.0
 
-    # Gain: maps degrees of tilt to m/s.  45 deg tilt -> 1.0 m/s
+    # Gain: maps degrees of tilt to m/s.  30 deg tilt -> 1.0 m/s
     linear_gain: float = 1.0 / 30.0
-    # Gain: maps degrees of yaw delta to rad/s.  90 deg -> 1.0 rad/s
+    # Gain: maps degrees of yaw delta to rad/s.  30 deg -> 1.0 rad/s
     angular_gain: float = 1.0 / 30.0
 
 
@@ -101,6 +103,10 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
         self._control_loop_thread: threading.Thread | None = None
         self._control_loop_running = False
 
+        # Deno bridge server
+        self._server_process: subprocess.Popen | None = None
+        self._server_script = Path(__file__).parent / "web" / "teleop_server.ts"
+
         logger.info("PhoneTeleopModule initialized")
 
     # -------------------------------------------------------------------------
@@ -127,6 +133,7 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
         if connected:
             logger.info(f"Subscribed to: {', '.join(connected)}")
 
+        self._start_server()
         self._start_control_loop()
         logger.info("Phone Teleoperation Module started")
 
@@ -135,6 +142,7 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
         """Stop the phone teleoperation module."""
         logger.info("Stopping Phone Teleoperation Module...")
         self._stop_control_loop()
+        self._stop_server()
         super().stop()
 
     @rpc
@@ -186,6 +194,46 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
         """Callback for teleop button state."""
         with self._lock:
             self._teleop_button = bool(msg.data)
+
+    # -------------------------------------------------------------------------
+    # Deno Bridge Server
+    # -------------------------------------------------------------------------
+
+    def _start_server(self) -> None:
+        """Launch the Deno WebSocket-to-LCM bridge server as a subprocess."""
+        if self._server_process is not None:
+            return
+
+        script = str(self._server_script)
+        cmd = [
+            "deno",
+            "run",
+            "--allow-net",
+            "--allow-read",
+            "--allow-run",
+            "--allow-write",
+            "--unstable-net",
+            script,
+        ]
+        try:
+            self._server_process = subprocess.Popen(cmd)
+            logger.info(f"Deno bridge server started (pid {self._server_process.pid})")
+        except FileNotFoundError:
+            logger.error("'deno' not found in PATH — install Deno or start the server manually")
+
+    def _stop_server(self) -> None:
+        """Terminate the Deno bridge server subprocess."""
+        if self._server_process is None:
+            return
+
+        self._server_process.terminate()
+        try:
+            self._server_process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            self._server_process.kill()
+            self._server_process.wait(timeout=1)
+        logger.info("Deno bridge server stopped")
+        self._server_process = None
 
     # -------------------------------------------------------------------------
     # Control Loop
@@ -240,7 +288,7 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
                 time.sleep(sleep_time)
 
     # -------------------------------------------------------------------------
-    # Overridable Control Loop Methods
+    # Control Loop Internal Methods
     # -------------------------------------------------------------------------
 
     def _handle_engage(self) -> None:
@@ -291,7 +339,8 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
             linear=Vector3(
                 x=-delta.linear.y * cfg.linear_gain,  # pitch forward -> drive forward
                 y=-delta.linear.x * cfg.linear_gain,  # roll right -> strafe right
-                z=d_yaw * cfg.linear_gain,  # yaw right -> positive z
+                z=d_yaw
+                * cfg.linear_gain,  # yaw delta -> linear.z (remapped to angular by extensions)
             ),
             angular=Vector3(
                 x=current.angular.x * cfg.angular_gain,

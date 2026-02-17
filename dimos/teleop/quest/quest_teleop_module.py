@@ -22,6 +22,8 @@ transforms from WebXR to robot frame, computes deltas, and publishes PoseStamped
 
 from dataclasses import dataclass
 from enum import IntEnum
+from pathlib import Path
+import subprocess
 import threading
 import time
 from typing import Any
@@ -113,6 +115,10 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         self._control_loop_thread: threading.Thread | None = None
         self._control_loop_running = False
 
+        # Deno bridge server
+        self._server_process: subprocess.Popen | None = None
+        self._server_script = Path(__file__).parent / "web" / "teleop_server.ts"
+
         logger.info("QuestTeleopModule initialized")
 
     # -------------------------------------------------------------------------
@@ -141,6 +147,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         if connected:
             logger.info(f"Subscribed to: {', '.join(connected)}")
 
+        self._start_server()
         self._start_control_loop()
         logger.info("Quest Teleoperation Module started")
 
@@ -149,6 +156,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         """Stop the Quest teleoperation module."""
         logger.info("Stopping Quest Teleoperation Module...")
         self._stop_control_loop()
+        self._stop_server()
         super().stop()
 
     @rpc
@@ -224,6 +232,46 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
             return
         with self._lock:
             self._controllers[hand] = controller
+
+    # -------------------------------------------------------------------------
+    # Deno Bridge Server
+    # -------------------------------------------------------------------------
+
+    def _start_server(self) -> None:
+        """Launch the Deno WebSocket-to-LCM bridge server as a subprocess."""
+        if self._server_process is not None:
+            return
+
+        script = str(self._server_script)
+        cmd = [
+            "deno",
+            "run",
+            "--allow-net",
+            "--allow-read",
+            "--allow-run",
+            "--allow-write",
+            "--unstable-net",
+            script,
+        ]
+        try:
+            self._server_process = subprocess.Popen(cmd)
+            logger.info(f"Deno bridge server started (pid {self._server_process.pid})")
+        except FileNotFoundError:
+            logger.error("'deno' not found in PATH — install Deno or start the server manually")
+
+    def _stop_server(self) -> None:
+        """Terminate the Deno bridge server subprocess."""
+        if self._server_process is None:
+            return
+
+        self._server_process.terminate()
+        try:
+            self._server_process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            self._server_process.kill()
+            self._server_process.wait(timeout=1)
+        logger.info("Deno bridge server stopped")
+        self._server_process = None
 
     def _start_control_loop(self) -> None:
         """Start the control loop thread."""
