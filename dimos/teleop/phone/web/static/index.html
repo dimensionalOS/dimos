@@ -108,7 +108,7 @@
         }
 
         #teleop-btn {
-            margin-top: auto;
+            margin-top: 12px;
             width: 100%;
             max-width: 400px;
             padding: 28px;
@@ -185,8 +185,8 @@
         let wsSendInterval = null;
 
         // LCM channels
-        const SENSOR_CHANNEL = "/phone/sensors#geometry_msgs.TwistStamped";
-        const BUTTON_CHANNEL = "/phone/button#std_msgs.Bool";
+        const SENSOR_CHANNEL = "/phone_sensors#geometry_msgs.TwistStamped";
+        const BUTTON_CHANNEL = "/phone_button#std_msgs.Bool";
 
         // ============================================
         // DOM
