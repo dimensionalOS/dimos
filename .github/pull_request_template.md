@@ -16,9 +16,9 @@ Closes DIM-XXX
 <!-- Write "None" if not applicable -->
 
 <!-- If applicable:
-- What breaks
-- Who is affected
-- Migration steps
+- what breaks
+- who is affected
+- migration steps
 -->
 
 ## How to Test
