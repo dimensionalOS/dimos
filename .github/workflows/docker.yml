@@ -150,9 +150,10 @@ jobs:
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
-        ((needs.ros-dev.result == 'success') ||
-        (needs.ros-dev.result == 'skipped' &&
-        needs.check-changes.outputs.tests == 'true'))
+        (needs.check-changes.outputs.tests == 'true' ||
+         needs.check-changes.outputs.ros == 'true' ||
+         needs.check-changes.outputs.python == 'true' ||
+         needs.check-changes.outputs.dev == 'true')
         }}
       cmd: "pytest && pytest -m ros" # run tests that depend on ros as well
       dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
@@ -165,9 +166,9 @@ jobs:
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
-        ((needs.dev.result == 'success') ||
-        (needs.dev.result == 'skipped' &&
-        needs.check-changes.outputs.tests == 'true'))
+        (needs.check-changes.outputs.tests == 'true' ||
+         needs.check-changes.outputs.python == 'true' ||
+         needs.check-changes.outputs.dev == 'true')
         }}
       cmd: "pytest"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
@@ -181,9 +182,9 @@ jobs:
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
-        ((needs.dev.result == 'success') ||
-        (needs.dev.result == 'skipped' &&
-        needs.check-changes.outputs.tests == 'true'))
+        (needs.check-changes.outputs.tests == 'true' ||
+         needs.check-changes.outputs.python == 'true' ||
+         needs.check-changes.outputs.dev == 'true')
         }}
       cmd: "pytest -m heavy"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
@@ -196,9 +197,9 @@ jobs:
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
-        ((needs.dev.result == 'success') ||
-        (needs.dev.result == 'skipped' &&
-        needs.check-changes.outputs.tests == 'true'))
+        (needs.check-changes.outputs.tests == 'true' ||
+         needs.check-changes.outputs.python == 'true' ||
+         needs.check-changes.outputs.dev == 'true')
         }}
       cmd: "pytest -m lcm"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
@@ -211,9 +212,9 @@ jobs:
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
-        ((needs.dev.result == 'success') ||
-        (needs.dev.result == 'skipped' &&
-        needs.check-changes.outputs.tests == 'true'))
+        (needs.check-changes.outputs.tests == 'true' ||
+         needs.check-changes.outputs.python == 'true' ||
+         needs.check-changes.outputs.dev == 'true')
         }}
       cmd: "pytest -m integration"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
@@ -226,9 +227,10 @@ jobs:
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
-        ((needs.ros-dev.result == 'success') ||
-        (needs.ros-dev.result == 'skipped' &&
-        needs.check-changes.outputs.tests == 'true'))
+        (needs.check-changes.outputs.tests == 'true' ||
+         needs.check-changes.outputs.ros == 'true' ||
+         needs.check-changes.outputs.python == 'true' ||
+         needs.check-changes.outputs.dev == 'true')
         }}
       cmd: "MYPYPATH=/opt/ros/humble/lib/python3.10/site-packages mypy dimos"
       dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
