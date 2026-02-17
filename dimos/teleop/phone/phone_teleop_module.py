@@ -105,7 +105,7 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
         self._control_loop_running = False
 
         # Deno bridge server
-        self._server_process: subprocess.Popen | None = None
+        self._server_process: subprocess.Popen[bytes] | None = None
         self._server_script = Path(__file__).parent / "web" / "teleop_server.ts"
 
         logger.info("PhoneTeleopModule initialized")
@@ -119,7 +119,7 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
         """Start the phone teleoperation module."""
         super().start()
 
-        input_streams = {
+        input_streams: dict[str, tuple[Any, Any]] = {
             "phone_sensors": (self.phone_sensors, self._on_sensors),
             "phone_button": (self.phone_button, self._on_button),
         }
