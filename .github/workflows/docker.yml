@@ -144,94 +144,94 @@ jobs:
 
   run-ros-tests:
     needs: [check-changes, ros-dev]
-    if: always()
+    if: ${{
+      always() &&
+      needs.check-changes.result == 'success' &&
+      (needs.check-changes.outputs.tests == 'true' ||
+       needs.check-changes.outputs.ros == 'true' ||
+       needs.check-changes.outputs.python == 'true' ||
+       needs.check-changes.outputs.dev == 'true')
+      }}
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      should-run: ${{
-        needs.check-changes.result == 'success' &&
-        (needs.check-changes.outputs.tests == 'true' ||
-         needs.check-changes.outputs.ros == 'true' ||
-         needs.check-changes.outputs.python == 'true' ||
-         needs.check-changes.outputs.dev == 'true')
-        }}
       cmd: "pytest && pytest -m ros" # run tests that depend on ros as well
       dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-tests:
     needs: [check-changes, dev]
-    if: always()
+    if: ${{
+      always() &&
+      needs.check-changes.result == 'success' &&
+      (needs.check-changes.outputs.tests == 'true' ||
+       needs.check-changes.outputs.python == 'true' ||
+       needs.check-changes.outputs.dev == 'true')
+      }}
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      should-run: ${{
-        needs.check-changes.result == 'success' &&
-        (needs.check-changes.outputs.tests == 'true' ||
-         needs.check-changes.outputs.python == 'true' ||
-         needs.check-changes.outputs.dev == 'true')
-        }}
       cmd: "pytest"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   # we run in parallel with normal tests for speed
   run-heavy-tests:
     needs: [check-changes, dev]
-    if: always()
+    if: ${{
+      always() &&
+      needs.check-changes.result == 'success' &&
+      (needs.check-changes.outputs.tests == 'true' ||
+       needs.check-changes.outputs.python == 'true' ||
+       needs.check-changes.outputs.dev == 'true')
+      }}
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      should-run: ${{
-        needs.check-changes.result == 'success' &&
-        (needs.check-changes.outputs.tests == 'true' ||
-         needs.check-changes.outputs.python == 'true' ||
-         needs.check-changes.outputs.dev == 'true')
-        }}
       cmd: "pytest -m heavy"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-lcm-tests:
     needs: [check-changes, dev]
-    if: always()
+    if: ${{
+      always() &&
+      needs.check-changes.result == 'success' &&
+      (needs.check-changes.outputs.tests == 'true' ||
+       needs.check-changes.outputs.python == 'true' ||
+       needs.check-changes.outputs.dev == 'true')
+      }}
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      should-run: ${{
-        needs.check-changes.result == 'success' &&
-        (needs.check-changes.outputs.tests == 'true' ||
-         needs.check-changes.outputs.python == 'true' ||
-         needs.check-changes.outputs.dev == 'true')
-        }}
       cmd: "pytest -m lcm"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-integration-tests:
     needs: [check-changes, dev]
-    if: always()
+    if: ${{
+      always() &&
+      needs.check-changes.result == 'success' &&
+      (needs.check-changes.outputs.tests == 'true' ||
+       needs.check-changes.outputs.python == 'true' ||
+       needs.check-changes.outputs.dev == 'true')
+      }}
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      should-run: ${{
-        needs.check-changes.result == 'success' &&
-        (needs.check-changes.outputs.tests == 'true' ||
-         needs.check-changes.outputs.python == 'true' ||
-         needs.check-changes.outputs.dev == 'true')
-        }}
       cmd: "pytest -m integration"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-mypy:
     needs: [check-changes, ros-dev]
-    if: always()
+    if: ${{
+      always() &&
+      needs.check-changes.result == 'success' &&
+      (needs.check-changes.outputs.tests == 'true' ||
+       needs.check-changes.outputs.ros == 'true' ||
+       needs.check-changes.outputs.python == 'true' ||
+       needs.check-changes.outputs.dev == 'true')
+      }}
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      should-run: ${{
-        needs.check-changes.result == 'success' &&
-        (needs.check-changes.outputs.tests == 'true' ||
-         needs.check-changes.outputs.ros == 'true' ||
-         needs.check-changes.outputs.python == 'true' ||
-         needs.check-changes.outputs.dev == 'true')
-        }}
       cmd: "MYPYPATH=/opt/ros/humble/lib/python3.10/site-packages mypy dimos"
       dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
@@ -271,7 +271,7 @@ jobs:
   #         /entrypoint.sh bash -c "pytest -m module"
 
   ci-complete:
-    needs: [run-tests, run-heavy-tests, run-lcm-tests, run-integration-tests, run-ros-tests, run-mypy]
+    needs: [check-changes, ros, python, ros-python, dev, ros-dev, run-tests, run-heavy-tests, run-lcm-tests, run-integration-tests, run-ros-tests, run-mypy]
     runs-on: [self-hosted, Linux]
     if: always()
     steps:

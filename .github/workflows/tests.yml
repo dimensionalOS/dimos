@@ -3,10 +3,6 @@ name: tests
 on:
  workflow_call:
    inputs:
-     should-run:
-       required: false
-       type: boolean
-       default: true
      dev-image:
        required: true
        type: string
@@ -31,19 +27,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        if: ${{ inputs.should-run }}
 
       - name: Fix permissions
-        if: ${{ inputs.should-run }}
         run: |
           git config --global --add safe.directory '*'
 
       - name: Run tests
-        if: ${{ inputs.should-run }}
         run: |
           /entrypoint.sh bash -c "${{ inputs.cmd }}"
 
       - name: check disk space
-        if: ${{ failure() && inputs.should-run }}
+        if: failure()
         run: |
           df -h
