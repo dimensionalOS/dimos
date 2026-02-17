@@ -32,17 +32,25 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.control.components import HardwareComponent, HardwareId, JointName, TaskName
-from dimos.control.hardware_interface import ConnectedHardware
+from dimos.control.components import (
+    TWIST_SUFFIX_MAP,
+    HardwareComponent,
+    HardwareId,
+    HardwareType,
+    JointName,
+    TaskName,
+)
+from dimos.control.hardware_interface import ConnectedHardware, ConnectedTwistBase
 from dimos.control.task import ControlTask
 from dimos.control.tick_loop import TickLoop
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import (
     PoseStamped,  # noqa: TC001 - needed at runtime for In[PoseStamped]
+    Twist,  # noqa: TC001 - needed at runtime for In[Twist]
 )
 from dimos.msgs.sensor_msgs import (
-    JointState,  # noqa: TC001 - needed at runtime for Out[JointState]
+    JointState,
 )
 from dimos.teleop.quest.quest_types import Buttons  # noqa: TC001 - needed for teleop buttons
 from dimos.utils.logging_config import setup_logger
@@ -51,6 +59,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from dimos.hardware.drive_trains.spec import TwistBaseAdapter
     from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
 logger = setup_logger()
@@ -148,6 +157,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     # Uses frame_id as task name for routing
     cartesian_command: In[PoseStamped]
 
+    # Input: Streaming twist commands for velocity-commanded platforms
+    twist_command: In[Twist]
+
     # Input: Teleop buttons for engage/disengage signaling
     buttons: In[Buttons]
 
@@ -174,6 +186,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         # Subscription handles for streaming commands
         self._joint_command_unsub: Callable[[], None] | None = None
         self._cartesian_command_unsub: Callable[[], None] | None = None
+        self._twist_command_unsub: Callable[[], None] | None = None
         self._buttons_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
@@ -206,7 +219,10 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
         """Connect and add a single hardware adapter."""
-        adapter = self._create_adapter(component)
+        if component.hardware_type == HardwareType.BASE:
+            adapter = self._create_twist_base_adapter(component)
+        else:
+            adapter = self._create_adapter(component)
 
         if not adapter.connect():
             raise RuntimeError(f"Failed to connect to {component.adapter_type} adapter")
@@ -225,6 +241,16 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         from dimos.hardware.manipulators.registry import adapter_registry
 
         return adapter_registry.create(
+            component.adapter_type,
+            dof=len(component.joints),
+            address=component.address,
+        )
+
+    def _create_twist_base_adapter(self, component: HardwareComponent) -> TwistBaseAdapter:
+        """Create a twist base adapter from component config."""
+        from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
+
+        return twist_base_adapter_registry.create(
             component.adapter_type,
             dof=len(component.joints),
             address=component.address,
@@ -310,7 +336,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     @rpc
     def add_hardware(
         self,
-        adapter: ManipulatorAdapter,
+        adapter: ManipulatorAdapter | TwistBaseAdapter,
         component: HardwareComponent,
     ) -> bool:
         """Register a hardware adapter with the coordinator."""
@@ -319,10 +345,11 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 logger.warning(f"Hardware {component.hardware_id} already registered")
                 return False
 
-            connected = ConnectedHardware(
-                adapter=adapter,
-                component=component,
-            )
+            if component.hardware_type == HardwareType.BASE:
+                connected = ConnectedTwistBase(adapter=adapter, component=component)
+            else:
+                connected = ConnectedHardware(adapter=adapter, component=component)
+
             self._hardware[component.hardware_id] = connected
 
             for joint_name in connected.joint_names:
@@ -490,6 +517,34 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
             task.on_cartesian_command(msg, t_now)
 
+    def _on_twist_command(self, msg: Twist) -> None:
+        """Convert Twist → virtual joint velocities and route via _on_joint_command.
+
+        Maps Twist fields to virtual joints using suffix convention:
+        base_vx ← linear.x, base_vy ← linear.y, base_wz ← angular.z, etc.
+        """
+        names: list[str] = []
+        velocities: list[float] = []
+
+        with self._hardware_lock:
+            for hw in self._hardware.values():
+                if hw.component.hardware_type != HardwareType.BASE:
+                    continue
+                for joint_name in hw.joint_names:
+                    # Extract suffix (e.g., "base_vx" → "vx")
+                    suffix = joint_name.rsplit("_", 1)[-1]
+                    mapping = TWIST_SUFFIX_MAP.get(suffix)
+                    if mapping is None:
+                        continue
+                    group, axis = mapping
+                    value = getattr(getattr(msg, group), axis)
+                    names.append(joint_name)
+                    velocities.append(value)
+
+        if names:
+            joint_state = JointState(name=names, velocity=velocities)
+            self._on_joint_command(joint_state)
+
     def _on_buttons(self, msg: Buttons) -> None:
         """Forward button state to all tasks."""
         with self._task_lock:
@@ -536,6 +591,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             if hw is None:
                 logger.warning(f"Hardware '{hardware_id}' not found for gripper command")
                 return False
+            if isinstance(hw, ConnectedTwistBase):
+                logger.warning(f"Hardware '{hardware_id}' is a twist base, no gripper support")
+                return False
             return hw.adapter.write_gripper_position(position)
 
     @rpc
@@ -548,6 +606,8 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         with self._hardware_lock:
             hw = self._hardware.get(hardware_id)
             if hw is None:
+                return None
+            if isinstance(hw, ConnectedTwistBase):
                 return None
             return hw.adapter.read_gripper_position()
 
@@ -610,6 +670,18 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                     "Use task_invoke RPC or set transport via blueprint."
                 )
 
+        # Subscribe to twist commands if any twist base hardware configured
+        has_twist_base = any(c.hardware_type == HardwareType.BASE for c in self.config.hardware)
+        if has_twist_base:
+            try:
+                self._twist_command_unsub = self.twist_command.subscribe(self._on_twist_command)
+                logger.info("Subscribed to twist_command for twist base control")
+            except Exception:
+                logger.warning(
+                    "Twist base configured but could not subscribe to twist_command. "
+                    "Use task_invoke RPC or set transport via blueprint."
+                )
+
         # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
         has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
         if has_teleop_ik:
@@ -630,6 +702,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         if self._cartesian_command_unsub:
             self._cartesian_command_unsub()
             self._cartesian_command_unsub = None
+        if self._twist_command_unsub:
+            self._twist_command_unsub()
+            self._twist_command_unsub = None
         if self._buttons_unsub:
             self._buttons_unsub()
             self._buttons_unsub = None
