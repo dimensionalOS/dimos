@@ -24,8 +24,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 import math
+from pathlib import Path
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -54,13 +54,13 @@ from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 # These must be imported at runtime (not TYPE_CHECKING) for In/Out port creation
 from dimos.msgs.sensor_msgs import JointState
 from dimos.msgs.trajectory_msgs import JointTrajectory
-from dimos.perception.detection.type.detection3d.object import Object as DetObject  # noqa: TC001
+from dimos.perception.detection.type.detection3d.object import Object as DetObject
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import RPCClient
-    from dimos.msgs.geometry_msgs import Pose, PoseArray, Vector3
+    from dimos.msgs.geometry_msgs import PoseArray
     from dimos.msgs.sensor_msgs import PointCloud2
     from dimos.perception.detection.type.detection3d.object import Object as DetObject
 
