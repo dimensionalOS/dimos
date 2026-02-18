@@ -27,11 +27,11 @@ from dimos.teleop.phone.phone_teleop_module import (
 )
 
 __all__ = [
-    "PhoneTwistTeleop",
     "PhoneTeleopConfig",
     "PhoneTeleopModule",
+    "PhoneTwistTeleop",
     "SimplePhoneTeleop",
-    "phone_twist_teleop_module",
     "phone_teleop_module",
+    "phone_twist_teleop_module",
     "simple_phone_teleop_module",
 ]

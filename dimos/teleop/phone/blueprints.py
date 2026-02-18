@@ -20,12 +20,11 @@ from dimos.teleop.phone.phone_extensions import (
     simple_phone_teleop_module,
 )
 
-
 # Simple phone teleop (mobile base axis filtering)
 simple_phone_teleop = autoconnect(
     simple_phone_teleop_module(),
 )
- 
+
 # Phone teleop wired to Unitree Go2
 phone_go2_teleop = autoconnect(
     phone_twist_teleop_module(),
