@@ -23,6 +23,7 @@ transforms from WebXR to robot frame, computes deltas, and publishes PoseStamped
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import threading
@@ -242,6 +243,12 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         """Launch the Deno WebSocket-to-LCM bridge server as a subprocess."""
         if self._server_process is not None and self._server_process.poll() is None:
             logger.warning("Deno bridge already running", pid=self._server_process.pid)
+            return
+
+        if shutil.which("deno") is None:
+            logger.error(
+                "Deno is not installed. Install it with: curl -fsSL https://deno.land/install.sh | sh"
+            )
             return
 
         script = str(self._server_script)
