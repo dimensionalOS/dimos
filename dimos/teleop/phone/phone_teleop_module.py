@@ -34,7 +34,7 @@ from typing import Any
 
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, Out
+from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
 from dimos.msgs.std_msgs.Bool import Bool
@@ -93,6 +93,7 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
     # Lifecycle
     # -------------------------------------------------------------------------
 
+    @rpc
     def start(self) -> None:
         super().start()
         for stream, handler in (
@@ -103,6 +104,7 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
         self._start_server()
         self._start_control_loop()
 
+    @rpc
     def stop(self) -> None:
         self._stop_control_loop()
         self._stop_server()

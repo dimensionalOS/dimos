@@ -32,7 +32,7 @@ from typing import Any
 
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, Out
+from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Joy
@@ -122,6 +122,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig]):
     # Lifecycle
     # -------------------------------------------------------------------------
 
+    @rpc
     def start(self) -> None:
         super().start()
 
@@ -145,6 +146,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig]):
         self._start_server()
         logger.info("Quest Teleoperation Module started")
 
+    @rpc
     def stop(self) -> None:
         self._stop_control_loop()
         self._stop_server()
