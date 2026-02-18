@@ -103,11 +103,10 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
     @rpc
     def start(self) -> None:
         super().start()
-        input_streams: dict[tuple[Any, Any]] = {
+        for stream, handler in (
             (self.phone_sensors, self._on_sensors),
             (self.phone_button, self._on_button),
-        }
-        for stream, handler in input_streams:
+        ):
             self._disposables.add(Disposable(stream.subscribe(handler)))  # type: ignore[attr-defined]
         self._start_server()
         self._start_control_loop()
