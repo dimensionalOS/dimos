@@ -13,11 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Phone teleop module extensions and subclasses.
+"""Phone teleop module extensions.
 
 Available subclasses:
-    - SimplePhoneTeleop: Maps raw twist to ground robot axes (linear.x, linear.y, angular.z)
-    - PhoneTwistTeleop: Outputs cmd_vel: Out[Twist] for direct autoconnect with any Twist consumer
+    - SimplePhoneTeleop: Filters to ground robot axes and outputs cmd_vel: Out[Twist]
 """
 
 from dimos.core import Out
@@ -26,54 +25,28 @@ from dimos.teleop.phone.phone_teleop_module import PhoneTeleopModule
 
 
 class SimplePhoneTeleop(PhoneTeleopModule):
-    """Phone teleop mapped to ground robot axes.
+    """Phone teleop for ground robots.
 
-    Takes the raw 6-axis twist from the base module and extracts only the
-    axes relevant for a mobile base:
-        - linear.x  (forward/back from pitch tilt)
-        - linear.y  (strafe from roll tilt)
-        - angular.z (turn from yaw orientation delta)
-
-    All other axes are zeroed.
-    """
-
-    def _get_output_twist(self) -> TwistStamped | None:
-        raw = super()._get_output_twist()
-        if raw is None:
-            return None
-
-        # raw.linear.z is the yaw orientation delta (already scaled by linear_gain
-        # in the base class), remapped here to angular.z for ground-robot turning.
-        return TwistStamped(
-            ts=raw.ts,
-            frame_id="mobile_base",
-            linear=Vector3(x=raw.linear.x, y=raw.linear.y, z=0.0),
-            angular=Vector3(x=0.0, y=0.0, z=raw.linear.z),
-        )
-
-
-class PhoneTwistTeleop(SimplePhoneTeleop):
-    """Phone teleop that outputs Twist on cmd_vel.
-
-    Extends SimplePhoneTeleop with cmd_vel: Out[Twist]
-    for direct autoconnect wiring with any module that has cmd_vel: In[Twist].
+    Filters the raw 6-axis twist to mobile base axes (linear.x, linear.y, angular.z)
+    and publishes as Twist on cmd_vel for direct autoconnect wiring with any
+    module that has cmd_vel: In[Twist].
     """
 
     cmd_vel: Out[Twist]
 
     def _publish_msg(self, output_msg: TwistStamped) -> None:
-        """Publish as Twist on cmd_vel.
-        Intentionally bypasses the base twist_output stream — only cmd_vel is used.
-        """
-        self.cmd_vel.publish(Twist(linear=output_msg.linear, angular=output_msg.angular))
+        """Filter to ground robot axes and publish as Twist on cmd_vel."""
+        self.cmd_vel.publish(
+            Twist(
+                linear=Vector3(x=output_msg.linear.x, y=output_msg.linear.y, z=0.0),
+                angular=Vector3(x=0.0, y=0.0, z=output_msg.linear.z),
+            )
+        )
 
 
 simple_phone_teleop_module = SimplePhoneTeleop.blueprint
-phone_twist_teleop_module = PhoneTwistTeleop.blueprint
 
 __all__ = [
-    "PhoneTwistTeleop",
     "SimplePhoneTeleop",
-    "phone_twist_teleop_module",
     "simple_phone_teleop_module",
 ]
