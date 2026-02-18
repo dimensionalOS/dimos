@@ -16,7 +16,7 @@
 from dimos.core.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 from dimos.teleop.phone.phone_extensions import (
-    phone_go2_teleop_module,
+    phone_twist_teleop_module,
     simple_phone_teleop_module,
 )
 
@@ -28,7 +28,7 @@ simple_phone_teleop = autoconnect(
  
 # Phone teleop wired to Unitree Go2
 phone_go2_teleop = autoconnect(
-    phone_go2_teleop_module(),
+    phone_twist_teleop_module(),
     unitree_go2_basic,
 )
 

@@ -17,7 +17,7 @@
 
 Available subclasses:
     - SimplePhoneTeleop: Maps raw twist to ground robot axes (linear.x, linear.y, angular.z)
-    - PhoneGo2Teleop: Go2-specific extension, outputs cmd_vel: Out[Twist] for direct Go2 wiring
+    - PhoneTwistTeleop: Outputs cmd_vel: Out[Twist] for direct autoconnect with any Twist consumer
 """
 
 from dimos.core import Out
@@ -52,28 +52,28 @@ class SimplePhoneTeleop(PhoneTeleopModule):
         )
 
 
-class PhoneGo2Teleop(SimplePhoneTeleop):
-    """Phone teleop for Unitree Go2.
+class PhoneTwistTeleop(SimplePhoneTeleop):
+    """Phone teleop that outputs Twist on cmd_vel.
 
     Extends SimplePhoneTeleop with cmd_vel: Out[Twist]
-    that matches GO2Connection.cmd_vel: In[Twist] for direct autoconnect wiring.
+    for direct autoconnect wiring with any module that has cmd_vel: In[Twist].
     """
 
     cmd_vel: Out[Twist]
 
     def _publish_msg(self, output_msg: TwistStamped) -> None:
-        """Publish as Twist on cmd_vel to match GO2Connection.
+        """Publish as Twist on cmd_vel.
         Intentionally bypasses the base twist_output stream — only cmd_vel is used.
         """
         self.cmd_vel.publish(Twist(linear=output_msg.linear, angular=output_msg.angular))
 
 
 simple_phone_teleop_module = SimplePhoneTeleop.blueprint
-phone_go2_teleop_module = PhoneGo2Teleop.blueprint
+phone_twist_teleop_module = PhoneTwistTeleop.blueprint
 
 __all__ = [
-    "PhoneGo2Teleop",
+    "PhoneTwistTeleop",
     "SimplePhoneTeleop",
-    "phone_go2_teleop_module",
+    "phone_twist_teleop_module",
     "simple_phone_teleop_module",
 ]

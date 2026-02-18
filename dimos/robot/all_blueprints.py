@@ -108,7 +108,7 @@ all_modules = {
     "osm_skill": "dimos.agents.skills.osm",
     "person_follow_skill": "dimos.agents.skills.person_follow",
     "person_tracker_module": "dimos.perception.detection.person_tracker",
-    "phone_go2_teleop_module": "dimos.teleop.phone.phone_extensions",
+    "phone_twist_teleop_module": "dimos.teleop.phone.phone_extensions",
     "phone_teleop_module": "dimos.teleop.phone.phone_teleop_module",
     "quest_teleop_module": "dimos.teleop.quest.quest_teleop_module",
     "realsense_camera": "dimos.hardware.sensors.camera.realsense.camera",
