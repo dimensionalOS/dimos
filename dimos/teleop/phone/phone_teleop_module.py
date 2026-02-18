@@ -34,11 +34,10 @@ from typing import Any
 
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core import In, Module, Out
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.teleop.base import TeleopProtocol
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -54,7 +53,7 @@ class PhoneTeleopConfig(ModuleConfig):
     angular_gain: float = 1.0 / 30.0
 
 
-class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
+class PhoneTeleopModule(Module[PhoneTeleopConfig]):
     """
     Receives raw sensor data from the phone web app:
       - TwistStamped: linear=(roll, pitch, yaw) deg, angular=(gyro) deg/s
@@ -101,7 +100,6 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
     # Public RPC Methods
     # -------------------------------------------------------------------------
 
-    @rpc
     def start(self) -> None:
         super().start()
         for stream, handler in (
@@ -112,21 +110,10 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
         self._start_server()
         self._start_control_loop()
 
-    @rpc
     def stop(self) -> None:
         self._stop_control_loop()
         self._stop_server()
         super().stop()
-
-    @rpc
-    def engage(self, hand: Any = None) -> bool:  # TeleopProtocol signature
-        with self._lock:
-            return self._engage()
-
-    @rpc
-    def disengage(self, hand: Any = None) -> None:  # TeleopProtocol signature
-        with self._lock:
-            self._disengage()
 
     # -------------------------------------------------------------------------
     # Internal engage / disengage (assumes lock is held)
@@ -246,16 +233,13 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
 
         while not self._stop_event.is_set():
             loop_start = time.perf_counter()
-            try:
-                with self._lock:
-                    self._handle_engage()
+            with self._lock:
+                self._handle_engage()
 
-                    if self._should_publish():
-                        output_twist = self._get_output_twist()
-                        if output_twist is not None:
-                            self._publish_msg(output_twist)
-            except Exception:
-                logger.exception("Error in phone teleop control loop")
+                if self._is_engaged:
+                    output_twist = self._get_output_twist()
+                    if output_twist is not None:
+                        self._publish_msg(output_twist)
 
             elapsed = time.perf_counter() - loop_start
             sleep_time = period - elapsed
@@ -277,13 +261,6 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig], TeleopProtocol):
         else:
             if self._is_engaged:
                 self._disengage()
-
-    def _should_publish(self) -> bool:
-        """
-        Override to add custom conditions.
-        Default: Returns True if engaged.
-        """
-        return self._is_engaged
 
     def _get_output_twist(self) -> TwistStamped | None:
         """Compute twist from orientation delta.
