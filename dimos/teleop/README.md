@@ -56,13 +56,18 @@ Adds Rerun visualization for debugging. Extends ArmTeleopModule (toggle engage).
 
 ```
 teleop/
-├── base/
-│   └── teleop_protocol.py      # TeleopProtocol interface
 ├── quest/
 │   ├── quest_teleop_module.py   # Base Quest teleop module
 │   ├── quest_extensions.py      # ArmTeleop, TwistTeleop, VisualizingTeleop
 │   ├── quest_types.py           # QuestControllerState, Buttons
 │   └── web/                     # Deno bridge + WebXR client
+│       ├── teleop_server.ts
+│       └── static/index.html
+├── phone/
+│   ├── phone_teleop_module.py   # Base Phone teleop module
+│   ├── phone_extensions.py      # SimplePhoneTeleop
+│   ├── blueprints.py            # Pre-wired configurations
+│   └── web/                     # Deno bridge + mobile web app
 │       ├── teleop_server.ts
 │       └── static/index.html
 ├── utils/
