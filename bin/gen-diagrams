@@ -6,8 +6,8 @@ cd "$REPO_ROOT"
 
 # if md-babel-py doesnt exist
 if [ -z "$(command -v "md-babel-py")" ]; then
-    # if ni doesnt exist
-    if [ -z "$(command -v "ni")" ]
+    # if nix doesnt exist
+    if [ -z "$(command -v "nix")" ]
     then
         echo "Error: md-babel-py required for running gen-diagrams." >&2
         echo "       Either isntall nix or install md-babel-py" >&2
