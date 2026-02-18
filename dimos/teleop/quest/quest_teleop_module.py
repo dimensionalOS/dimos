@@ -114,7 +114,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
         # Control loop
         self._control_loop_thread: threading.Thread | None = None
-        self._control_loop_running = False
+        self._stop_event = threading.Event()
 
         # Deno bridge server
         self._server_process: subprocess.Popen[bytes] | None = None
@@ -285,10 +285,10 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
     def _start_control_loop(self) -> None:
         """Start the control loop thread."""
-        if self._control_loop_running:
+        if self._control_loop_thread is not None and self._control_loop_thread.is_alive():
             return
 
-        self._control_loop_running = True
+        self._stop_event.clear()
         self._control_loop_thread = threading.Thread(
             target=self._control_loop,
             daemon=True,
@@ -299,7 +299,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
     def _stop_control_loop(self) -> None:
         """Stop the control loop thread."""
-        self._control_loop_running = False
+        self._stop_event.set()
         if self._control_loop_thread is not None:
             self._control_loop_thread.join(timeout=1.0)
             self._control_loop_thread = None
@@ -313,7 +313,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         """
         period = 1.0 / self.config.control_loop_hz
 
-        while self._control_loop_running:
+        while not self._stop_event.is_set():
             loop_start = time.perf_counter()
             try:
                 with self._lock:
@@ -337,7 +337,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
             elapsed = time.perf_counter() - loop_start
             sleep_time = period - elapsed
             if sleep_time > 0:
-                time.sleep(sleep_time)
+                self._stop_event.wait(sleep_time)
 
     # -------------------------------------------------------------------------
     # Control Loop Internals
