@@ -46,11 +46,8 @@ logger = setup_logger()
 @dataclass
 class PhoneTeleopConfig(ModuleConfig):
     control_loop_hz: float = 50.0
-
-    # Gain: maps degrees of tilt to m/s.  30 deg tilt -> 1.0 m/s
-    linear_gain: float = 1.0 / 30.0
-    # Gain: maps degrees of yaw delta to rad/s.  30 deg -> 1.0 rad/s
-    angular_gain: float = 1.0 / 30.0
+    linear_gain: float = 1.0 / 30.0  # Gain: maps degrees of tilt to m/s. 30 deg -> 1.0 m/s
+    angular_gain: float = 1.0 / 30.0  # Gain: maps gyro deg/s to rad/s. 30 deg/s -> 1.0 rad/s
 
 
 class PhoneTeleopModule(Module[PhoneTeleopConfig]):
@@ -58,10 +55,6 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
     Receives raw sensor data from the phone web app:
       - TwistStamped: linear=(roll, pitch, yaw) deg, angular=(gyro) deg/s
       - Bool: teleop button state (True = held)
-
-    On engage (button pressed), captures the current orientation as initial.
-    Each control-loop tick computes the orientation delta from initial,
-    converts it to a TwistStamped via configurable gains, and publishes.
 
     Outputs:
         - twist_output: TwistStamped (velocity command for robot)
@@ -288,8 +281,7 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
             linear=Vector3(
                 x=-delta.linear.y * cfg.linear_gain,  # pitch forward -> drive forward
                 y=-delta.linear.x * cfg.linear_gain,  # roll right -> strafe right
-                z=d_yaw
-                * cfg.linear_gain,  # yaw delta -> linear.z (remapped to angular by extensions)
+                z=d_yaw * cfg.linear_gain,  # yaw delta
             ),
             angular=Vector3(
                 x=current.angular.x * cfg.angular_gain,

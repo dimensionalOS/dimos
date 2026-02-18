@@ -35,7 +35,6 @@ class SimplePhoneTeleop(PhoneTeleopModule):
     cmd_vel: Out[Twist]
 
     def _publish_msg(self, output_msg: TwistStamped) -> None:
-        """Filter to ground robot axes and publish as Twist on cmd_vel."""
         self.cmd_vel.publish(
             Twist(
                 linear=Vector3(x=output_msg.linear.x, y=output_msg.linear.y, z=0.0),

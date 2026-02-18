@@ -261,7 +261,7 @@
         // Teleop Button
         // ============================================
         function startTeleop() {
-            if (!sensorsActive) return;
+            if (!sensorsActive || !ws || ws.readyState !== WebSocket.OPEN) return;
             teleopActive = true;
             $('teleop-btn').textContent = 'TRACKING...';
             $('teleop-btn').classList.add('active');
