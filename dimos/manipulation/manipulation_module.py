@@ -30,6 +30,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core import In, Module, rpc
 from dimos.core.docker_runner import DockerModule as DockerRunner
