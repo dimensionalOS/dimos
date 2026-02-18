@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "linear": {
+      "baseUrl": "https://mcp.linear.app/mcp"
+    }
+  },
+  "imports": []
+}

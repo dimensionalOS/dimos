@@ -15,19 +15,48 @@
 """
 AGIbot Navigation Test Blueprint
 
-Composes ROSNav (the standard ROS↔DimOS bridge) to validate the AGIbot's
-navigation stack. ROSNav handles all ROS topic subscriptions, TF broadcasting,
-and republishing to LCM/SHM so data is visible in lcmspy and rerun.
+Composes ROSNav (the standard ROS↔DimOS bridge) with the correct transport
+assignments: ROS transports on ros_* ports, LCM transports on DimOS ports.
+Data flows from ROS topics → ROSNav → LCM, visible in lcmspy and rerun.
 
 Usage:
     dimos run agibot-nav-test
 """
 
 from dimos.core.blueprints import autoconnect
+from dimos.core.transport import LCMTransport, ROSTransport
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
+from dimos.msgs.nav_msgs import Path
+from dimos.msgs.sensor_msgs import Joy, PointCloud2
+from dimos.msgs.std_msgs import Bool, Int8
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.rosnav import ros_nav
 
 agibot_nav_test = autoconnect(
     ros_nav(),
+).transports(
+    {
+        # DimOS Out ports → LCM (visible in lcmspy / rerun)
+        ("pointcloud", PointCloud2): LCMTransport("/lidar", PointCloud2),
+        ("global_pointcloud", PointCloud2): LCMTransport("/map", PointCloud2),
+        ("goal_req", PoseStamped): LCMTransport("/goal_req", PoseStamped),
+        ("goal_active", PoseStamped): LCMTransport("/goal_active", PoseStamped),
+        ("path_active", Path): LCMTransport("/path_active", Path),
+        ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
+        # ROS In ports → ROSTransport (receive from nav stack)
+        ("ros_goal_reached", Bool): ROSTransport("/goal_reached", Bool),
+        ("ros_cmd_vel", TwistStamped): ROSTransport("/cmd_vel", TwistStamped),
+        ("ros_way_point", PoseStamped): ROSTransport("/way_point", PoseStamped),
+        ("ros_registered_scan", PointCloud2): ROSTransport("/registered_scan", PointCloud2),
+        ("ros_global_pointcloud", PointCloud2): ROSTransport("/terrain_map_ext", PointCloud2),
+        ("ros_path", Path): ROSTransport("/path", Path),
+        ("ros_tf", TFMessage): ROSTransport("/tf", TFMessage),
+        # ROS Out ports → ROSTransport (publish to nav stack)
+        ("ros_goal_pose", PoseStamped): ROSTransport("/goal_pose", PoseStamped),
+        ("ros_cancel_goal", Bool): ROSTransport("/cancel_goal", Bool),
+        ("ros_soft_stop", Int8): ROSTransport("/stop", Int8),
+        ("ros_joy", Joy): ROSTransport("/joy", Joy),
+    }
 )
 
 __all__ = ["agibot_nav_test"]
