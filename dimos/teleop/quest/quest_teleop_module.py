@@ -74,8 +74,6 @@ class QuestTeleopModule(Module[QuestTeleopConfig]):
     Gets controller data from Deno bridge, computes output poses, and publishes them. Subclass to customize pose
     computation, output format, and engage behavior.
 
-    Implements TeleopProtocol.
-
     Outputs:
         - left_controller_output: PoseStamped (output pose for left hand)
         - right_controller_output: PoseStamped (output pose for right hand)
@@ -121,7 +119,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig]):
         self._server_script = Path(__file__).parent / "web" / "teleop_server.ts"
 
     # -------------------------------------------------------------------------
-    # Public RPC Methods
+    # Lifecycle
     # -------------------------------------------------------------------------
 
     def start(self) -> None:

@@ -97,7 +97,7 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
         self._server_script = Path(__file__).parent / "web" / "teleop_server.ts"
 
     # -------------------------------------------------------------------------
-    # Public RPC Methods
+    # Lifecycle
     # -------------------------------------------------------------------------
 
     def start(self) -> None:
