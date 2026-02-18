@@ -10,8 +10,7 @@ on:
       - 'setup.py'
       - 'uv.lock'
       - 'dimos/**'
-    paths-ignore:
-      - 'dimos/**/*.md'
+      - '!dimos/**/*.md'
   workflow_dispatch:
 
 permissions:
