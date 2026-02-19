@@ -123,8 +123,6 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
 
 </div>
 
-[New Hardware Integration Guide](docs/hardware/integration_guide.md)
-
 # Installation
 
 ### Step 1: System Install
@@ -133,7 +131,7 @@ To set up your system dependencies, follow one of these guides:
 
 - 🟩 [NixOS / General Linux](docs/installation/nix.md)
 - 🟧 [macOS](docs/installation/osx.md)
-- 🟩 [Ubuntu 24.04](docs/installation/ubuntu.md)
+- 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
 - 🟨 [Docker](docs/installation/docker.md)
 
 ### Step 2: Python Install
