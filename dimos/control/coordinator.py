@@ -45,6 +45,9 @@ from dimos.control.task import ControlTask
 from dimos.control.tick_loop import TickLoop
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
+from dimos.hardware.drive_trains.spec import (
+    TwistBaseAdapter,
+)
 from dimos.msgs.geometry_msgs import (
     PoseStamped,  # noqa: TC001 - needed at runtime for In[PoseStamped]
     Twist,  # noqa: TC001 - needed at runtime for In[Twist]
@@ -52,14 +55,15 @@ from dimos.msgs.geometry_msgs import (
 from dimos.msgs.sensor_msgs import (
     JointState,
 )
-from dimos.teleop.quest.quest_types import Buttons  # noqa: TC001 - needed for teleop buttons
+from dimos.teleop.quest.quest_types import (
+    Buttons,  # noqa: TC001 - needed at runtime for In[Buttons]
+)
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from dimos.hardware.drive_trains.spec import TwistBaseAdapter
     from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
 logger = setup_logger()
@@ -341,15 +345,12 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         component: HardwareComponent,
     ) -> bool:
         """Register a hardware adapter with the coordinator."""
-        from dimos.hardware.drive_trains.spec import TwistBaseAdapter as TwistBaseAdapterProto
-
         is_base = component.hardware_type == HardwareType.BASE
-        is_twist_adapter = isinstance(adapter, TwistBaseAdapterProto)
-        if is_base != is_twist_adapter:
+        if is_base != isinstance(adapter, TwistBaseAdapter):
             raise TypeError(
                 f"Hardware type / adapter mismatch for '{component.hardware_id}': "
-                f"hardware_type={component.hardware_type.value} but adapter is "
-                f"{'TwistBaseAdapter' if is_twist_adapter else 'ManipulatorAdapter'}"
+                f"hardware_type={component.hardware_type.value} but got "
+                f"{type(adapter).__name__}"
             )
 
         with self._hardware_lock:
@@ -357,14 +358,14 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 logger.warning(f"Hardware {component.hardware_id} already registered")
                 return False
 
-            if is_base:
+            if isinstance(adapter, TwistBaseAdapter):
                 connected: ConnectedHardware = ConnectedTwistBase(
-                    adapter=adapter,  # type: ignore[arg-type]
+                    adapter=adapter,
                     component=component,
                 )
             else:
                 connected = ConnectedHardware(
-                    adapter=adapter,  # type: ignore[arg-type]
+                    adapter=adapter,
                     component=component,
                 )
 

@@ -209,6 +209,8 @@ class ConnectedTwistBase(ConnectedHardware):
     - No retry loop for initialization (twist bases start at zero velocity)
     """
 
+    _twist_adapter: TwistBaseAdapter
+
     def __init__(
         self,
         adapter: TwistBaseAdapter,
@@ -219,7 +221,7 @@ class ConnectedTwistBase(ConnectedHardware):
         if not isinstance(adapter, TwistBaseAdapterProto):
             raise TypeError("adapter must implement TwistBaseAdapter")
 
-        self._adapter: TwistBaseAdapter = adapter  # type: ignore[assignment]
+        self._twist_adapter = adapter
         self._component = component
         self._joint_names = component.joints
 
@@ -230,9 +232,13 @@ class ConnectedTwistBase(ConnectedHardware):
         self._current_mode: ControlMode | None = None
 
     @property
-    def adapter(self) -> TwistBaseAdapter:  # type: ignore[override]
+    def adapter(self) -> TwistBaseAdapter:
         """The underlying twist base adapter."""
-        return self._adapter
+        return self._twist_adapter
+
+    def disconnect(self) -> None:
+        """Disconnect the underlying adapter."""
+        self._twist_adapter.disconnect()
 
     def read_state(self) -> dict[JointName, JointState]:
         """Read state as {joint_name: JointState}.
@@ -242,8 +248,8 @@ class ConnectedTwistBase(ConnectedHardware):
         """
         from dimos.control.components import JointState
 
-        velocities = self._adapter.read_velocities()
-        odometry = self._adapter.read_odometry()
+        velocities = self._twist_adapter.read_velocities()
+        odometry = self._twist_adapter.read_odometry()
         positions = odometry if odometry is not None else [0.0] * self.dof
 
         return {
@@ -278,7 +284,7 @@ class ConnectedTwistBase(ConnectedHardware):
 
         # Build ordered velocity list and send
         ordered = self._build_ordered_command()
-        return self._adapter.write_velocities(ordered)
+        return self._twist_adapter.write_velocities(ordered)
 
 
 __all__ = [
