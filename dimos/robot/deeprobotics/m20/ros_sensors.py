@@ -353,8 +353,8 @@ class M20ROSSensors:
         msg.data.y_vel = float(y_vel)
         msg.data.yaw_vel = float(yaw_vel)
         now = time.time()
-        msg.header.timestamp.sec = int(now)
-        msg.header.timestamp.nsec = int((now - int(now)) * 1e9)
+        msg.header.stamp.sec = int(now)
+        msg.header.stamp.nanosec = int((now - int(now)) * 1e9)
         self._ros.publish(self._nav_cmd_topic, msg)
 
     # --- ROS callbacks ---
