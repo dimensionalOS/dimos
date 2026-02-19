@@ -421,6 +421,21 @@ class TestUDPWireFormat:
             proto.close()
             recv.close()
 
+    def test_agile_gait_wire_format(self):
+        """Agile gait values (0x3002, 0x3003) encode correctly for Navigation Mode."""
+        proto, recv = self._loopback_pair()
+        try:
+            proto.send_gait_switch(GaitType.AGILE_FLAT)
+            data, _ = recv.recvfrom(65536)
+
+            payload_len = struct.unpack("<H", data[4:6])[0]
+            payload = json.loads(data[HEADER_LEN : HEADER_LEN + payload_len])
+            items = payload["PatrolDevice"]["Items"]
+            assert items["GaitParam"] == 0x3002
+        finally:
+            proto.close()
+            recv.close()
+
     def test_usage_mode_wire_format(self):
         """Usage mode command encodes Mode correctly."""
         proto, recv = self._loopback_pair()

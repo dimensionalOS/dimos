@@ -41,6 +41,21 @@ from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import PointCloud2 as DimosPointCloud2
 from dimos.protocol.pubsub.impl.rospubsub import ROS_AVAILABLE, RawROS, RawROSTopic
 
+# QoS import — only available when rclpy is installed
+_QoSProfile = None
+if ROS_AVAILABLE:
+    try:
+        from rclpy.qos import (
+            QoSDurabilityPolicy,
+            QoSHistoryPolicy,
+            QoSProfile,
+            QoSReliabilityPolicy,
+        )
+
+        _QoSProfile = QoSProfile
+    except ImportError:
+        pass
+
 logger = logging.getLogger(__name__)
 
 # Standard ROS 2 message types (available wherever rclpy is installed)
@@ -205,7 +220,17 @@ class M20ROSSensors:
                 "Source /opt/ros/foxy/setup.bash or install ros-foxy-common-interfaces."
             )
 
-        self._ros = RawROS(node_name=node_name)
+        # QoS matching M20's RELIABLE/VOLATILE with moderate depth
+        qos = None
+        if _QoSProfile is not None:
+            qos = _QoSProfile(
+                reliability=QoSReliabilityPolicy.RELIABLE,
+                history=QoSHistoryPolicy.KEEP_LAST,
+                durability=QoSDurabilityPolicy.VOLATILE,
+                depth=10,
+            )
+
+        self._ros = RawROS(node_name=node_name, qos=qos)
 
         # Observable streams
         self._odom_subject: Subject[PoseStamped] = Subject()
@@ -366,4 +391,6 @@ class M20ROSSensors:
             data = _motion_info_to_data(msg)
             self._motion_info_subject.on_next(data)
         except Exception:
-            logger.exception("Error converting /MOTION_INFO message")
+            # /MOTION_INFO can be intermittent due to DDS discovery with
+            # the bare-DDS publisher on AOS. Log at debug to avoid spam.
+            logger.debug("Error converting /MOTION_INFO message", exc_info=True)

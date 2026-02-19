@@ -61,9 +61,13 @@ class MotionState(IntEnum):
 
 
 class GaitType(IntEnum):
+    # Standard Motion Mode (manual control)
     STANDARD = 0x1001
     HIGH_OBSTACLE = 0x1002
     STAIRS = 0x1003
+    # Agile Motion Mode (navigation / autonomous — dev guide 2.2.2)
+    AGILE_FLAT = 0x3002
+    AGILE_STAIRS = 0x3003
 
 
 class UsageMode(IntEnum):

@@ -232,10 +232,12 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
 
             if self._ros_sensors is not None:
                 self._protocol.send_usage_mode(UsageMode.NAVIGATION)
+                # Agile Motion Mode for navigation (dev guide 2.2.2:
+                # "suitable for navigation and autonomous algorithm development")
+                self._protocol.send_gait_switch(GaitType.AGILE_FLAT)
             else:
                 self._protocol.send_usage_mode(UsageMode.REGULAR)
-
-            self._protocol.send_gait_switch(GaitType.STANDARD)
+                self._protocol.send_gait_switch(GaitType.STANDARD)
 
             mode = "Navigation" if self._ros_sensors else "Regular"
             logger.info(f"M20Connection started in {mode} Mode")
