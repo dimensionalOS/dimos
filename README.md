@@ -145,20 +145,23 @@ Check the [hardware section](#hardware) above to choose the right `extras` and `
 **Use DimOS as a library / UI**
 
 ```bash
-pip install dimos[your_platform]
+uv pip install dimos[your_hardware_platform]
 dimos run your_platform_blueprint
 ```
 
 **Develop DimOS**
 
-```bash
-git clone https://github.com/dimensionalOS/dimos/ dimos
+```sh
+export GIT_LFS_SKIP_SMUDGE=1
+git clone -b dev https://github.com/dimensionalOS/dimos.git
 cd dimos
-uv venv -p 3.12
-source .venv/bin/activate
+
+uv venv --python 3.12
+source .env/bin/activate
+
 uv sync --all-extras
-mypy dimos
-pytest dimos
+
+# Play a recording of unitree go2 run
 dimos --replay run unitree-go2
 ```
 
