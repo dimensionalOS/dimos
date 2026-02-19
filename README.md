@@ -47,7 +47,7 @@ With a simple install and no ROS required, design, build, and run physical appli
   <tr>
     <td align="center" width="50%">
       <h3><a href="docs/capabilities/navigation/readme.md">Navigation and Mapping</a></h3>
-      SLAM, dynamic obstacle avoidance, route planning, and autonomous exploration — supported on native DimOS and ROS<br><a href="https://x.com/stash_pomichter/status/2010471593806545367">Watch video</a>
+      SLAM, dynamic obstacle avoidance, route planning, and autonomous exploration — via both DimOS native and ROS<br><a href="https://x.com/stash_pomichter/status/2010471593806545367">Watch video</a>
     </td>
     <td align="center" width="50%">
       <h3><a href="docs/capabilities/perception/readme.md">Perception</a></h3>
