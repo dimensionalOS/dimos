@@ -107,8 +107,10 @@ class M20RTSPCamera:
                 self._stream_from_rtsp(min_interval)
             except av.error.ExitError:
                 logger.warning("RTSP stream ended, reconnecting in 2s...")
-            except Exception as e:
-                logger.error(f"RTSP error: {e}, reconnecting in 2s...")
+            except (ConnectionError, OSError, av.error.InvalidDataError) as e:
+                logger.warning(f"RTSP connection error: {e}, reconnecting in 2s...")
+            except Exception:
+                logger.exception("Unexpected RTSP error, reconnecting in 2s...")
 
             if self._running:
                 time.sleep(2.0)

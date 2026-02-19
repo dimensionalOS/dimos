@@ -29,8 +29,10 @@ from ..protocol import M20Protocol
 
 logger = logging.getLogger(__name__)
 
+_ZERO_THRESHOLD = 0.001
 
-@dataclass
+
+@dataclass(frozen=True)
 class M20SpeedLimits:
     """Physical speed limits for the M20 in standard walking gait.
 
@@ -86,9 +88,23 @@ class M20VelocityController:
         command_timeout: float = 0.5,  # seconds
         control_rate: int = 20,  # Hz (per M20 docs)
     ):
+        if linear_accel <= 0 or angular_accel <= 0:
+            raise ValueError("Acceleration values must be positive")
+        if control_rate <= 0:
+            raise ValueError("control_rate must be positive")
+        if command_timeout <= 0:
+            raise ValueError("command_timeout must be positive")
+
         self.protocol = protocol
         self.speed_limits = speed_limits or M20SpeedLimits()
+
+        if self.speed_limits.max_linear_x <= 0 or self.speed_limits.max_linear_y <= 0:
+            raise ValueError("Speed limits must be positive")
+        if self.speed_limits.max_angular_yaw <= 0:
+            raise ValueError("Speed limits must be positive")
+
         self.state = VelocityState()
+        self._lock = threading.Lock()
 
         self.linear_accel = linear_accel
         self.angular_accel = angular_accel
@@ -105,35 +121,42 @@ class M20VelocityController:
         Twist.linear.y  = lateral  (m/s)
         Twist.angular.z = yaw      (rad/s)
         """
-        if self.state.emergency_stopped:
-            return
+        with self._lock:
+            if self.state.emergency_stopped:
+                return
 
-        lim = self.speed_limits
-        self.state.target_linear_x = max(
-            -lim.max_linear_x, min(lim.max_linear_x, twist.linear.x)
-        )
-        self.state.target_linear_y = max(
-            -lim.max_linear_y, min(lim.max_linear_y, twist.linear.y)
-        )
-        self.state.target_angular_yaw = max(
-            -lim.max_angular_yaw, min(lim.max_angular_yaw, twist.angular.z)
-        )
-        self.state.last_command_time = time.time()
+            lim = self.speed_limits
+            self.state.target_linear_x = max(
+                -lim.max_linear_x, min(lim.max_linear_x, twist.linear.x)
+            )
+            self.state.target_linear_y = max(
+                -lim.max_linear_y, min(lim.max_linear_y, twist.linear.y)
+            )
+            self.state.target_angular_yaw = max(
+                -lim.max_angular_yaw, min(lim.max_angular_yaw, twist.angular.z)
+            )
+            self.state.last_command_time = time.time()
 
     def emergency_stop(self, engage: bool) -> None:
         """Engage or release emergency stop."""
+        with self._lock:
+            if engage:
+                self.state.emergency_stopped = True
+                self.state.target_linear_x = 0.0
+                self.state.target_linear_y = 0.0
+                self.state.target_angular_yaw = 0.0
+                self.state.actual_linear_x = 0.0
+                self.state.actual_linear_y = 0.0
+                self.state.actual_angular_yaw = 0.0
+                logger.warning("EMERGENCY STOP ENGAGED")
+            else:
+                self.state.emergency_stopped = False
+                logger.info("Emergency stop released")
+
+        # Send zero velocity immediately on e-stop (outside lock to avoid
+        # holding lock during I/O)
         if engage:
-            self.state.emergency_stopped = True
-            self.state.target_linear_x = 0.0
-            self.state.target_linear_y = 0.0
-            self.state.target_angular_yaw = 0.0
-            self.state.actual_linear_x = 0.0
-            self.state.actual_linear_y = 0.0
-            self.state.actual_angular_yaw = 0.0
-            logger.warning("EMERGENCY STOP ENGAGED")
-        else:
-            self.state.emergency_stopped = False
-            logger.info("Emergency stop released")
+            self.protocol.send_velocity(0, 0, 0)
 
     def start(self) -> None:
         """Start the 20Hz control loop thread."""
@@ -160,22 +183,35 @@ class M20VelocityController:
 
         while self._running:
             now = time.time()
+            try:
+                with self._lock:
+                    # Ramp to zero if no recent commands
+                    if now - self.state.last_command_time > self.command_timeout:
+                        self.state.target_linear_x = 0.0
+                        self.state.target_linear_y = 0.0
+                        self.state.target_angular_yaw = 0.0
 
-            # Ramp to zero if no recent commands
-            if now - self.state.last_command_time > self.command_timeout:
-                self.state.target_linear_x = 0.0
-                self.state.target_linear_y = 0.0
-                self.state.target_angular_yaw = 0.0
+                    self._update_velocities(dt)
 
-            self._update_velocities(dt)
-            self._publish_control()
-            self.state.last_update_time = now
+                self._publish_control()
+
+                with self._lock:
+                    self.state.last_update_time = now
+            except Exception:
+                logger.exception("Control loop error — sending zero velocity")
+                try:
+                    self.protocol.send_velocity(0, 0, 0)
+                except Exception:
+                    pass
 
             elapsed = time.time() - now
             time.sleep(max(0.0, dt - elapsed))
 
     def _update_velocities(self, dt: float) -> None:
-        """Apply acceleration limits for smooth velocity changes."""
+        """Apply acceleration limits for smooth velocity changes.
+
+        Must be called with self._lock held.
+        """
         max_lin = self.linear_accel * dt
         max_ang = self.angular_accel * dt
 
@@ -195,49 +231,40 @@ class M20VelocityController:
 
     def _publish_control(self) -> None:
         """Convert smoothed m/s velocities to M20 normalized [-1,1] and send."""
-        if self.state.paused:
-            return
+        with self._lock:
+            if self.state.paused:
+                return
 
-        if self.state.emergency_stopped:
-            self.protocol.send_velocity(0, 0, 0)
-            return
+            if self.state.emergency_stopped:
+                self.protocol.send_velocity(0, 0, 0)
+                return
 
-        if self._is_idle():
-            return
+            if self._is_idle():
+                return
 
-        lim = self.speed_limits
-        norm_x = (
-            self.state.actual_linear_x / lim.max_linear_x
-            if lim.max_linear_x > 0
-            else 0.0
-        )
-        norm_y = (
-            self.state.actual_linear_y / lim.max_linear_y
-            if lim.max_linear_y > 0
-            else 0.0
-        )
-        norm_yaw = (
-            self.state.actual_angular_yaw / lim.max_angular_yaw
-            if lim.max_angular_yaw > 0
-            else 0.0
-        )
+            lim = self.speed_limits
+            norm_x = self.state.actual_linear_x / lim.max_linear_x
+            norm_y = self.state.actual_linear_y / lim.max_linear_y
+            norm_yaw = self.state.actual_angular_yaw / lim.max_angular_yaw
 
         self.protocol.send_velocity(x=norm_x, y=norm_y, yaw=norm_yaw)
 
     def _is_idle(self) -> bool:
+        """Must be called with self._lock held."""
         timed_out = time.time() - self.state.last_command_time > self.command_timeout
         near_zero = (
-            abs(self.state.actual_linear_x) < 0.001
-            and abs(self.state.actual_linear_y) < 0.001
-            and abs(self.state.actual_angular_yaw) < 0.001
+            abs(self.state.actual_linear_x) < _ZERO_THRESHOLD
+            and abs(self.state.actual_linear_y) < _ZERO_THRESHOLD
+            and abs(self.state.actual_angular_yaw) < _ZERO_THRESHOLD
         )
         return timed_out and near_zero
 
     @property
     def is_moving(self) -> bool:
         threshold = 0.01
-        return (
-            abs(self.state.actual_linear_x) > threshold
-            or abs(self.state.actual_linear_y) > threshold
-            or abs(self.state.actual_angular_yaw) > threshold
-        )
+        with self._lock:
+            return (
+                abs(self.state.actual_linear_x) > threshold
+                or abs(self.state.actual_linear_y) > threshold
+                or abs(self.state.actual_angular_yaw) > threshold
+            )

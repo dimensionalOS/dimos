@@ -25,6 +25,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.navigation.base import NavigationState
+from dimos.robot.deeprobotics.protocol import GaitType
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -83,7 +84,7 @@ class M20SkillContainer(Module):
                 "NavigationInterface.is_goal_reached",
             )
         except Exception:
-            logger.error("Navigation module not connected properly")
+            logger.exception("Navigation module not connected properly")
             return "Failed to connect to navigation module."
 
         set_goal_rpc(self._generate_new_goal(tf.to_pose(), forward, left, degrees))
@@ -130,6 +131,7 @@ class M20SkillContainer(Module):
             standup_rpc()
             return "Robot is standing up."
         except Exception:
+            logger.exception("standup skill failed")
             return "Failed to send standup command."
 
     @skill
@@ -140,6 +142,7 @@ class M20SkillContainer(Module):
             sitdown_rpc()
             return "Robot is sitting down."
         except Exception:
+            logger.exception("sitdown skill failed")
             return "Failed to send sitdown command."
 
     @skill
@@ -155,9 +158,9 @@ class M20SkillContainer(Module):
             switch_gait("high_obstacle")  # High obstacle traversal
         """
         gait_map = {
-            "standard": 0x1001,
-            "high_obstacle": 0x1002,
-            "stairs": 0x1003,
+            "standard": GaitType.STANDARD,
+            "high_obstacle": GaitType.HIGH_OBSTACLE,
+            "stairs": GaitType.STAIRS,
         }
         gait_name = gait_name.lower().strip()
         if gait_name not in gait_map:
@@ -168,6 +171,7 @@ class M20SkillContainer(Module):
             set_gait_rpc(gait_map[gait_name])
             return f"Gait switched to {gait_name}."
         except Exception:
+            logger.exception("switch_gait skill failed")
             return "Failed to switch gait."
 
     @skill
@@ -178,6 +182,7 @@ class M20SkillContainer(Module):
             estop_rpc(True)
             return "EMERGENCY STOP ENGAGED. Call release_emergency_stop to resume."
         except Exception:
+            logger.exception("EMERGENCY STOP skill failed")
             return "Failed to engage emergency stop."
 
     @skill
@@ -188,6 +193,7 @@ class M20SkillContainer(Module):
             estop_rpc(False)
             return "Emergency stop released. Robot can now move."
         except Exception:
+            logger.exception("release_emergency_stop skill failed")
             return "Failed to release emergency stop."
 
     @skill

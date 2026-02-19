@@ -117,13 +117,13 @@ def _dds_to_dimos_pointcloud(dds_msg: "DDSPointCloud2") -> DimosPointCloud2:
             ts=dds_msg.header.stamp.sec + dds_msg.header.stamp.nanosec * 1e-9,
         )
 
-    # Extract XYZ as Nx3 float32 array
-    points = np.zeros((n_points, 3), dtype=np.float32)
-    for i in range(n_points):
-        base = i * point_step
-        points[i, 0] = struct.unpack_from("<f", raw, base + offsets["x"])[0]
-        points[i, 1] = struct.unpack_from("<f", raw, base + offsets["y"])[0]
-        points[i, 2] = struct.unpack_from("<f", raw, base + offsets["z"])[0]
+    # Extract XYZ as Nx3 float32 array using vectorized numpy operations.
+    # Reshape raw bytes into (n_points, point_step) and extract float32 at offsets.
+    raw_2d = raw[: n_points * point_step].reshape(n_points, point_step)
+    points = np.column_stack([
+        raw_2d[:, off : off + 4].view(np.float32).reshape(-1)
+        for off in (offsets["x"], offsets["y"], offsets["z"])
+    ])
 
     # Filter NaN/Inf points
     valid = np.isfinite(points).all(axis=1)

@@ -17,6 +17,8 @@
 Binary protocol format (16-byte header + JSON payload):
     Header: 0xEB 0x91 0xEB 0x90 | data_len (u16 LE) | msg_id (u16 LE) | format (1) | padding (7)
     Payload: UTF-8 JSON with PatrolDevice wrapper
+
+Reference: M20 Software Development Guide section 1.2 (UDP Protocol Specification)
 """
 
 import json
@@ -25,6 +27,7 @@ import socket
 import struct
 import threading
 import time
+from enum import IntEnum
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -35,13 +38,13 @@ HEADER_LEN = 16
 JSON_FORMAT = 0x01
 
 
-class CommandType:
+class CommandType(IntEnum):
     HEARTBEAT = 100
     MOTION = 2
     PERIPHERAL = 1101
 
 
-class Command:
+class Command(IntEnum):
     HEARTBEAT = 100
     VELOCITY = 21
     MOTION_STATE = 22
@@ -52,18 +55,18 @@ class Command:
     FLASHLIGHT = 2
 
 
-class MotionState:
+class MotionState(IntEnum):
     STAND = 1
     SIT = 4
 
 
-class GaitType:
+class GaitType(IntEnum):
     STANDARD = 0x1001
     HIGH_OBSTACLE = 0x1002
     STAIRS = 0x1003
 
 
-class UsageMode:
+class UsageMode(IntEnum):
     REGULAR = 0
     NAVIGATION = 1
     ASSIST = 2
@@ -93,6 +96,9 @@ class M20Protocol:
 
     def connect(self) -> None:
         """Create the UDP socket."""
+        if self._sock is not None:
+            logger.warning("M20 UDP protocol already connected — ignoring duplicate connect()")
+            return
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.settimeout(1.0)
         logger.info(f"M20 UDP protocol ready — target {self.host}:{self.port}")
@@ -109,6 +115,7 @@ class M20Protocol:
     def _send_command(self, cmd_type: int, command: int, items: dict) -> None:
         """Send a UDP command with 16-byte header + JSON payload."""
         if not self._sock:
+            logger.warning("_send_command called with no socket (not connected)")
             return
 
         payload = json.dumps({
@@ -130,7 +137,10 @@ class M20Protocol:
             + bytes(7)
         )
 
-        self._sock.sendto(header + payload, (self.host, self.port))
+        try:
+            self._sock.sendto(header + payload, (self.host, self.port))
+        except OSError as e:
+            logger.error(f"UDP send failed: {e}")
 
     # --- Motion commands ---
 
@@ -262,15 +272,17 @@ class M20Protocol:
     def _listen_loop(self, callback: Callable[[dict], None]) -> None:
         while self._listener_running and self._sock:
             try:
-                data, _ = self._sock.recvfrom(65536)
+                data, addr = self._sock.recvfrom(65536)
             except socket.timeout:
                 continue
             except OSError:
                 break
 
             if len(data) < HEADER_LEN:
+                logger.debug(f"Dropped short packet ({len(data)} bytes) from {addr}")
                 continue
             if data[:4] != HEADER_MAGIC:
+                logger.debug(f"Dropped packet with bad magic from {addr}")
                 continue
 
             payload_len = struct.unpack("<H", data[4:6])[0]
@@ -284,5 +296,6 @@ class M20Protocol:
                     "command": device.get("Command"),
                     "items": device.get("Items", {}),
                 })
-            except (json.JSONDecodeError, UnicodeDecodeError):
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                logger.debug(f"Dropped packet with unparseable payload: {e}")
                 continue

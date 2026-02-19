@@ -91,6 +91,7 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
     _global_config: GlobalConfig
     _camera_info: CameraInfo  # required by spec.Camera
     _camera_info_thread: Thread | None = None
+    _camera_info_running: bool = False
     _latest_video_frame: Image | None = None
 
     def __init__(
@@ -123,10 +124,16 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
             self._camera_info = self._camera.camera_info
 
         self._lidar: "M20LidarDDS | None" = None
-        if enable_lidar and _LIDAR_AVAILABLE:
-            from .lidar import M20LidarDDS
+        if enable_lidar:
+            if _LIDAR_AVAILABLE:
+                from .lidar import M20LidarDDS
 
-            self._lidar = M20LidarDDS()
+                self._lidar = M20LidarDDS()
+            else:
+                logger.warning(
+                    "LiDAR requested but CycloneDDS not installed — "
+                    "install with: pip install 'dimos[dds]'"
+                )
 
         self._odometry: M20DeadReckonOdometry | None = None
 
@@ -137,83 +144,108 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
     def start(self) -> None:
         super().start()
 
-        # Connect to M20 and start protocol services
-        self._protocol.connect()
-        self._protocol.start_heartbeat()
-        self._protocol.start_listener(self._on_status_report)
+        try:
+            # Connect to M20 and start protocol services
+            self._protocol.connect()
+            self._protocol.start_heartbeat()
+            self._protocol.start_listener(self._on_status_report)
 
-        # Start velocity control loop
-        self._velocity_ctrl.start()
+            # Start velocity control loop
+            self._velocity_ctrl.start()
 
-        # Wire cmd_vel input to velocity controller
-        self._disposables.add(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
+            # Wire cmd_vel input to velocity controller
+            self._disposables.add(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
 
-        # Start RTSP camera
-        if self._camera:
-            self._camera.start()
+            # Start RTSP camera
+            if self._camera:
+                self._camera.start()
 
-            def _on_image(image: Image) -> None:
-                self.color_image.publish(image)
-                self._latest_video_frame = image
+                def _on_image(image: Image) -> None:
+                    self.color_image.publish(image)
+                    self._latest_video_frame = image
 
-            self._disposables.add(
-                self._camera.image_stream().subscribe(_on_image)
+                self._disposables.add(
+                    self._camera.image_stream().subscribe(_on_image)
+                )
+
+                # Publish camera_info at 1Hz
+                self._camera_info_running = True
+                self._camera_info_thread = Thread(
+                    target=self._publish_camera_info, daemon=True
+                )
+                self._camera_info_thread.start()
+
+            # Start LiDAR via DDS
+            if self._lidar:
+                self._lidar.start()
+
+                def _on_lidar(pc: PointCloud2) -> None:
+                    self.lidar.publish(pc)
+                    self.pointcloud.publish(pc)
+
+                self._disposables.add(
+                    self._lidar.pointcloud_stream().subscribe(_on_lidar)
+                )
+
+            # Start dead-reckoning odometry (feeds from velocity controller)
+            self._odometry = M20DeadReckonOdometry(
+                publish_callback=self._publish_tf
             )
+            self._odometry.start()
 
-            # Publish camera_info at 1Hz
-            self._camera_info_thread = Thread(
-                target=self._publish_camera_info, daemon=True
-            )
-            self._camera_info_thread.start()
+            # Stand up and switch to navigation mode
+            self._protocol.send_motion_state(MotionState.STAND)
+            time.sleep(1.0)
+            self._protocol.send_usage_mode(UsageMode.NAVIGATION)
+            self._protocol.send_gait_switch(GaitType.STANDARD)
 
-        # Start LiDAR via DDS
-        if self._lidar:
-            self._lidar.start()
-
-            def _on_lidar(pc: PointCloud2) -> None:
-                self.lidar.publish(pc)
-                self.pointcloud.publish(pc)
-
-            self._disposables.add(
-                self._lidar.pointcloud_stream().subscribe(_on_lidar)
-            )
-
-        # Start dead-reckoning odometry (feeds from velocity controller)
-        self._odometry = M20DeadReckonOdometry(
-            publish_callback=self._publish_tf
-        )
-        self._odometry.start()
-
-        # Stand up and switch to navigation mode
-        self._protocol.send_motion_state(MotionState.STAND)
-        time.sleep(1.0)
-        self._protocol.send_usage_mode(UsageMode.NAVIGATION)
-        self._protocol.send_gait_switch(GaitType.STANDARD)
-
-        logger.info("M20Connection started")
+            logger.info("M20Connection started")
+        except Exception:
+            logger.exception("M20Connection.start() failed — cleaning up partial init")
+            self.stop()
+            raise
 
     @rpc
     def stop(self) -> None:
         # Sit down before disconnecting
-        self._protocol.send_usage_mode(UsageMode.REGULAR)
-        self._protocol.send_motion_state(MotionState.SIT)
-        time.sleep(1.0)
+        try:
+            self._protocol.send_usage_mode(UsageMode.REGULAR)
+            self._protocol.send_motion_state(MotionState.SIT)
+            time.sleep(1.0)
+        except Exception:
+            logger.exception("Failed to send sit-down during stop")
 
-        self._velocity_ctrl.stop()
+        try:
+            self._velocity_ctrl.stop()
+        except Exception:
+            logger.exception("Failed to stop velocity controller")
 
-        if self._odometry:
-            self._odometry.stop()
+        try:
+            if self._odometry:
+                self._odometry.stop()
+        except Exception:
+            logger.exception("Failed to stop odometry")
 
-        if self._lidar:
-            self._lidar.stop()
+        try:
+            if self._lidar:
+                self._lidar.stop()
+        except Exception:
+            logger.exception("Failed to stop LiDAR")
 
-        if self._camera:
-            self._camera.stop()
+        try:
+            if self._camera:
+                self._camera.stop()
+        except Exception:
+            logger.exception("Failed to stop camera")
 
+        self._camera_info_running = False
         if self._camera_info_thread and self._camera_info_thread.is_alive():
             self._camera_info_thread.join(timeout=1.0)
 
-        self._protocol.close()
+        try:
+            self._protocol.close()
+        except Exception:
+            logger.exception("Failed to close protocol")
 
         super().stop()
 
@@ -221,14 +253,16 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
         """Route Twist commands from the navigation stack to velocity controller."""
         self._velocity_ctrl.set_twist(twist)
 
-        # Feed smoothed velocities into dead-reckoning odometry
+        # Feed target velocities into dead-reckoning odometry.
+        # We use targets here because smoothed actuals only update in the
+        # control loop thread — reading them here would race.
         if self._odometry:
-            state = self._velocity_ctrl.state
-            self._odometry.update_velocity(
-                state.actual_linear_x,
-                state.actual_linear_y,
-                state.actual_angular_yaw,
-            )
+            with self._velocity_ctrl._lock:
+                self._odometry.update_velocity(
+                    self._velocity_ctrl.state.target_linear_x,
+                    self._velocity_ctrl.state.target_linear_y,
+                    self._velocity_ctrl.state.target_angular_yaw,
+                )
 
     def _on_status_report(self, report: dict) -> None:
         """Handle incoming status reports from the M20."""
@@ -237,7 +271,7 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
 
     def _publish_camera_info(self) -> None:
         """Publish camera intrinsics at 1Hz."""
-        while self._camera and self._camera._running:
+        while self._camera_info_running and self._camera and self._camera._running:
             self.camera_info.publish(self._camera.camera_info.with_ts(time.time()))
             time.sleep(1.0)
 

@@ -31,6 +31,7 @@ import socket
 import struct
 import threading
 import time
+from enum import IntEnum
 
 import pytest
 
@@ -68,12 +69,13 @@ class TestVelocitySafety:
         ctrl = M20VelocityController(protocol=proto)
 
         # Simulate mid-motion state
-        ctrl.state.actual_linear_x = 1.2
-        ctrl.state.actual_linear_y = 0.4
-        ctrl.state.actual_angular_yaw = 0.8
-        ctrl.state.target_linear_x = 1.5
-        ctrl.state.target_linear_y = 0.5
-        ctrl.state.target_angular_yaw = 1.0
+        with ctrl._lock:
+            ctrl.state.actual_linear_x = 1.2
+            ctrl.state.actual_linear_y = 0.4
+            ctrl.state.actual_angular_yaw = 0.8
+            ctrl.state.target_linear_x = 1.5
+            ctrl.state.target_linear_y = 0.5
+            ctrl.state.target_angular_yaw = 1.0
 
         ctrl.emergency_stop(True)
 
@@ -151,11 +153,12 @@ class TestVelocitySafety:
             linear_accel=2.0,
             angular_accel=3.0,
         )
-        ctrl.state.target_linear_x = 10.0  # way above step limit
-        ctrl.state.target_angular_yaw = 10.0
+        with ctrl._lock:
+            ctrl.state.target_linear_x = 10.0  # way above step limit
+            ctrl.state.target_angular_yaw = 10.0
 
-        dt = 0.05  # 20Hz
-        ctrl._update_velocities(dt)
+            dt = 0.05  # 20Hz
+            ctrl._update_velocities(dt)
 
         # max step = accel * dt
         assert abs(ctrl.state.actual_linear_x - 0.10) < 1e-6  # 2.0 * 0.05
@@ -168,11 +171,12 @@ class TestVelocitySafety:
             protocol=proto,
             linear_accel=1.0,
         )
-        ctrl.state.actual_linear_x = 1.0
-        ctrl.state.target_linear_x = 0.0
+        with ctrl._lock:
+            ctrl.state.actual_linear_x = 1.0
+            ctrl.state.target_linear_x = 0.0
 
-        dt = 0.05
-        ctrl._update_velocities(dt)
+            dt = 0.05
+            ctrl._update_velocities(dt)
 
         assert abs(ctrl.state.actual_linear_x - 0.95) < 1e-6  # 1.0 - 1.0*0.05
 
@@ -217,9 +221,10 @@ class TestVelocitySafety:
             max_linear_x=1.5, max_linear_y=0.5, max_angular_yaw=1.0
         )
         ctrl = M20VelocityController(protocol=proto, speed_limits=limits)
-        ctrl.state.actual_linear_x = 1.5
-        ctrl.state.actual_linear_y = 0.5
-        ctrl.state.actual_angular_yaw = 1.0
+        with ctrl._lock:
+            ctrl.state.actual_linear_x = 1.5
+            ctrl.state.actual_linear_y = 0.5
+            ctrl.state.actual_angular_yaw = 1.0
 
         norm_x = ctrl.state.actual_linear_x / limits.max_linear_x
         norm_y = ctrl.state.actual_linear_y / limits.max_linear_y
@@ -235,11 +240,62 @@ class TestVelocitySafety:
         ctrl = M20VelocityController(protocol=proto)
         assert not ctrl.is_moving
 
-        ctrl.state.actual_linear_x = 0.005  # below 0.01 threshold
+        with ctrl._lock:
+            ctrl.state.actual_linear_x = 0.005  # below 0.01 threshold
         assert not ctrl.is_moving
 
-        ctrl.state.actual_linear_x = 0.02  # above threshold
+        with ctrl._lock:
+            ctrl.state.actual_linear_x = 0.02  # above threshold
         assert ctrl.is_moving
+
+    def test_estop_sends_zero_velocity_on_wire(self):
+        """E-stop must immediately send zero velocity over UDP (P0 safety)."""
+        recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        recv_sock.bind(("127.0.0.1", 0))
+        recv_sock.settimeout(2.0)
+        port = recv_sock.getsockname()[1]
+
+        proto = M20Protocol(host="127.0.0.1", port=port)
+        proto.connect()
+        ctrl = M20VelocityController(protocol=proto)
+
+        # Set mid-motion state
+        with ctrl._lock:
+            ctrl.state.actual_linear_x = 1.0
+            ctrl.state.actual_linear_y = 0.5
+            ctrl.state.actual_angular_yaw = 0.8
+
+        ctrl.emergency_stop(True)
+
+        try:
+            data, _ = recv_sock.recvfrom(65536)
+            payload_len = struct.unpack("<H", data[4:6])[0]
+            payload = json.loads(data[HEADER_LEN : HEADER_LEN + payload_len])
+            items = payload["PatrolDevice"]["Items"]
+            assert items["X"] == 0.0
+            assert items["Y"] == 0.0
+            assert items["Yaw"] == 0.0
+        finally:
+            proto.close()
+            recv_sock.close()
+
+    def test_constructor_rejects_invalid_params(self):
+        """Constructor must reject non-positive acceleration/rate/timeout."""
+        proto = M20Protocol()
+        with pytest.raises(ValueError):
+            M20VelocityController(protocol=proto, linear_accel=-1.0)
+        with pytest.raises(ValueError):
+            M20VelocityController(protocol=proto, angular_accel=0.0)
+        with pytest.raises(ValueError):
+            M20VelocityController(protocol=proto, control_rate=0)
+        with pytest.raises(ValueError):
+            M20VelocityController(protocol=proto, command_timeout=-0.1)
+
+    def test_speed_limits_frozen(self):
+        """M20SpeedLimits must be immutable (frozen dataclass)."""
+        limits = M20SpeedLimits()
+        with pytest.raises(AttributeError):
+            limits.max_linear_x = 99.0
 
 
 # ---------------------------------------------------------------------------
@@ -429,6 +485,23 @@ class TestUDPWireFormat:
         finally:
             proto.close()
             recv.close()
+
+    def test_protocol_constants_are_intenum(self):
+        """Protocol constants must be IntEnum per dimos codebase convention."""
+        assert issubclass(CommandType, IntEnum)
+        assert issubclass(Command, IntEnum)
+        assert issubclass(MotionState, IntEnum)
+        assert issubclass(GaitType, IntEnum)
+        assert issubclass(UsageMode, IntEnum)
+
+    def test_double_connect_is_idempotent(self):
+        """Calling connect() twice should not create a second socket."""
+        proto = M20Protocol(host="127.0.0.1", port=40000)
+        proto.connect()
+        first_sock = proto._sock
+        proto.connect()
+        assert proto._sock is first_sock
+        proto.close()
 
     def test_listener_receives_status(self):
         """Listener thread must parse a valid status response."""
