@@ -41,7 +41,7 @@ mkdir myproject
 cd myproject
 
 uv venv --python "3.12"
-source .env/bin/activate
+source .venv/bin/activate
 
 # if on nixos you can pull our flake
 wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/flake.nix
