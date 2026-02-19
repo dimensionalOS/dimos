@@ -16,20 +16,19 @@
 Blueprints for manipulation module integration with ControlCoordinator.
 
 Usage:
-    # Start coordinator first, then planner:
-    coordinator = xarm7_planner_coordinator.build()
-    coordinator.loop()
+    # Non-agentic (manual RPC):
+    dimos run coordinator-mock
+    dimos run xarm-perception
 
-    # Plan and execute via RPC client:
-    from dimos.manipulation.planning.examples.manipulation_client import ManipulationClient
-    client = ManipulationClient()
-    client.plan_to_joints([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
-    client.execute()
+    # Agentic (LLM agent with skills):
+    dimos run coordinator-mock
+    dimos run xarm-perception-agent
 """
 
 import math
 from pathlib import Path
 
+from dimos.agents.agent import Agent
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense import realsense_camera
@@ -176,6 +175,7 @@ def _make_xarm6_config(
         max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
+        home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
 
 
@@ -232,6 +232,8 @@ def _make_xarm7_config(
         coordinator_task_name=coordinator_task,
         gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=tf_extra_links or [],
+        # Home configuration: arm extended forward, elbow up (safe observe pose)
+        home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
 
 
@@ -272,6 +274,7 @@ def _make_piper_config(
         max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
+        home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
 
 
@@ -366,6 +369,36 @@ xarm_perception = (
 )
 
 
+# XArm7 perception + LLM agent for agentic manipulation
+# Skills (pick, place, move_to_pose, etc.) auto-register with the agent's SkillCoordinator.
+# Usage: dimos run coordinator-mock, then dimos run xarm-perception-agent
+_MANIPULATION_AGENT_SYSTEM_PROMPT = """\
+You are a robotic manipulation assistant controlling an xArm7 robot arm.
+
+Use ONLY these ManipulationModule skills for manipulation tasks:
+- scan_objects: Scan scene and list detected objects with 3D positions. Always call this first.
+- pick: Pick up an object by name. Requires scan_objects first.
+- place: Place a held object at x, y, z position.
+- place_back: Place a held object back at its original pick position.
+- pick_and_place: Pick an object and place it at a target location.
+- move_to_pose: Move end-effector to x, y, z with optional roll, pitch, yaw.
+- move_to_joints: Move to a joint configuration (comma-separated radians).
+- open_gripper / close_gripper / set_gripper: Control the gripper.
+- go_home: Move to the home/observe position.
+- go_init: Return to the startup position.
+- get_scene_info: Get full robot state, detected objects, and scene info.
+
+Do NOT use the 'detect' or 'select' skills — use scan_objects instead.
+For robot_name parameters, always omit or pass None (single-arm setup).
+After pick or place, return to init with go_init unless another action follows immediately.
+"""
+
+xarm_perception_agent = autoconnect(
+    xarm_perception,
+    Agent.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
+)
+
+
 __all__ = [
     "PIPER_GRIPPER_COLLISION_EXCLUSIONS",
     "XARM_GRIPPER_COLLISION_EXCLUSIONS",
@@ -373,4 +406,5 @@ __all__ = [
     "xarm6_planner_only",
     "xarm7_planner_coordinator",
     "xarm_perception",
+    "xarm_perception_agent",
 ]

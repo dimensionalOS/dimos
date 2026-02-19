@@ -5,11 +5,11 @@ import signal
 import time
 from typing import TYPE_CHECKING, cast
 
+import lazy_loader as lazy
 from rich.console import Console
 
 from dimos.core.core import rpc
 from dimos.utils.logging_config import setup_logger
-import lazy_loader as lazy
 
 if TYPE_CHECKING:
     # Avoid runtime import to prevent circular import; ruff's TC001 would otherwise move it.

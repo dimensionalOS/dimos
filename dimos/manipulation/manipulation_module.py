@@ -12,16 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Manipulation Module - Motion planning with ControlCoordinator execution."""
+"""Manipulation Module - Motion planning with ControlCoordinator execution.
+
+Interface layers:
+- @rpc: Low-level building blocks (plan_to_pose, plan_to_joints, preview_path, execute)
+- @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, scan_objects, go_init)
+- @skill (long-horizon): Multi-step composed behaviors (pick, place, place_back, pick_and_place)
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import math
 from pathlib import Path
 import threading
-from typing import TYPE_CHECKING, TypeAlias
+import time
+from typing import TYPE_CHECKING, Any, TypeAlias
 
+from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core import In, Module, rpc
 from dimos.core.docker_runner import DockerModule as DockerRunner
@@ -41,18 +50,20 @@ from dimos.manipulation.planning import (
     create_planner,
 )
 from dimos.manipulation.planning.monitor import WorldMonitor
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 
 # These must be imported at runtime (not TYPE_CHECKING) for In/Out port creation
 from dimos.msgs.sensor_msgs import JointState
 from dimos.msgs.trajectory_msgs import JointTrajectory
-from dimos.perception.detection.type.detection3d.object import Object as DetObject  # noqa: TC001
+from dimos.perception.detection.type.detection3d.object import Object as DetObject
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import RPCClient
-    from dimos.msgs.geometry_msgs import Pose, PoseArray
+    from dimos.msgs.geometry_msgs import PoseArray
     from dimos.msgs.sensor_msgs import PointCloud2
+    from dimos.perception.detection.type.detection3d.object import Object as DetObject
 
 logger = setup_logger()
 
@@ -108,7 +119,12 @@ class ManipulationModuleConfig(ModuleConfig):
 
 
 class ManipulationModule(Module):
-    """Motion planning module with ControlCoordinator execution."""
+    """Motion planning module with ControlCoordinator execution.
+
+    - @rpc: Low-level building blocks (plan, execute, obstacles)
+    - @skill (short-horizon): Single-step actions (move_to_pose, open_gripper, scan_objects)
+    - @skill (long-horizon): Multi-step behaviors (pick, place, pick_and_place)
+    """
 
     default_config = ManipulationModuleConfig
 
@@ -146,6 +162,16 @@ class ManipulationModule(Module):
 
         # GraspGen Docker runner (lazy initialized on first generate_grasps call)
         self._graspgen: DockerRunner | None = None
+        # Init joints: captured from first joint state received, used by go_init
+        self._init_joints: JointState | None = None
+
+        # Last pick position: stored during pick so place_back() can return the object
+        self._last_pick_position: Vector3 | None = None
+
+        # Snapshotted detections from the last scan_objects/refresh call.
+        # The live detection cache is volatile (labels change every frame),
+        # so pick/place use this stable snapshot instead.
+        self._detection_snapshot: list[DetObject] = []
 
         # TF publishing thread
         self._tf_stop_event = threading.Event()
@@ -233,7 +259,7 @@ class ManipulationModule(Module):
         Returns:
             (robot_name, robot_id, config, traj_gen) or None if not found
         """
-        if robot_name is None:
+        if not robot_name:  # None or empty string (LLMs often pass "")
             robot_name = self._get_default_robot_name()
             if robot_name is None:
                 logger.error("Multiple robots configured, must specify robot_name")
@@ -254,6 +280,13 @@ class ManipulationModule(Module):
             # extracts only its robot's joints based on joint_name_mapping.
             if self._world_monitor is not None:
                 self._world_monitor.on_joint_state(msg, robot_id=None)
+
+            # Capture initial joint positions on first callback
+            if self._init_joints is None and msg.position:
+                self._init_joints = JointState(name=list(msg.name), position=list(msg.position))
+                logger.info(
+                    f"Init joints captured: [{', '.join(f'{j:.3f}' for j in msg.position)}]"
+                )
 
         except Exception as e:
             logger.error(f"Exception in _on_joint_state: {e}")
@@ -456,20 +489,18 @@ class ManipulationModule(Module):
         return self._plan_path_only(robot_name, robot_id, ik.joint_state)
 
     @rpc
-    def plan_to_joints(self, joints: list[float], robot_name: RobotName | None = None) -> bool:
+    def plan_to_joints(self, joints: JointState, robot_name: RobotName | None = None) -> bool:
         """Plan motion to joint config. Use preview_path() then execute().
 
         Args:
-            joints: Target joint configuration
+            joints: Target joint state (names + positions)
             robot_name: Robot to plan for (required if multiple robots configured)
         """
         if (r := self._begin_planning(robot_name)) is None:
             return False
         robot_name, robot_id = r
-        _, config, _ = self._robots[robot_name]
-        goal_state = JointState(name=config.joint_names, position=joints)
-        logger.info(f"Planning to joints for {robot_name}: {[f'{j:.3f}' for j in joints]}")
-        return self._plan_path_only(robot_name, robot_id, goal_state)
+        logger.info(f"Planning to joints for {robot_name}: {[f'{j:.3f}' for j in joints.position]}")
+        return self._plan_path_only(robot_name, robot_id, joints)
 
     def _plan_path_only(
         self, robot_name: RobotName, robot_id: WorldRobotID, goal: JointState
@@ -583,7 +614,7 @@ class ManipulationModule(Module):
         return list(self._robots.keys())
 
     @rpc
-    def get_robot_info(self, robot_name: RobotName | None = None) -> dict[str, object] | None:
+    def get_robot_info(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
         """Get information about a robot.
 
         Args:
@@ -608,7 +639,49 @@ class ManipulationModule(Module):
             "max_acceleration": config.max_acceleration,
             "has_joint_name_mapping": bool(config.joint_name_mapping),
             "coordinator_task_name": config.coordinator_task_name,
+            "home_joints": config.home_joints,
+            "pre_grasp_offset": config.pre_grasp_offset,
+            "init_joints": list(self._init_joints.position) if self._init_joints else None,
         }
+
+    @rpc
+    def get_init_joints(self) -> JointState | None:
+        """Get the init joint state (captured at startup or set manually)."""
+        return self._init_joints
+
+    @rpc
+    def set_init_joints(self, joint_state: JointState) -> bool:
+        """Set the init joint state.
+
+        Args:
+            joint_state: New init joint state (names + positions)
+        """
+        self._init_joints = joint_state
+        logger.info(f"Init joints set: [{', '.join(f'{j:.3f}' for j in joint_state.position)}]")
+        return True
+
+    @rpc
+    def set_init_joints_to_current(self, robot_name: RobotName | None = None) -> bool:
+        """Set init joints to the current joint positions.
+
+        Args:
+            robot_name: Robot to capture from (required if multiple robots configured)
+        """
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return False
+        _, robot_id, _, _ = robot
+        if self._world_monitor is None:
+            return False
+        current = self._world_monitor.get_current_joint_state(robot_id)
+        if current is None:
+            logger.error("Cannot capture init joints — no current joint state")
+            return False
+        self._init_joints = current
+        logger.info(
+            f"Init joints set to current: [{', '.join(f'{j:.3f}' for j in current.position)}]"
+        )
+        return True
 
     # =========================================================================
     # Coordinator Integration RPC Methods
@@ -691,17 +764,20 @@ class ManipulationModule(Module):
             return self._fail("Coordinator rejected trajectory")
 
     @rpc
-    def get_trajectory_status(
-        self, robot_name: RobotName | None = None
-    ) -> dict[str, object] | None:
-        """Get trajectory execution status."""
+    def get_trajectory_status(self, robot_name: RobotName | None = None) -> dict[str, Any] | None:
+        """Get trajectory execution status via coordinator task_invoke."""
         if (robot := self._get_robot(robot_name)) is None:
             return None
         _, _, config, _ = robot
         if not config.coordinator_task_name or (client := self._get_coordinator_client()) is None:
             return None
-        status = client.get_trajectory_status(config.coordinator_task_name)
-        return dict(status) if status else None
+        try:
+            state = client.task_invoke(config.coordinator_task_name, "get_state", {})
+            if state is not None:
+                return {"state": int(state), "task": config.coordinator_task_name}
+            return None
+        except Exception:
+            return None
 
     def _get_graspgen(self) -> DockerRunner:
         """Get or create GraspGen Docker module (lazy init, thread-safe)."""
@@ -826,11 +902,18 @@ class ManipulationModule(Module):
     # =========================================================================
 
     @rpc
-    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, object]]:
-        """Refresh perception obstacles. Returns the list of obstacles added."""
+    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, Any]]:
+        """Refresh perception obstacles. Returns the list of obstacles added.
+
+        Also snapshots the current detections so pick/place can use stable labels.
+        """
         if self._world_monitor is None:
             return []
-        return self._world_monitor.refresh_obstacles(min_duration)
+        result = self._world_monitor.refresh_obstacles(min_duration)
+        # Snapshot detections at refresh time — the live cache is volatile
+        self._detection_snapshot = self._world_monitor.get_cached_objects()
+        logger.info(f"Detection snapshot: {[d.name for d in self._detection_snapshot]}")
+        return result
 
     @rpc
     def clear_perception_obstacles(self) -> int:
@@ -847,21 +930,21 @@ class ManipulationModule(Module):
         return self._world_monitor.get_perception_status()
 
     @rpc
-    def list_cached_detections(self) -> list[dict[str, object]]:
+    def list_cached_detections(self) -> list[dict[str, Any]]:
         """List cached detections from perception."""
         if self._world_monitor is None:
             return []
         return self._world_monitor.list_cached_detections()
 
     @rpc
-    def list_added_obstacles(self) -> list[dict[str, object]]:
+    def list_added_obstacles(self) -> list[dict[str, Any]]:
         """List perception obstacles currently in the planning world."""
         if self._world_monitor is None:
             return []
         return self._world_monitor.list_added_obstacles()
 
     # =========================================================================
-    # Gripper RPC Methods
+    # Gripper Methods
     # =========================================================================
 
     def _get_gripper_hardware_id(self, robot_name: RobotName | None = None) -> str | None:
@@ -875,14 +958,8 @@ class ManipulationModule(Module):
             return None
         return str(config.gripper_hardware_id)
 
-    @rpc
-    def set_gripper(self, position: float, robot_name: RobotName | None = None) -> bool:
-        """Set gripper position in meters.
-
-        Args:
-            position: Gripper position in meters
-            robot_name: Robot to control (required if multiple robots configured)
-        """
+    def _set_gripper_position(self, position: float, robot_name: RobotName | None = None) -> bool:
+        """Internal: set gripper position in meters."""
         hw_id = self._get_gripper_hardware_id(robot_name)
         if hw_id is None:
             return False
@@ -908,23 +985,603 @@ class ManipulationModule(Module):
         result = client.get_gripper_position(hw_id)
         return float(result) if result is not None else None
 
-    @rpc
-    def open_gripper(self, robot_name: RobotName | None = None) -> bool:
-        """Open gripper fully (0.85m opening).
+    @skill
+    def set_gripper(self, position: float, robot_name: str | None = None) -> str:
+        """Set gripper to a specific opening in meters.
 
         Args:
-            robot_name: Robot to control (required if multiple robots configured)
+            position: Gripper opening in meters (0.0 = closed, 0.85 = fully open).
+            robot_name: Robot to control (only needed for multi-arm setups).
         """
-        return bool(self.set_gripper(0.85, robot_name))
+        if self._set_gripper_position(position, robot_name):
+            return f"Gripper set to {position:.3f}m"
+        return "Error: Failed to set gripper position"
 
-    @rpc
-    def close_gripper(self, robot_name: RobotName | None = None) -> bool:
-        """Close gripper fully.
+    @skill
+    def open_gripper(self, robot_name: str | None = None) -> str:
+        """Open the robot gripper fully.
 
         Args:
-            robot_name: Robot to control (required if multiple robots configured)
+            robot_name: Robot to control (only needed for multi-arm setups).
         """
-        return bool(self.set_gripper(0.0, robot_name))
+        if self._set_gripper_position(0.85, robot_name):
+            return "Gripper opened"
+        return "Error: Failed to open gripper"
+
+    @skill
+    def close_gripper(self, robot_name: str | None = None) -> str:
+        """Close the robot gripper fully.
+
+        Args:
+            robot_name: Robot to control (only needed for multi-arm setups).
+        """
+        if self._set_gripper_position(0.0, robot_name):
+            return "Gripper closed"
+        return "Error: Failed to close gripper"
+
+    # =========================================================================
+    # Skill Helpers (internal)
+    # =========================================================================
+
+    def _wait_for_trajectory_completion(
+        self, robot_name: RobotName | None = None, timeout: float = 60.0, poll_interval: float = 0.2
+    ) -> bool:
+        """Wait for trajectory execution to complete.
+
+        Polls the coordinator task state via task_invoke. Falls back to waiting
+        for the trajectory duration if the coordinator is unavailable.
+
+        Args:
+            robot_name: Robot to monitor
+            timeout: Maximum wait time in seconds
+            poll_interval: Time between status checks
+
+        Returns:
+            True if trajectory completed successfully
+        """
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return True
+        rname, _, config, _ = robot
+        client = self._get_coordinator_client()
+
+        if client is None or not config.coordinator_task_name:
+            # No coordinator — wait for trajectory duration as fallback
+            traj = self._planned_trajectories.get(rname)
+            if traj is not None:
+                logger.info(f"No coordinator status — waiting {traj.duration:.1f}s for trajectory")
+                time.sleep(traj.duration + 0.5)
+            return True
+
+        # Poll task state via task_invoke
+        start = time.time()
+        while (time.time() - start) < timeout:
+            try:
+                state = client.task_invoke(config.coordinator_task_name, "get_state", {})
+                # TrajectoryState is an IntEnum: IDLE=0, EXECUTING=1, COMPLETED=2, ABORTED=3, FAULT=4
+                if state is not None:
+                    state_val = int(state)
+                    if state_val in (0, 2):  # IDLE or COMPLETED
+                        return True
+                    if state_val in (3, 4):  # ABORTED or FAULT
+                        logger.warning(f"Trajectory failed: state={state}")
+                        return False
+                    # state_val == 1 means EXECUTING, keep polling
+                else:
+                    # task_invoke returned None — task not found, assume done
+                    return True
+            except Exception:
+                # Fallback: wait for trajectory duration
+                traj = self._planned_trajectories.get(rname)
+                if traj is not None:
+                    remaining = traj.duration - (time.time() - start)
+                    if remaining > 0:
+                        logger.info(f"Status poll failed — waiting {remaining:.1f}s for trajectory")
+                        time.sleep(remaining + 0.5)
+                return True
+            time.sleep(poll_interval)
+
+        logger.warning(f"Trajectory execution timed out after {timeout}s")
+        return False
+
+    def _preview_execute_wait(
+        self, robot_name: RobotName | None = None, preview_duration: float = 0.5
+    ) -> str | None:
+        """Preview planned path, execute, and wait for completion.
+
+        Returns None on success, or an error string on failure.
+
+        Args:
+            robot_name: Robot to operate on
+            preview_duration: Duration to animate the preview in Meshcat (seconds)
+        """
+        logger.info("Previewing trajectory...")
+        self.preview_path(preview_duration, robot_name)
+
+        logger.info("Executing trajectory...")
+        if not self.execute(robot_name):
+            return "Error: Trajectory execution failed"
+
+        if not self._wait_for_trajectory_completion(robot_name):
+            return "Error: Trajectory execution timed out"
+
+        return None
+
+    def _compute_pre_grasp_pose(self, grasp_pose: Pose, offset: float = 0.10) -> Pose:
+        """Compute a pre-grasp pose offset along the approach direction (local -Z).
+
+        Args:
+            grasp_pose: The final grasp pose
+            offset: Distance to retract along the approach direction (meters)
+
+        Returns:
+            Pre-grasp pose offset from the grasp pose
+        """
+        from dimos.utils.transform_utils import offset_distance
+
+        return offset_distance(grasp_pose, offset)
+
+    def _find_object_in_detections(
+        self, object_name: str, object_id: str | None = None
+    ) -> DetObject | None:
+        """Find an object in the detection snapshot by name or ID.
+
+        Uses the snapshot taken during the last scan_objects/refresh call,
+        not the volatile live cache (which changes labels every frame).
+
+        Args:
+            object_name: Name/label to search for
+            object_id: Optional specific object ID
+
+        Returns:
+            Matching DetObject, or None
+        """
+        if not self._detection_snapshot:
+            logger.warning("No detection snapshot — call scan_objects() first")
+            return None
+
+        for det in self._detection_snapshot:
+            if object_id and det.object_id == object_id:
+                return det
+            if object_name.lower() in det.name.lower() or det.name.lower() in object_name.lower():
+                return det
+
+        available = [det.name for det in self._detection_snapshot]
+        logger.warning(f"Object '{object_name}' not found in snapshot. Available: {available}")
+        return None
+
+    def _generate_grasps_for_pick(
+        self, object_name: str, object_id: str | None = None
+    ) -> list[Pose] | None:
+        """Generate grasp poses for an object.
+
+        Computes a top-down approach grasp from the object's detected position.
+
+        Args:
+            object_name: Name of the object
+            object_id: Optional object ID
+
+        Returns:
+            List of grasp poses (best first), or None if object not found
+        """
+        det = self._find_object_in_detections(object_name, object_id)
+        if det is None:
+            logger.warning(f"Object '{object_name}' not found in detections")
+            return None
+
+        c = det.center
+        grasp_pose = Pose(Vector3(c.x, c.y, c.z), Quaternion.from_euler(Vector3(0.0, math.pi, 0.0)))
+        logger.info(f"Heuristic grasp for '{object_name}' at ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
+        return [grasp_pose]
+
+    # =========================================================================
+    # Short-Horizon Skills — Single-step actions
+    # =========================================================================
+
+    @skill
+    def move_to_pose(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        roll: float = 0.0,
+        pitch: float = 0.0,
+        yaw: float = 0.0,
+        robot_name: str | None = None,
+    ) -> str:
+        """Move the robot end-effector to a target pose.
+
+        Plans a collision-free trajectory and executes it.
+
+        Args:
+            x: Target X position in meters.
+            y: Target Y position in meters.
+            z: Target Z position in meters.
+            roll: Target roll in radians (default 0).
+            pitch: Target pitch in radians (default 0).
+            yaw: Target yaw in radians (default 0).
+            robot_name: Robot to move (only needed for multi-arm setups).
+        """
+        logger.info(f"Planning motion to ({x:.3f}, {y:.3f}, {z:.3f})...")
+        pose = Pose(Vector3(x, y, z), Quaternion.from_euler(Vector3(roll, pitch, yaw)))
+
+        if not self.plan_to_pose(pose, robot_name):
+            return f"Error: Planning failed — pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision"
+
+        err = self._preview_execute_wait(robot_name)
+        if err:
+            return err
+
+        return f"Reached target pose ({x:.3f}, {y:.3f}, {z:.3f})"
+
+    @skill
+    def move_to_joints(
+        self,
+        joints: str,
+        robot_name: str | None = None,
+    ) -> str:
+        """Move the robot to a target joint configuration.
+
+        Plans a collision-free trajectory and executes it.
+
+        Args:
+            joints: Comma-separated joint positions in radians, e.g. "0.1, -0.5, 1.2, 0.0, 0.3, -0.1".
+            robot_name: Robot to move (only needed for multi-arm setups).
+        """
+        try:
+            joint_values = [float(j.strip()) for j in joints.split(",")]
+        except ValueError:
+            return f"Error: Invalid joints format '{joints}'. Expected comma-separated floats."
+
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return "Error: Robot not found"
+        rname, _, config, _ = robot
+        goal = JointState(name=config.joint_names, position=joint_values)
+
+        logger.info(f"Planning motion to joints [{', '.join(f'{j:.3f}' for j in joint_values)}]...")
+        if not self.plan_to_joints(goal, rname):
+            return "Error: Planning failed — joint configuration may be unreachable or in collision"
+
+        err = self._preview_execute_wait(robot_name)
+        if err:
+            return err
+
+        return "Reached target joint configuration"
+
+    @skill
+    def get_scene_info(self, robot_name: str | None = None) -> str:
+        """Get current robot state, detected objects, and scene information.
+
+        Returns a summary of the robot's joint positions, end-effector pose,
+        gripper state, detected objects, and obstacle count.
+
+        Args:
+            robot_name: Robot to query (only needed for multi-arm setups).
+        """
+        lines: list[str] = []
+
+        # Robot state
+        joints = self.get_current_joints(robot_name)
+        if joints is not None:
+            lines.append(f"Joints: [{', '.join(f'{j:.3f}' for j in joints)}]")
+        else:
+            lines.append("Joints: unavailable (no state received)")
+
+        ee_pose = self.get_ee_pose(robot_name)
+        if ee_pose is not None:
+            p = ee_pose.position
+            lines.append(f"EE pose: ({p.x:.4f}, {p.y:.4f}, {p.z:.4f})")
+        else:
+            lines.append("EE pose: unavailable")
+
+        # Gripper
+        gripper_pos = self.get_gripper(robot_name)
+        if gripper_pos is not None:
+            lines.append(f"Gripper: {gripper_pos:.3f}m")
+        else:
+            lines.append("Gripper: not configured")
+
+        # Perception
+        perception = self.get_perception_status()
+        lines.append(
+            f"Perception: {perception.get('cached', 0)} cached, {perception.get('added', 0)} obstacles added"
+        )
+
+        detections = self._detection_snapshot
+        if detections:
+            lines.append(f"Detected objects ({len(detections)}):")
+            for det in detections:
+                c = det.center
+                lines.append(f"  - {det.name}: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
+        else:
+            lines.append("Detected objects: none")
+
+        # Visualization
+        url = self.get_visualization_url()
+        if url:
+            lines.append(f"Visualization: {url}")
+
+        # State
+        lines.append(f"State: {self.get_state()}")
+
+        return "\n".join(lines)
+
+    @skill
+    def scan_objects(self, min_duration: float = 1.0, robot_name: str | None = None) -> str:
+        """Scan the scene and list detected objects with their 3D positions.
+
+        Refreshes perception obstacles from the latest sensor data and returns
+        a formatted list of all detected objects.
+
+        Args:
+            min_duration: Minimum time in seconds to wait for stable detections.
+            robot_name: Robot context (only needed for multi-arm setups).
+        """
+        obstacles = self.refresh_obstacles(min_duration)
+
+        detections = self._detection_snapshot
+        if not detections:
+            return "No objects detected in scene"
+
+        lines = [f"Detected {len(detections)} object(s):"]
+        for det in detections:
+            c = det.center
+            lines.append(f"  - {det.name}: ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
+
+        if obstacles:
+            lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
+
+        return "\n".join(lines)
+
+    # =========================================================================
+    # Long-Horizon Skills — Multi-step composed behaviors
+    # =========================================================================
+
+    @skill
+    def go_home(self, robot_name: str | None = None) -> str:
+        """Move the robot to its home/observe joint configuration.
+
+        Opens the gripper and moves to the predefined home position.
+
+        Args:
+            robot_name: Robot to move (only needed for multi-arm setups).
+        """
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return "Error: Robot not found"
+        rname, _, config, _ = robot
+
+        if config.home_joints is None:
+            return "Error: No home_joints configured for this robot"
+
+        logger.info("Opening gripper...")
+        self._set_gripper_position(0.85, rname)
+        time.sleep(0.5)
+
+        goal = JointState(name=config.joint_names, position=config.home_joints)
+        logger.info("Planning motion to home position...")
+        if not self.plan_to_joints(goal, rname):
+            return "Error: Failed to plan path to home position"
+
+        err = self._preview_execute_wait(robot_name)
+        if err:
+            return err
+
+        return "Reached home position"
+
+    @skill
+    def go_init(self, robot_name: str | None = None) -> str:
+        """Move the robot to its init position (captured at startup or set manually).
+
+        The init position is the joint configuration the robot was in when the
+        module first received joint state. It can be changed with set_init_joints().
+
+        Args:
+            robot_name: Robot to move (only needed for multi-arm setups).
+        """
+        if self._init_joints is None:
+            return "Error: No init joints captured — robot may not have reported joint state yet"
+
+        logger.info(
+            f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in self._init_joints.position)}]..."
+        )
+        if not self.plan_to_joints(self._init_joints, robot_name):
+            return "Error: Failed to plan path to init position"
+
+        err = self._preview_execute_wait(robot_name)
+        if err:
+            return err
+
+        return "Reached init position"
+
+    @skill
+    def pick(
+        self,
+        object_name: str,
+        object_id: str | None = None,
+        robot_name: str | None = None,
+    ) -> str:
+        """Pick up an object by name using grasp planning and motion execution.
+
+        Generates grasp poses, plans collision-free approach/grasp/retract motions,
+        and executes them.
+
+        Args:
+            object_name: Name of the object to pick (e.g. "cup", "bottle", "can").
+            object_id: Optional unique object ID from perception for precise identification.
+            robot_name: Robot to use (only needed for multi-arm setups).
+        """
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return "Error: Robot not found"
+        rname, _, config, _ = robot
+        pre_grasp_offset = config.pre_grasp_offset
+
+        # 1. Generate grasps (uses already-cached detections — call scan_objects first)
+        logger.info(f"Generating grasp poses for '{object_name}'...")
+        grasp_poses = self._generate_grasps_for_pick(object_name, object_id)
+        if not grasp_poses:
+            return f"Error: No grasp poses found for '{object_name}'. Object may not be detected."
+
+        # 2. Try each grasp candidate
+        max_attempts = min(len(grasp_poses), 5)
+        for i, grasp_pose in enumerate(grasp_poses[:max_attempts]):
+            pre_grasp_pose = self._compute_pre_grasp_pose(grasp_pose, pre_grasp_offset)
+
+            logger.info(f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})...")
+            if not self.plan_to_pose(pre_grasp_pose, rname):
+                logger.info(f"Grasp candidate {i + 1} approach planning failed, trying next")
+                continue  # Try next candidate
+
+            # Open gripper before approach
+            logger.info("Opening gripper...")
+            self._set_gripper_position(0.85, rname)
+            time.sleep(0.5)
+
+            # 3. Preview + execute approach
+            err = self._preview_execute_wait(rname)
+            if err:
+                return err
+
+            # 4. Move to grasp pose
+            logger.info("Moving to grasp position...")
+            if not self.plan_to_pose(grasp_pose, rname):
+                return "Error: Grasp pose planning failed"
+            err = self._preview_execute_wait(rname)
+            if err:
+                return err
+
+            # 5. Close gripper
+            logger.info("Closing gripper...")
+            self._set_gripper_position(0.0, rname)
+            time.sleep(1.5)  # Wait for gripper to close
+
+            # 6. Retract to pre-grasp
+            logger.info("Retracting with object...")
+            if not self.plan_to_pose(pre_grasp_pose, rname):
+                return "Error: Retract planning failed"
+            err = self._preview_execute_wait(rname)
+            if err:
+                return err
+
+            # Store pick position so place_back() can return the object
+            self._last_pick_position = grasp_pose.position
+
+            return f"Pick complete — grasped '{object_name}' successfully"
+
+        return f"Error: All {max_attempts} grasp attempts failed for '{object_name}'"
+
+    @skill
+    def place(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        robot_name: str | None = None,
+    ) -> str:
+        """Place a held object at the specified position.
+
+        Plans and executes an approach, lowers to the target, releases the gripper,
+        and retracts.
+
+        Args:
+            x: Target X position in meters.
+            y: Target Y position in meters.
+            z: Target Z position in meters.
+            robot_name: Robot to use (only needed for multi-arm setups).
+        """
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return "Error: Robot not found"
+        rname, _, config, _ = robot
+        pre_place_offset = config.pre_grasp_offset
+
+        # Compute place pose (top-down approach)
+        place_pose = Pose(Vector3(x, y, z), Quaternion.from_euler(Vector3(0.0, math.pi, 0.0)))
+        pre_place_pose = self._compute_pre_grasp_pose(place_pose, pre_place_offset)
+
+        # 1. Move to pre-place
+        logger.info(f"Planning approach to place position ({x:.3f}, {y:.3f}, {z:.3f})...")
+        if not self.plan_to_pose(pre_place_pose, rname):
+            return "Error: Pre-place approach planning failed"
+
+        err = self._preview_execute_wait(rname)
+        if err:
+            return err
+
+        # 2. Lower to place position
+        logger.info("Lowering to place position...")
+        if not self.plan_to_pose(place_pose, rname):
+            return "Error: Place pose planning failed"
+        err = self._preview_execute_wait(rname)
+        if err:
+            return err
+
+        # 3. Release
+        logger.info("Releasing object...")
+        self._set_gripper_position(0.85, rname)
+        time.sleep(1.0)
+
+        # 4. Retract
+        logger.info("Retracting...")
+        if not self.plan_to_pose(pre_place_pose, rname):
+            return "Error: Retract planning failed"
+        err = self._preview_execute_wait(rname)
+        if err:
+            return err
+
+        return f"Place complete — object released at ({x:.3f}, {y:.3f}, {z:.3f})"
+
+    @skill
+    def place_back(self, robot_name: str | None = None) -> str:
+        """Place the held object back at its original pick position.
+
+        Uses the position stored from the last successful pick operation.
+
+        Args:
+            robot_name: Robot to use (only needed for multi-arm setups).
+        """
+        if self._last_pick_position is None:
+            return "Error: No previous pick position stored — run pick() first"
+
+        p = self._last_pick_position
+        logger.info(f"Placing back at original position ({p.x:.3f}, {p.y:.3f}, {p.z:.3f})...")
+        return self.place(p.x, p.y, p.z, robot_name)
+
+    @skill
+    def pick_and_place(
+        self,
+        object_name: str,
+        place_x: float,
+        place_y: float,
+        place_z: float,
+        object_id: str | None = None,
+        robot_name: str | None = None,
+    ) -> str:
+        """Pick up an object and place it at a target location.
+
+        Combines the pick and place skills into a single end-to-end operation.
+
+        Args:
+            object_name: Name of the object to pick (e.g. "cup", "bottle").
+            place_x: Target X position to place the object (meters).
+            place_y: Target Y position to place the object (meters).
+            place_z: Target Z position to place the object (meters).
+            object_id: Optional unique object ID from perception.
+            robot_name: Robot to use (only needed for multi-arm setups).
+        """
+        logger.info(
+            f"Starting pick and place: pick '{object_name}' → place at ({place_x:.3f}, {place_y:.3f}, {place_z:.3f})"
+        )
+
+        # Pick phase
+        result = self.pick(object_name, object_id, robot_name)
+        if result.startswith("Error:"):
+            return result
+
+        # Place phase
+        return self.place(place_x, place_y, place_z, robot_name)
 
     # =========================================================================
     # Lifecycle
