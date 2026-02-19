@@ -2,7 +2,7 @@
 
 You need to have [nix](https://nixos.org/) installed and [flakes](https://nixos.wiki/wiki/Flakes) enabled,
 
-[official install docs](https://nixos.org/download/) recomended, but here is a quickstart:
+[official install docs](https://nixos.org/download/) recommended, but here is a quickstart:
 
 ```sh
 # Install Nix https://nixos.org/download/
@@ -15,11 +15,11 @@ mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" 
 
 # Install Direnv (optional)
 
-[direnv](https://direnv.net) is a convinient helper that allows you to automatically enter your nix and python env once you cd into the project dir.
+[direnv](https://direnv.net) is a convenient helper that allows you to automatically enter your nix and python env once you cd into the project dir.
 
-You can skip this step if you intend to type `nix develop` by hand
+You can skip this step if you intend to type `nix develop` by hand.
 
-Following  [direnv install docs](https://direnv.net/docs/installation.html) is recommended (many distros have native package support)
+Following [direnv install docs](https://direnv.net/docs/installation.html) is recommended (many distros have native package support)
 
 but a quick oneliner binary install is
 ```sh
@@ -32,15 +32,12 @@ curl -sfL https://direnv.net/install.sh | bash
 mkdir myproject
 cd myproject
 
-uv venv --python "3.12"
-source .venv/bin/activate
-
 # if on nixos you can pull our flake
 wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/flake.nix
 wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/flake.lock
 
 # if using direnv (recommended)
-wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/.envrc.nix -o .envrc
+wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/.envrc.nix -O .envrc
 direnv allow
 
 # if using nix develop directly instead of direnv,
@@ -51,7 +48,7 @@ source .venv/bin/activate
 
 # this will just pull everything (big checkout)
 # depending on what you are working on you might not need everything,
-# check your respectative platform guides
+# check your respective platform guides
 uv pip install dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu,dev]
 ```
 

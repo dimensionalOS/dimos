@@ -13,11 +13,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin
 
 # Install Direnv (optional)
 
-[direnv](https://direnv.net) is a convinient helper that allows you to automatically enter your nix and python env once you cd into the project dir.
+[direnv](https://direnv.net) is a convenient helper that allows you to automatically enter your python env once you cd into the project dir.
 
-You can skip this step if you intend to type `nix develop` by hand
+You can skip this step if you intend to activate manually.
 
-Following  [direnv install docs](https://direnv.net/docs/installation.html) is recommended (many distros have native package support)
+Following [direnv install docs](https://direnv.net/docs/installation.html) is recommended (many distros have native package support)
 
 but a quick oneliner binary install is
 ```sh
@@ -33,14 +33,14 @@ cd myproject
 uv venv --python "3.12"
 
 # if using direnv (recommended)
-wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/.envrc.venv -o .envrc
+wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/.envrc.venv -O .envrc
 direnv allow
 # if not using direnv
-# source .env/bin/activate
+# source .venv/bin/activate
 
 # this will just pull everything (big checkout)
 # depending on what you are working on you might not need everything,
-# check your respectative platform guides
+# check your respective platform guides
 uv pip install dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu,dev]
 ```
 
@@ -59,7 +59,7 @@ uv venv --python 3.12
 direnv allow
 
 # if not using direnv
-# source .env/bin/activate
+# source .venv/bin/activate
 
 uv sync --all-extras
 
