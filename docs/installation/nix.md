@@ -1,6 +1,5 @@
-# System Dependancies Install
+# Nix install (required for nix managed dimos)
 
-## Nix install (all linux)
 You need to have [nix](https://nixos.org/) installed and [flakes](https://nixos.wiki/wiki/Flakes) enabled,
 
 [official install docs](https://nixos.org/download/) recomended, but here is a quickstart:
@@ -14,38 +13,38 @@ curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix 
 mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
 ```
 
-## Ubuntu 22.04 or 24.04
-```sh
-sudo apt-get update
-sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev pre-commit
+# Install Direnv (optional)
 
-# install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+[direnv](https://direnv.net) is a convinient helper that allows you to automatically enter your nix and python env once you cd into the project dir.
+
+You can skip this step if you intend to type `nix develop` by hand
+
+Following  [direnv install docs](https://direnv.net/docs/installation.html) is recommended (many distros have native package support)
+
+but a quick oneliner binary install is
+```sh
+curl -sfL https://direnv.net/install.sh | bash
 ```
 
-## macOS 12.6 or newer
-```sh
-# install homebrew
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-# install dependencies
-brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python pre-commit
-
-# install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
-```
-
-# DimOS as a library
+# Using DimOS as a library
 
 ```sh
 mkdir myproject
 cd myproject
 
-uv venv --python "3.12"
-source .env/bin/activate
-
-# if on nixos you can pull our flake
+# pull our nix flake
 wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/flake.nix
 wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/flake.lock
+
+# if using direnv (recommended)
+wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/.envrc.nix -o .envrc
+direnv allow
+
+# if using nix develop directly instead of direnv,
+# nix develop
+
+uv venv --python "3.12"
+source .venv/bin/activate
 
 # this will just pull everything (big checkout)
 # depending on what you are working on you might not need everything,
@@ -54,11 +53,19 @@ uv pip install dimos[misc,sim,visualization,agents,web,perception,unitree,manipu
 ```
 
 # Developing on DimOS
+
 ```sh
 # this allows getting large files on-demand (and not pulling all immediately)
 export GIT_LFS_SKIP_SMUDGE=1
 git clone -b dev https://github.com/dimensionalOS/dimos.git
 cd dimos
+
+# if using direnv (recommended)
+cp .envrc.nix .envrc
+direnv allow
+
+# if using nix develop directly instead of direnv,
+# nix develop
 
 # create venv
 uv venv --python 3.12
@@ -73,7 +80,3 @@ uv run mypy dimos
 # tests (around a minute to run)
 uv run pytest dimos
 ```
-
-# direnv
-
-[Direnv](https://direnv.net/) is super convinient for auto-entering your nix env of uv venv
