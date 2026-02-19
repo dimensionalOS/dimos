@@ -31,11 +31,11 @@
 
 # Intro
 
-Dimensional is the modern framework and agentive operating system for generalist robotics. We are setting the next-generation SDK standard, integrating with the majority of robot manufacturers.
+Dimensional is the modern operating system for generalist robotics. We are setting the next-generation SDK standard, integrating with the majority of robot manufacturers.
 
-With a simple install and no ROS required, build physical applications entirely in python that runs on any humanoid, quadruped, or drone.
+With a simple install and no ROS required, build physical applications entirely in python that run on any humanoid, quadruped, or drone.
 
-Dimensional is agent native -- "vibecode" your robots in natural language and build (local & hosted) multi-agent systems that work seamlessly with your hardware, able to subscribe to lidar, cameras, spatial memory, and more. 
+Dimensional is agent native -- "vibecode" your robots in natural language and build (local & hosted) multi-agent systems that work seamlessly with your hardware. Agents run as native modules — subscribing to any embedded stream, from perception (lidar, camera) and spatial memory down to control loops and motor drivers. 
 <table>
   <tr>
     <td align="center" width="50%">
@@ -65,7 +65,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
   </tr>
   <tr>
     <td align="center" width="50%">
-      <h3><a href="docs/capabilities/agents/readme.md">Agentic Control, MCP</a></h3>
+      <h3><a href="docs/capabilities/agents/readme.md">Agentive Control, MCP</a></h3>
       "hey Robot, go find the kitchen"<br><a href="https://x.com/stash_pomichter/status/2015912688854200322">Watch video</a>
     </td>
     <td align="center" width="50%">
