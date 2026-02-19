@@ -24,6 +24,7 @@ import logging
 import math
 import threading
 import time
+from typing import Callable
 
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 
@@ -43,10 +44,12 @@ class M20DeadReckonOdometry:
 
     def __init__(
         self,
-        publish_callback: callable,
+        publish_callback: Callable[[PoseStamped], None],
         rate: float = 10.0,
         frame_id: str = "world",
     ):
+        if rate <= 0:
+            raise ValueError("rate must be positive")
         self._publish = publish_callback
         self._rate = rate
         self._frame_id = frame_id
@@ -96,10 +99,10 @@ class M20DeadReckonOdometry:
 
     def _integration_loop(self) -> None:
         dt = 1.0 / self._rate
-        last_time = time.time()
+        last_time = time.monotonic()
 
         while self._running:
-            now = time.time()
+            now = time.monotonic()
             elapsed = now - last_time
             last_time = now
 
@@ -123,12 +126,12 @@ class M20DeadReckonOdometry:
                         Vector3(0.0, 0.0, self._yaw)
                     ),
                     frame_id=self._frame_id,
-                    ts=now,
+                    ts=time.time(),
                 )
 
             self._publish(pose)
 
-            sleep_time = max(0.0, dt - (time.time() - now))
+            sleep_time = max(0.0, dt - (time.monotonic() - now))
             time.sleep(sleep_time)
 
     @property
