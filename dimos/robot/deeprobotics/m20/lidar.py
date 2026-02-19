@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""LiDAR integration for M20 quadruped via DDS.
+"""LiDAR integration for M20 quadruped via CycloneDDS (DEPRECATED).
 
-The M20 publishes PointCloud2 on /LIDAR/POINTS at 10Hz (sensor_msgs/msg/PointCloud2)
-and IMU on /IMU at 200Hz (sensor_msgs/msg/Imu) via ROS 2 Foxy DDS.
+.. deprecated::
+    Use M20ROSSensors (ros_sensors.py) for rclpy-based LiDAR subscription
+    instead. CycloneDDS bypasses the ROS 2 RMW interop layer and may not
+    work with the M20's FastRTPS middleware.
 
-This module uses CycloneDDS to subscribe to the M20's LiDAR topic directly,
-converting the raw DDS PointCloud2 to dimos PointCloud2 format.
+This module uses CycloneDDS to subscribe to the M20's /LIDAR/POINTS topic
+directly, converting the raw DDS PointCloud2 to dimos PointCloud2 format.
+Kept as fallback for environments without rclpy.
 
 Reference: M20 Software Development Guide section 2.1 (Sensor Driver Topics)
 """
@@ -27,6 +30,7 @@ import logging
 import struct
 import threading
 import time
+import warnings
 from typing import Callable, Optional
 
 import numpy as np
@@ -155,6 +159,12 @@ class M20LidarDDS:
         topic_name: str = "/LIDAR/POINTS",
         domain_id: int = 0,
     ):
+        warnings.warn(
+            "M20LidarDDS is deprecated — use M20ROSSensors (ros_sensors.py) "
+            "for rclpy-based LiDAR that works with the M20's FastRTPS middleware.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if not DDS_AVAILABLE:
             raise RuntimeError(
                 "CycloneDDS not installed. Install with: pip install 'dimos[dds]'"
