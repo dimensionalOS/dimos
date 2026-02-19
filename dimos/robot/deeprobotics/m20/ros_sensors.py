@@ -15,12 +15,16 @@
 """ROS 2 sensor interface for M20 quadruped.
 
 Wraps a RawROS instance to subscribe to the M20's native ROS 2 topics
-(/ODOM, /tf, /LIDAR/POINTS, /IMU, /MOTION_INFO) and publish velocity
+(/ODOM, /tf, /ALIGNED_POINTS, /IMU, /MOTION_INFO) and publish velocity
 commands to /NAV_CMD for Navigation Mode operation.
 
 The M20 uses FastRTPS (ros-foxy-fastrtps) with custom vendor messages
 (drdds-ros2-msgs v1.0.4). Standard types use rclpy's RMW interop layer;
 vendor types (NavCmd, MotionInfo) require drdds to be installed.
+
+Note: /LIDAR/POINTS is restricted to the robot's AOS host (dev guide 2.1)
+and requires multicast-relay.service. /ALIGNED_POINTS is the localization-
+processed point cloud in map frame, accessible from GOS at ~11Hz.
 
 Reference: M20 Software Development Guide sections 2.1-2.3
 """
@@ -69,6 +73,9 @@ class MotionInfoData(NamedTuple):
     vel_x: float
     vel_y: float
     vel_yaw: float
+    height: float
+    state: int  # 0=Idle, 1=Stand, 2=SoftEStop, 3=Damping, 4=Sit, 17=RLControl
+    gait: int  # 0x1001=Basic, 0x3002=FlatAgile, 0x3003=StairAgile
     remain_mile: float
 
 
@@ -150,12 +157,21 @@ def _ros_pc2_to_dimos(pc_msg: Any) -> DimosPointCloud2:
 
 
 def _motion_info_to_data(msg: Any) -> MotionInfoData:
-    """Convert drdds/MotionInfo to MotionInfoData tuple."""
+    """Convert drdds/MotionInfo to MotionInfoData tuple.
+
+    MotionInfo structure: msg.header (MetaType) + msg.data (MotionInfoValue).
+    MotionInfoValue has: vel_x, vel_y, vel_yaw, height, motion_state, gait_state,
+    payload, remain_mile.
+    """
+    d = msg.data
     return MotionInfoData(
-        vel_x=msg.vel_x if hasattr(msg, "vel_x") else 0.0,
-        vel_y=msg.vel_y if hasattr(msg, "vel_y") else 0.0,
-        vel_yaw=msg.vel_yaw if hasattr(msg, "vel_yaw") else 0.0,
-        remain_mile=msg.remain_mile if hasattr(msg, "remain_mile") else 0.0,
+        vel_x=d.vel_x,
+        vel_y=d.vel_y,
+        vel_yaw=d.vel_yaw,
+        height=d.height,
+        state=d.motion_state.state,
+        gait=d.gait_state.gait,
+        remain_mile=d.remain_mile,
     )
 
 
@@ -165,7 +181,7 @@ class M20ROSSensors:
     Composes a RawROS instance for rclpy node management and subscribes
     to the M20's native ROS 2 topics, converting to dimos message types.
 
-    Standard topics (/ODOM, /tf, /LIDAR/POINTS, /IMU) require rclpy
+    Standard topics (/ODOM, /tf, /ALIGNED_POINTS, /IMU) require rclpy
     with standard message packages. Vendor topics (/MOTION_INFO, /NAV_CMD)
     additionally require drdds-ros2-msgs.
 
@@ -205,7 +221,7 @@ class M20ROSSensors:
         self._odom_topic = RawROSTopic(topic="/ODOM", ros_type=Odometry)
         self._tf_topic = RawROSTopic(topic="/tf", ros_type=TFMessage)
         self._lidar_topic = RawROSTopic(
-            topic="/LIDAR/POINTS", ros_type=RosPointCloud2
+            topic="/ALIGNED_POINTS", ros_type=RosPointCloud2
         )
         self._imu_topic = RawROSTopic(topic="/IMU", ros_type=RosImu)
 
@@ -252,7 +268,7 @@ class M20ROSSensors:
             )
 
         logger.info(
-            "M20ROSSensors started — /ODOM, /tf, /LIDAR/POINTS, /IMU"
+            "M20ROSSensors started — /ODOM, /tf, /ALIGNED_POINTS, /IMU"
             + (", /MOTION_INFO, /NAV_CMD" if DRDDS_AVAILABLE else "")
         )
 
@@ -337,7 +353,7 @@ class M20ROSSensors:
             pc = _ros_pc2_to_dimos(msg)
             self._lidar_subject.on_next(pc)
         except Exception:
-            logger.exception("Error converting /LIDAR/POINTS message")
+            logger.exception("Error converting /ALIGNED_POINTS message")
 
     def _on_imu(self, msg: Any, _topic: RawROSTopic) -> None:
         try:

@@ -258,12 +258,12 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
             self._ros_sensors.odom_stream().subscribe(self._publish_tf)
         )
 
-        # Wire /LIDAR/POINTS → lidar + pointcloud streams
+        # Wire /ALIGNED_POINTS → lidar + pointcloud streams
         self._disposables.add(
             self._ros_sensors.lidar_stream().subscribe(_on_lidar)
         )
 
-        logger.info("ROS sensor path active: /ODOM, /tf, /LIDAR/POINTS, /NAV_CMD")
+        logger.info("ROS sensor path active: /ODOM, /tf, /ALIGNED_POINTS, /NAV_CMD")
 
     def _start_udp_fallback_path(self) -> None:
         """Start UDP-only fallback path (Regular Mode)."""

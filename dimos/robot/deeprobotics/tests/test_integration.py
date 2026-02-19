@@ -914,17 +914,33 @@ class TestROSSensorConversions:
             _motion_info_to_data,
         )
 
-        class MockMotionInfo:
+        class MockMotionState:
+            state = 1  # Stand
+
+        class MockGaitState:
+            gait = 0x3002  # Flat Agile
+
+        class MockMotionInfoValue:
             vel_x = 0.5
             vel_y = -0.1
             vel_yaw = 0.3
+            height = 0.42
+            motion_state = MockMotionState()
+            gait_state = MockGaitState()
+            payload = 0.0
             remain_mile = 12.5
+
+        class MockMotionInfo:
+            data = MockMotionInfoValue()
 
         result = _motion_info_to_data(MockMotionInfo())
         assert isinstance(result, MotionInfoData)
         assert abs(result.vel_x - 0.5) < 1e-6
         assert abs(result.vel_y - (-0.1)) < 1e-6
         assert abs(result.vel_yaw - 0.3) < 1e-6
+        assert abs(result.height - 0.42) < 1e-6
+        assert result.state == 1
+        assert result.gait == 0x3002
         assert abs(result.remain_mile - 12.5) < 1e-6
 
     def test_tf_to_transforms(self):
