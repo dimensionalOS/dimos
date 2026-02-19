@@ -45,6 +45,8 @@ from ..protocol import (
     MotionState,
     UsageMode,
 )
+from .camera import M20RTSPCamera
+from .odometry import M20DeadReckonOdometry
 from .velocity_controller import M20SpeedLimits, M20VelocityController
 
 logger = logging.getLogger(__name__)
@@ -89,6 +91,8 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
         ip: str | None = None,
         port: int = 30000,
         speed_limits: M20SpeedLimits | None = None,
+        enable_camera: bool = True,
+        camera_stream: str = "video1",
         cfg: GlobalConfig = global_config,
         *args: Any,
         **kwargs: Any,
@@ -102,6 +106,15 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
             protocol=self._protocol,
             speed_limits=speed_limits,
         )
+
+        self._camera: M20RTSPCamera | None = None
+        if enable_camera:
+            self._camera = M20RTSPCamera(
+                host=ip, stream_path=camera_stream
+            )
+            self._camera_info = self._camera.camera_info
+
+        self._odometry: M20DeadReckonOdometry | None = None
 
         # Module.__init__ must be called LAST
         Module.__init__(self, *args, **kwargs)
@@ -121,6 +134,30 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
         # Wire cmd_vel input to velocity controller
         self._disposables.add(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
 
+        # Start RTSP camera
+        if self._camera:
+            self._camera.start()
+
+            def _on_image(image: Image) -> None:
+                self.color_image.publish(image)
+                self._latest_video_frame = image
+
+            self._disposables.add(
+                self._camera.image_stream().subscribe(_on_image)
+            )
+
+            # Publish camera_info at 1Hz
+            self._camera_info_thread = Thread(
+                target=self._publish_camera_info, daemon=True
+            )
+            self._camera_info_thread.start()
+
+        # Start dead-reckoning odometry (feeds from velocity controller)
+        self._odometry = M20DeadReckonOdometry(
+            publish_callback=self._publish_tf
+        )
+        self._odometry.start()
+
         # Stand up and switch to navigation mode
         self._protocol.send_motion_state(MotionState.STAND)
         time.sleep(1.0)
@@ -138,6 +175,12 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
 
         self._velocity_ctrl.stop()
 
+        if self._odometry:
+            self._odometry.stop()
+
+        if self._camera:
+            self._camera.stop()
+
         if self._camera_info_thread and self._camera_info_thread.is_alive():
             self._camera_info_thread.join(timeout=1.0)
 
@@ -149,10 +192,25 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
         """Route Twist commands from the navigation stack to velocity controller."""
         self._velocity_ctrl.set_twist(twist)
 
+        # Feed smoothed velocities into dead-reckoning odometry
+        if self._odometry:
+            state = self._velocity_ctrl.state
+            self._odometry.update_velocity(
+                state.actual_linear_x,
+                state.actual_linear_y,
+                state.actual_angular_yaw,
+            )
+
     def _on_status_report(self, report: dict) -> None:
         """Handle incoming status reports from the M20."""
         # Status reports can be used for battery, fault detection, etc.
         logger.debug(f"M20 status: type={report.get('type')} items={report.get('items')}")
+
+    def _publish_camera_info(self) -> None:
+        """Publish camera intrinsics at 1Hz."""
+        while self._camera and self._camera._running:
+            self.camera_info.publish(self._camera.camera_info.with_ts(time.time()))
+            time.sleep(1.0)
 
     # --- TF publishing ---
 
