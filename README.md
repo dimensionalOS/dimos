@@ -134,16 +134,11 @@ To set up your system dependencies, follow one of these guides:
 - 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
 - 🟨 [Docker](docs/installation/docker.md)
 
-### Step 2: Python Install
+### Step 2: Python Library & Editable Installs
 
-Now install the Python package.
-
-Check the [hardware section](#hardware) above to choose the right `extras` and `blueprint` for your platform.
-
-**Quickstart**
+**DimOS Quickstart**
 
 ```bash
-# Install with Unitree support
 uv pip install dimos[base,unitree]
 
 # Replay a recorded Go2 session (no hardware needed)
@@ -157,7 +152,6 @@ uv pip install dimos[base,unitree,sim]
 
 # Run Go2 in MuJoCo simulation
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
-# ignore the warp warnings
 dimos --simulation run unitree-go2
 
 # Run G1 humanoid in simulation
@@ -170,7 +164,7 @@ export ROBOT_IP=<YOUR_ROBOT_IP>
 dimos run unitree-go2
 ```
 
-**Develop DimOS**
+**Develop on DimOS**
 
 ```sh
 export GIT_LFS_SKIP_SMUDGE=1
@@ -182,8 +176,8 @@ source .venv/bin/activate
 
 uv sync --all-extras
 
-# Run in simulation
-dimos --simulation run unitree-g1-sim
+# Run full test suite
+pytest -s dimos/
 ```
 
 ### Step 3 - Profit
