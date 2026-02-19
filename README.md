@@ -52,10 +52,10 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
   </tr>
   <tr>
     <td align="center" width="50%">
-      <a href="docs/capabilities/agents/readme.md"><img src="assets/readme/agents.png" alt="Agents" width="100%"></a>
+      <a href="docs/capabilities/agents/readme.md"><img src="assets/readme/agentic_control.gif" alt="Agents" width="100%"></a>
     </td>
     <td align="center" width="50%">
-      <a href="docs/usage/data_streams/README.md"><img src="assets/readme/lidar.gif" alt="Sensor Integrations" width="100%"></a>
+      <img src="assets/readme/spatial_memory.gif" alt="Spatial Memory" width="100%"></a>
     </td>
   </tr>
   <tr>
@@ -64,8 +64,8 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
       "hey Robot, go find the kitchen"<br><a href="https://x.com/stash_pomichter/status/2015912688854200322">Watch video</a>
     </td>
     <td align="center" width="50%">
-      <h3><a href="docs/usage/data_streams/README.md">Sensor Integrations</a></h3>
-      <a href="">Livox Mid360</a>, <a href="">Zed</a>
+      <h3>Spatial Memory</a></h3>
+      Spatio-temporal RAG, Dynamic memory, Object localization and permanence<br><a href="https://x.com/stash_pomichter/status/1980741077205414328">Watch video</a>
     </td>
   </tr>
 </table>
