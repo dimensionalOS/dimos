@@ -43,11 +43,11 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
   <tr>
     <td align="center" width="50%">
       <h3><a href="docs/capabilities/navigation/readme.md">Navigation and Mapping</a></h3>
-      ros and non ros<br><a href="#">Watch video</a>
+      ROS and Native<br><a href="#">Watch video</a>
     </td>
     <td align="center" width="50%">
       <h3><a href="docs/capabilities/perception/readme.md">Perception</a></h3>
-      bla bla perception<br><a href="#">Watch video</a>
+      Detectors, 3d projections, VLMs, Audio processing<br><a href="#">Watch video</a>
     </td>
   </tr>
   <tr>
@@ -102,11 +102,11 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
       🟩 <a href="docs/platforms/quadruped/go2/index.md">Unitree Go2 pro/air</a><br>
     </td>
     <td align="center" width="20%">
-      🟥 <a href="docs/platforms/todo.md">Unitree G1</a><br>
+      🟥 <a href="docs/todo.md">Unitree G1</a><br>
     </td>
     <td align="center" width="20%">
-      🟥 <a href="docs/platforms/todo.md">Xarm</a><br>
-      🟥 <a href="docs/platforms/todo.md">Piper</a><br>
+      🟥 <a href="docs/todo.md">Xarm</a><br>
+      🟥 <a href="docs/todo.md">Piper</a><br>
     </td>
     <td align="center" width="20%">
       🟥 <a href="dimos/robot/drone">Mavlink</a><br>
@@ -132,7 +132,7 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
 To set up your system dependencies, follow one of these guides:
 
 - 🟩 [NixOS / General Linux](docs/installation/nix.md)
-- 🟥 [macOS](docs/installation/osx.md)
+- 🟧 [macOS](docs/installation/osx.md)
 - 🟩 [Ubuntu 24.04](docs/installation/ubuntu.md)
 - 🟨 [Docker](docs/installation/docker.md)
 
@@ -157,7 +157,7 @@ git clone -b dev https://github.com/dimensionalOS/dimos.git
 cd dimos
 
 uv venv --python 3.12
-source .env/bin/activate
+source .venv/bin/activate
 
 uv sync --all-extras
 
