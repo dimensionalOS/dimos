@@ -16,13 +16,14 @@
 
 Covers:
     - Velocity safety (e-stop, command timeout, acceleration limits)
+    - /NAV_CMD velocity transport (Navigation Mode)
     - Heartbeat lifecycle
     - UDP protocol binary wire format (loopback)
     - Dead-reckoning odometry accuracy
+    - ROS sensor conversions (odom, pointcloud)
     - Blueprint smoke tests
 
-Reference: M20 Software Development Guide
-    (nell/relay/docs/software_development_guide.md)
+Reference: M20 Software Development Guide, di-cetts architecture fixes
 """
 
 import json
@@ -652,6 +653,320 @@ class TestOdometryIntegration:
         assert len(poses) > 0
         assert isinstance(poses[0], PoseStamped)
         assert poses[0].frame_id == "test_frame"
+
+
+# ---------------------------------------------------------------------------
+# /NAV_CMD velocity transport tests (di-cetts)
+# ---------------------------------------------------------------------------
+
+
+class TestNavCmdVelocity:
+    """Verify /NAV_CMD callback integration in velocity controller."""
+
+    def test_nav_cmd_callback_receives_absolute_m_per_s(self):
+        """When nav_cmd_publish is set, it receives absolute m/s (not normalized)."""
+        published = []
+
+        def capture_nav_cmd(x: float, y: float, yaw: float) -> None:
+            published.append((x, y, yaw))
+
+        proto = M20Protocol()
+        ctrl = M20VelocityController(
+            protocol=proto,
+            nav_cmd_publish=capture_nav_cmd,
+        )
+
+        # Set actual velocities directly (skip smoothing for this test)
+        with ctrl._lock:
+            ctrl.state.actual_linear_x = 0.75
+            ctrl.state.actual_linear_y = -0.25
+            ctrl.state.actual_angular_yaw = 0.5
+            ctrl.state.last_command_time = time.time()  # prevent idle
+
+        ctrl._publish_control()
+
+        assert len(published) == 1
+        x, y, yaw = published[0]
+        assert abs(x - 0.75) < 1e-6
+        assert abs(y - (-0.25)) < 1e-6
+        assert abs(yaw - 0.5) < 1e-6
+
+    def test_udp_fallback_when_no_nav_cmd(self):
+        """Without nav_cmd_publish, velocity goes through UDP normalized path."""
+        recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        recv_sock.bind(("127.0.0.1", 0))
+        recv_sock.settimeout(2.0)
+        port = recv_sock.getsockname()[1]
+
+        proto = M20Protocol(host="127.0.0.1", port=port)
+        proto.connect()
+        ctrl = M20VelocityController(
+            protocol=proto,
+            nav_cmd_publish=None,  # no /NAV_CMD
+        )
+
+        with ctrl._lock:
+            ctrl.state.actual_linear_x = 0.75
+            ctrl.state.actual_linear_y = 0.25
+            ctrl.state.actual_angular_yaw = 0.5
+            ctrl.state.last_command_time = time.time()
+
+        ctrl._publish_control()
+
+        try:
+            data, _ = recv_sock.recvfrom(65536)
+            payload_len = struct.unpack("<H", data[4:6])[0]
+            payload = json.loads(data[HEADER_LEN : HEADER_LEN + payload_len])
+            items = payload["PatrolDevice"]["Items"]
+            # Should be normalized: 0.75/1.5=0.5, 0.25/0.5=0.5, 0.5/1.0=0.5
+            assert abs(items["X"] - 0.5) < 1e-3
+            assert abs(items["Y"] - 0.5) < 1e-3
+            assert abs(items["Yaw"] - 0.5) < 1e-3
+        finally:
+            proto.close()
+            recv_sock.close()
+
+    def test_estop_sends_zero_on_both_transports(self):
+        """E-stop with nav_cmd_publish must zero both /NAV_CMD and UDP."""
+        nav_cmd_calls = []
+        recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        recv_sock.bind(("127.0.0.1", 0))
+        recv_sock.settimeout(2.0)
+        port = recv_sock.getsockname()[1]
+
+        proto = M20Protocol(host="127.0.0.1", port=port)
+        proto.connect()
+        ctrl = M20VelocityController(
+            protocol=proto,
+            nav_cmd_publish=lambda x, y, yaw: nav_cmd_calls.append((x, y, yaw)),
+        )
+
+        with ctrl._lock:
+            ctrl.state.actual_linear_x = 1.0
+
+        ctrl.emergency_stop(True)
+
+        try:
+            # /NAV_CMD should have received zero
+            assert len(nav_cmd_calls) >= 1
+            assert nav_cmd_calls[-1] == (0.0, 0.0, 0.0)
+
+            # UDP should also have received zero
+            data, _ = recv_sock.recvfrom(65536)
+            payload_len = struct.unpack("<H", data[4:6])[0]
+            payload = json.loads(data[HEADER_LEN : HEADER_LEN + payload_len])
+            items = payload["PatrolDevice"]["Items"]
+            assert items["X"] == 0.0
+            assert items["Y"] == 0.0
+            assert items["Yaw"] == 0.0
+        finally:
+            proto.close()
+            recv_sock.close()
+
+    def test_idle_suppresses_publish(self):
+        """When idle (timed out + near zero), no publish on either transport."""
+        nav_cmd_calls = []
+        proto = M20Protocol()
+        ctrl = M20VelocityController(
+            protocol=proto,
+            nav_cmd_publish=lambda x, y, yaw: nav_cmd_calls.append((x, y, yaw)),
+            command_timeout=0.1,
+        )
+
+        # State is all zeros, last_command_time is 0 (long ago) — should be idle
+        ctrl._publish_control()
+        assert len(nav_cmd_calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# ROS sensor conversion tests (di-cetts)
+# ---------------------------------------------------------------------------
+
+
+class TestROSSensorConversions:
+    """Verify ROS→dimos message conversions (mocked, no real rclpy)."""
+
+    def test_odom_to_pose_stamped(self):
+        """nav_msgs/Odometry → dimos PoseStamped conversion."""
+        from dimos.robot.deeprobotics.m20.ros_sensors import _odom_to_pose_stamped
+
+        # Create a mock Odometry message
+        class MockStamp:
+            sec = 1000
+            nanosec = 500_000_000
+
+        class MockHeader:
+            stamp = MockStamp()
+            frame_id = "odom"
+
+        class MockPoint:
+            x = 1.5
+            y = -2.0
+            z = 0.1
+
+        class MockQuat:
+            x = 0.0
+            y = 0.0
+            z = 0.3827
+            w = 0.9239
+
+        class MockPose:
+            position = MockPoint()
+            orientation = MockQuat()
+
+        class MockPoseWithCovariance:
+            pose = MockPose()
+
+        class MockOdom:
+            header = MockHeader()
+            pose = MockPoseWithCovariance()
+
+        result = _odom_to_pose_stamped(MockOdom())
+
+        assert isinstance(result, PoseStamped)
+        assert abs(result.position.x - 1.5) < 1e-6
+        assert abs(result.position.y - (-2.0)) < 1e-6
+        assert abs(result.position.z - 0.1) < 1e-6
+        assert abs(result.orientation.z - 0.3827) < 1e-4
+        assert abs(result.orientation.w - 0.9239) < 1e-4
+        assert result.frame_id == "odom"
+        assert abs(result.ts - 1000.5) < 1e-6
+
+    def test_ros_pc2_to_dimos_basic(self):
+        """sensor_msgs/PointCloud2 → dimos PointCloud2 with XYZ float32."""
+        from dimos.robot.deeprobotics.m20.ros_sensors import _ros_pc2_to_dimos
+
+        import numpy as np
+
+        # Build a minimal PointCloud2-like message with 3 points
+        points = np.array(
+            [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]],
+            dtype=np.float32,
+        )
+        raw_data = points.tobytes()
+
+        class MockField:
+            def __init__(self, name: str, offset: int):
+                self.name = name
+                self.offset = offset
+                self.datatype = 7  # FLOAT32
+                self.count = 1
+
+        class MockStamp:
+            sec = 100
+            nanosec = 0
+
+        class MockHeader:
+            stamp = MockStamp()
+            frame_id = "lidar_frame"
+
+        class MockPC2:
+            header = MockHeader()
+            height = 1
+            width = 3
+            fields = [MockField("x", 0), MockField("y", 4), MockField("z", 8)]
+            is_bigendian = False
+            point_step = 12  # 3 * 4 bytes
+            row_step = 36
+            data = list(raw_data)
+            is_dense = True
+
+        result = _ros_pc2_to_dimos(MockPC2())
+        assert result.frame_id == "lidar_frame"
+        assert abs(result.ts - 100.0) < 1e-6
+
+        # Verify points came through
+        result_points, _ = result.as_numpy()
+        assert result_points.shape == (3, 3)
+        assert abs(result_points[0, 0] - 1.0) < 1e-5
+        assert abs(result_points[2, 2] - 9.0) < 1e-5
+
+    def test_ros_pc2_empty(self):
+        """Empty PointCloud2 should produce empty dimos PointCloud2."""
+        from dimos.robot.deeprobotics.m20.ros_sensors import _ros_pc2_to_dimos
+
+        class MockStamp:
+            sec = 0
+            nanosec = 0
+
+        class MockHeader:
+            stamp = MockStamp()
+            frame_id = "world"
+
+        class MockPC2:
+            header = MockHeader()
+            height = 0
+            width = 0
+            fields = []
+            is_bigendian = False
+            point_step = 0
+            row_step = 0
+            data = []
+            is_dense = True
+
+        result = _ros_pc2_to_dimos(MockPC2())
+        assert result.frame_id == "world"
+
+    def test_motion_info_to_data(self):
+        """drdds/MotionInfo → MotionInfoData conversion."""
+        from dimos.robot.deeprobotics.m20.ros_sensors import (
+            MotionInfoData,
+            _motion_info_to_data,
+        )
+
+        class MockMotionInfo:
+            vel_x = 0.5
+            vel_y = -0.1
+            vel_yaw = 0.3
+            remain_mile = 12.5
+
+        result = _motion_info_to_data(MockMotionInfo())
+        assert isinstance(result, MotionInfoData)
+        assert abs(result.vel_x - 0.5) < 1e-6
+        assert abs(result.vel_y - (-0.1)) < 1e-6
+        assert abs(result.vel_yaw - 0.3) < 1e-6
+        assert abs(result.remain_mile - 12.5) < 1e-6
+
+    def test_tf_to_transforms(self):
+        """tf2_msgs/TFMessage → list[Transform] conversion."""
+        from dimos.robot.deeprobotics.m20.ros_sensors import _tf_to_transforms
+
+        class MockStamp:
+            sec = 100
+            nanosec = 0
+
+        class MockHeader:
+            stamp = MockStamp()
+            frame_id = "odom"
+
+        class MockTranslation:
+            x = 1.0
+            y = 2.0
+            z = 0.0
+
+        class MockRotation:
+            x = 0.0
+            y = 0.0
+            z = 0.0
+            w = 1.0
+
+        class MockTransform:
+            translation = MockTranslation()
+            rotation = MockRotation()
+
+        class MockTransformStamped:
+            header = MockHeader()
+            child_frame_id = "base_link"
+            transform = MockTransform()
+
+        class MockTFMessage:
+            transforms = [MockTransformStamped()]
+
+        result = _tf_to_transforms(MockTFMessage())
+        assert len(result) == 1
+        assert result[0].frame_id == "odom"
+        assert result[0].child_frame_id == "base_link"
+        assert abs(result[0].translation.x - 1.0) < 1e-6
 
 
 # ---------------------------------------------------------------------------

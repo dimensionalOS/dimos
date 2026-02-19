@@ -17,9 +17,17 @@ from .connection import M20Connection, m20_connection
 from .skill_container import M20SkillContainer, m20_skills
 from .velocity_controller import M20SpeedLimits, M20VelocityController
 
+try:
+    from .ros_sensors import M20ROSSensors
+
+    _ROS_SENSORS_AVAILABLE = True
+except (ImportError, RuntimeError):
+    _ROS_SENSORS_AVAILABLE = False
+
 __all__ = [
     "M20Connection",
     "M20RTSPCamera",
+    "M20ROSSensors",
     "M20SkillContainer",
     "M20VelocityController",
     "M20SpeedLimits",

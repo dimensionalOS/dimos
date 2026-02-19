@@ -15,13 +15,23 @@
 """Velocity controller for M20 quadruped.
 
 Accepts dimos Twist messages (m/s, rad/s), applies acceleration smoothing,
-converts to M20 normalized [-1,1] range, and sends via UDP protocol.
+and sends velocity commands via one of two transports:
+
+- **Navigation Mode** (/NAV_CMD via rclpy): Publishes absolute m/s values
+  to the /NAV_CMD DDS topic. Requires rclpy and drdds on GOS. Enables
+  the robot's built-in obstacle avoidance.
+- **Regular Mode** (UDP): Normalizes to [-1,1] range and sends via UDP
+  protocol. Teleop only — no obstacle avoidance.
+
+Transport is selected by providing a `nav_cmd_publish` callback.
+Reference: M20 Software Development Guide sections 1.2.5, 2.3.1
 """
 
 import logging
 import threading
 import time
 from dataclasses import dataclass
+from typing import Callable
 
 from dimos.msgs.geometry_msgs import Twist
 
@@ -87,6 +97,7 @@ class M20VelocityController:
         angular_accel: float = 2.0,  # rad/s^2
         command_timeout: float = 0.5,  # seconds
         control_rate: int = 20,  # Hz (per M20 docs)
+        nav_cmd_publish: Callable[[float, float, float], None] | None = None,
     ):
         if linear_accel <= 0 or angular_accel <= 0:
             raise ValueError("Acceleration values must be positive")
@@ -97,6 +108,7 @@ class M20VelocityController:
 
         self.protocol = protocol
         self.speed_limits = speed_limits or M20SpeedLimits()
+        self._nav_cmd_publish = nav_cmd_publish
 
         if self.speed_limits.max_linear_x <= 0 or self.speed_limits.max_linear_y <= 0:
             raise ValueError("Speed limits must be positive")
@@ -156,7 +168,7 @@ class M20VelocityController:
         # Send zero velocity immediately on e-stop (outside lock to avoid
         # holding lock during I/O)
         if engage:
-            self.protocol.send_velocity(0, 0, 0)
+            self._send_zero()
 
     def start(self) -> None:
         """Start the 20Hz control loop thread."""
@@ -200,7 +212,7 @@ class M20VelocityController:
             except Exception:
                 logger.exception("Control loop error — sending zero velocity")
                 try:
-                    self.protocol.send_velocity(0, 0, 0)
+                    self._send_zero()
                 except Exception:
                     pass
 
@@ -230,24 +242,37 @@ class M20VelocityController:
         )
 
     def _publish_control(self) -> None:
-        """Convert smoothed m/s velocities to M20 normalized [-1,1] and send."""
+        """Send velocity via /NAV_CMD (absolute m/s) or UDP (normalized [-1,1])."""
         with self._lock:
             if self.state.paused:
                 return
 
             if self.state.emergency_stopped:
-                self.protocol.send_velocity(0, 0, 0)
+                self._send_zero()
                 return
 
             if self._is_idle():
                 return
 
-            lim = self.speed_limits
-            norm_x = self.state.actual_linear_x / lim.max_linear_x
-            norm_y = self.state.actual_linear_y / lim.max_linear_y
-            norm_yaw = self.state.actual_angular_yaw / lim.max_angular_yaw
+            vx = self.state.actual_linear_x
+            vy = self.state.actual_linear_y
+            vyaw = self.state.actual_angular_yaw
 
-        self.protocol.send_velocity(x=norm_x, y=norm_y, yaw=norm_yaw)
+        if self._nav_cmd_publish is not None:
+            self._nav_cmd_publish(vx, vy, vyaw)
+        else:
+            lim = self.speed_limits
+            self.protocol.send_velocity(
+                x=vx / lim.max_linear_x,
+                y=vy / lim.max_linear_y,
+                yaw=vyaw / lim.max_angular_yaw,
+            )
+
+    def _send_zero(self) -> None:
+        """Send zero velocity on all active transports."""
+        if self._nav_cmd_publish is not None:
+            self._nav_cmd_publish(0.0, 0.0, 0.0)
+        self.protocol.send_velocity(0, 0, 0)
 
     def _is_idle(self) -> bool:
         """Must be called with self._lock held."""

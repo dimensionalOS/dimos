@@ -15,8 +15,18 @@
 """M20 Connection Module for dimos.
 
 Provides the primary interface between dimos and the Deep Robotics M20
-quadruped. Communicates via UDP for motion control and receives sensor
-data via RTSP (camera) and DDS (LiDAR/IMU).
+quadruped. Two operating paths depending on rclpy availability:
+
+- **Navigation Mode** (rclpy available, e.g. on GOS): Velocity via /NAV_CMD
+  DDS topic, odometry from /ODOM, LiDAR from /LIDAR/POINTS. Obstacle
+  avoidance enabled.
+- **Regular Mode** (no rclpy, fallback): Velocity via UDP, dead-reckoning
+  odometry, CycloneDDS LiDAR. Teleop only — no obstacle avoidance.
+
+Camera always uses RTSP. UDP protocol always used for heartbeat, motion
+state, gait switch, and usage mode commands.
+
+Reference: M20 Software Development Guide, di-cetts architecture fixes
 """
 
 import logging
@@ -50,6 +60,13 @@ from .odometry import M20DeadReckonOdometry
 from .velocity_controller import M20SpeedLimits, M20VelocityController
 
 try:
+    from .ros_sensors import M20ROSSensors
+
+    _ROS_AVAILABLE = True
+except (ImportError, RuntimeError):
+    _ROS_AVAILABLE = False
+
+try:
     from .lidar import M20LidarDDS
 
     _LIDAR_AVAILABLE = True
@@ -62,12 +79,17 @@ logger = logging.getLogger(__name__)
 class M20Connection(Module, spec.Camera, spec.Pointcloud):
     """Deep Robotics M20 quadruped connection.
 
+    When rclpy is available (GOS), operates in Navigation Mode with
+    /NAV_CMD velocity, /ODOM odometry, and /LIDAR/POINTS via rclpy.
+    Falls back to Regular Mode with UDP velocity, dead-reckoning, and
+    CycloneDDS LiDAR when rclpy is not available.
+
     Streams:
         cmd_vel (In):      Twist velocity commands from the navigation stack
         color_image (Out): RGB camera frames (via RTSP)
         camera_info (Out): Camera intrinsics
         pointcloud (Out):  Processed point cloud (alias for lidar)
-        lidar (Out):       Raw LiDAR point cloud (via DDS)
+        lidar (Out):       Raw LiDAR point cloud
         odom (Out):        Robot odometry pose
     """
 
@@ -101,6 +123,7 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
         speed_limits: M20SpeedLimits | None = None,
         enable_camera: bool = True,
         enable_lidar: bool = True,
+        enable_ros: bool = True,
         camera_stream: str = "video1",
         cfg: GlobalConfig = global_config,
         *args: Any,
@@ -111,9 +134,24 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
         ip = ip if ip is not None else self._global_config.robot_ip
 
         self._protocol = M20Protocol(host=ip, port=port)
+
+        # Try to initialize ROS sensors for Navigation Mode
+        self._ros_sensors: "M20ROSSensors | None" = None
+        if enable_ros and _ROS_AVAILABLE:
+            try:
+                self._ros_sensors = M20ROSSensors()
+            except RuntimeError as e:
+                logger.warning(f"M20ROSSensors init failed — falling back to UDP: {e}")
+
+        # Velocity controller: use /NAV_CMD if ros_sensors available, else UDP
+        nav_cmd_fn = None
+        if self._ros_sensors is not None and self._ros_sensors.nav_cmd_available:
+            nav_cmd_fn = self._ros_sensors.publish_nav_cmd
+
         self._velocity_ctrl = M20VelocityController(
             protocol=self._protocol,
             speed_limits=speed_limits,
+            nav_cmd_publish=nav_cmd_fn,
         )
 
         self._camera: M20RTSPCamera | None = None
@@ -123,19 +161,27 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
             )
             self._camera_info = self._camera.camera_info
 
+        # CycloneDDS LiDAR fallback (used only when rclpy not available)
         self._lidar: "M20LidarDDS | None" = None
-        if enable_lidar:
+        if enable_lidar and self._ros_sensors is None:
             if _LIDAR_AVAILABLE:
                 from .lidar import M20LidarDDS
 
                 self._lidar = M20LidarDDS()
             else:
                 logger.warning(
-                    "LiDAR requested but CycloneDDS not installed — "
-                    "install with: pip install 'dimos[dds]'"
+                    "LiDAR requested but neither rclpy nor CycloneDDS available"
                 )
 
         self._odometry: M20DeadReckonOdometry | None = None
+
+        if self._ros_sensors is not None:
+            logger.info("M20Connection: rclpy available — Navigation Mode enabled")
+        else:
+            logger.warning(
+                "M20Connection: rclpy not available — Regular Mode only, "
+                "no obstacle avoidance"
+            )
 
         # Module.__init__ must be called LAST
         Module.__init__(self, *args, **kwargs)
@@ -145,7 +191,7 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
         super().start()
 
         try:
-            # Connect to M20 and start protocol services
+            # Connect to M20 and start protocol services (always UDP)
             self._protocol.connect()
             self._protocol.start_heartbeat()
             self._protocol.start_listener(self._on_status_report)
@@ -175,35 +221,69 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
                 )
                 self._camera_info_thread.start()
 
-            # Start LiDAR via DDS
-            if self._lidar:
-                self._lidar.start()
+            if self._ros_sensors is not None:
+                self._start_ros_path()
+            else:
+                self._start_udp_fallback_path()
 
-                def _on_lidar(pc: PointCloud2) -> None:
-                    self.lidar.publish(pc)
-                    self.pointcloud.publish(pc)
-
-                self._disposables.add(
-                    self._lidar.pointcloud_stream().subscribe(_on_lidar)
-                )
-
-            # Start dead-reckoning odometry (feeds from velocity controller)
-            self._odometry = M20DeadReckonOdometry(
-                publish_callback=self._publish_tf
-            )
-            self._odometry.start()
-
-            # Stand up and switch to navigation mode
+            # Stand up and select usage mode
             self._protocol.send_motion_state(MotionState.STAND)
             time.sleep(1.0)
-            self._protocol.send_usage_mode(UsageMode.NAVIGATION)
+
+            if self._ros_sensors is not None:
+                self._protocol.send_usage_mode(UsageMode.NAVIGATION)
+            else:
+                self._protocol.send_usage_mode(UsageMode.REGULAR)
+
             self._protocol.send_gait_switch(GaitType.STANDARD)
 
-            logger.info("M20Connection started")
+            mode = "Navigation" if self._ros_sensors else "Regular"
+            logger.info(f"M20Connection started in {mode} Mode")
         except Exception:
             logger.exception("M20Connection.start() failed — cleaning up partial init")
             self.stop()
             raise
+
+    def _start_ros_path(self) -> None:
+        """Start rclpy-based sensor path (Navigation Mode)."""
+        assert self._ros_sensors is not None
+        self._ros_sensors.start()
+
+        def _on_lidar(pc: PointCloud2) -> None:
+            self.lidar.publish(pc)
+            self.pointcloud.publish(pc)
+
+        # Wire /ODOM → odom stream + TF
+        self._disposables.add(
+            self._ros_sensors.odom_stream().subscribe(self._publish_tf)
+        )
+
+        # Wire /LIDAR/POINTS → lidar + pointcloud streams
+        self._disposables.add(
+            self._ros_sensors.lidar_stream().subscribe(_on_lidar)
+        )
+
+        logger.info("ROS sensor path active: /ODOM, /tf, /LIDAR/POINTS, /NAV_CMD")
+
+    def _start_udp_fallback_path(self) -> None:
+        """Start UDP-only fallback path (Regular Mode)."""
+        # CycloneDDS LiDAR
+        if self._lidar:
+            self._lidar.start()
+
+            def _on_lidar(pc: PointCloud2) -> None:
+                self.lidar.publish(pc)
+                self.pointcloud.publish(pc)
+
+            self._disposables.add(
+                self._lidar.pointcloud_stream().subscribe(_on_lidar)
+            )
+
+        # Dead-reckoning odometry
+        self._odometry = M20DeadReckonOdometry(
+            publish_callback=self._publish_tf
+        )
+        self._odometry.start()
 
     @rpc
     def stop(self) -> None:
@@ -219,6 +299,12 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
             self._velocity_ctrl.stop()
         except Exception:
             logger.exception("Failed to stop velocity controller")
+
+        try:
+            if self._ros_sensors:
+                self._ros_sensors.stop()
+        except Exception:
+            logger.exception("Failed to stop ROS sensors")
 
         try:
             if self._odometry:
@@ -253,9 +339,8 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
         """Route Twist commands from the navigation stack to velocity controller."""
         self._velocity_ctrl.set_twist(twist)
 
-        # Feed target velocities into dead-reckoning odometry.
-        # We use targets here because smoothed actuals only update in the
-        # control loop thread — reading them here would race.
+        # Feed target velocities into dead-reckoning odometry (Regular Mode only).
+        # In Navigation Mode, /ODOM provides real odometry so this is skipped.
         if self._odometry:
             with self._velocity_ctrl._lock:
                 self._odometry.update_velocity(
