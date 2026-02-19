@@ -7,8 +7,6 @@ on:
     paths-ignore:
       - '**.md'
   pull_request:
-    paths-ignore:
-      - '**.md'
 
 permissions:
   contents: read
@@ -22,6 +20,7 @@ jobs:
       ros:    ${{ steps.filter.outputs.ros }}
       python: ${{ steps.filter.outputs.python }}
       dev:    ${{ steps.filter.outputs.dev }}
+      navigation: ${{ steps.filter.outputs.navigation }}
       tests:  ${{ steps.filter.outputs.tests }}
       branch-tag: ${{ steps.set-tag.outputs.branch_tag }}
     steps:
@@ -51,6 +50,11 @@ jobs:
 
             dev:
               - docker/dev/**
+
+            navigation:
+              - .github/workflows/_docker-build-template.yml
+              - .github/workflows/docker.yml
+              - docker/navigation/**
 
             tests:
               - dimos/**
@@ -130,6 +134,57 @@ jobs:
       to-image: ghcr.io/dimensionalos/dev:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile: dev
 
+  navigation:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.navigation == 'true'
+    runs-on: [self-hosted, Linux]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Fix permissions
+        run: |
+          sudo chown -R $USER:$USER ${{ github.workspace }} || true
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout ros-navigation-autonomy-stack
+        uses: actions/checkout@v4
+        with:
+          repository: dimensionalOS/ros-navigation-autonomy-stack
+          ref: fastlio2
+          path: docker/navigation/ros-navigation-autonomy-stack
+          fetch-depth: 1
+          lfs: false
+          token: ${{ secrets.NAV_REPO_READ_TOKEN }}
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: crazy-max/ghaction-github-runtime@v3
+
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          install: true
+          use: true
+
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          context: .
+          file: docker/navigation/Dockerfile
+          tags: ghcr.io/dimensionalos/navigation:${{ needs.check-changes.outputs.branch-tag }}
+          cache-from: type=gha,scope=navigation
+          cache-to: type=gha,mode=max,scope=navigation
+          build-args: |
+            ROS_DISTRO=humble
+
   ros-dev:
     needs: [check-changes, ros-python]
     if: always()
@@ -146,92 +201,94 @@ jobs:
 
   run-ros-tests:
     needs: [check-changes, ros-dev]
-    if: always()
+    if: ${{
+      always() &&
+      needs.check-changes.result == 'success' &&
+      (needs.check-changes.outputs.tests == 'true' ||
+       needs.check-changes.outputs.ros == 'true' ||
+       needs.check-changes.outputs.python == 'true' ||
+       needs.check-changes.outputs.dev == 'true')
+      }}
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      should-run: ${{
-        needs.check-changes.result == 'success' &&
-        ((needs.ros-dev.result == 'success') ||
-        (needs.ros-dev.result == 'skipped' &&
-        needs.check-changes.outputs.tests == 'true'))
-        }}
       cmd: "pytest && pytest -m ros" # run tests that depend on ros as well
       dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-tests:
     needs: [check-changes, dev]
-    if: always()
+    if: ${{
+      always() &&
+      needs.check-changes.result == 'success' &&
+      (needs.check-changes.outputs.tests == 'true' ||
+       needs.check-changes.outputs.python == 'true' ||
+       needs.check-changes.outputs.dev == 'true')
+      }}
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      should-run: ${{
-        needs.check-changes.result == 'success' &&
-        ((needs.dev.result == 'success') ||
-        (needs.dev.result == 'skipped' &&
-        needs.check-changes.outputs.tests == 'true'))
-        }}
       cmd: "pytest"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   # we run in parallel with normal tests for speed
   run-heavy-tests:
     needs: [check-changes, dev]
-    if: always()
+    if: ${{
+      always() &&
+      needs.check-changes.result == 'success' &&
+      (needs.check-changes.outputs.tests == 'true' ||
+       needs.check-changes.outputs.python == 'true' ||
+       needs.check-changes.outputs.dev == 'true')
+      }}
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      should-run: ${{
-        needs.check-changes.result == 'success' &&
-        ((needs.dev.result == 'success') ||
-        (needs.dev.result == 'skipped' &&
-        needs.check-changes.outputs.tests == 'true'))
-        }}
       cmd: "pytest -m heavy"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-lcm-tests:
     needs: [check-changes, dev]
-    if: always()
+    if: ${{
+      always() &&
+      needs.check-changes.result == 'success' &&
+      (needs.check-changes.outputs.tests == 'true' ||
+       needs.check-changes.outputs.python == 'true' ||
+       needs.check-changes.outputs.dev == 'true')
+      }}
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      should-run: ${{
-        needs.check-changes.result == 'success' &&
-        ((needs.dev.result == 'success') ||
-        (needs.dev.result == 'skipped' &&
-        needs.check-changes.outputs.tests == 'true'))
-        }}
       cmd: "pytest -m lcm"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-integration-tests:
     needs: [check-changes, dev]
-    if: always()
+    if: ${{
+      always() &&
+      needs.check-changes.result == 'success' &&
+      (needs.check-changes.outputs.tests == 'true' ||
+       needs.check-changes.outputs.python == 'true' ||
+       needs.check-changes.outputs.dev == 'true')
+      }}
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      should-run: ${{
-        needs.check-changes.result == 'success' &&
-        ((needs.dev.result == 'success') ||
-        (needs.dev.result == 'skipped' &&
-        needs.check-changes.outputs.tests == 'true'))
-        }}
       cmd: "pytest -m integration"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-mypy:
     needs: [check-changes, ros-dev]
-    if: always()
+    if: ${{
+      always() &&
+      needs.check-changes.result == 'success' &&
+      (needs.check-changes.outputs.tests == 'true' ||
+       needs.check-changes.outputs.ros == 'true' ||
+       needs.check-changes.outputs.python == 'true' ||
+       needs.check-changes.outputs.dev == 'true')
+      }}
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      should-run: ${{
-        needs.check-changes.result == 'success' &&
-        ((needs.ros-dev.result == 'success') ||
-        (needs.ros-dev.result == 'skipped' &&
-        needs.check-changes.outputs.tests == 'true'))
-        }}
       cmd: "MYPYPATH=/opt/ros/humble/lib/python3.10/site-packages mypy dimos"
       dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
@@ -269,3 +326,16 @@ jobs:
   #         CI: "true"
   #       run: |
   #         /entrypoint.sh bash -c "pytest -m module"
+
+  ci-complete:
+    needs: [check-changes, ros, python, ros-python, dev, ros-dev, run-tests, run-heavy-tests, run-lcm-tests, run-integration-tests, run-ros-tests, run-mypy]
+    runs-on: [self-hosted, Linux]
+    if: always()
+    steps:
+      - name: CI gate
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "❌ One or more CI jobs failed or were cancelled"
+          exit 1
+      - name: CI passed
+        run: echo "✅ All CI checks passed or were intentionally skipped"

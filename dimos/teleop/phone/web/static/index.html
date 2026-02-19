@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>DimOS Phone Teleop</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #fff;
+            color: #333;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px 16px;
+        }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #28283b;
+        }
+
+        .status-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+            justify-content: center;
+        }
+        .status-badge {
+            font-size: 13px;
+            font-weight: 500;
+            padding: 6px 14px;
+            border-radius: 8px;
+            border: 2px solid #adb5bd;
+            color: #6c757d;
+            background: #fff;
+        }
+        .status-badge.ok {
+            border-color: #0077b6;
+            color: #0077b6;
+            background: #e8f4fd;
+        }
+        .status-badge.error {
+            border-color: #c0392b;
+            color: #c0392b;
+            background: #fdf0ef;
+        }
+
+        .panel {
+            width: 100%;
+            max-width: 400px;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 14px;
+            margin-bottom: 12px;
+            background: #fff;
+        }
+
+        h3 {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #6c757d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .data-grid {
+            display: grid;
+            grid-template-columns: 40px 1fr 1fr 1fr;
+            gap: 2px 8px;
+            font-size: 15px;
+            font-family: 'SF Mono', 'Menlo', monospace;
+        }
+        .data-label { color: #6c757d; }
+        .data-value { color: #0077b6; text-align: right; font-weight: 500; }
+
+        button {
+            background-color: #0077b6;
+            color: white;
+            border: none;
+            padding: 12px 28px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        button:hover { background-color: #005f8a; }
+        button:active { background-color: #004a6e; }
+
+        button.secondary {
+            background-color: #6c757d;
+        }
+        button.secondary:hover { background-color: #545b62; }
+
+        .btn-row {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            margin-bottom: 12px;
+        }
+
+        #teleop-btn {
+            margin-top: 12px;
+            width: 100%;
+            max-width: 400px;
+            padding: 28px;
+            font-size: 22px;
+            font-weight: 700;
+            background-color: #6c757d;
+            border-radius: 12px;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+        }
+        #teleop-btn.active {
+            background-color: #0077b6;
+        }
+    </style>
+</head>
+<body>
+    <h1>DimOS Phone Teleop</h1>
+
+    <!-- Status Badges -->
+    <div class="status-row">
+        <span id="sensor-status" class="status-badge">Sensors: off</span>
+        <span id="ws-status" class="status-badge">WS: disconnected</span>
+    </div>
+
+    <!-- Buttons -->
+    <div class="btn-row">
+        <button id="start-btn">Start Sensors</button>
+        <button id="ws-btn" class="secondary">Connect</button>
+    </div>
+
+    <!-- Raw Sensor Data -->
+    <div class="panel">
+        <h3>Sensors</h3>
+        <div class="data-grid">
+            <div class="data-label"></div>
+            <div class="data-label" style="text-align:right">X</div>
+            <div class="data-label" style="text-align:right">Y</div>
+            <div class="data-label" style="text-align:right">Z</div>
+
+            <div class="data-label">Ori</div>
+            <div class="data-value" id="ori-r">0.0&deg;</div>
+            <div class="data-value" id="ori-p">0.0&deg;</div>
+            <div class="data-value" id="ori-y">0.0&deg;</div>
+
+            <div class="data-label">Gyro</div>
+            <div class="data-value" id="gyro-x">0.0</div>
+            <div class="data-value" id="gyro-y">0.0</div>
+            <div class="data-value" id="gyro-z">0.0</div>
+        </div>
+    </div>
+
+    <!-- Teleop Button -->
+    <button id="teleop-btn">HOLD TO TELEOP</button>
+
+    <script type="module">
+        import { encodePacket, geometry_msgs, std_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
+
+        // ============================================
+        // State
+        // ============================================
+        let sensorsActive = false;
+
+        // Raw sensor values
+        let orientation = { roll: 0, pitch: 0, yaw: 0 };   // from DeviceOrientation (degrees)
+        let gyro = { x: 0, y: 0, z: 0 };                   // from DeviceMotion rotationRate (deg/s)
+
+        // Teleop button (sent as Bool, module handles engagement)
+        let teleopActive = false;
+
+        // WebSocket
+        let ws = null;
+        let wsConnected = false;
+        let wsSendInterval = null;
+
+        // LCM channels
+        const SENSOR_CHANNEL = "/phone_sensors#geometry_msgs.TwistStamped";
+        const BUTTON_CHANNEL = "/phone_button#std_msgs.Bool";
+
+        // ============================================
+        // DOM
+        // ============================================
+        const $ = id => document.getElementById(id);
+
+        // ============================================
+        // Sensor Setup
+        // ============================================
+        async function startSensors() {
+            // Request permissions on iOS
+            if (typeof DeviceOrientationEvent !== 'undefined' &&
+                typeof DeviceOrientationEvent.requestPermission === 'function') {
+                const oriPerm = await DeviceOrientationEvent.requestPermission();
+                if (oriPerm !== 'granted') {
+                    alert('Orientation permission denied');
+                    return;
+                }
+            }
+            if (typeof DeviceMotionEvent !== 'undefined' &&
+                typeof DeviceMotionEvent.requestPermission === 'function') {
+                const motPerm = await DeviceMotionEvent.requestPermission();
+                if (motPerm !== 'granted') {
+                    alert('Motion permission denied');
+                    return;
+                }
+            }
+
+            window.addEventListener('deviceorientation', onOrientation);
+            window.addEventListener('devicemotion', onMotion);
+
+            sensorsActive = true;
+            $('sensor-status').textContent = 'Sensors: active';
+            $('sensor-status').className = 'status-badge ok';
+            $('start-btn').textContent = 'Stop Sensors';
+        }
+
+        function stopSensors() {
+            window.removeEventListener('deviceorientation', onOrientation);
+            window.removeEventListener('devicemotion', onMotion);
+
+            sensorsActive = false;
+            $('sensor-status').textContent = 'Sensors: off';
+            $('sensor-status').className = 'status-badge';
+            $('start-btn').textContent = 'Start Sensors';
+
+            orientation = { roll: 0, pitch: 0, yaw: 0 };
+            gyro = { x: 0, y: 0, z: 0 };
+            updateDisplay();
+        }
+
+        // ============================================
+        // Sensor Callbacks
+        // ============================================
+        function onOrientation(e) {
+            // gamma = roll (-90 to 90), beta = pitch (-180 to 180), alpha = yaw (0 to 360)
+            orientation.roll = e.gamma || 0;
+            orientation.pitch = e.beta || 0;
+            orientation.yaw = e.alpha || 0;
+        }
+
+        function onMotion(e) {
+            // rotationRate in deg/s
+            if (e.rotationRate) {
+                gyro.x = e.rotationRate.beta || 0;   // pitch rate
+                gyro.y = e.rotationRate.gamma || 0;   // roll rate
+                gyro.z = e.rotationRate.alpha || 0;   // yaw rate
+            }
+        }
+
+        // ============================================
+        // Teleop Button
+        // ============================================
+        function startTeleop() {
+            if (!sensorsActive || !ws || ws.readyState !== WebSocket.OPEN) return;
+            teleopActive = true;
+            $('teleop-btn').textContent = 'TRACKING...';
+            $('teleop-btn').classList.add('active');
+        }
+
+        function stopTeleop() {
+            teleopActive = false;
+            $('teleop-btn').textContent = 'HOLD TO TELEOP';
+            $('teleop-btn').classList.remove('active');
+        }
+
+        // ============================================
+        // WebSocket + LCM Encoding
+        // ============================================
+        function connectWS() {
+            if (wsConnected) { disconnectWS(); return; }
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}`;
+
+            try {
+                ws = new WebSocket(wsUrl);
+                ws.binaryType = "arraybuffer";
+
+                ws.onopen = () => {
+                    wsConnected = true;
+                    $('ws-status').textContent = 'WS: connected';
+                    $('ws-status').className = 'status-badge ok';
+                    $('ws-btn').textContent = 'Disconnect';
+                    wsSendInterval = setInterval(sendData, 20);  // 50 Hz
+                };
+
+                ws.onclose = () => {
+                    wsConnected = false;
+                    $('ws-status').textContent = 'WS: disconnected';
+                    $('ws-status').className = 'status-badge';
+                    $('ws-btn').textContent = 'Connect';
+                    if (wsSendInterval) clearInterval(wsSendInterval);
+                };
+
+                ws.onerror = () => {
+                    $('ws-status').textContent = 'WS: error';
+                    $('ws-status').className = 'status-badge error';
+                };
+            } catch (e) {
+                alert('WebSocket error: ' + e.message);
+            }
+        }
+
+        function disconnectWS() {
+            if (ws) ws.close();
+            if (wsSendInterval) clearInterval(wsSendInterval);
+            wsConnected = false;
+        }
+
+        function sendData() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+            const nowMs = Date.now();
+            const header = new std_msgs.Header({
+                stamp: new std_msgs.Time({
+                    sec: Math.floor(nowMs / 1000),
+                    nsec: (nowMs % 1000) * 1_000_000
+                }),
+                frame_id: "phone"
+            });
+
+            // --- Send raw sensors as TwistStamped ---
+            // linear = orientation (roll, pitch, yaw) in degrees
+            // angular = gyro rates (pitch, roll, yaw) in deg/s
+            const twistStamped = new geometry_msgs.TwistStamped({
+                header: header,
+                twist: new geometry_msgs.Twist({
+                    linear: new geometry_msgs.Vector3({
+                        x: orientation.roll,
+                        y: orientation.pitch,
+                        z: orientation.yaw
+                    }),
+                    angular: new geometry_msgs.Vector3({
+                        x: gyro.x,
+                        y: gyro.y,
+                        z: gyro.z
+                    })
+                })
+            });
+            ws.send(encodePacket(SENSOR_CHANNEL, twistStamped));
+
+            // --- Send teleop button as Bool ---
+            const boolMsg = new std_msgs.Bool({ data: teleopActive ? 1 : 0 });
+            ws.send(encodePacket(BUTTON_CHANNEL, boolMsg));
+
+            updateDisplay();
+        }
+
+        // ============================================
+        // Display
+        // ============================================
+        function updateDisplay() {
+            $('ori-r').textContent = orientation.roll.toFixed(1) + '\u00B0';
+            $('ori-p').textContent = orientation.pitch.toFixed(1) + '\u00B0';
+            $('ori-y').textContent = orientation.yaw.toFixed(1) + '\u00B0';
+
+            $('gyro-x').textContent = gyro.x.toFixed(1);
+            $('gyro-y').textContent = gyro.y.toFixed(1);
+            $('gyro-z').textContent = gyro.z.toFixed(1);
+        }
+
+        // ============================================
+        // Event Listeners
+        // ============================================
+        $('start-btn').addEventListener('click', () => {
+            if (sensorsActive) stopSensors();
+            else startSensors();
+        });
+
+        $('ws-btn').addEventListener('click', connectWS);
+
+        $('teleop-btn').addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            startTeleop();
+        });
+        $('teleop-btn').addEventListener('pointerup', stopTeleop);
+        $('teleop-btn').addEventListener('pointercancel', stopTeleop);
+        $('teleop-btn').addEventListener('pointerleave', stopTeleop);
+
+        updateDisplay();
+    </script>
+</body>
+</html>

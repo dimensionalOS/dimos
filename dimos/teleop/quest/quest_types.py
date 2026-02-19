@@ -37,7 +37,7 @@ class QuestControllerState:
     Preserves full-fidelity analog values (trigger, grip as floats, thumbstick axes)
     from the raw Joy message in a readable format. Use this when you need analog
     precision (e.g., proportional grip control). Subclasses can publish this
-    alongside QuestButtons for float access.
+    alongside Buttons for float access.
 
     Axes layout:
         0: thumbstick X, 1: thumbstick Y, 2: trigger (analog), 3: grip (analog)
@@ -91,16 +91,16 @@ class QuestControllerState:
         )
 
 
-class QuestButtons(UInt32):
-    """Packed button states for both Quest controllers in a single UInt32.
+class Buttons(UInt32):
+    """Packed button states for both controllers in a single UInt32.
 
     All values are collapsed to bools for lightweight transport. Analog values
     (trigger, grip) are thresholded at 0.5. If you need the original float
     values, access them from QuestControllerState and publish them in a subclass.
 
     Bit layout:
-        Left (bits 0-6): trigger, grip, touchpad, thumbstick, X, Y, menu
-        Right (bits 8-14): trigger, grip, touchpad, thumbstick, A, B, menu
+        Left  (bits 0-6): trigger, grip, touchpad, thumbstick, primary, secondary, menu
+        Right (bits 8-14): trigger, grip, touchpad, thumbstick, primary, secondary, menu
     """
 
     # Bit positions
@@ -109,29 +109,29 @@ class QuestButtons(UInt32):
         "left_grip": 1,
         "left_touchpad": 2,
         "left_thumbstick": 3,
-        "left_x": 4,
-        "left_y": 5,
+        "left_primary": 4,
+        "left_secondary": 5,
         "left_menu": 6,
         "right_trigger": 8,
         "right_grip": 9,
         "right_touchpad": 10,
         "right_thumbstick": 11,
-        "right_a": 12,
-        "right_b": 13,
+        "right_primary": 12,
+        "right_secondary": 13,
         "right_menu": 14,
     }
 
     def __getattr__(self, name: str) -> bool:
-        if name in QuestButtons.BITS:
-            return bool(self.data & (1 << QuestButtons.BITS[name]))
+        if name in Buttons.BITS:
+            return bool(self.data & (1 << Buttons.BITS[name]))
         raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
 
     def __setattr__(self, name: str, value: bool) -> None:
-        if name in QuestButtons.BITS:
+        if name in Buttons.BITS:
             if value:
-                self.data |= 1 << QuestButtons.BITS[name]
+                self.data |= 1 << Buttons.BITS[name]
             else:
-                self.data &= ~(1 << QuestButtons.BITS[name])
+                self.data &= ~(1 << Buttons.BITS[name])
         else:
             super().__setattr__(name, value)
 
@@ -140,8 +140,8 @@ class QuestButtons(UInt32):
         cls,
         left: "QuestControllerState | None",
         right: "QuestControllerState | None",
-    ) -> "QuestButtons":
-        """Create QuestButtons from two QuestControllerState instances."""
+    ) -> "Buttons":
+        """Create Buttons from two QuestControllerState instances."""
         # Safe: cls() calls UInt32.__init__ which sets self.data = 0 before bit ops.
         buttons = cls()
 
@@ -150,8 +150,8 @@ class QuestButtons(UInt32):
             buttons.left_grip = left.grip > 0.5
             buttons.left_touchpad = left.touchpad
             buttons.left_thumbstick = left.thumbstick_press
-            buttons.left_x = left.primary
-            buttons.left_y = left.secondary
+            buttons.left_primary = left.primary
+            buttons.left_secondary = left.secondary
             buttons.left_menu = left.menu
 
         if right:
@@ -159,11 +159,11 @@ class QuestButtons(UInt32):
             buttons.right_grip = right.grip > 0.5
             buttons.right_touchpad = right.touchpad
             buttons.right_thumbstick = right.thumbstick_press
-            buttons.right_a = right.primary
-            buttons.right_b = right.secondary
+            buttons.right_primary = right.primary
+            buttons.right_secondary = right.secondary
             buttons.right_menu = right.menu
 
         return buttons
 
 
-__all__ = ["QuestButtons", "QuestControllerState", "ThumbstickState"]
+__all__ = ["Buttons", "QuestControllerState", "ThumbstickState"]

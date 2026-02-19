@@ -24,25 +24,31 @@ CRITICAL: Uses t_now from CoordinatorState, never calls time.time()
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 import threading
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from numpy.linalg import norm, solve
-import pinocchio  # type: ignore[import-untyped]
 
 from dimos.control.task import (
+    BaseControlTask,
     ControlMode,
-    ControlTask,
     CoordinatorState,
     JointCommandOutput,
     ResourceClaim,
 )
+from dimos.manipulation.planning.kinematics.pinocchio_ik import (
+    PinocchioIK,
+    check_joint_delta,
+    get_worst_joint_delta,
+    pose_to_se3,
+)
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from numpy.typing import NDArray
+    import pinocchio  # type: ignore[import-untyped]
 
     from dimos.msgs.geometry_msgs import Pose, PoseStamped
 
@@ -59,12 +65,7 @@ class CartesianIKTaskConfig:
         ee_joint_id: End-effector joint ID in the kinematic chain
         priority: Priority for arbitration (higher wins)
         timeout: If no command received for this many seconds, go inactive (0 = never)
-        ik_max_iter: Maximum IK solver iterations
-        ik_eps: IK convergence threshold (error norm in meters)
-        ik_damp: IK damping factor for singularity handling (higher = more stable)
-        ik_dt: IK integration step size
         max_joint_delta_deg: Maximum allowed joint change per tick (safety limit)
-        max_velocity: Max joint velocity per IK iteration (rad/s)
     """
 
     joint_names: list[str]
@@ -72,18 +73,13 @@ class CartesianIKTaskConfig:
     ee_joint_id: int
     priority: int = 10
     timeout: float = 0.5
-    ik_max_iter: int = 100
-    ik_eps: float = 1e-4
-    ik_damp: float = 1e-2
-    ik_dt: float = 1.0
     max_joint_delta_deg: float = 15.0  # ~1500°/s at 100Hz
-    max_velocity: float = 2.0
 
 
-class CartesianIKTask(ControlTask):
+class CartesianIKTask(BaseControlTask):
     """Cartesian control task with internal Pinocchio IK solver.
 
-    Accepts streaming cartesian poses via set_target_pose() and computes IK
+    Accepts streaming cartesian poses via on_cartesian_command() and computes IK
     internally to output joint commands. Uses current joint state from
     CoordinatorState as IK warm-start for fast convergence.
 
@@ -107,7 +103,7 @@ class CartesianIKTask(ControlTask):
         >>> task.start()
         >>>
         >>> # From teleop callback or other source:
-        >>> task.set_target_pose(pose_stamped, t_now=time.perf_counter())
+        >>> task.on_cartesian_command(pose_stamped, t_now=time.perf_counter())
     """
 
     def __init__(self, name: str, config: CartesianIKTaskConfig) -> None:
@@ -128,29 +124,19 @@ class CartesianIKTask(ControlTask):
         self._joint_names_list = list(config.joint_names)
         self._num_joints = len(config.joint_names)
 
-        # Load Pinocchio model
-        model_path = Path(config.model_path)
-        if not model_path.exists():
-            raise FileNotFoundError(f"Model file not found: {model_path}")
-
-        if model_path.suffix == ".xml":
-            self._model = pinocchio.buildModelFromMJCF(str(model_path))
-        else:
-            self._model = pinocchio.buildModelFromUrdf(str(model_path))
-
-        self._data = self._model.createData()
-        self._ee_joint_id = config.ee_joint_id
+        # Create IK solver from model
+        self._ik = PinocchioIK.from_model_path(config.model_path, config.ee_joint_id)
 
         # Validate DOF matches joint names
-        if self._model.nq != self._num_joints:
+        if self._ik.nq != self._num_joints:
             logger.warning(
-                f"CartesianIKTask {name}: model DOF ({self._model.nq}) != "
+                f"CartesianIKTask {name}: model DOF ({self._ik.nq}) != "
                 f"joint_names count ({self._num_joints})"
             )
 
         # Thread-safe target state
         self._lock = threading.Lock()
-        self._target_pose: pinocchio.SE3 | None = None
+        self._target_pose: Pose | PoseStamped | None = None
         self._last_update_time: float = 0.0
         self._active = False
 
@@ -158,7 +144,7 @@ class CartesianIKTask(ControlTask):
         self._last_q_solution: NDArray[np.floating[Any]] | None = None
 
         logger.info(
-            f"CartesianIKTask {name} initialized with model: {model_path}, "
+            f"CartesianIKTask {name} initialized with model: {config.model_path}, "
             f"ee_joint_id={config.ee_joint_id}, joints={config.joint_names}"
         )
 
@@ -192,7 +178,6 @@ class CartesianIKTask(ControlTask):
         with self._lock:
             if not self._active or self._target_pose is None:
                 return None
-
             # Check timeout
             if self._config.timeout > 0:
                 time_since_update = state.t_now - self._last_update_time
@@ -203,9 +188,10 @@ class CartesianIKTask(ControlTask):
                     )
                     self._active = False
                     return None
+            raw_pose = self._target_pose
 
-            target_pose = self._target_pose
-
+        # Convert to SE3 right before use
+        target_pose = pose_to_se3(raw_pose)
         # Get current joint positions for IK warm-start
         q_current = self._get_current_joints(state)
         if q_current is None:
@@ -213,27 +199,30 @@ class CartesianIKTask(ControlTask):
             return None
 
         # Compute IK
-        q_solution, converged, final_error = self._solve_ik(target_pose, q_current)
-
-        # Use the solution even if it didn't fully converge - the safety clamp
-        # will handle any large jumps. This prevents the arm from "sticking"
-        # when near singularities or workspace boundaries.
+        q_solution, converged, final_error = self._ik.solve(target_pose, q_current)
+        # Use the solution even if it didn't fully converge
         if not converged:
             logger.debug(
                 f"CartesianIKTask {self._name}: IK did not converge "
                 f"(error={final_error:.4f}), using partial solution"
             )
 
-        # Safety check: clamp large joint jumps for smooth motion
-        _is_exact, q_clamped = self._safety_check(q_solution, q_current)
+        # Safety check: reject if any joint delta exceeds limit
+        if not check_joint_delta(q_solution, q_current, self._config.max_joint_delta_deg):
+            worst_idx, worst_deg = get_worst_joint_delta(q_solution, q_current)
+            logger.warning(
+                f"CartesianIKTask {self._name}: rejecting motion - "
+                f"joint {self._joint_names_list[worst_idx]} delta "
+                f"{worst_deg:.1f}° exceeds limit {self._config.max_joint_delta_deg}°"
+            )
+            return None
 
         # Cache solution for next warm-start
         with self._lock:
-            self._last_q_solution = q_clamped.copy()
-
+            self._last_q_solution = q_solution.copy()
         return JointCommandOutput(
             joint_names=self._joint_names_list,
-            positions=q_clamped.flatten().tolist(),
+            positions=q_solution.flatten().tolist(),
             mode=ControlMode.SERVO_POSITION,
         )
 
@@ -254,77 +243,6 @@ class CartesianIKTask(ControlTask):
             positions.append(pos)
         return np.array(positions, dtype=np.float64)
 
-    def _solve_ik(
-        self,
-        target_pose: pinocchio.SE3,
-        q_init: NDArray[np.floating[Any]],
-    ) -> tuple[NDArray[np.floating[Any]], bool, float]:
-        """Solve IK using damped least-squares (Levenberg-Marquardt).
-
-        Args:
-            target_pose: Target end-effector pose as SE3
-            q_init: Initial joint configuration (warm-start)
-
-        Returns:
-            Tuple of (joint_angles, converged, final_error)
-        """
-        q = q_init.copy()
-        final_err = float("inf")
-
-        for _ in range(self._config.ik_max_iter):
-            pinocchio.forwardKinematics(self._model, self._data, q)
-            iMd = self._data.oMi[self._ee_joint_id].actInv(target_pose)
-
-            err = pinocchio.log(iMd).vector
-            final_err = float(norm(err))
-            if final_err < self._config.ik_eps:
-                return q, True, final_err
-
-            J = pinocchio.computeJointJacobian(self._model, self._data, q, self._ee_joint_id)
-            J = -np.dot(pinocchio.Jlog6(iMd.inverse()), J)
-            v = -J.T.dot(solve(J.dot(J.T) + self._config.ik_damp * np.eye(6), err))
-
-            # Clamp velocity to prevent explosion near singularities
-            v_norm = norm(v)
-            if v_norm > self._config.max_velocity:
-                v = v * (self._config.max_velocity / v_norm)
-
-            q = pinocchio.integrate(self._model, q, v * self._config.ik_dt)
-
-        return q, False, final_err
-
-    def _safety_check(
-        self, q_new: NDArray[np.floating[Any]], q_current: NDArray[np.floating[Any]]
-    ) -> tuple[bool, NDArray[np.floating[Any]]]:
-        """Check IK solution and clamp if needed.
-
-        Args:
-            q_new: Proposed joint positions from IK
-            q_current: Current joint positions
-
-        Returns:
-            Tuple of (is_safe, clamped_q) - if not safe, returns interpolated position
-        """
-        max_delta_rad = np.radians(self._config.max_joint_delta_deg)
-        joint_deltas = q_new - q_current
-
-        # Check if any joint exceeds the limit
-        if np.any(np.abs(joint_deltas) > max_delta_rad):
-            # Clamp the delta to the max allowed
-            clamped_delta = np.clip(joint_deltas, -max_delta_rad, max_delta_rad)
-            q_clamped = q_current + clamped_delta
-
-            worst_joint = int(np.argmax(np.abs(joint_deltas)))
-            logger.debug(
-                f"CartesianIKTask {self._name}: clamping joint motion - "
-                f"joint {self._joint_names_list[worst_joint]} delta "
-                f"{np.degrees(joint_deltas[worst_joint]):.1f}° -> "
-                f"{np.degrees(clamped_delta[worst_joint]):.1f}°"
-            )
-            return False, q_clamped
-
-        return True, q_new
-
     def on_preempted(self, by_task: str, joints: frozenset[str]) -> None:
         """Handle preemption by higher-priority task.
 
@@ -341,10 +259,8 @@ class CartesianIKTask(ControlTask):
     # Task-specific methods
     # =========================================================================
 
-    def set_target_pose(self, pose: Pose | PoseStamped, t_now: float) -> bool:
-        """Set target end-effector pose.
-
-        Call this from your teleop callback, visual servoing, or other input source.
+    def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
+        """Handle incoming cartesian command (target EE pose).
 
         Args:
             pose: Target end-effector pose (Pose or PoseStamped)
@@ -353,64 +269,12 @@ class CartesianIKTask(ControlTask):
         Returns:
             True if accepted
         """
-        target_se3 = self._pose_to_se3(pose)
-
         with self._lock:
-            self._target_pose = target_se3
+            self._target_pose = pose  # Store raw, convert to SE3 in compute()
             self._last_update_time = t_now
             self._active = True
 
         return True
-
-    def set_target_pose_dict(
-        self,
-        pose: dict[str, float],
-        t_now: float,
-    ) -> bool:
-        """Set target from pose dict with position and RPY orientation.
-
-        Args:
-            pose: {x, y, z, roll, pitch, yaw} in meters/radians
-            t_now: Current time
-
-        Returns:
-            True if accepted, False if missing required keys
-        """
-        required_keys = {"x", "y", "z", "roll", "pitch", "yaw"}
-        if not required_keys.issubset(pose.keys()):
-            missing = required_keys - set(pose.keys())
-            logger.warning(f"CartesianIKTask {self._name}: missing pose keys {missing}")
-            return False
-
-        position = np.array([pose["x"], pose["y"], pose["z"]])
-        rotation = pinocchio.rpy.rpyToMatrix(pose["roll"], pose["pitch"], pose["yaw"])
-        target_se3 = pinocchio.SE3(rotation, position)
-
-        with self._lock:
-            self._target_pose = target_se3
-            self._last_update_time = t_now
-            self._active = True
-
-        return True
-
-    def _pose_to_se3(self, pose: Pose | PoseStamped) -> pinocchio.SE3:
-        """Convert a Pose message to pinocchio SE3.
-
-        Uses quaternion directly to avoid Euler angle conversion issues.
-        """
-        # Handle both Pose and PoseStamped
-        if hasattr(pose, "position"):
-            # Assume Pose or PoseStamped with position/orientation attributes
-            position = np.array([pose.x, pose.y, pose.z])
-            quat = pose.orientation
-            rotation = pinocchio.Quaternion(quat.w, quat.x, quat.y, quat.z).toRotationMatrix()
-        else:
-            # Assume it has x, y, z directly
-            position = np.array([pose.x, pose.y, pose.z])
-            quat = pose.orientation
-            rotation = pinocchio.Quaternion(quat.w, quat.x, quat.y, quat.z).toRotationMatrix()
-
-        return pinocchio.SE3(rotation, position)
 
     def start(self) -> None:
         """Activate the task (start accepting and outputting commands)."""
@@ -451,8 +315,7 @@ class CartesianIKTask(ControlTask):
         if q_current is None:
             return None
 
-        pinocchio.forwardKinematics(self._model, self._data, q_current)
-        return self._data.oMi[self._ee_joint_id].copy()
+        return self._ik.forward_kinematics(q_current)
 
     def forward_kinematics(self, joint_positions: NDArray[np.floating[Any]]) -> pinocchio.SE3:
         """Compute end-effector pose from joint positions.
@@ -463,8 +326,7 @@ class CartesianIKTask(ControlTask):
         Returns:
             End-effector pose as SE3
         """
-        pinocchio.forwardKinematics(self._model, self._data, joint_positions)
-        return self._data.oMi[self._ee_joint_id].copy()
+        return self._ik.forward_kinematics(joint_positions)
 
 
 __all__ = [

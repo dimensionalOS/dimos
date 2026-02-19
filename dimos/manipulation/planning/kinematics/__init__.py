@@ -43,5 +43,9 @@ from dimos.manipulation.planning.kinematics.drake_optimization_ik import (
     DrakeOptimizationIK,
 )
 from dimos.manipulation.planning.kinematics.jacobian_ik import JacobianIK
+from dimos.manipulation.planning.kinematics.pinocchio_ik import (
+    PinocchioIK,
+    PinocchioIKConfig,
+)
 
-__all__ = ["DrakeOptimizationIK", "JacobianIK"]
+__all__ = ["DrakeOptimizationIK", "JacobianIK", "PinocchioIK", "PinocchioIKConfig"]

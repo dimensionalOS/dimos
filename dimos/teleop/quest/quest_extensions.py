@@ -16,21 +16,25 @@
 """Quest teleop module extensions and subclasses.
 
 Available subclasses:
-    - ArmTeleopModule: Per-hand toggle engage (X/A press to toggle)
+    - ArmTeleopModule: Per-hand press-and-hold engage (X/A hold to track), task name routing
     - TwistTeleopModule: Outputs Twist instead of PoseStamped
-    - VisualizingTeleopModule: Adds Rerun visualization (uses toggle engage)
+    - VisualizingTeleopModule: Adds Rerun visualization (inherits press-and-hold engage)
 """
 
-from dataclasses import dataclass
-from typing import Any
+from __future__ import annotations
 
-from dimos.core import Out
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
 from dimos.teleop.quest.quest_teleop_module import Hand, QuestTeleopConfig, QuestTeleopModule
 from dimos.teleop.utils.teleop_visualization import (
     visualize_buttons,
     visualize_pose,
 )
+
+if TYPE_CHECKING:
+    from dimos.core import Out
 
 
 @dataclass
@@ -52,22 +56,22 @@ class TwistTeleopModule(QuestTeleopModule):
     Outputs:
         - left_twist: TwistStamped (linear + angular velocity)
         - right_twist: TwistStamped (linear + angular velocity)
-        - buttons: QuestButtons (inherited)
+        - buttons: Buttons (inherited)
     """
 
     default_config = TwistTeleopConfig
+    config: TwistTeleopConfig
 
     left_twist: Out[TwistStamped]
     right_twist: Out[TwistStamped]
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Convert PoseStamped to TwistStamped, apply scaling, and publish."""
-        cfg: TwistTeleopConfig = self.config  # type: ignore[assignment]
         twist = TwistStamped(
             ts=output_msg.ts,
             frame_id=output_msg.frame_id,
-            linear=output_msg.position * cfg.linear_scale,
-            angular=output_msg.orientation.to_euler() * cfg.angular_scale,
+            linear=output_msg.position * self.config.linear_scale,
+            angular=output_msg.orientation.to_euler() * self.config.angular_scale,
         )
         if hand == Hand.LEFT:
             self.left_twist.publish(twist)
@@ -75,36 +79,56 @@ class TwistTeleopModule(QuestTeleopModule):
             self.right_twist.publish(twist)
 
 
+@dataclass
+class ArmTeleopConfig(QuestTeleopConfig):
+    """Configuration for ArmTeleopModule.
+
+    Attributes:
+        task_names: Mapping of Hand -> coordinator task name. Used to set
+            frame_id on output PoseStamped so the coordinator routes each
+            hand's commands to the correct TeleopIKTask.
+    """
+
+    task_names: dict[str, str] = field(default_factory=dict)
+
+
 class ArmTeleopModule(QuestTeleopModule):
-    """Quest teleop with per-hand toggle engage.
+    """Quest teleop with per-hand press-and-hold engage and task name routing.
 
     Each controller's primary button (X for left, A for right)
-    toggles that hand's engage state independently.
+    engages that hand while held, disengages on release.
+
+    When task_names is configured, output PoseStamped messages have their
+    frame_id set to the task name, enabling the coordinator to route
+    each hand's commands to the correct TeleopIKTask.
 
     Outputs:
         - left_controller_output: PoseStamped (inherited)
         - right_controller_output: PoseStamped (inherited)
-        - buttons: QuestButtons (inherited)
+        - buttons: Buttons (inherited)
     """
+
+    default_config = ArmTeleopConfig
+    config: ArmTeleopConfig
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._prev_primary: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}
 
-    def _handle_engage(self) -> None:
-        """Toggle per-hand engage on primary button rising edge."""
-        for hand in Hand:
-            controller = self._controllers.get(hand)
-            if controller is None:
-                continue
+        self._task_names: dict[Hand, str] = {
+            Hand[k.upper()]: v for k, v in self.config.task_names.items()
+        }
 
-            pressed = controller.primary
-            if pressed and not self._prev_primary[hand]:
-                if self._is_engaged[hand]:
-                    self._disengage(hand)
-                else:
-                    self._engage(hand)
-            self._prev_primary[hand] = pressed
+    def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
+        """Stamp frame_id with task name and publish."""
+        task_name = self._task_names.get(hand)
+        if task_name:
+            output_msg = PoseStamped(
+                position=output_msg.position,
+                orientation=output_msg.orientation,
+                ts=output_msg.ts,
+                frame_id=task_name,
+            )
+        super()._publish_msg(hand, output_msg)
 
 
 class VisualizingTeleopModule(ArmTeleopModule):
@@ -116,7 +140,7 @@ class VisualizingTeleopModule(ArmTeleopModule):
     Outputs:
         - left_controller_output: PoseStamped (inherited)
         - right_controller_output: PoseStamped (inherited)
-        - buttons: QuestButtons (inherited)
+        - buttons: Buttons (inherited)
     """
 
     def _get_output_pose(self, hand: Hand) -> PoseStamped | None:
@@ -147,6 +171,7 @@ arm_teleop_module = ArmTeleopModule.blueprint
 visualizing_teleop_module = VisualizingTeleopModule.blueprint
 
 __all__ = [
+    "ArmTeleopConfig",
     "ArmTeleopModule",
     "TwistTeleopModule",
     "VisualizingTeleopModule",

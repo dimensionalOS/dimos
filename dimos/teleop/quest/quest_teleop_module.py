@@ -22,6 +22,10 @@ transforms from WebXR to robot frame, computes deltas, and publishes PoseStamped
 
 from dataclasses import dataclass
 from enum import IntEnum
+from pathlib import Path
+import shutil
+import signal
+import subprocess
 import threading
 import time
 from typing import Any
@@ -32,8 +36,7 @@ from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Joy
-from dimos.teleop.base import TeleopProtocol
-from dimos.teleop.quest.quest_types import QuestButtons, QuestControllerState
+from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
 from dimos.teleop.utils.teleop_transforms import webxr_to_robot
 from dimos.utils.logging_config import setup_logger
 
@@ -55,7 +58,7 @@ class QuestTeleopStatus:
     right_engaged: bool
     left_pose: PoseStamped | None
     right_pose: PoseStamped | None
-    buttons: QuestButtons
+    buttons: Buttons
 
 
 @dataclass
@@ -65,18 +68,16 @@ class QuestTeleopConfig(ModuleConfig):
     control_loop_hz: float = 50.0
 
 
-class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
+class QuestTeleopModule(Module[QuestTeleopConfig]):
     """Quest Teleoperation Module for Meta Quest controllers.
 
     Gets controller data from Deno bridge, computes output poses, and publishes them. Subclass to customize pose
     computation, output format, and engage behavior.
 
-    Implements TeleopProtocol.
-
     Outputs:
         - left_controller_output: PoseStamped (output pose for left hand)
         - right_controller_output: PoseStamped (output pose for right hand)
-        - buttons: QuestButtons (button states for both controllers)
+        - buttons: Buttons (button states for both controllers)
     """
 
     default_config = QuestTeleopConfig
@@ -90,7 +91,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
     # Outputs: delta poses for each controller
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]
-    buttons: Out[QuestButtons]
+    buttons: Out[Buttons]
 
     # -------------------------------------------------------------------------
     # Initialization
@@ -111,17 +112,18 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
         # Control loop
         self._control_loop_thread: threading.Thread | None = None
-        self._control_loop_running = False
+        self._stop_event = threading.Event()
 
-        logger.info("QuestTeleopModule initialized")
+        # Deno bridge server
+        self._server_process: subprocess.Popen[bytes] | None = None
+        self._server_script = Path(__file__).parent / "web" / "teleop_server.ts"
 
     # -------------------------------------------------------------------------
-    # Public RPC Methods
+    # Lifecycle
     # -------------------------------------------------------------------------
 
     @rpc
     def start(self) -> None:
-        """Start the Quest teleoperation module."""
         super().start()
 
         input_streams = {
@@ -141,27 +143,14 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         if connected:
             logger.info(f"Subscribed to: {', '.join(connected)}")
 
-        self._start_control_loop()
+        self._start_server()
         logger.info("Quest Teleoperation Module started")
 
     @rpc
     def stop(self) -> None:
-        """Stop the Quest teleoperation module."""
-        logger.info("Stopping Quest Teleoperation Module...")
         self._stop_control_loop()
+        self._stop_server()
         super().stop()
-
-    @rpc
-    def engage(self, hand: Hand | None = None) -> bool:
-        """Engage teleoperation for a hand. If hand is None, engage both."""
-        with self._lock:
-            return self._engage(hand)
-
-    @rpc
-    def disengage(self, hand: Hand | None = None) -> None:
-        """Disengage teleoperation for a hand. If hand is None, disengage both."""
-        with self._lock:
-            self._disengage(hand)
 
     # -------------------------------------------------------------------------
     # Internal engage/disengage (assumes lock is held)
@@ -187,9 +176,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
             self._is_engaged[h] = False
             logger.info(f"{h.name} disengaged.")
 
-    @rpc
     def get_status(self) -> QuestTeleopStatus:
-        """Get current teleoperation status."""
         with self._lock:
             left = self._controllers.get(Hand.LEFT)
             right = self._controllers.get(Hand.RIGHT)
@@ -198,7 +185,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
                 right_engaged=self._is_engaged[Hand.RIGHT],
                 left_pose=self._current_poses.get(Hand.LEFT),
                 right_pose=self._current_poses.get(Hand.RIGHT),
-                buttons=QuestButtons.from_controllers(left, right),
+                buttons=Buttons.from_controllers(left, right),
             )
 
     # -------------------------------------------------------------------------
@@ -225,12 +212,67 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         with self._lock:
             self._controllers[hand] = controller
 
-    def _start_control_loop(self) -> None:
-        """Start the control loop thread."""
-        if self._control_loop_running:
+    # -------------------------------------------------------------------------
+    # Deno Bridge Server
+    # -------------------------------------------------------------------------
+
+    def _start_server(self) -> None:
+        """Launch the Deno WebSocket-to-LCM bridge server as a subprocess."""
+        if self._server_process is not None and self._server_process.poll() is None:
+            logger.warning("Deno bridge already running", pid=self._server_process.pid)
             return
 
-        self._control_loop_running = True
+        if shutil.which("deno") is None:
+            logger.error(
+                "Deno is not installed. Install it with: curl -fsSL https://deno.land/install.sh | sh"
+            )
+            return
+
+        script = str(self._server_script)
+        cmd = [
+            "deno",
+            "run",
+            "--allow-net",
+            "--allow-read",
+            "--allow-run",
+            "--allow-write",
+            "--unstable-net",
+            script,
+        ]
+        try:
+            self._server_process = subprocess.Popen(cmd)
+            logger.info(f"Deno bridge server started (pid {self._server_process.pid})")
+        except OSError as e:
+            logger.error(f"Failed to start Deno bridge: {e}")
+
+    def _stop_server(self) -> None:
+        """Terminate the Deno bridge server subprocess."""
+        if self._server_process is None or self._server_process.poll() is not None:
+            self._server_process = None
+            return
+
+        logger.info("Stopping Deno bridge server", pid=self._server_process.pid)
+        self._server_process.send_signal(signal.SIGTERM)
+        try:
+            self._server_process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "Deno bridge did not exit, sending SIGKILL", pid=self._server_process.pid
+            )
+            self._server_process.kill()
+            try:
+                self._server_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                logger.error("Deno bridge did not exit after SIGKILL")
+        logger.info("Deno bridge server stopped")
+        self._server_process = None
+
+    def _start_control_loop(self) -> None:
+        """Start the control loop thread."""
+        if self._control_loop_thread is not None and self._control_loop_thread.is_alive():
+            return
+
+        self._stop_event.clear()
         self._control_loop_thread = threading.Thread(
             target=self._control_loop,
             daemon=True,
@@ -241,21 +283,20 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
 
     def _stop_control_loop(self) -> None:
         """Stop the control loop thread."""
-        self._control_loop_running = False
+        self._stop_event.set()
         if self._control_loop_thread is not None:
             self._control_loop_thread.join(timeout=1.0)
             self._control_loop_thread = None
         logger.info("Control loop stopped")
 
     def _control_loop(self) -> None:
-        """Main control loop: compute deltas and publish at fixed rate.
-
+        """
         Holds self._lock for the entire iteration so overridable methods
         don't need to acquire it themselves.
         """
         period = 1.0 / self.config.control_loop_hz
 
-        while self._control_loop_running:
+        while not self._stop_event.is_set():
             loop_start = time.perf_counter()
             try:
                 with self._lock:
@@ -279,7 +320,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
             elapsed = time.perf_counter() - loop_start
             sleep_time = period - elapsed
             if sleep_time > 0:
-                time.sleep(sleep_time)
+                self._stop_event.wait(sleep_time)
 
     # -------------------------------------------------------------------------
     # Control Loop Internals
@@ -351,7 +392,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig], TeleopProtocol):
         Override to customize button output format (e.g., different bit layout,
         keep analog values, add extra streams).
         """
-        buttons = QuestButtons.from_controllers(left, right)
+        buttons = Buttons.from_controllers(left, right)
         self.buttons.publish(buttons)
 
 

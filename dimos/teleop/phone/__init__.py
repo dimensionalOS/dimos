@@ -12,8 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Teleoperation protocol."""
+"""Phone teleoperation module for DimOS."""
 
-from dimos.teleop.base.teleop_protocol import TeleopProtocol
+from dimos.teleop.phone.phone_extensions import (
+    SimplePhoneTeleop,
+    simple_phone_teleop_module,
+)
+from dimos.teleop.phone.phone_teleop_module import (
+    PhoneTeleopConfig,
+    PhoneTeleopModule,
+    phone_teleop_module,
+)
 
-__all__ = ["TeleopProtocol"]
+__all__ = [
+    "PhoneTeleopConfig",
+    "PhoneTeleopModule",
+    "SimplePhoneTeleop",
+    "phone_teleop_module",
+    "simple_phone_teleop_module",
+]

@@ -18,7 +18,7 @@ from datetime import datetime
 import json
 import textwrap
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolCall, ToolMessage
 from rich.highlighter import JSONHighlighter
@@ -26,6 +26,7 @@ from rich.theme import Theme
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
+from textual.geometry import Size
 from textual.widgets import Input, RichLog
 
 from dimos.core import pLCMTransport
@@ -33,6 +34,8 @@ from dimos.utils.cli import theme
 from dimos.utils.generic import truncate_display_string
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from textual.events import Key
 
 # Custom theme for JSON highlighting
@@ -47,6 +50,76 @@ JSON_THEME = Theme(
         "json.brace": theme.BRIGHT_WHITE,
     }
 )
+
+
+class ThinkingIndicator:
+    """Manages a throbbing 'thinking...' chat message in a RichLog."""
+
+    def __init__(
+        self,
+        app: App[Any],
+        chat_log: RichLog,
+        add_message_fn: Callable[[str, str, str, str], None],
+    ) -> None:
+        self._app: App[Any] = app
+        self._chat_log = chat_log
+        self._add_message = add_message_fn
+        self._timer: Any = None
+        self._strips: list[Any] = []
+        self.visible = False
+        self._throb_dim = False
+
+    def show(self) -> None:
+        if self.visible:
+            return
+        self.visible = True
+        self._throb_dim = False
+        self._write_line()
+        self._timer = self._app.set_interval(0.6, self._toggle_throb)
+
+    def hide(self) -> None:
+        if not self.visible:
+            return
+        self.visible = False
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+        self._remove_lines()
+
+    def detach_if_needed(self) -> bool:
+        if self.visible and self._strips:
+            self._remove_lines()
+            return True
+        return False
+
+    def reattach(self) -> None:
+        self._write_line()
+
+    def _write_line(self) -> None:
+        before_count = len(self._chat_log.lines)
+        color = theme.DIM if self._throb_dim else theme.ACCENT
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self._add_message(timestamp, "", "[italic]thinking...[/italic]", color)
+        self._strips = list(self._chat_log.lines[before_count:])
+
+    def _remove_lines(self) -> None:
+        if not self._strips:
+            return
+        strip_ids = {id(s) for s in self._strips}
+        self._chat_log.lines = [line for line in self._chat_log.lines if id(line) not in strip_ids]
+        self._strips = []
+        self._chat_log._line_cache.clear()
+        self._chat_log.virtual_size = Size(
+            self._chat_log.virtual_size.width, len(self._chat_log.lines)
+        )
+        self._chat_log.refresh()
+
+    def _toggle_throb(self) -> None:
+        if not self.visible:
+            return
+        self._remove_lines()
+        self._throb_dim = not self._throb_dim
+        self._write_line()
 
 
 class HumanCLIApp(App):  # type: ignore[type-arg]
@@ -70,6 +143,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
     Input {{
         dock: bottom;
     }}
+
     """
 
     BINDINGS = [
@@ -80,11 +154,14 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
-        self.human_transport = pLCMTransport("/human_input")  # type: ignore[var-annotated]
-        self.agent_transport = pLCMTransport("/agent")  # type: ignore[var-annotated]
+        self._human_transport = pLCMTransport("/human_input")  # type: ignore[var-annotated]
+        self._agent_transport = pLCMTransport("/agent")  # type: ignore[var-annotated]
+        self._agent_idle = pLCMTransport("/agent_idle")  # type: ignore[var-annotated]
         self.chat_log: RichLog | None = None
         self.input_widget: Input | None = None
         self._subscription_thread: threading.Thread | None = None
+        self._idle_subscription_thread: threading.Thread | None = None
+        self._thinking: ThinkingIndicator | None = None
         self._running = False
 
     def compose(self) -> ComposeResult:
@@ -106,16 +183,22 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         # Set custom highlighter for RichLog
         self.chat_log.highlighter = JSONHighlighter()  # type: ignore[union-attr]
 
-        # Start subscription thread
+        assert self.chat_log is not None
+        self._thinking = ThinkingIndicator(self, self.chat_log, self._add_message)
+
+        # Start subscription threads
         self._subscription_thread = threading.Thread(target=self._subscribe_to_agent, daemon=True)
         self._subscription_thread.start()
+        self._idle_subscription_thread = threading.Thread(
+            target=self._subscribe_to_idle, daemon=True
+        )
+        self._idle_subscription_thread.start()
 
         # Focus on input
         self.input_widget.focus()  # type: ignore[union-attr]
 
         self.chat_log.write(f"[{theme.ACCENT}]{theme.ascii_logo}[/{theme.ACCENT}]")  # type: ignore[union-attr]
 
-        # Welcome message
         self._add_system_message("Connected to DimOS Agent Interface")
 
     def on_unmount(self) -> None:
@@ -173,7 +256,18 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
                     self._add_message, timestamp, "human", msg.content, theme.HUMAN
                 )
 
-        self.agent_transport.subscribe(receive_msg)
+        self._agent_transport.subscribe(receive_msg)
+
+    def _subscribe_to_idle(self) -> None:
+        def receive_idle(is_idle: bool) -> None:
+            assert self._thinking is not None
+
+            if not self._running:
+                return
+
+            self.call_from_thread(self._thinking.hide if is_idle else self._thinking.show)
+
+        self._agent_idle.subscribe(receive_idle)
 
     def _format_tool_call(self, tool_call: ToolCall) -> str:
         """Format a tool call for display."""
@@ -183,7 +277,9 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         return f"▶ {name}({args_str})"
 
     def _add_message(self, timestamp: str, sender: str, content: str, color: str) -> None:
-        """Add a message to the chat log."""
+        assert self._thinking is not None
+        reattach = self._thinking.detach_if_needed()
+
         # Strip leading/trailing whitespace from content
         content = content.strip() if content else ""
 
@@ -238,6 +334,9 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
                     # Empty line
                     self.chat_log.write(indent + "│")  # type: ignore[union-attr]
 
+        if reattach:
+            self._thinking.reattach()
+
     def _add_system_message(self, content: str) -> None:
         """Add a system message to the chat."""
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -277,7 +376,7 @@ Tool calls are displayed in cyan with ▶ prefix"""
             return
 
         # Send to agent (message will be displayed when received back)
-        self.human_transport.publish(message)
+        self._human_transport.publish(message)
 
     def action_clear(self) -> None:
         """Clear the chat log."""

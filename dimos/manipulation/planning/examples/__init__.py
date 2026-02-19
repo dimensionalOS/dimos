@@ -13,23 +13,5 @@
 # limitations under the License.
 
 """
-Manipulation Client - RPC client for ManipulationModule
-
-Usage:
-    # Start coordinator and planner first:
-    dimos run coordinator-mock
-    dimos run xarm7-planner-coordinator
-
-    # Then run the interactive client:
-    python -m dimos.manipulation.planning.examples.manipulation_client
-
-    # IPython shell with client pre-loaded:
-    c.joints()           # Get current joint positions
-    c.plan([0.1, ...])   # Plan to joints
-    c.preview()          # Preview in Meshcat
-    c.execute()          # Execute via coordinator
+Manipulation planning examples.
 """
-
-from dimos.manipulation.planning.examples.manipulation_client import ManipulationClient
-
-__all__ = ["ManipulationClient"]

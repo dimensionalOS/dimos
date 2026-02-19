@@ -3,7 +3,7 @@
 #### Warning: If you just want to run a blueprint you don't need to add it to `dimos run`:
 
 `your_code.py`
-```py
+```python
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic as example_blueprint
 
 if __name__ == "__main__":

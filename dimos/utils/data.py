@@ -262,3 +262,75 @@ def get_data(name: str | Path) -> Path:
     if nested_path:
         return archive_path / nested_path
     return archive_path
+
+
+class LfsPath(type(Path())):  # type: ignore[misc]
+    """
+    A Path subclass that lazily downloads LFS data when accessed.
+
+    This is useful for both lazy loading and differentiating between LFS paths and regular paths.
+
+    This class wraps pathlib.Path and ensures that get_data() is called
+    before any meaningful filesystem operation, making LFS data lazy-loaded.
+
+    Usage:
+        path = LfsPath("sample_data")
+        # No download yet
+
+        with path.open('rb') as f:  # Downloads now if needed
+            data = f.read()
+
+        # Or use any Path operation:
+        if path.exists():  # Downloads now if needed
+            files = list(path.iterdir())
+    """
+
+    def __new__(cls, filename: str | Path) -> "LfsPath":
+        # Create instance with a placeholder path to satisfy Path.__new__
+        # We use "." as a dummy path that always exists
+        instance: LfsPath = super().__new__(cls, ".")  # type: ignore[call-arg]
+        # Store the actual filename as an instance attribute
+        object.__setattr__(instance, "_lfs_filename", filename)
+        object.__setattr__(instance, "_lfs_resolved_cache", None)
+        return instance
+
+    def _ensure_downloaded(self) -> Path:
+        """Ensure the LFS data is downloaded and return the resolved path."""
+        cache: Path | None = object.__getattribute__(self, "_lfs_resolved_cache")
+        if cache is None:
+            filename = object.__getattribute__(self, "_lfs_filename")
+            cache = get_data(filename)
+            object.__setattr__(self, "_lfs_resolved_cache", cache)
+        return cache
+
+    def __getattribute__(self, name: str) -> object:
+        # During Path.__new__(), _lfs_filename hasn't been set yet.
+        # Fall through to normal Path behavior until construction is complete.
+        try:
+            object.__getattribute__(self, "_lfs_filename")
+        except AttributeError:
+            return object.__getattribute__(self, name)
+
+        # After construction, allow access to our internal attributes directly
+        if name in ("_lfs_filename", "_lfs_resolved_cache", "_ensure_downloaded"):
+            return object.__getattribute__(self, name)
+
+        # For all other attributes, ensure download first then delegate to resolved path
+        resolved = object.__getattribute__(self, "_ensure_downloaded")()
+        return getattr(resolved, name)
+
+    def __str__(self) -> str:
+        """String representation returns resolved path."""
+        return str(self._ensure_downloaded())
+
+    def __fspath__(self) -> str:
+        """Return filesystem path, downloading from LFS if needed."""
+        return str(self._ensure_downloaded())
+
+    def __truediv__(self, other: object) -> Path:
+        """Path division operator - returns resolved path."""
+        return self._ensure_downloaded() / other  # type: ignore[operator, return-value]
+
+    def __rtruediv__(self, other: object) -> Path:
+        """Reverse path division operator."""
+        return other / self._ensure_downloaded()  # type: ignore[operator, return-value]

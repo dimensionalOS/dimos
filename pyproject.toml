@@ -52,7 +52,8 @@ dependencies = [
     "colorlog==6.9.0",
     # Core Msgs
     "opencv-python",
-    "open3d",
+    "open3d-unofficial-arm; platform_system == 'Linux' and platform_machine == 'aarch64'",
+    "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
     # CLI
     "pydantic-settings>=2.11.0,<3",
     "textual==3.7.1",
@@ -171,7 +172,7 @@ unitree = [
 
 manipulation = [
     # Planning (Drake)
-    "drake>=1.40.0",
+    "drake>=1.40.0; platform_machine != 'aarch64'",
 
     # Hardware SDKs
     "piper-sdk",
@@ -195,13 +196,13 @@ cpu = [
 ]
 
 cuda = [
-    "cupy-cuda12x==13.6.0",
-    "nvidia-nvimgcodec-cu12[all]",
-    "onnxruntime-gpu>=1.17.1", # Only versions supporting both cuda11 and cuda12
+    "cupy-cuda12x==13.6.0; platform_machine == 'x86_64'",
+    "nvidia-nvimgcodec-cu12[all]; platform_machine == 'x86_64'",
+    "onnxruntime-gpu>=1.17.1; platform_machine == 'x86_64'", # Only versions supporting both cuda11 and cuda12
     "ctransformers[cuda]==0.2.27",
     "mmengine>=0.10.3",
     "mmcv>=2.1.0",
-    "xformers>=0.0.20",
+    "xformers>=0.0.20; platform_machine == 'x86_64'",
 ]
 
 dev = [
@@ -297,7 +298,8 @@ docker = [
     "sortedcontainers",
     "PyTurboJPEG",
     "rerun-sdk",
-    "open3d"
+    "open3d-unofficial-arm; platform_system == 'Linux' and platform_machine == 'aarch64'",
+    "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
 ]
 
 base = [
@@ -353,6 +355,7 @@ module = [
     "dimos_lcm.*",
     "etils",
     "geometry_msgs.*",
+    "lazy_loader",
     "mujoco",
     "mujoco_playground.*",
     "nav_msgs.*",
@@ -411,4 +414,5 @@ ignore = [
     "*/package-lock.json",
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
+    "dimos/manipulation/manipulation_module.py",
 ]

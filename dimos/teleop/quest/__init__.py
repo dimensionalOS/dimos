@@ -30,15 +30,15 @@ from dimos.teleop.quest.quest_teleop_module import (
     quest_teleop_module,
 )
 from dimos.teleop.quest.quest_types import (
-    QuestButtons,
+    Buttons,
     QuestControllerState,
     ThumbstickState,
 )
 
 __all__ = [
     "ArmTeleopModule",
+    "Buttons",
     "Hand",
-    "QuestButtons",
     "QuestControllerState",
     "QuestTeleopConfig",
     "QuestTeleopModule",

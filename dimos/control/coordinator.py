@@ -44,10 +44,12 @@ from dimos.msgs.geometry_msgs import (
 from dimos.msgs.sensor_msgs import (
     JointState,  # noqa: TC001 - needed at runtime for Out[JointState]
 )
+from dimos.teleop.quest.quest_types import Buttons  # noqa: TC001 - needed for teleop buttons
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
@@ -65,20 +67,21 @@ class TaskConfig:
 
     Attributes:
         name: Task name (e.g., "traj_arm")
-        type: Task type ("trajectory", "servo", "velocity", "cartesian_ik")
+        type: Task type ("trajectory", "servo", "velocity", "cartesian_ik", "teleop_ik")
         joint_names: List of joint names this task controls
         priority: Task priority (higher wins arbitration)
-        model_path: Path to URDF/MJCF for IK solver (cartesian_ik only)
-        ee_joint_id: End-effector joint ID in model (cartesian_ik only)
+        model_path: Path to URDF/MJCF for IK solver (cartesian_ik/teleop_ik only)
+        ee_joint_id: End-effector joint ID in model (cartesian_ik/teleop_ik only)
     """
 
     name: str
     type: str = "trajectory"
     joint_names: list[str] = field(default_factory=lambda: [])
     priority: int = 10
-    # Cartesian IK specific
-    model_path: str | None = None
+    # Cartesian IK / Teleop IK specific
+    model_path: str | Path | None = None
     ee_joint_id: int = 6
+    hand: str = ""  # teleop_ik only: "left" or "right" controller
 
 
 @dataclass
@@ -145,6 +148,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     # Uses frame_id as task name for routing
     cartesian_command: In[PoseStamped]
 
+    # Input: Teleop buttons for engage/disengage signaling
+    buttons: In[Buttons]
+
     config: ControlCoordinatorConfig
     default_config = ControlCoordinatorConfig
 
@@ -168,6 +174,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         # Subscription handles for streaming commands
         self._joint_command_unsub: Callable[[], None] | None = None
         self._cartesian_command_unsub: Callable[[], None] | None = None
+        self._buttons_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -273,6 +280,23 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                     model_path=cfg.model_path,
                     ee_joint_id=cfg.ee_joint_id,
                     priority=cfg.priority,
+                ),
+            )
+
+        elif task_type == "teleop_ik":
+            from dimos.control.tasks.teleop_task import TeleopIKTask, TeleopIKTaskConfig
+
+            if cfg.model_path is None:
+                raise ValueError(f"TeleopIKTask '{cfg.name}' requires model_path in TaskConfig")
+
+            return TeleopIKTask(
+                cfg.name,
+                TeleopIKTaskConfig(
+                    joint_names=cfg.joint_names,
+                    model_path=cfg.model_path,
+                    ee_joint_id=cfg.ee_joint_id,
+                    priority=cfg.priority,
+                    hand=cfg.hand,
                 ),
             )
 
@@ -437,14 +461,14 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                     continue
 
                 # Route to servo tasks (position control)
-                if hasattr(task, "set_target_by_name") and msg.position:
+                if msg.position:
                     positions_by_name = dict(zip(msg.name, msg.position, strict=False))
-                    task.set_target_by_name(positions_by_name, t_now)  # type: ignore[attr-defined]
+                    task.set_target_by_name(positions_by_name, t_now)
 
                 # Route to velocity tasks (velocity control)
-                elif hasattr(task, "set_velocities_by_name") and msg.velocity:
+                elif msg.velocity:
                     velocities_by_name = dict(zip(msg.name, msg.velocity, strict=False))
-                    task.set_velocities_by_name(velocities_by_name, t_now)  # type: ignore[attr-defined]
+                    task.set_velocities_by_name(velocities_by_name, t_now)
 
     def _on_cartesian_command(self, msg: PoseStamped) -> None:
         """Route incoming PoseStamped to CartesianIKTask by task name.
@@ -464,11 +488,13 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 logger.warning(f"Cartesian command for unknown task: {task_name}")
                 return
 
-            # Route to CartesianIKTask
-            if hasattr(task, "set_target_pose"):
-                task.set_target_pose(msg, t_now)  # type: ignore[attr-defined]
-            else:
-                logger.warning(f"Task {task_name} does not support set_target_pose")
+            task.on_cartesian_command(msg, t_now)
+
+    def _on_buttons(self, msg: Buttons) -> None:
+        """Forward button state to all tasks."""
+        with self._task_lock:
+            for task in self._tasks.values():
+                task.on_buttons(msg)
 
     @rpc
     def task_invoke(
@@ -561,35 +587,34 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         streaming_types = ("servo", "velocity")
         has_streaming = any(t.type in streaming_types for t in self.config.tasks)
         if has_streaming:
-            # Only subscribe if transport is configured
             try:
-                if self.joint_command.transport:
-                    self._joint_command_unsub = self.joint_command.subscribe(self._on_joint_command)
-                    logger.info("Subscribed to joint_command for streaming tasks")
-                else:
-                    logger.warning(
-                        "Streaming tasks configured but no transport set for joint_command. "
-                        "Use task_invoke RPC or set transport via blueprint."
-                    )
-            except Exception as e:
-                logger.warning(f"Could not subscribe to joint_command: {e}")
+                self._joint_command_unsub = self.joint_command.subscribe(self._on_joint_command)
+                logger.info("Subscribed to joint_command for streaming tasks")
+            except Exception:
+                logger.warning(
+                    "Streaming tasks configured but could not subscribe to joint_command. "
+                    "Use task_invoke RPC or set transport via blueprint."
+                )
 
         # Subscribe to cartesian commands if any cartesian_ik tasks configured
-        has_cartesian_ik = any(t.type == "cartesian_ik" for t in self.config.tasks)
+        has_cartesian_ik = any(t.type in ("cartesian_ik", "teleop_ik") for t in self.config.tasks)
         if has_cartesian_ik:
             try:
-                if self.cartesian_command.transport:
-                    self._cartesian_command_unsub = self.cartesian_command.subscribe(
-                        self._on_cartesian_command
-                    )
-                    logger.info("Subscribed to cartesian_command for CartesianIK tasks")
-                else:
-                    logger.warning(
-                        "CartesianIK tasks configured but no transport set for cartesian_command. "
-                        "Use task_invoke RPC or set transport via blueprint."
-                    )
-            except Exception as e:
-                logger.warning(f"Could not subscribe to cartesian_command: {e}")
+                self._cartesian_command_unsub = self.cartesian_command.subscribe(
+                    self._on_cartesian_command
+                )
+                logger.info("Subscribed to cartesian_command for CartesianIK/TeleopIK tasks")
+            except Exception:
+                logger.warning(
+                    "CartesianIK/TeleopIK tasks configured but could not subscribe to cartesian_command. "
+                    "Use task_invoke RPC or set transport via blueprint."
+                )
+
+        # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
+        has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
+        if has_teleop_ik:
+            self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
+            logger.info("Subscribed to buttons for engage/disengage")
 
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
 
@@ -605,6 +630,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         if self._cartesian_command_unsub:
             self._cartesian_command_unsub()
             self._cartesian_command_unsub = None
+        if self._buttons_unsub:
+            self._buttons_unsub()
+            self._buttons_unsub = None
 
         if self._tick_loop:
             self._tick_loop.stop()

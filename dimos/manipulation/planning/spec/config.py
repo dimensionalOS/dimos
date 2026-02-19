@@ -76,6 +76,10 @@ class RobotModelConfig:
     gripper_hardware_id: str | None = None
     # TF publishing for extra links (e.g., camera mount)
     tf_extra_links: list[str] = field(default_factory=list)
+    # Home/observe joint configuration for go_home skill
+    home_joints: list[float] | None = None
+    # Pre-grasp offset distance in meters (along approach direction)
+    pre_grasp_offset: float = 0.10
 
     def get_urdf_joint_name(self, coordinator_name: str) -> str:
         """Translate coordinator joint name to URDF joint name."""

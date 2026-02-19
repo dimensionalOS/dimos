@@ -187,18 +187,19 @@ class RRTConnectPlanner:
                 "Goal configuration is in collision",
             )
 
-        # Check limits (extract arrays for numpy comparison)
+        # Check limits with small tolerance for driver floating-point drift
         lower, upper = world.get_joint_limits(robot_id)
         q_start = np.array(start.position, dtype=np.float64)
         q_goal = np.array(goal.position, dtype=np.float64)
+        limit_eps = 1e-3  # ~0.06 degrees
 
-        if np.any(q_start < lower) or np.any(q_start > upper):
+        if np.any(q_start < lower - limit_eps) or np.any(q_start > upper + limit_eps):
             return _create_failure_result(
                 PlanningStatus.INVALID_START,
                 "Start configuration is outside joint limits",
             )
 
-        if np.any(q_goal < lower) or np.any(q_goal > upper):
+        if np.any(q_goal < lower - limit_eps) or np.any(q_goal > upper + limit_eps):
             return _create_failure_result(
                 PlanningStatus.INVALID_GOAL,
                 "Goal configuration is outside joint limits",

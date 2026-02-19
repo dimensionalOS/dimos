@@ -256,7 +256,7 @@ class TestProcessMarkdown:
     def test_relative_mode(self, file_index):
         """Should generate relative paths in relative mode."""
         content = "See [`service/spec.py`]()"
-        doc_path = REPO_ROOT / "docs/concepts/test.md"
+        doc_path = REPO_ROOT / "docs/usage/test.md"
 
         new_content, _changes, _errors = process_markdown(
             content,
@@ -277,7 +277,7 @@ class TestDocIndex:
         """Should index docs by lowercase stem."""
         assert "configuration" in doc_index
         assert "modules" in doc_index
-        assert "development" in doc_index
+        assert "blueprints" in doc_index
 
     def test_case_insensitive(self, doc_index):
         """Should use lowercase keys."""
@@ -349,8 +349,8 @@ class TestDocLinking:
 
     def test_doc_link_relative_mode(self, file_index, doc_index):
         """Should generate relative paths for doc links."""
-        content = "See [Development](.md)"
-        doc_path = REPO_ROOT / "docs/concepts/test.md"
+        content = "See [Blueprints](.md)"
+        doc_path = REPO_ROOT / "docs/usage/test.md"
 
         new_content, _changes, errors = process_markdown(
             content,
@@ -364,8 +364,8 @@ class TestDocLinking:
         )
 
         assert len(errors) == 0
-        # Should be relative path from docs/concepts/ to docs/
-        assert "../" in new_content
+        # Should be relative path from docs/usage/ to target doc
+        assert "[Blueprints](blueprints.md)" in new_content
 
     def test_doc_not_found_error(self, file_index, doc_index):
         """Should error when doc doesn't exist."""

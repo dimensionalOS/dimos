@@ -27,7 +27,7 @@ Example:
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dimos.manipulation.planning.spec import (
     CollisionObjectMessage,
@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 
     from dimos.manipulation.planning.spec import WorldSpec
     from dimos.msgs.vision_msgs import Detection3D
+    from dimos.perception.detection.type.detection3d.object import Object
 
 logger = setup_logger()
 
@@ -92,7 +93,7 @@ class WorldObstacleMonitor:
 
         # Object-based cache (from ObjectDB, keyed by object_id)
         # object_id -> (Object, first_seen, last_seen)
-        self._object_cache: dict[str, tuple[object, float, float]] = {}
+        self._object_cache: dict[str, tuple[Object, float, float]] = {}
         # object_id -> obstacle_id (objects currently added to Drake world)
         self._object_obstacles: dict[str, str] = {}
 
@@ -441,7 +442,7 @@ class WorldObstacleMonitor:
             for oid in stale:
                 del self._object_cache[oid]
 
-    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, object]]:
+    def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, Any]]:
         """Full sync: remove all object obstacles, re-add from cache.
 
         Args:
@@ -453,7 +454,7 @@ class WorldObstacleMonitor:
         from dimos.perception.detection.type.detection3d.object import Object
 
         # Step 1: snapshot eligible objects under lock (fast)
-        eligible: list[tuple[str, object]] = []
+        eligible: list[tuple[str, Object]] = []
         with self._lock:
             for oid, (obj, first_seen, last_seen) in self._object_cache.items():
                 if not isinstance(obj, Object):
@@ -463,7 +464,7 @@ class WorldObstacleMonitor:
                 eligible.append((oid, obj))
 
         # Step 2: compute obstacles OUTSIDE lock (convex hull can be slow)
-        prepared: list[tuple[str, object, Obstacle]] = []
+        prepared: list[tuple[str, Object, Obstacle]] = []
         for oid, obj in eligible:
             obstacle = self._object_to_obstacle(obj)
             prepared.append((oid, obj, obstacle))
@@ -474,7 +475,7 @@ class WorldObstacleMonitor:
                 self._world.remove_obstacle(obs_id)
             self._object_obstacles.clear()
 
-            result: list[dict[str, object]] = []
+            result: list[dict[str, Any]] = []
             for oid, obj, obstacle in prepared:
                 assert isinstance(obj, Object)
                 obs_id = self._world.add_obstacle(obstacle)
@@ -513,12 +514,22 @@ class WorldObstacleMonitor:
                 "added": len(self._object_obstacles),
             }
 
-    def list_cached_detections(self) -> list[dict[str, object]]:
+    def get_cached_objects(self) -> list[Object]:
+        """Get cached Object instances from perception.
+
+        Returns raw Object instances for typed access to .name, .center, .size etc.
+        """
+        from dimos.perception.detection.type.detection3d.object import Object as _Object
+
+        with self._lock:
+            return [obj for obj, _, _ in self._object_cache.values() if isinstance(obj, _Object)]
+
+    def list_cached_detections(self) -> list[dict[str, Any]]:
         """List cached detections from perception."""
         from dimos.perception.detection.type.detection3d.object import Object
 
         with self._lock:
-            result: list[dict[str, object]] = []
+            result: list[dict[str, Any]] = []
             for oid, (obj, first_seen, last_seen) in self._object_cache.items():
                 if not isinstance(obj, Object):
                     continue
@@ -534,12 +545,12 @@ class WorldObstacleMonitor:
                 )
             return result
 
-    def list_added_obstacles(self) -> list[dict[str, object]]:
+    def list_added_obstacles(self) -> list[dict[str, Any]]:
         """List perception obstacles currently in the planning world."""
         from dimos.perception.detection.type.detection3d.object import Object
 
         with self._lock:
-            result: list[dict[str, object]] = []
+            result: list[dict[str, Any]] = []
             for oid, obs_id in self._object_obstacles.items():
                 entry = self._object_cache.get(oid)
                 if entry is None:
