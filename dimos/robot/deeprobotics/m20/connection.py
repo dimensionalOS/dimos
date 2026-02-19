@@ -49,6 +49,13 @@ from .camera import M20RTSPCamera
 from .odometry import M20DeadReckonOdometry
 from .velocity_controller import M20SpeedLimits, M20VelocityController
 
+try:
+    from .lidar import M20LidarDDS
+
+    _LIDAR_AVAILABLE = True
+except (ImportError, RuntimeError):
+    _LIDAR_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,6 +99,7 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
         port: int = 30000,
         speed_limits: M20SpeedLimits | None = None,
         enable_camera: bool = True,
+        enable_lidar: bool = True,
         camera_stream: str = "video1",
         cfg: GlobalConfig = global_config,
         *args: Any,
@@ -113,6 +121,12 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
                 host=ip, stream_path=camera_stream
             )
             self._camera_info = self._camera.camera_info
+
+        self._lidar: "M20LidarDDS | None" = None
+        if enable_lidar and _LIDAR_AVAILABLE:
+            from .lidar import M20LidarDDS
+
+            self._lidar = M20LidarDDS()
 
         self._odometry: M20DeadReckonOdometry | None = None
 
@@ -152,6 +166,18 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
             )
             self._camera_info_thread.start()
 
+        # Start LiDAR via DDS
+        if self._lidar:
+            self._lidar.start()
+
+            def _on_lidar(pc: PointCloud2) -> None:
+                self.lidar.publish(pc)
+                self.pointcloud.publish(pc)
+
+            self._disposables.add(
+                self._lidar.pointcloud_stream().subscribe(_on_lidar)
+            )
+
         # Start dead-reckoning odometry (feeds from velocity controller)
         self._odometry = M20DeadReckonOdometry(
             publish_callback=self._publish_tf
@@ -177,6 +203,9 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
 
         if self._odometry:
             self._odometry.stop()
+
+        if self._lidar:
+            self._lidar.stop()
 
         if self._camera:
             self._camera.stop()
