@@ -32,7 +32,10 @@ curl -sfL https://direnv.net/install.sh | bash
 mkdir myproject
 cd myproject
 
-# pull our nix flake
+uv venv --python "3.12"
+source .venv/bin/activate
+
+# if on nixos you can pull our flake
 wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/flake.nix
 wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/flake.lock
 
@@ -70,7 +73,7 @@ direnv allow
 # create venv
 uv venv --python 3.12
 
-source .env/bin/activate
+source .venv/bin/activate
 
 uv sync --all-extras
 

@@ -55,7 +55,7 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
       <a href="docs/capabilities/agents/readme.md"><img src="assets/readme/agents.png" alt="Agents" width="100%"></a>
     </td>
     <td align="center" width="50%">
-      <a href="docs/api/data_streams/README.md"><img src="assets/readme/lidar.gif" alt="Sensor Integrations" width="100%"></a>
+      <a href="docs/usage/data_streams/README.md"><img src="assets/readme/lidar.gif" alt="Sensor Integrations" width="100%"></a>
     </td>
   </tr>
   <tr>
@@ -64,14 +64,14 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
       "hey Claude, go to the kitchen"<br><a href="https://x.com/lesh_bla/status/2014904935088062503">Watch video</a>
     </td>
     <td align="center" width="50%">
-      <h3><a href="docs/api/data_streams/README.md">Sensor Integrations</a></h3>
+      <h3><a href="docs/usage/data_streams/README.md">Sensor Integrations</a></h3>
       <a href="">Livox Mid360</a>, <a href="">Zed</a>
     </td>
   </tr>
 </table>
 
 
-# Platforms
+# Hardware
 
 <table>
   <tr>
@@ -109,8 +109,8 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
       🟥 <a href="docs/platforms/todo.md">Piper</a><br>
     </td>
     <td align="center" width="20%">
-      🟥 <a href="docs/platforms/todo.md">Mavlink</a><br>
-      🟥 <a href="docs/platforms/todo.md">DJI SDK</a><br>
+      🟥 <a href="dimos/robot/drone">Mavlink</a><br>
+      🟥 <a href="dimos/robot/drone">DJI SDK</a><br>
     </td>
     <td align="center" width="20%">
       🟥 <a href="https://github.com/dimensionalOS/openFT-sensor">Force Torque Sensor</a><br>
@@ -170,13 +170,13 @@ dimos --replay run unitree-go2
 
 ## API
 
-- [Modules](docs/api/modules.md)
-- [LCM](docs/api/lcm.md)
-- [Blueprints](docs/api/blueprints.md)
-- [Transports](docs/api/transports.md)
-- [Data Streams](docs/api/data_streams/README.md)
-- [Configuration](docs/api/configuration.md)
-- [Visualization](docs/api/visualization.md)
+- [Modules](docs/usage/modules.md)
+- [LCM](docs/usage/lcm.md)
+- [Blueprints](docs/usage/blueprints.md)
+- [Transports](docs/usage/transports/index.md)
+- [Data Streams](docs/usage/data_streams/README.md)
+- [Configuration](docs/usage/configuration.md)
+- [Visualization](docs/usage/visualization.md)
 
 ## Multi Language Support
 
@@ -189,4 +189,4 @@ Check our language interop examples:
 
 ## ROS interop
 
-For researchers, we can talk to ROS directly via [ROS Transports](docs/api/transports.md), or host dockerized ROS deployments as first-class DimOS modules, allowing you easy installation and portability
+For researchers, we can talk to ROS directly via [ROS Transports](docs/usage/transports/index.md), or host dockerized ROS deployments as first-class DimOS modules, allowing you easy installation and portability
