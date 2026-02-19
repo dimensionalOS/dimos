@@ -47,7 +47,7 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
     </td>
     <td align="center" width="50%">
       <h3><a href="docs/capabilities/perception/readme.md">Perception</a></h3>
-      Object detection, depth estimation, VLM reasoning, and audio — from camera to understanding
+      Detectors, 3d projections, VLMs, Audio processing
     </td>
   </tr>
   <tr>
