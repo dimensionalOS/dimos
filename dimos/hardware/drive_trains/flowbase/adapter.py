@@ -69,7 +69,7 @@ class FlowBaseAdapter:
     def connect(self) -> bool:
         """Connect to FlowBase controller via Portal RPC."""
         try:
-            import portal  # type: ignore[import-not-found]
+            import portal  # type: ignore[import-untyped]
 
             self._client = portal.Client(self._address)
             self._connected = True

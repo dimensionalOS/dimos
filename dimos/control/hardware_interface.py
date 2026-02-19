@@ -232,7 +232,7 @@ class ConnectedTwistBase(ConnectedHardware):
         self._current_mode: ControlMode | None = None
 
     @property
-    def adapter(self) -> TwistBaseAdapter:
+    def adapter(self) -> TwistBaseAdapter:  # type: ignore[override]
         """The underlying twist base adapter."""
         return self._twist_adapter
 
