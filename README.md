@@ -23,9 +23,7 @@
 [Multi Language](#multi-language-support) •
 [ROS](#ros-interop)
 
-> \[!NOTE]
->
-> ⚠️ **Alpha Pre-Release: Expect Breaking Changes** ⚠️
+⚠️ **Alpha Pre-Release: Expect Breaking Changes** ⚠️
 
 </big></big>
 
