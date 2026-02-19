@@ -67,6 +67,13 @@ except (ImportError, RuntimeError):
     _ROS_AVAILABLE = False
 
 try:
+    from .mac_bridge_client import M20MacBridgeClient
+
+    _BRIDGE_AVAILABLE = True
+except (ImportError, RuntimeError):
+    _BRIDGE_AVAILABLE = False
+
+try:
     from .lidar import M20LidarDDS
 
     _LIDAR_AVAILABLE = True
@@ -125,6 +132,8 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
         enable_lidar: bool = True,
         enable_ros: bool = True,
         camera_stream: str = "video1",
+        bridge_host: str | None = None,
+        bridge_port: int = 9731,
         cfg: GlobalConfig = global_config,
         *args: Any,
         **kwargs: Any,
@@ -135,9 +144,19 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
 
         self._protocol = M20Protocol(host=ip, port=port)
 
-        # Try to initialize ROS sensors for Navigation Mode
-        self._ros_sensors: "M20ROSSensors | None" = None
-        if enable_ros and _ROS_AVAILABLE:
+        # Sensor path priority:
+        # 1. bridge_host set → M20MacBridgeClient (Mac Bridge over TCP)
+        # 2. rclpy available → M20ROSSensors (direct ROS on GOS)
+        # 3. neither → UDP fallback (Regular Mode)
+        self._ros_sensors: "M20ROSSensors | M20MacBridgeClient | None" = None
+        self._using_bridge = False
+        if bridge_host is not None and _BRIDGE_AVAILABLE:
+            try:
+                self._ros_sensors = M20MacBridgeClient(bridge_host, bridge_port)
+                self._using_bridge = True
+            except Exception as e:
+                logger.warning(f"M20MacBridgeClient init failed — trying rclpy: {e}")
+        if self._ros_sensors is None and enable_ros and _ROS_AVAILABLE:
             try:
                 self._ros_sensors = M20ROSSensors()
             except RuntimeError as e:
@@ -175,7 +194,9 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
 
         self._odometry: M20DeadReckonOdometry | None = None
 
-        if self._ros_sensors is not None:
+        if self._using_bridge:
+            logger.info("M20Connection: Mac Bridge — Navigation Mode via TCP bridge")
+        elif self._ros_sensors is not None:
             logger.info("M20Connection: rclpy available — Navigation Mode enabled")
         else:
             logger.warning(
@@ -239,7 +260,12 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud):
                 self._protocol.send_usage_mode(UsageMode.REGULAR)
                 self._protocol.send_gait_switch(GaitType.STANDARD)
 
-            mode = "Navigation" if self._ros_sensors else "Regular"
+            if self._using_bridge:
+                mode = "Navigation (Mac Bridge)"
+            elif self._ros_sensors:
+                mode = "Navigation"
+            else:
+                mode = "Regular"
             logger.info(f"M20Connection started in {mode} Mode")
         except Exception:
             logger.exception("M20Connection.start() failed — cleaning up partial init")

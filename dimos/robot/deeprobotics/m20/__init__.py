@@ -24,8 +24,16 @@ try:
 except (ImportError, RuntimeError):
     _ROS_SENSORS_AVAILABLE = False
 
+try:
+    from .mac_bridge_client import M20MacBridgeClient
+
+    _MAC_BRIDGE_AVAILABLE = True
+except (ImportError, RuntimeError):
+    _MAC_BRIDGE_AVAILABLE = False
+
 __all__ = [
     "M20Connection",
+    "M20MacBridgeClient",
     "M20RTSPCamera",
     "M20ROSSensors",
     "M20SkillContainer",
