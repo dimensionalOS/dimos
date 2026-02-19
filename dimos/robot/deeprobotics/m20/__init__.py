@@ -12,12 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .camera import M20RTSPCamera
 from .connection import M20Connection, m20_connection
+from .skill_container import M20SkillContainer, m20_skills
 from .velocity_controller import M20SpeedLimits, M20VelocityController
 
 __all__ = [
     "M20Connection",
-    "m20_connection",
-    "M20SpeedLimits",
+    "M20RTSPCamera",
+    "M20SkillContainer",
     "M20VelocityController",
+    "M20SpeedLimits",
+    "m20_connection",
+    "m20_skills",
 ]
