@@ -125,18 +125,17 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
 
 # Installation
 
-### Step 1: System Install
+## Step 1: System Install
 
 To set up your system dependencies, follow one of these guides:
 
+- 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
 - 🟩 [NixOS / General Linux](docs/installation/nix.md)
 - 🟧 [macOS](docs/installation/osx.md)
-- 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
-- 🟨 [Docker](docs/installation/docker.md)
 
-### Step 2: Python Library & Editable Installs
+## Step 2: Python Installs
 
-**DimOS Quickstart**
+### Quickstart
 
 ```bash
 uv pip install dimos[base,unitree]
@@ -164,7 +163,7 @@ export ROBOT_IP=<YOUR_ROBOT_IP>
 dimos run unitree-go2
 ```
 
-**Develop on DimOS**
+### Develop on DimOS
 
 ```sh
 export GIT_LFS_SKIP_SMUDGE=1
@@ -177,7 +176,7 @@ source .venv/bin/activate
 uv sync --all-extras
 
 # Run full test suite
-pytest -s dimos/
+uv run pytest dimos
 ```
 
 ### Step 3 - Profit
