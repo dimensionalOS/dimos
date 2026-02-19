@@ -63,7 +63,7 @@ cd dimos
 # create venv
 uv venv --python 3.12
 
-source .env/bin/activate
+source .venv/bin/activate
 
 uv sync --all-extras
 
