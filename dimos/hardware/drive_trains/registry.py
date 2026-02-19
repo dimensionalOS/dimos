@@ -89,7 +89,7 @@ class TwistBaseAdapterRegistry:
                 if hasattr(module, "register"):
                     module.register(self)
             except ImportError as e:
-                logger.debug(f"Skipping twist base adapter {name}: {e}")
+                logger.warning(f"Skipping twist base adapter {name}: {e}")
 
 
 twist_base_adapter_registry = TwistBaseAdapterRegistry()

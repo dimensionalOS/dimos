@@ -63,15 +63,9 @@ def main() -> None:
     coord.start()
     teleop.start()
 
-    # Block until coordinator stops (or Ctrl+C)
-    try:
-        coord.loop()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        teleop.stop()
-        coord.stop()
-        print("Stopped.")
+    # Block until Ctrl+C — loop() handles KeyboardInterrupt and calls stop()
+    coord.loop()
+    teleop.stop()
 
 
 if __name__ == "__main__":

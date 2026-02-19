@@ -606,9 +606,6 @@ coordinator_teleop_dual = control_coordinator(
 # Mock holonomic twist base (3-DOF: vx, vy, wz)
 _base_joints = make_twist_base_joints("base")
 coordinator_mock_twist_base = control_coordinator(
-    tick_rate=100.0,
-    publish_joint_state=True,
-    joint_state_frame_id="coordinator",
     hardware=[
         HardwareComponent(
             hardware_id="base",
@@ -640,9 +637,6 @@ coordinator_mock_twist_base = control_coordinator(
 # Mock arm (7-DOF) + mock holonomic base (3-DOF)
 _mm_base_joints = make_twist_base_joints("base")
 coordinator_mobile_manip_mock = control_coordinator(
-    tick_rate=100.0,
-    publish_joint_state=True,
-    joint_state_frame_id="coordinator",
     hardware=[
         HardwareComponent(
             hardware_id="arm",
