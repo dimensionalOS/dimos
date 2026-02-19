@@ -9,7 +9,7 @@ Transports connect **module streams** across **process boundaries** and/or **net
 
 Each edge in the graph is a **transported stream** (potentially different protocols). Each node is a **module**:
 
-![go2_nav](assets/go2_nav.svg)
+![go2_nav](../assets/go2_nav.svg)
 
 ## What the transport layer guarantees (and what it doesn’t)
 
@@ -37,7 +37,7 @@ Quick view on performance of our pubsub backends:
 python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_benchmark.py
 ```
 
-![Benchmark results](assets/pubsub_benchmark.png)
+![Benchmark results](../assets/pubsub_benchmark.png)
 
 ---
 
@@ -45,7 +45,7 @@ python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_b
 
 <details><summary>Pikchr</summary>
 
-```pikchr output=assets/abstraction_layers.svg fold
+```pikchr output=../assets/abstraction_layers.svg fold
 color = white
 fill = none
 linewid = 0.5in
@@ -71,7 +71,7 @@ text "pub/sub API" at P.s + (0, -0.2in)
 </details>
 
 <!--Result:-->
-![output](assets/abstraction_layers.svg)
+![output](../assets/abstraction_layers.svg)
 
 We’ll go through these layers top-down.
 
@@ -168,7 +168,7 @@ See [Modules](modules.md) for more on module architecture.
 
 `lcmspy` shows topic frequency/bandwidth stats:
 
-![lcmspy](assets/lcmspy.png)
+![lcmspy](../assets/lcmspy.png)
 
 `dimos topic echo /topic` listens on typed channels like `/topic#pkg.Msg` and decodes automatically:
 
