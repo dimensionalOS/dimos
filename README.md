@@ -71,7 +71,7 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
 </table>
 
 
-# Platforms
+# Hardware
 
 <table>
   <tr>
