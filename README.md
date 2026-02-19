@@ -109,8 +109,8 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
       🟥 <a href="docs/platforms/todo.md">Piper</a><br>
     </td>
     <td align="center" width="20%">
-      🟥 <a href="docs/platforms/todo.md">Mavlink</a><br>
-      🟥 <a href="docs/platforms/todo.md">DJI SDK</a><br>
+      🟥 <a href="dimos/robot/drone">Mavlink</a><br>
+      🟥 <a href="dimos/robot/drone">DJI SDK</a><br>
     </td>
     <td align="center" width="20%">
       🟥 <a href="https://github.com/dimensionalOS/openFT-sensor">Force Torque Sensor</a><br>
