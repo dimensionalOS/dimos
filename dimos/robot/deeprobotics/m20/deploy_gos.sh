@@ -2,7 +2,10 @@
 #
 # Deploy dimos M20 integration to GOS (General Operating System)
 #
-# Usage: ./deploy_gos.sh [hostname] [user]
+# Usage:
+#   ./deploy_gos.sh [hostname] [user]              # Full dimos deploy
+#   ./deploy_gos.sh --mac-bridge [hostname] [user]  # Mac bridge only (fast)
+#
 #   hostname: Tailscale hostname or IP of the M20 GOS (default: m20-770-gogo)
 #   user:     SSH user on GOS (default: user)
 #
@@ -13,14 +16,36 @@
 #   - drdds-ros2-msgs package installed
 #
 # What this does:
-#   1. Syncs dimos source to /opt/dimos on GOS
-#   2. Creates venv with --system-site-packages (rclpy + drdds access)
-#   3. Installs dimos into venv
-#   4. Optionally installs a systemd service
+#   Full deploy:
+#     1. Syncs dimos source to /opt/dimos on GOS
+#     2. Creates venv with --system-site-packages (rclpy + drdds access)
+#     3. Installs dimos into venv
+#     4. Optionally installs a systemd service
+#   Mac bridge deploy (--mac-bridge):
+#     1. Copies mac_bridge.py to /opt/dimos/ on GOS
+#     2. Installs systemd service (dimos-mac-bridge)
+#     3. Starts the bridge service
+#     4. Cleans up legacy 3.8 compat artifacts
 #
 # Reference: M20-SETUP.md, relay deploy/deploy.sh
 
 set -e
+
+# Parse --mac-bridge flag
+MAC_BRIDGE=false
+POSITIONAL=()
+for arg in "$@"; do
+    case $arg in
+        --mac-bridge)
+            MAC_BRIDGE=true
+            shift
+            ;;
+        *)
+            POSITIONAL+=("$arg")
+            ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"
 
 # Configuration
 GOS_HOST="${1:-m20-770-gogo}"
@@ -32,10 +57,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # dimos root is 4 levels up from m20/ directory
 DIMOS_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
 
-echo "=== dimos M20 GOS Deployment ==="
+if [ "$MAC_BRIDGE" = true ]; then
+    echo "=== M20 Mac Bridge Deploy ==="
+else
+    echo "=== dimos M20 GOS Deployment ==="
+fi
 echo "Target: ${GOS_USER}@${GOS_HOST}"
 echo "Deploy dir: ${DEPLOY_DIR}"
-echo "Source: ${DIMOS_ROOT}"
 echo ""
 
 # Check SSH connection
@@ -65,6 +93,99 @@ if ! printf '%s\n' "${SUDO_PASS}" | ssh "${GOS_USER}@${GOS_HOST}" "sudo -S true"
     echo "ERROR: Invalid sudo password"
     exit 1
 fi
+
+# --- Mac Bridge deploy ---
+
+if [ "$MAC_BRIDGE" = true ]; then
+    # Check ROS 2 Foxy installation
+    echo "Checking ROS 2 Foxy..."
+    ssh "${GOS_USER}@${GOS_HOST}" << 'CHECK_ROS'
+set -e
+if [ ! -d /opt/ros/foxy ]; then
+    echo "ERROR: /opt/ros/foxy not found"
+    exit 1
+fi
+PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages LD_LIBRARY_PATH=/opt/ros/foxy/lib python3.8 -c "import rclpy; print('rclpy OK')"
+echo "ROS 2 Foxy: OK"
+CHECK_ROS
+
+    # Create deploy directory
+    remote_sudo mkdir -p ${DEPLOY_DIR}
+    remote_sudo chown -R ${GOS_USER}:${GOS_USER} ${DEPLOY_DIR}
+
+    # Stop existing service
+    echo "Stopping existing bridge service (if running)..."
+    remote_sudo systemctl stop dimos-mac-bridge 2>/dev/null || true
+
+    # Copy mac_bridge.py (atomic: scp to .tmp, then mv)
+    echo "Deploying mac_bridge.py..."
+    scp "${SCRIPT_DIR}/mac_bridge.py" "${GOS_USER}@${GOS_HOST}:${DEPLOY_DIR}/mac_bridge.py.tmp"
+    ssh "${GOS_USER}@${GOS_HOST}" "mv ${DEPLOY_DIR}/mac_bridge.py.tmp ${DEPLOY_DIR}/mac_bridge.py"
+
+    # Install systemd service
+    echo "Installing systemd service..."
+    cat << 'SERVICE_EOF' | ssh "${GOS_USER}@${GOS_HOST}" "cat > /tmp/dimos-mac-bridge.service"
+[Unit]
+Description=dimos Mac Bridge (ROS2 → TCP)
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/dimos/mac_bridge.py --port 9731
+Restart=on-failure
+RestartSec=3
+StartLimitIntervalSec=300
+StartLimitBurst=5
+Environment=LD_LIBRARY_PATH=/opt/ros/foxy/lib:/opt/drdds/lib
+Environment=PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages:/opt/drdds/lib/python3.8/site-packages
+Environment=ROS_DOMAIN_ID=0
+StandardOutput=journal
+StandardError=journal
+User=user
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+    remote_sudo mv /tmp/dimos-mac-bridge.service /etc/systemd/system/dimos-mac-bridge.service
+    remote_sudo systemctl daemon-reload
+    remote_sudo systemctl enable dimos-mac-bridge
+
+    # Start service
+    echo "Starting Mac bridge service..."
+    remote_sudo systemctl start dimos-mac-bridge
+
+    # Verify
+    sleep 3
+    echo ""
+    echo "Service status:"
+    ssh "${GOS_USER}@${GOS_HOST}" "systemctl is-active dimos-mac-bridge && echo 'Bridge is RUNNING' || echo 'Bridge FAILED to start'"
+    echo ""
+    echo "Recent logs:"
+    ssh "${GOS_USER}@${GOS_HOST}" "journalctl -u dimos-mac-bridge -n 10 --no-pager" 2>/dev/null || true
+
+    # Clean up legacy 3.8 compat artifacts
+    echo ""
+    echo "Cleaning up legacy artifacts..."
+    ssh "${GOS_USER}@${GOS_HOST}" "rm -rf ${DEPLOY_DIR}/stubs ${DEPLOY_DIR}/venv ${DEPLOY_DIR}/src" 2>/dev/null || true
+    echo "Legacy cleanup done"
+
+    echo ""
+    echo "=== Mac Bridge Deployment Complete ==="
+    echo ""
+    echo "Bridge is listening on port 9731"
+    echo "Connect from Mac with: bridge_host=\"${GOS_HOST}\""
+    echo ""
+    echo "Useful commands:"
+    echo "  Restart:  ssh ${GOS_USER}@${GOS_HOST} 'sudo systemctl restart dimos-mac-bridge'"
+    echo "  Logs:     ssh ${GOS_USER}@${GOS_HOST} 'journalctl -u dimos-mac-bridge -f'"
+    echo "  Status:   ssh ${GOS_USER}@${GOS_HOST} 'systemctl status dimos-mac-bridge'"
+    exit 0
+fi
+
+# --- Full dimos deploy (legacy) ---
+
+echo "Source: ${DIMOS_ROOT}"
+echo ""
 
 # Check ROS 2 Foxy installation
 echo "Checking ROS 2 Foxy..."

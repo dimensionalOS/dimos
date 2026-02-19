@@ -1064,3 +1064,485 @@ class TestBlueprintSmoke:
 
         # Module.blueprint is a classmethod that returns a functools.partial
         assert callable(m20_skills)
+
+
+# ---------------------------------------------------------------------------
+# Mac Bridge wire protocol tests (di-cetts.2.7)
+# ---------------------------------------------------------------------------
+
+
+class TestMacBridgeProtocol:
+    """Verify Mac bridge frame encode/decode, including edge cases."""
+
+    def test_json_frame_encode_decode(self):
+        """ODOM JSON round-trip through FrameProtocol."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import (
+            MSG_ODOM,
+            FrameProtocol,
+        )
+
+        payload = json.dumps({"x": 1.5, "y": -2.0, "z": 0.1}).encode("utf-8")
+        frame = FrameProtocol.encode(MSG_ODOM, payload)
+
+        # Decode via socketpair
+        a, b = socket.socketpair()
+        try:
+            a.sendall(frame)
+            msg_type, decoded = FrameProtocol.read_frame(b)
+            assert msg_type == MSG_ODOM
+            assert decoded == payload
+            data = json.loads(decoded)
+            assert data["x"] == 1.5
+        finally:
+            a.close()
+            b.close()
+
+    def test_lidar_binary_mixed_frame(self):
+        """LIDAR binary+JSON frame has correct byte count."""
+        import numpy as np
+
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import (
+            MSG_LIDAR,
+            FrameProtocol,
+        )
+
+        n_points = 100
+        header = json.dumps({"n_points": n_points, "ts": 1.0, "frame_id": "world"}).encode()
+        points = np.random.randn(n_points, 3).astype(np.float32).tobytes()
+        payload = struct.pack("!I", len(header)) + header + points
+        frame = FrameProtocol.encode(MSG_LIDAR, payload)
+
+        a, b = socket.socketpair()
+        try:
+            a.sendall(frame)
+            msg_type, decoded = FrameProtocol.read_frame(b)
+            assert msg_type == MSG_LIDAR
+            header_len = struct.unpack("!I", decoded[:4])[0]
+            point_data = decoded[4 + header_len:]
+            assert len(point_data) == n_points * 3 * 4
+        finally:
+            a.close()
+            b.close()
+
+    def test_heartbeat_empty_payload(self):
+        """Heartbeat frame has zero-length payload."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import (
+            MSG_HEARTBEAT,
+            FrameProtocol,
+        )
+
+        frame = FrameProtocol.encode(MSG_HEARTBEAT, b'')
+        a, b = socket.socketpair()
+        try:
+            a.sendall(frame)
+            msg_type, payload = FrameProtocol.read_frame(b)
+            assert msg_type == MSG_HEARTBEAT
+            assert payload == b''
+        finally:
+            a.close()
+            b.close()
+
+    def test_magic_bytes_present(self):
+        """Encoded frames must start with magic bytes 0xD105."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import (
+            MAGIC,
+            MSG_ODOM,
+            FrameProtocol,
+        )
+
+        frame = FrameProtocol.encode(MSG_ODOM, b'test')
+        assert frame[:2] == MAGIC
+
+    def test_oversized_payload_rejected(self):
+        """Payload exceeding MAX_FRAME_SIZE must raise ValueError."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import (
+            MAGIC,
+            MAX_FRAME_SIZE,
+            MSG_ODOM,
+            FrameProtocol,
+        )
+
+        # Craft a frame header claiming oversized length
+        fake_frame = MAGIC + struct.pack("!I", MAX_FRAME_SIZE + 1) + struct.pack("B", MSG_ODOM)
+        a, b = socket.socketpair()
+        try:
+            a.sendall(fake_frame)
+            with pytest.raises(ValueError, match="too large"):
+                FrameProtocol.read_frame(b)
+        finally:
+            a.close()
+            b.close()
+
+    def test_truncated_frame_raises_connection_error(self):
+        """Partial frame followed by close raises ConnectionError."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import (
+            MAGIC,
+            MSG_ODOM,
+            FrameProtocol,
+        )
+
+        # Send header claiming 100 bytes but then close
+        header = MAGIC + struct.pack("!I", 100) + struct.pack("B", MSG_ODOM)
+        a, b = socket.socketpair()
+        try:
+            a.sendall(header + b'short')
+            a.close()
+            with pytest.raises(ConnectionError):
+                FrameProtocol.read_frame(b)
+        finally:
+            try:
+                a.close()
+            except Exception:
+                pass
+            b.close()
+
+    def test_back_to_back_frames(self):
+        """Two concatenated frames both parse correctly."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import (
+            MSG_IMU,
+            MSG_ODOM,
+            FrameProtocol,
+        )
+
+        frame1 = FrameProtocol.encode(MSG_ODOM, b'frame1')
+        frame2 = FrameProtocol.encode(MSG_IMU, b'frame2')
+        a, b = socket.socketpair()
+        try:
+            a.sendall(frame1 + frame2)
+            t1, p1 = FrameProtocol.read_frame(b)
+            t2, p2 = FrameProtocol.read_frame(b)
+            assert t1 == MSG_ODOM and p1 == b'frame1'
+            assert t2 == MSG_IMU and p2 == b'frame2'
+        finally:
+            a.close()
+            b.close()
+
+    def test_frame_protocol_parity(self):
+        """Encode and decode round-trip preserves data."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import (
+            MSG_NAV_CMD,
+            FrameProtocol,
+        )
+
+        payload = json.dumps({"x_vel": 0.5, "y_vel": -0.1, "yaw_vel": 0.3}).encode()
+        frame = FrameProtocol.encode(MSG_NAV_CMD, payload)
+
+        a, b = socket.socketpair()
+        try:
+            a.sendall(frame)
+            msg_type, decoded = FrameProtocol.read_frame(b)
+            assert msg_type == MSG_NAV_CMD
+            assert json.loads(decoded) == {"x_vel": 0.5, "y_vel": -0.1, "yaw_vel": 0.3}
+        finally:
+            a.close()
+            b.close()
+
+
+# ---------------------------------------------------------------------------
+# Mac Bridge client dispatch tests (di-cetts.2.7)
+# ---------------------------------------------------------------------------
+
+
+class TestMacBridgeClientDispatch:
+    """Verify message reconstruction from wire frames to dimos types."""
+
+    def test_odom_frame_produces_pose_stamped(self):
+        """JSON ODOM frame → PoseStamped with correct fields."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import _decode_odom
+
+        payload = json.dumps({
+            "x": 1.5, "y": -2.0, "z": 0.1,
+            "qx": 0.0, "qy": 0.0, "qz": 0.383, "qw": 0.924,
+            "ts": 1000.5, "frame_id": "odom",
+        }).encode()
+
+        result = _decode_odom(payload)
+        assert isinstance(result, PoseStamped)
+        assert abs(result.position.x - 1.5) < 1e-6
+        assert abs(result.position.y - (-2.0)) < 1e-6
+        assert abs(result.orientation.z - 0.383) < 1e-3
+        assert result.frame_id == "odom"
+        assert abs(result.ts - 1000.5) < 1e-6
+
+    def test_lidar_frame_produces_point_cloud(self):
+        """Binary LIDAR frame → DimosPointCloud2."""
+        import numpy as np
+
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import _decode_lidar
+
+        points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+        header = json.dumps({"n_points": 2, "ts": 42.0, "frame_id": "lidar"}).encode()
+        payload = struct.pack("!I", len(header)) + header + points.tobytes()
+
+        result = _decode_lidar(payload)
+        assert result.frame_id == "lidar"
+        assert abs(result.ts - 42.0) < 1e-6
+        pts, _ = result.as_numpy()
+        assert pts.shape == (2, 3)
+        assert abs(pts[0, 0] - 1.0) < 1e-5
+        assert abs(pts[1, 2] - 6.0) < 1e-5
+
+    def test_motion_info_frame_produces_named_tuple(self):
+        """JSON MOTION_INFO → MotionInfoData with correct field names."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import _decode_motion_info
+        from dimos.robot.deeprobotics.m20.ros_sensors import MotionInfoData
+
+        payload = json.dumps({
+            "vel_x": 0.5, "vel_y": -0.1, "vel_yaw": 0.3,
+            "height": 0.42, "state": 1, "gait": 0x3002,
+            "remain_mile": 12.5,
+        }).encode()
+
+        result = _decode_motion_info(payload)
+        assert isinstance(result, MotionInfoData)
+        assert result._fields == ("vel_x", "vel_y", "vel_yaw", "height", "state", "gait", "remain_mile")
+        assert abs(result.vel_x - 0.5) < 1e-6
+        assert result.state == 1
+        assert result.gait == 0x3002
+
+    def test_nav_cmd_sends_correct_frame(self):
+        """publish_nav_cmd encodes correct wire bytes."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import (
+            MSG_NAV_CMD,
+            FrameProtocol,
+            M20MacBridgeClient,
+        )
+
+        client = M20MacBridgeClient("127.0.0.1")
+        # Manually set up connected state with a socketpair
+        a, b = socket.socketpair()
+        try:
+            client._sock = b
+            client._connected.set()
+
+            client.publish_nav_cmd(0.5, -0.1, 0.3)
+
+            a.settimeout(1.0)
+            msg_type, payload = FrameProtocol.read_frame(a)
+            assert msg_type == MSG_NAV_CMD
+            data = json.loads(payload)
+            assert abs(data["x_vel"] - 0.5) < 1e-6
+            assert abs(data["y_vel"] - (-0.1)) < 1e-6
+            assert abs(data["yaw_vel"] - 0.3) < 1e-6
+        finally:
+            client._connected.clear()
+            client._sock = None
+            a.close()
+            b.close()
+
+    def test_nav_cmd_available_always_true(self):
+        """M20MacBridgeClient.nav_cmd_available is always True."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import M20MacBridgeClient
+
+        client = M20MacBridgeClient("127.0.0.1")
+        assert client.nav_cmd_available is True
+
+
+# ---------------------------------------------------------------------------
+# Mac Bridge client lifecycle tests (di-cetts.2.7)
+# ---------------------------------------------------------------------------
+
+
+class TestMacBridgeClientLifecycle:
+    """Verify connection management and thread lifecycle."""
+
+    def test_stop_during_reconnect_backoff(self):
+        """Calling stop() while in backoff sleep should exit promptly."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import M20MacBridgeClient
+
+        # Connect to a port nothing is listening on → triggers backoff
+        client = M20MacBridgeClient("127.0.0.1", bridge_port=19999, reconnect_delay=10.0)
+        client.start()
+        time.sleep(0.5)  # Let it attempt first connect
+
+        t0 = time.monotonic()
+        client.stop()
+        elapsed = time.monotonic() - t0
+        # Should exit well within the 10s backoff
+        assert elapsed < 3.0
+
+    def test_double_start_idempotent(self):
+        """Calling start() twice should not create duplicate threads."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import M20MacBridgeClient
+
+        client = M20MacBridgeClient("127.0.0.1", bridge_port=19998)
+        client.start()
+        first_recv = client._recv_thread
+        first_hb = client._heartbeat_thread
+        client.start()  # second call should be no-op
+        assert client._recv_thread is first_recv
+        assert client._heartbeat_thread is first_hb
+        client.stop()
+
+    def test_reconnect_on_disconnect(self):
+        """Client auto-reconnects after server disconnects."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import M20MacBridgeClient
+
+        connect_count = [0]
+
+        # Mini server that accepts, then closes, then accepts again
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        server.settimeout(5.0)
+
+        def accept_loop():
+            while connect_count[0] < 2:
+                try:
+                    conn, _ = server.accept()
+                    connect_count[0] += 1
+                    time.sleep(0.2)
+                    conn.close()  # Force disconnect
+                except socket.timeout:
+                    break
+
+        accept_thread = threading.Thread(target=accept_loop, daemon=True)
+        accept_thread.start()
+
+        client = M20MacBridgeClient("127.0.0.1", bridge_port=port, reconnect_delay=0.5)
+        client.start()
+
+        # Wait for at least 2 connections (initial + reconnect)
+        deadline = time.monotonic() + 5.0
+        while connect_count[0] < 2 and time.monotonic() < deadline:
+            time.sleep(0.1)
+
+        client.stop()
+        server.close()
+        accept_thread.join(timeout=2)
+
+        assert connect_count[0] >= 2
+
+
+# ---------------------------------------------------------------------------
+# Mac Bridge end-to-end tests (di-cetts.2.7)
+# ---------------------------------------------------------------------------
+
+
+class TestMacBridgeE2E:
+    """Integration tests using a mock TCP server and real M20MacBridgeClient."""
+
+    def _start_mock_server(self, port=0):
+        """Start a mock bridge server. Returns (server_sock, port)."""
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", port))
+        server.listen(1)
+        server.settimeout(5.0)
+        return server, server.getsockname()[1]
+
+    def test_odom_e2e(self):
+        """Server sends ODOM frame, client's odom_stream emits PoseStamped."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import (
+            MSG_ODOM,
+            FrameProtocol,
+            M20MacBridgeClient,
+        )
+
+        server, port = self._start_mock_server()
+        received = []
+
+        client = M20MacBridgeClient("127.0.0.1", bridge_port=port, reconnect_delay=0.5)
+        client.odom_stream().subscribe(lambda p: received.append(p))
+        client.start()
+
+        try:
+            conn, _ = server.accept()
+            payload = json.dumps({
+                "x": 1.0, "y": 2.0, "z": 0.0,
+                "qx": 0.0, "qy": 0.0, "qz": 0.0, "qw": 1.0,
+                "ts": 100.0, "frame_id": "odom",
+            }).encode()
+            conn.sendall(FrameProtocol.encode(MSG_ODOM, payload))
+
+            deadline = time.monotonic() + 3.0
+            while not received and time.monotonic() < deadline:
+                time.sleep(0.05)
+
+            assert len(received) >= 1
+            assert isinstance(received[0], PoseStamped)
+            assert abs(received[0].position.x - 1.0) < 1e-6
+            conn.close()
+        finally:
+            client.stop()
+            server.close()
+
+    def test_lidar_e2e(self):
+        """Server sends LIDAR frame, client's lidar_stream emits DimosPointCloud2."""
+        import numpy as np
+
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import (
+            MSG_LIDAR,
+            FrameProtocol,
+            M20MacBridgeClient,
+        )
+
+        server, port = self._start_mock_server()
+        received = []
+
+        client = M20MacBridgeClient("127.0.0.1", bridge_port=port, reconnect_delay=0.5)
+        client.lidar_stream().subscribe(lambda pc: received.append(pc))
+        client.start()
+
+        try:
+            conn, _ = server.accept()
+            points = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
+            header = json.dumps({"n_points": 2, "ts": 50.0, "frame_id": "lidar"}).encode()
+            payload = struct.pack("!I", len(header)) + header + points.tobytes()
+            conn.sendall(FrameProtocol.encode(MSG_LIDAR, payload))
+
+            deadline = time.monotonic() + 3.0
+            while not received and time.monotonic() < deadline:
+                time.sleep(0.05)
+
+            assert len(received) >= 1
+            pts, _ = received[0].as_numpy()
+            assert pts.shape == (2, 3)
+            conn.close()
+        finally:
+            client.stop()
+            server.close()
+
+    def test_nav_cmd_e2e(self):
+        """Client sends NAV_CMD, mock server receives correct bytes."""
+        from dimos.robot.deeprobotics.m20.mac_bridge_client import (
+            MSG_NAV_CMD,
+            FrameProtocol,
+            M20MacBridgeClient,
+        )
+
+        server, port = self._start_mock_server()
+        client = M20MacBridgeClient("127.0.0.1", bridge_port=port, reconnect_delay=0.5)
+        client.start()
+
+        try:
+            conn, _ = server.accept()
+            conn.settimeout(3.0)
+
+            # Wait for client to connect
+            deadline = time.monotonic() + 2.0
+            while not client._connected.is_set() and time.monotonic() < deadline:
+                time.sleep(0.05)
+
+            client.publish_nav_cmd(0.5, -0.1, 0.3)
+
+            # Read the frame from server side
+            msg_type, payload = FrameProtocol.read_frame(conn)
+
+            # May receive heartbeat first — skip them
+            retries = 5
+            while msg_type != MSG_NAV_CMD and retries > 0:
+                msg_type, payload = FrameProtocol.read_frame(conn)
+                retries -= 1
+
+            assert msg_type == MSG_NAV_CMD
+            data = json.loads(payload)
+            assert abs(data["x_vel"] - 0.5) < 1e-6
+            assert abs(data["y_vel"] - (-0.1)) < 1e-6
+            assert abs(data["yaw_vel"] - 0.3) < 1e-6
+            conn.close()
+        finally:
+            client.stop()
+            server.close()
