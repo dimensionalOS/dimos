@@ -112,7 +112,8 @@ class FlowBaseAdapter:
 
     def read_velocities(self) -> list[float]:
         """Return last commanded velocities (FlowBase doesn't report actual)."""
-        return self._last_velocities.copy()
+        with self._lock:
+            return self._last_velocities.copy()
 
     def read_odometry(self) -> list[float] | None:
         """Read odometry from FlowBase as [x, y, theta]."""
@@ -150,14 +151,16 @@ class FlowBaseAdapter:
             return False
 
         vx, vy, wz = velocities
-        self._last_velocities = list(velocities)
+        with self._lock:
+            self._last_velocities = list(velocities)
 
         # Negate vy and wz for FlowBase's inverted Y-axis frame
         return self._send_velocity(vx, -vy, -wz)
 
     def write_stop(self) -> bool:
         """Stop all motion."""
-        self._last_velocities = [0.0, 0.0, 0.0]
+        with self._lock:
+            self._last_velocities = [0.0, 0.0, 0.0]
         if not self._connected or not self._client:
             return False
         return self._send_velocity(0.0, 0.0, 0.0)
