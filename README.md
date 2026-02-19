@@ -43,7 +43,7 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
   <tr>
     <td align="center" width="50%">
       <h3><a href="docs/capabilities/navigation/readme.md">Navigation and Mapping</a></h3>
-      ROS and Native<br><a href="#">Watch video</a>
+      ROS and Native<br><a href="https://x.com/stash_pomichter/status/2010471593806545367">Watch video</a>
     </td>
     <td align="center" width="50%">
       <h3><a href="docs/capabilities/perception/readme.md">Perception</a></h3>
@@ -61,7 +61,7 @@ Our goal is to provide an easy-to-install, modern framework for general robotics
   <tr>
     <td align="center" width="50%">
       <h3><a href="docs/capabilities/agents/readme.md">Agentic Control, MCP</a></h3>
-      "hey Claude, go to the kitchen"<br><a href="https://x.com/lesh_bla/status/2014904935088062503">Watch video</a>
+      "hey Robot, go find the kitchen"<br><a href="https://x.com/stash_pomichter/status/2015912688854200322">Watch video</a>
     </td>
     <td align="center" width="50%">
       <h3><a href="docs/usage/data_streams/README.md">Sensor Integrations</a></h3>
