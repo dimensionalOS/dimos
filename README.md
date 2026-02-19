@@ -4,7 +4,7 @@
 ![Dimensional](assets/dimensional-dark.svg#gh-dark-mode-only)
 ![Dimensional](assets/dimensional-light.svg#gh-light-mode-only)
 
-<h2>Operating System for Generalist Robotics</h2>
+<h2>The Agentive Operating System for Generalist Robotics</h2>
 
 [![Discord](https://img.shields.io/discord/1341146487186391173?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/dimos)
 [![Stars](https://img.shields.io/github/stars/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/stargazers)
@@ -23,13 +23,19 @@
 [Multi Language](#multi-language-support) •
 [ROS](#ros-interop)
 
+> \[!NOTE]
+>
+> ⚠️ **Alpha Pre-Release: Expect Breaking Changes** ⚠️
+
 </big></big>
 
 </div>
 
 # Intro
 
-Our goal is to provide an easy-to-install, modern framework for general robotics. You should be up and running in minutes.
+Dimensional is the modern framework and agentive operating system for generalist robotics.
+
+With a simple install and no ROS required, design, build, and run physical applications on any humanoid, quadruped, drone, or wheeled embodiment entirely in python.
 
 <table>
   <tr>
