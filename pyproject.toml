@@ -305,10 +305,6 @@ base = [
     "dimos[agents,web,perception,visualization,sim]",
 ]
 
-
-[tool.uv]
-constraint-dependencies = ["setuptools<82"]
-
 [tool.ruff]
 line-length = 100
 exclude = [

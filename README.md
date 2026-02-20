@@ -139,7 +139,7 @@ To set up your system dependencies, follow one of these guides:
 - 🟩 [NixOS / General Linux](docs/installation/nix.md)
 - 🟧 [macOS](docs/installation/osx.md)
 
-## Python Installs
+## Python Install
 
 ### Quickstart
 
@@ -170,7 +170,9 @@ export ROBOT_IP=<YOUR_ROBOT_IP>
 dimos run unitree-go2
 ```
 
-### Use DimOS as a Library
+# Usage
+
+## Use DimOS as a Library
 
 See below a simple robot connection module that sends streams of continuous `cmd_vel` to the robot and receives `color_image` to a simple `Listener` module. DimOS Modules are subsystems on a robot that communicate with other modules using standardized messages.
 
@@ -212,7 +214,7 @@ if __name__ == "__main__":
     ).build().loop()
 ```
 
-### Blueprints
+## Blueprints
 
 Blueprints are instructions for how to construct and wire modules. We compose them with
 `autoconnect(...)`, which connects streams by `(name, type)` and returns a `Blueprint`.
@@ -246,7 +248,13 @@ if __name__ == "__main__":
 - [Configuration](docs/usage/configuration.md)
 - [Visualization](docs/usage/visualization.md)
 
-### Develop on DimOS
+## Demos
+
+<img src="assets/readme/dimos_demo.gif" alt="DimOS Demo" width="100%">
+
+# Development
+
+## Develop on DimOS
 
 ```sh
 export GIT_LFS_SKIP_SMUDGE=1
@@ -258,12 +266,6 @@ uv sync --all-extras --no-extra dds
 # Run fast test suite
 uv run pytest dimos
 ```
-
-### Demos
-
-<img src="assets/readme/dimos_demo.gif" alt="DimOS Demo" width="100%">
-
-# Development
 
 ## Multi Language Support
 

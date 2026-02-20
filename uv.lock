@@ -24,9 +24,6 @@ resolution-markers = [
     "(python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.11' and sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')",
 ]
 
-[manifest]
-constraints = [{ name = "setuptools", specifier = "<82" }]
-
 [[package]]
 name = "absl-py"
 version = "2.4.0"
