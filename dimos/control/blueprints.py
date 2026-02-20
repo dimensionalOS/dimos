@@ -41,6 +41,7 @@ from dimos.utils.data import LfsPath
 _PIPER_MODEL_PATH = LfsPath("piper_description/mujoco_model/piper_no_gripper_description.xml")
 _XARM6_MODEL_PATH = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
 
+
 # =============================================================================
 # Single Arm Blueprints
 # =============================================================================
