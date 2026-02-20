@@ -43,7 +43,7 @@ else:
                 "ZED SDK not installed. Please install pyzed package to use ZED camera functionality."
             )
 
-    def zed_camera(*args, **kwargs):  # type: ignore[no-redef]
+    def zed_camera(*args: object, **kwargs: object) -> None:  # type: ignore[no-redef]
         raise ModuleNotFoundError(
             "ZED SDK not installed. Please install pyzed package to use ZED camera functionality.",
             name="pyzed",
