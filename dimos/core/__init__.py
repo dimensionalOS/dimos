@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-import signal
 import time
 from typing import TYPE_CHECKING, cast
 
@@ -266,31 +265,6 @@ def start(n: int | None = None, memory_limit: str = "auto") -> DimosCluster:
     )
 
     patched_client = patchdask(client, cluster)
-    patched_client._shutting_down = False  # type: ignore[attr-defined]
-
-    # Signal handler with proper exit handling
-    def signal_handler(sig, frame) -> None:  # type: ignore[no-untyped-def]
-        # If already shutting down, force exit
-        if patched_client._shutting_down:  # type: ignore[attr-defined]
-            import os
-
-            console.print("[red]Force exit!")
-            os._exit(1)
-
-        patched_client._shutting_down = True  # type: ignore[attr-defined]
-        console.print(f"[yellow]Shutting down (signal {sig})...")
-
-        try:
-            patched_client.close_all()  # type: ignore[attr-defined]
-        except Exception:
-            pass
-
-        import sys
-
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
 
     return patched_client
 
