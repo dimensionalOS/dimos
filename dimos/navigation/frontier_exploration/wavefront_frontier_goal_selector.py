@@ -211,7 +211,9 @@ class WavefrontFrontierExplorer(Module):
         Returns:
             Number of cells that are free space or obstacles (not unknown)
         """
-        free_count = np.sum(costmap.grid == CostValues.FREE)
+        free_count = np.sum(
+            (costmap.grid >= 0) & (costmap.grid < self.occupancy_threshold)
+        )
         obstacle_count = np.sum(costmap.grid >= self.occupancy_threshold)
         return int(free_count + obstacle_count)
 
@@ -250,11 +252,11 @@ class WavefrontFrontierExplorer(Module):
             neighbor_cost = costmap.grid[neighbor.y, neighbor.x]
 
             # If adjacent to occupied space, not a frontier
-            if neighbor_cost > self.occupancy_threshold:
+            if neighbor_cost >= self.occupancy_threshold:
                 return False
 
-            # Check if adjacent to free space
-            if neighbor_cost == CostValues.FREE:
+            # Check if adjacent to known traversable space
+            if 0 <= neighbor_cost < self.occupancy_threshold:
                 has_free = True
 
         return has_free
@@ -275,8 +277,9 @@ class WavefrontFrontierExplorer(Module):
                 continue
             visited.add((point.x, point.y))
 
-            # Check if this point is free space
-            if costmap.grid[point.y, point.x] == CostValues.FREE:
+            # Check if this point is traversable (non-obstacle, non-unknown)
+            cost = costmap.grid[point.y, point.x]
+            if 0 <= cost < self.occupancy_threshold:
                 return (point.x, point.y)
 
             # Add neighbors to search
@@ -388,17 +391,27 @@ class WavefrontFrontierExplorer(Module):
                     frontiers.append(centroid)  # Store centroid
                     frontier_sizes.append(len(new_frontier))  # Store frontier size
 
-            # Add ALL neighbors to main exploration queue to explore entire free space
+            # Add neighbors to main exploration queue
+            current_cost = costmap.grid[current_point.y, current_point.x]
             for neighbor in self._get_neighbors(current_point, costmap):
                 if not (
                     neighbor.classification
                     & (PointClassification.MapOpen | PointClassification.MapClosed)
                 ):
-                    # Check if neighbor is free space or unknown (explorable)
                     neighbor_cost = costmap.grid[neighbor.y, neighbor.x]
 
-                    # Add free space and unknown space to exploration queue
-                    if neighbor_cost == CostValues.FREE or neighbor_cost == CostValues.UNKNOWN:
+                    # Always traverse known non-obstacle cells (cost 0-98)
+                    if 0 <= neighbor_cost < self.occupancy_threshold:
+                        neighbor.classification |= PointClassification.MapOpen
+                        map_queue.append(neighbor)
+                    # Queue unknown cells only when adjacent to traversable
+                    # space (one layer deep for frontier detection). Unknown
+                    # cells won't propagate into more unknown cells because
+                    # this branch requires current_cost to be traversable.
+                    elif (
+                        neighbor_cost == CostValues.UNKNOWN
+                        and 0 <= current_cost < self.occupancy_threshold
+                    ):
                         neighbor.classification |= PointClassification.MapOpen
                         map_queue.append(neighbor)
 
