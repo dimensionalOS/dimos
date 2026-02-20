@@ -44,10 +44,7 @@ cd dimos
 # enter the nix development shell (provides system deps)
 nix develop
 
-uv venv --python 3.12
-source .venv/bin/activate
-
-uv sync --all-extras
+uv sync --all-extras --no-extra dds
 
 # type check
 uv run mypy dimos
