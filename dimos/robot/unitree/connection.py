@@ -278,7 +278,9 @@ class UnitreeWebRTCConnection(Resource):
         return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]}))
 
     def liedown(self) -> bool:
-        return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]}))
+        return bool(
+            self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
+        )
 
     async def handstand(self):  # type: ignore[no-untyped-def]
         return self.publish_request(

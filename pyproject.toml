@@ -360,6 +360,7 @@ module = [
     "mujoco_playground.*",
     "nav_msgs.*",
     "open_clip",
+    "pinocchio",
     "piper_sdk.*",
     "plotext",
     "plum.*",
@@ -375,7 +376,6 @@ module = [
     "torchreid",
     "ultralytics.*",
     "unitree_webrtc_connect.*",
-    "watchdog.*",
     "xarm.*",
 ]
 ignore_missing_imports = true
