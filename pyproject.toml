@@ -363,6 +363,8 @@ module = [
     "pinocchio",
     "piper_sdk.*",
     "plotext",
+    "pydrake",
+    "pydrake.*",
     "plum.*",
     "pycuda",
     "pycuda.*",
@@ -382,6 +384,10 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["dimos.rxpy_backpressure", "dimos.rxpy_backpressure.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["pydrake", "pydrake.*"]
 follow_imports = "skip"
 
 [tool.pytest.ini_options]

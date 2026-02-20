@@ -175,8 +175,9 @@ def test_lcmspy_global_totals() -> None:
     spy.msg("/odom", b"odometry data")
     spy.msg("/imu", b"imu data")
 
-    # The spy itself should have accumulated all messages
-    assert len(spy.message_history) == 3
+    # Verify each test topic received exactly one message (ignore LCM discovery packets)
+    for t in ("/video", "/odom", "/imu"):
+        assert len(spy.topic[t].message_history) == 1
 
     # Check global statistics
     global_freq = spy.freq(1.0)

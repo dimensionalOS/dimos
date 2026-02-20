@@ -46,10 +46,7 @@ class TestControlCoordinatorE2E:
         start_blueprint("coordinator-mock")
 
         # Wait for joint state to be published (proves tick loop is running)
-        lcm_spy.wait_for_saved_topic(
-            joint_state_topic,
-            timeout=10.0,
-        )
+        lcm_spy.wait_for_saved_topic(joint_state_topic)
 
         # Create RPC client and query
         client = RPCClient(None, ControlCoordinator)
@@ -81,9 +78,7 @@ class TestControlCoordinatorE2E:
         start_blueprint("coordinator-mock")
 
         # Wait for it to be ready
-        lcm_spy.wait_for_saved_topic(
-            "/coordinator/joint_state#sensor_msgs.JointState", timeout=10.0
-        )
+        lcm_spy.wait_for_saved_topic("/coordinator/joint_state#sensor_msgs.JointState")
 
         # Create RPC client
         client = RPCClient(None, ControlCoordinator)
@@ -138,7 +133,7 @@ class TestControlCoordinatorE2E:
         start_blueprint("coordinator-mock")
 
         # Wait for initial message
-        lcm_spy.wait_for_saved_topic(joint_state_topic, timeout=10.0)
+        lcm_spy.wait_for_saved_topic(joint_state_topic)
 
         # Collect messages for 1 second
         time.sleep(1.0)
@@ -165,9 +160,7 @@ class TestControlCoordinatorE2E:
 
         # Start coordinator
         start_blueprint("coordinator-mock")
-        lcm_spy.wait_for_saved_topic(
-            "/coordinator/joint_state#sensor_msgs.JointState", timeout=10.0
-        )
+        lcm_spy.wait_for_saved_topic("/coordinator/joint_state#sensor_msgs.JointState")
 
         client = RPCClient(None, ControlCoordinator)
         try:
@@ -210,9 +203,7 @@ class TestControlCoordinatorE2E:
 
         # Start dual-arm mock coordinator
         start_blueprint("coordinator-dual-mock")
-        lcm_spy.wait_for_saved_topic(
-            "/coordinator/joint_state#sensor_msgs.JointState", timeout=10.0
-        )
+        lcm_spy.wait_for_saved_topic("/coordinator/joint_state#sensor_msgs.JointState")
 
         client = RPCClient(None, ControlCoordinator)
         try:
