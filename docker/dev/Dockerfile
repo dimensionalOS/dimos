@@ -29,8 +29,8 @@ ENV UV_SYSTEM_PYTHON=1
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-# Install dependencies with UV
-RUN uv pip install .[dev]
+# --frozen installs from lock file, which is important for mypy to not diverge
+RUN uv sync --frozen --extra dev
 
 # Copy files and add version to motd
 COPY /assets/dimensionalascii.txt /etc/motd

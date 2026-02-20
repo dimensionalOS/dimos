@@ -1,0 +1,67 @@
+#!/usr/bin/env python3
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import subprocess
+
+repo_root = Path(__file__).resolve().parent.parent
+os.chdir(repo_root)
+
+
+def main() -> int:
+    # 1. name check (Note: doesn't throw even on fail)
+    subprocess.run(["bin/pr-name-check"], check=False, text=True)
+
+    # 2. check if only markdown changes
+    changed_files = get_changed_files()
+    for each in changed_files:
+        print(f"Changed file: {each}")
+    if all(changed_file.endswith(".md") for changed_file in changed_files):
+        print("All detected changes are Markdown files; just running doc tests.")
+        subprocess.run(
+            ["python", "-m", "dimos.utils.docs.doclinks", "docs/"], check=True, text=True
+        )
+        return 0
+
+    # 3. run ci checks (uv install, mypy, ruff, pytest)
+    return subprocess.run(["bin/ci-fast"], text=True).returncode
+
+
+def get_changed_files() -> set[str]:
+    def has_ref(ref: str) -> bool:
+        result = subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", ref],
+            text=True,
+            capture_output=True,
+        )
+        return result.returncode == 0
+
+    if has_ref("refs/heads/dev"):
+        base_ref = "dev"
+    elif has_ref("refs/remotes/origin/dev"):
+        base_ref = "origin/dev"
+    else:
+        print("Could not find 'dev' or 'origin/dev' to compare changes against.")
+        raise SystemExit(1)
+
+    def run_lines(cmd: list[str]) -> list[str]:
+        return [
+            line
+            for line in subprocess.run(
+                cmd, check=True, text=True, capture_output=True
+            ).stdout.splitlines()
+            if line.strip()
+        ]
+
+    changed_files: set[str] = set()
+    changed_files.update(run_lines(["git", "diff", "--name-only", f"{base_ref}...HEAD"]))
+    changed_files.update(run_lines(["git", "diff", "--name-only"]))
+    changed_files.update(run_lines(["git", "diff", "--name-only", "--cached"]))
+    changed_files.update(run_lines(["git", "ls-files", "--others", "--exclude-standard"]))
+    return changed_files
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

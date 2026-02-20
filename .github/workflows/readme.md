@@ -1,7 +1,7 @@
 # general structure of workflows
 
-Docker.yml checks for releavant file changes and re-builds required images
-Currently images have a dependancy chain of ros -> python -> dev (in the future this might be a tree and can fork)
+Docker.yml checks for relevant file changes and re-builds required images
+Currently images have a dependency chain of ros -> python -> dev (in the future this might be a tree and can fork)
 
 On top of the dev image then tests are run.
 Dev image is also what developers use in their own IDE via devcontainers
@@ -24,19 +24,19 @@ more info @ https://docs.github.com/en/packages/working-with-a-github-packages-r
 
 login to docker via
 
-`sh
+```sh
 echo TOKEN | docker login ghcr.io -u GITHUB_USER --password-stdin
-`
+```
 
 pull dev image (dev branch)
-`sh
+```sh
 docker pull ghcr.io/dimensionalos/dev:dev
-`
+```
 
 pull dev image (master)
-`sh
+```sh
 docker pull ghcr.io/dimensionalos/dev:latest
-`
+```
 
 # todo
 

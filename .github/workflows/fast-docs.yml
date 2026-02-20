@@ -1,0 +1,34 @@
+name: docs
+
+on:
+  pull_request:
+      - main
+      - dev
+  paths:
+      - 'docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check_links:
+    runs-on: [self-hosted, Linux]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run doclinks # Note: doesn't need uv python, just needs some python to run the script
+        run: |
+            python -m dimos.utils.docs.doclinks docs/
+
+      - uses: leshy/md-babel-py@main
+        with:
+          files: 'docs/**/*.md'
+          fail-on-change: true
+          # maybe later we can enforce python, for now just do diagram langs
+          args: --lang asymptote,pikchr,openscad,diagon

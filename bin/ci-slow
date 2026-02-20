@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+#
+# this file is supposed to mimic CI as closesly as possible, the main difference is it doesn't detect changes it just runs everything
+#
+set -euo pipefail
+
+echo "If you get permission errors try: echo YOUR_GITHUB_AUTH_TOKEN | docker login ghcr.io -u GITHUB_USER --password-stdin"
+
+run_in_image() {
+    local image="$1"
+    local cmd="$2"
+
+    if [ "$(uname)" = "Darwin" ]; then
+        docker run --rm -it -v "$PWD:/workspace" -w /workspace --platform linux/amd64 -e CI=1 "ghcr.io/dimensionalos/${image}:dev" /entrypoint.sh bash -lc "$cmd"
+    else
+        docker run --rm -it -v "$PWD:/workspace" -w /workspace -e CI=1 "ghcr.io/dimensionalos/${image}:dev" /entrypoint.sh bash -lc "$cmd"
+    fi
+}
+
+echo "Running checks equivalent to .github/workflows/docker.yml test jobs..."
+
+echo
+echo "== ros-dev: pytest && pytest -m ros =="
+run_in_image "ros-dev" "pytest && pytest -m ros"
+
+echo
+echo "== dev: pytest =="
+run_in_image "dev" "pytest"
+
+echo
+echo "== dev: pytest -m heavy =="
+run_in_image "dev" "pytest -m heavy"
+
+echo
+echo "== dev: pytest -m lcm =="
+run_in_image "dev" "pytest -m lcm"
+
+echo
+echo "== dev: pytest -m integration =="
+run_in_image "dev" "pytest -m integration"

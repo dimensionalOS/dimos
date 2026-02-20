@@ -1,0 +1,52 @@
+name: test-fast
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - 'pyproject.toml'
+      - 'setup.py'
+      - 'uv.lock'
+      - 'dimos/**'
+      - '!dimos/**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest_fast:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-15, ubuntu-24.04-arm]
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          python-version: "3.10"
+          cache-suffix: ${{ runner.os }}-${{ runner.arch }}-py3.10
+
+      - name: Install System dependencies
+        run: |
+          # these lines should stay exactly in sync with docs/development/README.md
+          if [ "$OSTYPE" = "linux-gnu" ]; then
+            sudo apt-get update
+            sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev pre-commit
+          # On macOS (12.6 or newer)
+          elif [ "$(uname)" = "Darwin" ]; then
+            # install homebrew
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            # install dependencies
+            brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python pre-commit
+          fi
+
+      - name: Install and run tests
+        run: |
+          bin/ci-fast

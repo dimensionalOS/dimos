@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+# if md-babel-py doesnt exist
+if [ -z "$(command -v "md-babel-py")" ]; then
+    # if nix doesnt exist
+    if [ -z "$(command -v "nix")" ]; then
+        echo "Error: md-babel-py required for running gen-diagrams." >&2
+        echo "       Either install nix or install md-babel-py" >&2
+        echo "       https://github.com/leshy/md-babel-py" >&2
+        exit 1
+    # use nix if local command doesn't exist
+    else
+        md-babel-py() {
+            nix run github:leshy/md-babel-py -- "$@"
+        }
+    fi
+fi
+
+diagram_langs="asymptote,pikchr,openscad,diagon"
+if [[ "$#" -gt 0 ]]; then
+    for arg in "$@"; do
+        md-babel-py run "$arg" --lang "$diagram_langs"
+    done
+else
+    while IFS= read -r file; do
+        md-babel-py run "$file" --lang "$diagram_langs"
+    done < <(find ./docs -type f -name '*.md' | sort)
+fi
