@@ -25,12 +25,12 @@ wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/flake
 # enter the nix development shell (provides system deps)
 nix develop
 
-uv venv --python 3.12
+python3 -m venv .venv
 source .venv/bin/activate
 
 # install everything (depending on your use case you might not need all extras,
 # check your respective platform guides)
-uv pip install "dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu,dev]"
+pip install "dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu,dev]"
 ```
 
 # Developing on DimOS
@@ -44,11 +44,11 @@ cd dimos
 # enter the nix development shell (provides system deps)
 nix develop
 
-uv sync --all-extras --no-extra dds
+pip install -e ".[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu,dev]"
 
 # type check
-uv run mypy dimos
+mypy dimos
 
 # tests (around a minute to run)
-uv run pytest dimos
+pytest dimos
 ```
