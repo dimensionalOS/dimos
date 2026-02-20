@@ -64,10 +64,8 @@ def test_person_follow(
 ) -> None:
     start_blueprint("--mujoco-start-pos", "-6.18 0.96", "run", "unitree-go2-agentic")
 
-    lcm_spy.save_topic("/rpc/HumanInput/start/res")
-    lcm_spy.wait_for_saved_topic("/rpc/HumanInput/start/res", timeout=120.0)
-    lcm_spy.save_topic("/agent")
-    lcm_spy.wait_for_saved_topic_content("/agent", b"AIMessage", timeout=120.0)
+    lcm_spy.save_topic("/rpc/Agent/on_system_modules/res")
+    lcm_spy.wait_for_saved_topic("/rpc/Agent/on_system_modules/res", timeout=120.0)
 
     time.sleep(5)
 

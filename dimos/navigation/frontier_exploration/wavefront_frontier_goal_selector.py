@@ -735,6 +735,16 @@ class WavefrontFrontierExplorer(Module):
         ):
             self.exploration_thread.join(timeout=2.0)
 
+        # Publish current location as goal to stop the robot.
+        if self.latest_odometry is not None:
+            goal = PoseStamped(
+                position=self.latest_odometry.position,
+                orientation=self.latest_odometry.orientation,
+                frame_id="world",
+                ts=self.latest_odometry.ts,
+            )
+            self.goal_request.publish(goal)
+
         logger.info("Stopped autonomous frontier exploration")
         return True
 
