@@ -170,6 +170,82 @@ export ROBOT_IP=<YOUR_ROBOT_IP>
 dimos run unitree-go2
 ```
 
+### Use DimOS as a Library
+
+See below a simple robot connection module that sends streams of continuous `cmd_vel` to the robot and receives `color_image` to a simple `Listener` module. DimOS Modules are subsystems on a robot that communicate with other modules using standardized messages.
+
+```py
+import threading, time, numpy as np
+from dimos.core import In, Module, Out, rpc, autoconnect
+from dimos.msgs.geometry_msgs import Twist
+from dimos.msgs.sensor_msgs import Image, ImageFormat
+
+class RobotConnection(Module):
+    cmd_vel: In[Twist]
+    color_image: Out[Image]
+
+    @rpc
+    def start(self):
+        threading.Thread(target=self._image_loop, daemon=True).start()
+
+    def _image_loop(self):
+        while True:
+            img = Image.from_numpy(
+                np.zeros((120, 160, 3), np.uint8),
+                format=ImageFormat.RGB,
+                frame_id="camera_optical",
+            )
+            self.color_image.publish(img)
+            time.sleep(0.2)
+
+class Listener(Module):
+    color_image: In[Image]
+
+    @rpc
+    def start(self):
+        self.color_image.subscribe(lambda img: print(f"image {img.width}x{img.height}"))
+
+if __name__ == "__main__":
+    autoconnect(
+        RobotConnection.blueprint(),
+        Listener.blueprint(),
+    ).build().loop()
+```
+
+### Blueprints
+
+Blueprints are instructions for how to construct and wire modules. We compose them with
+`autoconnect(...)`, which connects streams by `(name, type)` and returns a `Blueprint`.
+
+Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `In[]` and `Out[]` message types.
+
+A blueprint example that connects the image stream from a robot to an LLM Agent for reasoning and action execution.
+```py
+from dimos.core import autoconnect, LCMTransport
+from dimos.msgs.sensor_msgs import Image
+from dimos.robot.unitree.go2.connection import go2_connection
+from dimos.agents.agent import agent
+
+blueprint = autoconnect(
+    go2_connection(),
+    agent(),
+).transports({("color_image", Image): LCMTransport("/color_image", Image)})
+
+# Run the blueprint
+if __name__ == "__main__":
+    blueprint.build().loop()
+```
+
+## Library API
+
+- [Modules](docs/usage/modules.md)
+- [LCM](docs/usage/lcm.md)
+- [Blueprints](docs/usage/blueprints.md)
+- [Transports](docs/usage/transports/index.md)
+- [Data Streams](docs/usage/data_streams/README.md)
+- [Configuration](docs/usage/configuration.md)
+- [Visualization](docs/usage/visualization.md)
+
 ### Develop on DimOS
 
 ```sh
@@ -188,16 +264,6 @@ uv run pytest dimos
 <img src="assets/readme/dimos_demo.gif" alt="DimOS Demo" width="100%">
 
 # Development
-
-## API
-
-- [Modules](docs/usage/modules.md)
-- [LCM](docs/usage/lcm.md)
-- [Blueprints](docs/usage/blueprints.md)
-- [Transports](docs/usage/transports/index.md)
-- [Data Streams](docs/usage/data_streams/README.md)
-- [Configuration](docs/usage/configuration.md)
-- [Visualization](docs/usage/visualization.md)
 
 ## Multi Language Support
 
