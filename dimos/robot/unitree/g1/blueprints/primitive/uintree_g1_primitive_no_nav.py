@@ -118,9 +118,9 @@ uintree_g1_primitive_no_nav = (
             ("goal_pose", PoseStamped): LCMTransport("/goal_pose", PoseStamped),
             ("goal_reached", Bool): LCMTransport("/goal_reached", Bool),
             ("cancel_goal", Bool): LCMTransport("/cancel_goal", Bool),
-            # Camera topics (if camera module is added)
-            ("color_image", Image): LCMTransport("/g1/color_image", Image),
-            ("camera_info", CameraInfo): LCMTransport("/g1/camera_info", CameraInfo),
+            # Camera topics
+            ("color_image", Image): LCMTransport("/color_image", Image),
+            ("camera_info", CameraInfo): LCMTransport("/camera_info", CameraInfo),
         }
     )
 )
