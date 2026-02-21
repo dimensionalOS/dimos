@@ -1745,7 +1745,7 @@ wheels = [
 
 [[package]]
 name = "dimos"
-version = "0.0.10"
+version = "0.0.10.post1"
 source = { editable = "." }
 dependencies = [
     { name = "annotation-protocol" },
