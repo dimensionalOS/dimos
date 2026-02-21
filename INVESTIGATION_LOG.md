@@ -345,8 +345,21 @@ Tailscale installed but only filters Tailscale CGNAT traffic (100.64.0.0/10). IN
 
 **NOT the cause**: CPU/RT scheduling starvation (disproven — IMU drops to 0 twelve seconds BEFORE LiDAR processing even starts)
 
-### Problem 3: AOS lio_perception stuck
-**Root cause**: Still investigating. All processes root on AOS, SHM should work. May be similar to NOS localization issue.
+### Problem 3: AOS lio_perception stuck — SOLVED
+**Root cause**: AOS yesense and lio_perception have **ZERO shared SHM segments**. DDS SHM negotiation failed between them.
+
+**Evidence**:
+- yesense (PID 1676) owns: `fastrtps_923182e0b2958c22` (52MB), port 7415
+- lio_perception (PID 14827) maps: `f86a3f94eb6a46a2`, `71b8a1781727ece5`, `8ba3fa7311563254` — NONE from yesense
+- rslidar ↔ lio_perception: share segments `f86a3f94eb6a46a2` and `71b8a1781727ece5` → LiDAR SHM works
+- yesense ↔ lio_perception: share NOTHING → IMU doesn't flow → LIO can't run
+
+**Contrast with NOS**: NOS yesense DOES share SHM with localization (segment `c7269f2270249d40` mapped by both). But NOS yesense uses DEFAULT transports (all interfaces), while AOS yesense loads fastdds.xml (127.0.0.1 only).
+
+**Why rslidar↔lio_perception SHM works but yesense↔lio_perception doesn't**: Both rslidar and yesense load fastdds.xml. But rslidar SHM works with lio_perception while yesense SHM doesn't. The difference may be in DDS discovery timing, endpoint QoS matching, or a FastDDS bug affecting small-message DataSharing vs large-message SHM transport negotiation.
+
+**lio_perception log**: Only initialization, zero processing output (unlike NOS localization which actively processes LiDAR).
+Without IMU, LIO (Lidar-Inertial Odometry) cannot start at all — it needs both sensors from the first frame.
 
 ---
 
@@ -367,10 +380,11 @@ Tailscale installed but only filters Tailscale CGNAT traffic (100.64.0.0/10). IN
 - d) **Bypass NOS localization entirely** — use AOS lio_perception (which was the working path yesterday)
 **Risk**: Options a/b are low risk (reversible). Option d is the pragmatic approach.
 
-### Fix 3: AOS lio_perception (ALTERNATIVE PATH)
-**Change**: Restart lio_perception or check its specific IMU/LiDAR reception.
-**Why**: AOS lio_perception was the path for yesterday's working `/LIO_ALIGNED_POINTS`.
-**Risk**: Low. Service restart is standard.
+### Fix 3: AOS lio_perception (ALTERNATIVE PATH — restart services)
+**Change**: Restart ALL AOS sensor services in correct order: `systemctl restart yesense rsdriver lio_perception`
+**Why**: yesense↔lio_perception SHM negotiation failed. Restarting may re-trigger proper DDS discovery. AOS lio_perception was yesterday's working path for `/LIO_ALIGNED_POINTS` and `/LIO_ODOM`.
+**Risk**: Low. Service restart is standard and all services auto-recover.
+**Note**: If restart doesn't fix SHM negotiation, may need to set `FASTRTPS_DEFAULT_PROFILES_FILE` for lio_perception to use the same fastdds.xml as yesense, ensuring compatible transport config.
 
 ### Fix 4: fastdds.xml interface whitelist (BROADER FIX)
 **Change**: Add `10.21.31.x` to interfaceWhiteList on all hosts:
@@ -410,3 +424,40 @@ Tailscale installed but only filters Tailscale CGNAT traffic (100.64.0.0/10). IN
 - DDS domain 0 (port 7400 = default)
 - `ROS_LOCALHOST_ONLY=0` on GOS
 - `/opt/robot/fastdds.xml` identical on all hosts (127.0.0.1 + SHM only)
+
+---
+
+## RECOMMENDED ACTION PLAN (for when user returns)
+
+**Goal**: Get dimos on Mac receiving ODOM + ALIGNED_POINTS + IMU via mac_bridge for auto exploration testing.
+
+**Step 1** (GOS, highest confidence, 1 min):
+```bash
+ssh -J user@10.21.41.1 user@10.21.31.104
+echo "'" | sudo -S sed -i 's/User=user/User=root/' /etc/systemd/system/dimos-mac-bridge.service
+echo "'" | sudo -S systemctl daemon-reload
+echo "'" | sudo -S systemctl restart dimos-mac-bridge
+```
+This fixes the SHM permission mismatch and should immediately deliver `/LIDAR/POINTS` from GOS rslidar to mac_bridge.
+
+**Step 2** (AOS, medium confidence, 2 min):
+```bash
+ssh user@10.21.41.1
+echo "'" | sudo -S systemctl restart yesense rsdriver lio_perception
+# Wait 60s for rsdriver sleep 30 + startup
+echo "'" | sudo -S journalctl -u lio_perception -n 30 --no-pager
+```
+Restart AOS services to re-trigger DDS discovery. If lio_perception gets IMU this time, it will produce `/LIO_ODOM` and `/LIO_ALIGNED_POINTS`.
+
+**Step 3** (verify on Mac):
+```bash
+# From Mac, with SSH tunnel already set up:
+python launch_m20_smart.py  # bridge_host="127.0.0.1"
+# Check rerun for ODOM, ALIGNED_POINTS, LIDAR data
+```
+
+**Step 4** (if Step 2 fails — NOS fallback):
+Try toggling `imu_use_system_time: true` in NOS localization config, or restart all NOS services. This is lower confidence since the issue appears to be in the localization binary's timestamp handling.
+
+**Step 5** (if all else fails — bypass entirely):
+Write a simple drdds subscriber on GOS (Python 3.8 + drdds) that reads `/IMU` and `/LIDAR/POINTS` directly via drdds (same transport as rslidar/yesense), bypassing rclpy entirely.
