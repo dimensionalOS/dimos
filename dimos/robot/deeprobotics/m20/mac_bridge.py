@@ -45,7 +45,6 @@ except ImportError:
     _NUMPY = False
 
 import rclpy
-from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import (
     QoSDurabilityPolicy,
@@ -126,9 +125,9 @@ class _ROSAdapter(object):
         self._node_name = node_name
         self._callbacks = callbacks
         self._node = None  # type: Optional[Node]
-        self._executor = None  # type: Optional[SingleThreadedExecutor]
         self._spin_thread = None  # type: Optional[threading.Thread]
         self._nav_pub = None
+        self._shutdown_event = threading.Event()
 
     def start(self):
         # type: () -> None
@@ -154,24 +153,24 @@ class _ROSAdapter(object):
         else:
             logger.warning("drdds not available — /NAV_CMD and /MOTION_INFO disabled")
 
-        self._executor = SingleThreadedExecutor()
-        self._executor.add_node(self._node)
-        self._spin_thread = threading.Thread(target=self._spin, daemon=True, name="ros_spin")
+        # Use spin_once polling in a thread (matches Houdini relay's working pattern).
+        # SingleThreadedExecutor.spin() in a daemon thread does NOT work with drdds
+        # on GOS — the node fails to participate in DDS discovery.
+        self._spin_thread = threading.Thread(target=self._spin_loop, daemon=True, name="ros_spin")
         self._spin_thread.start()
         logger.info("ROS adapter started: subscriptions active")
 
-    def _spin(self):
+    def _spin_loop(self):
         # type: () -> None
         try:
-            self._executor.spin()
+            while not self._shutdown_event.is_set():
+                rclpy.spin_once(self._node, timeout_sec=0.01)
         except Exception:
             logger.exception("ROS spin exited with error")
 
     def stop(self):
         # type: () -> None
-        # Shutdown order critical for Foxy — wrong order causes segfault
-        if self._executor is not None:
-            self._executor.shutdown()
+        self._shutdown_event.set()
         if self._spin_thread is not None:
             self._spin_thread.join(timeout=5)
         if self._node is not None:
@@ -222,6 +221,7 @@ class M20MacBridge(object):
         # Heartbeat timeout
         self._last_heartbeat_time = 0.0  # monotonic
         self._heartbeat_timeout = 15.0
+        self._client_has_heartbeat = False  # True after first heartbeat from client
 
         # ROS adapter
         self._ros = _ROSAdapter(ros_node_name, {
@@ -233,6 +233,7 @@ class M20MacBridge(object):
         })
 
         self._sender_thread = None  # type: Optional[threading.Thread]
+        self._handler_thread = None  # type: Optional[threading.Thread]
 
     def start(self):
         # type: () -> None
@@ -243,7 +244,7 @@ class M20MacBridge(object):
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.settimeout(1.0)
         server.bind(("0.0.0.0", self._port))
-        server.listen(1)
+        server.listen(2)
         logger.info("Mac bridge listening on port %d", self._port)
 
         try:
@@ -255,6 +256,44 @@ class M20MacBridge(object):
     def stop(self):
         # type: () -> None
         self._shutdown.set()
+
+    def _kick_existing_client(self):
+        # type: () -> None
+        """Close existing client and wait for handler/sender threads to exit."""
+        with self._client_lock:
+            if self._client_connected and self._client_sock is not None:
+                logger.info("Kicking existing client for new connection")
+                try:
+                    self._client_sock.close()
+                except Exception:
+                    pass
+                self._client_connected = False
+                self._client_sock = None
+                self._client_has_heartbeat = False
+        if self._handler_thread is not None:
+            self._handler_thread.join(timeout=3)
+            self._handler_thread = None
+        if self._sender_thread is not None:
+            self._sender_thread.join(timeout=3)
+            self._sender_thread = None
+
+    def _client_handler_wrapper(self, client_sock):
+        # type: (socket.socket) -> None
+        """Run _handle_client with cleanup. Runs in handler thread."""
+        try:
+            self._handle_client(client_sock)
+        except Exception as e:
+            logger.info("Client disconnected: %s", e)
+        finally:
+            with self._client_lock:
+                # Only clean up if this is still the active client
+                if self._client_sock is client_sock:
+                    self._client_connected = False
+                    self._client_sock = None
+            try:
+                client_sock.close()
+            except Exception:
+                pass
 
     def _accept_loop(self, server_sock):
         # type: (socket.socket) -> None
@@ -270,12 +309,27 @@ class M20MacBridge(object):
 
             logger.info("Client connected from %s:%d", addr[0], addr[1])
 
+            # If existing client has sent heartbeats, it's the real dimos client —
+            # reject the new connection to prevent rogue connections from kicking it.
+            with self._client_lock:
+                if self._client_connected and self._client_has_heartbeat:
+                    logger.info("Rejecting new connection (existing client authenticated)")
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+                    continue
+
+            # Kick existing client (never sent heartbeat = rogue/stale)
+            self._kick_existing_client()
+
             # Clear stale buffers
             with self._buf_lock:
                 self._buffers.clear()
 
             self._last_heartbeat_time = time.monotonic()
             self._last_nav_cmd_time = time.monotonic()
+            self._client_has_heartbeat = False
 
             with self._client_lock:
                 self._client_sock = client
@@ -287,20 +341,15 @@ class M20MacBridge(object):
             )
             self._sender_thread.start()
 
-            try:
-                self._handle_client(client)
-            except Exception as e:
-                logger.info("Client disconnected: %s", e)
-            finally:
-                with self._client_lock:
-                    self._client_connected = False
-                    self._client_sock = None
-                try:
-                    client.close()
-                except Exception:
-                    pass
-                if self._sender_thread is not None:
-                    self._sender_thread.join(timeout=2)
+            # Start handler thread (non-blocking accept loop)
+            self._handler_thread = threading.Thread(
+                target=self._client_handler_wrapper, args=(client,),
+                daemon=True, name="handler"
+            )
+            self._handler_thread.start()
+
+        # Clean up on shutdown
+        self._kick_existing_client()
 
     def _handle_client(self, client_sock):
         # type: (socket.socket) -> None
@@ -320,9 +369,11 @@ class M20MacBridge(object):
 
             if msg_type == MSG_HEARTBEAT:
                 self._last_heartbeat_time = time.monotonic()
+                self._client_has_heartbeat = True
             elif msg_type == MSG_NAV_CMD:
                 self._last_nav_cmd_time = time.monotonic()
                 self._last_heartbeat_time = time.monotonic()
+                self._client_has_heartbeat = True
                 try:
                     data = json.loads(payload)
                     self._ros.publish_nav_cmd(

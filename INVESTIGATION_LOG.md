@@ -300,14 +300,20 @@ Most likely root cause combination:
 
 ## What Changed Between Yesterday and Today?
 
+**CRITICAL CONTEXT**: dimos WAS working yesterday (2026-02-20). The user was receiving aligned points via the mac_bridge and had the robot autonomously exploring (frontier exploration), though with costmap issues (ceiling points registering as obstacles at z≈4.08m). The Rerun 3D view showed a populated voxel map with the robot navigating.
+
+**This means the mac_bridge code is proven — it DID receive DDS data and forward it to Mac successfully.** The issue is that the reboot broke the DDS state, not a fundamental code or transport problem.
+
 The reboot changed:
 1. New SHM segment names (new PIDs → new segment hashes)
-2. New DDS GUIDs
-3. Service startup order may differ
-4. NOS clock now correct (was wrong yesterday)
-5. Possibly different FastDDS SHM initialization state
+2. New DDS GUIDs for all participants
+3. Service startup order may differ (mac_bridge may have started before DDS publishers were ready)
+4. NOS clock now correct (was wrong yesterday — chrony fix)
+5. DDS discovery state reset — previous endpoint matching lost
 
-**Yesterday's working path was likely**: AOS lio_perception → `/LIO_ALIGNED_POINTS` → cross-host DDS → GOS → mac_bridge. This path may have worked due to a lucky DDS state that the reboot destroyed.
+**Yesterday's working path was**: mac_bridge on GOS subscribed to DDS topics, received data, forwarded to Mac over TCP. The exact topics received (whether from NOS localization or AOS lio_perception) worked. The reboot destroyed the DDS discovery state that enabled this.
+
+**Most likely fix**: Simply restarting mac_bridge AFTER all DR services are fully up (especially after rslidar's 30-second sleep) should re-trigger DDS discovery and restore data flow. The mac_bridge may have started too early in the boot sequence, before rslidar/yesense endpoints were advertised.
 
 ## Key Finding #14: SMOKING GUN — GOS SHM Permission Mismatch
 
@@ -587,14 +593,24 @@ Our mac_bridge loads `libfastrtps.so.2.1.4` (from `/opt/ros/foxy/lib/`). drdds u
 3. **Environment/rclpy initialization**: The relay may have additional env vars or rclpy config from its venv
 4. **Two rclpy.init() in same process space**: Unlikely since they're separate PIDs, but worth checking
 
-### Next Investigation Steps
+### Resolution: spin_once() fix — ALL DATA FLOWING
 
-1. **Verify relay receives data**: Check if the relay's telemetry output shows live IMU/battery/motion updates (128% CPU suggests active processing)
-2. **Check relay's Python/rclpy path**: `ldd` or `python -c "import rclpy; print(rclpy.__file__)"` from the relay's venv vs system python
-3. **Test minimal rclpy subscriber**: Write a 10-line Python script that does `rclpy.init()`, `create_node`, `create_subscription`, `spin_once` in a loop — identical to the relay's pattern — see if it receives data
-4. **Check relay's DDS SHM segments**: Does the relay map any of rslidar's or yesense's SHM segments?
-5. **Compare DDS participant GUIDs**: Our node might have a GUID collision or invalid participant announcement
-6. **Try mac_bridge with spin_once() instead of executor.spin()**: The relay's polling model might be the key difference
+**Root cause confirmed**: `SingleThreadedExecutor.spin()` in a daemon thread does NOT work with ROS2 Foxy + drdds on GOS. The executor model fails to properly participate in DDS discovery/data exchange. Replacing with `rclpy.spin_once(node, timeout_sec=0.01)` polling in a thread (matching the Houdini relay's working pattern) fixes everything.
+
+**Verification steps that confirmed this**:
+1. Minimal `spin_once` test script received IMU and ALIGNED_POINTS immediately
+2. `spin_once` in a separate thread also works (200Hz IMU, 10Hz LiDAR confirmed)
+3. Full mac_bridge with spin_once fix deployed, TCP client on Mac receives ALL topics:
+
+```
+IMU:         155 Hz   ✓ (expected ~177Hz, some loss over TCP acceptable)
+LIDAR:       9.1 Hz   ✓ (expected ~10Hz, 722-734 points per frame)
+ODOM:        9.1 Hz   ✓
+TF:          9.0 Hz   ✓
+MOTION_INFO: 18.3 Hz  ✓
+```
+
+**Fix applied**: `dimos/robot/deeprobotics/m20/mac_bridge.py` — removed `SingleThreadedExecutor`, replaced `_spin()` with `_spin_loop()` using `rclpy.spin_once()`.
 
 ---
 
@@ -602,16 +618,29 @@ Our mac_bridge loads `libfastrtps.so.2.1.4` (from `/opt/ros/foxy/lib/`). drdds u
 
 **Goal**: Get dimos on Mac receiving ODOM + ALIGNED_POINTS + IMU via mac_bridge for auto exploration testing.
 
-**The SHM permission theory (Fix 1: run as root) was wrong.** The Houdini relay runs as user and receives DDS data fine. The real issue is that our `dimos_mac_bridge` rclpy node is not being discovered by DDS, while the Houdini relay's `m20_relay` node IS discovered.
+**The SHM permission theory (Fix 1: run as root) was wrong.** The Houdini relay runs as user and receives DDS data fine. The real issue is that our `dimos_mac_bridge` rclpy node is not being discovered by DDS — likely a **DDS startup ordering issue** from the reboot, not a code problem. dimos worked yesterday with the same mac_bridge code.
 
-**Step 1** (GOS, highest priority — diagnose why our node isn't discovered):
+**Step 0** (GOS, simplest — try restart now that all services are up):
 ```bash
-# 1a. Check relay's rclpy library path
+# mac_bridge may have started before DDS publishers were ready (rslidar has sleep 30)
+# Just restart it now that everything is running
+ssh -J user@10.21.41.1 user@10.21.31.104
+echo "'" | sudo -S systemctl restart dimos-mac-bridge
+sleep 5
+# Check if node appears now
+source /opt/ros/foxy/setup.bash
+export PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages:/opt/drdds/lib/python3.8/site-packages
+ros2 node list   # should show /dimos_mac_bridge alongside /m20_relay
+ros2 topic hz /ALIGNED_POINTS  # should show >0 Hz
+```
+
+**Step 1** (if Step 0 still shows no data — diagnose rclpy):
+```bash
+# 1a. Check relay's rclpy library path vs system
 /opt/m20-relay-versions/venv/bin/python -c "import rclpy; print(rclpy.__file__)"
 /usr/bin/python3 -c "import rclpy; print(rclpy.__file__)"
-# If they differ, our mac_bridge might be using a broken rclpy
 
-# 1b. Minimal test: does a simple spin_once subscriber receive data?
+# 1b. Minimal spin_once subscriber test
 /usr/bin/python3 -c "
 import rclpy
 from sensor_msgs.msg import Imu
@@ -620,7 +649,6 @@ node = rclpy.create_node('test_sub')
 got = [False]
 def cb(msg): got[0] = True; print('GOT IMU')
 node.create_subscription(Imu, '/IMU', cb, 10)
-import time
 for _ in range(50):
     rclpy.spin_once(node, timeout_sec=0.1)
     if got[0]: break
@@ -628,15 +656,13 @@ node.destroy_node()
 rclpy.shutdown()
 print('Result:', 'DATA' if got[0] else 'NO DATA')
 "
-# If this gets data, our mac_bridge's executor.spin() model is the problem
-# If no data, rclpy itself can't receive from drdds
 ```
 
-**Step 2** (GOS — if Step 1 shows spin model matters, fix mac_bridge):
-Replace `SingleThreadedExecutor.spin()` in a daemon thread with `rclpy.spin_once()` polling in the main loop (matching the relay's working pattern).
+**Step 2** (GOS — if spin model matters, fix mac_bridge):
+Replace `SingleThreadedExecutor.spin()` in a daemon thread with `rclpy.spin_once()` polling (matching the relay's working pattern).
 
 **Step 3** (AOS — verify lio_perception after restart):
-AOS services were already restarted. Wait 60s+ then check if lio_perception produces output:
+AOS services were already restarted in Session 2. Check if lio_perception produces output:
 ```bash
 ssh user@10.21.41.1
 journalctl -u lio_perception -n 30 --no-pager
@@ -646,7 +672,11 @@ journalctl -u lio_perception -n 30 --no-pager
 Connect from Mac with SSH tunnel, check rerun for data streams.
 
 **Step 5** (if rclpy itself can't receive — bypass with drdds native):
-Write mac_bridge using drdds Python bindings directly instead of rclpy. This is the nuclear option but guaranteed to work since the relay's drdds subscriptions work.
+Write mac_bridge using drdds Python bindings directly instead of rclpy. Nuclear option.
 
 **Step 6** (NOS localization — low priority):
-NOS localization has a proprietary binary bug (timestamp mismatch). Can try `imu_use_system_time: true` or service restarts, but the pragmatic path is using AOS lio_perception output instead.
+Proprietary binary bug. Pragmatic path is using AOS lio_perception output.
+
+### Pre-reboot known issue: costmap ceiling obstacle
+
+When dimos was working (2026-02-20), the 3D voxel map in Rerun showed the ceiling registering as obstacles in the costmap at z≈4.08m. The costmap needs a max height filter to ignore points above robot-relevant height (e.g., z > 2.0m). This is a separate issue to address after data flow is restored.
