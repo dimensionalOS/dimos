@@ -17,6 +17,69 @@
 | GOS  | 10.21.31.104 (eth0), 192.168.0.x (eth2/5G) | ROS2 bridge, mac_bridge, rsdriver, NAT gateway |
 | NOS  | 10.21.31.106 (eth1), 10.21.33.106 (eth0) | Localization/SLAM, rsdriver, yesense, handler |
 
+## IMU (Inertial Measurement Unit)
+
+The Yesense IMU is a physical sensor that measures:
+- **Accelerometer**: linear acceleration (x, y, z) — detects movement and gravity
+- **Gyroscope**: angular velocity (roll, pitch, yaw) — detects rotation
+- **Orientation**: fused quaternion (computed on-chip)
+
+It runs at **200Hz** — much faster than LiDAR (10Hz). The perception stack needs IMU because LiDAR alone gives point clouds but can't tell you how the robot moved *between* scans. IMU fills those gaps at 200Hz. Sensor fusion (LIO = Lidar-Inertial Odometry) combines both to produce accurate pose estimates. Without IMU, localization can't fuse poses and lio_perception can't even start.
+
+## Process Reference
+
+### Sensor Drivers
+
+| Process | Binary | Host(s) | Description |
+|---|---|---|---|
+| **rslidar** | `rslidar` | AOS, GOS, NOS | Receives raw LiDAR data from hardware via multicast UDP (224.10.10.201/202). Publishes `/LIDAR/POINTS` (PointCloud2) via DDS at 10Hz. Each host runs its own instance — 3 LiDAR sensors on the robot. Started by `rsdriver_run.sh` which does `sleep 30` then `taskset -c 4,5,6,7 chrt 45 ./rslidar`. Working dir: `/opt/robot/share/node_driver/bin`. Loads `/opt/robot/fastdds.xml` (SHM + loopback UDP only). |
+| **yesense** | `yesense_node` | AOS, NOS | Reads the Yesense IMU hardware over serial (`/dev/ttyS9`, 115200 baud). Publishes `/IMU` (sensor_msgs/Imu, 200Hz), `/IMU_DATA` (drdds/ImuData), `/IMU_DATA_10HZ`, `/IMU_YESENSE` via DDS. Two physical IMU sensors, one per host. Started by `yesense_run.sh`. Working dir: `/opt/robot/share/node_driver/bin`. On AOS: loads fastdds.xml (loopback only). On NOS: does NOT load fastdds.xml (publishes on all interfaces). |
+
+### Perception Stack
+
+| Process | Binary | Host(s) | Description |
+|---|---|---|---|
+| **localization** | `localization_ddsnode` | NOS | Graph-based SLAM/localization (v3.3.1). Subscribes to `/LIDAR/POINTS` + `/IMU`, fuses them to produce `/ODOM` (pose) and `/ALIGNED_POINTS` (registered point cloud). Loads a pre-built map from `/var/opt/robot/data/maps/active/occ_grid.yaml`. Also launches `map_server` as a sibling process. Config: `/opt/robot/share/localization/conf/params.yaml`. Started with `chrt 48 taskset -c 4,5,6,7`. Does NOT load fastdds.xml (uses default all-interface transports). |
+| **lio_perception** | `lio_ddsnode` | AOS | Lidar-Inertial Odometry (v1.0.11). Subscribes to `/LIDAR/POINTS` + `/IMU`, produces `/LIO_ODOM` and `/LIO_ALIGNED_POINTS`. Lighter than NOS localization — no map, real-time odometry only. Runs a UDP sender on port 30100. Started with `chrt 35 taskset -c 4,5,6,7`. Does NOT load fastdds.xml. |
+
+### Navigation
+
+| Process | Binary | Host(s) | Description |
+|---|---|---|---|
+| **handler** | `handler` | NOS | Navigation/motion controller. Subscribes to `/ODOM`, `/ALIGNED_POINTS`, `/IMU`, and point clouds. Runs DWA obstacle avoidance. Publishes `/NAV_CMD` to control the robot. Reports sensor frequencies every 1s (e.g. `IMU=200 Cloud=0 Odom=0`). Config: `/opt/robot/share/handler/conf/params.yaml`. Runs on CPUs 0-3 with SCHED_OTHER (normal scheduling) — the only perception-adjacent process NOT on CPUs 4-7 with real-time scheduling. |
+| **planner** | `planner` | NOS | Path planner. Currently **DISABLED** (per user request). |
+
+### Infrastructure
+
+| Process | Binary | Host(s) | Description |
+|---|---|---|---|
+| **cpunode** | `cpu_node` | AOS, GOS, NOS | System monitor — reports CPU/memory/temperature stats. Not involved in data flow. |
+| **rte_checker** | `rte_checker` | NOS | Runtime error checker. Monitors system health. |
+| **charge_manager** | `charge_manager` | NOS | Battery/charging management. |
+| **reflective_column_node** | `reflective_column_node` | NOS | Detects reflective columns (landmark-based localization aid). |
+| **multicast-relay** | `multicast-relay` | NOS | Bridges LiDAR multicast packets between eth0 (10.21.31.x) and eth1 (10.21.33.x) on NOS. |
+
+### Our Code (dimos)
+
+| Process | Binary | Host(s) | Description |
+|---|---|---|---|
+| **mac_bridge** | `mac_bridge.py` | GOS | rclpy (ROS2 Foxy) subscriber that forwards DDS topics over TCP:9731 to Mac. Subscribes to `/ODOM`, `/ALIGNED_POINTS`, `/IMU`, `/tf`, `/MOTION_INFO`. Runs as `user` (not root) — this is the cause of the GOS SHM permission bug. Systemd service: `dimos-mac-bridge.service`. |
+| **m20-relay** | `relay.main` | GOS | Browser-to-ROS2 bridge for Houdini teleop UI. Handles battery status, manual control. NOT involved in autonomy data flow. |
+
+### Scheduling Summary
+
+| Process | CPUs | Scheduler | Priority | User |
+|---|---|---|---|---|
+| rslidar | 4-7 | SCHED_RR | 45 | root |
+| yesense | 4-7 | SCHED_RR | 61 | root |
+| localization | 4-7 | SCHED_RR | 48 | root |
+| lio_perception | 4-7 | SCHED_RR | 35 | root |
+| handler | **0-3** | SCHED_OTHER | 0 | root |
+| mac_bridge | all | SCHED_OTHER | 0 | **user** |
+| m20-relay | all | SCHED_OTHER | 0 | **user** |
+
+All Deep Robotics processes run as root. Sensor/perception processes run on CPUs 4-7 with real-time scheduling (SCHED_RR). Handler is the exception — CPUs 0-3 with normal scheduling. Our processes (mac_bridge, m20-relay) run as `user`, which causes the GOS SHM permission mismatch.
+
 ## Data Pipeline (expected)
 
 ```
