@@ -42,6 +42,8 @@ dimos run unitree-go2
 
 That's it. DimOS connects via WebRTC (no jailbreak required), starts the full navigation stack, and opens the command center.
 
+> **Tip:** Keep the Unitree built-in obstacle avoidance enabled on the robot for now. DimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer.
+
 ### What's Running
 
 | Module | What It Does |
