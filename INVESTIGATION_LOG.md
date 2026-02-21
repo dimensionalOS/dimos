@@ -322,11 +322,28 @@ Tailscale installed but only filters Tailscale CGNAT traffic (100.64.0.0/10). IN
 ### Problem 1: GOS 0 Hz (all topics) — SOLVED
 **Root cause**: FastDDS SHM permission mismatch between root (rslidar/drdds) and user (mac_bridge/rclpy). FastDDS selects SHM transport, SHM fails silently, no UDP fallback.
 
-### Problem 2: NOS localization "lost" (no ODOM/ALIGNED_POINTS output)
-**Root cause**: Localization receives LiDAR at 10Hz but gets 0 IMU per frame. Without IMU, it can't fuse pose and reports "localization lost." IMU initially arrives then stops when LiDAR processing starts (~22s after launch). Not a SHM issue (all root on NOS). Possible causes:
-- Localization's computation threads (SCHED_RR 48) starving DDS IMU callback despite yesense having higher priority (61)
-- DDS buffer overflow: 200Hz IMU floods the localization subscriber queue while it's blocked in LiDAR matching
-- Bug in localization's data pipeline (IMU timestamp validation rejecting data?)
+### Problem 2: NOS localization "lost" (no ODOM/ALIGNED_POINTS output) — PARTIALLY SOLVED
+**Root cause**: DDS IS delivering IMU to localization (monitor reports "IMU has new data input"). But localization's ALGORITHM counts 0 IMU per LiDAR frame. The issue is in the APPLICATION layer, not DDS transport.
+
+**Evidence**:
+- SHM infrastructure correctly connected: yesense segment `c7269f2270249d40` is mapped by both localization AND handler
+- All processes run as root on NOS — no SHM permission issue
+- DDS monitor in localization reports "IMU has new data input" at each restart
+- Despite this, algorithm reports "imu数据量过少: 0" (too few IMU: 0) for every frame
+- Handler on same host receives IMU at 200Hz from same yesense publisher
+
+**Timeline (restart 2)**:
+- 01:16:22.958 — Localization reinitializes
+- 01:16:23.268 — Monitor: "IMU has new data input" (DDS delivering ✓)
+- 01:16:45.263 — First LiDAR frame (22s after restart, rsdriver has `sleep 30` in startup script)
+- 01:16:45.266 — "imu数据量过少: 0" (algorithm sees 0 IMU in frame ✗)
+- From here: permanently 0 IMU per frame
+
+**Most likely cause**: Timestamp mismatch between IMU and LiDAR data within localization's processing pipeline. Localization collects IMU samples whose timestamps fall within the current LiDAR frame's time window. If IMU timestamps use a different time base (e.g., Unix time vs monotonic/uptime), no samples align with the LiDAR window. LiDAR frame timestamps in the log are ~2587-5890 (looks like uptime seconds). IMU may use a different format.
+
+**This is a bug/limitation in the proprietary localization binary** — we can't fix it directly. The NOS clock was wrong (Aug 2024) until we fixed it with chrony. The timestamp mismatch may be related to the clock correction.
+
+**NOT the cause**: CPU/RT scheduling starvation (disproven — IMU drops to 0 twelve seconds BEFORE LiDAR processing even starts)
 
 ### Problem 3: AOS lio_perception stuck
 **Root cause**: Still investigating. All processes root on AOS, SHM should work. May be similar to NOS localization issue.
@@ -341,10 +358,14 @@ Tailscale installed but only filters Tailscale CGNAT traffic (100.64.0.0/10). IN
 **Risk**: Low. Only affects mac_bridge process. Security concern is minimal (mac_bridge already has full network access).
 **Fixes**: GOS rslidar → mac_bridge for `/LIDAR/POINTS` ✓. Also fixes cross-host reception since rclpy default transport includes all-interface UDP.
 
-### Fix 2: NOS localization IMU (REQUIRES TESTING)
-**Change**: Restart localization without RT scheduling: `taskset -c 0-7 chrt -o 0 /opt/robot/share/localization/bin/localization_ddsnode`
-**Why it might work**: Normal scheduling allows DDS threads to run freely, preventing IMU starvation.
-**Risk**: Medium. May affect localization real-time performance. Reversible by service restart.
+### Fix 2: NOS localization IMU (UNCERTAIN — may be a proprietary bug)
+**What we know**: DDS delivers IMU, but localization's algorithm discards it. Likely a timestamp mismatch in the binary.
+**Possible actions**:
+- a) Restart all NOS services (`systemctl restart localization handler yesense rsdriver`) — fresh DDS connections might fix matching
+- b) Check if `imu_use_system_time: true` in localization config fixes the timestamp alignment
+- c) Contact Deep Robotics support — this appears to be a bug in their localization binary
+- d) **Bypass NOS localization entirely** — use AOS lio_perception (which was the working path yesterday)
+**Risk**: Options a/b are low risk (reversible). Option d is the pragmatic approach.
 
 ### Fix 3: AOS lio_perception (ALTERNATIVE PATH)
 **Change**: Restart lio_perception or check its specific IMU/LiDAR reception.
