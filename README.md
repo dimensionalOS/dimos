@@ -1,6 +1,8 @@
 
 <div align="center">
 
+<img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/15283d94-ad95-42c9-abd5-6565a222a837" />
+
 ![Dimensional](assets/dimensional-dark.svg#gh-dark-mode-only)
 ![Dimensional](assets/dimensional-light.svg#gh-light-mode-only)
 
