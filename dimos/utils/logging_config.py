@@ -110,14 +110,14 @@ _CONSOLE_PATH_WIDTH = 30
 _CONSOLE_USE_COLORS = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
 
 _CONSOLE_LEVEL_COLORS = {
-    "dbg": "\033[1;36;40m",  # bold cyan on black
-    "inf": "\033[1;32;40m",  # bold green on black
-    "war": "\033[1;33;40m",  # bold yellow on black
-    "err": "\033[1;31;40m",  # bold red on black
-    "cri": "\033[1;31;40m",  # bold red on black
+    "dbg": "\033[1;36m",  # bold cyan
+    "inf": "\033[1;32m",  # bold green
+    "war": "\033[1;33m",  # bold yellow
+    "err": "\033[1;31m",  # bold red
+    "cri": "\033[1;31m",  # bold red
 }
 _CONSOLE_RESET = "\033[0m"
-_CONSOLE_FIXED = "\033[1;30;40m"  # bold dark gray on black
+_CONSOLE_FIXED = "\033[2m"  # dim
 _CONSOLE_TEXT = "\033[0;34m"  # blue
 _CONSOLE_KEY = "\033[0;36m"  # cyan
 _CONSOLE_VAL = "\033[0;35m"  # magenta
@@ -145,7 +145,7 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
     level_short = level[:3].lower()
 
     # File path — fixed width, truncated from the left, padded on the right
-    file_path = event_dict.pop("logger", "")
+    file_path = event_dict.pop("logger_name", event_dict.pop("logger", ""))
     if len(file_path) > _CONSOLE_PATH_WIDTH:
         file_path = file_path[-_CONSOLE_PATH_WIDTH:]
     file_path = f"{file_path:<{_CONSOLE_PATH_WIDTH}s}"
