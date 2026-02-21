@@ -10,13 +10,14 @@ The Unitree Go2 is DimOS's primary reference platform. Full autonomous navigatio
 
 ## Install
 
-```bash
-# System dependencies (pick your platform)
-# Ubuntu: docs/installation/ubuntu.md
-# macOS:  docs/installation/osx.md
-# Nix:    docs/installation/nix.md
+First, install system dependencies for your platform:
+- [Ubuntu](../../../installation/ubuntu.md)
+- [macOS](../../../installation/osx.md)
+- [Nix](../../../installation/nix.md)
 
-# Python
+Then install DimOS:
+
+```bash
 uv venv --python "3.12"
 source .venv/bin/activate
 uv pip install dimos[base,unitree]
