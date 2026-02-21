@@ -113,6 +113,15 @@ def get_model_xml(robot: str, scene_xml: str) -> str:
     map_elem.set("znear", "0.01")
     map_elem.set("zfar", "10000")
 
+    # Set offscreen framebuffer size to support higher render resolutions
+    global_elem = visual.find("global")
+    if global_elem is None:
+        global_elem = ET.SubElement(visual, "global")
+    from dimos.simulation.mujoco.constants import VIDEO_HEIGHT, VIDEO_WIDTH
+
+    global_elem.set("offwidth", str(VIDEO_WIDTH))
+    global_elem.set("offheight", str(VIDEO_HEIGHT))
+
     _add_person_object(root)
 
     return ET.tostring(root, encoding="unicode")

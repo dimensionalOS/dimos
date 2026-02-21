@@ -15,8 +15,8 @@
 from pathlib import Path
 
 # Video/Camera constants
-VIDEO_WIDTH = 320
-VIDEO_HEIGHT = 240
+VIDEO_WIDTH = 1280
+VIDEO_HEIGHT = 720
 VIDEO_CAMERA_FOV = 45  # MuJoCo default FOV for head_camera (degrees)
 DEPTH_CAMERA_FOV = 160
 
