@@ -145,7 +145,7 @@ def _compact_console_processor(logger: Any, method_name: str, event_dict: Mappin
     level_short = level[:3].lower()
 
     # File path — fixed width, truncated from the left, padded on the right
-    file_path = event_dict.pop("logger_name", event_dict.pop("logger", ""))
+    file_path = event_dict.pop("logger", "")
     if len(file_path) > _CONSOLE_PATH_WIDTH:
         file_path = file_path[-_CONSOLE_PATH_WIDTH:]
     file_path = f"{file_path:<{_CONSOLE_PATH_WIDTH}s}"
