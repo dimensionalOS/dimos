@@ -39,8 +39,8 @@ It runs at **200Hz** — much faster than LiDAR (10Hz). The perception stack nee
 
 | Process | Binary | Host(s) | Description |
 |---|---|---|---|
-| **localization** | `localization_ddsnode` | NOS | Graph-based SLAM/localization (v3.3.1). Subscribes to `/LIDAR/POINTS` + `/IMU`, fuses them to produce `/ODOM` (pose) and `/ALIGNED_POINTS` (registered point cloud). Loads a pre-built map from `/var/opt/robot/data/maps/active/occ_grid.yaml`. Also launches `map_server` as a sibling process. Config: `/opt/robot/share/localization/conf/params.yaml`. Started with `chrt 48 taskset -c 4,5,6,7`. Does NOT load fastdds.xml (uses default all-interface transports). |
-| **lio_perception** | `lio_ddsnode` | AOS | Lidar-Inertial Odometry (v1.0.11). Subscribes to `/LIDAR/POINTS` + `/IMU`, produces `/LIO_ODOM` and `/LIO_ALIGNED_POINTS`. Lighter than NOS localization — no map, real-time odometry only. Runs a UDP sender on port 30100. Started with `chrt 35 taskset -c 4,5,6,7`. Does NOT load fastdds.xml. |
+| **localization** | `localization_ddsnode` | NOS | Graph-based SLAM/localization (v3.3.1). Subscribes to `/LIDAR/POINTS` + `/IMU`, fuses them to produce **`/ODOM`** (pose) and likely `/ALIGNED_POINTS` (registered point cloud). Loads a pre-built map from `/var/opt/robot/data/maps/active/` (full_cloud.pcd + occ_grid). Also launches `map_server` as a sibling process. Config: `/opt/robot/share/localization/conf/params.yaml`. `init_pose: [0,0,0]`, `auto_reloc: false`. Started with `chrt 48 taskset -c 4,5,6,7`. Does NOT load fastdds.xml (uses default all-interface transports). **Currently drifting badly after reboot — see Session 3.** |
+| **lio_perception** | `lio_ddsnode` | AOS | Lidar-Inertial Odometry (v1.0.11). Subscribes to `/LIDAR/POINTS` + `/IMU_YESENSE`, produces **`/LIO_ODOM`** and `/LIO_ALIGNED_POINTS`. Lighter than NOS localization — no map, real-time odometry only. Runs a UDP sender on port 30100. Started with `chrt 35 taskset -c 4,5,6,7`. Does NOT load fastdds.xml. **Note: `/LIO_ODOM` is not visible via rclpy topic discovery on GOS.** |
 
 ### Navigation
 
@@ -63,7 +63,7 @@ It runs at **200Hz** — much faster than LiDAR (10Hz). The perception stack nee
 
 | Process | Binary | Host(s) | Description |
 |---|---|---|---|
-| **mac_bridge** | `mac_bridge.py` | GOS | rclpy (ROS2 Foxy) subscriber that forwards DDS topics over TCP:9731 to Mac. Subscribes to `/ODOM`, `/ALIGNED_POINTS`, `/IMU`, `/tf`, `/MOTION_INFO`. Runs as `user`. Uses `SingleThreadedExecutor.spin()` in a daemon thread. Node NOT discoverable by other DDS participants (see Finding #21). Systemd service: `dimos-mac-bridge.service`. |
+| **mac_bridge** | `mac_bridge.py` | GOS | rclpy (ROS2 Foxy) subscriber that forwards DDS topics over TCP:9731 to Mac. Subscribes to `/ODOM`, `/ALIGNED_POINTS`, `/IMU`, `/tf`, `/MOTION_INFO`. Runs as `user`. Uses `rclpy.spin_once()` polling in a thread (fixed from `SingleThreadedExecutor.spin()` which didn't work with drdds). Systemd service: `dimos-mac-bridge.service`. |
 | **m20-relay** | `relay.main` | GOS | Houdini relay — browser-to-ROS2 bridge for teleop UI. Uses rclpy with `spin_once()` polling. Subscribes to `/IMU`, `/BATTERY_DATA`, `/JOINTS_DATA_10HZ`, `/MOTION_INFO`. Publishes `/JOINTS_CMD`. Runs from `/opt/m20-relay-versions/venv/`. Node IS discoverable. Handles battery/motor telemetry, SDK mode, manual joint control. NOT involved in autonomy data flow. |
 
 ### Scheduling Summary
@@ -680,3 +680,195 @@ Proprietary binary bug. Pragmatic path is using AOS lio_perception output.
 ### Pre-reboot known issue: costmap ceiling obstacle
 
 When dimos was working (2026-02-20), the 3D voxel map in Rerun showed the ceiling registering as obstacles in the costmap at z≈4.08m. The costmap needs a max height filter to ignore points above robot-relevant height (e.g., z > 2.0m). This is a separate issue to address after data flow is restored.
+
+---
+
+## Session 3: Data Flowing But Odometry Drifting (2026-02-21 ~17:40 CST)
+
+dimos launched successfully on Mac. TCP bridge connected, all modules deployed, Rerun viewer showing data. But odometry is wildly unstable — robot position jumping around even while sitting still.
+
+### Findings
+
+#### Key Finding #25: ODOM Drift Is At The Source, Not The Bridge
+
+Sampled raw `/ODOM` directly on GOS via rclpy (bypassing mac_bridge entirely). **Robot is sitting still (docked/standing) yet ODOM shows massive drift**:
+
+```
+ODOM stats (100 samples in 10.0s = 10.0 Hz):
+  X: mean=-2.7985 std=0.3402 min=-3.4451 max=-2.4348 range=1.0103
+  Y: mean=-1.5891 std=0.7570 min=-2.1766 max=-0.2706 range=1.9060
+  Z: mean=-2.2588 std=0.0213 min=-2.2925 max=-2.0983 range=0.1942
+  Jumps (>5cm): 30 out of 99 transitions (30.3%)
+  Jump magnitudes: mean=0.1154m max=0.3351m
+  Total drift (first to last): 1.9683m
+```
+
+**30% of consecutive samples have >5cm jumps. 2m total drift in 10 seconds while stationary.** This is NOT a bridge issue — the raw ROS2 topic on GOS already has this drift.
+
+#### Key Finding #26: `/ODOM` Comes From NOS Localization, NOT AOS lio_perception
+
+**This was a critical misconception in earlier analysis.** The two perception systems publish to DIFFERENT topics:
+
+| System | Host | Output Topic | Status |
+|---|---|---|---|
+| **NOS localization** (`localization_ddsnode`) | NOS (10.21.31.106) | **`/ODOM`** | Running, 28% CPU, produces output but drifts |
+| **AOS lio_perception** (`lio_ddsnode`) | AOS (10.21.31.103) | **`/LIO_ODOM`** | Running, 14.6% CPU, topic NOT visible via rclpy |
+
+From NOS localization config (`/opt/robot/share/localization/conf/params.yaml`):
+```yaml
+output_odom_topic: "/ODOM"        # ← This is what mac_bridge subscribes to
+```
+
+From AOS lio_perception config (`/opt/robot/share/lio_perception/conf/params.yaml`):
+```yaml
+output_odom_topic: "/LIO_ODOM"    # ← Different topic, NOT visible in ros2 topic list
+```
+
+**`/LIO_ODOM` does NOT appear in `ros2 topic list` on GOS.** Either lio_perception doesn't publish it to DDS properly, or rclpy can't discover it.
+
+#### Key Finding #27: NOS Localization Has Map But May Not Be Localized
+
+NOS localization runs with a pre-built map:
+```
+/var/opt/robot/data/maps/active/
+  full_cloud.pcd      (1.8MB — pre-built point cloud map)
+  occ_grid.pgm        (90KB — occupancy grid, 252×358 @ 0.1m/cell)
+  occ_grid.yaml       (161B — map metadata)
+  blocks/             (directory — chunked map data for fast_icp)
+```
+
+Config details:
+```yaml
+init_pose: [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]  # Starts at origin
+auto_reloc: false           # NO automatic relocalization
+registration_cov: 0.0001   # Registration covariance
+matching_error_th: 0.25     # Match error threshold
+inlier_ratio_th: 0.95       # Required inlier ratio (very strict)
+fast_icp:
+  maximum_iterations: 30
+  inner_distance: 0.5
+```
+
+**Problem**: After reboot, localization starts at `init_pose: [0,0,0]` (map origin). If the robot's actual position doesn't match the map origin, scan-to-map matching starts from a wrong pose. With `auto_reloc: false`, it can't automatically relocalize. The strict `inlier_ratio_th: 0.95` means poor initial matching → noisy/jumpy pose estimates.
+
+**This was the same pattern identified in Session 1** (Finding #8): localization logs showed "matching_error ~0.19 with inlier_ratio ~0.50" — far below the 0.95 threshold. The scan matching never converges because the initial pose is wrong and there's no relocalization.
+
+#### Key Finding #28: IMU Is Healthy
+
+IMU data on GOS is clean (sampled directly via rclpy):
+```
+IMU: 474 msgs in 3.0s = 157.9 Hz
+  accel=(0.129,-0.103,9.803) |a|=9.804   ← correct gravity magnitude
+  gyro=(0.0010,0.0015,-0.0017)           ← near-zero (robot stationary)
+```
+
+IMU sensor is working perfectly. The drift is in the SLAM, not the IMU.
+
+#### Key Finding #29: ALIGNED_POINTS Source Uncertain
+
+`/ALIGNED_POINTS` appears in the topic list (10.8 Hz, 310-358 points/frame, frame_id="map", point_step=48). But:
+- NOS localization config has NO explicit `/ALIGNED_POINTS` output topic
+- AOS lio_perception config outputs `/LIO_ALIGNED_POINTS` (different name, doesn't appear in topic list)
+
+Possible explanations:
+1. NOS localization publishes `/ALIGNED_POINTS` internally even though it's not in the yaml config
+2. AOS lio_perception remaps `/LIO_ALIGNED_POINTS` → `/ALIGNED_POINTS` at the binary level
+3. There's another process producing it
+
+**Point count dropped from ~720 to ~320** compared to earlier TCP bridge tests. The lower count may be due to poor localization → fewer matched/aligned points.
+
+#### Key Finding #30: Full Topic List From GOS
+
+55+ DDS topics visible from GOS (via rclpy). Notable ones:
+```
+/ODOM                        ← NOS localization (drifting)
+/ALIGNED_POINTS              ← Source uncertain (NOS or AOS)
+/IMU                         ← NOS yesense (157Hz, healthy)
+/LIDAR/POINTS                ← Local GOS rslidar
+/MOTION_INFO                 ← AOS motor control
+/tf                          ← Transform frames
+/FULL_CLOUD_MAP              ← NOS localization (global map)
+/LOCATION_STATUS             ← NOS localization health (drdds type, unreadable via rclpy)
+/LOCATION_STATUS/MATCHING_ERROR  ← NOS localization quality metric
+/LOC_BODY_POINTS             ← NOS localization body-frame points
+```
+
+### Root Cause: NOS Localization Not Converged After Reboot
+
+The odometry drift is caused by NOS localization (`localization_ddsnode`) failing to properly localize against its pre-built map after the robot reboot:
+
+1. After reboot, localization starts at `init_pose: [0,0,0]` (map origin)
+2. Robot is NOT at map origin → initial scan-to-map matching fails
+3. `auto_reloc: false` → no automatic relocalization attempt
+4. Without proper localization, ICP matching oscillates between local minima
+5. Result: 1-2m drift per 10 seconds, 30% of transitions have >5cm jumps, even while stationary
+
+**This is consistent with Session 1 findings** where localization logs showed matching_error ~0.19 (above 0.25 threshold) with inlier_ratio ~0.50 (far below 0.95 threshold). The SLAM never converges.
+
+**Yesterday it worked because** either:
+- NOS localization had been running long enough to converge (the map was built from this environment)
+- The robot was positioned near the map origin at startup
+- A manual relocalization was triggered at some point
+
+### What about AOS lio_perception as alternative?
+
+AOS lio_perception is simpler (no prior map, pure LiDAR-inertial odometry). It publishes to `/LIO_ODOM` which is currently NOT visible via rclpy. Options:
+1. **Make mac_bridge subscribe to `/LIO_ODOM`** instead of/in addition to `/ODOM`
+2. **Fix NOS localization** by providing a correct initial pose or enabling auto-relocalization
+3. **Use both** — subscribe to both and pick the one with better quality
+
+### Proposed Next Steps
+
+1. **Quick test: Check raw `/LIO_ODOM` data quality on AOS**
+   - If lio_perception produces stable odometry, it's a better source than the broken NOS localization
+   - Need to check if `/LIO_ODOM` is even visible from GOS over DDS
+
+2. **Fix NOS localization initial pose**
+   - Option A: Change `init_pose` in `/opt/robot/share/localization/conf/params.yaml` to the robot's actual location
+   - Option B: Set `auto_reloc: true` so it relocates automatically on startup
+   - Option C: Publish a manual relocalization pose to `/initialpose` (topic exists in the list)
+
+3. **Subscribe to `/LIO_ODOM` in mac_bridge as fallback**
+   - Update mac_bridge.py to subscribe to both `/ODOM` and `/LIO_ODOM`
+   - Use whichever produces better data
+
+4. **NOS localization IMU issue** (Finding #8) — this was the deeper bug where localization gets 0 IMU per frame. Even with correct init_pose, localization can't converge without IMU. This is likely the real reason it's drifting — it's doing scan-matching only, no inertial prediction, producing noisy results.
+
+#### Key Finding #31: AOS SHM Fixed After Session 2 Restart — But lio_perception Still Silent
+
+After the AOS service restart in Session 2, the SHM segments are NOW properly shared:
+
+```
+lio_perception (PID 135111) ↔ yesense (PID 135029):
+  e8f7b26a07c7f7c0 — yesense owns (17:09), lio maps ✓
+  b60838afe85f56be — shared (17:09) ✓
+
+lio_perception (PID 135111) ↔ rslidar (PID 135310):
+  84efce70cb99c7b9 — lio owns (17:10), rslidar maps ✓
+  b60838afe85f56be — shared (17:09) ✓
+```
+
+**This fixes Finding #10** (AOS lio↔yesense shared ZERO segments). The Session 2 restart re-triggered DDS discovery and SHM negotiation succeeded. But lio_perception's log (`1576 bytes total`) contains ONLY initialization messages (4 restarts, no processing output):
+
+```
+[17:09:57] LIO version: 1.0.11
+[17:09:57] 里程计节点完成初始化 (odometry node initialized)
+[17:09:57] UDP server listening on port 30100
+           ← no further output in 38+ minutes
+```
+
+At 11% CPU, lio_perception may be processing data but not logging it (lio_perception has no verbose logging mode that we know of). Or it may be stuck in initialization despite having SHM access. **We cannot determine from logs alone whether `/LIO_ODOM` is being published.**
+
+### Status After Session 3
+
+| Component | Status | Notes |
+|---|---|---|
+| mac_bridge (GOS→Mac TCP) | **WORKING** | spin_once fix deployed, all 5 topics flowing |
+| SSH tunnel (Mac→GOS) | **WORKING** | localhost:9731 → GOS:9731 via AOS |
+| dimos on Mac | **RUNNING** | PID 75355, blueprint built, Rerun showing data |
+| TCP data flow | **VERIFIED** | IMU 155Hz, LIDAR 9.1Hz, ODOM 9.1Hz, TF 9Hz, MOTION_INFO 18.3Hz |
+| Odometry quality | **BROKEN** | 1.97m drift/10s while stationary, source: NOS localization |
+| Costmap | AFFECTED | Drift causes costmap to jump around (shows unstable ego) |
+| NOS localization | **DRIFTING** | Not converged after reboot, possible IMU integration failure |
+| AOS lio_perception | UNKNOWN | Running but `/LIO_ODOM` not visible from GOS via rclpy |
+| IMU | **HEALTHY** | 158Hz, correct gravity, near-zero gyro |
