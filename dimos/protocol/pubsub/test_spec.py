@@ -25,6 +25,7 @@ import pytest
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.impl.memory import Memory
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, ZenohPubSub
 
 
 @contextmanager
@@ -123,6 +124,16 @@ testdata.append(
     )
 )
 
+
+@contextmanager
+def zenoh_context() -> Generator[ZenohPubSub, None, None]:
+    zenoh_pubsub = ZenohPubSub()
+    zenoh_pubsub.start()
+    yield zenoh_pubsub
+    zenoh_pubsub.stop()
+
+
+testdata.append((zenoh_context, ZenohTopic("test/zenoh/spec"), [b"value1", b"value2", b"value3"]))
 
 from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
 

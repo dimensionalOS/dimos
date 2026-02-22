@@ -64,7 +64,7 @@ P: box "PubSub" rad 5px
 # Descriptions below
 text "robot configs" at B.s + (0.1, -0.2in)
 text "camera, nav" at M.s + (0, -0.2in)
-text "LCM, SHM, ROS" at T.s + (0, -0.2in)
+text "LCM, SHM, Zenoh" at T.s + (0, -0.2in)
 text "pub/sub API" at P.s + (0, -0.2in)
 ```
 
@@ -289,6 +289,42 @@ shm.stop()
 Received: [{'data': [1, 2, 3]}]
 ```
 
+### Zenoh
+
+Zenoh is a high-performance pub/sub protocol. Topics are untyped key expressions; payloads are raw `bytes` or `str` (serialization is your choice).
+
+```python session=zenoh_demo ansi=false
+import json
+from dataclasses import dataclass, asdict
+from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSub, Topic
+
+@dataclass
+class SensorReading:
+    value: float
+
+zenoh = ZenohPubSub()
+zenoh.start()
+
+received = []
+sensor_topic = Topic(name="sensors/temperature")
+
+zenoh.subscribe(sensor_topic, lambda msg, t: received.append(SensorReading(**json.loads(msg))))
+zenoh.publish(sensor_topic, json.dumps(asdict(SensorReading(value=22.5))))
+
+import time
+time.sleep(0.1)
+
+print(f"Received: {received}")
+zenoh.stop()
+```
+
+<!--Result:-->
+```
+Received: [SensorReading(value=22.5)]
+```
+
+Zenoh is interoperable with any Zenoh client (Rust, C, C++, etc.) since it sends raw bytes on the wire. Use any serialization format you like (JSON, Protobuf, LCM binary, etc.) — the transport doesn't impose one.
+
 ### DDS Transport
 
 For network communication, DDS uses the Data Distribution Service (DDS) protocol:
@@ -434,4 +470,5 @@ python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_b
 | `LCM`          | Robot LAN broadcast (UDP multicast) | Yes           | Yes     | Best-effort; can drop packets on LAN |
 | `Redis`        | Network pubsub via Redis server     | Yes           | Yes     | Central broker; adds hop             |
 | `ROS`          | ROS 2 topic communication           | Yes           | Yes     | Integrates with RViz/ROS tools       |
+| `Zenoh`        | High-perf network pubsub            | Yes           | Yes     | Raw bytes/str; no serialization overhead |
 | `DDS`          | Cyclone DDS without ROS (WIP)       | Yes           | Yes     | WIP                                  |

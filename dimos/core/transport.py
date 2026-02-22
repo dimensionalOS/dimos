@@ -35,6 +35,7 @@ from dimos.protocol.pubsub.impl.jpeg_shm import JpegSharedMemory
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, ZenohPubSub
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -319,4 +320,35 @@ if DDS_AVAILABLE:
                 return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
-class ZenohTransport(PubSubTransport[T]): ...
+class ZenohTransport(PubSubTransport[T]):
+    def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(ZenohTopic(topic))
+        self.zenoh = ZenohPubSub(**kwargs)
+        self._started: bool = False
+        self._start_lock = threading.RLock()
+
+    def start(self) -> None:
+        with self._start_lock:
+            if not self._started:
+                self.zenoh.start()
+                self._started = True
+
+    def stop(self) -> None:
+        with self._start_lock:
+            if self._started:
+                self.zenoh.stop()
+                self._started = False
+
+    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+        with self._start_lock:
+            if not self._started:
+                self.start()
+            self.zenoh.publish(self.topic, msg)
+
+    def subscribe(
+        self, callback: Callable[[T], None], selfstream: Stream[T] | None = None
+    ) -> Callable[[], None]:
+        with self._start_lock:
+            if not self._started:
+                self.start()
+            return self.zenoh.subscribe(self.topic, lambda msg, topic: callback(msg))

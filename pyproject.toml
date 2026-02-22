@@ -32,6 +32,7 @@ dependencies = [
     # Transport Protocols
     "dimos-lcm",
     "PyTurboJPEG==1.8.2",
+    "eclipse-zenoh>=1.7.2",
     # Core
     "numpy>=1.26.4",
     "scipy>=1.15.1",

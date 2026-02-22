@@ -35,6 +35,7 @@ from dimos.protocol.pubsub.impl.shmpubsub import (
     LCMSharedMemory,
     PickleSharedMemory,
 )
+from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, ZenohPubSub
 
 
 def make_data_bytes(size: int) -> bytes:
@@ -270,6 +271,27 @@ try:
 except (ConnectionError, ImportError):
     # either redis is not installed or the server is not running
     print("Redis not available")
+
+
+@contextmanager
+def zenoh_pubsub_channel() -> Generator[ZenohPubSub, None, None]:
+    zenoh_pubsub = ZenohPubSub()
+    zenoh_pubsub.start()
+    yield zenoh_pubsub
+    zenoh_pubsub.stop()
+
+
+def zenoh_msggen(size: int) -> tuple[ZenohTopic, bytes]:
+    """Generate raw bytes for Zenoh pubsub benchmark."""
+    return (ZenohTopic("benchmark/zenoh"), make_data_bytes(size))
+
+
+testcases.append(
+    Case(
+        pubsub_context=zenoh_pubsub_channel,
+        msg_gen=zenoh_msggen,
+    )
+)
 
 
 from dimos.protocol.pubsub.impl.rospubsub import (
