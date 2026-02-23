@@ -34,26 +34,13 @@ Usage:
 from __future__ import annotations
 
 from dimos.control.blueprints import coordinator_mock_twist_base
-from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import Twist
 from dimos.robot.unitree.keyboard_teleop import keyboard_teleop
 
 
 def main() -> None:
     """Run mock twist base + keyboard teleop."""
-    # Build coordinator with mock twist base
     coord = coordinator_mock_twist_base.build()
-
-    # Build keyboard teleop with LCM transport on /cmd_vel
-    teleop = (
-        keyboard_teleop()
-        .transports(
-            {
-                ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-            }
-        )
-        .build()
-    )
+    teleop = keyboard_teleop().build()
 
     print("Starting mock twist base coordinator + keyboard teleop...")
     print("Coordinator tick loop: 100Hz")
