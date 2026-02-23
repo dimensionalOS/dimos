@@ -35,7 +35,7 @@ dependencies = [
     # Core
     "numpy>=1.26.4",
     "scipy>=1.15.1",
-    "pin>=3.3.0",  # Pinocchio IK library
+    "pin>=3.3.0", # Pinocchio IK library
     "reactivex",
     "asyncio==3.4.3",
     "sortedcontainers==2.4.0",
@@ -43,7 +43,6 @@ dependencies = [
     "python-dotenv",
     "annotation-protocol>=1.4.0",
     "lazy_loader",
-
     # Multiprocess
     "dask[complete]==2025.5.1",
     "plum-dispatch==2.5.7",
@@ -61,12 +60,14 @@ dependencies = [
     "typer>=0.19.2,<1",
     "plotext==5.3.2",
     # Used for calculating the occupancy map.
-    "numba>=0.60.0",    # First version supporting Python 3.12
+    "numba>=0.60.0", # First version supporting Python 3.12
     "llvmlite>=0.42.0", # Required by numba 0.60+
     # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
     # remove this once rerun is optional in core
     "rerun-sdk>=0.20.0",
     "toolz>=1.1.0",
+    "av>=16.1.0",
+    "python-socketio>=5.16.1",
 ]
 
 

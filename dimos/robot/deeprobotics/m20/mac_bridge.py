@@ -309,18 +309,9 @@ class M20MacBridge(object):
 
             logger.info("Client connected from %s:%d", addr[0], addr[1])
 
-            # If existing client has sent heartbeats, it's the real dimos client —
-            # reject the new connection to prevent rogue connections from kicking it.
-            with self._client_lock:
-                if self._client_connected and self._client_has_heartbeat:
-                    logger.info("Rejecting new connection (existing client authenticated)")
-                    try:
-                        client.close()
-                    except Exception:
-                        pass
-                    continue
-
-            # Kick existing client (never sent heartbeat = rogue/stale)
+            # Always kick existing client — SSH tunnels can keep TCP alive
+            # long after the real client disconnects, causing stale "authenticated"
+            # connections that block new ones indefinitely.
             self._kick_existing_client()
 
             # Clear stale buffers

@@ -138,6 +138,7 @@ class HeightCostConfig(OccupancyConfig):
     can_climb: float = 0.15
     ignore_noise: float = 0.05
     smoothing: float = 1.0
+    max_height: float | None = None  # Filter points above this z-value (e.g. ceiling)
 
 
 def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
@@ -159,6 +160,10 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     points, _ = cloud.as_numpy()
     points = points.astype(np.float64)  # Upcast to avoid float32 rounding
     ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
+
+    # Filter out points above max_height (e.g. ceiling reflections)
+    if cfg.max_height is not None and len(points) > 0:
+        points = points[points[:, 2] <= cfg.max_height]
 
     if len(points) == 0:
         return OccupancyGrid(
@@ -217,6 +222,7 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
 
     # Track which cells have observations
     observed_mask = ~np.isnan(height_map)
+    original_observed_mask = observed_mask.copy()  # Before smoothing extends it
 
     # Step 3: Apply smoothing to fill gaps while preserving unknown space
     if cfg.smoothing > 0 and np.any(observed_mask):
@@ -265,10 +271,20 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         cost_float = (height_change_per_cell / cfg.can_climb) * 100.0
         cost_float = np.clip(cost_float, 0, 100)
 
-        # Erode observed mask - only trust gradients where all neighbors are observed
-        # This prevents false high costs at boundaries with unknown regions
+        # Cap costs on smoothing-boundary cells. Smoothing extends the observed
+        # mask ~3σ cells beyond real observations. The Sobel gradient at this
+        # artificial boundary produces high costs (the "gradient ring") that
+        # block frontier detection. Capping these to 50 makes them traversable
+        # by the BFS (threshold=99) and planner (threshold=100) while still
+        # indicating moderate cost. Real obstacles in the interior keep full cost.
+        smoothing_boundary = observed_mask & ~original_observed_mask
+        cost_float[smoothing_boundary] = np.minimum(cost_float[smoothing_boundary], 50.0)
+
+        # Erode the observed mask by 1 cell to avoid Sobel edge artifacts.
         structure = ndimage.generate_binary_structure(2, 1)  # 4-connectivity
-        valid_gradient_mask = ndimage.binary_erosion(observed_mask, structure=structure)
+        valid_gradient_mask = ndimage.binary_erosion(
+            observed_mask, structure=structure
+        )
 
         # Convert to int8, marking cells without valid gradients as -1
         cost = np.where(valid_gradient_mask, cost_float.astype(np.int8), -1)
