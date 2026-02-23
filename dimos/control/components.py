@@ -71,7 +71,41 @@ def make_joints(hardware_id: HardwareId, dof: int) -> list[JointName]:
     return [f"{hardware_id}_joint{i + 1}" for i in range(dof)]
 
 
+# Maps virtual joint suffix → (Twist group, Twist field)
+TWIST_SUFFIX_MAP: dict[str, tuple[str, str]] = {
+    "vx": ("linear", "x"),
+    "vy": ("linear", "y"),
+    "vz": ("linear", "z"),
+    "wx": ("angular", "x"),
+    "wy": ("angular", "y"),
+    "wz": ("angular", "z"),
+}
+
+_DEFAULT_TWIST_SUFFIXES = ["vx", "vy", "wz"]
+
+
+def make_twist_base_joints(
+    hardware_id: HardwareId,
+    suffixes: list[str] | None = None,
+) -> list[JointName]:
+    """Create virtual joint names for a twist base.
+
+    Args:
+        hardware_id: The hardware identifier (e.g., "base")
+        suffixes: Velocity DOF suffixes. Defaults to ["vx", "vy", "wz"] (holonomic).
+
+    Returns:
+        List of joint names like ["base_vx", "base_vy", "base_wz"]
+    """
+    suffixes = suffixes or _DEFAULT_TWIST_SUFFIXES
+    for s in suffixes:
+        if s not in TWIST_SUFFIX_MAP:
+            raise ValueError(f"Unknown twist suffix '{s}'. Valid: {list(TWIST_SUFFIX_MAP)}")
+    return [f"{hardware_id}_{s}" for s in suffixes]
+
+
 __all__ = [
+    "TWIST_SUFFIX_MAP",
     "HardwareComponent",
     "HardwareId",
     "HardwareType",
@@ -79,4 +113,5 @@ __all__ = [
     "JointState",
     "TaskName",
     "make_joints",
+    "make_twist_base_joints",
 ]

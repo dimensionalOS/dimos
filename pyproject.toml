@@ -119,6 +119,7 @@ misc = [
 
     # Hardware SDKs
     "xarm-python-sdk>=1.17.0",
+    "portal",
 ]
 
 visualization = [

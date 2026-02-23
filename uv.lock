@@ -1964,6 +1964,7 @@ misc = [
     { name = "onnx" },
     { name = "open-clip-torch" },
     { name = "opencv-contrib-python" },
+    { name = "portal" },
     { name = "python-multipart" },
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -2121,6 +2122,7 @@ requires-dist = [
     { name = "plotly", marker = "extra == 'manipulation'", specifier = ">=5.9.0" },
     { name = "plum-dispatch", specifier = "==2.5.7" },
     { name = "plum-dispatch", marker = "extra == 'docker'", specifier = "==2.5.7" },
+    { name = "portal", marker = "extra == 'misc'" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = "==4.2.0" },
     { name = "psycopg2-binary", marker = "extra == 'psql'", specifier = ">=2.9.11" },
     { name = "py-spy", marker = "extra == 'dev'" },
@@ -6942,6 +6944,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/8e/f3/b2a5e720cc56eaa38b4518e63aa577b4bbd60e8b05a00fe43ca051be5879/polars_runtime_32-1.38.1-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:61e8d73c614b46a00d2f853625a7569a2e4a0999333e876354ac81d1bf1bb5e2", size = 45336615, upload-time = "2026-02-06T18:12:14.074Z" },
     { url = "https://files.pythonhosted.org/packages/f1/8d/ee2e4b7de948090cfb3df37d401c521233daf97bfc54ddec5d61d1d31618/polars_runtime_32-1.38.1-cp310-abi3-win_amd64.whl", hash = "sha256:08c2b3b93509c1141ac97891294ff5c5b0c548a373f583eaaea873a4bf506437", size = 45680732, upload-time = "2026-02-06T18:12:19.097Z" },
     { url = "https://files.pythonhosted.org/packages/bf/18/72c216f4ab0c82b907009668f79183ae029116ff0dd245d56ef58aac48e7/polars_runtime_32-1.38.1-cp310-abi3-win_arm64.whl", hash = "sha256:6d07d0cc832bfe4fb54b6e04218c2c27afcfa6b9498f9f6bbf262a00d58cc7c4", size = 41639413, upload-time = "2026-02-06T18:12:22.044Z" },
+]
+
+[[package]]
+name = "portal"
+version = "3.7.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cloudpickle" },
+    { name = "msgpack" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "psutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/57/11/c67a1b771901e4c941fe3dcda763b78a29b6c45308e3ebaf99bac96820d8/portal-3.7.4.tar.gz", hash = "sha256:67234267d1eb319fe790653822d4a8d0e0e5312fb29fd8f440d8287066f478b9", size = 17380, upload-time = "2026-01-12T18:17:45.727Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c3/14/0f7d227894831d2d7eb7f2c6946e8cad8e86da6135b6f902bb961d948f04/portal-3.7.4-py3-none-any.whl", hash = "sha256:3801a489766d3ec2eb73ca8cefd29c54e166d4cf5cfdf1a079ac93fe1130bedb", size = 23486, upload-time = "2026-01-12T18:17:44.326Z" },
 ]
 
 [[package]]
