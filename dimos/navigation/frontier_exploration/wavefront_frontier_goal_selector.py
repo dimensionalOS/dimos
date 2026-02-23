@@ -238,8 +238,7 @@ class WavefrontFrontierExplorer(Module):
     def _is_frontier_point(self, point: GridPoint, costmap: OccupancyGrid) -> bool:
         """
         Check if a point is a frontier point.
-        A frontier point is an unknown cell adjacent to at least one free cell
-        and not adjacent to any occupied cells.
+        A frontier point is an unknown cell adjacent to at least one free cell.
         """
         # Point must be unknown
         cost = costmap.grid[point.y, point.x]
@@ -251,13 +250,10 @@ class WavefrontFrontierExplorer(Module):
         for neighbor in self._get_neighbors(point, costmap):
             neighbor_cost = costmap.grid[neighbor.y, neighbor.x]
 
-            # If adjacent to occupied space, not a frontier
-            if neighbor_cost >= self.occupancy_threshold:
-                return False
-
             # Check if adjacent to known traversable space
             if 0 <= neighbor_cost < self.occupancy_threshold:
                 has_free = True
+                break
 
         return has_free
 
@@ -318,8 +314,34 @@ class WavefrontFrontierExplorer(Module):
         grid_pos = costmap.world_to_grid(robot_pose)
         grid_x, grid_y = int(grid_pos.x), int(grid_pos.y)
 
+        # Debug: costmap stats
+        import numpy as _np
+        _grid = costmap.grid
+        _n_free = int(_np.sum((_grid >= 0) & (_grid < self.occupancy_threshold)))
+        _n_occ = int(_np.sum(_grid >= self.occupancy_threshold))
+        _n_unk = int(_np.sum(_grid == CostValues.UNKNOWN))
+        _robot_val = int(_grid[grid_y, grid_x]) if 0 <= grid_x < costmap.width and 0 <= grid_y < costmap.height else -999
+        logger.info(
+            "detect_frontiers debug",
+            robot_world=f"({robot_pose.x:.2f}, {robot_pose.y:.2f})",
+            robot_grid=f"({grid_x}, {grid_y})",
+            robot_cell_cost=_robot_val,
+            grid_shape=f"{costmap.width}x{costmap.height}",
+            free_cells=_n_free,
+            occupied_cells=_n_occ,
+            unknown_cells=_n_unk,
+            occupancy_threshold=self.occupancy_threshold,
+        )
+
         # Find nearest free space to start exploration
         free_x, free_y = self._find_free_space(grid_x, grid_y, costmap)
+        _free_val = int(_grid[free_y, free_x]) if 0 <= free_x < costmap.width and 0 <= free_y < costmap.height else -999
+        logger.info(
+            "find_free_space result",
+            free_grid=f"({free_x}, {free_y})",
+            free_cell_cost=_free_val,
+            dist_from_robot=f"{((free_x - grid_x)**2 + (free_y - grid_y)**2)**0.5:.1f} cells",
+        )
         start_point = self._cache.get_point(free_x, free_y)
         start_point.classification = PointClassification.MapOpen
 
@@ -414,6 +436,14 @@ class WavefrontFrontierExplorer(Module):
                     ):
                         neighbor.classification |= PointClassification.MapOpen
                         map_queue.append(neighbor)
+
+        logger.info(
+            "detect_frontiers BFS complete",
+            points_checked=points_checked,
+            frontier_candidates=frontier_candidates,
+            frontiers_found=len(frontiers),
+            frontier_sizes=frontier_sizes[:5] if frontier_sizes else [],
+        )
 
         # Extract just the centroids for ranking
         frontier_centroids = frontiers

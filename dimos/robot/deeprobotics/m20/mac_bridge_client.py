@@ -73,10 +73,25 @@ class FrameProtocol:
 
     @staticmethod
     def read_frame(sock: socket.socket) -> tuple[int, bytes]:
-        """Blocking read of one frame from socket."""
-        magic = _recv_exact(sock, 2)
-        if magic != MAGIC:
-            raise ValueError(f"Bad magic bytes: {magic!r}")
+        """Blocking read of one frame from socket.
+
+        If the first bytes aren't magic, scans forward byte-by-byte to
+        resynchronize (handles starting mid-stream after reconnect).
+        """
+        # Read first byte
+        b0 = _recv_exact(sock, 1)
+        # Scan for magic bytes if not aligned
+        skipped = 0
+        while True:
+            b1 = _recv_exact(sock, 1)
+            if b0 + b1 == MAGIC:
+                break
+            if skipped > MAX_FRAME_SIZE:
+                raise ValueError("Could not find magic bytes after scanning %d bytes" % skipped)
+            b0 = b1
+            skipped += 1
+        if skipped > 0:
+            logger.debug("Resynchronized after skipping %d bytes", skipped)
         length_bytes = _recv_exact(sock, 4)
         length = struct.unpack("!I", length_bytes)[0]
         if length > MAX_FRAME_SIZE:

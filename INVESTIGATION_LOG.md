@@ -872,3 +872,868 @@ At 11% CPU, lio_perception may be processing data but not logging it (lio_percep
 | NOS localization | **DRIFTING** | Not converged after reboot, possible IMU integration failure |
 | AOS lio_perception | UNKNOWN | Running but `/LIO_ODOM` not visible from GOS via rclpy |
 | IMU | **HEALTHY** | 158Hz, correct gravity, near-zero gyro |
+
+---
+
+## Session 4: LIO Enable Discovery & Stable Odometry (2026-02-22 ~08:00 CST)
+
+This session resolved the odometry drift by switching from NOS localization to AOS lio_perception, discovering the critical `/LIO_ENABLE` service requirement, and establishing a reliable Mac bridge pipeline.
+
+### Key Finding #32: `/opt/robot/fastdds.xml` Is NOT Loaded By Any Process
+
+Spent significant time investigating DDS transport config. Definitive findings:
+
+- `libfastrtps.so.2.14` checks for `DEFAULT_FASTRTPS_PROFILES.xml` in CWD and `FASTRTPS_DEFAULT_PROFILES_FILE` env var
+- `libdrdds.so` hardcodes loading `/opt/drdds/dr_qos/drqos.xml` (QoS settings only)
+- **No process sets `FASTRTPS_DEFAULT_PROFILES_FILE`** env var (verified via `/proc/<pid>/environ`)
+- rslidar's CWD is `/opt/robot/share/node_driver/bin` — no XML there
+- lio's CWD is `/` (from systemd) — no XML there either
+- rslidar creates 52MB SHM segments (default FastDDS size), NOT 500MB as specified in `fastdds.xml`
+- **Conclusion: `/opt/robot/fastdds.xml` is dead config — never loaded by any process**
+
+### Key Finding #33: libdrdds.so Programmatically Configures Transport
+
+All drdds binaries get transport config from `libdrdds.so` (27MB, `/usr/local/lib/`):
+
+| Process | UDP Bindings | SHM |
+|---|---|---|
+| rslidar | 127.0.0.1 + multicast 239.255.0.1 | ✓ 52MB |
+| yesense | 127.0.0.1 + multicast 239.255.0.1 | ✓ 52MB |
+| lio_ddsnode | 127.0.0.1 + 10.21.33.103 + multicast | ✓ 52MB |
+| basic_server | ALL interfaces | ✓ 52MB |
+
+**Transport is set programmatically by libdrdds, NOT via XML config.** This explains why modifying `fastdds.xml` or setting `FASTRTPS_DEFAULT_PROFILES_FILE` had no effect.
+
+### Key Finding #34: basic_server Relays Topics Cross-Host
+
+`basic_server` on AOS binds to ALL interfaces and acts as a DDS relay:
+- Subscribes to local topics on loopback/SHM
+- Re-publishes on all interfaces (10.21.31.103, 10.21.33.103, etc.)
+- This is how topics from AOS reach GOS/NOS
+
+### Key Finding #35: BREAKTHROUGH — `/LIO_ENABLE` Service Required
+
+**THIS WAS THE PRIMARY BLOCKER.** lio_ddsnode initializes but WAITS for an explicit enable command before processing sensor data.
+
+Evidence:
+- Binary `/opt/robot/share/lio_perception/bin/lio_command` sends integer commands to `/LIO_ENABLE` DDS service
+- lio log shows "LIO command server started." on init — it's waiting, not processing
+- Journal shows "Subscription matched" events but no data processing until enable
+
+```bash
+# Enable command:
+sudo /opt/robot/share/lio_perception/bin/lio_command 1
+# Output: "调用成功，res: 1" (Call successful, response: 1)
+```
+
+After enabling:
+```
+[08:38:02.199] LIO started
+[08:38:02.200] Restarting LidarOdometry...
+[08:38:02.200] LIO restarted
+[08:38:02.223] 本帧雷达无对应有效imu数据 (no valid IMU for this frame)
+[08:38:02.223] 本帧点云为空 (empty point cloud)  ← repeated ~10x during init
+[08:38:03.345] Finish init first scan!  ← LIO initialized successfully
+```
+
+### Key Finding #36: lio_perception params.yaml Already Modified
+
+From a previous session, the lio_perception output topics were renamed:
+```yaml
+output_odom_topic: "/ODOM"              # was "/LIO_ODOM"
+output_aligned_cloud_topic: "/ALIGNED_POINTS"  # was "/LIO_ALIGNED_POINTS"
+```
+Backup at `params.yaml.dimos_bak`. This means lio_perception publishes to the same topic names that the mac_bridge subscribes to — no bridge changes needed.
+
+### Key Finding #37: LIO Odometry Is Rock Stable
+
+After enabling LIO, sampled `/ODOM` data on GOS:
+
+```
+Drift test (robot stationary, 35s, 273 samples):
+  Max drift from first position: 0.58cm
+  Start: (+0.0002, +0.0145, +0.0003)
+  End:   (-0.0000, +0.0139, +0.0013)
+  PASS: Drift < 5cm — LIO odometry is stable
+```
+
+**Comparison**: NOS localization was drifting 2m/10s. LIO drifts 0.6cm/35s. ~300x improvement.
+
+### Key Finding #38: SSH Tunnels Cause Stale TCP Connections
+
+SSH tunnels (`ssh -L 9731:...`) don't properly propagate TCP FIN when the Mac client disconnects. The GOS bridge sees the TCP connection as still alive (heartbeats previously sent = "authenticated"). New connections are rejected for up to 15s (heartbeat timeout).
+
+**Fix applied (bridge-side)**: Removed "authenticated client" protection. New connections always kick existing ones. Single-client use case doesn't need protection.
+
+**Fix applied (client-side)**: Added magic byte resynchronization to `FrameProtocol.read_frame()`. If first bytes aren't magic, scans forward byte-by-byte until magic found. Handles starting mid-stream after reconnect.
+
+### Key Finding #39: iptables NAT Is Better Than SSH Tunnel
+
+Mac (10.21.41.29) can't directly reach GOS (10.21.31.104) — different subnets. AOS has IP forwarding enabled (`ip_forward=1`).
+
+**Solution**: iptables DNAT on AOS forwards WiFi traffic to GOS:
+```bash
+iptables -t nat -A PREROUTING -i wlan0 -p tcp --dport 9731 -j DNAT --to-destination 10.21.31.104:9731
+iptables -t nat -A POSTROUTING -p tcp -d 10.21.31.104 --dport 9731 -j MASQUERADE
+```
+
+Saved to `/etc/iptables/rules.v4` via `iptables-persistent` (survives reboot).
+
+**Advantages over SSH tunnel**: Proper TCP close propagation, no encryption overhead, transparent to bridge connection detection.
+
+### Changes Made This Session
+
+| Location | File | Change |
+|---|---|---|
+| AOS | `lio_ddsnode.sh` | Auto-enables LIO: starts lio_ddsnode in background, waits 5s, runs `lio_command 1` with retry |
+| AOS | `lio_ddsnode.sh.orig` | Backup of original script |
+| AOS | `/etc/iptables/rules.v4` | NAT PREROUTING: WiFi:9731 → GOS:9731 |
+| GOS | `mac_bridge.py` | Always-kick: new connections always replace existing (fixes stale SSH tunnel connections) |
+| Mac | `mac_bridge_client.py` | Magic byte resync in `FrameProtocol.read_frame()` |
+| Mac | `mac_bridge.py` (local) | Same always-kick fix |
+
+### Network Path (Final)
+
+```
+Mac (10.21.41.29) ──WiFi──→ AOS wlan0 (10.21.41.1:9731)
+  ──iptables DNAT──→ AOS eth2 (10.21.31.103)
+  ──wired──→ GOS (10.21.31.104:9731) mac_bridge
+  ──ROS2/DDS──→ AOS (loopback) basic_server relay
+  ──DDS──→ lio_ddsnode → /ODOM, /ALIGNED_POINTS
+```
+
+### Status After Session 4
+
+| Component | Status | Notes |
+|---|---|---|
+| mac_bridge (GOS→Mac TCP) | **WORKING** | Always-kick fix deployed |
+| iptables NAT (Mac→GOS) | **WORKING** | Persistent, no SSH tunnel needed |
+| lio_perception (AOS) | **WORKING** | Auto-enables on boot, stable odometry |
+| LIO odometry quality | **STABLE** | 0.6cm drift/35s (was 2m/10s from NOS) |
+| TCP data flow | **VERIFIED** | ODOM 10Hz, LIDAR 10Hz (2350pts), IMU 180Hz, MI 15Hz |
+| NAV_CMD (Mac→Robot) | **VERIFIED** | Zero-velocity commands sent successfully |
+| lio auto-enable | **AUTOMATED** | `lio_ddsnode.sh` runs `lio_command 1` after 5s |
+| NOS localization | BYPASSED | Using AOS lio_perception instead |
+| Client resync | IMPLEMENTED | Handles mid-stream magic byte alignment |
+
+### False Leads This Session
+
+1. **`/opt/robot/fastdds.xml` transport config** — Spent time investigating XML config differences. The file is never loaded by any process. libdrdds sets transport programmatically.
+2. **`FASTRTPS_DEFAULT_PROFILES_FILE` env var** — Setting this created extra DDS participants but didn't fix the input issue. The actual blocker was the `/LIO_ENABLE` service call.
+3. **SHM segment analysis** — Deep-dove into data sharing segments and permission errors. These were symptoms of cleaning `/dev/shm` without restarting basic_server, not root causes.
+
+---
+
+## Session 5: Rerun Fix & Full dimos Launch (2026-02-22 ~01:10 CST)
+
+Resolved the Rerun gRPC crash that prevented dimos from launching. Full navigation stack now running on Mac via the TCP bridge.
+
+### Key Finding #40: Rerun gRPC Crash in Subprocess Workers
+
+dimos launches modules in Dask worker subprocesses. `rr.init("dimos")` calls `flush_and_cleanup_orphaned_recordings()` which fails in subprocess workers:
+
+```
+RuntimeError: gRPC connection to rerun+http://127.0.0.1:9876/proxy gracefully disconnected
+```
+
+- Rerun 0.29.2 SDK and viewer versions match
+- `rr.init('test')` works from the main process but fails in Dask workers
+- Killing/restarting Rerun, cleaning temp state — no effect
+- The error occurs in `dimos/visualization/rerun/bridge.py:257` inside `RerunBridgeModule.start()`
+
+### Key Finding #41: `DIMOS_VIEWER_BACKEND=none` Env Var Doesn't Work
+
+`GlobalConfig` uses `pydantic_settings.BaseSettings` but has NO `env_prefix` configured:
+
+```python
+# dimos/core/global_config.py
+model_config = SettingsConfigDict(
+    env_file=".env",
+    env_file_encoding="utf-8",
+    extra="ignore",
+    # NO env_prefix — env vars like DIMOS_VIEWER_BACKEND are NOT read
+)
+```
+
+Setting `DIMOS_VIEWER_BACKEND=none` has no effect. The valid `ViewerBackend` values are: `"rerun"`, `"rerun-web"`, `"foxglove"`, `"none"`.
+
+### Key Finding #42: CRITICAL — `viewer_backend` Match Evaluates at Import Time
+
+In `dimos/robot/deeprobotics/m20/blueprints/basic/m20_minimal.py` (line 61), the match statement runs at **module import time**:
+
+```python
+match global_config.viewer_backend:   # ← evaluates when m20_minimal.py is imported
+    case "rerun":
+        from dimos.visualization.rerun.bridge import rerun_bridge
+        with_vis = autoconnect(_transports_base, rerun_bridge(**rerun_config))
+    case _:
+        with_vis = _transports_base   # ← fallback: no visualization
+```
+
+Calling `.global_config(viewer_backend="none")` AFTER importing the blueprint has no effect — `rerun_bridge` is already baked into the blueprint graph. The config must be set BEFORE importing.
+
+### Fix: Set `viewer_backend` Before Import
+
+Updated `launch_m20_smart.py`:
+
+```python
+# Disable Rerun BEFORE importing blueprints — the m20_minimal match statement
+# evaluates at import time, so viewer_backend must be set first.
+from dimos.core.global_config import global_config
+global_config.update(viewer_backend="none")
+
+from dimos.robot.deeprobotics.m20.blueprints.smart.m20_smart import m20_smart
+# ... rest of imports
+```
+
+This causes the `case _:` fallback to fire, which uses `_transports_base` (no visualization module).
+
+### Successful Launch
+
+All 6 modules deployed to Dask workers:
+
+| Module | Worker | Status |
+|---|---|---|
+| WebsocketVisModule | 3 | Running (port 7779) |
+| VoxelGridMapper | 5 | Running (CPU:0) |
+| CostMapper | 4 | Running |
+| ReplanningAStarPlanner | 1 | Running |
+| WavefrontFrontierExplorer | 2 | Running |
+| M20Connection | 0 | Running (Mac Bridge) |
+
+All transports wired: odom, lidar, global_map, global_costmap, cmd_vel, goal_request, explore_cmd, path, etc.
+
+Web UI (Command Center): http://localhost:7779 — serving and accepting websocket connections.
+
+### Changes Made This Session
+
+| Location | File | Change |
+|---|---|---|
+| Mac | `launch_m20_smart.py` | Set `global_config.update(viewer_backend="none")` before blueprint import; removed Rerun reference from print |
+
+### Status After Session 5
+
+| Component | Status | Notes |
+|---|---|---|
+| dimos on Mac | **RUNNING** | All 6 modules deployed, no Rerun |
+| Web UI (Command Center) | **RUNNING** | http://localhost:7779 |
+| VoxelGridMapper | **RUNNING** | Building 3D voxel map from LiDAR |
+| CostMapper | **RUNNING** | Generating occupancy grids |
+| ReplanningAStarPlanner | **RUNNING** | Ready for path planning |
+| WavefrontFrontierExplorer | **RUNNING** | Ready for autonomous exploration |
+| M20Connection (Mac Bridge) | **RUNNING** | Connected to GOS via iptables NAT |
+| lio_perception (AOS) | **RUNNING** | Auto-enabled, stable odometry |
+| mac_bridge (GOS) | **RUNNING** | TCP:9731 forwarding all topics |
+| iptables NAT (AOS) | **PERSISTENT** | WiFi:9731 → GOS:9731 |
+| Rerun visualization | DISABLED | Bypassed with `viewer_backend="none"` |
+
+### False Leads This Session
+
+1. **`DIMOS_VIEWER_BACKEND=none` env var** — pydantic-settings has no `env_prefix`, env vars are ignored
+2. **Rerun SDK/viewer version mismatch** — Both 0.29.2, versions matched; the issue was subprocess gRPC lifecycle
+3. **Rerun process state** — Killed/restarted Rerun multiple times, cleared temp files; the subprocess issue persisted regardless of viewer state
+
+---
+
+## Session 6: Robot Not Moving — Velocity Command Pipeline Broken (2026-02-22 ~03:08 CST)
+
+Re-enabled Rerun (`viewer_backend="rerun"`), verified native Rerun viewer working. Full navigation stack running — planner finding paths, Rerun showing 3D map + path visualization. But robot physically not moving.
+
+### Key Finding #43: Robot Not Responding To Any Velocity Commands
+
+Robot doesn't move despite:
+- ReplanningAStarPlanner actively computing paths and entering `initial_rotation` → `path_following` states
+- Local planner emitting `cmd_vel` Twist messages
+- Keyboard control (web UI "Start Keyboard Control") also not working
+- Exploration mode also not working
+
+**Keyboard control failure is the critical clue** — it rules out planner/navigation issues. The problem is in the velocity command pipeline itself.
+
+### Key Finding #44: Robot State Is Correct But Gait Wrong
+
+Read MOTION_INFO directly from GOS bridge:
+```
+state=17 (RLControl) — correct, robot is in RL control mode
+gait=0x1001 (Basic/Standard) — WRONG, should be 0x3002 (FlatAgile) for navigation
+height=0.5697 — standing (~57cm)
+vel_x=0.003, vel_y=-0.004, vel_yaw=0.001 — near zero (sensor noise)
+```
+
+Per the M20 Software Development Guide:
+- **Section 1.2.5**: UDP axis command (Type=2, Cmd=21) is **"only supported in Regular Mode"**
+- **Section 2.3.1**: `/NAV_CMD` ROS2 topic is **"only effective when the robot is in navigation mode"** and **"depends on the `basic_server` service"**
+- **Section 1.2.4**: "When switching gaits, the robot will automatically switch to the corresponding motion mode"
+
+The robot is in RL Control (state=17) with Standard gait (0x1001). dimos sends velocity through `/NAV_CMD` (bridge path), which requires Navigation mode + Agile gait. The gait switch to 0x3002 didn't take effect.
+
+### Key Finding #45: NAV_CMD Through Bridge Does Not Move Robot
+
+Direct test: connected to bridge, sent NAV_CMD frames with yaw_vel=0.3 at 20Hz for 2 seconds. MOTION_INFO vel_yaw remained at 0.0006 (sensor noise). **The robot completely ignores /NAV_CMD.**
+
+### Key Finding #46: Gait Switch Via UDP Not Taking Effect
+
+Sent gait switch command (Type=2, Cmd=23, GaitParam=0x3002) via UDP:
+1. From Mac to AOS WiFi (10.21.41.1:30000) — gait stayed at 0x1001
+2. From AOS itself to AOS wired (10.21.31.103:30000) — gait stayed at 0x1001
+3. Sent in sequence: heartbeat → UsageMode.NAVIGATION → GaitParam=0x3002 — still no change
+
+**The robot is rejecting or ignoring gait switch commands** regardless of source.
+
+### Key Finding #47: UDP Communication Otherwise Healthy
+
+Heartbeat → response test: AOS responds with full status reports (46 responses in 3s):
+- Type=1002, Cmd=4: Motion Control Status (10Hz)
+- Type=1002, Cmd=5: Device State (2Hz)
+- Type=1002, Cmd=6: Basic Status (2Hz)
+- Type=1002, Cmd=3: Abnormal Status (2Hz)
+
+UDP port 30000 is listening on 0.0.0.0 on AOS. Communication works fine — just the gait switch command is ignored.
+
+### Key Finding #48: AOS Services Running But height_map_nav Active
+
+```
+basic_server.service     — active (running) since 08:33 CST
+rl_deploy.service        — active (running) since 06:05 CST
+height_map_nav.service   — active (running), Cloud=0 Odom=0 IMU=0
+```
+
+`height_map_nav` is the robot's **built-in planner** — the dev guide warns of conflicts when publishing to `/NAV_CMD`. However, it reports `Cloud=0 Odom=0 IMU=0` so it's idle (no sensor data).
+
+Failed services: `dr_wifi.service` (failed), `isc-dhcp-server` (failed). WiFi works despite dr_wifi failure.
+
+### Key Finding #49: Teleop Controller Also Broken
+
+User reported: "on the teleop controller I'm not seeing any battery levels or joint parameters reported." This suggests the broader control interface is in a degraded state — not just our velocity commands.
+
+### Key Finding #50: Robot Battery Depleted
+
+During investigation, robot ran out of battery. Session paused pending recharge and fresh boot.
+
+### Root Cause Analysis
+
+**Primary issue**: The robot's gait is stuck at 0x1001 (Basic/Standard Motion Mode) and cannot be switched to 0x3002 (Flat/Agile Motion Mode). This makes `/NAV_CMD` velocity commands ineffective (they require Agile mode). UDP axis commands also wouldn't work (they require Regular mode, not RL Control state).
+
+**Contributing factors**:
+1. Gait switch UDP commands are being silently ignored by AOS — possibly `basic_server` or `rl_deploy` in a degraded state
+2. The teleop controller also lost status reporting — broader AOS control stack issue
+3. `height_map_nav` (built-in planner) is running but starved of data — unclear if it interferes
+
+**The velocity command pipeline in dimos is structurally correct** — the chain from local planner → cmd_vel → velocity controller → M20MacBridgeClient.publish_nav_cmd() → TCP → GOS mac_bridge → ROS2 /NAV_CMD is verified working. The issue is at the robot firmware/service level.
+
+### Velocity Command Pipeline (Documented)
+
+```
+LocalPlanner._loop()
+  → cmd_vel.on_next(Twist)              [RxPy Subject]
+  → LCM transport                        [inter-process, Dask workers]
+  → M20Connection._on_cmd_vel(twist)     [subscribes in start()]
+  → M20VelocityController.set_twist()    [stores target + timestamp]
+  → _control_loop() at 20Hz              [daemon thread]
+  → _publish_control()
+    → if nav_cmd_publish: bridge path    [absolute m/s]
+      → M20MacBridgeClient.publish_nav_cmd(vx, vy, vyaw)
+      → JSON encode → FrameProtocol.encode(MSG_NAV_CMD)
+      → socket.sendall() to GOS:9731
+      → GOS mac_bridge receives → publishes to /NAV_CMD ROS2 topic
+    → else: UDP fallback                 [normalized [-1,1]]
+      → M20Protocol.send_velocity() to AOS:30000
+```
+
+**Known silent failure point**: `M20MacBridgeClient._send_frame()` returns silently if `_connected` is not set (line 286-287). No logging on failure.
+
+### Proposed Next Steps (After Recharge)
+
+1. **Fresh boot** — battery depletion + recharge = clean restart of all services
+2. **Verify gait switching works after fresh boot** — send GaitParam=0x3002 immediately
+3. **Check `basic_server` journal** for errors during gait switch attempts
+4. **If gait switching works**: restart dimos, verify robot moves with keyboard control first, then test navigation
+5. **If gait switching still fails**: investigate `rl_deploy` and `basic_server` service health more deeply; may need Deep Robotics support
+
+### Changes Made This Session
+
+| Location | File | Change |
+|---|---|---|
+| Mac | `launch_m20_smart.py` | Set `viewer_backend="rerun"` (re-enabled Rerun) |
+| Mac | `INVESTIGATION_LOG.md` | Added Session 5 + Session 6 findings |
+
+### Status After Session 6
+
+| Component | Status | Notes |
+|---|---|---|
+| dimos on Mac | STOPPED | Killed for investigation; need restart after recharge |
+| Rerun visualization | **WORKING** | Native viewer showing 3D map, paths, goals |
+| Planner/Navigation | COMPUTING | Finding paths, entering states, but robot not moving |
+| Velocity pipeline (dimos) | **VERIFIED** | Full chain: planner → velocity ctrl → bridge → GOS → /NAV_CMD |
+| Gait switching | **BROKEN** | 0x3002 command ignored by AOS, stuck at 0x1001 |
+| /NAV_CMD | **IGNORED** | Robot doesn't respond (wrong gait/mode) |
+| UDP velocity | **N/A** | Only works in Regular mode; robot in RL Control |
+| Teleop controller | **DEGRADED** | No battery/joint data reported |
+| Robot battery | **DEPLETED** | Recharging required |
+| lio_perception | WORKING | Was producing stable odometry before battery died |
+| mac_bridge (GOS) | WORKING | TCP data flowing to Mac |
+| iptables NAT | PERSISTENT | Survives reboot |
+
+---
+
+## IMPORTANT REMINDERS (read every session)
+
+1. **NEVER use SSH passwords** — SSH keys are set up on all hosts (AOS, GOS, NOS). Use key-based auth only. If keys are lost after a reboot, re-push them using `sshpass` once, then use keys thereafter.
+
+2. **Always re-read the M20 Software Development Guide** when debugging M20 systems: `/Users/afik_cohen/gt/houmanoids_www/crew/nell/relay/docs/m20-official-software-development-guide.md`. It contains critical info about:
+   - DDS topic dependencies (e.g. /LIDAR/POINTS depends on multicast-relay.service on NOS)
+   - Service dependencies (e.g. /NAV_CMD depends on basic_server, conflicts with height_map_nav)
+   - Velocity mode requirements (/NAV_CMD only works in Navigation Mode with Agile gait 0x3002)
+   - State machine transitions and gait codes
+
+3. **After fresh boot**, the following must happen:
+   - SSH keys may need re-pushing to GOS/NOS
+   - iptables NAT on AOS persists (saved to /etc/iptables/rules.v4)
+   - lio_perception auto-sends lio_command 1 via modified lio_ddsnode.sh
+   - multicast-relay.service on NOS may crash on boot (race condition with interface) — verify and restart if needed
+   - height_map_nav (built-in planner) on AOS must be STOPPED to avoid /NAV_CMD conflicts
+
+---
+
+## Session 7: Fresh Boot After Battery Recharge (2026-02-22)
+
+### Finding #51: DDS Data Not Flowing After Fresh Boot
+**Problem**: Robot freshly rebooted. All services active (basic_server, rl_deploy, height_map_nav, lio_perception on AOS; dimos-mac-bridge on GOS; rsdriver on NOS). But height_map_nav shows `Cloud=0 Odom=0 IMU=0` — DDS sensor data from NOS not reaching AOS.
+
+**Root cause investigation**:
+- NOS multicast-relay.service crashed at boot with `OSError: [Errno 19] No such device` (race condition — interface not ready when service starts). Eventually restarted and became active, but DDS discovery may have been disrupted.
+- lio_ddsnode on AOS showed `receive: 0` initially, then `receive: 1` after restart but immediately `Subscription unmatched (1 total)`.
+- AOS has 3 ethernet interfaces: eth0 (10.21.33.103/24), eth1 (10.21.32.103/24), eth2 (10.21.31.103/24). NOS has eth0 (10.21.33.106/24) and eth1 (10.21.31.106/24). DDS multicast can flow on either shared subnet.
+
+**M20 dev guide confirms**: "/LIDAR/POINTS topic depends on the multicast-relay.service service" (Section 2.1)
+
+### Finding #52: height_map_nav Must Be Stopped
+**M20 dev guide Section 2.3.1**: "When publishing this topic [/NAV_CMD], potential conflicts may arise with the robot's built-in planner service. Please refer to Appendix 2 to disable the planner service."
+
+height_map_nav is the built-in planner. It conflicts with dimos publishing /NAV_CMD. Must be stopped.
+
+### Finding #53: SSH Keys Setup for All Hosts
+Pushed SSH keys (ed25519) from AOS to GOS and NOS. Mac key also pushed to GOS. Verified passwordless auth AOS→GOS, AOS→NOS. Keys survive across sessions but may be lost after robot firmware update.
+
+### Finding #54: Bridge Data Flow Partially Restored
+After restarting dimos-mac-bridge on GOS:
+- **IMU**: ~1858 frames/10s (185Hz) — WORKING
+- **MOTION_INFO**: ~200 frames/10s (20Hz) — WORKING
+- **ODOM**: 0 — NOT WORKING (depends on lio_ddsnode SLAM)
+- **TF**: 0 — NOT WORKING (depends on lio_ddsnode SLAM)
+- **LIDAR**: 0 — NOT WORKING (depends on lio_ddsnode SLAM)
+
+IMU and MOTION_INFO flow through drdds directly (from yesense_node and rl_deploy on AOS to GOS bridge). These bypass lio_ddsnode.
+
+### Finding #55: Gait Switch Works on Fresh Boot!
+On fresh boot with proper sequence:
+1. Send STAND (Type=2, Cmd=22, MotionParam=1) → State changes to 1 (Stand)
+2. Send NAVIGATION mode (Type=1101, Cmd=5, Mode=1)
+3. Send AGILE_FLAT gait (Type=2, Cmd=23, GaitParam=0x3002)
+4. Result: **State=17 (RLControl), Gait=0x3002, Mode=1 (Navigation)** ✓
+
+Previous session's gait-stuck-at-0x1001 was likely due to the robot being in a degraded state (low battery / service issues).
+
+### Finding #56: lio_ddsnode Not Receiving Sensor Data
+**Critical unresolved issue**: lio_ddsnode (LIO SLAM) on AOS starts up, receives lio_command 1 successfully, but NEVER receives LiDAR or IMU data. This means no /ODOM, /tf, or /ALIGNED_POINTS ROS2 topics are published.
+
+- rslidar (PID 2752) runs on AOS producing `msg_lidar id: 0/1` at high frequency
+- yesense_node (PID 1675) runs on AOS
+- lio_ddsnode (PID 12171) runs on AOS — same host!
+- lio_ddsnode log shows only the lio_command service interaction, never any sensor data receipt
+- Multiple restarts of lio_perception don't help
+- drdds communication between AOS→GOS works fine (MOTION_INFO, IMU bridge correctly)
+- The issue is specifically lio_ddsnode not subscribing to / not receiving from rslidar/yesense
+
+**Resolved**: See Finding #57 below. lio_ddsnode WAS receiving data (log shows "Finish init first scan!"). The issue was DDS transport — lio's output couldn't reach GOS.
+
+### Finding #57: BREAKTHROUGH — lio_ddsnode Output Not Reaching GOS Due to DDS Subnet Mismatch (RESOLVED)
+
+**Problem**: lio_ddsnode on AOS initializes successfully ("Finish init first scan!"), is processing at 37.8% CPU, but `/ODOM` and `/ALIGNED_POINTS` don't reach GOS. `ros2 topic info /ODOM -v` on GOS shows **Publisher count: 0**.
+
+**Root cause**: lio_ddsnode's DDS transport (configured by libdrdds.so) only uses `127.0.0.1 + 10.21.33.103` (eth0). GOS is on `10.21.31.104` (different subnet). DDS discovery via multicast works on the 10.21.31.x subnet but lio's data/metatraffic locators only point to 10.21.33.103, which GOS cannot reach.
+
+IMU and MOTION_INFO work because basic_server (which publishes them) binds to ALL interfaces including 10.21.31.103. basic_server subscribes to /ODOM internally but does NOT re-publish it.
+
+**Two-part fix**:
+
+1. **fastdds_lio.xml** on AOS — adds `10.21.31.103` (eth2) as a `defaultUnicastLocatorList` entry + `userTransport`:
+   ```xml
+   <defaultUnicastLocatorList>
+     <locator><udpv4><address>10.21.31.103</address></udpv4></locator>
+   </defaultUnicastLocatorList>
+   ```
+   This makes lio_ddsnode advertise its data endpoints on eth2 (GOS's subnet).
+   File: `/opt/robot/share/lio_perception/conf/fastdds_lio.xml`
+
+2. **GOS route** — adds `10.21.33.0/24 via 10.21.31.103` so GOS can reach lio's metatraffic on AOS eth0:
+   ```
+   ip route add 10.21.33.0/24 via 10.21.31.103
+   ```
+   Persisted in `/etc/netplan/config.yaml` on GOS.
+
+3. **lio_ddsnode.sh** on AOS — exports `FASTRTPS_DEFAULT_PROFILES_FILE` and uses `sudo -E` to pass it to lio_ddsnode:
+   ```bash
+   export FASTRTPS_DEFAULT_PROFILES_FILE=$SCRIPT_PATH/../conf/fastdds_lio.xml
+   sudo -E chrt 35 taskset -c 4,5,6,7 $SCRIPT_PATH/../bin/lio_ddsnode &
+   ```
+
+**Important**: `metatrafficUnicastLocatorList` REPLACES default metatraffic locators in FastDDS. Setting it to only 10.21.31.103 breaks local lio_command discovery. Only use `defaultUnicastLocatorList` (data locators) — leave metatraffic to libdrdds defaults.
+
+**Result after fix**: ALL topics flowing through bridge:
+- ODOM: 9.2 Hz (stable, near-zero drift while stationary)
+- LIDAR: 9.7 Hz (~2000 points/frame)
+- IMU: 177 Hz
+- MOTION_INFO: 19 Hz
+
+### Finding #58: Topic Name Config vs Actual DDS Names (re-confirmed)
+rslidar config says `dds_send_point_cloud_topic: /lidar_points` and `dds_send_imu_data_topic: /imu/data`, but these are NOT the actual DDS topic names. rslidar hardcodes `/LIDAR/POINTS` and yesense publishes `/IMU_YESENSE`. This was already established in Finding #5 (Session 1) — a known red herring.
+
+### Changes Made This Session (Session 7 continued)
+
+| Location | File | Change |
+|---|---|---|
+| AOS | `/opt/robot/share/lio_perception/conf/fastdds_lio.xml` | Added defaultUnicastLocatorList + userTransport for 10.21.31.103 (eth2) |
+| AOS | `/opt/robot/share/lio_perception/scripts/lio_ddsnode.sh` | Added FASTRTPS_DEFAULT_PROFILES_FILE env var, sudo -E |
+| GOS | `/etc/netplan/config.yaml` | Added route 10.21.33.0/24 via 10.21.31.103 |
+
+### Current State (14:28 CST)
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Robot state | RLControl (17) | Standing, Agile Flat gait, Navigation mode |
+| UDP protocol | WORKING | Heartbeat, stand, gait switch all work |
+| lio_ddsnode SLAM | **WORKING** | Processing at 37.8% CPU, Finish init first scan! |
+| ODOM | **FLOWING** | 9.2 Hz, stable (near-zero while stationary) |
+| LIDAR | **FLOWING** | 9.7 Hz, ~2000 points/frame |
+| IMU | **FLOWING** | 177 Hz |
+| MOTION_INFO | **FLOWING** | 19 Hz |
+| mac_bridge (GOS) | **WORKING** | All 5 topic types forwarding to Mac |
+| iptables NAT | WORKING | Persistent across reboot |
+| GOS route | **PERSISTENT** | 10.21.33.0/24 via 10.21.31.103 in netplan |
+| height_map_nav | STOPPED | Disabled to avoid /NAV_CMD conflicts |
+
+---
+
+## Session 8: Exploration Failure + lio Subscription Match Root Cause (~18:00-19:15 CST, Feb 22)
+
+### Summary
+After Session 7's working state, exploration was triggered. Robot spun in circles, lio lost tracking and stopped publishing ODOM. After multiple lio restarts, only 1 subscription match (instead of the needed 2). Root cause identified: **DDS participant port collision between cpu_node and lio_ddsnode on 127.0.0.1:7412**. Fix found: restart lio BEFORE cpu_node to control port assignment order.
+
+### Finding #59: lio Lost Tracking During Exploration
+After triggering exploration, the robot spun in circles. lio_ddsnode lost tracking (likely due to rapid rotation exceeding SLAM tracking limits). ODOM went to 0 Hz on both AOS and GOS. After stopping exploration via command center, robot stopped spinning but lio never recovered — it needed a restart.
+
+### Finding #60: Persistent 1-Match Problem After lio Restart
+After restarting lio_ddsnode (multiple times), the log consistently showed:
+```
+[Subscription] Subscription matched  (1 total)
+```
+Only 1 match instead of the expected 2 (rslidar for /LIDAR/POINTS + yesense for /IMU_YESENSE). Without IMU data from yesense, lio cannot produce ODOM output.
+
+### Finding #61: Full DDS Participant Port Map (ROOT CAUSE)
+Using `sudo ss -ulnp | grep ':741[0-9]'`, mapped all DDS participants on AOS:
+
+| Participant ID | Metatraffic Port | Process | Interfaces |
+|---|---|---|---|
+| 0 | 7410/7411 | gps_node (PID 49211) | 127.0.0.1 + 10.21.33.103 |
+| 1 | 7412/7413 | **cpu_node** (127.0.0.1) + **lio_ddsnode** (10.21.31.103 + 10.21.33.103) | **SPLIT - collision!** |
+| 2 | 7414/7415 | yesense_node | 127.0.0.1 ONLY |
+| 3 | 7416/7417 | ctrlmcu_node | 127.0.0.1 + 10.21.33.103 |
+| 32 | 7474/7475 | rslidar | 127.0.0.1 ONLY |
+| 33 | 7476/7477 | lio_ddsnode (2nd participant) | 127.0.0.1 + 10.21.33.103 |
+
+**The critical finding**: cpu_node (PID 1669, started at boot ~13:41) holds `127.0.0.1:7412`. When lio_ddsnode restarts later, it tries Participant 1 (port 7412) but can only bind 10.21.33.103:7412 and 10.21.31.103:7412. The 127.0.0.1:7412 binding fails silently because cpu_node already has it.
+
+**DDS Port Formula** (RTPS spec): metatraffic_unicast = 7410 + 2 × participantId
+
+### Finding #62: Why yesense→lio SEDP Fails
+1. yesense (Participant 2) advertises metatraffic at 127.0.0.1:7414
+2. lio Participant 1 advertises metatraffic at 10.21.33.103:7412 + 10.21.31.103:7412 (NO 127.0.0.1)
+3. yesense's transport is loopback-only (interfaceWhiteList: 127.0.0.1)
+4. yesense cannot reach 10.21.33.103 — it can only send to 127.0.0.1 addresses
+5. SEDP endpoint exchange fails → /IMU_YESENSE publisher never matches lio's subscriber
+6. lio's one match is from basic_server (which has all-interface transports at 0.0.0.0)
+
+Confirmed via tcpdump: yesense sends packets to 127.0.0.1:7412, but those go to cpu_node (not lio).
+
+### Finding #63: Why Session 7 Worked After Reboot
+After a full AOS reboot, ALL services restart simultaneously. The startup order (from systemd service configs):
+- yesense: `ExecStartPre=/bin/sleep 5`
+- cpunode: `ExecStartPre=/bin/sleep 5`
+- lio_ddsnode.sh: `sleep 10` at script start
+
+After reboot, services race for participant IDs. The exact ID assignment depends on who binds first. In Session 7's fresh boot, lio likely got 127.0.0.1:7412 before cpu_node (or the timing was different). After a manual lio-only restart, cpu_node already holds 127.0.0.1:7412, so lio always loses.
+
+### Finding #64: participantID XML Setting Broke Participant Init
+Attempted to set `<participantID>50</participantID>` in the FastDDS XML profile to force lio to use ports 7510/7511 (avoiding cpu_node's 7412). Result:
+- lio DID bind 127.0.0.1:7510, 10.21.33.103:7510, 10.21.31.103:7510 ✓
+- BUT lio was completely silent — zero sends in 10 seconds
+- FastDDS version is 2.14.2 (from `libfastrtps.so.2.14.2`)
+- The `participantID` XML element may not be valid in this version, causing broken participant initialization
+- **Reverted immediately**
+
+### Finding #65: Restart Order Fix — WORKING
+The correct fix: stop cpu_node systemd service → start lio_ddsnode → restart cpu_node.
+
+Steps:
+1. `sudo systemctl stop cpunode` — frees 127.0.0.1:7412
+2. Kill any running lio_ddsnode processes
+3. Start lio_ddsnode directly (with FASTRTPS_DEFAULT_PROFILES_FILE set, skipping the shell script's sleep 10)
+4. Wait for lio to bind ports (~3-5 seconds)
+5. `sudo systemctl start cpunode` — cpu_node gets a different Participant ID
+6. Restart yesense for fresh SEDP discovery
+
+**Result**: lio bound ALL three interfaces on port 7412:
+```
+UNCONN  10.21.31.103:7412  lio_ddsnode ✓
+UNCONN  10.21.33.103:7412  lio_ddsnode ✓
+UNCONN     127.0.0.1:7412  lio_ddsnode ✓  ← KEY FIX
+```
+
+lio_command succeeded after 4 retries ("调用成功, res: 1"). lio at 29% CPU, sending 12KB+ data frames to GOS (10.21.31.104). 1980 sends in 5 seconds confirmed.
+
+**CRITICAL**: cpunode has `Restart=on-failure` in systemd, so must use `systemctl stop` not `kill`.
+
+### Finding #66: libdrdds Uses XML Default Profile for Transports
+Evidence that the XML `is_default_profile="true"` participant profile IS applied to libdrdds's `create_participant()` call:
+- Without XML: lio only binds eth0 (10.21.33.103)
+- With XML adding eth2_udp transport: lio also binds 10.21.31.103
+- With XML adding loopback_udp transport AND cpu_node stopped: lio also binds 127.0.0.1
+
+This confirms libdrdds calls `create_participant()` with `PARTICIPANT_QOS_DEFAULT`, which picks up the XML's transport config.
+
+### Finding #67: lio Creates Two DDS Participants
+lio_ddsnode creates two separate DDS participants via libdrdds:
+- **Participant 1** (or whatever ID it gets): Used for sensor subscriptions (/LIDAR/POINTS, /IMU_YESENSE) and data publishing (/ODOM, /ALIGNED_POINTS). This is the critical one.
+- **Participant 33** (or next available ID): Purpose unclear — possibly for the LIO command service (DrDDSServerChannel). Has loopback binding regardless.
+
+The sensor subscriptions are on Participant 1, so Participant 1 MUST have loopback connectivity for yesense matching.
+
+### Changes Made This Session
+
+| Location | File | Change |
+|---|---|---|
+| AOS | `/opt/robot/share/lio_perception/conf/fastdds_lio.xml` | v3: loopback_udp + eth2_udp transports (no participantID) |
+| AOS | Services | Restart order: stop cpunode → start lio → start cpunode |
+| AOS | cpu_node | Temporarily stopped to free port 7412, then restarted |
+| AOS | yesense | Restarted for fresh DDS discovery |
+| AOS | lio_ddsnode | Started directly (bypassing shell script sleep 10) |
+
+### Current State (04:50 CST, Feb 23)
+
+| Component | Status | Notes |
+|---|---|---|
+| lio_ddsnode | **ACTIVE** | 29% CPU, 2 subscription matches, sending data to GOS |
+| lio_command | **SUCCEEDED** | "调用成功, res: 1" after 4 retries |
+| cpu_node | **RUNNING** | Restarted with different Participant ID |
+| yesense | **RUNNING** | Restarted, exchanging SEDP with lio |
+| rslidar | **RUNNING** | Never restarted (PID 88288 since 17:48) |
+| Data to GOS | **FLOWING** | 856B + 65KB packets to 10.21.31.104 via eth2 |
+| mac_bridge (GOS) | **RUNNING** | Service active 14h, no client connected |
+| ODOM on GOS | **UNVERIFIED** | ros2 topic hz /ODOM timed out, needs verification |
+| "Finish init first scan!" | **NOT SEEN** | Likely stdout buffering issue (nohup to file) |
+
+### Next Steps
+1. ~~Verify ODOM frequency on GOS via ros2 commands~~ → Done (Session 10)
+2. ~~Connect Mac client to mac_bridge and verify end-to-end data flow~~ → In progress (Session 10)
+3. ~~Make the restart-order fix permanent~~ → Superseded: removed all custom XML, vendor defaults work
+4. ~~Update lio_ddsnode.sh to use `stdbuf -oL`~~ → Not needed: restored vendor lio_ddsnode.sh
+
+---
+
+## Session 10 — NOS Migration (Feb 23-24, 2026)
+
+### Summary
+Resolved lio_command failure root cause, migrated mac_bridge from GOS to NOS for cleaner DDS architecture. All infrastructure verified end-to-end.
+
+### Finding #68: ANY Custom FastDDS XML Breaks lio_command
+Tested multiple XML configurations this session:
+1. **Minimal eth2-only XML** (no useBuiltinTransports) → lio_command fails all 10 retries
+2. **Full XML** (SHM + loopback + eth2, useBuiltinTransports=false) → lio_command fails all 10 retries
+3. **Full XML + `-E` flag on lio_command** → Progress! `Publisher matched:1`, `Subscription matched (2 total)`. But service call **HUNG** — lio_command at 17.7% CPU, 575MB RAM (SHM segment). Never completed. `receive: 1` never appeared.
+
+**Root cause**: libdrdds.so programmatically configures DDS transport in C++ (Finding #33). Setting `FASTRTPS_DEFAULT_PROFILES_FILE` creates mixed transport stacks — the XML transports conflict with libdrdds's hardcoded transports. Even when both lio_ddsnode and lio_command load the same XML, the mixed config causes DDS service calls to discover peers but hang on data exchange.
+
+**Solution**: Don't touch lio's DDS config at all. Vendor defaults are the only working configuration.
+
+### Finding #69: Vendor Default lio_command Works Perfectly
+After removing all custom XML and restoring `lio_ddsnode.sh`:
+```
+LIO command server started.
+[Subscription] Subscription matched (1 total)    ← rslidar
+Publisher matched:1
+[Subscription] Subscription matched (2 total)
+receive: 1
+调用成功，res: 1                                   ← SUCCESS
+[Subscription] Subscription unmatched (1 total)   ← lio_command exited
+```
+Two initial retries (`第0次尝试调用失败`, `第1次尝试调用失败`) are normal — lio_command starts discovery before lio_ddsnode's service endpoint is fully ready.
+
+### Finding #70: NOS Has Full DDS + ROS2 Stack
+NOS (10.21.33.106 eth0 / 10.21.31.106 eth1) verified:
+- Python 3.8.10, ROS2 Foxy, rclpy, rmw_fastrtps_cpp
+- drdds vendor types: NavCmd, MotionInfo — `from drdds.msg import NavCmd, MotionInfo` works
+- eth0 (10.21.33.106) on same L2 as AOS eth0 (10.21.33.103) — 0.2ms ping
+- All AOS DDS topics visible via `ros2 topic list` (50+ topics)
+- `/ODOM` data confirmed flowing: `ros2 topic echo /ODOM` received position/orientation data
+
+**Note**: `ros2 topic hz` returns nothing for bare DDS topics (libdrdds publishers) despite data flowing. Use `ros2 topic echo` to verify, or rely on rclpy subscriptions (which work fine — this is what mac_bridge uses).
+
+### Finding #71: /ODOM QoS = RELIABLE
+`ros2 topic info /ODOM -v` on NOS showed:
+- Publisher: `_CREATED_BY_BARE_DDS_APP_` (libdrdds)
+- QoS: `RELIABLE`, `VOLATILE`, `AUTOMATIC` liveliness
+- Same QoS for /IMU, /MOTION_INFO, /ALIGNED_POINTS
+
+mac_bridge.py uses `qos_profile_sensor_data` (BEST_EFFORT) for subscriptions — but this works because FastDDS allows BEST_EFFORT subscribers to match RELIABLE publishers (with potential data loss). For this use case it's fine.
+
+### Finding #72: /tf Not Published on M20
+`ros2 topic info /tf` returns "Unknown topic '/tf'" on NOS. mac_bridge.py subscribes to `/tf` but handles its absence gracefully (no callback = no data forwarded). This matches previous sessions — M20 doesn't publish standard ROS2 tf.
+
+### Changes Made This Session
+
+| Location | File | Change | Purpose |
+|---|---|---|---|
+| AOS | `/opt/robot/share/lio_perception/conf/fastdds_lio.xml` | Renamed to `.disabled_final` | Remove custom XML that broke lio_command |
+| AOS | `/opt/robot/share/lio_perception/scripts/lio_ddsnode.sh` | Restored to vendor defaults + lio_command auto-enable | Remove FASTRTPS export, -E flags; keep Session 4 lio_command logic |
+| AOS | iptables NAT PREROUTING | DNAT 9731 → 10.21.31.106 (was 10.21.31.104) | Route Mac traffic to NOS instead of GOS |
+| AOS | iptables NAT POSTROUTING | MASQUERADE for 10.21.31.106:9731 (was 10.21.31.104) | Return traffic for NOS NAT |
+| AOS | `/etc/iptables/rules.v4` | Persisted new NAT rules | Survive reboot |
+| NOS | `/opt/dimos/mac_bridge.py` | Deployed (copied from GOS) | TCP bridge server |
+| NOS | `/etc/systemd/system/dimos-mac-bridge.service` | Created + enabled | Auto-start bridge with correct LD_LIBRARY_PATH |
+
+### NOS systemd Service
+```ini
+[Unit]
+Description=dimos Mac Bridge (ROS2 → TCP)
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/bin/bash -c 'source /opt/ros/foxy/setup.bash && /usr/bin/python3 /opt/dimos/mac_bridge.py --port 9731'
+Restart=on-failure
+RestartSec=3
+Environment=LD_LIBRARY_PATH=/opt/ros/foxy/lib:/opt/drdds/lib
+Environment=PYTHONPATH=/opt/ros/foxy/lib/python3.8/site-packages:/opt/drdds/lib/python3.8/site-packages
+Environment=ROS_DOMAIN_ID=0
+Environment=RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+StandardOutput=journal
+StandardError=journal
+User=root
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Critical**: `LD_LIBRARY_PATH` must include `/opt/drdds/lib` — without it, `from drdds.msg import NavCmd, MotionInfo` fails silently and `/NAV_CMD` publish + `/MOTION_INFO` subscribe are disabled.
+
+### Restored lio_ddsnode.sh (on AOS)
+```bash
+#!/bin/bash
+sleep 10
+SCRIPT_PATH=$(dirname "$(readlink -f "$0")")
+echo "启动drdds节点"
+sudo mkdir -p /var/opt/robot/data/maps/active
+
+sudo chrt 35 taskset -c 4,5,6,7 $SCRIPT_PATH/../bin/lio_ddsnode &
+LIO_PID=$!
+
+sleep 5
+
+echo "Enabling LIO via lio_command..."
+sudo $SCRIPT_PATH/../bin/lio_command 1
+if [ $? -ne 0 ]; then
+    echo "lio_command failed, retrying in 3s..."
+    sleep 3
+    sudo $SCRIPT_PATH/../bin/lio_command 1 || echo "lio_command retry failed"
+fi
+
+wait $LIO_PID
+```
+Changes from vendor original: Added lio_command auto-enable logic (from Session 4). Removed: FASTRTPS_DEFAULT_PROFILES_FILE export, -E flags, custom comments.
+
+### Network Path (Final)
+```
+Mac (WiFi) ──TCP 9731──→ AOS wlan0 (10.21.41.1)
+                              │ DNAT → 10.21.31.106:9731
+                              ↓
+                         AOS eth2 (10.21.31.103)
+                              │ forward + MASQUERADE
+                              ↓
+                         NOS eth1 (10.21.31.106) ← TCP arrives here
+                         NOS mac_bridge :9731
+                         NOS eth0 (10.21.33.106) ← DDS subscriptions
+                              │ same L2 broadcast domain
+                              ↓
+                         AOS eth0 (10.21.33.103) ← lio_ddsnode publishes
+```
+
+### Current State (03:05 CST, Feb 24)
+
+| Component | Status | Notes |
+|---|---|---|
+| lio_ddsnode (AOS) | **ACTIVE** | Vendor defaults, lio_command succeeded |
+| lio_command (AOS) | **SUCCEEDED** | `调用成功，res: 1` after 2 retries |
+| mac_bridge (NOS) | **RUNNING** | drdds enabled, TCP 9731 listening, systemd enabled |
+| mac_bridge (GOS) | **RUNNING** | Still active, will disable after burn-in |
+| NAT (AOS) | **UPDATED** | DNAT 9731 → NOS (10.21.31.106), persisted |
+| TCP path Mac→NOS | **VERIFIED** | `nc -z 10.21.41.1 9731` succeeds, connection logged on NOS |
+| /ODOM data | **FLOWING** | Confirmed via `ros2 topic echo` on NOS |
+| dimos client test | **PENDING** | Next: run `launch_m20_smart.py` from Mac |
+
+### Rollback Commands (if NOS bridge fails)
+```bash
+# On AOS — revert NAT to GOS
+ssh user@10.21.41.1
+echo "'" | sudo -S bash -c '
+iptables -t nat -D PREROUTING -p tcp --dport 9731 -j DNAT --to-destination 10.21.31.106:9731
+iptables -t nat -D POSTROUTING -p tcp -d 10.21.31.106 --dport 9731 -j MASQUERADE
+iptables -t nat -A PREROUTING -p tcp --dport 9731 -j DNAT --to-destination 10.21.31.104:9731
+iptables -t nat -A POSTROUTING -p tcp -d 10.21.31.104 --dport 9731 -j MASQUERADE
+iptables-save > /etc/iptables/rules.v4
+'
+```
+
+### Next Steps
+1. ~~Run `python launch_m20_smart.py` from Mac~~ → Done, point cloud confirmed on Rerun
+2. ~~Send velocity command from Mac~~ → Done, robot moved (explored autonomously)
+3. ~~Monitor 5+ minutes for stability~~ → Partial, see Finding #73
+4. ~~Disable GOS mac_bridge after burn-in~~ → Done
+5. ~~Update `deploy_gos.sh` to support NOS target~~ → Done, renamed to `deploy_nos.sh`
+
+### Finding #73: height_map_nav Conflicts with dimos /NAV_CMD
+During first full e2e test, robot started exploring autonomously via dimos. When approaching a table, operator stopped exploration. After that:
+- Point cloud stopped updating in Rerun
+- Robot began halting/spinning in place
+- Stop button on dimos command center had no effect
+
+**Root cause**: `height_map_nav.service` was running on AOS. This is the vendor's built-in planner which also publishes to `/NAV_CMD`. Both dimos and height_map_nav were fighting over velocity commands — dimos sent stop (0,0,0) but height_map_nav immediately overwrote it.
+
+**Fix**: `sudo systemctl stop height_map_nav && sudo systemctl disable height_map_nav` on AOS. This is explicitly documented in dev guide Section 2.3.1: *"Must disable height_map_nav to avoid /NAV_CMD conflicts."*
+
+**Point cloud loss**: Likely caused by lio losing tracking during rapid deceleration (table collision) or TCP backpressure from high-frequency data. Needs restart of lio_perception and bridge to recover.
+
+### Changes Made (continued)
+
+| Location | File/Service | Change | Purpose |
+|---|---|---|---|
+| AOS | `height_map_nav.service` | Stopped + disabled | Eliminate /NAV_CMD conflict with dimos |
+| Local | `deploy_gos.sh` → `deploy_nos.sh` | Renamed, updated for NOS | SSH jump host, NOS defaults, fixed systemd service |
+| GOS | `dimos-mac-bridge.service` | Stopped + disabled | Replaced by NOS bridge |
+
+### Current State (07:50 CST, Feb 24)
+
+| Component | Status | Notes |
+|---|---|---|
+| lio_ddsnode (AOS) | **ACTIVE** | Vendor defaults, lio_command succeeded |
+| mac_bridge (NOS) | **RUNNING** | drdds enabled, TCP 9731, systemd enabled |
+| mac_bridge (GOS) | **DISABLED** | Stopped + disabled |
+| height_map_nav (AOS) | **DISABLED** | Stopped + disabled to avoid /NAV_CMD conflict |
+| NAT (AOS) | **PERSISTED** | DNAT 9731 → NOS (10.21.31.106) |
+| dimos client (Mac) | **STOPPED** | Killed after conflict incident, ready to relaunch |
+
+### Operational Checklist (before running dimos)
+1. Ensure `height_map_nav` is stopped on AOS: `ssh user@10.21.41.1 "echo \"'\" | sudo -S systemctl is-active height_map_nav"`
+2. Ensure `lio_perception` is active and lio_command succeeded
+3. Ensure `dimos-mac-bridge` is running on NOS
+4. Launch: `uv run python launch_m20_smart.py`

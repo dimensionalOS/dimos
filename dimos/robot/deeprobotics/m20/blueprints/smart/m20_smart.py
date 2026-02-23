@@ -23,6 +23,7 @@ Reference: M20 Software Development Guide (nell/relay/docs/software-development-
 
 from dimos.core.blueprints import autoconnect
 from dimos.mapping.costmapper import cost_mapper
+from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.mapping.voxels import voxel_mapper
 from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
 from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
@@ -31,7 +32,7 @@ from dimos.robot.deeprobotics.m20.blueprints.basic.m20_minimal import m20_minima
 m20_smart = autoconnect(
     m20_minimal,
     voxel_mapper(voxel_size=0.1),
-    cost_mapper(),
+    cost_mapper(config=HeightCostConfig(max_height=1.5)),
     replanning_a_star_planner(),
     wavefront_frontier_explorer(),
 ).global_config(
