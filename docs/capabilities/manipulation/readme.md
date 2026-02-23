@@ -99,6 +99,10 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 | XArm6 | 6 | Y | Y | — |
 | XArm7 | 7 | Y | Y | Y |
 
+## Adding a Custom Arm
+
+[guide is here](adding_a_custom_arm.md)
+
 ## Key Files
 
 | File | Description |

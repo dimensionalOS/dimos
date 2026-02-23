@@ -222,7 +222,6 @@ This will save the rerun data to `rerun.json` in the current directory.
 ## Where is `<thing>` located? (Architecture)
 
 * If you want to add a `dimos run <your_thing>` command see [dimos_run.md](/docs/development/dimos_run.md)
-* If you want to add a camera driver see [depth_camera_integration.md](/docs/development/depth_camera_integration.md)
 * For edits to manipulation see [manipulation](/dimos/hardware/manipulators/README.md) and the related modules under `dimos/manipulation/`.
 * `dimos/core/`: Is where stuff like `Module`, `In`, `Out`, and `RPC` live.
 * `dimos/robot/`: Robot-specific modules live here.
