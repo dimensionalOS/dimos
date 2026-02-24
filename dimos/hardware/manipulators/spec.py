@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
+from dimos.hardware.drive_trains.spec import HardwareAdapter
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 
 # ============================================================================
@@ -89,7 +90,7 @@ def default_base_transform() -> Transform:
 
 
 @runtime_checkable
-class ManipulatorAdapter(Protocol):
+class ManipulatorAdapter(HardwareAdapter, Protocol):
     """Protocol for hardware-specific IO.
 
     Implement this per vendor SDK. All methods use SI units:
