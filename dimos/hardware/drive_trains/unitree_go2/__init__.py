@@ -14,6 +14,6 @@
 
 """Unitree Go2 quadruped robot adapter."""
 
-from dimos.hardware.drive_trains.unitree_go2.adapter import UnitreeGo2Adapter
+from dimos.hardware.drive_trains.unitree_go2.adapter import UnitreeGo2TwistAdapter
 
-__all__ = ["UnitreeGo2Adapter"]
+__all__ = ["UnitreeGo2TwistAdapter"]

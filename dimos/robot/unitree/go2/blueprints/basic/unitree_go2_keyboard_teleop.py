@@ -14,7 +14,7 @@
 
 """Unitree Go2 keyboard teleop via ControlCoordinator.
 
-WASD keys → Twist → coordinator twist_command → UnitreeGo2Adapter.
+WASD keys → Twist → coordinator twist_command → UnitreeGo2TwistAdapter.
 
 Controls:
     W/S: Forward/backward (linear.x)
