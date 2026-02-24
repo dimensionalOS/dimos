@@ -77,11 +77,7 @@ else:
         }
     )
 
-    _teleop = keyboard_teleop().transports(
-        {
-            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-        }
-    )
+    _teleop = keyboard_teleop()
 
 unitree_go2_keyboard_teleop = autoconnect(_go2, _teleop)
 
