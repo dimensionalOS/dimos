@@ -196,11 +196,8 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         # Tick loop (created on start)
         self._tick_loop: TickLoop | None = None
 
-        # Subscription handles for streaming commands
-        self._joint_command_unsub: Callable[[], None] | None = None
-        self._cartesian_command_unsub: Callable[[], None] | None = None
-        self._twist_command_unsub: Callable[[], None] | None = None
-        self._buttons_unsub: Callable[[], None] | None = None
+        # Subscription handles for streaming commands (disposed on stop)
+        self._subscriptions: list[Callable[[], None]] = []
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -653,6 +650,20 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     # Lifecycle
     # =========================================================================
 
+    def _subscribe_if(self, condition: bool, port: In, callback: Callable, name: str) -> None:
+        """Subscribe to a port if condition is met, tracking the unsub handle."""
+        if not condition:
+            return
+        try:
+            unsub = port.subscribe(callback)
+            self._subscriptions.append(unsub)
+            logger.info(f"Subscribed to {name}")
+        except Exception:
+            logger.warning(
+                f"Could not subscribe to {name}. "
+                "Use task_invoke RPC or set transport via blueprint."
+            )
+
     @rpc
     def start(self) -> None:
         """Start the coordinator control loop."""
@@ -681,50 +692,31 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         )
         self._tick_loop.start()
 
-        # Subscribe to joint commands if any streaming tasks configured
-        streaming_types = ("servo", "velocity")
-        has_streaming = any(t.type in streaming_types for t in self.config.tasks)
-        if has_streaming:
-            try:
-                self._joint_command_unsub = self.joint_command.subscribe(self._on_joint_command)
-                logger.info("Subscribed to joint_command for streaming tasks")
-            except Exception:
-                logger.warning(
-                    "Streaming tasks configured but could not subscribe to joint_command. "
-                    "Use task_invoke RPC or set transport via blueprint."
-                )
-
-        # Subscribe to cartesian commands if any cartesian_ik tasks configured
-        has_cartesian_ik = any(t.type in ("cartesian_ik", "teleop_ik") for t in self.config.tasks)
-        if has_cartesian_ik:
-            try:
-                self._cartesian_command_unsub = self.cartesian_command.subscribe(
-                    self._on_cartesian_command
-                )
-                logger.info("Subscribed to cartesian_command for CartesianIK/TeleopIK tasks")
-            except Exception:
-                logger.warning(
-                    "CartesianIK/TeleopIK tasks configured but could not subscribe to cartesian_command. "
-                    "Use task_invoke RPC or set transport via blueprint."
-                )
-
-        # Subscribe to twist commands if any twist base hardware configured
-        has_twist_base = any(c.hardware_type == HardwareType.BASE for c in self.config.hardware)
-        if has_twist_base:
-            try:
-                self._twist_command_unsub = self.twist_command.subscribe(self._on_twist_command)
-                logger.info("Subscribed to twist_command for twist base control")
-            except Exception:
-                logger.warning(
-                    "Twist base configured but could not subscribe to twist_command. "
-                    "Use task_invoke RPC or set transport via blueprint."
-                )
-
-        # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
-        has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
-        if has_teleop_ik:
-            self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
-            logger.info("Subscribed to buttons for engage/disengage")
+        # Subscribe to streaming command ports
+        self._subscribe_if(
+            any(t.type in ("servo", "velocity") for t in self.config.tasks),
+            self.joint_command,
+            self._on_joint_command,
+            "joint_command",
+        )
+        self._subscribe_if(
+            any(t.type in ("cartesian_ik", "teleop_ik") for t in self.config.tasks),
+            self.cartesian_command,
+            self._on_cartesian_command,
+            "cartesian_command",
+        )
+        self._subscribe_if(
+            any(c.hardware_type == HardwareType.BASE for c in self.config.hardware),
+            self.twist_command,
+            self._on_twist_command,
+            "twist_command",
+        )
+        self._subscribe_if(
+            any(t.type == "teleop_ik" for t in self.config.tasks),
+            self.buttons,
+            self._on_buttons,
+            "buttons",
+        )
 
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
 
@@ -734,18 +726,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         logger.info("Stopping ControlCoordinator...")
 
         # Unsubscribe from streaming commands
-        if self._joint_command_unsub:
-            self._joint_command_unsub()
-            self._joint_command_unsub = None
-        if self._cartesian_command_unsub:
-            self._cartesian_command_unsub()
-            self._cartesian_command_unsub = None
-        if self._twist_command_unsub:
-            self._twist_command_unsub()
-            self._twist_command_unsub = None
-        if self._buttons_unsub:
-            self._buttons_unsub()
-            self._buttons_unsub = None
+        for unsub in self._subscriptions:
+            unsub()
+        self._subscriptions.clear()
 
         if self._tick_loop:
             self._tick_loop.stop()
