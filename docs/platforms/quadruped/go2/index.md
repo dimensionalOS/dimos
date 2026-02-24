@@ -37,7 +37,7 @@ Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3
 
 ### Pre-flight checks
 
-1. Robot is reacheable and low latency <10ms, 0% packet loss
+1. Robot is reachable and low latency <10ms, 0% packet loss
 ```bash
 ping $ROBOT_IP
 ```
@@ -54,7 +54,7 @@ or
 sudo sntp -sS pool.ntp.org
 ```
 
-### Ready to run dimos
+### Ready to run DimOS
 
 ```bash
 export ROBOT_IP=<YOUR_GO2_IP>
