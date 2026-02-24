@@ -29,6 +29,9 @@ from dimos.visualization.rerun.bridge import rerun_bridge
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.utils.data import get_data
+from dimos.core.module import ModuleConfig
+from dataclasses import dataclass
 
 import pickle
 import math
@@ -38,10 +41,9 @@ from pathlib import Path
 
 logger = setup_logger()
 
-voxel_size = 0.05
-
-# data_path = Path(__file__).parent.parent.parent.parent.parent.parent / "data" / "livox_nav_recording"
-# lidar_path = data_path / "lidar.pkl"
+VOXEL_SIZE = 0.05
+ANGLE_OF_MID_360_ON_ROBOT = 24 # degree
+HEIGHT_OF_MID_360_ON_ROBOT = 0.5 # meter
 
 
 class ReplayMid360Module(Module):
@@ -51,11 +53,8 @@ class ReplayMid360Module(Module):
 
     def __init__(self) -> None:
         super().__init__()
-        # TODO: clean up (use get_data function)
-        data_path = Path(__file__).parent.parent.parent.parent.parent.parent.parent / "data" / "livox_nav_recording"
-        lidar_path = data_path / "lidar.pkl"
-
-        self.lidar_path = lidar_path
+        # TODO: clean up (use get_data function) done
+        self.lidar_path = get_data("livox_nav_recording/lidar.pkl")
         self.file = None
         self._running = False
         self._thread = None
@@ -102,16 +101,25 @@ class ReplayMid360Module(Module):
             self.file.close()
         logger.info("ReplayMid360Module stopped")
 
-ANGLE_OF_MID_360_ON_ROBOT = 24 # degre
+
+@dataclass 
+class Config(ModuleConfig):
+    angle_of_mid_360_on_robot: float = 0
+    height_of_mid_360_on_robot: float = 0.5
+    lidar_max_height: float = 2.0
+
+
 class TransformToRobot(Module):
+    default_config = Config
+    config: Config
     lidar_untrans: In[PointCloud2]
     lidar_trans: Out[PointCloud2]
 
     def __init__(self) -> None:
         super().__init__()
         self.floor_orientation = Transform(
-            translation=Vector3(0, 0, 0.5),
-            rotation=Quaternion.from_euler(Vector3(0, math.radians(ANGLE_OF_MID_360_ON_ROBOT), 0)),
+            translation=Vector3(0, 0, self.config.height_of_mid_360_on_robot),
+            rotation=Quaternion.from_euler(Vector3(0, math.radians(self.config.angle_of_mid_360_on_robot), 0)),
         )
 
     @rpc
@@ -122,7 +130,7 @@ class TransformToRobot(Module):
     def _on_lidar(self, pcd: PointCloud2):
         #TODO: add straight to costmapper
         """Apply transform and filter by height before publishing."""
-        transformed = pcd.transform(self.floor_orientation).filter_by_height(max_height=2)
+        transformed = pcd.transform(self.floor_orientation).filter_by_height(max_height=self.config.lidar_max_height)
         self.lidar_trans.publish(transformed)
 
     @rpc
@@ -157,10 +165,14 @@ class OdometryToOdom(Module):
 
 unitree_go2_fastlio = autoconnect(
     unitree_go2_basic,
-    FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=-1),
-    TransformToRobot.blueprint(),
+    FastLio2.blueprint(voxel_size=VOXEL_SIZE, map_voxel_size=VOXEL_SIZE, map_freq=-1),
+    TransformToRobot.blueprint(
+        angle_of_mid_360_on_robot=ANGLE_OF_MID_360_ON_ROBOT,
+        height_of_mid_360_on_robot=HEIGHT_OF_MID_360_ON_ROBOT,
+        lidar_max_height=2.0
+    ),
     OdometryToOdom.blueprint(),
-    VoxelGridMapper.blueprint(voxel_size=voxel_size),
+    VoxelGridMapper.blueprint(voxel_size=VOXEL_SIZE),
     cost_mapper(),
     replanning_a_star_planner(),
     wavefront_frontier_explorer(),
@@ -168,21 +180,26 @@ unitree_go2_fastlio = autoconnect(
 ).remappings([
     # TODO: maybe call lidar in fastlio raw lidar
     # turn off go2 lidar (basically)
-    (GO2Connection, 'lidar', 'lidar_onboard'),
+    (GO2Connection, 'lidar', 'lidar_null'),
     (GO2Connection, 'odom', 'odom_null'),
-    #
-    # (FastLio2, 'odometry', 'odometry_nav'),
-    # (FastLio2, 'lidar', 'lidar_fastlio'),
     (TransformToRobot, 'lidar_untrans', 'lidar'),
-    # Convert nav_msgs.Odometry to geometry_msgs.PoseStamped
-    # (OdometryToOdom, 'odometry_nav', 'odom'),
-    # (cost_mapper, 'odom', 'odometry'),
     (VoxelGridMapper, 'lidar', 'lidar_trans'),
 ]).global_config(n_dask_workers=6, robot_model="unitree_go2")
 
 
 
+fastlio_livox  = autoconnect(
+    ReplayMid360Module.blueprint(),
+    TransformToRobot.blueprint(),
+    VoxelGridMapper.blueprint(voxel_size=VOXEL_SIZE),
+    cost_mapper(),
+    replanning_a_star_planner(),
+    wavefront_frontier_explorer(),
+    rerun_bridge()
+)
+
 __all__ = ["unitree_go2_fastlio"]
 
 if __name__ == "__main__":
-    unitree_go2_fastlio.build().loop()
+    # unitree_go2_fastlio.build().loop()
+    fastlio_livox.build().loop()

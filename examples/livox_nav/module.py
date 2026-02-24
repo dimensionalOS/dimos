@@ -1,3 +1,4 @@
+from logging import log
 from dimos.core import Module, rpc, In, Out
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.robot.unitree.go2.connection import GO2Connection
@@ -14,11 +15,14 @@ from dimos.mapping.voxels import voxel_mapper
 from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
 from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
+from dimos.utils.logging_config import setup_logger
 
 from pathlib import Path
 import time
 import pickle
 import math
+
+logger = setup_logger()
 
 voxel_size = 0.05
 
@@ -34,15 +38,15 @@ class RecordMid360Module(Module):
     def start(self):
         self.file = open("lidar.pkl", "wb")
         self.file2 = open('odo.pkl', "wb")
-        print("Started recording lidar data to lidar.pkl")
+        logger.info("Started recording lidar data to lidar.pkl")
 
         def save_lidar(msg):
             pickle.dump(msg, self.file)
-            print(f"Saved pointcloud at ts={msg.ts}")
-            
+            logger.info(f"Saved pointcloud at ts={msg.ts}")
+
         def save_odom(msg):
             pickle.dump(msg, self.file2)
-            print(f"Saved odometry at ts={msg.ts}")
+            logger.info(f"Saved odometry at ts={msg.ts}")
 
         self.lidar.subscribe(save_lidar)
         self.odometry.subscribe(save_odom)
@@ -51,7 +55,7 @@ class RecordMid360Module(Module):
     def stop(self):
         if self.file:
             self.file.close()
-            print(f"Recording stopped.")
+            logger.info(f"Recording stopped.")
         super().stop()
         
 class ReplayMid360Module(Module):
@@ -75,14 +79,14 @@ class ReplayMid360Module(Module):
             rotation=Quaternion.from_euler(Vector3(0,math.radians(24),0)),
         )
         try:
-            print('Starting replay from lidar.pkl')
+            logger.info('Starting replay from lidar.pkl')
             while self._running:
                 pcd: PointCloud2 = pickle.load(self.file)
-                print(f"Replaying pointcloud at ts={pcd.ts}")
+                logger.info(f"Replaying pointcloud at ts={pcd.ts}")
                 self.lidar.publish(pcd.transform(floor_orienation))
                 time.sleep(0.1)  # Add small delay between frames
         except EOFError:
-            print("Replay finished - reached end of file")
+            logger.info("Replay finished - reached end of file")
             self._running = False
 
     @rpc
@@ -122,7 +126,7 @@ replay_mid360 = autoconnect(
     ),
 )
 
-replay_object_permanence_mid360 = autoconnect(
+replay_mid360_voxel_mapper = autoconnect(
     ReplayMid360Module.blueprint(),
     voxel_mapper(voxel_size=voxel_size),
     rerun_bridge()
@@ -131,4 +135,4 @@ replay_object_permanence_mid360 = autoconnect(
 if __name__ == "__main__":
     # record_mid360.build().loop()
     # replay_mid360.build().loop()
-    replay_object_permanence_mid360.build().loop()
+    replay_mid360_voxel_mapper.build().loop()
