@@ -409,6 +409,7 @@ module = [
     "tf2_msgs.*",
     "torchreid",
     "ultralytics.*",
+    "unitree_sdk2py.*",
     "unitree_webrtc_connect.*",
     "xarm.*",
 ]

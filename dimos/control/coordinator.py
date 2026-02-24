@@ -649,7 +649,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     # Lifecycle
     # =========================================================================
 
-    def _subscribe_if(self, condition: bool, port: In, callback: Callable, name: str) -> None:
+    def _subscribe_if(
+        self, condition: bool, port: In, callback: Callable[..., object], name: str
+    ) -> None:
         """Subscribe to a port if condition is met, tracking the unsub handle."""
         if not condition:
             return
