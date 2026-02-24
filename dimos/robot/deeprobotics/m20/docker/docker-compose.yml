@@ -1,0 +1,14 @@
+services:
+  dimos:
+    build:
+      context: ../../../../..  # dimos repo root (5 levels up from docker/)
+      dockerfile: dimos/robot/deeprobotics/m20/docker/Dockerfile
+    image: dimos-m20-nos:latest
+    container_name: dimos-m20
+    privileged: true
+    network_mode: host
+    ipc: host
+    environment:
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - ROS_DOMAIN_ID=0
+    restart: "no"  # Manual start only — lio must be enabled first (DDS conflict)

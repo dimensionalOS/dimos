@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+    <!-- Default participant profile for dimos on M20 NOS -->
+    <participant profile_name="participant_profile" is_default_profile="true">
+        <rtps>
+            <name>dimos_m20_participant</name>
+            <builtin>
+                <discovery_config>
+                    <discoveryProtocol>SIMPLE</discoveryProtocol>
+                    <leaseDuration>
+                        <sec>10</sec>
+                        <nanosec>0</nanosec>
+                    </leaseDuration>
+                    <leaseAnnouncement>
+                        <sec>3</sec>
+                        <nanosec>0</nanosec>
+                    </leaseAnnouncement>
+                </discovery_config>
+            </builtin>
+            <!-- 10MB socket buffers for point cloud data -->
+            <sendSocketBufferSize>10485760</sendSocketBufferSize>
+            <listenSocketBufferSize>10485760</listenSocketBufferSize>
+            <useBuiltinTransports>true</useBuiltinTransports>
+        </rtps>
+    </participant>
+
+    <transport_descriptors>
+        <transport_descriptor>
+            <transport_id>udp_transport</transport_id>
+            <type>UDPv4</type>
+            <sendBufferSize>10485760</sendBufferSize>
+            <receiveBufferSize>10485760</receiveBufferSize>
+            <maxMessageSize>65500</maxMessageSize>
+        </transport_descriptor>
+        <!-- Shared memory for same-host DDS communication -->
+        <transport_descriptor>
+            <transport_id>shm_transport</transport_id>
+            <type>SHM</type>
+            <segment_size>10485760</segment_size>
+            <max_message_size>1048576</max_message_size>
+        </transport_descriptor>
+    </transport_descriptors>
+</profiles>
