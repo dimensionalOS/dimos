@@ -652,15 +652,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         """Subscribe to a port if condition is met, tracking the unsub handle."""
         if not condition:
             return
-        try:
-            unsub = port.subscribe(callback)
-            self._subscriptions.append(unsub)
-            logger.info(f"Subscribed to {name}")
-        except Exception:
-            logger.warning(
-                f"Could not subscribe to {name}. "
-                "Use task_invoke RPC or set transport via blueprint."
-            )
+        unsub = port.subscribe(callback)
+        self._subscriptions.append(unsub)
+        logger.info(f"Subscribed to {name}")
 
     @rpc
     def start(self) -> None:
