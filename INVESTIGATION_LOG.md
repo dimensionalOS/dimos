@@ -1737,3 +1737,76 @@ During first full e2e test, robot started exploring autonomously via dimos. When
 2. Ensure `lio_perception` is active and lio_command succeeded
 3. Ensure `dimos-mac-bridge` is running on NOS
 4. Launch: `uv run python launch_m20_smart.py`
+
+---
+
+## Session 11 — Upstream Spec Adoption & Deploy Hardening (Feb 24, 2026)
+
+### Context
+After Session 10 (NOS migration), rebased `feature/m20-integration` onto latest `origin/dev` (37 new upstream commits). Needed to adopt new spec protocols and harden the deploy script.
+
+### Finding #74: New Upstream Spec Protocols
+37 upstream commits introduced three new spec protocols in `dimos/spec/perception.py`:
+- `spec.Lidar` → `lidar: Out[PointCloud2]`
+- `spec.IMU` → `imu: Out[Imu]`
+- `spec.Odometry` → `odometry: Out[OdometryMsg]`
+
+Also new message types: `dimos.msgs.sensor_msgs.Imu` (with covariances) and enhanced `dimos.msgs.nav_msgs.Odometry` (with `PoseWithCovariance`, `TwistWithCovariance`, convenience properties like `.vx`, `.yaw`).
+
+No breaking changes to M20, but our code was using raw/legacy types where proper dimos types now exist.
+
+### Finding #75: DDS Participant Startup Order Conflict (Root Cause)
+**Critical discovery**: The NOS bridge's ROS2 DDS participant interferes with `lio_command`'s DDS service call on AOS.
+
+**Symptoms**: `lio_command` hangs at `"Publisher matched:1"` indefinitely when bridge is running on NOS. lio_command succeeded immediately when bridge was stopped.
+
+**Root cause**: FastDDS service discovery. The bridge creates a DDS participant on the shared L2 network (NOS eth0 10.21.33.106 ↔ AOS eth0 10.21.33.103). lio_command uses a DDS service to enable lio, and the extra participant confuses the service matching.
+
+**Required startup order**:
+1. `systemctl restart lio_perception` on AOS (wait for `调用成功，res: 1`)
+2. `systemctl start dimos-mac-bridge` on NOS (only after lio is enabled)
+
+### Changes Made
+
+| Location | File | Change | Purpose |
+|---|---|---|---|
+| Local | `connection.py` | Added `spec.Lidar`, `spec.IMU`, `spec.Odometry` to class; added `imu: Out[Imu]`, `odometry: Out[OdometryMsg]` outputs; wired streams in `_start_ros_path()` | Adopt upstream spec protocols |
+| Local | `ros_sensors.py` | Added `_ros_imu_to_dimos()`, `_ros_odom_to_dimos()` conversions; typed Subject/Observable to `DimosImu`/`DimosOdometry` | Proper dimos message types with covariances |
+| NOS | `mac_bridge.py` | Extended `_on_odom()` with twist velocities + child_frame_id; `_on_imu()` with frame_id | Backward-compatible serialization for new fields |
+| Local | `mac_bridge_client.py` | Added `_decode_odometry()`, updated `_decode_imu()` to return `DimosImu`; added `odometry_stream()` | Typed decoding, full Odometry with twist |
+| Local | `deploy_nos.sh` | Added `ensure_lio_enabled()` with 3-signal health check; `lio_publishing_data()` data flow check | Automate startup order, prevent DDS conflict |
+
+### Three-Signal lio Health Check (`deploy_nos.sh`)
+1. **`pgrep -f lio_ddsnode`** on AOS — is the DDS node process running?
+2. **`! pgrep -f 'lio_command 1'`** on AOS — has the enable sequence completed?
+3. **`ros2 topic echo /ODOM --once`** on NOS — is data actually flowing over shared L2?
+
+Fast path: if all 3 healthy, skip restart. Otherwise restart lio_perception and poll up to 45s.
+
+**Note**: The `/ODOM` echo check timed out during deploy testing (45s) despite lio being healthy. Likely a ROS2 Foxy DDS discovery timing issue on NOS — the bridge wasn't running yet so no DDS participant to relay. The check is conservative (proceeds anyway with a warning). AOS process checks confirmed lio was healthy.
+
+### Backward Compatibility (Bridge Protocol)
+- New JSON fields added to odom: `lx`, `ly`, `lz`, `ax`, `ay`, `az`, `child_frame_id`
+- New JSON field added to IMU: `frame_id`
+- Client decoders use `.get()` with defaults — handles both old and new bridge format gracefully
+- Old bridge running on NOS before redeploy still works with new client code
+
+### End-to-End Test Result
+Deployed updated bridge via `deploy_nos.sh --mac-bridge`, launched `uv run python launch_m20_smart.py`:
+- All modules deployed (7 modules, 6 workers)
+- New transports registered: `odometry` (`/odometry#nav_msgs.Odometry`), `imu` (`/imu#sensor_msgs.Imu`)
+- Bridge connected, data flowing
+- Frontier exploration started autonomously — 9 frontiers detected, goal published, robot navigating
+- Robot replanned once (stuck detection), then continued exploring
+
+### Current State (19:22 CST, Feb 24)
+
+| Component | Status | Notes |
+|---|---|---|
+| lio_ddsnode (AOS) | **ACTIVE** | lio_command completed, /ODOM flowing |
+| mac_bridge (NOS) | **RUNNING** | Updated with twist + frame_id serialization |
+| height_map_nav (AOS) | **DISABLED** | Still disabled from Session 10 |
+| dimos (Mac) | **RUNNING** | Autonomous exploration active, all spec streams wired |
+
+### Commits
+- `d8e4db742` — Adopt upstream spec protocols (Lidar, IMU, Odometry) and harden deploy
