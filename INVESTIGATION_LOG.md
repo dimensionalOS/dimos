@@ -1971,7 +1971,9 @@ log_channel(SDK): Sender has been blocked for over 5 seconds waiting for space i
 batcher_output: Sender has been blocked for over 5 seconds waiting for space in channel
 ```
 
-Data path: NOS container → gRPC → AOS NAT → WiFi → Mac native Rerun viewer. The WiFi link can't sustain the combined bandwidth of point clouds + color images + maps + odometry. Rerun SDK queues data, channel fills, sender blocks 5+ seconds, data gets through in bursts when channel drains.
+Data path: `rr.log()` → SDK log_channel → batcher → batcher_output → gRPC transport → NOS → AOS NAT → WiFi → Mac. Backpressure starts at `log_channel(SDK)` — BEFORE any network sending. Total data rate (~350 KB/s across all streams) is well within WiFi capacity (10-50+ Mbps), so **this is NOT a WiFi bandwidth issue**.
+
+Root cause: **ARM64 CPU + Python GIL contention**. Rerun SDK's internal serialization/batching pipeline can't keep up on the 4-core ARM64. Worker 2 runs Rerun + CostMapper + M20Connection, all competing for the same Python GIL. When CostMapper or M20Connection holds the GIL, Rerun's internal threads stall.
 
 **M20ROSSensors architecture** (confirmed no batching):
 - rclpy: `SingleThreadedExecutor`, `spin_once(timeout_sec=0.01)` = 100Hz spin in background thread
@@ -1979,7 +1981,7 @@ Data path: NOS container → gRPC → AOS NAT → WiFi → Mac native Rerun view
 - QoS: RELIABLE, KEEP_LAST(10), VOLATILE
 - No batching, no throttling at any layer
 
-**Not fixable without wired connection** — this is a WiFi bandwidth limitation. Potential mitigations: downsample point clouds before Rerun logging, reduce image resolution, or connect Mac directly to NOS via ethernet.
+**Potential fixes**: give Rerun a dedicated dask worker (4 workers), downsample point clouds before `rr.log()`, reduce logging frequency (skip frames).
 
 ### Commits
 - `557d99734` — Add Docker deployment for running full dimos on NOS in Humble container
