@@ -13,6 +13,8 @@ import signal
 import sys
 import time
 
+import dask
+
 from dimos.core.global_config import global_config
 
 global_config.update(viewer_backend="rerun-web")
@@ -29,12 +31,16 @@ from dimos.robot.deeprobotics.m20.connection import m20_connection
 # Direct ROS2 mode: no bridge_host, robot_ip is AOS eth0 (shared L2 with NOS)
 AOS_ETH0 = "10.21.33.103"
 
-# Same as m20_smart but with publish_interval=1.0 — VoxelGridMapper on CPU
-# is expensive, Lesh recommended 1Hz instead of every-frame (~10Hz).
+# NOS-tuned blueprint: VoxelGridMapper on CPU without CUDA is expensive.
+# - voxel_size=0.2: 8x fewer voxels than 0.1 (cubic), fine for outdoor patrol
+# - publish_interval=1.0: Lesh recommended 1Hz instead of every-frame (~10Hz)
+# - resolution=0.2: match costmap grid to voxel size (16x smaller grid than default 0.05)
+# - n_dask_workers=2: 4 threads/worker hardcoded, 2x4=8 threads on 4 cores (was 3x4=12)
+# - memory_limit=4GB: explicit cap per worker (15GB - ~7GB OS/ROS/lio = ~8GB / 2 workers)
 bp = autoconnect(
     m20_minimal,
-    voxel_mapper(voxel_size=0.1, publish_interval=1.0),
-    cost_mapper(config=HeightCostConfig(max_height=1.5)),
+    voxel_mapper(voxel_size=0.2, publish_interval=1.0),
+    cost_mapper(config=HeightCostConfig(max_height=1.5, resolution=0.2)),
     replanning_a_star_planner(),
     wavefront_frontier_explorer(),
     m20_connection(ip=AOS_ETH0, enable_ros=True),
@@ -43,11 +49,21 @@ bp = autoconnect(
     robot_model="deeprobotics_m20",
     robot_width=0.3,
     robot_rotation_diameter=0.6,
-    n_dask_workers=3,  # 3 workers across 4 cores — avoids VoxelGridMapper blocking M20Connection
+    n_dask_workers=2,
+    memory_limit="4GB",
 )
 
 
 def main():
+    # Raise dask memory pause threshold before LocalCluster is created in bp.build().
+    # Default pause=0.8 causes thrashing on shared-RAM ARM64 system.
+    dask.config.set({
+        "distributed.worker.memory.target": 0.7,
+        "distributed.worker.memory.spill": 0.8,
+        "distributed.worker.memory.pause": 0.9,
+        "distributed.worker.memory.terminate": 0.95,
+    })
+
     print("Starting dimos M20 on NOS (direct ROS2 mode)...")
     coordinator = bp.build()
     print("dimos running!")
