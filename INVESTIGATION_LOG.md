@@ -1891,10 +1891,27 @@ Standard `docker build` OOMs on NOS. Instead:
 - `2b42b8ac8` — Fix deploy.sh argument parsing: command before host/user
 - `0727bf228` — Fix Docker deployment: pre-built deps image, LCM autoconf, viewer disable
 
+### Finding #10: NAT rules not persisted across power cycles
+The `deploy.sh ensure_nat()` uses `aos_sudo` to add iptables rules, but the rules added during `deploy.sh start` silently failed (likely due to sudo piping issues with `aos_sudo`). NAT rules had to be added manually:
+```bash
+ssh user@10.21.41.1 "printf \"'\\n\" | sudo -S iptables -t nat -A PREROUTING -i wlan0 -p tcp --dport 7779 -j DNAT --to-destination 10.21.31.106:7779"
+ssh user@10.21.41.1 "printf \"'\\n\" | sudo -S iptables -t nat -A PREROUTING -i wlan0 -p tcp --dport 9876 -j DNAT --to-destination 10.21.31.106:9876"
+```
+After adding rules manually, `curl http://10.21.31.106:7779/command-center` from AOS returned HTTP 200, and the web UI loaded from Mac at `http://10.21.41.1:7779/command-center`.
+
+### Current State (11:05 CST, Feb 25)
+
+| Component | Status | Notes |
+|---|---|---|
+| dimos-m20 container (NOS) | **RUNNING** | All modules deployed, stable for 6+ min |
+| Web UI (Mac) | **ACCESSIBLE** | http://10.21.41.1:7779/command-center — HTTP 200 |
+| NAT rules (AOS) | **ACTIVE** | 7779→NOS, 9876→NOS (manually added) |
+
 ### Next Steps
-- Test web UI from Mac at http://10.21.41.1:7779/command-center
+- ~~Test web UI from Mac at http://10.21.41.1:7779/command-center~~ **DONE**
 - Test navigation: send goal from web UI → verify robot moves
 - Test exploration: start autonomous exploration from web UI
 - Re-enable Rerun viewer (viewer_backend="rerun-web") once basic stack verified
 - Fix FastDDS XML for this version of FastRTPS
+- Fix `deploy.sh ensure_nat()` — aos_sudo piping broken for iptables
 - Consider adding `get_data("command_center.html")` to container (web assets)
