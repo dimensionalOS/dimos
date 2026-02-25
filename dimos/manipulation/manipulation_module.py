@@ -1009,7 +1009,8 @@ class ManipulationModule(Module):
         """
         logger.info(f"Planning motion to ({x:.3f}, {y:.3f}, {z:.3f})...")
 
-        # If no orientation specified, preserve the current EE orientation
+        # If no orientation specified, preserve the current EE orientation.
+        # If partially specified, fill unspecified angles from current orientation.
         if roll is None and pitch is None and yaw is None:
             current_pose = self.get_ee_pose(robot_name)
             if current_pose is not None:
@@ -1017,7 +1018,18 @@ class ManipulationModule(Module):
             else:
                 orientation = Quaternion(0, 0, 0, 1)  # identity fallback
         else:
-            orientation = Quaternion.from_euler(Vector3(roll or 0.0, pitch or 0.0, yaw or 0.0))
+            current_pose = self.get_ee_pose(robot_name)
+            if current_pose is not None:
+                current_euler = current_pose.orientation.to_euler()
+                orientation = Quaternion.from_euler(
+                    Vector3(
+                        roll if roll is not None else current_euler.x,
+                        pitch if pitch is not None else current_euler.y,
+                        yaw if yaw is not None else current_euler.z,
+                    )
+                )
+            else:
+                orientation = Quaternion.from_euler(Vector3(roll or 0.0, pitch or 0.0, yaw or 0.0))
 
         pose = Pose(Vector3(x, y, z), orientation)
 
