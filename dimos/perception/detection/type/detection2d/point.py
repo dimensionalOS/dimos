@@ -152,6 +152,15 @@ class Detection2DPoint(Detection2D):
 
     def to_ros_detection2d(self) -> ROSDetection2D:
         """Convert point to ROS Detection2D message (as zero-size bbox at point)."""
+        # LCM ObjectHypothesis.class_id is a *string* type.
+        results = [
+            ObjectHypothesisWithPose(
+                ObjectHypothesis(
+                    class_id=str(self.class_id),
+                    score=self.confidence,
+                )
+            )
+        ]
         return ROSDetection2D(
             header=Header(self.ts, "camera_link"),
             bbox=BoundingBox2D(
@@ -162,14 +171,8 @@ class Detection2DPoint(Detection2D):
                 size_x=0.0,
                 size_y=0.0,
             ),
-            results=[
-                ObjectHypothesisWithPose(
-                    ObjectHypothesis(
-                        class_id=self.class_id,
-                        score=self.confidence,
-                    )
-                )
-            ],
+            results=results,
+            results_length=len(results),
             id=str(self.track_id),
         )
 

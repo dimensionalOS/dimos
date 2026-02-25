@@ -367,11 +367,14 @@ class Detection2DBBox(Detection2D):
         bbox = (x1, y1, x2, y2)
 
         # Extract hypothesis info
+        # Note: LCM decodes class_id as str (LCM string type), convert back to int
         class_id = 0
         confidence = 0.0
         if ros_det.results:
             hypothesis = ros_det.results[0].hypothesis
-            class_id = hypothesis.class_id
+            class_id = (
+                int(hypothesis.class_id) if str(hypothesis.class_id).lstrip("-").isdigit() else 0
+            )
             confidence = hypothesis.score
 
         # Extract track_id
@@ -393,16 +396,20 @@ class Detection2DBBox(Detection2D):
         )
 
     def to_ros_detection2d(self) -> ROSDetection2D:
+        # LCM ObjectHypothesis.class_id is a *string* type (see dimos_lcm/vision_msgs/ObjectHypothesis.py).
+        # Passing an int causes AttributeError: 'int' object has no attribute 'encode'.
+        results = [
+            ObjectHypothesisWithPose(
+                ObjectHypothesis(
+                    class_id=str(self.class_id),
+                    score=self.confidence,
+                )
+            )
+        ]
         return ROSDetection2D(
             header=Header(self.ts, "camera_link"),
             bbox=self.to_ros_bbox(),
-            results=[
-                ObjectHypothesisWithPose(
-                    ObjectHypothesis(
-                        class_id=self.class_id,
-                        score=self.confidence,
-                    )
-                )
-            ],
+            results=results,
+            results_length=len(results),
             id=str(self.track_id),
         )
