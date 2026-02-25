@@ -1810,3 +1810,91 @@ Deployed updated bridge via `deploy_nos.sh --mac-bridge`, launched `uv run pytho
 
 ### Commits
 - `d8e4db742` — Adopt upstream spec protocols (Lidar, IMU, Odometry) and harden deploy
+
+---
+
+## Session 12: Full dimos on NOS in Humble Docker Container (Feb 25, 2026)
+
+### Goal
+Run the full dimos stack (navigation, mapping, planning, web UI) directly on NOS inside a ROS2 Humble Docker container, eliminating the Mac-side TCP bridge entirely.
+
+### Architecture Change
+```
+BEFORE: Mac (dimos full stack) → TCP bridge → NOS (mac_bridge.py) → ROS2 Foxy DDS
+AFTER:  NOS Docker (dimos full stack) → direct rclpy → ROS2 Humble DDS
+        Mac → http://10.21.41.1:7779/command-center (thin client only)
+```
+
+### Why Docker?
+M20 runs ROS2 Foxy natively (Python 3.8, Ubuntu 20.04). dimos requires Python 3.10+ (Humble). Deep Robotics provided `ysc_ros2_backup.tar.gz` — ARM64 Ubuntu 22.04 + ROS2 Humble + drdds vendor messages. This Docker container bridges the version gap without modifying the host OS.
+
+### Key Findings
+
+1. **NOS hardware**: 4 cores, 15GB RAM, 18GB disk, ARM64 — identical to GOS and AOS
+2. **Vendor image**: `192.168.102.241:8881/ysc_docker_hub/ysc_jammy_ros2:arm64.1.0.3` (4.39GB), Python 3.10.12, ROS2 Humble, drdds vendor messages pre-installed
+3. **Private apt sources**: Vendor image has apt sources pointing to `192.168.102.241:25193` (unreachable). Must replace with `ports.ubuntu.com` before installing packages
+4. **docker build OOM**: `docker build` on NOS sends entire build context to daemon, saturating 4-core ARM64. Solution: build image interactively with `docker exec` + `docker commit` instead
+5. **NumPy 2.x vs system matplotlib**: System matplotlib (from Ubuntu packages) compiled against NumPy 1.x. Installing NumPy 2.2.6 in venv causes `_ARRAY_API not found`. Fix: install matplotlib 3.10+ in venv to override system version
+6. **langchain-core missing**: dimos core module imports `langchain_core.tools` — not in the dep list. Added interactively
+7. **LCM autoconf prompt blocks**: `configure_system()` prompts `input("Apply changes? [y/N]:")` which gets EOFError in non-interactive container, causing SystemExit(1). Fix: set `CI=1` env var to skip the check (sysctl/multicast configured in entrypoint instead)
+8. **FastDDS XML parse error**: `max_message_size` is not valid for SharedMemory transport descriptor in this FastRTPS version. Non-fatal — DDS falls back to defaults
+9. **lio /ODOM check from NOS**: The deploy.sh lio health check uses `ros2 topic echo /ODOM --once` from NOS via Foxy setup.bash. This often times out due to Foxy-Humble DDS version mismatch. lio is actually healthy — the check is unreliable cross-version
+
+### Files Created
+| File | Purpose |
+|---|---|
+| `dimos/robot/deeprobotics/m20/docker/Dockerfile` | Extends pre-built deps image with dimos source |
+| `dimos/robot/deeprobotics/m20/docker/deploy.sh` | Build/start/stop/logs/shell/status lifecycle |
+| `dimos/robot/deeprobotics/m20/docker/entrypoint.sh` | Sources Humble, configures DDS + LCM, waits for topics |
+| `dimos/robot/deeprobotics/m20/docker/launch_nos.py` | Direct ROS2 mode launch (no bridge) |
+| `dimos/robot/deeprobotics/m20/docker/fastdds.xml` | DDS transport config (UDP + SHM) |
+| `dimos/robot/deeprobotics/m20/docker/docker-compose.yml` | Container config (host network, host IPC) |
+
+### Docker Image Build Process (for NOS ARM64)
+Standard `docker build` OOMs on NOS. Instead:
+1. Load vendor image: `docker load -i ysc_ros2_backup.tar.gz`
+2. Tag: `docker tag <id> dimos/m20-humble-base:latest`
+3. Start builder: `docker run -d --name deps-builder --network host dimos/m20-humble-base:latest sleep 3600`
+4. Fix apt sources (replace private DR repos with ports.ubuntu.com)
+5. Install system deps: `python3-venv python3-dev libturbojpeg0-dev libgl1 libglib2.0-0 git curl`
+6. Create venv: `python3 -m venv --system-site-packages /opt/dimos-venv`
+7. Install pip deps in batches (numpy, scipy, dask, rerun-sdk, etc.)
+8. Commit: `docker commit deps-builder dimos/m20-deps:latest`
+9. Start new builder from deps image, copy dimos source via `docker cp`
+10. `pip install -e /opt/dimos/src` + copy entrypoint/fastdds/launch_nos
+11. Commit final: `docker commit --change 'ENTRYPOINT/CMD' builder dimos-m20-nos:latest`
+
+### Container Runtime Requirements
+- `--privileged` — required for sysctl and ip route (LCM multicast)
+- `--network host` — DDS discovery on shared L2 with AOS
+- `--ipc host` — shared memory DDS transport
+- `-e CI=1` — skip interactive LCM autoconf prompt
+- `-e RMW_IMPLEMENTATION=rmw_fastrtps_cpp` — DDS middleware
+
+### Current State (10:55 CST, Feb 25)
+
+| Component | Status | Notes |
+|---|---|---|
+| dimos-m20 container (NOS) | **RUNNING** | All modules deployed, web UI on port 7779 |
+| WebsocketVisModule | **DEPLOYED** | Port 7779, GPS goal tracking enabled |
+| M20Connection | **DEPLOYED** | odometry, IMU, pointcloud, color_image, camera_info |
+| ReplanningAStarPlanner | **DEPLOYED** | Navigation ready |
+| WavefrontFrontierExplorer | **DEPLOYED** | Exploration ready |
+| lio_perception (AOS) | **ACTIVE** | /ODOM, /IMU flowing |
+| height_map_nav (AOS) | **STOPPED** | Conflicts with /NAV_CMD |
+| planner (NOS) | **STOPPED** | Conflicts with velocity commands |
+| NAT rules (AOS) | **ACTIVE** | 7779→NOS, 9876→NOS |
+| viewer_backend | **none** | Disabled for initial testing (Rerun crashed dask workers) |
+
+### Commits
+- `557d99734` — Add Docker deployment for running full dimos on NOS in Humble container
+- `2b42b8ac8` — Fix deploy.sh argument parsing: command before host/user
+- `0727bf228` — Fix Docker deployment: pre-built deps image, LCM autoconf, viewer disable
+
+### Next Steps
+- Test web UI from Mac at http://10.21.41.1:7779/command-center
+- Test navigation: send goal from web UI → verify robot moves
+- Test exploration: start autonomous exploration from web UI
+- Re-enable Rerun viewer (viewer_backend="rerun-web") once basic stack verified
+- Fix FastDDS XML for this version of FastRTPS
+- Consider adding `get_data("command_center.html")` to container (web assets)
