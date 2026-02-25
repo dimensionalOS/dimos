@@ -20,6 +20,12 @@ ip route add 224.0.0.0/4 dev lo 2>/dev/null || true
 sysctl -w net.core.rmem_max=67108864 2>/dev/null || true
 sysctl -w net.core.rmem_default=67108864 2>/dev/null || true
 
+# Prevent ros2 CLI from spawning a daemon on the host (--network host shares
+# the filesystem namespace). The Foxy daemon on NOS thrashes at 78% CPU trying
+# to reconcile Humble DDS discovery traffic.
+export ROS2_DAEMON_TIMEOUT=0
+ros2 daemon stop >/dev/null 2>&1 || true
+
 # Wait for ROS2 topics before launching dimos (data flow verification)
 echo "Waiting for ROS2 topics..."
 for topic in /ODOM /IMU; do

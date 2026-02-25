@@ -1907,11 +1907,102 @@ After adding rules manually, `curl http://10.21.31.106:7779/command-center` from
 | Web UI (Mac) | **ACCESSIBLE** | http://10.21.41.1:7779/command-center — HTTP 200 |
 | NAT rules (AOS) | **ACTIVE** | 7779→NOS, 9876→NOS (manually added) |
 
+---
+
+## Session 13 — Docker Debugging: Rerun, Resource Optimization, Data Flow (Feb 25)
+
+### Finding #11: Web UI black screen — lio needs navigation mode
+
+After power cycle, web UI loaded (HTTP 200) but showed black screen with no map. Keyboard control didn't work. Root cause: lio_command ran but the robot wasn't in navigation mode. /ODOM topic existed in DDS discovery but had no data. After user switched robot to navigation mode via controller, /ODOM data started flowing at 10Hz. The entrypoint topic wait passed (`/ODOM: OK`, `/IMU: OK`).
+
+**Lesson**: lio_perception produces /ODOM only when robot is in navigation mode. DDS topic discovery lists topics even when no data flows — `ros2 topic list` is insufficient, must verify with `ros2 topic echo`.
+
+### Finding #12: FastDDS XML parse error — `max_message_size` invalid for SHM
+
+The `max_message_size` element in the SharedMemory transport descriptor caused FastDDS XML parse errors. Removed it; `segment_size` is the only valid SHM sizing parameter. Non-fatal (DDS falls back to defaults) but generates noise in logs.
+
+### Finding #13: Rerun viewer enabled successfully with CI=1 fix
+
+Previous attempt to enable `viewer_backend="rerun-web"` crashed dask workers via `SystemExit(1)` from LCM autoconf's interactive `input()` prompt. With `-e CI=1` env var, the autoconf is skipped entirely. RerunBridgeModule now deploys cleanly.
+
+Rerun serves on two ports:
+- **9876**: gRPC data server (for `rerun --connect rerun+http://HOST:9876/proxy`)
+- **9090**: Web viewer (serves HTML page with embedded viewer)
+
+Both require NAT rules on AOS. Port 9090 was initially missed.
+
+### Finding #14: drdds-ros2-msgs not available in Humble container
+
+The vendor Docker image has drdds as a C++ DDS library (`/opt/drdds/`, `/usr/local/lib/cmake/drdds`) but NO Python ROS2 message bindings. The Python bindings exist only at `/opt/drdds/lib/python3.8/site-packages` on the Foxy system — compiled for Python 3.8, incompatible with Python 3.10 (Humble).
+
+**Impact**: `/NAV_CMD` publisher and `/MOTION_INFO` subscription disabled. M20VelocityController falls back to UDP protocol for velocity commands (normalized [-1,1] range instead of absolute m/s). Robot obstacle avoidance is bypassed in this mode.
+
+### Finding #15: NOS resource contention — 383% CPU on 4 cores
+
+After power cycle, NOS was running at load average 27 on 4 cores. Root causes identified and fixed:
+
+| Process | CPU% | Action | Reason |
+|---------|------|--------|--------|
+| ros2_daemon (Foxy) | 78% | Killed | Foxy/Humble DDS discovery storm — daemon thrashes trying to reconcile Humble type hashes |
+| mac_bridge.py | 56% | Killed | Replaced by Docker container |
+| multicast-relay | 27% | Stopped + disabled | dimos uses DDS not multicast; /LIDAR/POINTS relay not needed on NOS |
+| rsdriver (rslidar) | 18% | Stopped + disabled | Lidar driver; lio runs on AOS, NOS doesn't need raw lidar |
+| yesense | 7% | Stopped + disabled | /IMU comes from main controller independently |
+| charge_manager | 10% | **Kept** | Needed for autonomous charging |
+| reflective_column | 2.4% | **Kept** | Needed for charging dock localization |
+| handler | 14% | **Kept** | Robot state management, essential |
+
+Total freed: ~186% CPU. Load average dropped from 27 to ~8.
+
+**Foxy ros2_daemon thrashing explained**: With `--network host`, the Humble container's DDS participants share multicast with the Foxy host. Humble uses a newer DDS type system with type hashes that Foxy can't resolve. Every 3-second lease announcement triggers the Foxy daemon to attempt type resolution, fail, queue for retry, repeat. 78% CPU doing nothing useful.
+
+**Prevention**: `entrypoint.sh` now sets `ROS2_DAEMON_TIMEOUT=0` and runs `ros2 daemon stop`. `deploy.sh check_conflicts()` kills mac_bridge, ros2_daemon, and stops unneeded services.
+
+**Per DR official docs**: "After each OTA update, the auto-start settings of all services will be reset to factory defaults" — services need re-disabling after firmware updates.
+
+### Finding #16: Rerun hitchiness — gRPC backpressure over WiFi
+
+Despite 10Hz ROS2 data and clean rclpy pipeline (SingleThreadedExecutor, 100Hz spin, 1:1 synchronous callbacks, no batching), Rerun showed data arriving in ~1-second bursts. Root cause: **Rerun gRPC channel backpressure**.
+
+Container logs:
+```
+re_grpc_server broadcast: Sender has been blocked for over 5 seconds waiting for space in channel
+log_channel(SDK): Sender has been blocked for over 5 seconds waiting for space in channel
+batcher_output: Sender has been blocked for over 5 seconds waiting for space in channel
+```
+
+Data path: NOS container → gRPC → AOS NAT → WiFi → Mac native Rerun viewer. The WiFi link can't sustain the combined bandwidth of point clouds + color images + maps + odometry. Rerun SDK queues data, channel fills, sender blocks 5+ seconds, data gets through in bursts when channel drains.
+
+**M20ROSSensors architecture** (confirmed no batching):
+- rclpy: `SingleThreadedExecutor`, `spin_once(timeout_sec=0.01)` = 100Hz spin in background thread
+- Callbacks: synchronous 1:1, ROS msg → `Subject.on_next()` → LCM publish
+- QoS: RELIABLE, KEEP_LAST(10), VOLATILE
+- No batching, no throttling at any layer
+
+**Not fixable without wired connection** — this is a WiFi bandwidth limitation. Potential mitigations: downsample point clouds before Rerun logging, reduce image resolution, or connect Mac directly to NOS via ethernet.
+
+### Commits
+- `557d99734` — Add Docker deployment for running full dimos on NOS in Humble container
+- `2b42b8ac8` — Fix deploy.sh argument parsing: command before host/user
+- `0727bf228` — Fix Docker deployment: pre-built deps image, LCM autoconf, viewer disable
+- (uncommitted) — FastDDS XML fix, Rerun enabled, 3 dask workers, deploy.sh service management, entrypoint daemon prevention
+
+### Current State (20:30 CST, Feb 25)
+
+| Component | Status | Notes |
+|---|---|---|
+| dimos-m20 container (NOS) | **RUNNING** | 3 dask workers, all modules deployed |
+| Rerun viewer (Mac native) | **WORKING** | Point cloud, costmap, color_image, odom visible — hitchy due to WiFi bandwidth |
+| Web UI (Mac) | **ACCESSIBLE** | http://10.21.41.1:7779/command-center |
+| Color camera | **WORKING** | First time! Didn't work over mac_bridge TCP |
+| NAT rules (AOS) | **ACTIVE** | 7779, 9876, 9090 → NOS |
+| NOS load average | **~8** (was 27) | After stopping 5 unnecessary services |
+| drdds /NAV_CMD | **DISABLED** | No Humble Python bindings; UDP fallback active |
+
 ### Next Steps
-- ~~Test web UI from Mac at http://10.21.41.1:7779/command-center~~ **DONE**
+- Test keyboard control via web UI (UDP fallback path)
 - Test navigation: send goal from web UI → verify robot moves
 - Test exploration: start autonomous exploration from web UI
-- Re-enable Rerun viewer (viewer_backend="rerun-web") once basic stack verified
-- Fix FastDDS XML for this version of FastRTPS
-- Fix `deploy.sh ensure_nat()` — aos_sudo piping broken for iptables
-- Consider adding `get_data("command_center.html")` to container (web assets)
+- Investigate wired connection option for smoother Rerun streaming
+- Consider building drdds Python bindings for Humble to enable /NAV_CMD
+- Commit pending changes

@@ -15,8 +15,7 @@ import time
 
 from dimos.core.global_config import global_config
 
-# Start with no viewer to reduce memory — enable rerun-web once basic stack verified
-global_config.update(viewer_backend="none")
+global_config.update(viewer_backend="rerun-web")
 
 from dimos.core.blueprints import autoconnect
 from dimos.robot.deeprobotics.m20.blueprints.smart.m20_smart import m20_smart
@@ -30,7 +29,7 @@ bp = autoconnect(
     m20_connection(ip=AOS_ETH0, enable_ros=True),
 ).global_config(
     robot_ip=AOS_ETH0,
-    n_dask_workers=2,  # NOS has 4 cores total; keep headroom for RT processes
+    n_dask_workers=3,  # 3 workers across 4 cores — avoids VoxelGridMapper blocking M20Connection
 )
 
 

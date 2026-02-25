@@ -132,6 +132,27 @@ check_conflicts() {
         echo "  Stopping dimos-mac-bridge (replaced by Docker container)..."
         remote_sudo systemctl stop dimos-mac-bridge
     fi
+    if remote_ssh "pgrep -f mac_bridge" >/dev/null 2>&1; then
+        echo "  Killing mac_bridge process (replaced by Docker container)..."
+        remote_sudo pkill -f mac_bridge
+    fi
+    # Kill Foxy ros2 daemon — thrashes at 78% CPU due to Humble DDS discovery
+    if remote_ssh "pgrep -f ros2_daemon" >/dev/null 2>&1; then
+        echo "  Killing ros2 daemon (Foxy/Humble DDS conflict)..."
+        remote_sudo pkill -f ros2_daemon
+    fi
+    # Stop NOS services not needed by dimos (saves ~64% CPU)
+    # multicast-relay: relays lidar multicast — dimos uses DDS /ODOM not raw /LIDAR/POINTS
+    # rsdriver: lidar driver — lio runs on AOS, NOS doesn't need raw lidar
+    # yesense: IMU driver — /IMU comes from main controller independently
+    # charge_manager: conflicts with /NAV_CMD publishing (per DR official docs)
+    # reflective_column: charging dock localization — not used
+    for svc in multicast-relay rsdriver yesense; do
+        if remote_ssh "systemctl is-active ${svc}" 2>/dev/null | grep -q active; then
+            echo "  Stopping ${svc} (not needed by dimos)..."
+            remote_sudo systemctl stop ${svc}
+        fi
+    done
 }
 
 case "${CMD}" in
@@ -207,6 +228,7 @@ case "${CMD}" in
             --ipc host \
             -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
             -e ROS_DOMAIN_ID=0 \
+            -e CI=1 \
             --restart no \
             dimos-m20-nos:latest
 
