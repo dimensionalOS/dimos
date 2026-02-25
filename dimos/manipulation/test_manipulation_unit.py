@@ -100,7 +100,6 @@ def _make_module():
         module._planner = None
         module._kinematics = None
         module._coordinator_client = None
-        module._graspgen = None
         return module
 
 
@@ -129,12 +128,14 @@ class TestStateMachine:
 
         module._state = ManipulationState.FAULT
         module._error_message = "Error"
-        assert module.reset() is True
+        result = module.reset()
+        assert "IDLE" in result
         assert module._state == ManipulationState.IDLE
         assert module._error_message == ""
 
         module._state = ManipulationState.EXECUTING
-        assert module.reset() is False
+        result = module.reset()
+        assert "Error" in result
 
     def test_fail_sets_fault_state(self):
         """_fail helper sets FAULT state and message."""
