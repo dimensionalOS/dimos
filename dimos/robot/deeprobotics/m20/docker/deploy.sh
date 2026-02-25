@@ -141,13 +141,14 @@ check_conflicts() {
         echo "  Killing ros2 daemon (Foxy/Humble DDS conflict)..."
         remote_sudo pkill -f ros2_daemon
     fi
-    # Stop NOS services not needed by dimos (saves ~64% CPU)
-    # multicast-relay: relays lidar multicast — dimos uses DDS /ODOM not raw /LIDAR/POINTS
-    # rsdriver: lidar driver — lio runs on AOS, NOS doesn't need raw lidar
+    # Stop NOS services not needed by dimos (saves ~46% CPU)
+    # multicast-relay: relays lidar multicast between eth0/eth1 — dimos uses DDS not multicast
     # yesense: IMU driver — /IMU comes from main controller independently
-    # charge_manager: conflicts with /NAV_CMD publishing (per DR official docs)
-    # reflective_column: charging dock localization — not used
-    for svc in multicast-relay rsdriver yesense; do
+    #
+    # NOTE: rsdriver MUST stay running — charge_manager and reflective_column_node both
+    # subscribe to /LIDAR/POINTS for obstacle avoidance and charging dock detection.
+    # Without rsdriver, auto-charge cannot work.
+    for svc in multicast-relay yesense; do
         if remote_ssh "systemctl is-active ${svc}" 2>/dev/null | grep -q active; then
             echo "  Stopping ${svc} (not needed by dimos)..."
             remote_sudo systemctl stop ${svc}

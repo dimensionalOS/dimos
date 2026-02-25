@@ -2079,3 +2079,58 @@ The M20 RTSP camera pipeline (H.265 1280x720@15fps) currently uses PyAV FFmpeg s
 - Test keyboard control, navigation, exploration
 - Investigate MPP hardware video decode (Step 3 from plan)
 - Consider building drdds Python bindings for Humble to enable /NAV_CMD
+- Commit pending changes
+
+---
+
+## Session 14 — Auto-Charge Fix: rsdriver Required on NOS (Feb 26, 2026)
+
+### Problem
+
+Auto-charge stopped working — robot could not initiate auto-charge walk or align with charging dock.
+
+### Root Cause
+
+In Session 13's resource optimization, `rsdriver` (lidar driver) was disabled on NOS to save 18% CPU. This was incorrect — both `charge_manager` and `reflective_column_node` subscribe to `/LIDAR/POINTS` via DDS:
+
+| Process | Needs `/LIDAR/POINTS` for |
+|---------|--------------------------|
+| `charge_manager` | Obstacle avoidance during docking approach (`ObstacleAvoid_enable = true`), lidar point cloud cropping for dock alignment |
+| `reflective_column_node` | Detecting charging dock reflective columns — publishes `/charge/left_rc`, `/charge/right_rc`, `/tag_status` |
+
+Both binaries live in `/opt/robot/share/charge_manager/bin/`. The `charge_manager.toml` config confirms extensive lidar usage: point cloud cropping parameters (`lidar_z_min/max`, `lidar_x_min/max`, `lidar_y_min/max`), obstacle detection grid/cluster methods, and charge pile height reference.
+
+Without rsdriver → no `/LIDAR/POINTS` → `reflective_column_node` can't see the dock → `charge_manager` can't navigate to it.
+
+### Fix
+
+1. Re-enabled `rsdriver` on NOS: `systemctl enable rsdriver && systemctl start rsdriver`
+2. Restarted `charge_manager` and `reflective_column` to discover the new DDS publisher
+3. Verified lidar data flowing: `send success size: 101402` at 10Hz
+4. User confirmed auto-charge walk and auto-align working again
+
+### deploy.sh Fix
+
+Updated `check_conflicts()` to no longer disable `rsdriver`. Corrected comments explaining which services are safe to stop vs required:
+
+- **Safe to stop**: `multicast-relay` (multicast bridge, dimos uses DDS), `yesense` (IMU driver, not needed on NOS)
+- **Must keep running**: `rsdriver` (lidar for charge_manager + reflective_column), `charge_manager`, `reflective_column`, `handler`
+
+CPU savings reduced from ~64% to ~46% (lost 18% from rsdriver), but auto-charge functionality restored. NOS load ~10 vs ~8 before, still well under the pre-optimization 27.
+
+### Lesson
+
+Before disabling a sensor driver, verify that ALL consumers of its DDS topics are accounted for — not just the primary perception pipeline. `rsdriver` feeds lio_perception (AOS) but also charge_manager/reflective_column (NOS) via DDS cross-host transport. The original rationale ("lio runs on AOS, NOS doesn't need raw lidar") was incomplete.
+
+### Commits
+- (this session) — Fix deploy.sh: keep rsdriver running on NOS for auto-charge
+
+### Current State (Feb 26, 03:30 CST)
+
+| Component | Status | Notes |
+|---|---|---|
+| rsdriver (NOS) | **RUNNING** | Re-enabled, publishing /LIDAR/POINTS at 10Hz |
+| charge_manager (NOS) | **RUNNING** | Subscription matched, receiving lidar data |
+| reflective_column (NOS) | **RUNNING** | Subscription matched, detecting dock |
+| Auto-charge | **WORKING** | Walk + auto-align confirmed by user |
+| NOS load average | **~10** | +2 from rsdriver, acceptable |
