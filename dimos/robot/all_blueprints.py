@@ -84,6 +84,7 @@ all_blueprints = {
     "xarm-perception-agent": "dimos.manipulation.manipulation_blueprints:xarm_perception_agent",
     "xarm6-planner-only": "dimos.manipulation.manipulation_blueprints:xarm6_planner_only",
     "xarm7-planner-coordinator": "dimos.manipulation.manipulation_blueprints:xarm7_planner_coordinator",
+    "xarm7-planner-coordinator-agent": "dimos.manipulation.manipulation_blueprints:xarm7_planner_coordinator_agent",
     "xarm7-trajectory-sim": "dimos.simulation.sim_blueprints:xarm7_trajectory_sim",
 }
 
@@ -122,6 +123,7 @@ all_modules = {
     "person-follow-skill": "dimos.agents.skills.person_follow",
     "person-tracker-module": "dimos.perception.detection.person_tracker",
     "phone-teleop-module": "dimos.teleop.phone.phone_teleop_module",
+    "pick-and-place-module": "dimos.manipulation.pick_and_place_module",
     "quest-teleop-module": "dimos.teleop.quest.quest_teleop_module",
     "realsense-camera": "dimos.hardware.sensors.camera.realsense.camera",
     "replanning-a-star-planner": "dimos.navigation.replanning_a_star.module",
