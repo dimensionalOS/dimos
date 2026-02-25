@@ -1987,24 +1987,95 @@ Root cause: **ARM64 CPU + Python GIL contention**. Rerun SDK's internal serializ
 - `557d99734` — Add Docker deployment for running full dimos on NOS in Humble container
 - `2b42b8ac8` — Fix deploy.sh argument parsing: command before host/user
 - `0727bf228` — Fix Docker deployment: pre-built deps image, LCM autoconf, viewer disable
-- (uncommitted) — FastDDS XML fix, Rerun enabled, 3 dask workers, deploy.sh service management, entrypoint daemon prevention
+- `afcdda5d8` — Fix Docker runtime: Rerun viewer, FastDDS, NOS resource optimization
+- `9581f47a2` — Correct Finding #16: ARM64 CPU/GIL contention, not WiFi bandwidth
+- `0abf7c584` — Slow VoxelGridMapper to 1Hz publish rate on NOS
 
-### Current State (20:30 CST, Feb 25)
+---
+
+## Session 14: NOS Performance Optimization & Hardware Acceleration Research
+
+**Date**: 2026-02-25 (continued)
+
+### Finding #17: Lesh's feedback — VoxelGridMapper 1Hz publish
+
+Lesh (dimos maintainer) reviewed our blueprint and recommended slowing VoxelGridMapper publish to 1Hz instead of every-frame (~10Hz). The `publish_interval` parameter already existed — `publish_interval=0` (default) publishes every frame, `publish_interval=1.0` publishes once per second. Critically, the mapper still **ingests every frame** at full rate — only the publish of the accumulated global map to downstream consumers is throttled. No mapping quality loss.
+
+Commit: `0abf7c584`
+
+### Finding #18: M20 compute boards are RK3588, NOT Jetson
+
+DeepRobotics confirmed: all three compute boards (AOS, GOS, NOS) are **Rockchip RK3588** based on `rockchip,rk3588-firefly-itx-3588j` device tree, not NVIDIA Jetson. This means:
+- **No CUDA** — Open3D VoxelBlockGrid only supports CUDA or CPU. Falls back to CPU:0.
+- **Mali-G610 MP4 GPU**: ~470 GFLOPS FP32 via OpenCL 2.2, Vulkan 1.2 — but Open3D has no OpenCL/Vulkan backend
+- **6 TOPS RKNN NPU**: CNN inference only (YOLO, ResNet), irrelevant for geometric/voxel operations
+- **VPU (MPP)**: Hardware H.265/H.264 decode/encode up to 8K@60fps — useful for camera pipeline
+- **RGA2**: Hardware 2D image ops (resize, color convert)
+
+Open3D's SYCL backend (v0.19) explicitly excludes ARM64 Linux. ClPy (OpenCL CuPy fork) exists but is ancient (forked from CuPy v2.1.0). No realistic path to GPU-accelerate VoxelBlockGrid on RK3588.
+
+### Finding #19: Thread oversubscription is the primary CPU bottleneck
+
+Both code reviewer and Codex CLI independently flagged this: `n_dask_workers=3` with `threads_per_worker=4` (hardcoded in `core/__init__.py:257`) creates **12 dask threads on 4 physical cores**. Add RTSP camera thread, rclpy executor thread, Open3D TBB threads, and you get load average 22.
+
+Fix: reduce to 2 workers (8 dask threads on 4 cores).
+
+### Finding #20: Dask worker memory thrashing — root cause and fix
+
+Container logs showed:
+```
+Worker is at 80% memory usage. Pausing worker.  Process memory: 6.14 GiB -- Worker memory limit: 7.66 GiB
+Worker is at 79% memory usage. Resuming worker. Process memory: 6.11 GiB -- Worker memory limit: 7.66 GiB
+```
+
+Oscillating at 80% threshold, pausing/resuming multiple times per second. This causes the ~1s data burst pattern in Rerun: worker pauses (all tasks stall), accumulates data, resumes briefly, flushes burst, pauses again.
+
+Root causes:
+1. `memory_limit="auto"` divides total system RAM (15GB) by worker count — but container shares RAM with host OS, ROS2, lio
+2. VoxelGridMapper `block_count=2_000_000` pre-allocates for GPU-scale memory
+3. `voxel_size=0.1` creates 8x more voxels than needed for outdoor patrol
+4. CostMapper default `resolution=0.05` creates 16x more grid cells than needed when voxels are 0.2m
+
+Fix: explicit `memory_limit="4GB"`, `voxel_size=0.2`, `resolution=0.2`, raised pause threshold to 0.9.
+
+### Finding #21: CostMapper resolution must match voxel_size
+
+Code reviewer caught this: with `voxel_size=0.2` and default `resolution=0.05`, CostMapper builds a 0.05m grid from 0.2m-spaced voxel centers. Only 1 in 16 grid cells get data — the rest are interpolation artifacts from gaussian_filter smoothing. The `scipy.ndimage` cascade (gaussian_filter, sobel, binary_erosion) runs on this oversized grid for no benefit.
+
+Fix: `HeightCostConfig(max_height=1.5, resolution=0.2)` — 16x reduction in costmap grid size.
+
+### Finding #22: Rerun backpressure diagnosis correction
+
+Previous diagnosis blamed `np.unique` on full voxel map and matplotlib colormap evaluation. Codex CLI review disproved this:
+- `np.unique` only runs in `mode="boxes"` — M20 blueprint uses default `mode="points"` (no `np.unique`)
+- Costmap `to_rerun()` default is `colormap=None` — no matplotlib evaluation
+
+Actual root cause is simpler: **CPU oversubscription** (12 dask threads + other threads on 4 cores). Rerun SDK serialization stalls when it can't get CPU time. The pause/resume memory thrashing exacerbates this by creating bursty workloads.
+
+### Finding #23: MPP hardware video decode — feasible but high-risk
+
+The M20 RTSP camera pipeline (H.265 1280x720@15fps) currently uses PyAV FFmpeg software decode. RK3588's MPP can hardware-decode this at zero CPU cost. However:
+- PyAV + `hevc_rkmpp` is NOT viable (hwaccel is CLI-only, rkmpp outputs DRM_PRIME frames)
+- Correct path: GStreamer + OpenCV with `mppvideodec` element
+- Requires: OpenCV with GStreamer support (pip headless version lacks it), `gstreamer1.0-rockchip` plugins, `librockchip_mpp.so` in container
+- May need Docker image rebuild — deferred until Steps 1-2 validated
+
+### Commits
+- `a6eec2329` — Optimize NOS launch: voxel_size 0.2, 2 workers, 4GB memory limit
+
+### Current State (21:30 CST, Feb 25)
 
 | Component | Status | Notes |
 |---|---|---|
-| dimos-m20 container (NOS) | **RUNNING** | 3 dask workers, all modules deployed |
-| Rerun viewer (Mac native) | **WORKING** | Point cloud, costmap, color_image, odom visible — hitchy due to WiFi bandwidth |
-| Web UI (Mac) | **ACCESSIBLE** | http://10.21.41.1:7779/command-center |
-| Color camera | **WORKING** | First time! Didn't work over mac_bridge TCP |
-| NAT rules (AOS) | **ACTIVE** | 7779, 9876, 9090 → NOS |
-| NOS load average | **~8** (was 27) | After stopping 5 unnecessary services |
-| drdds /NAV_CMD | **DISABLED** | No Humble Python bindings; UDP fallback active |
+| dimos-m20 container (NOS) | **PENDING RESTART** | Robot rebooting; updated launch_nos.py on NOS at /tmp/ |
+| Config changes | **COMMITTED + PUSHED** | voxel_size=0.2, resolution=0.2, 2 workers, 4GB limit |
+| NAT rules (AOS) | **LOST** (reboot) | Need to re-add 7779, 9876, 9090 after boot |
+| fastdds.xml mount | **NEEDS FIX** | `/opt/dimos/docker/` doesn't exist in image; mount to `/tmp/fastdds.xml` instead |
 
 ### Next Steps
-- Test keyboard control via web UI (UDP fallback path)
-- Test navigation: send goal from web UI → verify robot moves
-- Test exploration: start autonomous exploration from web UI
-- Investigate wired connection option for smoother Rerun streaming
+- Re-add NAT rules on AOS after boot
+- Fix fastdds.xml volume mount path
+- Start container with optimized config, measure improvement
+- Test keyboard control, navigation, exploration
+- Investigate MPP hardware video decode (Step 3 from plan)
 - Consider building drdds Python bindings for Humble to enable /NAV_CMD
-- Commit pending changes
