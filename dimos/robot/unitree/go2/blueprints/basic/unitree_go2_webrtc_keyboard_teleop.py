@@ -44,6 +44,8 @@ if global_config.simulation:
     _go2 = go2_connection()
     _teleop = keyboard_teleop()
 else:
+    import os
+
     from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
     from dimos.control.coordinator import TaskConfig, control_coordinator
     from dimos.core.transport import LCMTransport
@@ -59,7 +61,7 @@ else:
                 hardware_type=HardwareType.BASE,
                 joints=_go2_joints,
                 adapter_type="unitree_go2_webrtc",
-                address="100.71.80.46",
+                address=os.getenv("ROBOT_IP", "192.168.12.1"),
             ),
         ],
         tasks=[
