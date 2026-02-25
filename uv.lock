@@ -198,15 +198,6 @@ wheels = [
 ]
 
 [[package]]
-name = "asyncio"
-version = "3.4.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/da/54/054bafaf2c0fb8473d423743e191fcdf49b2c1fd5e9af3524efbe097bafd/asyncio-3.4.3.tar.gz", hash = "sha256:83360ff8bc97980e4ff25c964c7bd3923d333d177aa4f7fb736b019f26c7cb41", size = 204411, upload-time = "2015-03-10T14:11:26.494Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/22/74/07679c5b9f98a7cb0fc147b1ef1cc1853bc07a4eb9cb5731e24732c5f773/asyncio-3.4.3-py3-none-any.whl", hash = "sha256:c4d18b22701821de07bd6aea8b53d21449ec0ec5680645e5317062ea21817d2d", size = 101767, upload-time = "2015-03-10T14:05:10.959Z" },
-]
-
-[[package]]
 name = "attrs"
 version = "25.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1749,7 +1740,6 @@ version = "0.0.10.post1"
 source = { editable = "." }
 dependencies = [
     { name = "annotation-protocol" },
-    { name = "asyncio" },
     { name = "colorlog" },
     { name = "dask", extra = ["complete"] },
     { name = "dimos-lcm" },
@@ -2044,7 +2034,6 @@ web = [
 requires-dist = [
     { name = "annotation-protocol", specifier = ">=1.4.0" },
     { name = "anthropic", marker = "extra == 'agents'", specifier = ">=0.19.0" },
-    { name = "asyncio", specifier = "==3.4.3" },
     { name = "bitsandbytes", marker = "sys_platform == 'linux' and extra == 'agents'", specifier = ">=0.48.2,<1.0" },
     { name = "catkin-pkg", marker = "extra == 'misc'" },
     { name = "cerebras-cloud-sdk", marker = "extra == 'misc'" },
