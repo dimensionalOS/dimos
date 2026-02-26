@@ -2401,3 +2401,87 @@ Single Dask worker on 4-core RK3588 caused ~0.5s hitches (VoxelGridMapper blocki
 | Memory | 7.9 GiB after 1hr | Growing but no swap usage, no kills |
 | AOS NAT | Needs re-add on reboot | deploy.sh `start` handles it automatically |
 | lio /ODOM | Publishing | Working this session |
+
+---
+
+## Session 18: drdds Bundled .msg Files + NavCmd Fix (Feb 26-27)
+
+### Problem
+
+Container logs showed `drdds-ros2-msgs not available — /NAV_CMD publisher and /MOTION_INFO subscription disabled`. Keyboard control and autonomous exploration both failed because the robot is in Navigation Mode, where `/NAV_CMD` DDS topic is the **only** way to send velocity commands. UDP axis command fallback only works in Regular Mode per the official dev guide.
+
+**Root cause**: The GHCR base image (`m20-deps:latest`) has drdds C++ headers and `libdrdds.so`, but **zero Python bindings**. The NOS host has Python 3.8 bindings at `/opt/drdds/lib/python3.8/site-packages/` but these are Foxy/ABI-incompatible with the container's Humble/Python 3.10. Bex's `build_drdds_bindings.sh` script (Session 16) rebuilds from `.msg` files, but the GHCR base image also has no vendor `.msg` files — those only exist on the NOS filesystem at `/opt/ros/humble/share/drdds/msg/`.
+
+### Solution
+
+Bundled `.msg` files extracted from the C++ headers in the Docker image as a fallback source for `build_drdds_bindings.sh`.
+
+**10 message types created** (`dimos/robot/deeprobotics/m20/docker/drdds_msgs/msg/`):
+- `Timestamp.msg` (int32 sec, uint32 nsec)
+- `MetaType.msg` (uint64 frame_id, drdds/Timestamp timestamp)
+- `NavCmdValue.msg` (float32 x_vel/y_vel/yaw_vel)
+- `NavCmd.msg` (drdds/MetaType header, drdds/NavCmdValue data)
+- `MotionStateValue.msg`, `GaitValue.msg`, `MotionInfoValue.msg`, `MotionInfo.msg`
+- `MotionStatusValue.msg`, `MotionStatus.msg` (Humble-specific, 9 error fields)
+
+Package name in `package.xml` is `drdds` (not `drdds_msgs`) so the import path is `from drdds.msg import NavCmd` — matching existing code.
+
+### Bug Fix: MetaType Field Names
+
+After deployment, keyboard control still failed with:
+```
+AttributeError: 'MetaType' object has no attribute 'stamp'
+```
+
+`ros_sensors.py:436` used ROS2 standard naming (`header.stamp.sec`, `header.stamp.nanosec`) but drdds uses custom field names:
+- `stamp` → `timestamp` (MetaType field)
+- `nanosec` → `nsec` (Timestamp field)
+
+Fixed in `ros_sensors.py:publish_nav_cmd()`.
+
+### Other Fixes
+
+- **`.dockerignore`**: `*.md` stripped `README.md` (referenced by `pyproject.toml` for `pip install -e`). Changed to exclude specific files (`CHANGELOG.md`, `CONTRIBUTING.md`) instead.
+- **`deploy.sh` shell command**: Still used `sudo docker exec` — removed `sudo` (user in docker group).
+- **`deploy.sh` check_conflicts()**: Changed `height_map_nav` (AOS) and `planner` (NOS) from warning to `systemctl disable --now` — prevents them from respawning on reboot and conflicting with dimos `/NAV_CMD`.
+- **`entrypoint.sh`**: Removed redundant PYTHONPATH auto-detect block (the static path set above already works).
+
+### Build Verification
+
+Docker build passes all verification tests:
+```
+Vendor .msg files: /opt/dimos/docker/drdds_msgs/msg
+Copied 10 .msg files
+NavCmd OK (header field: header)     PASS
+NavCmd.data.x_vel = 0.1              PASS
+MotionInfo (Foxy)                    PASS
+DDS publisher: OK                    PASS (no segfault!)
+```
+
+### Deployment Verification
+
+Container logs after deploy:
+```
+/ODOM: OK
+/IMU: TIMEOUT (continuing anyway)
+drdds available — /NAV_CMD publisher enabled
+```
+
+No `Control loop error` or `AttributeError` after the field name fix. Keyboard control (WASD) and autonomous exploration confirmed working by user.
+
+### Lesson
+
+When extracting `.msg` definitions from C++ headers, verify field names match what the application code expects. drdds uses non-standard naming (`timestamp` not `stamp`, `nsec` not `nanosec`). The CDR wire format doesn't care about field names (only order and types), but the Python API does.
+
+### Current State (Feb 27)
+
+| Component | Status | Notes |
+|---|---|---|
+| drdds Python 3.10 bindings | **WORKING** | Built from bundled .msg via colcon |
+| /NAV_CMD publisher | **WORKING** | MetaType field names fixed |
+| Keyboard control | **WORKING** | WASD confirmed by user |
+| Autonomous exploration | **WORKING** | Confirmed by user |
+| height_map_nav (AOS) | **DISABLED** | systemctl disable --now |
+| planner (NOS) | **DISABLED** | systemctl disable --now |
+| Dask memory | Pause/resume at 90% | terminate=False keeps workers alive |
+| /IMU | TIMEOUT | Non-critical, continues without it |
