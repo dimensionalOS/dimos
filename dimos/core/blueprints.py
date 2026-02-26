@@ -223,9 +223,7 @@ class Blueprint:
     def _run_configurators(self) -> None:
         from dimos.protocol.service.system_configurator import configure_system, lcm_configurators
 
-        configurators = list(lcm_configurators()) + list(self.configurator_checks)
-        if not configurators:
-            return
+        configurators = [*lcm_configurators(), *self.configurator_checks]
 
         try:
             configure_system(configurators)
