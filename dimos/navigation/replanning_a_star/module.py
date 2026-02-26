@@ -143,7 +143,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
             task_config = PathFollowerTaskConfig(
                 joint_names=["base_vx", "base_vy", "base_wz"],
                 priority=10,
-                max_linear_speed=2.2,
+                max_linear_speed=1.3,
                 goal_tolerance=0.2,                      # match GlobalPlanner._goal_tolerance
                 orientation_tolerance=math.radians(15),  # match _rotation_tolerance
             )
@@ -176,6 +176,32 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
             logger.error(f"Failed to set coordinator: {e}")
             logger.error(traceback.format_exc())
             return False
+
+    @rpc
+    def on_system_modules(self, modules: list) -> None:
+        """Called by the framework after all modules are started.
+        
+        Auto-detects ControlCoordinator and wires up coordinator-based path
+        following. This runs after start(), so it properly overrides the
+        LocalPlanner fallback if a coordinator is present.
+        """
+        from dimos.control.coordinator import ControlCoordinator as CoordinatorClass
+
+        coordinator = None
+        for module in modules:
+            try:
+                if issubclass(module.actor_class, CoordinatorClass):
+                    coordinator = module
+                    break
+            except (AttributeError, TypeError):
+                continue
+
+        if coordinator is not None:
+            logger.info("ControlCoordinator found - setting up coordinator-based path following")
+            if self.set_coordinator(coordinator):
+                self.setup_base_hardware_with_callback(coordinator, None)
+        else:
+            logger.info("No ControlCoordinator in blueprint - LocalPlanner fallback active")
 
     @rpc
     def setup_base_hardware_with_callback(
