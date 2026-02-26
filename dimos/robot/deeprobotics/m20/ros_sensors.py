@@ -77,11 +77,37 @@ if ROS_AVAILABLE:
     except ImportError:
         pass
 
-# Vendor message types (only on GOS with drdds-ros2-msgs installed)
+# Vendor message types (only on GOS with drdds-ros2-msgs installed).
+# Foxy drdds has MotionInfo + NavCmd.header; Humble has MotionStatus + NavCmd.meta.
+# /MOTION_INFO and /MOTION_STATUS are separate DDS topics with different type
+# identities, so we must subscribe to the topic matching the available type.
 DRDDS_AVAILABLE = False
+_DRDDS_HEADER_FIELD = "header"  # Foxy default; overridden to "meta" for Humble
+_DRDDS_MOTION_TYPE = None  # Set to the available motion message class
+_DRDDS_MOTION_TOPIC = "/MOTION_INFO"  # Foxy default; overridden for Humble
 if ROS_AVAILABLE:
     try:
-        from drdds.msg import MotionInfo, NavCmd
+        from drdds.msg import NavCmd
+
+        # Detect Humble's "meta" field vs Foxy's "header"
+        _test_nav = NavCmd()
+        if hasattr(_test_nav, "meta"):
+            _DRDDS_HEADER_FIELD = "meta"
+        del _test_nav
+
+        # MotionInfo (Foxy, topic /MOTION_INFO) or MotionStatus (Humble, topic
+        # /MOTION_STATUS). DDS matches on type identity, so we must use the
+        # correct type for the correct topic.
+        try:
+            from drdds.msg import MotionInfo
+
+            _DRDDS_MOTION_TYPE = MotionInfo
+            _DRDDS_MOTION_TOPIC = "/MOTION_INFO"
+        except ImportError:
+            from drdds.msg import MotionStatus
+
+            _DRDDS_MOTION_TYPE = MotionStatus
+            _DRDDS_MOTION_TOPIC = "/MOTION_STATUS"
 
         DRDDS_AVAILABLE = True
     except ImportError:
@@ -220,11 +246,12 @@ def _ros_pc2_to_dimos(pc_msg: Any) -> DimosPointCloud2:
 
 
 def _motion_info_to_data(msg: Any) -> MotionInfoData:
-    """Convert drdds/MotionInfo to MotionInfoData tuple.
+    """Convert drdds MotionInfo/MotionStatus to MotionInfoData tuple.
 
-    MotionInfo structure: msg.header (MetaType) + msg.data (MotionInfoValue).
-    MotionInfoValue has: vel_x, vel_y, vel_yaw, height, motion_state, gait_state,
-    payload, remain_mile.
+    Foxy: MotionInfo with msg.header (MetaType) + msg.data (MotionInfoValue).
+    Humble: MotionStatus with msg.meta (MetaType) + msg.data (MotionStatusValue).
+    The data fields are identical: vel_x, vel_y, vel_yaw, height, motion_state,
+    gait_state, payload, remain_mile.
     """
     d = msg.data
     return MotionInfoData(
@@ -307,7 +334,7 @@ class M20ROSSensors:
                 topic="/NAV_CMD", ros_type=NavCmd
             )
             self._motion_info_topic = RawROSTopic(
-                topic="/MOTION_INFO", ros_type=MotionInfo
+                topic=_DRDDS_MOTION_TOPIC, ros_type=_DRDDS_MOTION_TYPE
             )
         else:
             logger.warning(
@@ -343,7 +370,7 @@ class M20ROSSensors:
 
         logger.info(
             "M20ROSSensors started — /ODOM, /tf, /ALIGNED_POINTS, /IMU"
-            + (", /MOTION_INFO, /NAV_CMD" if DRDDS_AVAILABLE else "")
+            + (f", {_DRDDS_MOTION_TOPIC}, /NAV_CMD" if DRDDS_AVAILABLE else "")
         )
 
     def stop(self) -> None:
@@ -405,8 +432,9 @@ class M20ROSSensors:
         msg.data.y_vel = float(y_vel)
         msg.data.yaw_vel = float(yaw_vel)
         now = time.time()
-        msg.header.stamp.sec = int(now)
-        msg.header.stamp.nanosec = int((now - int(now)) * 1e9)
+        header = getattr(msg, _DRDDS_HEADER_FIELD)
+        header.stamp.sec = int(now)
+        header.stamp.nanosec = int((now - int(now)) * 1e9)
         self._ros.publish(self._nav_cmd_topic, msg)
 
     # --- ROS callbacks ---
@@ -446,6 +474,9 @@ class M20ROSSensors:
             data = _motion_info_to_data(msg)
             self._motion_info_subject.on_next(data)
         except Exception:
-            # /MOTION_INFO can be intermittent due to DDS discovery with
+            # Motion topic can be intermittent due to DDS discovery with
             # the bare-DDS publisher on AOS. Log at debug to avoid spam.
-            logger.debug("Error converting /MOTION_INFO message", exc_info=True)
+            logger.debug(
+                "Error converting %s message", _DRDDS_MOTION_TOPIC,
+                exc_info=True,
+            )

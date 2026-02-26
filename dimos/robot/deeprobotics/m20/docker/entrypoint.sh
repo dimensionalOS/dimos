@@ -12,8 +12,11 @@ export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
 export FASTRTPS_DEFAULT_PROFILES_FILE=/opt/dimos/docker/fastdds.xml
 
-# Ensure LD_LIBRARY_PATH includes ROS and drdds
-export LD_LIBRARY_PATH=/opt/ros/humble/lib:/opt/drdds/lib:${LD_LIBRARY_PATH}
+# drdds libs rebuilt from .msg files during docker build (ABI-compatible)
+export LD_LIBRARY_PATH=/opt/drdds/lib:/opt/ros/humble/lib:${LD_LIBRARY_PATH}
+
+# drdds Python 3.10 bindings (built during docker build)
+export PYTHONPATH="/opt/drdds/lib/python3/site-packages:${PYTHONPATH}"
 
 # LCM multicast configuration (required by dimos service layer)
 ip route add 224.0.0.0/4 dev lo 2>/dev/null || true
@@ -33,5 +36,9 @@ for topic in /ODOM /IMU; do
     timeout 30 bash -c "until ros2 topic echo $topic --once >/dev/null 2>&1; do sleep 1; done" \
         && echo "OK" || echo "TIMEOUT (continuing anyway)"
 done
+
+# Verify drdds bindings (non-fatal — falls back to UDP if unavailable)
+python3 -c "from drdds.msg import NavCmd; print('drdds available — /NAV_CMD publisher enabled')" 2>/dev/null \
+    || echo "WARNING: drdds Python bindings not available — using UDP fallback (no obstacle avoidance)"
 
 exec "$@"

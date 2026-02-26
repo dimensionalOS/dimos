@@ -2134,3 +2134,84 @@ Before disabling a sensor driver, verify that ALL consumers of its DDS topics ar
 | reflective_column (NOS) | **RUNNING** | Subscription matched, detecting dock |
 | Auto-charge | **WORKING** | Walk + auto-align confirmed by user |
 | NOS load average | **~10** | +2 from rsdriver, acceptable |
+
+## Session 16 — drdds Python 3.10 Bindings Rebuild (Feb 25-26, 2026)
+
+### Problem
+
+Keyboard control in the Humble Docker container fell back to UDP (no obstacle avoidance) because `from drdds.msg import NavCmd` failed. The vendor Humble image ships drdds Python bindings only for cpython-38, but the container runs Python 3.10.
+
+### Investigation
+
+**Phase 1: Manual C source recompilation (FAILED)**
+
+Initial approach: recompile the vendor's `_*_s.c` files and generate entry point modules against Python 3.10. This produced importable `NavCmd`/`MotionStatus` types, but `rclpy.create_publisher(NavCmd, ...)` segfaulted.
+
+Debugging via `ctypes` struct inspection and `faulthandler` revealed:
+- The `rosidl_typesupport_c` dispatch function returned a valid type_support handle
+- The handle's `func(handle, identifier)` dispatch correctly resolved to the FastRTPS implementation
+- The segfault occurred AFTER dispatch — when `rmw_fastrtps_cpp` tried to use the FastRTPS callback data
+
+Root cause: **ABI incompatibility** between the vendor's pre-compiled `libdrdds__rosidl_typesupport_fastrtps_c.so` (and `_introspection_c`) and the container's ROS2 Humble packages. The vendor built against an older Humble release with different `rosidl_typesupport_fastrtps_c` (v2.2.x) struct layouts. Both FastRTPS and introspection typesupport handles segfaulted, confirming a fundamental version mismatch.
+
+Key version info:
+- Container: `rosidl_typesupport_c` 2.0.2, `rosidl_typesupport_fastrtps_c` 2.2.3, FastCDR 1.0.24, FastRTPS 2.6.10
+- Vendor: compiled against unknown earlier Humble release
+
+**Phase 2: colcon rebuild from .msg definitions (SUCCESS)**
+
+The vendor's `share/drdds/msg/` directory contains all 38 `.msg` files. Solution: create a temporary colcon workspace, copy the `.msg` files, and rebuild the entire `drdds` package against the container's ROS2. This generates ALL typesupport code (C structs, Python bindings, FastRTPS serialization, introspection) with guaranteed ABI compatibility.
+
+### DDS Topic Discovery
+
+On-robot investigation revealed the Foxy/Humble topic landscape:
+
+| Topic | Type | Publisher |
+|-------|------|-----------|
+| `/MOTION_INFO` | `drdds/msg/MotionInfo` | Foxy (AOS) |
+| `/MOTION_STATUS` | `drdds/msg/MotionStatus` | Humble vendor processes |
+| `/MOTION_STATE` | `drdds/msg/MotionState` | Humble vendor processes |
+| `/NAV_CMD` | `drdds/msg/NavCmd` | Foxy handler subscriber |
+
+**Critical finding**: `/MOTION_INFO` and `/MOTION_STATUS` are SEPARATE DDS topics with different type identities — not a rename as initially assumed. The Humble drdds package has `MotionStatus` but no `MotionInfo`, so our container subscribes to `/MOTION_STATUS`.
+
+### Changes
+
+**`build_drdds_bindings.sh`** — Rewritten to use colcon:
+1. Copies vendor `.msg` files to a temporary workspace
+2. Generates `CMakeLists.txt` and `package.xml`
+3. Runs `colcon build --packages-select drdds` (2 parallel workers, ~4min on NOS aarch64)
+4. Installs to `/opt/drdds/` (libs + Python packages)
+5. Verifies: NavCmd import, MotionStatus import, DDS publisher creation
+
+**`ros_sensors.py`** — Humble compatibility:
+- Detects `meta` vs `header` field on `NavCmd` at import time
+- Subscribes to `/MOTION_STATUS` (Humble) or `/MOTION_INFO` (Foxy) based on available type
+- `publish_nav_cmd()` uses `getattr(msg, _DRDDS_HEADER_FIELD)` for field access
+
+**`entrypoint.sh`** — Simplified LD_LIBRARY_PATH (no vendor lib probing needed)
+
+**`Dockerfile`** — Updated build step comment
+
+### Verification
+
+```
+NavCmd OK (header field: meta)       PASS
+NavCmd.data.x_vel = 0.1              PASS
+MotionStatus (Humble)                PASS
+DDS publisher: OK                    PASS (no segfault!)
+Topic discovery: /NAV_CMD visible    PASS
+```
+
+### Lesson
+
+When vendor-compiled ROS2 libraries segfault in a different container, don't try to patch individual components — rebuild from IDL/msg definitions using the container's own rosidl toolchain. The `.msg` files are the stable interface; the compiled libraries are version-specific artifacts.
+
+### Current State (Feb 26)
+
+| Component | Status | Notes |
+|---|---|---|
+| drdds Python 3.10 bindings | **WORKING** | Rebuilt from .msg via colcon |
+| NavCmd publisher (DDS) | **WORKING** | No segfault, type_support ABI compatible |
+| /MOTION_STATUS subscription | **AVAILABLE** | Type discovered, needs runtime verification |
+| UDP fallback | **STILL DEFAULT** | Until container deployed with new build script |

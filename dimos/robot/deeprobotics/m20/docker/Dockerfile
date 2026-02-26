@@ -22,6 +22,15 @@ FROM ${BASE_IMAGE}
 COPY . /opt/dimos/src
 RUN /opt/dimos-venv/bin/pip install --no-cache-dir -e /opt/dimos/src
 
+# Rebuild drdds ROS2 package from vendor .msg definitions.
+# The base image has drdds pre-compiled for Python 3.8 with potentially
+# ABI-incompatible rosidl typesupport.  This colcon build regenerates
+# everything against the container's ROS2 Humble (Python 3.10, matching
+# rosidl/FastRTPS versions).
+COPY dimos/robot/deeprobotics/m20/docker/build_drdds_bindings.sh /opt/dimos/docker/build_drdds_bindings.sh
+RUN chmod +x /opt/dimos/docker/build_drdds_bindings.sh \
+    && bash -c "source /opt/ros/humble/setup.bash && /opt/dimos/docker/build_drdds_bindings.sh"
+
 # Copy Docker support files
 COPY dimos/robot/deeprobotics/m20/docker/entrypoint.sh /opt/dimos/entrypoint.sh
 COPY dimos/robot/deeprobotics/m20/docker/fastdds.xml /opt/dimos/docker/fastdds.xml

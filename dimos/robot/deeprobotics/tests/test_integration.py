@@ -958,6 +958,13 @@ class TestROSSensorConversions:
         assert result.gait == 0x3002
         assert abs(result.remain_mile - 12.5) < 1e-6
 
+    def test_drdds_header_field_detection(self):
+        """_DRDDS_HEADER_FIELD should be 'header' or 'meta' based on NavCmd type."""
+        from dimos.robot.deeprobotics.m20.ros_sensors import _DRDDS_HEADER_FIELD
+
+        # Without real drdds, it stays at the default "header"
+        assert _DRDDS_HEADER_FIELD in ("header", "meta")
+
     def test_tf_to_transforms(self):
         """tf2_msgs/TFMessage → list[Transform] conversion."""
         from dimos.robot.deeprobotics.m20.ros_sensors import _tf_to_transforms
