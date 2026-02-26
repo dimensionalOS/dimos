@@ -3,19 +3,22 @@
 # Deploy dimos Docker container to M20 NOS
 #
 # Usage:
-#   ./deploy.sh build     # Sync code + build Docker image on NOS
+#   ./deploy.sh push      # Build image on Mac + push to GHCR
+#   ./deploy.sh pull      # Pull latest image on NOS from GHCR
 #   ./deploy.sh start     # Start container (with lio health check)
 #   ./deploy.sh stop      # Stop container
 #   ./deploy.sh logs      # Tail container logs
 #   ./deploy.sh shell     # Open shell in running container
 #   ./deploy.sh status    # Show container + lio status
+#   ./deploy.sh build     # Legacy: sync code + build on NOS (may OOM)
 #
 # Prerequisites:
+#   - GHCR auth: docker login ghcr.io (Mac for push, NOS for pull)
 #   - SSH access to NOS via AOS jump host
-#   - DeepRobotics Humble image loaded and tagged as dimos/m20-humble-base:latest
-#   - Docker + docker compose installed on NOS
+#   - Docker installed on Mac and NOS
 #
 # Network: Mac → AOS WiFi (10.21.41.1) → DNAT → NOS (10.21.31.106)
+# Registry: Mac → internet → GHCR; NOS → GOS 5G → GHCR
 
 set -e
 
@@ -31,15 +34,22 @@ AOS_HOST="${JUMP_HOST}"
 SSH_OPTS="-o ProxyJump=${JUMP_HOST}"
 DEPLOY_DIR="/opt/dimos/src"
 CONTAINER_NAME="dimos-m20"
+GHCR_IMAGE="ghcr.io/aphexcx/m20-nos:latest"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIMOS_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
 
-# Prompt for sudo password
-if [ -z "${SUDO_PASS}" ]; then
-    read -sp "Sudo password for ${NOS_USER}@${NOS_HOST}: " SUDO_PASS
-    echo ""
-fi
+# Only prompt for sudo on commands that actually need it (systemctl, iptables)
+# Docker commands use docker group membership (no sudo needed)
+case "${CMD}" in
+    push|pull) ;; # push is local, pull only needs docker (no sudo)
+    *)
+        if [ -z "${SUDO_PASS}" ]; then
+            read -sp "Sudo password for ${NOS_USER}@${NOS_HOST}: " SUDO_PASS
+            echo ""
+        fi
+        ;;
+esac
 
 remote_sudo() {
     printf '%s\n' "${SUDO_PASS}" | ssh ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "sudo -S $*" 2>&1 | { grep -v '^\[sudo\] password' || true; }
@@ -119,13 +129,13 @@ check_conflicts() {
     echo "Checking for service conflicts..."
     # height_map_nav on AOS conflicts with dimos /NAV_CMD
     if aos_ssh "systemctl is-active height_map_nav" 2>/dev/null | grep -q active; then
-        echo "  WARNING: height_map_nav is active on AOS — will conflict with /NAV_CMD"
-        echo "  Run: ssh ${AOS_HOST} 'echo \"'\" | sudo -S systemctl stop height_map_nav'"
+        echo "  Disabling height_map_nav on AOS (conflicts with /NAV_CMD)..."
+        aos_sudo systemctl disable --now height_map_nav
     fi
     # planner on NOS conflicts with dimos velocity commands
     if remote_ssh "systemctl is-active planner" 2>/dev/null | grep -q active; then
-        echo "  WARNING: planner is active on NOS — will conflict with /NAV_CMD"
-        echo "  Run: ssh ${SSH_OPTS} ${NOS_USER}@${NOS_HOST} 'echo \"'\" | sudo -S systemctl stop planner'"
+        echo "  Disabling planner on NOS (conflicts with /NAV_CMD)..."
+        remote_sudo systemctl disable --now planner
     fi
     # Stop mac_bridge if running (we're replacing it)
     if remote_ssh "systemctl is-active dimos-mac-bridge" 2>/dev/null | grep -q active; then
@@ -141,13 +151,10 @@ check_conflicts() {
         echo "  Killing ros2 daemon (Foxy/Humble DDS conflict)..."
         remote_sudo pkill -f ros2_daemon
     fi
-    # Stop NOS services not needed by dimos (saves ~46% CPU)
-    # multicast-relay: relays lidar multicast between eth0/eth1 — dimos uses DDS not multicast
+    # Stop NOS services not needed by dimos (saves CPU)
+    # multicast-relay: relays lidar multicast — dimos uses DDS /ODOM not raw /LIDAR/POINTS
     # yesense: IMU driver — /IMU comes from main controller independently
-    #
-    # NOTE: rsdriver MUST stay running — charge_manager and reflective_column_node both
-    # subscribe to /LIDAR/POINTS for obstacle avoidance and charging dock detection.
-    # Without rsdriver, auto-charge cannot work.
+    # Note: rsdriver must stay running (charge_manager + reflective_column need /LIDAR/POINTS)
     for svc in multicast-relay yesense; do
         if remote_ssh "systemctl is-active ${svc}" 2>/dev/null | grep -q active; then
             echo "  Stopping ${svc} (not needed by dimos)..."
@@ -157,23 +164,119 @@ check_conflicts() {
 }
 
 case "${CMD}" in
+    push)
+        echo "=== Building + Pushing M20 Docker Image ==="
+        echo "Image: ${GHCR_IMAGE}"
+        echo "Context: ${DIMOS_ROOT}"
+        echo ""
+
+        # Build on Mac (ARM64 native — same arch as NOS RK3588)
+        echo "Building Docker image..."
+        docker build \
+            -t "${GHCR_IMAGE}" \
+            -f "${DIMOS_ROOT}/dimos/robot/deeprobotics/m20/docker/Dockerfile" \
+            "${DIMOS_ROOT}"
+
+        echo ""
+        echo "Pushing to GHCR..."
+        docker push "${GHCR_IMAGE}"
+
+        echo ""
+        echo "=== Push Complete ==="
+        echo "Deploy to robot: $0 pull && $0 start"
+        ;;
+
+    pull)
+        echo "=== Pulling M20 Docker Image on NOS ==="
+        echo "Image: ${GHCR_IMAGE}"
+        echo ""
+
+        remote_ssh docker pull "${GHCR_IMAGE}"
+
+        echo ""
+        echo "=== Pull Complete ==="
+        ;;
+
+    start)
+        echo "=== Starting dimos M20 Docker Container ==="
+
+        check_conflicts
+        ensure_lio_enabled
+        ensure_nat
+
+        # Remove old container if exists
+        remote_ssh docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
+
+        echo "Starting container..."
+        remote_ssh docker run -d \
+            --name ${CONTAINER_NAME} \
+            --privileged \
+            --network host \
+            --ipc host \
+            -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+            -e ROS_DOMAIN_ID=0 \
+            -e CI=1 \
+            --restart no \
+            "${GHCR_IMAGE}"
+
+        sleep 5
+        echo ""
+        echo "Container status:"
+        remote_ssh docker ps --filter name=${CONTAINER_NAME}
+        echo ""
+        echo "Access from Mac:"
+        echo "  Web UI:  http://10.21.41.1:7779/command-center"
+        echo "  Rerun:   rerun --connect rerun+http://10.21.41.1:9876/proxy"
+        ;;
+
+    stop)
+        echo "Stopping ${CONTAINER_NAME}..."
+        remote_ssh docker stop ${CONTAINER_NAME} 2>/dev/null || true
+        remote_ssh docker rm ${CONTAINER_NAME} 2>/dev/null || true
+        echo "Stopped."
+        ;;
+
+    logs)
+        remote_ssh docker logs -f ${CONTAINER_NAME}
+        ;;
+
+    shell)
+        echo "Opening shell in ${CONTAINER_NAME}..."
+        ssh -t ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "docker exec -it ${CONTAINER_NAME} /bin/bash"
+        ;;
+
+    status)
+        echo "=== Container ==="
+        remote_ssh docker ps -a --filter name=${CONTAINER_NAME}
+        echo ""
+        echo "=== lio (AOS) ==="
+        if aos_ssh "pgrep -f lio_ddsnode" >/dev/null 2>&1; then
+            echo "  lio_ddsnode: RUNNING"
+        else
+            echo "  lio_ddsnode: NOT RUNNING"
+        fi
+        if aos_ssh "pgrep -f 'lio_command 1'" >/dev/null 2>&1; then
+            echo "  lio_command: IN PROGRESS"
+        else
+            echo "  lio_command: finished"
+        fi
+        echo ""
+        echo "=== Services ==="
+        echo -n "  height_map_nav (AOS): "
+        aos_ssh "systemctl is-active height_map_nav" 2>/dev/null || echo "inactive"
+        echo -n "  dimos-mac-bridge (NOS): "
+        remote_ssh "systemctl is-active dimos-mac-bridge" 2>/dev/null || echo "inactive"
+        ;;
+
     build)
-        echo "=== dimos M20 NOS Docker Build ==="
+        echo "=== dimos M20 NOS Docker Build (legacy — may OOM) ==="
+        echo "NOTE: Prefer './deploy.sh push' (builds on Mac) + './deploy.sh pull'"
         echo "Target: ${NOS_USER}@${NOS_HOST} (via ${JUMP_HOST})"
         echo ""
 
         # Check SSH
         echo "Checking SSH..."
         remote_ssh "echo 'Connected'" || { echo "ERROR: Cannot connect"; exit 1; }
-
-        # Verify base image exists
-        echo "Checking base image..."
-        if ! remote_sudo docker images dimos/m20-humble-base:latest | grep -q 'm20-humble-base'; then
-            echo "ERROR: Base image dimos/m20-humble-base:latest not found on NOS"
-            echo "Load it first: sudo docker load -i /tmp/ysc_ros2_backup.tar.gz"
-            echo "Then tag it:   sudo docker tag <IMAGE_ID> dimos/m20-humble-base:latest"
-            exit 1
-        fi
 
         # Sync source
         echo "Syncing dimos source to NOS..."
@@ -205,93 +308,27 @@ case "${CMD}" in
         # Build image on NOS
         echo "Building Docker image on NOS (this may take a while on first build)..."
         remote_sudo docker build \
-            -t dimos-m20-nos:latest \
+            -t "${GHCR_IMAGE}" \
             -f ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/docker/Dockerfile \
             ${DEPLOY_DIR}
 
         echo ""
         echo "=== Build Complete ==="
-        echo "Image: dimos-m20-nos:latest"
-        ;;
-
-    start)
-        echo "=== Starting dimos M20 Docker Container ==="
-
-        check_conflicts
-        ensure_lio_enabled
-        ensure_nat
-
-        echo "Starting container..."
-        remote_sudo docker run -d \
-            --name ${CONTAINER_NAME} \
-            --privileged \
-            --network host \
-            --ipc host \
-            -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
-            -e ROS_DOMAIN_ID=0 \
-            -e CI=1 \
-            --restart no \
-            dimos-m20-nos:latest
-
-        sleep 5
-        echo ""
-        echo "Container status:"
-        remote_sudo docker ps --filter name=${CONTAINER_NAME}
-        echo ""
-        echo "Access from Mac:"
-        echo "  Web UI:  http://10.21.41.1:7779/command-center"
-        echo "  Rerun:   rerun --connect rerun+http://10.21.41.1:9876/proxy"
-        ;;
-
-    stop)
-        echo "Stopping ${CONTAINER_NAME}..."
-        remote_sudo docker stop ${CONTAINER_NAME} 2>/dev/null || true
-        remote_sudo docker rm ${CONTAINER_NAME} 2>/dev/null || true
-        echo "Stopped."
-        ;;
-
-    logs)
-        remote_sudo docker logs -f ${CONTAINER_NAME}
-        ;;
-
-    shell)
-        echo "Opening shell in ${CONTAINER_NAME}..."
-        ssh -t ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "sudo docker exec -it ${CONTAINER_NAME} /bin/bash"
-        ;;
-
-    status)
-        echo "=== Container ==="
-        remote_sudo docker ps -a --filter name=${CONTAINER_NAME}
-        echo ""
-        echo "=== lio (AOS) ==="
-        if aos_ssh "pgrep -f lio_ddsnode" >/dev/null 2>&1; then
-            echo "  lio_ddsnode: RUNNING"
-        else
-            echo "  lio_ddsnode: NOT RUNNING"
-        fi
-        if aos_ssh "pgrep -f 'lio_command 1'" >/dev/null 2>&1; then
-            echo "  lio_command: IN PROGRESS"
-        else
-            echo "  lio_command: finished"
-        fi
-        echo ""
-        echo "=== Services ==="
-        echo -n "  height_map_nav (AOS): "
-        aos_ssh "systemctl is-active height_map_nav" 2>/dev/null || echo "inactive"
-        echo -n "  dimos-mac-bridge (NOS): "
-        remote_ssh "systemctl is-active dimos-mac-bridge" 2>/dev/null || echo "inactive"
+        echo "Image: ${GHCR_IMAGE}"
         ;;
 
     *)
-        echo "Usage: $0 {build|start|stop|logs|shell|status} [hostname=$NOS_HOST] [user=$NOS_USER]"
+        echo "Usage: $0 {push|pull|start|stop|logs|shell|status} [hostname=$NOS_HOST] [user=$NOS_USER]"
         echo ""
         echo "Commands:"
-        echo "  build   - Sync code + build Docker image on NOS"
+        echo "  push    - Build image on Mac + push to GHCR"
+        echo "  pull    - Pull latest image on NOS from GHCR"
         echo "  start   - Start container (with lio health check + NAT)"
         echo "  stop    - Stop and remove container"
         echo "  logs    - Tail container logs"
         echo "  shell   - Open shell in running container"
         echo "  status  - Show container + service status"
+        echo "  build   - Legacy: sync code + build on NOS (may OOM)"
         exit 1
         ;;
 esac

@@ -2217,3 +2217,188 @@ When vendor-compiled ROS2 libraries segfault in a different container, don't try
 | NavCmd publisher (DDS) | **WORKING** | No segfault, type_support ABI compatible |
 | /MOTION_STATUS subscription | **AVAILABLE** | Type discovered, needs runtime verification |
 | UDP fallback | **STILL DEFAULT** | Until container deployed with new build script |
+| rsdriver (NOS) | **RUNNING** | Re-enabled, publishing /LIDAR/POINTS at 10Hz |
+| charge_manager (NOS) | **RUNNING** | Subscription matched, receiving lidar data |
+| reflective_column (NOS) | **RUNNING** | Subscription matched, detecting dock |
+| Auto-charge | **WORKING** | Walk + auto-align confirmed by user |
+| NOS load average | **~10** | +2 from rsdriver, acceptable |
+
+---
+
+## Session 16: GHCR Registry Pipeline + NOS Hardening (Feb 25-26)
+
+### Problem
+
+Docker builds OOM on NOS (RK3588, 4 cores, 15GB shared RAM). The previous deploy approach (`rsync` + `docker build` on NOS) crashes the system. Additionally, NOS becomes completely unreachable during heavy Docker operations (pull, save) — SSH fails with "Connection timed out during banner exchange".
+
+### Solution: GHCR Container Registry Pipeline
+
+Since M2 Max MacBook and NOS RK3588 are both ARM64 (aarch64), Docker images are binary-compatible. Build on Mac, push to GHCR, pull incrementally on NOS over 5G.
+
+**Registry**: `ghcr.io/aphexcx/` (fork at `aphexcx/dimos`, not `dimensionalOS/dimos`)
+**Auth**: GitHub PAT with `write:packages` scope, stored in Infisical as `GHCR_TOKEN`
+
+### One-time Base Image Migration
+
+Migrated `dimos/m20-deps:latest` (5.72GB, DeepRobotics Humble base + pip deps) from NOS to GHCR:
+
+1. **Failed approaches**: `docker save | gzip` (sudo password `'` corrupted tar stream), `docker save -o` (disk full), direct push from NOS (SSH dropped over 5G)
+2. **Root cause of sudo issues**: Password is `'` (single quote) — impossible to pipe reliably through SSH shell quoting layers
+3. **Fix**: Added `user` to `docker` group (`sudo usermod -aG docker user`) — eliminates sudo for all docker commands
+4. **Successful approach**: `ssh NOS "docker save dimos/m20-deps:latest" | docker load` — clean pipe, no sudo, streamed 5.72GB directly into Mac
+5. Pushed to `ghcr.io/aphexcx/m20-deps:latest` using PAT with `write:packages` scope
+
+### Files Modified
+
+**`dimos/robot/deeprobotics/m20/docker/Dockerfile`**:
+- Updated `ARG BASE_IMAGE` to `ghcr.io/aphexcx/m20-deps:latest`
+- Added `pip install -e "/opt/dimos/src[agents]"` (includes langchain deps)
+- Added `pip install --ignore-installed matplotlib` (system matplotlib compiled against NumPy 1.x, venv has NumPy 2.x — `--ignore-installed` forces install into venv, shadowing system version)
+
+**`dimos/robot/deeprobotics/m20/docker/deploy.sh`**:
+- Added `push` command (build on Mac + push to GHCR)
+- Added `pull` command (NOS pulls from GHCR via SSH, no sudo needed)
+- Updated `start` to use GHCR image, uses `remote_ssh` for docker commands (docker group), `remote_sudo` only for systemctl/iptables
+- `pull` and `push` skip sudo password prompt
+- Fixed `check_conflicts()`: only stops `multicast-relay` and `yesense` (NOT `rsdriver` — needed for auto-charge per Session 14)
+
+**`dimos/robot/deeprobotics/m20/docker/docker-compose.yml`**: Updated image to `ghcr.io/aphexcx/m20-nos:latest`
+
+**`.dockerignore`**: Removed `!data/.lfs/` exception (was including 15GB LFS cache in build context, ballooning image from 6.66GB to 22.8GB). Added exclusions for docs, logs, .beads, .runtime.
+
+### .dockerignore Discovery
+
+Build context was 16.29GB because `.dockerignore` had `data/*` but `!data/.lfs/` re-included the 15GB LFS cache. After fix, context dropped to **91KB**. Build time: ~30 seconds (was 5+ minutes).
+
+### NOS Crash Root Cause + Hardening
+
+**Root cause of SSH "banner exchange timeout"**: Docker operations spike memory → Linux OOM killer fires → kills sshd → port 22 stays in LISTEN (kernel) but nobody responds → SSH connects but never gets protocol banner.
+
+**Three fixes applied**:
+
+| Fix | Detail | Persists? |
+|-----|--------|-----------|
+| sshd OOM protection | `OOMScoreAdjust=-1000` in systemd override | Yes (systemd drop-in) |
+| 4GB swap file | `/var/opt/robot/data/swapfile` | Yes (in fstab) |
+| Docker storage moved | `data-root: /var/opt/robot/data/docker` | Yes (daemon.json) |
+
+**Key discovery**: NOS has a **62.5GB `/var/opt/robot/data`** partition (on `/dev/mmcblk0p11`) that was 99% empty (only 48MB of localization data). Each board (AOS, NOS, GOS) has its own 115.3GB eMMC with identical partition layouts — they are separate physical boards, not shared storage. Docker was using `/userdata` (18GB partition, 9.3GB free) when 59GB was available next door.
+
+After migration: **46GB free** for Docker vs the previous 9.3GB.
+
+### M20 Architecture Clarification
+
+| Board | IP (eth) | Role | Disk (eMMC) |
+|-------|----------|------|-------------|
+| AOS | 10.21.31.103, wlan0: 10.21.41.1 | Motor control, camera, lio_perception | 115.3GB own eMMC |
+| GOS | 10.21.31.104, 5G modem | Internet gateway (5G), ROS2 bridge | 115.3GB own eMMC |
+| NOS | 10.21.31.106 | Docker host, SLAM, localization | 115.3GB own eMMC |
+
+Network path: Mac → WiFi → AOS (wlan0) → eth → NOS; NOS → eth → GOS → 5G → internet
+
+### NumPy/Matplotlib Compatibility Issue
+
+**Problem**: Base image has system matplotlib at `/usr/lib/python3/dist-packages/matplotlib` (compiled against NumPy 1.x). Venv has NumPy 2.2.6. Import crashes with `_ARRAY_API not found`.
+
+**Root cause**: Venv created with `include-system-site-packages = true`. `pip install matplotlib` saw system version (3.5.1) as "already satisfied" and didn't install into venv.
+
+**Fix**: `pip install --no-cache-dir --ignore-installed matplotlib` — forces install into venv (3.10.8, NumPy 2-compatible), shadowing the system version. Harmless warning about Axes3D dual installs.
+
+### Deployment Workflow
+
+```bash
+# On Mac:
+./deploy.sh push          # Build ARM64 image (~30s), push to GHCR (~2min)
+
+# From Mac (SSHs to NOS):
+./deploy.sh pull           # Incremental pull (~150MB for source-only changes)
+./deploy.sh start          # lio check, NAT, start container
+./deploy.sh logs           # Tail container logs
+```
+
+### Current State (Feb 26, ~15:00 CST)
+
+| Component | Status | Notes |
+|---|---|---|
+| GHCR base image | `ghcr.io/aphexcx/m20-deps:latest` pushed | 5.72GB, all 21 layers |
+| GHCR NOS image | `ghcr.io/aphexcx/m20-nos:latest` pushed | 6.66GB, building with [agents] extra |
+| NOS sshd OOM protection | **ACTIVE** | OOMScoreAdjust=-1000 |
+| NOS swap | **ACTIVE** | 4GB on /var/opt/robot/data |
+| NOS Docker storage | **MOVED** | /var/opt/robot/data/docker (46GB free) |
+| NOS GHCR auth | **CONFIGURED** | PAT in ~/.docker/config.json |
+| Container | **STARTING** | matplotlib fixed, adding langchain deps |
+| lio_perception | **NOT PUBLISHING /ODOM** | Persistent issue after robot reboots, needs investigation |
+
+---
+
+## Session 17: Dask Memory Management, Command Center Fix, Rerun Stability (Feb 26-27)
+
+### Dask Worker OOM Killing Rerun Server
+
+**Problem**: Rerun gRPC server (port 9876) runs inside a Dask worker. When that worker exceeds its memory budget, Dask kills it — destroying the Rerun server permanently (it doesn't respawn).
+
+**Root cause**: Rerun accumulates recording data over time. Memory grew: 1.2GB → 3.4GB → 6.7GB → exceeded budget. Every configuration tried (2x4GB, 1x8GB) eventually hit the terminate threshold.
+
+**Timeline of Dask config iterations**:
+1. **2 workers, 4GB each** (original): Worker OOM'd within minutes. Rerun died.
+2. **1 worker, 8GB**: Lasted ~40min, then worker hit 95% (6.7/7.45 GiB) and was killed.
+3. **2 workers, 7GB each, terminate=False**: Current config. Dask still spills/pauses under memory pressure but never kills workers. Rerun stays alive. After 1hr+: 7.9 GiB used, no swap, no kills.
+
+**Final config** (`launch_nos.py`):
+```python
+n_dask_workers=2, memory_limit="7GB"
+dask.config.set({
+    "target": 0.7,     # spill to disk at 70%
+    "spill": 0.8,      # aggressive spill at 80%
+    "pause": 0.9,      # pause work at 90%
+    "terminate": False, # NEVER kill workers
+})
+```
+
+### Command Center Blank Page (Web UI)
+
+**Problem**: `http://10.21.41.1:7779/command-center` showed blank white area with only bottom buttons visible. Socket.IO data was confirmed flowing (costmap + robot_pose), but the React app wasn't rendering.
+
+**Root cause** (two layers):
+
+1. **Socket.IO hardcoded to localhost** (`Connection.ts:22`): `io("ws://localhost:7779")`. When accessed remotely at `10.21.41.1`, the browser tried connecting back to `ws://localhost:7779` on the Mac — nothing there. Silent failure, no data reaches the app.
+
+2. **Docker serving wrong HTML**: `.dockerignore` excluded `data/` (to prevent 15GB LFS leak). Without `.git` in the container, `get_data()` fell back to **cloning the repo from GitHub at runtime** — serving the upstream (old, unfixed) version.
+
+**Fixes**:
+- `Connection.ts`: Changed `io("ws://localhost:7779")` → `io()` (auto-detects host from page URL)
+- Rebuilt React app with `vite-plugin-singlefile` for inline HTML
+- `.dockerignore`: Added `!data/command_center.html` exception
+- `Dockerfile`: Added `mkdir -p /opt/dimos/src/.git` so `get_data()` uses local source
+
+**Why it worked before**: Mac bridge ran dimos locally. `localhost:7779` pointed to the same machine. No NAT, no remote host mismatch.
+
+### AOS NAT Rules (Non-persistent)
+
+iptables rules reset on robot reboot. `deploy.sh start` calls `ensure_nat()` which re-adds them, but manual `docker run` doesn't. Two ports NAT'd: 7779 (Web UI) and 9876 (Rerun gRPC).
+
+### Rerun Hitchiness
+
+Single Dask worker on 4-core RK3588 caused ~0.5s hitches (VoxelGridMapper blocking the worker). Switching back to 2 workers improved parallelism. Some timeline gaps still visible in Rerun after 1hr+ — likely CPU contention under load average ~22 on 4 cores.
+
+### Files Modified
+
+| File | Change |
+|---|---|
+| `dimos/web/command-center-extension/src/Connection.ts` | `io("ws://localhost:7779")` → `io()` |
+| `dimos/web/command-center-extension/vite.config.ts` | Added `vite-plugin-singlefile` for inline build |
+| `data/command_center.html` | Rebuilt with Socket.IO fix |
+| `.dockerignore` | Added `!data/command_center.html` exception |
+| `dimos/robot/deeprobotics/m20/docker/Dockerfile` | Added `mkdir .git` for local data resolution |
+| `dimos/robot/deeprobotics/m20/docker/launch_nos.py` | 2 workers, 7GB, terminate=False |
+
+### Current State (Feb 27, ~14:00 CST)
+
+| Component | Status | Notes |
+|---|---|---|
+| Container | **RUNNING** | 2 workers, 7GB each, terminate=False |
+| Web UI (7779) | **FIXED** | Socket.IO auto-detects host, serves local HTML |
+| Rerun (9876) | **STABLE** | No worker kills, survives long-running sessions |
+| Memory | 7.9 GiB after 1hr | Growing but no swap usage, no kills |
+| AOS NAT | Needs re-add on reboot | deploy.sh `start` handles it automatically |
+| lio /ODOM | Publishing | Working this session |

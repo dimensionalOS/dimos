@@ -1,0 +1,10 @@
+uint32 drivers_over_heat
+uint32 joints_over_heat
+uint32 joints_pos_error
+uint32 joints_vel_error
+uint32 joints_data_nan_error
+uint32 joints_update_error
+uint32 joints_timeout
+uint32 driver_status_error
+uint8 hipy_pos_outlimit
+uint64 common_error

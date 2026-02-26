@@ -35,8 +35,10 @@ AOS_ETH0 = "10.21.33.103"
 # - voxel_size=0.2: 8x fewer voxels than 0.1 (cubic), fine for outdoor patrol
 # - publish_interval=1.0: Lesh recommended 1Hz instead of every-frame (~10Hz)
 # - resolution=0.2: match costmap grid to voxel size (16x smaller grid than default 0.05)
-# - n_dask_workers=2: 4 threads/worker hardcoded, 2x4=8 threads on 4 cores (was 3x4=12)
-# - memory_limit=4GB: explicit cap per worker (15GB - ~7GB OS/ROS/lio = ~8GB / 2 workers)
+# - n_dask_workers=2: 2 workers for parallelism (less hitchy Rerun visualization).
+#   terminate=False in Dask config prevents worker kills that destroy Rerun server.
+# - memory_limit=7GB: per-worker limit. 2x7=14GB on 15GB system — tight but
+#   sshd is OOM-protected and 4GB swap absorbs pressure spikes.
 bp = autoconnect(
     m20_minimal,
     voxel_mapper(voxel_size=0.2, publish_interval=1.0),
@@ -50,18 +52,19 @@ bp = autoconnect(
     robot_width=0.3,
     robot_rotation_diameter=0.6,
     n_dask_workers=2,
-    memory_limit="4GB",
+    memory_limit="7GB",
 )
 
 
 def main():
-    # Raise dask memory pause threshold before LocalCluster is created in bp.build().
-    # Default pause=0.8 causes thrashing on shared-RAM ARM64 system.
+    # Dask memory management: spill/pause but NEVER terminate workers.
+    # Terminating kills the Rerun gRPC server (runs in-worker, doesn't respawn).
+    # With sshd OOM-protected and 4GB swap, it's safer to swap than lose Rerun.
     dask.config.set({
         "distributed.worker.memory.target": 0.7,
         "distributed.worker.memory.spill": 0.8,
         "distributed.worker.memory.pause": 0.9,
-        "distributed.worker.memory.terminate": 0.95,
+        "distributed.worker.memory.terminate": False,
     })
 
     print("Starting dimos M20 on NOS (direct ROS2 mode)...")

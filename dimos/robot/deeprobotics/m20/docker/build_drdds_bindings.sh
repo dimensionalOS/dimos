@@ -27,7 +27,8 @@ echo "=== Building drdds from .msg definitions ==="
 VENDOR_MSG=""
 for c in /opt/ros/humble-vendor/share/drdds/msg \
          /opt/ros/humble/share/drdds/msg \
-         /root-ro/opt/ros/humble/share/drdds/msg; do
+         /root-ro/opt/ros/humble/share/drdds/msg \
+         /opt/dimos/docker/drdds_msgs/msg; do
     [ -f "${c}/NavCmd.msg" ] && { VENDOR_MSG="${c}"; break; }
 done
 [ -z "${VENDOR_MSG}" ] && { echo "ERROR: Cannot find drdds .msg files"; exit 1; }

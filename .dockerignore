@@ -43,9 +43,9 @@ build/
 .env.local
 .env.*.local
 
-# Large data files (LFS archives only)
-data/*
-!data/.lfs/
+# Large data files (LFS cache is 15GB+ and never needed in containers)
+data/
+!data/command_center.html
 
 # Model files (can be downloaded at runtime)
 *.pt
@@ -102,6 +102,19 @@ tmp/
 temp/
 *.tmp
 .python-version
+
+# Documentation and non-runtime files
+docs/
+CHANGELOG.md
+CONTRIBUTING.md
+INVESTIGATION_LOG*
+LICENSE
+
+# Runtime/state files
+.beads/
+.runtime/
+state.json
+logs/
 
 # Exclude all assets subdirectories
 assets/*/*

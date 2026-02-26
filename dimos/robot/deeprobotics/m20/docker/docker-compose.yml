@@ -3,7 +3,7 @@ services:
     build:
       context: ../../../../..  # dimos repo root (5 levels up from docker/)
       dockerfile: dimos/robot/deeprobotics/m20/docker/Dockerfile
-    image: dimos-m20-nos:latest
+    image: ghcr.io/aphexcx/m20-nos:latest
     container_name: dimos-m20
     privileged: true
     network_mode: host
