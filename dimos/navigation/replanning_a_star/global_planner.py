@@ -86,6 +86,15 @@ class GlobalPlanner(Resource):
         self._replan_reason = None
         self._lock = RLock()
 
+        # Coordinator-based path follower (optional, for mobile base control).
+        # These are set via set_path_follower_task() when using the ControlCoordinator.
+        self._path_follower_task_name: str | None = None
+        self._coordinator: object | None = None
+
+        # Polling bookkeeping for coordinator task state
+        self._last_task_state_poll: float = 0.0
+        self._task_state_poll_period: float = 0.2  # seconds
+
     def start(self) -> None:
         self._local_planner.start()
         self._disposables.add(
@@ -114,6 +123,39 @@ class GlobalPlanner(Resource):
 
         self._local_planner.handle_odom(msg)
         self._position_tracker.add_position(msg)
+
+        # Forward odometry to coordinator-backed PathFollowerTask if configured.
+        if self._coordinator is not None and self._path_follower_task_name is not None:
+            try:
+                # Update the PathFollowerTask instance that is inside the ControlCoordinator.
+                self._coordinator.task_invoke( 
+                    self._path_follower_task_name,
+                    "update_odom",
+                    {"odom": msg},
+                )
+            except Exception as e:
+                logger.error(f"Failed to update PathFollowerTask odom via coordinator: {e}")
+
+            # Poll task state and clear path/goal when it finishes
+            now = time.perf_counter()
+            if now - self._last_task_state_poll >= self._task_state_poll_period:
+                self._last_task_state_poll = now
+                try:
+                    task_state = self._coordinator.task_invoke(
+                        self._path_follower_task_name,
+                        "get_state",
+                        {},
+                    )
+                    # Avoid repeated cancels
+                    with self._lock:
+                        has_goal = self._current_goal is not None
+
+                    if has_goal and task_state == "completed":
+                        self.cancel_goal(arrived=True)
+                    elif has_goal and task_state == "aborted":
+                        self.cancel_goal(arrived=False)
+                except Exception as e:
+                    logger.error(f"Failed to poll PathFollowerTask state via coordinator: {e}")
 
     def handle_global_costmap(self, msg: OccupancyGrid) -> None:
         self._navigation_map.update(msg)
@@ -305,10 +347,24 @@ class GlobalPlanner(Resource):
 
         self.path.on_next(resampled_path)
 
-        self._local_planner.start_planning(resampled_path)
+        # Prefer coordinator + PathFollowerTask when available, else fall back to LocalPlanner.
+        if (
+            self._coordinator is not None
+            and self._path_follower_task_name is not None
+            and self._current_odom is not None
+        ):
+            try:
+                self._coordinator.task_invoke(  # type: ignore[call-arg, attr-defined]
+                    self._path_follower_task_name,
+                    "start_path",
+                    {"path": resampled_path, "current_odom": self._current_odom},
+                )
+            except Exception as e:
+                logger.error(f"Failed to start PathFollowerTask via coordinator: {e}")
+        else:
+            self._local_planner.start_planning(resampled_path)
 
     def _find_wide_path(self, goal: Vector3, robot_pos: Vector3) -> Path | None:
-        #        sizes_to_try: list[float] = [2.2, 1.7, 1.3, 1]
         sizes_to_try: list[float] = [1.1]
 
         for size in sizes_to_try:
@@ -346,3 +402,13 @@ class GlobalPlanner(Resource):
         logger.info("Found safe goal.", x=round(safe_goal.x, 2), y=round(safe_goal.y, 2))
 
         return safe_goal
+
+    def set_path_follower_task(self, coordinator: object, task_name: str) -> None:
+        """Configure coordinator-based PathFollowerTask usage.
+        
+        Args:
+            coordinator: ControlCoordinator RPC client proxy
+            task_name: Name of the task registered in the coordinator
+        """
+        self._coordinator = coordinator
+        self._path_follower_task_name = task_name

@@ -74,6 +74,116 @@ class PathDistancer:
         distances = np.linalg.norm(self._path - pos, axis=1)
         return int(np.argmin(distances))
 
+    def find_adaptive_lookahead_point(
+        self, start_idx: int, current_speed: float, min_lookahead: float = 0.3, max_lookahead: float = 2.0
+    ) -> NDArray[np.float64]:
+        """Find lookahead point with adaptive distance based on speed.
+        
+        Args:
+            start_idx: Starting path index
+            current_speed: Current robot speed (m/s)
+            min_lookahead: Minimum lookahead distance (m)
+            max_lookahead: Maximum lookahead distance (m)
+            
+        Returns:
+            Lookahead point [x, y]
+        """
+        # Adaptive lookahead: faster = longer lookahead
+        lookahead_gain = 0.5
+        adaptive_dist = min_lookahead + lookahead_gain * current_speed
+        adaptive_dist = np.clip(adaptive_dist, min_lookahead, max_lookahead)
+        
+        # Temporarily set lookahead distance
+        original_lookahead = self._lookahead_dist
+        self._lookahead_dist = adaptive_dist
+        try:
+            return self.find_lookahead_point(start_idx)
+        finally:
+            self._lookahead_dist = original_lookahead
+
+    def get_curvature_at_index(self, index: int) -> float:
+        """Get curvature at a specific path index.
+        
+        Args:
+            index: Path point index
+            
+        Returns:
+            Curvature (1/m) at that point
+        """
+        if len(self._path) < 3 or index < 0 or index >= len(self._path):
+            return 0.0
+        
+        # Use three-point method
+        if index == 0:
+            p0, p1, p2 = self._path[0], self._path[1], self._path[2]
+        elif index == len(self._path) - 1:
+            p0, p1, p2 = (
+                self._path[-3],
+                self._path[-2],
+                self._path[-1],
+            )
+        else:
+            p0, p1, p2 = (
+                self._path[index - 1],
+                self._path[index],
+                self._path[index + 1],
+            )
+        
+        # Compute angle change
+        v1 = p1 - p0
+        v2 = p2 - p1
+        
+        norm1 = np.linalg.norm(v1)
+        norm2 = np.linalg.norm(v2)
+        
+        if norm1 < 1e-6 or norm2 < 1e-6:
+            return 0.0
+        
+        v1 = v1 / norm1
+        v2 = v2 / norm2
+        
+        cos_angle = np.clip(np.dot(v1, v2), -1.0, 1.0)
+        angle = np.arccos(cos_angle)
+        
+        # Curvature = angle / arc_length
+        arc_length = (norm1 + norm2) / 2.0
+        if arc_length > 1e-6:
+            return float(abs(angle) / arc_length)
+        
+        return 0.0
+
+    def get_signed_cross_track_error(self, pos: NDArray[np.float64]) -> float:
+        """Signed lateral distance from robot to path (left positive, right negative).
+        
+        Args:
+            pos: Robot position [x, y]
+            
+        Returns:
+            Signed cross-track error (m). Positive = left of path, negative = right of path.
+        """
+        index = self.find_closest_point_index(pos)
+        p = self._path[index]
+
+        # Choose a path tangent at this index
+        if index < len(self._path) - 1:
+            t = self._path[index + 1] - p
+        elif index > 0:
+            t = p - self._path[index - 1]
+        else:
+            return 0.0
+
+        norm_t = np.linalg.norm(t)
+        if norm_t < 1e-6:
+            return 0.0
+
+        t = t / norm_t  # Normalize tangent
+        v = pos - p  # Vector from path point to robot
+
+        # 2D cross product z-component: t × v
+        # Positive = robot left of path, negative = robot right of path
+        cross_z = t[0] * v[1] - t[1] * v[0]
+        return float(cross_z)
+
 
 def _make_cumulative_distance_array(array: NDArray[np.float64]) -> NDArray[np.float64]:
     """
