@@ -94,6 +94,7 @@ class GlobalPlanner(Resource):
         # Polling bookkeeping for coordinator task state
         self._last_task_state_poll: float = 0.0
         self._task_state_poll_period: float = 0.2  # seconds
+        self._replanning_in_progress: bool = False
 
     def start(self) -> None:
         self._local_planner.start()
@@ -138,7 +139,10 @@ class GlobalPlanner(Resource):
 
             # Poll task state and clear path/goal when it finishes
             now = time.perf_counter()
-            if now - self._last_task_state_poll >= self._task_state_poll_period:
+            if (
+                not self._replanning_in_progress
+                and now - self._last_task_state_poll >= self._task_state_poll_period
+            ):
                 self._last_task_state_poll = now
                 try:
                     task_state = self._coordinator.task_invoke(
@@ -146,7 +150,6 @@ class GlobalPlanner(Resource):
                         "get_state",
                         {},
                     )
-                    # Avoid repeated cancels
                     with self._lock:
                         has_goal = self._current_goal is not None
 
@@ -179,8 +182,21 @@ class GlobalPlanner(Resource):
                 self._goal_reached = arrived
                 self._replan_limiter.reset()
 
+        if but_will_try_again:
+            self._replanning_in_progress = True
+
         self.path.on_next(Path())
         self._local_planner.stop_planning()
+
+        if self._coordinator is not None and self._path_follower_task_name is not None:
+            try:
+                self._coordinator.task_invoke(  # type: ignore[call-arg, attr-defined]
+                    self._path_follower_task_name,
+                    "cancel",
+                    {},
+                )
+            except Exception as e:
+                logger.warning(f"Failed to cancel PathFollowerTask via coordinator: {e}")
 
         if not but_will_try_again:
             self.goal_reached.on_next(Bool(arrived))
@@ -363,6 +379,9 @@ class GlobalPlanner(Resource):
                 logger.error(f"Failed to start PathFollowerTask via coordinator: {e}")
         else:
             self._local_planner.start_planning(resampled_path)
+
+        # Planning complete — re-enable task-state polling.
+        self._replanning_in_progress = False
 
     def _find_wide_path(self, goal: Vector3, robot_pos: Vector3) -> Path | None:
         sizes_to_try: list[float] = [1.1]

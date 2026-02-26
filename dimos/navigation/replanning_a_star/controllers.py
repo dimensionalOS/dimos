@@ -270,6 +270,7 @@ class PurePursuitController:
         min_lookahead: float = 0.3,
         max_lookahead: float = 2.0,
         lookahead_gain: float = 0.5,
+        max_linear_speed: float = 0.8,
     ):
         """Initialize Pure Pursuit controller.
         
@@ -285,6 +286,7 @@ class PurePursuitController:
         self._min_lookahead = min_lookahead
         self._max_lookahead = max_lookahead
         self._lookahead_gain = lookahead_gain
+        self._max_linear_speed = max_linear_speed
     
     def advance(
         self,
@@ -320,9 +322,6 @@ class PurePursuitController:
 
         # Pure Pursuit geometry: signed curvature of arc to lookahead point.
         # Standard formula: κ = 2 * sin(α) / L  (sign comes from sin(α))
-        if distance_to_lookahead < 1e-6:
-            return Twist()
-
         if abs(heading_error) < 1e-6:
             curvature = 0.0
         else:

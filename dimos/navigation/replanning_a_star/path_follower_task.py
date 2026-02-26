@@ -129,7 +129,8 @@ class PathFollowerTask(BaseControlTask):
             control_frequency=100.0, 
             min_lookahead=0.2,
             max_lookahead=0.5,  
-            lookahead_gain=0.3,  
+            lookahead_gain=0.3,
+            max_linear_speed=self._config.max_linear_speed,  
         )
         # Cross-track PID controller for tighter lateral tracking
         self._cross_track_controller = PIDCrossTrackController(
@@ -314,9 +315,9 @@ class PathFollowerTask(BaseControlTask):
         self._velocity_profiler = VelocityProfiler(
             max_linear_speed=self._config.max_linear_speed,
             max_angular_speed=2.0,
-            max_linear_accel=2.0,
-            max_linear_decel=3.0,
-            max_centripetal_accel=2.5,
+            max_linear_accel=1.0,
+            max_linear_decel=2.0,
+            max_centripetal_accel=1.5,
             min_speed=0.1,
         )
 

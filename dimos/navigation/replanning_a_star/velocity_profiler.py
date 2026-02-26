@@ -32,12 +32,12 @@ class VelocityProfiler:
     
     def __init__(
         self,
-        max_linear_speed: float = 0.8,  # ~3-4x current 0.55 m/s
+        max_linear_speed: float = 0.8,  
         max_angular_speed: float = 1.5,
-        max_linear_accel: float = 1.0,  # m/s^2
-        max_linear_decel: float = 2.0,  # m/s^2 (braking can be faster)
-        max_centripetal_accel: float = 1.0,  # m/s^2 (lateral acceleration limit)
-        min_speed: float = 0.05,  # Minimum speed to avoid stalling
+        max_linear_accel: float = 1.0,  
+        max_linear_decel: float = 2.0,  
+        max_centripetal_accel: float = 1.0, 
+        min_speed: float = 0.05, 
     ):
         """Initialize velocity profiler.
         
@@ -55,6 +55,9 @@ class VelocityProfiler:
         self._max_linear_decel = max_linear_decel
         self._max_centripetal_accel = max_centripetal_accel
         self._min_speed = min_speed
+
+        self._cached_path_id: int | None = None
+        self._cached_profile: NDArray[np.float64] | None = None
     
     def compute_profile(self, path: Path) -> NDArray[np.float64]:
         """Compute velocity profile for entire path.
@@ -102,9 +105,14 @@ class VelocityProfiler:
         Returns:
             Velocity at that point (m/s)
         """
-        velocities = self.compute_profile(path)
-        idx = min(max(0, index), len(velocities) - 1)
-        return float(velocities[idx])
+        # The profile is recomputed only when the path object changes.
+        path_id = id(path)
+        if self._cached_path_id != path_id or self._cached_profile is None:
+            self._cached_profile = self.compute_profile(path)
+            self._cached_path_id = path_id
+
+        idx = min(max(0, index), len(self._cached_profile) - 1)
+        return float(self._cached_profile[idx])
     
     def _compute_curvatures(self, path_points: NDArray[np.float64]) -> NDArray[np.float64]:
         """Compute curvature at each path point.
