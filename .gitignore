@@ -69,3 +69,8 @@ yolo11n.pt
 .runtime/
 .beads/
 .logs/
+
+CLAUDE.MD
+/assets/teleop_certs/
+
+/.mcp.json

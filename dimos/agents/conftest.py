@@ -32,11 +32,6 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture
-def fixture_dir() -> Path:
-    return FIXTURE_DIR
-
-
-@pytest.fixture
 def agent_setup(request):
     coordinator = None
     transports: list[pLCMTransport] = []

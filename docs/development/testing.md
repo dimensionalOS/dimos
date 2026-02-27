@@ -8,23 +8,27 @@ uv sync --all-extras --no-extra dds
 
 ## Types of tests
 
-There are different types of tests based on what their goal is:
+In general, there are different types of tests based on what their goal is:
 
 | Type | Description | Mocking | Speed |
 |------|-------------|---------|-------|
-| Unit | Test a small individual piece of code | All dependencies | Very fast |
-| Integration | Test the integration between multiple units of code | Most dependencies | Some fast, some slow |
-| Functional | Test a particular desired functionality | Some dependencies | Some fast, some slow |
+| Unit | Test a small individual piece of code | All external systems | Very fast |
+| Integration | Test the integration between multiple units of code | Most external systems | Some fast, some slow |
+| Functional | Test a particular desired functionality | Some external systems | Some fast, some slow |
 | End-to-end | Test the entire system as a whole from the perspective of the user | None | Very slow |
 
 The distinction between unit, integration, and functional tests is often debated and rarely productive.
 
 Rather than waste time on classifying tests, it's better to separate tests by how they are used:
 
-* **fast tests**: tests which you can run after each code change (people often run them with filesystem watchers: whenever a file is saved, automatically run the tests)
-* **slow tests**: tests which you run every once in a while to make sure you haven't broken anything (maybe every commit, but definitely before publishing a PR)
+| Test Group | When to run | Typical usage |
+|------------|-------------|---------------|
+| **fast tests** | after each code change | often run with filesystem watchers so tests rerun whenever a file is saved |
+| **slow tests** | every once in a while to make sure you haven't broken anything | maybe every commit, but definitely before publishing a PR |
 
 The purpose of running tests in a loop is to get immediate feedback. The faster the loop, the easier it is to identify a problem since the source is the tiny bit of code you changed.
+
+For the purposes of DimOS, slow tests are marked with `@pytest.mark.slow` and fast tests are all the remaining ones.
 
 ## Usage
 
@@ -42,7 +46,7 @@ This is the same as:
 pytest dimos
 ```
 
-The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes slow markers (like `integration`, `heavy`, `e2e`, etc.), so plain `pytest dimos` only runs fast tests.
+The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes the `slow`/`mujoco`/`tool`. So plain `pytest dimos` only runs fast tests.
 
 ### Slow tests
 
@@ -52,13 +56,13 @@ Run the slow tests:
 ./bin/pytest-slow
 ```
 
-This overrides the default `-m` filter to include most markers. When writing or debugging a specific slow test, override `-m` yourself:
+(This is just a shortcut for `pytest -m 'not (tool or mujoco)' dimos`. I.e., run both fast tests and slow tests, but not `tool` or `mujoco`.)
+
+When writing or debugging a specific slow test, override `-m` yourself to run it:
 
 ```bash
-pytest -m integration dimos/path/to/test_something.py
+pytest -m slow dimos/path/to/test_something.py
 ```
-
-Note: passing `-m` on the command line overrides the default from `addopts`, so you get exactly the marker set you asked for.
 
 ## Writing tests
 
@@ -120,3 +124,17 @@ There are other useful things in `mocker`, like `mocker.MagicMock()` for creatin
 | `--pdb` | Drop into the debugger when a test fails |
 | `--tb=short` | Shorter tracebacks |
 | `--durations=0` | Measure the speed of each test |
+
+## Markers
+
+We have a few markers in use now.
+
+* `slow`: used to mark tests that take more than 1 second to finish.
+* `tool`: tests which require human interaction. I don't like this. Please don't use them.
+* `mujoco`: tests which use `MuJoCo`. These are very slow and don't work in CI currently.
+
+If a test needs to be skipped for some reason, please use on of these markers, or add another one.
+
+* `skipif_in_ci`: tests which cannot run in GitHub Actions
+* `skipif_no_openai`: tests which require an `OPENAI_API_KEY` key in the env
+* `skipif_no_alibaba`: tests which require an `ALIBABA_API_KEY` key in the env

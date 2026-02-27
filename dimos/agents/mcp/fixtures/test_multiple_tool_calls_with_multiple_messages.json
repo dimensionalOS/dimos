@@ -1,0 +1,116 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "locate_person",
+          "args": {
+            "name": "John"
+          },
+          "id": "call_eOoKTtyvvXBk171ro4bXzW5C",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "register_person",
+          "args": {
+            "name": "John"
+          },
+          "id": "call_tTB5A3q60teaBrdonRvCwcwM",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "locate_person",
+          "args": {
+            "name": "John"
+          },
+          "id": "call_uEhafkL3f7BLQKhRuZlEAany",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "go_to_location",
+          "args": {
+            "description": "kitchen"
+          },
+          "id": "call_oxnH4gCGi6aSeVLPrhnp31yP",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I have moved to the kitchen where John is located.",
+      "tool_calls": []
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "locate_person",
+          "args": {
+            "name": "Jane"
+          },
+          "id": "call_2HinxBmffnafloaP4b7DkBZW",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "register_person",
+          "args": {
+            "name": "Jane"
+          },
+          "id": "call_XtHavMmgpzrhmVi3XB6RUFrW",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "locate_person",
+          "args": {
+            "name": "Jane"
+          },
+          "id": "call_fRHHO4cPWDXi4IvQ4qQqidwT",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "go_to_location",
+          "args": {
+            "description": "living room"
+          },
+          "id": "call_Hcc7C0FMWS8rfKwMP0sUL7XN",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I have moved to the living room where Jane is located.",
+      "tool_calls": []
+    }
+  ]
+}

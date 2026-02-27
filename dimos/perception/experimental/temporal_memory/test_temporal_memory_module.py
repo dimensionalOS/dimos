@@ -76,9 +76,9 @@ class VideoReplayModule(Module):
         logger.info("VideoReplayModule stopped")
 
 
-@pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM replay + dataset not CI-safe.")
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
-@pytest.mark.neverending
+@pytest.mark.skipif_in_ci
+@pytest.mark.skipif_no_openai
+@pytest.mark.slow
 class TestTemporalMemoryModule:
     @pytest.fixture(scope="function")
     def temp_dir(self):
@@ -221,7 +221,3 @@ class TestTemporalMemoryModule:
         assert (output_path / "frames_index.jsonl").exists(), "frames_index.jsonl should exist"
 
         logger.info("All temporal memory module tests passed!")
-
-
-if __name__ == "__main__":
-    pytest.main(["-v", "-s", __file__])

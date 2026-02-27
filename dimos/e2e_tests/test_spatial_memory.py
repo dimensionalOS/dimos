@@ -14,7 +14,6 @@
 
 from collections.abc import Callable
 import math
-import os
 import time
 
 import pytest
@@ -23,8 +22,8 @@ from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
 
 
-@pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
+@pytest.mark.skipif_in_ci
+@pytest.mark.skipif_no_openai
 @pytest.mark.mujoco
 def test_spatial_memory_navigation(
     lcm_spy: LcmSpy,

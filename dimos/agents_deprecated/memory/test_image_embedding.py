@@ -22,12 +22,13 @@ import time
 import numpy as np
 import pytest
 from reactivex import operators as ops
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.agents_deprecated.memory.image_embedding import ImageEmbeddingProvider
 from dimos.stream.video_provider import VideoProvider
 
 
-@pytest.mark.heavy
+@pytest.mark.slow
 class TestImageEmbedding:
     """Test class for CLIP image embedding functionality."""
 
@@ -45,6 +46,7 @@ class TestImageEmbedding:
 
     def test_clip_embedding_process_video(self) -> None:
         """Test CLIP embedding provider can process video frames and return embeddings."""
+        test_scheduler = ThreadPoolScheduler(max_workers=4)
         try:
             from dimos.utils.data import get_data
 
@@ -53,7 +55,9 @@ class TestImageEmbedding:
             embedding_provider = ImageEmbeddingProvider(model_name="clip", dimensions=512)
 
             assert os.path.exists(video_path), f"Test video not found: {video_path}"
-            video_provider = VideoProvider(dev_name="test_video", video_source=video_path)
+            video_provider = VideoProvider(
+                dev_name="test_video", video_source=video_path, pool_scheduler=test_scheduler
+            )
 
             video_stream = video_provider.capture_video_as_observable(realtime=False, fps=15)
 
@@ -146,6 +150,8 @@ class TestImageEmbedding:
 
         except Exception as e:
             pytest.fail(f"Test failed with error: {e}")
+        finally:
+            test_scheduler.executor.shutdown(wait=True)
 
     def test_clip_embedding_similarity(self) -> None:
         """Test CLIP embedding similarity search and text-to-image queries."""
@@ -205,7 +211,3 @@ class TestImageEmbedding:
 
         except Exception as e:
             pytest.fail(f"Similarity test failed with error: {e}")
-
-
-if __name__ == "__main__":
-    pytest.main(["-v", "--disable-warnings", __file__])

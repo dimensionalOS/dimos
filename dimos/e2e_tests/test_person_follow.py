@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections.abc import Callable, Generator
-import os
 import threading
 import time
 
@@ -53,8 +52,8 @@ def start_person_track() -> Generator[StartPersonTrack, None, None]:
         publisher.stop()
 
 
-@pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
+@pytest.mark.skipif_in_ci
+@pytest.mark.skipif_no_openai
 @pytest.mark.mujoco
 def test_person_follow(
     lcm_spy: LcmSpy,

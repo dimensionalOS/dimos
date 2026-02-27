@@ -18,7 +18,6 @@ These tests start a real coordinator process and communicate via LCM/RPC.
 Unlike unit tests, these verify the full system integration.
 """
 
-import os
 import time
 
 import pytest
@@ -29,8 +28,8 @@ from dimos.msgs.sensor_msgs import JointState
 from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint, TrajectoryState
 
 
-@pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM doesn't work in CI.")
-@pytest.mark.e2e
+@pytest.mark.skipif_in_ci
+@pytest.mark.slow
 class TestControlCoordinatorE2E:
     """End-to-end tests for ControlCoordinator."""
 

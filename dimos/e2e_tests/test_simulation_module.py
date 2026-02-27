@@ -14,8 +14,6 @@
 
 """End-to-end tests for the simulation module."""
 
-import os
-
 import pytest
 
 from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
@@ -31,8 +29,8 @@ def _positions_within_tolerance(
     return all(abs(positions[i] - target[i]) <= tolerance for i in range(len(target)))
 
 
-@pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM doesn't work in CI.")
-@pytest.mark.e2e
+@pytest.mark.skipif_in_ci
+@pytest.mark.slow
 class TestSimulationModuleE2E:
     def test_xarm7_joint_state_published(self, lcm_spy, start_blueprint) -> None:
         joint_state_topic = "/xarm/joint_states#sensor_msgs.JointState"

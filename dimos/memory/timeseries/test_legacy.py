@@ -13,12 +13,16 @@
 # limitations under the License.
 """Tests specific to LegacyPickleStore."""
 
+import pytest
+
 from dimos.memory.timeseries.legacy import LegacyPickleStore
 
 
 class TestLegacyPickleStoreRealData:
     """Test LegacyPickleStore with real recorded data."""
 
+    @pytest.mark.skipif_in_ci
+    @pytest.mark.slow
     def test_read_lidar_recording(self) -> None:
         """Test reading from unitree_go2_bigoffice/lidar recording."""
         store = LegacyPickleStore("unitree_go2_bigoffice/lidar")

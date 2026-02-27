@@ -1,0 +1,34 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "register_user",
+          "args": {
+            "name": "Paul"
+          },
+          "id": "call_NrrizXSIFaeCLuG9i05IwDy3",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "register_user",
+          "args": {
+            "name": "paul"
+          },
+          "id": "call_2QPx4GsL61Xjrggbq7afXTjn",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "The user named 'paul' has been registered successfully.",
+      "tool_calls": []
+    }
+  ]
+}

@@ -30,6 +30,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from typing import Any
 
 
@@ -78,7 +79,7 @@ def get_git_tracked_files(root: Path) -> list[Path]:
         return []
 
 
-def build_file_index(root: Path) -> dict[str, list[Path]]:
+def build_file_index(root: Path, tracked_files: list[Path] | None = None) -> dict[str, list[Path]]:
     """
     Build an index mapping filename suffixes to full paths.
 
@@ -89,7 +90,8 @@ def build_file_index(root: Path) -> dict[str, list[Path]]:
     - dimos/protocol/service/spec.py
     """
     index: dict[str, list[Path]] = defaultdict(list)
-    tracked_files = get_git_tracked_files(root)
+    if tracked_files is None:
+        tracked_files = get_git_tracked_files(root)
 
     for rel_path in tracked_files:
         parts = rel_path.parts
@@ -102,7 +104,7 @@ def build_file_index(root: Path) -> dict[str, list[Path]]:
     return index
 
 
-def build_doc_index(root: Path) -> dict[str, list[Path]]:
+def build_doc_index(root: Path, tracked_files: list[Path] | None = None) -> dict[str, list[Path]]:
     """
     Build an index mapping lowercase doc names to .md file paths.
 
@@ -113,7 +115,8 @@ def build_doc_index(root: Path) -> dict[str, list[Path]]:
     - "modules" -> [Path("docs/modules/index.md")] (if modules/index.md exists)
     """
     index: dict[str, list[Path]] = defaultdict(list)
-    tracked_files = get_git_tracked_files(root)
+    if tracked_files is None:
+        tracked_files = get_git_tracked_files(root)
 
     for rel_path in tracked_files:
         if rel_path.suffix != ".md":
@@ -144,11 +147,78 @@ def find_symbol_line(file_path: Path, symbol: str) -> int | None:
     return None
 
 
+# Extensions that indicate a backticked term is a filename, not a symbol
+_FILE_EXTENSIONS = frozenset(
+    (
+        ".py",
+        ".md",
+        ".ts",
+        ".js",
+        ".go",
+        ".rs",
+        ".c",
+        ".h",
+        ".cpp",
+        ".hpp",
+        ".java",
+        ".rb",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".toml",
+        ".sh",
+        ".lua",
+    )
+)
+
+
 def extract_other_backticks(line: str, file_ref: str) -> list[str]:
     """Extract other backticked terms from a line, excluding the file reference."""
     pattern = r"`([^`]+)`"
     matches = re.findall(pattern, line)
-    return [m for m in matches if m != file_ref and not m.endswith(".py") and "/" not in m]
+    return [
+        m
+        for m in matches
+        if m != file_ref and "/" not in m and not any(m.endswith(ext) for ext in _FILE_EXTENSIONS)
+    ]
+
+
+def score_path_similarity(candidate: Path, original_path: str) -> int:
+    """Score how well a candidate matches the original link's path.
+
+    Counts common directory names plus a bonus for matching filename.
+    Higher = better match.
+    """
+    orig = Path(original_path)
+    orig_dirs = set(orig.parent.parts)
+    cand_dirs = set(candidate.parent.parts)
+    score = len(orig_dirs & cand_dirs)
+    if candidate.name == orig.name:
+        score += 1
+    return score
+
+
+def pick_best_candidate(candidates: list[Path], original_path: str) -> Path | None:
+    """Pick the best candidate by path similarity. Returns None if tied."""
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    scored = sorted(candidates, key=lambda c: score_path_similarity(c, original_path), reverse=True)
+    top = score_path_similarity(scored[0], original_path)
+    second = score_path_similarity(scored[1], original_path)
+    if top > second:
+        return scored[0]
+    return None  # Ambiguous tie
+
+
+def resolve_candidates(candidates: list[Path], original_path: str) -> Path | None:
+    """Resolve candidates to a single path. Returns None if 0 or ambiguous."""
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        return pick_best_candidate(candidates, original_path)
+    return None
 
 
 def generate_link(
@@ -245,14 +315,32 @@ def process_markdown(
 
     Returns (new_content, changes, errors).
     """
-    changes = []
-    errors = []
+    changes: list[str] = []
+    errors: list[str] = []
 
-    # Pattern 1: [`filename`](link) - code file links
+    # Pattern 1: [`filename`](link) - backtick code links with symbol auto-linking
     code_pattern = r"\[`([^`]+)`\]\(([^)]*)\)"
 
-    # Pattern 2: [Text](.md) - doc file links
-    doc_pattern = r"\[([^\]]+)\]\(\.md\)"
+    # Pattern 2: [Text](url) - all non-backtick, non-image links
+    # (?<!!) excludes image links ![alt](url)
+    # [^\]`] as first char excludes backtick-wrapped text (handled by code_pattern)
+    link_pattern = r"(?<!!)\[([^\]`][^\]]*)\]\(([^)]+)\)"
+
+    def _search_fallback(link_path: str, original_ref: str) -> tuple[Path | None, list[Path]]:
+        """Search for a broken link's target by name in doc_index or file_index."""
+        path = Path(link_path)
+        if path.suffix == ".md":
+            stem = path.stem.lower()
+            if stem == "index":
+                stem = path.parent.name.lower()
+            candidates = doc_index.get(stem, []) if doc_index else []
+        elif path.suffix:
+            # Has a file extension — search file_index by filename
+            candidates = file_index.get(path.name, [])
+        else:
+            # No extension (likely a directory) — no fallback search
+            return None, []
+        return resolve_candidates(candidates, original_ref), candidates
 
     def replace_code_match(match: re.Match[str]) -> str:
         file_ref = match.group(1)
@@ -267,17 +355,18 @@ def process_markdown(
         if "." not in file_ref and "/" not in file_ref:
             return full_match
 
-        # Look up in index
+        # Look up in index, with disambiguation
         candidates = file_index.get(file_ref, [])
+        resolved_path = resolve_candidates(candidates, file_ref)
 
-        if len(candidates) == 0:
-            errors.append(f"No file matching '{file_ref}' found in codebase")
+        if resolved_path is None:
+            if len(candidates) > 1:
+                errors.append(
+                    f"'{file_ref}' matches multiple files: {[str(c) for c in candidates]}"
+                )
+            else:
+                errors.append(f"No file matching '{file_ref}' found in codebase")
             return full_match
-        elif len(candidates) > 1:
-            errors.append(f"'{file_ref}' matches multiple files: {[str(c) for c in candidates]}")
-            return full_match
-
-        resolved_path = candidates[0]
 
         # Determine line fragment
         line_fragment = ""
@@ -313,33 +402,107 @@ def process_markdown(
 
         return new_match
 
-    def replace_doc_match(match: re.Match[str]) -> str:
-        """Replace [Text](.md) with resolved doc path."""
-        if doc_index is None:
-            return match.group(0)
-
+    def replace_link_match(match: re.Match[str]) -> str:
+        """Handle all non-backtick links: doc placeholders, path validation."""
         link_text = match.group(1)
+        raw_link = match.group(2)
         full_match = match.group(0)
-        lookup_key = link_text.lower()
 
-        # Look up in doc index
-        candidates = doc_index.get(lookup_key, [])
-
-        if len(candidates) == 0:
-            errors.append(f"No doc matching '{link_text}' found")
-            return full_match
-        elif len(candidates) > 1:
-            errors.append(f"'{link_text}' matches multiple docs: {[str(c) for c in candidates]}")
+        # Skip URLs
+        if raw_link.startswith(("http://", "https://", "mailto:")):
             return full_match
 
-        resolved_path = candidates[0]
-        new_link = generate_link(resolved_path, root, doc_path, link_mode, github_url, github_ref)
-        new_match = f"[{link_text}]({new_link})"
+        # Skip anchor-only links
+        if raw_link.startswith("#"):
+            return full_match
 
-        if new_match != full_match:
-            changes.append(f"  {link_text}: .md -> {new_link}")
+        # Extract fragment if present
+        fragment = ""
+        link_path = raw_link
+        if "#" in raw_link:
+            link_path, frag = raw_link.split("#", 1)
+            fragment = "#" + frag
 
-        return new_match
+        # .md placeholder: [Text](.md) → doc_index lookup by link text
+        if link_path == ".md":
+            if doc_index is None:
+                return full_match
+            lookup_key = link_text.lower()
+            candidates = doc_index.get(lookup_key, [])
+            resolved = resolve_candidates(candidates, lookup_key)
+            if resolved is not None:
+                new_link = generate_link(
+                    resolved, root, doc_path, link_mode, github_url, github_ref, fragment
+                )
+                result = f"[{link_text}]({new_link})"
+                if result != full_match:
+                    changes.append(f"  {link_text}: .md -> {new_link}")
+                return result
+            if len(candidates) > 1:
+                errors.append(
+                    f"'{link_text}' matches multiple docs: {[str(c) for c in candidates]}"
+                )
+            else:
+                errors.append(f"No doc matching '{link_text}' found")
+            return full_match
+
+        # Absolute path
+        if link_path.startswith("/"):
+            target = root / link_path.lstrip("/")
+            if target.exists():
+                return full_match  # Valid, leave as-is
+
+            # Broken — try fallback search
+            resolved, candidates = _search_fallback(link_path, link_path.lstrip("/"))
+            if resolved is not None:
+                new_link = generate_link(
+                    resolved, root, doc_path, link_mode, github_url, github_ref, fragment
+                )
+                changes.append(f"  {link_text}: {raw_link} -> {new_link} (fixed broken link)")
+                return f"[{link_text}]({new_link})"
+            if len(candidates) > 1:
+                errors.append(
+                    f"Broken link '{raw_link}': ambiguous, matches {[str(c) for c in candidates]}"
+                )
+            else:
+                errors.append(f"Broken link: '{raw_link}' does not exist")
+            return full_match
+
+        # Relative path — resolve from doc file's directory
+        doc_dir = doc_path.parent
+        resolved_abs = (doc_dir / link_path).resolve()
+
+        try:
+            rel_to_root = resolved_abs.relative_to(root)
+        except ValueError:
+            errors.append(f"Link '{raw_link}' resolves outside repo root")
+            return full_match
+
+        if resolved_abs.exists():
+            # File exists — convert to appropriate link format
+            new_link = generate_link(
+                rel_to_root, root, doc_path, link_mode, github_url, github_ref, fragment
+            )
+            result = f"[{link_text}]({new_link})"
+            if result != full_match:
+                changes.append(f"  {link_text}: {raw_link} -> {new_link}")
+            return result
+
+        # Target doesn't exist — try fallback search
+        resolved, candidates = _search_fallback(link_path, raw_link)
+        if resolved is not None:
+            new_link = generate_link(
+                resolved, root, doc_path, link_mode, github_url, github_ref, fragment
+            )
+            changes.append(f"  {link_text}: {raw_link} -> {new_link} (found by search)")
+            return f"[{link_text}]({new_link})"
+        if len(candidates) > 1:
+            errors.append(
+                f"Broken link '{raw_link}': ambiguous, matches {[str(c) for c in candidates]}"
+            )
+        else:
+            errors.append(f"Broken link '{raw_link}': target not found")
+        return full_match
 
     # Split by ignore regions and only process non-ignored parts
     regions = split_by_ignore_regions(content)
@@ -347,9 +510,9 @@ def process_markdown(
 
     for region_content, should_process in regions:
         if should_process:
-            # Process code links first, then doc links
+            # Process code links first, then all other links
             processed = re.sub(code_pattern, replace_code_match, region_content)
-            processed = re.sub(doc_pattern, replace_doc_match, processed)
+            processed = re.sub(link_pattern, replace_link_match, processed)
             result_parts.append(processed)
         else:
             result_parts.append(region_content)
@@ -377,6 +540,7 @@ Finds [`filename.py`](...) patterns and resolves them to actual file paths.
 Also auto-links symbols: `Configurable` on same line adds #L<line> fragment.
 
 Supports doc-to-doc linking: [Modules](.md) resolves to modules.md or modules/index.md.
+Validates all file links and fixes broken relative/absolute paths by searching the index.
 
 Usage:
   doclinks [options] <paths...>
@@ -471,8 +635,9 @@ def main() -> None:
         sys.exit(1)
 
     print(f"Building file index from {root}...")
-    file_index = build_file_index(root)
-    doc_index = build_doc_index(root)
+    tracked_files = get_git_tracked_files(root)
+    file_index = build_file_index(root, tracked_files)
+    doc_index = build_doc_index(root, tracked_files)
     print(
         f"Indexed {sum(len(v) for v in file_index.values())} file paths, {len(doc_index)} doc names"
     )
@@ -551,8 +716,6 @@ def main() -> None:
         observer.start()
         try:
             while True:
-                import time
-
                 time.sleep(1)
         except KeyboardInterrupt:
             observer.stop()

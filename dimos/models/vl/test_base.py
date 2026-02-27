@@ -1,4 +1,3 @@
-import os
 from unittest.mock import MagicMock
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
@@ -78,7 +77,7 @@ def test_query_detections_mocked() -> None:
 
 
 @pytest.mark.tool
-@pytest.mark.skipif(not os.getenv("ALIBABA_API_KEY"), reason="ALIBABA_API_KEY not set")
+@pytest.mark.skipif_no_alibaba
 def test_query_detections_real() -> None:
     """Test query_detections with real API calls (requires API key)."""
     # Load test image

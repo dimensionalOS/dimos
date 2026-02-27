@@ -153,8 +153,3 @@ def test_bounding_box_intersects() -> None:
         pass
 
     print("✓ All bounding box intersection tests passed!")
-
-
-if __name__ == "__main__":
-    test_lcm_encode_decode()
-    test_bounding_box_intersects()

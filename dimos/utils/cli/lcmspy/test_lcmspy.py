@@ -20,28 +20,46 @@ from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
 from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy, GraphTopic, LCMSpy, Topic as TopicSpy
 
 
-@pytest.mark.lcm
-def test_spy_basic() -> None:
+@pytest.fixture
+def pickle_lcm():
     lcm = PickleLCM(autoconf=True)
     lcm.start()
+    yield lcm
+    lcm.stop()
 
-    lcmspy = LCMSpy(autoconf=True)
-    lcmspy.start()
 
+@pytest.fixture
+def lcmspy_instance():
+    spy = LCMSpy(autoconf=True)
+    spy.start()
+    yield spy
+    spy.stop()
+
+
+@pytest.fixture
+def graph_lcmspy_instance():
+    spy = GraphLCMSpy(autoconf=True, graph_log_window=0.1)
+    spy.start()
+    time.sleep(0.2)  # Wait for thread to start
+    yield spy
+    spy.stop()
+
+
+def test_spy_basic(pickle_lcm, lcmspy_instance) -> None:
     video_topic = Topic(topic="/video")
     odom_topic = Topic(topic="/odom")
 
     for i in range(5):
-        lcm.publish(video_topic, f"video frame {i}")
+        pickle_lcm.publish(video_topic, f"video frame {i}")
         time.sleep(0.1)
         if i % 2 == 0:
-            lcm.publish(odom_topic, f"odometry data {i / 2}")
+            pickle_lcm.publish(odom_topic, f"odometry data {i / 2}")
 
     # Wait a bit for messages to be processed
     time.sleep(0.5)
 
     # Test statistics for video topic
-    video_topic_spy = lcmspy.topic["/video"]
+    video_topic_spy = lcmspy_instance.topic["/video"]
     assert video_topic_spy is not None
 
     # Test frequency (should be around 10 Hz for 5 messages in ~0.5 seconds)
@@ -60,7 +78,7 @@ def test_spy_basic() -> None:
     print(f"Video topic average message size: {avg_size:.2f} bytes")
 
     # Test statistics for odom topic
-    odom_topic_spy = lcmspy.topic["/odom"]
+    odom_topic_spy = lcmspy_instance.topic["/odom"]
     assert odom_topic_spy is not None
 
     freq = odom_topic_spy.freq(1.0)
@@ -79,7 +97,6 @@ def test_spy_basic() -> None:
     print(f"Odom topic: {odom_topic_spy}")
 
 
-@pytest.mark.lcm
 def test_topic_statistics_direct() -> None:
     """Test Topic statistics directly without LCM"""
 
@@ -128,7 +145,6 @@ def test_topic_cleanup() -> None:
     assert topic.message_history[0][0] > time.time() - 10  # Recent message
 
 
-@pytest.mark.lcm
 def test_graph_topic_basic() -> None:
     """Test GraphTopic basic functionality"""
     topic = GraphTopic("/test_graph")
@@ -144,79 +160,59 @@ def test_graph_topic_basic() -> None:
     assert topic.bandwidth_history[0] > 0
 
 
-@pytest.mark.lcm
-def test_graph_lcmspy_basic() -> None:
+def test_graph_lcmspy_basic(graph_lcmspy_instance) -> None:
     """Test GraphLCMSpy basic functionality"""
-    spy = GraphLCMSpy(autoconf=True, graph_log_window=0.1)
-    spy.start()
-    time.sleep(0.2)  # Wait for thread to start
-
     # Simulate a message
-    spy.msg("/test", b"test data")
+    graph_lcmspy_instance.msg("/test", b"test data")
     time.sleep(0.2)  # Wait for graph update
 
     # Should create GraphTopic with history
-    topic = spy.topic["/test"]
+    topic = graph_lcmspy_instance.topic["/test"]
     assert isinstance(topic, GraphTopic)
     assert len(topic.freq_history) > 0
     assert len(topic.bandwidth_history) > 0
 
-    spy.stop()
 
-
-@pytest.mark.lcm
-def test_lcmspy_global_totals() -> None:
+def test_lcmspy_global_totals(lcmspy_instance) -> None:
     """Test that LCMSpy tracks global totals as a Topic itself"""
-    spy = LCMSpy(autoconf=True)
-    spy.start()
-
     # Send messages to different topics
-    spy.msg("/video", b"video frame data")
-    spy.msg("/odom", b"odometry data")
-    spy.msg("/imu", b"imu data")
+    lcmspy_instance.msg("/video", b"video frame data")
+    lcmspy_instance.msg("/odom", b"odometry data")
+    lcmspy_instance.msg("/imu", b"imu data")
 
     # Verify each test topic received exactly one message (ignore LCM discovery packets)
     for t in ("/video", "/odom", "/imu"):
-        assert len(spy.topic[t].message_history) == 1
+        assert len(lcmspy_instance.topic[t].message_history) == 1
 
     # Check global statistics
-    global_freq = spy.freq(1.0)
-    global_kbps = spy.kbps(1.0)
-    global_size = spy.size(1.0)
+    global_freq = lcmspy_instance.freq(1.0)
+    global_kbps = lcmspy_instance.kbps(1.0)
+    global_size = lcmspy_instance.size(1.0)
 
     assert global_freq > 0
     assert global_kbps > 0
     assert global_size > 0
 
     print(f"Global frequency: {global_freq:.2f} Hz")
-    print(f"Global bandwidth: {spy.kbps_hr(1.0)}")
+    print(f"Global bandwidth: {lcmspy_instance.kbps_hr(1.0)}")
     print(f"Global avg message size: {global_size:.0f} bytes")
 
-    spy.stop()
 
-
-@pytest.mark.lcm
-def test_graph_lcmspy_global_totals() -> None:
+def test_graph_lcmspy_global_totals(graph_lcmspy_instance) -> None:
     """Test that GraphLCMSpy tracks global totals with history"""
-    spy = GraphLCMSpy(autoconf=True, graph_log_window=0.1)
-    spy.start()
-    time.sleep(0.2)
-
     # Send messages
-    spy.msg("/video", b"video frame data")
-    spy.msg("/odom", b"odometry data")
+    graph_lcmspy_instance.msg("/video", b"video frame data")
+    graph_lcmspy_instance.msg("/odom", b"odometry data")
     time.sleep(0.2)  # Wait for graph update
 
     # Update global graphs
-    spy.update_graphs(1.0)
+    graph_lcmspy_instance.update_graphs(1.0)
 
     # Should have global history
-    assert len(spy.freq_history) == 1
-    assert len(spy.bandwidth_history) == 1
-    assert spy.freq_history[0] > 0
-    assert spy.bandwidth_history[0] > 0
+    assert len(graph_lcmspy_instance.freq_history) == 1
+    assert len(graph_lcmspy_instance.bandwidth_history) == 1
+    assert graph_lcmspy_instance.freq_history[0] > 0
+    assert graph_lcmspy_instance.bandwidth_history[0] > 0
 
-    print(f"Global frequency history: {spy.freq_history[0]:.2f} Hz")
-    print(f"Global bandwidth history: {spy.bandwidth_history[0]:.2f} kB/s")
-
-    spy.stop()
+    print(f"Global frequency history: {graph_lcmspy_instance.freq_history[0]:.2f} Hz")
+    print(f"Global bandwidth history: {graph_lcmspy_instance.bandwidth_history[0]:.2f} kB/s")

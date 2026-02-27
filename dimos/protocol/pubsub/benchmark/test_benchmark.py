@@ -29,6 +29,7 @@ from dimos.protocol.pubsub.benchmark.type import (
     MsgGen,
     PubSubContext,
 )
+from dimos.utils.human import human_bytes
 
 # Message sizes for throughput benchmarking (powers of 2 from 64B to 10MB)
 MSG_SIZES = [
@@ -56,15 +57,6 @@ MAX_MESSAGES = 5000
 RECEIVE_TIMEOUT = 1.0
 
 
-def size_id(size: int) -> str:
-    """Convert byte size to human-readable string for test IDs."""
-    if size >= 1048576:
-        return f"{size // 1048576}MB"
-    if size >= 1024:
-        return f"{size // 1024}KB"
-    return f"{size}B"
-
-
 def pubsub_id(testcase: Case[Any, Any]) -> str:
     """Extract pubsub implementation name from context manager function name."""
     name: str = testcase.pubsub_context.__name__
@@ -86,7 +78,9 @@ def benchmark_results() -> Generator[BenchmarkResults, None, None]:
 
 
 @pytest.mark.tool
-@pytest.mark.parametrize("msg_size", MSG_SIZES, ids=[size_id(s) for s in MSG_SIZES])
+@pytest.mark.parametrize(
+    "msg_size", MSG_SIZES, ids=[human_bytes(s, concise=True, decimals=0) for s in MSG_SIZES]
+)
 @pytest.mark.parametrize("pubsub_context, msggen", testcases, ids=[pubsub_id(t) for t in testcases])
 def test_throughput(
     pubsub_context: PubSubContext[Any, Any],

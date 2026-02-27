@@ -101,7 +101,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 
 ## Adding a Custom Arm
 
-[guide is here](adding_a_custom_arm.md)
+[guide is here](/docs/capabilities/manipulation/adding_a_custom_arm.md)
 
 ## Key Files
 

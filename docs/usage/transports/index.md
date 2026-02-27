@@ -79,7 +79,7 @@ We’ll go through these layers top-down.
 
 ## Using transports with blueprints
 
-See [Blueprints](blueprints.md) for the blueprint API.
+See [Blueprints](/docs/usage/blueprints.md) for the blueprint API.
 
 From [`unitree/go2/blueprints/__init__.py`](/dimos/robot/unitree/go2/blueprints/__init__.py).
 
@@ -160,7 +160,7 @@ Received: (480, 640, 3)
 Received: (480, 640, 3)
 ```
 
-See [Modules](modules.md) for more on module architecture.
+See [Modules](/docs/usage/modules.md) for more on module architecture.
 
 ---
 

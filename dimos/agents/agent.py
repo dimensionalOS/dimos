@@ -46,9 +46,8 @@ class AgentConfig(ModuleConfig):
     model_fixture: str | None = None
 
 
-class Agent(Module):
-    default_config: type[AgentConfig] = AgentConfig
-    config: AgentConfig
+class Agent(Module[AgentConfig]):
+    default_config = AgentConfig
     agent: Out[BaseMessage]
     human_input: In[str]
     agent_idle: Out[bool]

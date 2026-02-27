@@ -14,6 +14,7 @@
 
 import os
 import resource
+import struct
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,15 +23,18 @@ from dimos.protocol.service.system_configurator import (
     IDEAL_RMEM_SIZE,
     BufferConfiguratorLinux,
     BufferConfiguratorMacOS,
+    ClockSyncConfigurator,
     MaxFileConfiguratorMacOS,
     MulticastConfiguratorLinux,
     MulticastConfiguratorMacOS,
     SystemConfigurator,
+    configure_system,
+    sudo_run,
+)
+from dimos.protocol.service.system_configurator.base import (
     _is_root_user,
     _read_sysctl_int,
     _write_sysctl_int,
-    configure_system,
-    sudo_run,
 )
 
 # ----------------------------- Helper function tests -----------------------------
@@ -142,52 +146,44 @@ class MockConfigurator(SystemConfigurator):
 
 
 class TestConfigureSystem:
-    def test_skips_in_ci_environment(self) -> None:
-        with patch.dict(os.environ, {"CI": "true"}):
-            mock_check = MockConfigurator(passes=False)
-            configure_system([mock_check])
-            assert not mock_check.fix_called
+    @pytest.fixture(autouse=True)
+    def non_ci_env(self, mocker):
+        mocker.patch.dict(os.environ, {"CI": ""}, clear=False)
+
+    def test_skips_in_ci_environment(self, mocker) -> None:
+        mocker.patch.dict(os.environ, {"CI": "true"})
+        mock_check = MockConfigurator(passes=False)
+        configure_system([mock_check])
+        assert not mock_check.fix_called
 
     def test_does_nothing_when_all_checks_pass(self) -> None:
-        with patch.dict(os.environ, {"CI": ""}, clear=False):
-            mock_check = MockConfigurator(passes=True)
-            configure_system([mock_check])
-            assert not mock_check.fix_called
+        mock_check = MockConfigurator(passes=True)
+        configure_system([mock_check])
+        assert not mock_check.fix_called
 
     def test_check_only_mode_does_not_fix(self) -> None:
-        with patch.dict(os.environ, {"CI": ""}, clear=False):
-            mock_check = MockConfigurator(passes=False)
-            configure_system([mock_check], check_only=True)
-            assert not mock_check.fix_called
+        mock_check = MockConfigurator(passes=False)
+        configure_system([mock_check], check_only=True)
+        assert not mock_check.fix_called
 
-    def test_prompts_user_and_fixes_on_yes(self) -> None:
-        with patch.dict(os.environ, {"CI": ""}, clear=False):
-            mock_check = MockConfigurator(passes=False)
-            with patch("builtins.input", return_value="y"):
-                configure_system([mock_check])
-                assert mock_check.fix_called
+    def test_prompts_user_and_fixes_on_yes(self, mocker) -> None:
+        mock_check = MockConfigurator(passes=False)
+        mocker.patch("typer.confirm", return_value=True)
+        configure_system([mock_check])
+        assert mock_check.fix_called
 
-    def test_does_not_fix_on_no(self) -> None:
-        with patch.dict(os.environ, {"CI": ""}, clear=False):
-            mock_check = MockConfigurator(passes=False)
-            with patch("builtins.input", return_value="n"):
-                configure_system([mock_check])
-                assert not mock_check.fix_called
+    def test_does_not_fix_on_no(self, mocker) -> None:
+        mock_check = MockConfigurator(passes=False)
+        mocker.patch("typer.confirm", return_value=False)
+        configure_system([mock_check])
+        assert not mock_check.fix_called
 
-    def test_exits_on_no_with_critical_check(self) -> None:
-        with patch.dict(os.environ, {"CI": ""}, clear=False):
-            mock_check = MockConfigurator(passes=False, is_critical=True)
-            with patch("builtins.input", return_value="n"):
-                with pytest.raises(SystemExit) as exc_info:
-                    configure_system([mock_check])
-                assert exc_info.value.code == 1
-
-    def test_handles_eof_error_on_input(self) -> None:
-        with patch.dict(os.environ, {"CI": ""}, clear=False):
-            mock_check = MockConfigurator(passes=False)
-            with patch("builtins.input", side_effect=EOFError):
-                configure_system([mock_check])
-                assert not mock_check.fix_called
+    def test_exits_on_no_with_critical_check(self, mocker) -> None:
+        mock_check = MockConfigurator(passes=False, is_critical=True)
+        mocker.patch("typer.confirm", return_value=False)
+        with pytest.raises(SystemExit) as exc_info:
+            configure_system([mock_check])
+        assert exc_info.value.code == 1
 
 
 # ----------------------------- MulticastConfiguratorLinux tests -----------------------------
@@ -314,14 +310,14 @@ class TestMulticastConfiguratorMacOS:
 class TestBufferConfiguratorLinux:
     def test_check_returns_true_when_buffers_sufficient(self) -> None:
         configurator = BufferConfiguratorLinux()
-        with patch("dimos.protocol.service.system_configurator._read_sysctl_int") as mock_read:
+        with patch("dimos.protocol.service.system_configurator.lcm._read_sysctl_int") as mock_read:
             mock_read.return_value = IDEAL_RMEM_SIZE
             assert configurator.check() is True
             assert configurator.needs == []
 
     def test_check_returns_false_when_rmem_max_low(self) -> None:
         configurator = BufferConfiguratorLinux()
-        with patch("dimos.protocol.service.system_configurator._read_sysctl_int") as mock_read:
+        with patch("dimos.protocol.service.system_configurator.lcm._read_sysctl_int") as mock_read:
             mock_read.side_effect = [1048576, IDEAL_RMEM_SIZE]  # rmem_max low
             assert configurator.check() is False
             assert len(configurator.needs) == 1
@@ -329,7 +325,7 @@ class TestBufferConfiguratorLinux:
 
     def test_check_returns_false_when_both_low(self) -> None:
         configurator = BufferConfiguratorLinux()
-        with patch("dimos.protocol.service.system_configurator._read_sysctl_int") as mock_read:
+        with patch("dimos.protocol.service.system_configurator.lcm._read_sysctl_int") as mock_read:
             mock_read.return_value = 1048576  # Both low
             assert configurator.check() is False
             assert len(configurator.needs) == 2
@@ -344,7 +340,9 @@ class TestBufferConfiguratorLinux:
     def test_fix_writes_needed_values(self) -> None:
         configurator = BufferConfiguratorLinux()
         configurator.needs = [("net.core.rmem_max", IDEAL_RMEM_SIZE)]
-        with patch("dimos.protocol.service.system_configurator._write_sysctl_int") as mock_write:
+        with patch(
+            "dimos.protocol.service.system_configurator.lcm._write_sysctl_int"
+        ) as mock_write:
             configurator.fix()
             mock_write.assert_called_once_with("net.core.rmem_max", IDEAL_RMEM_SIZE)
 
@@ -355,7 +353,7 @@ class TestBufferConfiguratorLinux:
 class TestBufferConfiguratorMacOS:
     def test_check_returns_true_when_buffers_sufficient(self) -> None:
         configurator = BufferConfiguratorMacOS()
-        with patch("dimos.protocol.service.system_configurator._read_sysctl_int") as mock_read:
+        with patch("dimos.protocol.service.system_configurator.lcm._read_sysctl_int") as mock_read:
             mock_read.side_effect = [
                 BufferConfiguratorMacOS.TARGET_BUFFER_SIZE,
                 BufferConfiguratorMacOS.TARGET_RECVSPACE,
@@ -366,7 +364,7 @@ class TestBufferConfiguratorMacOS:
 
     def test_check_returns_false_when_values_low(self) -> None:
         configurator = BufferConfiguratorMacOS()
-        with patch("dimos.protocol.service.system_configurator._read_sysctl_int") as mock_read:
+        with patch("dimos.protocol.service.system_configurator.lcm._read_sysctl_int") as mock_read:
             mock_read.return_value = 1024  # All low
             assert configurator.check() is False
             assert len(configurator.needs) == 3
@@ -384,7 +382,9 @@ class TestBufferConfiguratorMacOS:
         configurator.needs = [
             ("kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET_BUFFER_SIZE),
         ]
-        with patch("dimos.protocol.service.system_configurator._write_sysctl_int") as mock_write:
+        with patch(
+            "dimos.protocol.service.system_configurator.lcm._write_sysctl_int"
+        ) as mock_write:
             configurator.fix()
             mock_write.assert_called_once_with(
                 "kern.ipc.maxsockbuf", BufferConfiguratorMacOS.TARGET_BUFFER_SIZE
@@ -480,3 +480,220 @@ class TestMaxFileConfiguratorMacOS:
         with patch("resource.setrlimit", side_effect=ValueError("test error")):
             with pytest.raises(ValueError):
                 configurator.fix()
+
+
+# ----------------------------- ClockSyncConfigurator tests -----------------------------
+
+
+class TestClockSyncConfigurator:
+    def test_check_passes_when_offset_within_threshold(self) -> None:
+        configurator = ClockSyncConfigurator()
+        with patch.object(ClockSyncConfigurator, "_ntp_offset", return_value=0.05):  # 50ms
+            assert configurator.check() is True
+            assert configurator._offset == 0.05
+
+    def test_check_fails_when_offset_exceeds_threshold(self) -> None:
+        configurator = ClockSyncConfigurator()
+        with patch.object(ClockSyncConfigurator, "_ntp_offset", return_value=0.5):  # 500ms
+            assert configurator.check() is False
+            assert configurator._offset == 0.5
+
+    def test_check_fails_with_negative_offset(self) -> None:
+        configurator = ClockSyncConfigurator()
+        with patch.object(ClockSyncConfigurator, "_ntp_offset", return_value=-0.5):  # -500ms
+            assert configurator.check() is False
+
+    def test_check_passes_when_ntp_unreachable(self) -> None:
+        configurator = ClockSyncConfigurator()
+        with patch.object(
+            ClockSyncConfigurator, "_ntp_offset", side_effect=OSError("Network unreachable")
+        ):
+            assert configurator.check() is True
+            assert configurator._offset is None
+
+    def test_check_passes_on_socket_timeout(self) -> None:
+        configurator = ClockSyncConfigurator()
+        with patch.object(
+            ClockSyncConfigurator, "_ntp_offset", side_effect=TimeoutError("timed out")
+        ):
+            assert configurator.check() is True
+
+    def test_check_passes_on_malformed_response(self) -> None:
+        configurator = ClockSyncConfigurator()
+        with patch.object(
+            ClockSyncConfigurator, "_ntp_offset", side_effect=ValueError("NTP response too short")
+        ):
+            assert configurator.check() is True
+
+    def test_is_not_critical(self) -> None:
+        configurator = ClockSyncConfigurator()
+        assert configurator.critical is False
+
+    def test_explanation_on_linux_with_ntpdate(self) -> None:
+        configurator = ClockSyncConfigurator()
+        configurator._offset = 0.5  # 500ms
+        with (
+            patch(
+                "dimos.protocol.service.system_configurator.clock_sync.platform.system",
+                return_value="Linux",
+            ),
+            patch(
+                "dimos.protocol.service.system_configurator.clock_sync.shutil.which",
+                return_value="/usr/bin/ntpdate",
+            ),
+        ):
+            configurator._fix_cmd = configurator._resolve_fix_cmd()
+            explanation = configurator.explanation()
+            assert explanation is not None
+            assert "+500.0 ms" in explanation or "+0.5 s" in explanation
+            assert "ntpdate" in explanation
+            assert "systemd-timesyncd" in explanation
+
+    def test_explanation_on_linux_no_ntp_tools(self) -> None:
+        configurator = ClockSyncConfigurator()
+        configurator._offset = 0.5
+        with (
+            patch(
+                "dimos.protocol.service.system_configurator.clock_sync.platform.system",
+                return_value="Linux",
+            ),
+            patch(
+                "dimos.protocol.service.system_configurator.clock_sync.shutil.which",
+                return_value=None,
+            ),
+        ):
+            configurator._fix_cmd = configurator._resolve_fix_cmd()
+            explanation = configurator.explanation()
+            # Falls back to `date -s` when ntpdate/sntp unavailable
+            assert "date -s" in explanation
+            assert "systemd-timesyncd" in explanation
+
+    def test_explanation_on_macos(self) -> None:
+        configurator = ClockSyncConfigurator()
+        configurator._offset = -0.3  # -300ms
+        with patch(
+            "dimos.protocol.service.system_configurator.clock_sync.platform.system",
+            return_value="Darwin",
+        ):
+            configurator._fix_cmd = configurator._resolve_fix_cmd()
+            explanation = configurator.explanation()
+            assert explanation is not None
+            assert "-300.0 ms" in explanation
+            assert "sntp" in explanation
+
+    def test_explanation_returns_none_when_ntp_unreachable(self) -> None:
+        configurator = ClockSyncConfigurator()
+        configurator._offset = None
+        assert configurator.explanation() is None
+
+    def test_fix_on_linux_with_ntpdate(self) -> None:
+        _is_root_user.cache_clear()
+        configurator = ClockSyncConfigurator()
+        with (
+            patch(
+                "dimos.protocol.service.system_configurator.clock_sync.platform.system",
+                return_value="Linux",
+            ),
+            patch(
+                "dimos.protocol.service.system_configurator.clock_sync.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/ntpdate" if cmd == "ntpdate" else None,
+            ),
+            patch("os.geteuid", return_value=0),
+            patch("subprocess.run") as mock_run,
+        ):
+            configurator._fix_cmd = configurator._resolve_fix_cmd()
+            mock_run.return_value = MagicMock(returncode=0)
+            configurator.fix()
+            assert mock_run.call_count == 1
+            assert "ntpdate" in mock_run.call_args_list[0][0][0]
+
+    def test_fix_on_linux_sntp_fallback(self) -> None:
+        _is_root_user.cache_clear()
+        configurator = ClockSyncConfigurator()
+        with (
+            patch(
+                "dimos.protocol.service.system_configurator.clock_sync.platform.system",
+                return_value="Linux",
+            ),
+            patch(
+                "dimos.protocol.service.system_configurator.clock_sync.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/sntp" if cmd == "sntp" else None,
+            ),
+            patch("os.geteuid", return_value=0),
+            patch("subprocess.run") as mock_run,
+        ):
+            configurator._fix_cmd = configurator._resolve_fix_cmd()
+            mock_run.return_value = MagicMock(returncode=0)
+            configurator.fix()
+            assert mock_run.call_count == 1
+            assert "sntp" in mock_run.call_args_list[0][0][0]
+
+    def test_fix_on_linux_date_fallback(self) -> None:
+        _is_root_user.cache_clear()
+        configurator = ClockSyncConfigurator()
+        configurator._offset = 1.0
+        with (
+            patch(
+                "dimos.protocol.service.system_configurator.clock_sync.platform.system",
+                return_value="Linux",
+            ),
+            patch(
+                "dimos.protocol.service.system_configurator.clock_sync.shutil.which",
+                return_value=None,
+            ),
+            patch("os.geteuid", return_value=0),
+            patch("subprocess.run") as mock_run,
+        ):
+            configurator._fix_cmd = configurator._resolve_fix_cmd()
+            mock_run.return_value = MagicMock(returncode=0)
+            configurator.fix()
+            assert mock_run.call_count == 1
+            assert "date" in mock_run.call_args_list[0][0][0]
+
+    def test_fix_on_macos(self) -> None:
+        _is_root_user.cache_clear()
+        configurator = ClockSyncConfigurator()
+        with (
+            patch(
+                "dimos.protocol.service.system_configurator.clock_sync.platform.system",
+                return_value="Darwin",
+            ),
+            patch("os.geteuid", return_value=0),
+            patch("subprocess.run") as mock_run,
+        ):
+            configurator._fix_cmd = configurator._resolve_fix_cmd()
+            mock_run.return_value = MagicMock(returncode=0)
+            configurator.fix()
+            assert mock_run.call_count == 1
+            args = mock_run.call_args[0][0]
+            assert "sntp" in args
+
+    def test_ntp_offset_with_mocked_socket(self) -> None:
+        # Build a minimal NTP response with a known transmit timestamp
+        # NTP epoch offset: 2208988800 seconds between 1900 and 1970
+        fake_time = 1700000000.0  # a Unix timestamp
+        ntp_secs = int(fake_time) + 2208988800
+        ntp_frac = 0
+        response = b"\x00" * 40 + struct.pack("!II", ntp_secs, ntp_frac)
+
+        with patch("socket.socket") as mock_socket_cls:
+            mock_sock = MagicMock()
+            mock_socket_cls.return_value = mock_sock
+            mock_sock.recvfrom.return_value = (response, ("pool.ntp.org", 123))
+
+            with patch("time.time", side_effect=[fake_time, fake_time + 0.01]):
+                offset = ClockSyncConfigurator._ntp_offset("pool.ntp.org", 123, 2)
+                # With zero RTT offset and matching times, offset should be close to 0
+                # t1=fake_time, t4=fake_time+0.01, server=fake_time
+                # offset = fake_time - (fake_time + 0.005) = -0.005
+                assert abs(offset - (-0.005)) < 0.001
+
+    def test_ntp_offset_raises_on_short_response(self) -> None:
+        with patch("socket.socket") as mock_socket_cls:
+            mock_sock = MagicMock()
+            mock_socket_cls.return_value = mock_sock
+            mock_sock.recvfrom.return_value = (b"\x00" * 10, ("pool.ntp.org", 123))
+
+            with patch("time.time", return_value=1700000000.0):
+                with pytest.raises(ValueError, match="too short"):
+                    ClockSyncConfigurator._ntp_offset()

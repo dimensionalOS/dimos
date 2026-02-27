@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import os
 import threading
 
 from dotenv import load_dotenv
@@ -23,27 +24,39 @@ from dimos.protocol.service.lcmservice import autoconf
 load_dotenv()
 
 
-def _has_cuda():
+def _has_ros() -> bool:
     try:
-        import torch
-    except Exception:
+        import rclpy  # noqa: F401
+
+        return True
+    except ImportError:
         return False
 
-    try:
-        return bool(torch.cuda.is_available())
-    except Exception:
-        return False
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "tool: dev tooling")
+    config.addinivalue_line("markers", "slow: tests that are too slow for the fast loop")
+    config.addinivalue_line("markers", "mujoco: tests which open mujoco")
+    config.addinivalue_line("markers", "skipif_in_ci: skip when CI env var is set")
+    config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
+    config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
+    config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
 
 
 @pytest.hookimpl()
 def pytest_collection_modifyitems(config, items):
-    if not _has_cuda():
-        skip_marker = pytest.mark.skip(
-            reason="CUDA is not available (torch.cuda.is_available() returned False)"
-        )
-        for item in items:
-            if item.get_closest_marker("cuda"):
-                item.add_marker(skip_marker)
+    _skipif_markers = {
+        "skipif_in_ci": (bool(os.getenv("CI")), "Skipped in CI"),
+        "skipif_no_openai": (not os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY not set"),
+        "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
+        "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
+    }
+    for marker_name, (condition, reason) in _skipif_markers.items():
+        if condition:
+            skip = pytest.mark.skip(reason=reason)
+            for item in items:
+                if item.get_closest_marker(marker_name):
+                    item.add_marker(skip)
 
 
 @pytest.fixture
@@ -69,8 +82,6 @@ _session_threads = set()
 _seen_threads = set()
 _seen_threads_lock = threading.RLock()
 _before_test_threads = {}  # Map test name to set of thread IDs before test
-
-_skip_for = ["lcm", "heavy", "ros"]
 
 
 @pytest.fixture(scope="module")
@@ -107,11 +118,6 @@ def pytest_sessionfinish(session):
 
 @pytest.fixture(autouse=True)
 def monitor_threads(request):
-    # Skip monitoring for tests marked with specified markers
-    if any(request.node.get_closest_marker(marker) for marker in _skip_for):
-        yield
-        return
-
     # Capture threads before test runs
     test_name = request.node.nodeid
     with _seen_threads_lock:

@@ -293,7 +293,7 @@ def test_exception_handling_callback(rpc_context, impl_name: str) -> None:
             unsub_server()
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
 def test_timeout(rpc_context, impl_name: str) -> None:
     """Test that RPC calls properly timeout."""
@@ -392,8 +392,3 @@ def test_concurrent_calls(rpc_context, impl_name: str) -> None:
 
         finally:
             unsub()
-
-
-if __name__ == "__main__":
-    # Run tests for debugging
-    pytest.main([__file__, "-v"])

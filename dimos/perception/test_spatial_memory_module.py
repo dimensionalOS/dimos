@@ -22,6 +22,7 @@ from reactivex import operators as ops
 
 from dimos import core
 from dimos.core import Module, Out, rpc
+from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.robot.unitree.type.odometry import Odometry
@@ -70,14 +71,16 @@ class VideoReplayModule(Module):
 
 
 class OdometryReplayModule(Module):
-    """Module that replays odometry data from TimedSensorReplay."""
-
-    odom_out: Out[Odometry]
+    """Module that replays odometry data and publishes to the tf system."""
 
     def __init__(self, odom_path: str) -> None:
         super().__init__()
         self.odom_path = odom_path
         self._subscription = None
+
+    def _publish_tf(self, odom: Odometry) -> None:
+        """Convert odometry to TF transforms and publish."""
+        self.tf.publish(Transform.from_pose("base_link", odom))
 
     @rpc
     def start(self) -> None:
@@ -85,14 +88,14 @@ class OdometryReplayModule(Module):
         # Use TimedSensorReplay to replay odometry
         odom_replay = TimedSensorReplay(self.odom_path, autocast=Odometry.from_msg)
 
-        # Subscribe to the replay stream and publish to LCM
+        # Subscribe to the replay stream and publish to tf
         self._subscription = (
             odom_replay.stream()
             .pipe(
                 ops.sample(0.5),  # Sample every 500ms
                 ops.take(10),  # Only take 10 odometry updates total
             )
-            .subscribe(self.odom_out.publish)
+            .subscribe(self._publish_tf)
         )
 
         logger.info("OdometryReplayModule started")
@@ -106,8 +109,8 @@ class OdometryReplayModule(Module):
         logger.info("OdometryReplayModule stopped")
 
 
-@pytest.mark.gpu
-@pytest.mark.neverending
+@pytest.mark.slow
+@pytest.mark.skipif_in_ci
 class TestSpatialMemoryModule:
     @pytest.fixture(scope="function")
     def temp_dir(self):
@@ -135,9 +138,8 @@ class TestSpatialMemoryModule:
             video_module = dimos.deploy(VideoReplayModule, video_path)
             video_module.video_out.transport = core.LCMTransport("/test_video", Image)
 
-            # Odometry replay module
+            # Odometry replay module (publishes to tf system directly)
             odom_module = dimos.deploy(OdometryReplayModule, odom_path)
-            odom_module.odom_out.transport = core.LCMTransport("/test_odom", Odometry)
 
             # Spatial memory module
             spatial_memory = dimos.deploy(
@@ -153,9 +155,8 @@ class TestSpatialMemoryModule:
                 output_dir=os.path.join(temp_dir, "images"),
             )
 
-            # Connect streams
-            spatial_memory.video.connect(video_module.video_out)
-            spatial_memory.odom.connect(odom_module.odom_out)
+            # Connect video stream
+            spatial_memory.color_image.connect(video_module.video_out)
 
             # Start all modules
             video_module.start()
@@ -209,19 +210,12 @@ class TestSpatialMemoryModule:
 
             video_module.stop()
             odom_module.stop()
-            logger.info("Stopped replay modules")
+            spatial_memory.stop()
+            logger.info("Stopped all modules")
 
             logger.info("All spatial memory module tests passed!")
 
         finally:
             # Cleanup
             if "dimos" in locals():
-                dimos.close()
-
-
-if __name__ == "__main__":
-    pytest.main(["-v", "-s", __file__])
-    # test = TestSpatialMemoryModule()
-    # asyncio.run(
-    #     test.test_spatial_memory_module_with_replay(tempfile.mkdtemp(prefix="spatial_memory_test_"))
-    # )
+                dimos.close_all()

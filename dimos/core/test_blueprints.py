@@ -175,7 +175,7 @@ def test_global_config() -> None:
     assert blueprint_set.global_config_overrides["option2"] == 42
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_build_happy_path() -> None:
     pubsub.lcm.autoconf()
 
@@ -286,7 +286,7 @@ def test_that_remapping_can_resolve_conflicts() -> None:
     blueprint_set_remapped._verify_no_name_conflicts()
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_remapping() -> None:
     """Test that remapping streams works correctly."""
     pubsub.lcm.autoconf()
@@ -355,7 +355,7 @@ def test_future_annotations_support() -> None:
     assert in_blueprint.streams[0] == StreamRef(name="data", type=FutureData, direction="in")
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_future_annotations_autoconnect() -> None:
     """Test that autoconnect works with modules using `from __future__ import annotations`."""
 
@@ -448,7 +448,7 @@ class Mod2(Module):
     def stop(self) -> None: ...
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_module_ref_direct() -> None:
     coordinator = autoconnect(
         Calculator1.blueprint(),
@@ -464,7 +464,7 @@ def test_module_ref_direct() -> None:
         coordinator.stop()
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_module_ref_spec() -> None:
     coordinator = autoconnect(
         Calculator1.blueprint(),
@@ -480,7 +480,7 @@ def test_module_ref_spec() -> None:
         coordinator.stop()
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_module_ref_remap_ambiguous() -> None:
     coordinator = (
         autoconnect(

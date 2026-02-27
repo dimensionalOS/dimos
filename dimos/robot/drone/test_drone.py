@@ -1029,7 +1029,3 @@ class TestVisualServoingVelocity(unittest.TestCase):
         self.assertGreater(vy, 0)
         # No vertical offset -> vx should be ~0
         self.assertAlmostEqual(vx, 0, places=1)
-
-
-if __name__ == "__main__":
-    unittest.main()
