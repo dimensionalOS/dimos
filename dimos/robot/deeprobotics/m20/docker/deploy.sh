@@ -5,12 +5,21 @@
 # Usage:
 #   ./deploy.sh push      # Build image on Mac + push to GHCR
 #   ./deploy.sh pull      # Pull latest image on NOS from GHCR
+#   ./deploy.sh dev       # Sync Python source into running container (fast, ~1-2 min)
 #   ./deploy.sh start     # Start container (with lio health check)
 #   ./deploy.sh stop      # Stop container
+#   ./deploy.sh restart   # Restart running container
 #   ./deploy.sh logs      # Tail container logs
 #   ./deploy.sh shell     # Open shell in running container
 #   ./deploy.sh status    # Show container + lio status
-#   ./deploy.sh build     # Legacy: sync code + build on NOS (may OOM)
+#
+# Workflows:
+#   Full deploy:  ./deploy.sh push && ./deploy.sh pull && ./deploy.sh start
+#   Iterate:      ./deploy.sh dev   (rsync + docker cp + restart, ~1-2 min)
+#   Quick restart: ./deploy.sh restart  (no sync, ~10-30 sec)
+#
+# Use `push+pull` when dependencies, Dockerfile, or C++ extensions change.
+# Use `dev` for pure Python changes — 5-10x faster.
 #
 # Prerequisites:
 #   - GHCR auth: docker login ghcr.io (Mac for push, NOS for pull)
@@ -31,7 +40,6 @@ NOS_HOST="${1:-10.21.31.106}"
 NOS_USER="${2:-user}"
 JUMP_HOST="${JUMP_HOST:-user@10.21.41.1}"
 AOS_HOST="${JUMP_HOST}"
-SSH_OPTS="-o ProxyJump=${JUMP_HOST}"
 DEPLOY_DIR="/opt/dimos/src"
 CONTAINER_NAME="dimos-m20"
 GHCR_IMAGE="ghcr.io/aphexcx/m20-nos:latest"
@@ -39,10 +47,23 @@ GHCR_IMAGE="ghcr.io/aphexcx/m20-nos:latest"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIMOS_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
 
+# --- SSH ControlMaster multiplexing ---
+# Reuses a single TCP connection for all SSH calls, saving ~2-5s per call.
+SSH_CONTROL_DIR="/tmp/deploy-ssh-mux"
+mkdir -p "${SSH_CONTROL_DIR}"
+SSH_MUX_OPTS="-o ControlMaster=auto -o ControlPath=${SSH_CONTROL_DIR}/%r@%h:%p -o ControlPersist=600"
+SSH_OPTS="${SSH_MUX_OPTS} -o ProxyJump=${JUMP_HOST}"
+
+setup_ssh_mux() {
+    # Establish persistent connections (background, non-blocking)
+    ssh -fNM ${SSH_MUX_OPTS} -o ProxyJump=${JUMP_HOST} "${NOS_USER}@${NOS_HOST}" 2>/dev/null || true
+    ssh -fNM ${SSH_MUX_OPTS} "${AOS_HOST}" 2>/dev/null || true
+}
+
 # Only prompt for sudo on commands that actually need it (systemctl, iptables)
 # Docker commands use docker group membership (no sudo needed)
 case "${CMD}" in
-    push|pull) ;; # push is local, pull only needs docker (no sudo)
+    push|pull|restart) ;; # push is local, pull/restart only need docker (no sudo)
     *)
         if [ -z "${SUDO_PASS}" ]; then
             read -sp "Sudo password for ${NOS_USER}@${NOS_HOST}: " SUDO_PASS
@@ -50,6 +71,11 @@ case "${CMD}" in
         fi
         ;;
 esac
+
+# Establish SSH multiplexing early (except for push which is local-only)
+if [ "${CMD}" != "push" ]; then
+    setup_ssh_mux
+fi
 
 remote_sudo() {
     printf '%s\n' "${SUDO_PASS}" | ssh ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "sudo -S $*" 2>&1 | { grep -v '^\[sudo\] password' || true; }
@@ -60,11 +86,46 @@ remote_ssh() {
 }
 
 aos_sudo() {
-    printf '%s\n' "${SUDO_PASS}" | ssh "${AOS_HOST}" "sudo -S $*" 2>&1 | { grep -v '^\[sudo\] password' || true; }
+    printf '%s\n' "${SUDO_PASS}" | ssh ${SSH_MUX_OPTS} "${AOS_HOST}" "sudo -S $*" 2>&1 | { grep -v '^\[sudo\] password' || true; }
 }
 
 aos_ssh() {
-    ssh "${AOS_HOST}" "$@"
+    ssh ${SSH_MUX_OPTS} "${AOS_HOST}" "$@"
+}
+
+# Common rsync excludes for source sync
+RSYNC_EXCLUDES=(
+    --exclude '__pycache__'
+    --exclude '*.pyc'
+    --exclude '.git'
+    --exclude 'venv'
+    --exclude '.venv'
+    --exclude '.pytest_cache'
+    --exclude '.mypy_cache'
+    --exclude '*.egg-info'
+    --exclude '.beads'
+    --exclude '.runtime'
+    --exclude 'state.json'
+    --exclude 'data'
+    --exclude 'logs'
+    --exclude 'docs'
+    --exclude 'assets'
+    --exclude '.claude'
+    --exclude '.github'
+    --exclude 'examples'
+    --exclude 'mail'
+)
+
+sync_source() {
+    echo "Syncing dimos source to NOS..."
+    remote_sudo mkdir -p ${DEPLOY_DIR}
+    # Only fix ownership if needed (avoid slow recursive chown)
+    remote_ssh "[ -O ${DEPLOY_DIR} ]" 2>/dev/null || \
+        remote_sudo chown ${NOS_USER}:${NOS_USER} ${DEPLOY_DIR}
+    rsync -avz --delete \
+        -e "ssh ${SSH_OPTS}" \
+        "${RSYNC_EXCLUDES[@]}" \
+        "${DIMOS_ROOT}/" "${NOS_USER}@${NOS_HOST}:${DEPLOY_DIR}/"
 }
 
 lio_publishing_data() {
@@ -197,6 +258,43 @@ case "${CMD}" in
         echo "=== Pull Complete ==="
         ;;
 
+    dev)
+        echo "=== dimos M20 Fast Dev Sync ==="
+        echo "Target: ${NOS_USER}@${NOS_HOST} (via ${JUMP_HOST})"
+        echo ""
+
+        # Verify container exists
+        if ! remote_ssh docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+            echo "ERROR: Container '${CONTAINER_NAME}' not found."
+            echo "Run './deploy.sh pull && ./deploy.sh start' first."
+            exit 1
+        fi
+
+        sync_source
+
+        # Copy updated source into the running container.
+        # docker cp merges into the existing directory — preserving
+        # compiled C++ extensions (.so) that were built during docker build.
+        echo "Copying source into container..."
+        remote_ssh docker cp ${DEPLOY_DIR}/dimos/. ${CONTAINER_NAME}:/opt/dimos/src/dimos/
+
+        # Also sync docker support files
+        remote_ssh docker cp ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/docker/launch_nos.py ${CONTAINER_NAME}:/opt/dimos/launch_nos.py
+        remote_ssh docker cp ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/docker/entrypoint.sh ${CONTAINER_NAME}:/opt/dimos/entrypoint.sh
+        remote_ssh docker cp ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/docker/fastdds.xml ${CONTAINER_NAME}:/opt/dimos/docker/fastdds.xml
+
+        echo "Restarting container..."
+        remote_ssh docker restart ${CONTAINER_NAME}
+
+        sleep 3
+        echo ""
+        echo "Container status:"
+        remote_ssh docker ps --filter name=${CONTAINER_NAME}
+        echo ""
+        echo "=== Dev Sync Complete ==="
+        echo "Tail logs: ./deploy.sh logs"
+        ;;
+
     start)
         echo "=== Starting dimos M20 Docker Container ==="
 
@@ -236,6 +334,15 @@ case "${CMD}" in
         echo "Stopped."
         ;;
 
+    restart)
+        echo "Restarting ${CONTAINER_NAME}..."
+        remote_ssh docker restart ${CONTAINER_NAME}
+        sleep 3
+        echo ""
+        echo "Container status:"
+        remote_ssh docker ps --filter name=${CONTAINER_NAME}
+        ;;
+
     logs)
         remote_ssh docker logs -f ${CONTAINER_NAME}
         ;;
@@ -268,67 +375,24 @@ case "${CMD}" in
         remote_ssh "systemctl is-active dimos-mac-bridge" 2>/dev/null || echo "inactive"
         ;;
 
-    build)
-        echo "=== dimos M20 NOS Docker Build (legacy — may OOM) ==="
-        echo "NOTE: Prefer './deploy.sh push' (builds on Mac) + './deploy.sh pull'"
-        echo "Target: ${NOS_USER}@${NOS_HOST} (via ${JUMP_HOST})"
-        echo ""
-
-        # Check SSH
-        echo "Checking SSH..."
-        remote_ssh "echo 'Connected'" || { echo "ERROR: Cannot connect"; exit 1; }
-
-        # Sync source
-        echo "Syncing dimos source to NOS..."
-        remote_sudo mkdir -p ${DEPLOY_DIR}
-        remote_sudo chown -R ${NOS_USER}:${NOS_USER} /opt/dimos
-        rsync -avz --delete \
-            -e "ssh ${SSH_OPTS}" \
-            --exclude '__pycache__' \
-            --exclude '*.pyc' \
-            --exclude '.git' \
-            --exclude 'venv' \
-            --exclude '.venv' \
-            --exclude '.pytest_cache' \
-            --exclude '.mypy_cache' \
-            --exclude '*.egg-info' \
-            --exclude '.beads' \
-            --exclude '.runtime' \
-            --exclude 'state.json' \
-            --exclude 'data' \
-            --exclude 'logs' \
-            --exclude 'docs' \
-            --exclude 'assets' \
-            --exclude '.claude' \
-            --exclude '.github' \
-            --exclude 'examples' \
-            --exclude 'mail' \
-            "${DIMOS_ROOT}/" "${NOS_USER}@${NOS_HOST}:${DEPLOY_DIR}/"
-
-        # Build image on NOS
-        echo "Building Docker image on NOS (this may take a while on first build)..."
-        remote_sudo docker build \
-            -t "${GHCR_IMAGE}" \
-            -f ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/docker/Dockerfile \
-            ${DEPLOY_DIR}
-
-        echo ""
-        echo "=== Build Complete ==="
-        echo "Image: ${GHCR_IMAGE}"
-        ;;
-
     *)
-        echo "Usage: $0 {push|pull|start|stop|logs|shell|status} [hostname=$NOS_HOST] [user=$NOS_USER]"
+        echo "Usage: $0 {push|pull|dev|start|stop|restart|logs|shell|status}"
         echo ""
         echo "Commands:"
-        echo "  push    - Build image on Mac + push to GHCR"
-        echo "  pull    - Pull latest image on NOS from GHCR"
+        echo "  push    - Build image on Mac + push to GHCR (~3-5 min)"
+        echo "  pull    - Pull latest image on NOS from GHCR (~1-3 min)"
+        echo "  dev     - Sync Python source into running container (~1-2 min)"
         echo "  start   - Start container (with lio health check + NAT)"
         echo "  stop    - Stop and remove container"
+        echo "  restart - Restart running container (no sync, ~10-30 sec)"
         echo "  logs    - Tail container logs"
         echo "  shell   - Open shell in running container"
         echo "  status  - Show container + service status"
-        echo "  build   - Legacy: sync code + build on NOS (may OOM)"
+        echo ""
+        echo "Workflows:"
+        echo "  Full deploy:   ./deploy.sh push && ./deploy.sh pull && ./deploy.sh start"
+        echo "  Iterate (fast): ./deploy.sh dev"
+        echo "  Quick restart:  ./deploy.sh restart"
         exit 1
         ;;
 esac

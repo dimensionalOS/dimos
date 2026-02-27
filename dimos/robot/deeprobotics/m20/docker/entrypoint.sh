@@ -29,13 +29,17 @@ sysctl -w net.core.rmem_default=67108864 2>/dev/null || true
 export ROS2_DAEMON_TIMEOUT=0
 ros2 daemon stop >/dev/null 2>&1 || true
 
-# Wait for ROS2 topics before launching dimos (data flow verification)
-echo "Waiting for ROS2 topics..."
-for topic in /ODOM /IMU; do
-    echo -n "  $topic: "
+# Wait for ROS2 topics before launching dimos (data flow verification).
+# Checks run in parallel — 30s total timeout instead of 30s per topic.
+echo "Waiting for ROS2 topics (30s timeout)..."
+wait_topic() {
+    local topic=$1
     timeout 30 bash -c "until ros2 topic echo $topic --once >/dev/null 2>&1; do sleep 1; done" \
-        && echo "OK" || echo "TIMEOUT (continuing anyway)"
-done
+        && echo "  $topic: OK" || echo "  $topic: TIMEOUT (continuing anyway)"
+}
+wait_topic /ODOM &
+wait_topic /IMU &
+wait
 
 # Verify drdds bindings (non-fatal — falls back to UDP if unavailable)
 python3 -c "from drdds.msg import NavCmd; print('drdds available — /NAV_CMD publisher enabled')" 2>/dev/null \
