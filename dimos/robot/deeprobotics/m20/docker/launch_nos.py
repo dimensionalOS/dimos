@@ -17,7 +17,9 @@ import dask
 
 from dimos.core.global_config import global_config
 
-global_config.update(viewer_backend="rerun-web")
+# Disable default rerun bridge from m20_minimal — we configure our own below
+# with memory_limit and visual_override for the NOS environment.
+global_config.update(viewer_backend="none")
 
 from dimos.core.blueprints import autoconnect
 from dimos.mapping.costmapper import cost_mapper
@@ -25,27 +27,60 @@ from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.mapping.voxels import voxel_mapper
 from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
 from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.robot.deeprobotics.m20.blueprints.basic.m20_minimal import m20_minimal
 from dimos.robot.deeprobotics.m20.connection import m20_connection
+from dimos.visualization.rerun.bridge import rerun_bridge
 
 # Direct ROS2 mode: no bridge_host, robot_ip is AOS eth0 (shared L2 with NOS)
 AOS_ETH0 = "10.21.33.103"
 
-# NOS-tuned blueprint: VoxelGridMapper on CPU without CUDA is expensive.
-# - voxel_size=0.2: 8x fewer voxels than 0.1 (cubic), fine for outdoor patrol
-# - publish_interval=1.0: Lesh recommended 1Hz instead of every-frame (~10Hz)
-# - resolution=0.2: match costmap grid to voxel size (16x smaller grid than default 0.05)
-# - n_dask_workers=2: 2 workers for parallelism (less hitchy Rerun visualization).
-#   terminate=False in Dask config prevents worker kills that destroy Rerun server.
-# - memory_limit=7GB: per-worker limit. 2x7=14GB on 15GB system — tight but
-#   sshd is OOM-protected and 4GB swap absorbs pressure spikes.
+# NOS-tuned config notes:
+# - voxel_size=0.1: Fine enough for indoor navigation (doors are ~0.8m wide).
+#   Lesh: "0.2 is nuts, it will think doors are not passable."
+# - publish_interval=0.5: Publish voxel grid at 2Hz (not every lidar frame ~10Hz).
+#   Keeps compute manageable on RK3588 CPU. Lesh: "do 1hz or 0.5hz even."
+# - algo="height_cost": Gradient-based terrain slope analysis. Produces continuous
+#   costs (0-100) based on terrain steepness — much better for tight spaces than
+#   binary free/occupied. Needs ignore_noise tuned to voxel resolution.
+# - ignore_noise=0.1: Match to voxel_size — 1-voxel height jumps are quantization
+#   noise, not real obstacles. Default 0.05 was too sensitive at 0.2 voxels.
+# - can_climb=0.2: 20cm height change per cell = cost 100 (lethal). M20 can step
+#   over ~15cm, so 20cm is a reasonable lethal threshold.
+# - smoothing=1.5: More gap-filling between sparse ground observations.
+# - memory_limit="512MB": Caps Rerun recording memory. Won't retain full history
+#   but draws current state. Prevents Rerun from eating all Dask worker memory.
+#   Lesh: "limit it to something small and it won't remember the history for you
+#   but it will draw the current state."
+# - global_map visual_override: Render voxels as 3D boxes (not flat sprites).
+#   Lesh: 'has this "world/global_map": lambda grid: grid.to_rerun(voxel_size=0.1,
+#   mode="boxes") line in rerun bridge.'
 bp = autoconnect(
     m20_minimal,
-    voxel_mapper(voxel_size=0.2, publish_interval=1.0),
-    cost_mapper(config=HeightCostConfig(max_height=1.5, resolution=0.2)),
+    voxel_mapper(voxel_size=0.05, publish_interval=1.0),
+    cost_mapper(config=HeightCostConfig(
+        max_height=1.5, resolution=0.05, ignore_noise=0.05, can_climb=0.2,
+        smoothing=2.0,
+    )),
     replanning_a_star_planner(),
     wavefront_frontier_explorer(),
     m20_connection(ip=AOS_ETH0, enable_ros=True),
+    rerun_bridge(
+        viewer_mode="web",
+        memory_limit="512MB",
+        pubsubs=[LCM(autoconf=True)],
+        visual_override={
+            "world/global_map": lambda grid: grid.to_rerun(
+                voxel_size=0.05, mode="boxes",
+            ),
+            "world/navigation_costmap": lambda grid: grid.to_rerun(
+                colormap="Accent",
+                z_offset=0.015,
+                opacity=0.2,
+                background="#484981",
+            ),
+        },
+    ),
 ).global_config(
     robot_ip=AOS_ETH0,
     robot_model="deeprobotics_m20",

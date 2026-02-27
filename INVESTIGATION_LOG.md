@@ -2486,3 +2486,86 @@ When extracting `.msg` definitions from C++ headers, verify field names match wh
 | planner (NOS) | **DISABLED** | systemctl disable --now |
 | Dask memory | Pause/resume at 90% | terminate=False keeps workers alive |
 | /IMU | TIMEOUT | Non-critical, continues without it |
+
+---
+
+## Session 19: Costmap Tuning + Rerun Memory Cap (Feb 27)
+
+### Problem
+
+Costmap showed obstacles but almost no traversable floor space — robot couldn't find paths through hallways.
+
+### Root Cause Analysis
+
+**Z histogram of `/ALIGNED_POINTS`** (map frame):
+```
+[-0.25, +0.00): 332 points  ################ (floor)
+[+0.00, +0.25):  87 points  ####
+[+0.25, +0.50):  69 points  ###
+[+2.25, +2.50): 266 points  ############# (ceiling)
+```
+Floor at z ≈ -0.3 to 0.0. Ceiling at z ≈ 2.0+ (filtered by max_height=1.5).
+
+**`height_cost` algorithm failure at coarse voxels**: With `voxel_size=0.2`, adjacent cells had 20cm height jumps from quantization noise alone. The `ignore_noise=0.05` (default) was 4x smaller than the noise, so the Sobel gradient filter interpreted flat floor as steep slope → everything marked as obstacle or unknown.
+
+### Iteration History
+
+| # | Algorithm | Voxel | Resolution | Key Params | Result |
+|---|-----------|-------|------------|------------|--------|
+| 1 | `height_cost` (default) | 0.2 | 0.2 | ignore_noise=0.05 | No free space — quantization noise > noise floor |
+| 2 | `general` | 0.1 | 0.1 | min_height=0.15 | Floor detected but narrow corridors (binary free/occupied) |
+| 3 | `general` | 0.1 | 0.1 | min_height=0.25, mark_free_radius=1.5 | Wider corridors but still binary, no gradient |
+| 4 | `height_cost` (tuned) | 0.1 | 0.1 | ignore_noise=0.1, can_climb=0.2, smoothing=1.5 | Good — gradient costs, more pathable area |
+| 5 | `height_cost` (tuned) | 0.05 | 0.05 | ignore_noise=0.05, can_climb=0.2, smoothing=2.0 | Testing — 8x more voxels, 1Hz publish |
+
+**Key insight from Lesh**: "your voxel size is nuts... it will think doors are not passable." At 20cm voxels, a standard 80cm door opening is only 4 cells wide — border artifacts consume most of it.
+
+### Rerun Memory Cap
+
+**Problem**: Rerun accumulated recording data indefinitely inside a Dask worker. Memory grew 1.2→3.4→6.7 GiB, triggering Dask pause/spill cycles.
+
+**Fix** (per Lesh): `rerun_bridge(memory_limit="512MB")`. Rerun discards old history but draws current state. Container memory dropped from ~6 GiB to 3.7 GiB.
+
+### Rerun Visual Override
+
+Added `visual_override` for voxel rendering (per Lesh):
+```python
+"world/global_map": lambda grid: grid.to_rerun(voxel_size=0.05, mode="boxes"),
+"world/navigation_costmap": lambda grid: grid.to_rerun(
+    colormap="Accent", z_offset=0.015, opacity=0.2, background="#484981",
+),
+```
+
+### launch_nos.py Restructured
+
+- Set `viewer_backend="none"` to bypass `m20_minimal`'s default rerun bridge
+- Add explicit `rerun_bridge()` in `autoconnect()` with NOS-specific config
+- Conflicting services (`height_map_nav`, `planner`) now `systemctl disable --now`
+
+### Resource Usage (voxel_size=0.1)
+
+| Resource | Value | Headroom |
+|----------|-------|----------|
+| CPU | 316% / 400% | ~84% free |
+| Container RAM | 3.7 GiB | Down from 6+ GiB |
+| System RAM | 4.1 / 15.3 GiB | 10 GiB available |
+| Load avg | ~20 | Steady |
+
+### Lesh Feedback Summary
+
+- "switch back to height_cost algo, tune those settings"
+- "do 1hz or 0.5hz even, same compute costs, better global map"
+- "limit [rerun memory] to something small and it won't remember the history"
+- "you are at a stage in which you look at what you'd like it to pass and try to understand why it didn't"
+- "try and tune the local planner to be more aggressive, seems a bit slow with rotation"
+- "but great! you are basically there"
+
+### Current State (Feb 27)
+
+| Component | Status | Notes |
+|---|---|---|
+| Costmap | **IMPROVED** | height_cost with tuned params, gradient costs working |
+| Voxel size | **0.05** (testing) | Down from 0.2 → 0.1 → 0.05, with 1Hz publish |
+| Rerun memory | **CAPPED at 512MB** | Container RAM 3.7 GiB (was 6+) |
+| Exploration | **WORKING** | Robot navigating hallways |
+| Next tuning | Local planner | Lesh says rotation is slow, needs to be more aggressive |
