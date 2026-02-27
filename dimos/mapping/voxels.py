@@ -42,6 +42,8 @@ class Config(ModuleConfig):
     block_count: int = 2_000_000
     device: str = "CUDA:0"
     carve_columns: bool = True
+    min_height: float | None = None  # Filter points below this z
+    max_height: float | None = None  # Filter points above this z
 
 
 class VoxelGridMapper(Module):
@@ -133,6 +135,19 @@ class VoxelGridMapper(Module):
             return
 
         pts = pcd.point["positions"].to(self._dev, o3c.float32)
+
+        # Filter by height before voxelization (prevents ceiling from carving floor)
+        if self.config.min_height is not None or self.config.max_height is not None:
+            z = pts[:, 2]
+            mask = o3c.Tensor.ones((pts.shape[0],), dtype=o3c.bool, device=self._dev)
+            if self.config.min_height is not None:
+                mask = mask.logical_and(z >= self.config.min_height)
+            if self.config.max_height is not None:
+                mask = mask.logical_and(z <= self.config.max_height)
+            pts = pts[mask]
+            if pts.shape[0] == 0:
+                return
+
         vox = (pts / self.config.voxel_size).floor().to(self._key_dtype)
         keys_Nx3 = vox.contiguous()
 

@@ -57,10 +57,10 @@ AOS_ETH0 = "10.21.33.103"
 #   mode="boxes") line in rerun bridge.'
 bp = autoconnect(
     m20_minimal,
-    voxel_mapper(voxel_size=0.05, publish_interval=1.0),
+    voxel_mapper(voxel_size=0.05, publish_interval=1.0, max_height=0.7),
     cost_mapper(config=HeightCostConfig(
-        max_height=1.5, resolution=0.05, ignore_noise=0.05, can_climb=0.2,
-        smoothing=2.0,
+        max_height=0.7, resolution=0.05, ignore_noise=0.05, can_climb=0.25,
+        smoothing=5.0,
     )),
     replanning_a_star_planner(),
     wavefront_frontier_explorer(),

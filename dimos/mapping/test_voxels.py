@@ -205,3 +205,49 @@ def test_roundtrip_range_preserved(mapper: VoxelGridMapper) -> None:
 
         assert abs(in_min - out_min) < tolerance, f"{name} min mismatch: in={in_min}, out={out_min}"
         assert abs(in_max - out_max) < tolerance, f"{name} max mismatch: in={in_max}, out={out_max}"
+
+
+def test_max_height_prevents_ceiling_carving() -> None:
+    """Ceiling points in frame B should not carve floor voxels from frame A when max_height is set."""
+    import open3d as o3d
+
+    # Create synthetic floor points (z=0) across a 5x5 grid
+    floor_pts = np.array(
+        [[x * 0.1, y * 0.1, 0.0] for x in range(5) for y in range(5)],
+        dtype=np.float32,
+    )
+    floor_pcd = o3d.geometry.PointCloud()
+    floor_pcd.points = o3d.utility.Vector3dVector(floor_pts)
+    floor_frame = PointCloud2(floor_pcd)
+
+    # Create synthetic ceiling points (z=3.0) at same X,Y columns
+    ceiling_pts = floor_pts.copy()
+    ceiling_pts[:, 2] = 3.0
+    ceiling_pcd = o3d.geometry.PointCloud()
+    ceiling_pcd.points = o3d.utility.Vector3dVector(ceiling_pts)
+    ceiling_frame = PointCloud2(ceiling_pcd)
+
+    # Without max_height: ceiling carves floor
+    mapper_no_filter = VoxelGridMapper(voxel_size=0.05)
+    mapper_no_filter.add_frame(floor_frame)
+    floor_count = mapper_no_filter.size()
+    assert floor_count == 25  # 5x5 grid
+
+    mapper_no_filter.add_frame(ceiling_frame)
+    # Column carving replaces floor with ceiling
+    assert mapper_no_filter.size() == 25  # same count, but now ceiling voxels
+    out_pts = np.asarray(mapper_no_filter.get_global_pointcloud().to_legacy().points)
+    assert out_pts[:, 2].min() > 2.0  # all points are ceiling now
+    mapper_no_filter.stop()
+
+    # With max_height=1.5: ceiling filtered, floor preserved
+    mapper_filtered = VoxelGridMapper(voxel_size=0.05, max_height=1.5)
+    mapper_filtered.add_frame(floor_frame)
+    assert mapper_filtered.size() == 25
+
+    mapper_filtered.add_frame(ceiling_frame)
+    # Ceiling points filtered out → no carving → floor survives
+    assert mapper_filtered.size() == 25
+    out_pts = np.asarray(mapper_filtered.get_global_pointcloud().to_legacy().points)
+    assert out_pts[:, 2].max() < 1.0  # still floor points
+    mapper_filtered.stop()
