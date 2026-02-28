@@ -193,7 +193,7 @@ perception = [
 unitree = [
     "dimos[base]",
     "unitree-webrtc-connect-leshy>=2.0.7",
-    "unitree-sdk2py>=1.0.1",
+    "unitree-sdk2py-dimos>=1.0.1",
 ]
 
 manipulation = [
