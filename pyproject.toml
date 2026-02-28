@@ -66,6 +66,7 @@ dependencies = [
     # remove this once rerun is optional in core
     "rerun-sdk>=0.20.0",
     "toolz>=1.1.0",
+    "protobuf>=6.33.5,<7",
 ]
 
 
