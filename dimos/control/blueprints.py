@@ -33,7 +33,7 @@ from __future__ import annotations
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
-    make_gripper_joint,
+    make_gripper_joints,
     make_joints,
     make_twist_base_joints,
 )
@@ -488,12 +488,7 @@ coordinator_teleop_xarm7 = control_coordinator(
             adapter_type="xarm",
             address="192.168.2.235",
             auto_enable=True,
-        ),
-        HardwareComponent(
-            hardware_id=make_gripper_joint("arm"),
-            hardware_type=HardwareType.GRIPPER,
-            joints=[make_gripper_joint("arm")],
-            parent_hardware_id="arm",
+            gripper_joints=make_gripper_joints("arm"),
         ),
     ],
     tasks=[
@@ -505,7 +500,7 @@ coordinator_teleop_xarm7 = control_coordinator(
             model_path=_XARM7_MODEL_PATH,
             ee_joint_id=7,
             hand="right",
-            gripper_joint=make_gripper_joint("arm"),
+            gripper_joint=make_gripper_joints("arm")[0],
             gripper_open_pos=0.85,  # xArm gripper range
             gripper_closed_pos=0.0,
         ),

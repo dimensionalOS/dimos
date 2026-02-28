@@ -25,7 +25,6 @@ TaskName = str
 class HardwareType(Enum):
     MANIPULATOR = "manipulator"
     BASE = "base"
-    GRIPPER = "gripper"
 
 
 @dataclass(frozen=True)
@@ -43,12 +42,12 @@ class HardwareComponent:
 
     Attributes:
         hardware_id: Unique identifier, also used as joint name prefix
-        hardware_type: Type of hardware (MANIPULATOR, BASE, GRIPPER)
+        hardware_type: Type of hardware (MANIPULATOR, BASE)
         joints: List of joint names (e.g., ["arm_joint1", "arm_joint2", ...])
         adapter_type: Adapter type ("mock", "xarm", "piper")
         address: Connection address - IP for TCP, port for CAN
         auto_enable: Whether to auto-enable servos
-        parent_hardware_id: For GRIPPER type only — gripper shares the parent's already-connected adapter.
+        gripper_joints: Joints that use adapter gripper methods. Auto-appended to joints.
     """
 
     hardware_id: HardwareId
@@ -57,19 +56,22 @@ class HardwareComponent:
     adapter_type: str = "mock"
     address: str | None = None
     auto_enable: bool = True
-    parent_hardware_id: HardwareId | None = None
+    gripper_joints: list[JointName] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        self.joints.extend(self.gripper_joints)
 
 
-def make_gripper_joint(hardware_id: HardwareId) -> str:
-    """Create the gripper joint name for a hardware device.
+def make_gripper_joints(hardware_id: HardwareId) -> list[JointName]:
+    """Create gripper joint names for a hardware device.
 
     Args:
         hardware_id: The hardware identifier (e.g., "arm")
 
     Returns:
-        Joint name like "arm_gripper"
+        List of joint names like ["arm_gripper"]
     """
-    return f"{hardware_id}_gripper"
+    return [f"{hardware_id}_gripper"]
 
 
 def make_joints(hardware_id: HardwareId, dof: int) -> list[JointName]:
@@ -126,7 +128,7 @@ __all__ = [
     "JointName",
     "JointState",
     "TaskName",
-    "make_gripper_joint",
+    "make_gripper_joints",
     "make_joints",
     "make_twist_base_joints",
 ]

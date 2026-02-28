@@ -259,7 +259,7 @@ class TeleopIKTask(BaseControlTask):
         joint_names = list(self._joint_names_list)
         positions = q_solution.flatten().tolist()
 
-        # Append gripper joint if configured — routed to ConnectedGripper by tick loop
+        # Append gripper joint if configured — routed to ConnectedHardware by tick loop
         if self._config.gripper_joint:
             with self._lock:
                 gripper_pos = self._gripper_target

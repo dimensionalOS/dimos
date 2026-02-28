@@ -67,6 +67,13 @@ class ConnectedHardware:
         self._component = component
         self._joint_names = component.joints
 
+        # Gripper joints use adapter.read/write_gripper_position() instead of
+        # the array-based read/write_joint_positions().
+        self._gripper_joints: frozenset[str] = frozenset(component.gripper_joints)
+        self._arm_joint_names: list[JointName] = [
+            j for j in component.joints if j not in self._gripper_joints
+        ]
+
         # Track last commanded values for hold-last behavior
         self._last_commanded: dict[str, float] = {}
         self._initialized = False
@@ -114,14 +121,26 @@ class ConnectedHardware:
         velocities = self._adapter.read_joint_velocities()
         efforts = self._adapter.read_joint_efforts()
 
-        return {
+        result: dict[JointName, JointState] = {
             name: JointState(
                 position=positions[i],
                 velocity=velocities[i],
                 effort=efforts[i],
             )
-            for i, name in enumerate(self._joint_names)
+            for i, name in enumerate(self._arm_joint_names)
         }
+
+        # Append gripper joint(s) via adapter gripper method
+        if self._gripper_joints:
+            gripper_pos = self._adapter.read_gripper_position()
+            for gj in self._gripper_joints:
+                result[gj] = JointState(
+                    position=gripper_pos if gripper_pos is not None else 0.0,
+                    velocity=0.0,
+                    effort=0.0,
+                )
+
+        return result
 
     def write_command(self, commands: dict[str, float], mode: ControlMode) -> bool:
         """Write commands - allows partial joint sets, holds last for missing.
@@ -153,8 +172,8 @@ class ConnectedHardware:
                 )
                 self._warned_unknown_joints.add(joint_name)
 
-        # Build ordered list for adapter
-        ordered = self._build_ordered_command()
+        # Build ordered list for arm joints only
+        arm_ordered = [self._last_commanded[name] for name in self._arm_joint_names]
 
         # Switch control mode if needed
         if mode != self._current_mode:
@@ -163,25 +182,43 @@ class ConnectedHardware:
                 return False
             self._current_mode = mode
 
-        # Send to adapter
+        # Send arm joints to adapter
+        arm_ok: bool
         match mode:
             case ControlMode.POSITION | ControlMode.SERVO_POSITION:
-                return self._adapter.write_joint_positions(ordered)
+                arm_ok = self._adapter.write_joint_positions(arm_ordered)
             case ControlMode.VELOCITY:
-                return self._adapter.write_joint_velocities(ordered)
+                arm_ok = self._adapter.write_joint_velocities(arm_ordered)
             case ControlMode.TORQUE:
                 logger.warning(f"Hardware {self.hardware_id} does not support torque mode")
-                return False
+                arm_ok = False
             case _:
-                return False
+                arm_ok = False
+
+        # Send gripper joints via adapter gripper method
+        gripper_ok = True
+        for gj in self._gripper_joints:
+            if gj in self._last_commanded:
+                gripper_ok = (
+                    self._adapter.write_gripper_position(self._last_commanded[gj]) and gripper_ok
+                )
+
+        return arm_ok and gripper_ok
 
     def _initialize_last_commanded(self) -> None:
         """Initialize last_commanded with current hardware positions."""
         for _ in range(10):
             try:
                 current = self._adapter.read_joint_positions()
-                for i, name in enumerate(self._joint_names):
+                for i, name in enumerate(self._arm_joint_names):
                     self._last_commanded[name] = current[i]
+
+                # Initialize gripper joint(s) from adapter
+                if self._gripper_joints:
+                    gripper_pos = self._adapter.read_gripper_position()
+                    for gj in self._gripper_joints:
+                        self._last_commanded[gj] = gripper_pos if gripper_pos is not None else 0.0
+
                 self._initialized = True
                 return
             except Exception:
@@ -190,10 +227,6 @@ class ConnectedHardware:
         raise RuntimeError(
             f"Hardware {self.hardware_id} failed to read initial positions after retries"
         )
-
-    def _build_ordered_command(self) -> list[float]:
-        """Build ordered command list from last_commanded dict."""
-        return [self._last_commanded[name] for name in self._joint_names]
 
 
 class ConnectedTwistBase(ConnectedHardware):
@@ -287,53 +320,7 @@ class ConnectedTwistBase(ConnectedHardware):
         return self._twist_adapter.write_velocities(ordered)
 
 
-class ConnectedGripper(ConnectedHardware):
-    """Runtime wrapper for a gripper attached to a manipulator.
-
-    Registered as a separate HardwareComponent with hardware_type=GRIPPER
-    so the tick loop treats it uniformly alongside arm joints.
-    """
-
-    def __init__(
-        self,
-        adapter: ManipulatorAdapter,
-        component: HardwareComponent,
-    ) -> None:
-        super().__init__(adapter, component)
-        self._last_commanded = {name: 0.0 for name in self._joint_names}
-        self._initialized = True
-
-    def disconnect(self) -> None:
-        """No-op: lifecycle is owned by the parent ConnectedHardware."""
-
-    def read_state(self) -> dict[JointName, JointState]:
-        """Read gripper position via adapter.read_gripper_position()."""
-        from dimos.control.components import JointState
-
-        pos = self._adapter.read_gripper_position()
-        joint_name = self._joint_names[0]
-        return {
-            joint_name: JointState(
-                position=pos if pos is not None else 0.0,
-                velocity=0.0,
-                effort=0.0,
-            )
-        }
-
-    def write_command(self, commands: dict[str, float], _mode: ControlMode) -> bool:
-        """Write gripper position via adapter.write_gripper_position().
-
-        Mode is ignored — gripper is always position-controlled.
-        Re-sends last commanded position when no new command arrives (hold-last-value).
-        """
-        joint_name = self._joint_names[0]
-        if joint_name in commands:
-            self._last_commanded[joint_name] = commands[joint_name]
-        return self._adapter.write_gripper_position(self._last_commanded[joint_name])
-
-
 __all__ = [
-    "ConnectedGripper",
     "ConnectedHardware",
     "ConnectedTwistBase",
 ]

@@ -48,7 +48,6 @@ from dimos.core.module import ModuleConfig
 from dimos.hardware.drive_trains.spec import (
     TwistBaseAdapter,
 )
-from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.geometry_msgs import (
     PoseStamped,  # noqa: TC001 - needed at runtime for In[PoseStamped]
     Twist,  # noqa: TC001 - needed at runtime for In[Twist]
@@ -64,6 +63,8 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+    from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
 
 logger = setup_logger()
@@ -231,10 +232,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
         """Connect and add a single hardware adapter."""
-        if component.hardware_type == HardwareType.GRIPPER:
-            self._setup_gripper_hardware(component)
-            return
-
         adapter: ManipulatorAdapter | TwistBaseAdapter
         if component.hardware_type == HardwareType.BASE:
             adapter = self._create_twist_base_adapter(component)
@@ -253,31 +250,15 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             adapter.disconnect()
             raise
 
-    def _setup_gripper_hardware(self, component: HardwareComponent) -> None:
-        """Register a gripper by borrowing the parent arm's adapter."""
-        if not component.parent_hardware_id:
-            raise ValueError(
-                f"Gripper component '{component.hardware_id}' requires parent_hardware_id"
-            )
-
-        with self._hardware_lock:
-            parent = self._hardware.get(component.parent_hardware_id)
-
-        if parent is None:
-            raise ValueError(
-                f"Parent hardware '{component.parent_hardware_id}' not found for gripper "
-                f"'{component.hardware_id}'. Add the parent arm before the gripper."
-            )
-
-        self.add_hardware(parent.adapter, component)
-
     def _create_adapter(self, component: HardwareComponent) -> ManipulatorAdapter:
         """Create a manipulator adapter from component config."""
         from dimos.hardware.manipulators.registry import adapter_registry
 
+        # Adapter DOF is arm joints only — gripper joints use separate adapter methods.
+        arm_dof = len(component.joints) - len(component.gripper_joints)
         return adapter_registry.create(
             component.adapter_type,
-            dof=len(component.joints),
+            dof=arm_dof,
             address=component.address,
         )
 
@@ -378,11 +359,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         component: HardwareComponent,
     ) -> bool:
         """Register a hardware adapter with the coordinator."""
-        is_gripper = component.hardware_type == HardwareType.GRIPPER
         is_base = component.hardware_type == HardwareType.BASE
 
-        # Grippers reuse their parent arm's ManipulatorAdapter — skip the base/adapter check
-        if not is_gripper and (is_base != isinstance(adapter, TwistBaseAdapter)):
+        if is_base != isinstance(adapter, TwistBaseAdapter):
             raise TypeError(
                 f"Hardware type / adapter mismatch for '{component.hardware_id}': "
                 f"hardware_type={component.hardware_type.value} but got "
@@ -394,15 +373,8 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 logger.warning(f"Hardware {component.hardware_id} already registered")
                 return False
 
-            if is_gripper and isinstance(adapter, ManipulatorAdapter):
-                from dimos.control.hardware_interface import ConnectedGripper
-
-                connected: ConnectedHardware = ConnectedGripper(
-                    adapter=adapter,
-                    component=component,
-                )
-            elif isinstance(adapter, TwistBaseAdapter):
-                connected = ConnectedTwistBase(
+            if isinstance(adapter, TwistBaseAdapter):
+                connected: ConnectedHardware = ConnectedTwistBase(
                     adapter=adapter,
                     component=component,
                 )
