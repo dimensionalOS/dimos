@@ -22,11 +22,13 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 (scan_objects, get_scene_info) and long-horizon skills (pick, place, pick_and_place).
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from enum import Enum
 import threading
 import time
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
