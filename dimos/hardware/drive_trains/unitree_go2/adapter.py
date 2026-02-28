@@ -77,7 +77,7 @@ class UnitreeGo2TwistAdapter:
         self._session: _Session | None = None
 
     def _get_session(self) -> _Session:
-        """Return active session or raise if not connected."""
+        """Return active session or raise if not connected"""
         if self._session is None:
             raise RuntimeError("Go2 not connected")
         return self._session
