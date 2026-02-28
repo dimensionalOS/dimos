@@ -14,10 +14,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import multiprocessing as mp
 import threading
 import traceback
 from typing import TYPE_CHECKING, Any
+
+import psutil
 
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
@@ -26,6 +29,79 @@ if TYPE_CHECKING:
     from multiprocessing.connection import Connection
 
     from dimos.core.module import ModuleT
+
+_MB = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class WorkerStats:
+    pid: int
+    worker_id: int
+    alive: bool
+    cpu_percent: float = 0.0
+    cpu_time_user: float = 0.0
+    cpu_time_system: float = 0.0
+    cpu_time_iowait: float = 0.0
+    pss_mb: float = 0.0
+    uss_mb: float = 0.0
+    rss_mb: float = 0.0
+    vms_mb: float = 0.0
+    num_threads: int = 0
+    num_children: int = 0
+    num_fds: int = 0
+    io_read_mb: float = 0.0
+    io_write_mb: float = 0.0
+    modules: list[str] = field(default_factory=list)
+
+
+def collect_process_stats(
+    pid: int, worker_id: int = -1, modules: list[str] | None = None
+) -> WorkerStats:
+    """Collect resource stats for a single process by PID."""
+    try:
+        proc = psutil.Process(pid)
+        with proc.oneshot():
+            cpu_pct = proc.cpu_percent(interval=None)
+            ct = proc.cpu_times()
+            mem_basic = proc.memory_info()
+            try:
+                mem_full = proc.memory_full_info()
+                pss = getattr(mem_full, "pss", 0) / _MB
+                uss = getattr(mem_full, "uss", 0) / _MB
+            except (psutil.AccessDenied, AttributeError):
+                pss = uss = 0.0
+            try:
+                io = proc.io_counters()
+                io_r = io.read_bytes / _MB
+                io_w = io.write_bytes / _MB
+            except (psutil.AccessDenied, AttributeError):
+                io_r = io_w = 0.0
+            try:
+                fds = proc.num_fds()
+            except (psutil.AccessDenied, AttributeError):
+                fds = 0
+            return WorkerStats(
+                pid=pid,
+                worker_id=worker_id,
+                alive=True,
+                cpu_percent=cpu_pct,
+                cpu_time_user=ct.user,
+                cpu_time_system=ct.system,
+                cpu_time_iowait=getattr(ct, "iowait", 0.0),
+                pss_mb=pss,
+                uss_mb=uss,
+                rss_mb=mem_basic.rss / _MB,
+                vms_mb=mem_basic.vms / _MB,
+                num_threads=proc.num_threads(),
+                num_children=len(proc.children(recursive=True)),
+                num_fds=fds,
+                io_read_mb=io_r,
+                io_write_mb=io_w,
+                modules=modules or [],
+            )
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return WorkerStats(pid=pid, worker_id=worker_id, alive=False, modules=modules or [])
+
 
 logger = setup_logger()
 
@@ -154,6 +230,14 @@ class Worker:
     @property
     def module_count(self) -> int:
         return len(self._modules) + self._reserved
+
+    def collect_stats(self) -> WorkerStats:
+        """Collect resource stats for this worker's process."""
+        modules = [actor._cls.__name__ for actor in self._modules.values()]
+        if self._process is not None and self._process.is_alive():
+            pid: int = self._process.pid  # type: ignore[assignment]
+            return collect_process_stats(pid, self._worker_id, modules)
+        return WorkerStats(pid=0, worker_id=self._worker_id, alive=False, modules=modules)
 
     def reserve_slot(self) -> None:
         """Reserve a slot so _select_worker() sees the pending load."""

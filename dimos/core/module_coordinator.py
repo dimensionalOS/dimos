@@ -12,17 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from concurrent.futures import ThreadPoolExecutor
+import os
 import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module, ModuleT
 from dimos.core.resource import Resource
+from dimos.core.resource_logger import LCMResourceLogger, ResourceLogger
+from dimos.core.worker import WorkerStats, collect_process_stats
 from dimos.core.worker_manager import WorkerManager
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from dimos.core.module import Module, ModuleT
     from dimos.core.rpc_client import ModuleProxy
 
 logger = setup_logger()
@@ -33,7 +38,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
     _global_config: GlobalConfig
     _n: int | None = None
     _memory_limit: str = "auto"
-    _deployed_modules: dict[type[Module], "ModuleProxy"]
+    _deployed_modules: dict[type[Module], ModuleProxy]
 
     def __init__(
         self,
@@ -61,7 +66,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
 
         self._client.close_all()  # type: ignore[union-attr]
 
-    def deploy(self, module_class: type[ModuleT], *args, **kwargs) -> "ModuleProxy":  # type: ignore[no-untyped-def]
+    def deploy(self, module_class: type[ModuleT], *args, **kwargs) -> ModuleProxy:  # type: ignore[no-untyped-def]
         if not self._client:
             raise ValueError("Trying to dimos.deploy before the client has started")
 
@@ -71,7 +76,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
 
     def deploy_parallel(
         self, module_specs: list[tuple[type[ModuleT], tuple[Any, ...], dict[str, Any]]]
-    ) -> list["ModuleProxy"]:
+    ) -> list[ModuleProxy]:
         if not self._client:
             raise ValueError("Not started")
 
@@ -94,14 +99,35 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
             if hasattr(module, "on_system_modules"):
                 module.on_system_modules(module_list)
 
-    def get_instance(self, module: type[ModuleT]) -> "ModuleProxy":
+    def get_instance(self, module: type[ModuleT]) -> ModuleProxy:
         return self._deployed_modules.get(module)  # type: ignore[return-value, no-any-return]
 
-    def loop(self) -> None:
+    def loop(
+        self,
+        resource_logger: ResourceLogger | None = None,
+        monitor_interval: float = 2.0,
+    ) -> None:
+        _logger: ResourceLogger = resource_logger or LCMResourceLogger()
+        coordinator_pid = os.getpid()
+        # Prime cpu_percent so the first real reading isn't 0.0.
+        collect_process_stats(coordinator_pid)
+
+        last_monitor = time.monotonic()
         try:
             while True:
                 time.sleep(0.1)
+                now = time.monotonic()
+                if now - last_monitor >= monitor_interval:
+                    last_monitor = now
+                    self._log_resource_stats(_logger, coordinator_pid)
         except KeyboardInterrupt:
             return
         finally:
             self.stop()
+
+    def _log_resource_stats(self, _logger: ResourceLogger, coordinator_pid: int) -> None:
+        coordinator = collect_process_stats(coordinator_pid)
+        workers: list[WorkerStats] = []
+        if self._client is not None:
+            workers = self._client.collect_stats()
+        _logger.log_stats(coordinator, workers)

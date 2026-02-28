@@ -166,6 +166,35 @@ def test_worker_manager_parallel_deployment(create_worker_manager):
 
 
 @pytest.mark.slow
+def test_collect_stats(create_worker_manager):
+    manager = create_worker_manager(n_workers=2)
+    module1 = manager.deploy(SimpleModule)
+    module2 = manager.deploy(AnotherModule)
+    module1.start()
+    module2.start()
+
+    stats = manager.collect_stats()
+    assert len(stats) == 2
+
+    for s in stats:
+        assert s.alive is True
+        assert s.pid > 0
+        assert s.rss_mb > 0
+        assert s.num_threads >= 1
+        assert s.num_fds >= 0
+        assert s.io_read_mb >= 0
+        assert s.io_write_mb >= 0
+
+    # At least one worker should report module names
+    all_modules = [name for s in stats for name in s.modules]
+    assert "SimpleModule" in all_modules
+    assert "AnotherModule" in all_modules
+
+    module1.stop()
+    module2.stop()
+
+
+@pytest.mark.slow
 def test_worker_pool_modules_share_workers(create_worker_manager):
     manager = create_worker_manager(n_workers=1)
     module1 = manager.deploy(SimpleModule)
