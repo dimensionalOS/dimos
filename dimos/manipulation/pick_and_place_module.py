@@ -30,8 +30,9 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.core import In, rpc
+from dimos.core.core import rpc
 from dimos.core.docker_runner import DockerModule as DockerRunner
+from dimos.core.stream import In  # noqa: TC001
 from dimos.manipulation.grasping.graspgen_module import GraspGenModule
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
