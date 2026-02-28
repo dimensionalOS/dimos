@@ -43,6 +43,10 @@ class Config(ModuleConfig):
             raise ValueError(f"max_angular_speed must be positive, got {self.max_angular_speed}")
         if self.control_frequency <= 0:
             raise ValueError(f"control_frequency must be positive, got {self.control_frequency}")
+        if self.k_angular <= 0:
+            raise ValueError(f"k_angular must be positive, got {self.k_angular}")
+        if self.rotation_threshold <= 0:
+            raise ValueError(f"rotation_threshold must be positive, got {self.rotation_threshold}")
 
 
 class ReplanningAStarPlanner(Module, NavigationInterface):
