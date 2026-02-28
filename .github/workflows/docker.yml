@@ -46,7 +46,6 @@ jobs:
               - .github/workflows/_docker-build-template.yml
               - .github/workflows/docker.yml
               - docker/python/**
-              - pyproject.toml
 
             dev:
               - docker/dev/**
@@ -199,7 +198,7 @@ jobs:
       to-image: ghcr.io/dimensionalos/ros-dev:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile: dev
 
-  run-ros-tests:
+  run-tests:
     needs: [check-changes, ros-dev]
     if: ${{
       always() &&
@@ -232,7 +231,7 @@ jobs:
       dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   ci-complete:
-    needs: [check-changes, ros, python, ros-python, dev, ros-dev, run-ros-tests, run-mypy]
+    needs: [check-changes, ros, python, ros-python, dev, ros-dev, run-tests, run-mypy]
     runs-on: [self-hosted, Linux]
     if: always()
     steps:

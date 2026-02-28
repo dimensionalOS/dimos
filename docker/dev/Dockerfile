@@ -29,9 +29,6 @@ ENV UV_SYSTEM_PYTHON=1
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-# Install dependencies with UV
-RUN uv pip install .[dev]
-
 # Copy files and add version to motd
 COPY /assets/dimensionalascii.txt /etc/motd
 COPY /docker/dev/bash.sh /root/.bash.sh
