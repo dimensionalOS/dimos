@@ -23,7 +23,7 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.9"
+version = "0.0.10.post1"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
 readme = "README.md"
@@ -37,7 +37,6 @@ dependencies = [
     "scipy>=1.15.1",
     "pin>=3.3.0",  # Pinocchio IK library
     "reactivex",
-    "asyncio==3.4.3",
     "sortedcontainers==2.4.0",
     "pydantic",
     "python-dotenv",
@@ -76,7 +75,7 @@ foxglove-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"
 humancli = "dimos.utils.cli.human.humanclianim:main"
 dimos = "dimos.robot.cli.dimos:main"
-rerun-bridge = "dimos.visualization.rerun.bridge:main"
+rerun-bridge = "dimos.visualization.rerun.bridge:app"
 doclinks = "dimos.utils.docs.doclinks:main"
 
 [project.optional-dependencies]
@@ -119,6 +118,7 @@ misc = [
 
     # Hardware SDKs
     "xarm-python-sdk>=1.17.0",
+    "portal",
 ]
 
 visualization = [
@@ -141,9 +141,6 @@ agents = [
     "openai",
     "openai-whisper",
     "sounddevice",
-
-    # MCP Server
-    "mcp>=1.0.0",
 ]
 
 web = [
@@ -172,7 +169,8 @@ unitree = [
 
 manipulation = [
     # Planning (Drake)
-    "drake>=1.40.0; platform_machine != 'aarch64'",
+    "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
+    "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
 
     # Hardware SDKs
     "piper-sdk",
@@ -200,8 +198,6 @@ cuda = [
     "nvidia-nvimgcodec-cu12[all]; platform_machine == 'x86_64'",
     "onnxruntime-gpu>=1.17.1; platform_machine == 'x86_64'", # Only versions supporting both cuda11 and cuda12
     "ctransformers[cuda]==0.2.27",
-    "mmengine>=0.10.3",
-    "mmcv>=2.1.0",
     "xformers>=0.0.20; platform_machine == 'x86_64'",
 ]
 
@@ -306,7 +302,6 @@ base = [
     "dimos[agents,web,perception,visualization,sim]",
 ]
 
-
 [tool.ruff]
 line-length = 100
 exclude = [
@@ -360,11 +355,15 @@ module = [
     "mujoco_playground.*",
     "nav_msgs.*",
     "open_clip",
+    "pinocchio",
     "piper_sdk.*",
     "plotext",
     "plum.*",
+    "portal",
     "pycuda",
     "pycuda.*",
+    "pydrake",
+    "pydrake.*",
     "pyzed",
     "pyzed.*",
     "rclpy.*",
@@ -375,7 +374,6 @@ module = [
     "torchreid",
     "ultralytics.*",
     "unitree_webrtc_connect.*",
-    "watchdog.*",
     "xarm.*",
 ]
 ignore_missing_imports = true
@@ -384,26 +382,17 @@ ignore_missing_imports = true
 module = ["dimos.rxpy_backpressure", "dimos.rxpy_backpressure.*"]
 follow_imports = "skip"
 
+[[tool.mypy.overrides]]
+module = ["pydrake", "pydrake.*"]
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
-markers = [
-    "heavy: resource heavy test",
-    "tool: dev tooling",
-    "ros: depend on ros",
-    "lcm: tests that run actual LCM bus (can't execute in CI)",
-    "module: tests that need to run directly as modules",
-    "gpu: tests that require GPU",
-    "cuda: tests which require CUDA (specifically CUDA not just GPU acceleration)",
-    "e2e: end to end tests",
-    "integration: slower integration tests",
-    "neverending: they don't finish",
-    "mujoco: tests which open mujoco",
-]
 env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "-v -p no:warnings -ra --color=yes -m 'not (vis or exclude or tool or lcm or ros or heavy or gpu or module or e2e or integration or neverending or mujoco)'"
+addopts = "-v -r a -p no:warnings --color=yes -m 'not (tool or slow or mujoco)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from enum import Enum
 import inspect
 import sys
 from typing import Any, get_args, get_origin
@@ -21,9 +20,6 @@ from dotenv import load_dotenv
 import typer
 
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.robot.all_blueprints import all_blueprints
-
-RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})  # type: ignore[misc]
 
 main = typer.Typer(
     help="Dimensional CLI",
@@ -102,28 +98,19 @@ main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 @main.command()
 def run(
     ctx: typer.Context,
-    robot_type: RobotType = typer.Argument(..., help="Type of robot to run"),
-    extra_modules: list[str] = typer.Option(  # type: ignore[valid-type]
-        [], "--extra-module", help="Extra modules to add to the blueprint"
-    ),
+    robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
 ) -> None:
     """Start a robot blueprint"""
     from dimos.core.blueprints import autoconnect
-    from dimos.protocol import pubsub
-    from dimos.robot.get_all_blueprints import get_blueprint_by_name, get_module_by_name
+    from dimos.robot.get_all_blueprints import get_by_name
     from dimos.utils.logging_config import setup_exception_handler
 
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
     global_config.update(**cli_config_overrides)
-    pubsub.lcm.autoconf()  # type: ignore[attr-defined]
-    blueprint = get_blueprint_by_name(robot_type.value)
 
-    if extra_modules:
-        loaded_modules = [get_module_by_name(mod_name) for mod_name in extra_modules]  # type: ignore[attr-defined]
-        blueprint = autoconnect(blueprint, *loaded_modules)
-
+    blueprint = autoconnect(*map(get_by_name, robot_types))
     dimos = blueprint.build(cli_config_overrides=cli_config_overrides)
     dimos.loop()
 
@@ -139,8 +126,8 @@ def show_config(ctx: typer.Context) -> None:
         typer.echo(f"{field_name}: {value}")
 
 
-@main.command()
-def list() -> None:
+@main.command(name="list")
+def list_blueprints() -> None:
     """List all available blueprints."""
     from dimos.robot.all_blueprints import all_blueprints
 

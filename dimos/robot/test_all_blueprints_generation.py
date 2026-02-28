@@ -31,12 +31,19 @@ IGNORED_FILES: set[str] = {
     "dimos/core/blueprints.py",
     "dimos/core/test_blueprints.py",
 }
-BLUEPRINT_METHODS = {"transports", "global_config", "remappings", "requirements"}
+BLUEPRINT_METHODS = {"transports", "global_config", "remappings", "requirements", "configurators"}
 
 
 def test_all_blueprints_is_current() -> None:
     root = DIMOS_PROJECT_ROOT / "dimos"
     all_blueprints, all_modules = _scan_for_blueprints(root)
+
+    common = set(all_blueprints.keys()) & set(all_modules.keys())
+    assert not common, (
+        f"Names must be unique across blueprints and modules, "
+        f"but these appear in both: {sorted(common)}"
+    )
+
     generated_content = _generate_all_blueprints_content(all_blueprints, all_modules)
 
     file_path = root / "robot" / "all_blueprints.py"
@@ -83,8 +90,8 @@ def _scan_for_blueprints(root: Path) -> tuple[dict[str, str], dict[str, str]]:
             all_blueprints[cli_name] = full_path
 
         for var_name in module_vars:
-            full_path = f"{module_name}:{var_name}"
-            all_modules[var_name] = module_name
+            cli_name = var_name.replace("_", "-")
+            all_modules[cli_name] = module_name
 
     return all_blueprints, all_modules
 

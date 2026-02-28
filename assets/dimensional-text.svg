@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 535 80">
+  <style>
+    .logo {
+      fill: currentColor;
+      font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", "Consolas", "Liberation Mono", "DejaVu Sans Mono", monospace;
+      font-size: 10px;
+      white-space: pre;
+    }
+    @media (prefers-color-scheme: light) { .logo { fill: #000; } }
+    @media (prefers-color-scheme: dark) { .logo { fill: #fff; } }
+  </style>
+  <text class="logo" xml:space="preserve">
+<tspan x="0" dy="13">  ██████╗ ██╗███╗   ███╗███████╗███╗   ██╗███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗</tspan>
+<tspan x="0" dy="13">  ██╔══██╗██║████╗ ████║██╔════╝████╗  ██║██╔════╝██║██╔═══██╗████╗  ██║██╔══██╗██║</tspan>
+<tspan x="0" dy="13">  ██║  ██║██║██╔████╔██║█████╗  ██╔██╗ ██║███████╗██║██║   ██║██╔██╗ ██║███████║██║</tspan>
+<tspan x="0" dy="13">  ██║  ██║██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║</tspan>
+<tspan x="0" dy="13">  ██████╔╝██║██║ ╚═╝ ██║███████╗██║ ╚████║███████║██║╚██████╔╝██║ ╚████║██║  ██║███████╗</tspan>
+<tspan x="0" dy="13">  ╚═════╝ ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝</tspan>
+  </text>
+</svg>

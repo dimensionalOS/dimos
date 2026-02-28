@@ -14,7 +14,6 @@
 
 from collections.abc import Callable
 import math
-import os
 import time
 
 import pytest
@@ -23,8 +22,8 @@ from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
 
 
-@pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
+@pytest.mark.skipif_in_ci
+@pytest.mark.skipif_no_openai
 @pytest.mark.mujoco
 def test_spatial_memory_navigation(
     lcm_spy: LcmSpy,
@@ -34,10 +33,8 @@ def test_spatial_memory_navigation(
 ) -> None:
     start_blueprint("run", "unitree-go2-agentic")
 
-    lcm_spy.save_topic("/rpc/HumanInput/start/res")
-    lcm_spy.wait_for_saved_topic("/rpc/HumanInput/start/res", timeout=120.0)
-    lcm_spy.save_topic("/agent")
-    lcm_spy.wait_for_saved_topic_content("/agent", b"AIMessage", timeout=120.0)
+    lcm_spy.save_topic("/rpc/Agent/on_system_modules/res")
+    lcm_spy.wait_for_saved_topic("/rpc/Agent/on_system_modules/res", timeout=120.0)
 
     time.sleep(5)
 

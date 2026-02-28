@@ -1,0 +1,38 @@
+{
+  "common": {
+    "time_sync_en": false,
+    "time_offset_lidar_to_imu": 0.0,
+    "msr_freq": 50.0,
+    "main_freq": 5000.0
+  },
+  "preprocess": {
+    "lidar_type": 1,
+    "scan_line": 1,
+    "blind": 1
+  },
+  "mapping": {
+    "acc_cov": 0.1,
+    "gyr_cov": 0.1,
+    "b_acc_cov": 0.0001,
+    "b_gyr_cov": 0.0001,
+    "fov_degree": 360,
+    "det_range": 100.0,
+    "extrinsic_est_en": true,
+    "extrinsic_T": [
+      0.04165,
+      0.02326,
+      -0.0284
+    ],
+    "extrinsic_R": [
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ]
+  }
+}

@@ -52,15 +52,3 @@ def test_pickle_encode_decode() -> None:
     assert isinstance(twist_dest, TwistStamped)
     assert twist_dest is not twist_source
     assert twist_dest == twist_source
-
-
-if __name__ == "__main__":
-    print("Running test_lcm_encode_decode...")
-    test_lcm_encode_decode()
-    print("test_lcm_encode_decode passed")
-
-    print("Running test_pickle_encode_decode...")
-    test_pickle_encode_decode()
-    print("test_pickle_encode_decode passed")
-
-    print("\nAll tests passed!")

@@ -672,7 +672,3 @@ class TestRetractDistance:
         assert np.isclose(retracted.position.x, expected_x)
         assert np.isclose(retracted.position.y, expected_y)
         assert np.isclose(retracted.position.z, expected_z)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

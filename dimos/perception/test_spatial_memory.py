@@ -20,13 +20,14 @@ import time
 import numpy as np
 import pytest
 from reactivex import operators as ops
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.msgs.geometry_msgs import Pose
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.stream.video_provider import VideoProvider
 
 
-@pytest.mark.heavy
+@pytest.mark.slow
 class TestSpatialMemory:
     @pytest.fixture(scope="class")
     def temp_dir(self):
@@ -87,6 +88,7 @@ class TestSpatialMemory:
 
     def test_spatial_memory_processing(self, spatial_memory, temp_dir) -> None:
         """Test processing video frames and building spatial memory with CLIP embeddings."""
+        test_scheduler = ThreadPoolScheduler(max_workers=4)
         try:
             # Use the shared spatial_memory fixture
             memory = spatial_memory
@@ -95,7 +97,9 @@ class TestSpatialMemory:
 
             video_path = get_data("assets") / "trimmed_video_office.mov"
             assert os.path.exists(video_path), f"Test video not found: {video_path}"
-            video_provider = VideoProvider(dev_name="test_video", video_source=video_path)
+            video_provider = VideoProvider(
+                dev_name="test_video", video_source=video_path, pool_scheduler=test_scheduler
+            )
             video_stream = video_provider.capture_video_as_observable(realtime=False, fps=15)
 
             # Create a frame counter for position generation
@@ -196,7 +200,4 @@ class TestSpatialMemory:
             pytest.fail(f"Error in test: {e}")
         finally:
             video_provider.dispose_all()
-
-
-if __name__ == "__main__":
-    pytest.main(["-v", __file__])
+            test_scheduler.executor.shutdown(wait=True)

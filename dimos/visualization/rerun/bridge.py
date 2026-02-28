@@ -202,6 +202,10 @@ class RerunBridgeModule(Module):
             if pattern_matches(pattern, entity_path)
         ]
 
+        # None means "suppress this topic entirely"
+        if any(fn is None for fn in matches):
+            return lambda msg: None
+
         # final step (ensures we return Archetype or None)
         def final_convert(msg: Any) -> RerunData | None:
             if isinstance(msg, Archetype):
@@ -255,6 +259,7 @@ class RerunBridgeModule(Module):
 
         # Initialize and spawn Rerun viewer
         rr.init("dimos")
+
         if self.config.viewer_mode == "native":
             rr.spawn(connect=True, memory_limit=self.config.memory_limit)
         elif self.config.viewer_mode == "web":
@@ -309,35 +314,6 @@ def run_bridge(
         # any pubsub that supports subscribe_all and topic that supports str(topic)
         # is acceptable here
         pubsubs=[LCM(autoconf=True)],
-        # Custom converters for specific rerun entity paths
-        # Normally all these would be specified in their respectative modules
-        # Until this is implemented we have central overrides here
-        #
-        # This is unsustainable once we move to multi robot etc
-        visual_override={
-            "world/camera_info": lambda camera_info: camera_info.to_rerun(
-                image_topic="/world/color_image",
-                optical_frame="camera_optical",
-            ),
-            "world/global_map": lambda grid: grid.to_rerun(voxel_size=0.1),
-            "world/navigation_costmap": lambda grid: grid.to_rerun(
-                colormap="Accent",
-                z_offset=0.015,
-                opacity=0.2,
-                background="#484981",
-            ),
-        },
-        # slapping a go2 shaped box on top of tf/base_link
-        static={
-            "world/tf/base_link": lambda rr: [
-                rr.Boxes3D(
-                    half_sizes=[0.35, 0.155, 0.2],
-                    colors=[(0, 255, 127)],
-                    fill_mode="wireframe",
-                ),
-                rr.Transform3D(parent_frame="tf#/base_link"),
-            ]
-        },
     )
 
     bridge.start()
@@ -346,7 +322,11 @@ def run_bridge(
     signal.pause()
 
 
-def _cli(
+app = typer.Typer()
+
+
+@app.command()
+def cli(
     viewer_mode: str = typer.Option(
         "native", help="Viewer mode: native (desktop), web (browser), none (headless)"
     ),
@@ -359,7 +339,7 @@ def _cli(
 
 
 if __name__ == "__main__":
-    typer.run(_cli)
+    app()
 
 # you don't need to include this in your blueprint if you are not creating a
 # custom rerun configuration for your deployment, you can also run rerun-bridge standalone

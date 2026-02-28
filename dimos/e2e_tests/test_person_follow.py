@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections.abc import Callable, Generator
-import os
 import threading
 import time
 
@@ -53,8 +52,8 @@ def start_person_track() -> Generator[StartPersonTrack, None, None]:
         publisher.stop()
 
 
-@pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
+@pytest.mark.skipif_in_ci
+@pytest.mark.skipif_no_openai
 @pytest.mark.mujoco
 def test_person_follow(
     lcm_spy: LcmSpy,
@@ -64,10 +63,8 @@ def test_person_follow(
 ) -> None:
     start_blueprint("--mujoco-start-pos", "-6.18 0.96", "run", "unitree-go2-agentic")
 
-    lcm_spy.save_topic("/rpc/HumanInput/start/res")
-    lcm_spy.wait_for_saved_topic("/rpc/HumanInput/start/res", timeout=120.0)
-    lcm_spy.save_topic("/agent")
-    lcm_spy.wait_for_saved_topic_content("/agent", b"AIMessage", timeout=120.0)
+    lcm_spy.save_topic("/rpc/Agent/on_system_modules/res")
+    lcm_spy.wait_for_saved_topic("/rpc/Agent/on_system_modules/res", timeout=120.0)
 
     time.sleep(5)
 

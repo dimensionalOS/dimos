@@ -14,30 +14,11 @@
 
 from collections import deque
 from dataclasses import dataclass
-from enum import Enum
 import threading
 import time
 
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService
-
-
-class BandwidthUnit(Enum):
-    BP = "B"
-    KBP = "kB"
-    MBP = "MB"
-    GBP = "GB"
-
-
-def human_readable_bytes(bytes_value: float, round_to: int = 2) -> tuple[float, BandwidthUnit]:
-    """Convert bytes to human-readable format with appropriate units"""
-    if bytes_value >= 1024**3:  # GB
-        return round(bytes_value / (1024**3), round_to), BandwidthUnit.GBP
-    elif bytes_value >= 1024**2:  # MB
-        return round(bytes_value / (1024**2), round_to), BandwidthUnit.MBP
-    elif bytes_value >= 1024:  # KB
-        return round(bytes_value / 1024, round_to), BandwidthUnit.KBP
-    else:
-        return round(bytes_value, round_to), BandwidthUnit.BP
+from dimos.utils.human import human_bytes
 
 
 class Topic:
@@ -88,12 +69,10 @@ class Topic:
         total_kbytes = total_bytes / 1000  # Convert bytes to kB
         return total_kbytes / time_window  # type: ignore[no-any-return]
 
-    def kbps_hr(self, time_window: float, round_to: int = 2) -> tuple[float, BandwidthUnit]:
+    def kbps_hr(self, time_window: float) -> str:
         """Return human-readable bandwidth with appropriate units"""
-        kbps_val = self.kbps(time_window)
-        # Convert kB/s to B/s for human_readable_bytes
-        bps = kbps_val * 1000
-        return human_readable_bytes(bps, round_to)
+        bps = self.kbps(time_window) * 1000
+        return human_bytes(bps) + "/s"
 
     # avg msg size in the last n seconds
     def size(self, time_window: float) -> float:
@@ -107,10 +86,9 @@ class Topic:
         """Return total traffic passed in bytes since the beginning"""
         return self.total_traffic_bytes
 
-    def total_traffic_hr(self) -> tuple[float, BandwidthUnit]:
+    def total_traffic_hr(self) -> str:
         """Return human-readable total traffic with appropriate units"""
-        total_bytes = self.total_traffic()
-        return human_readable_bytes(total_bytes)
+        return human_bytes(self.total_traffic())
 
     def __str__(self) -> str:
         return f"topic({self.name})"

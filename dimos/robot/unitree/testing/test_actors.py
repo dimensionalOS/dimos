@@ -102,12 +102,6 @@ def test_mapper_start(dimos) -> None:
     print("start res", mapper.start().result())
 
 
-if __name__ == "__main__":
-    dimos = core.start(2)
-    test_basic(dimos)
-    test_mapper_start(dimos)
-
-
 @pytest.mark.tool
 def test_counter(dimos) -> None:
     counter = dimos.deploy(Counter)

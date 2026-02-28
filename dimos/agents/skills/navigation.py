@@ -63,6 +63,7 @@ class NavigationSkillContainer(Module):
 
     @rpc
     def start(self) -> None:
+        super().start()
         self._disposables.add(Disposable(self.color_image.subscribe(self._on_color_image)))
         self._disposables.add(Disposable(self.odom.subscribe(self._on_odom)))
         self._skill_started = True
@@ -92,12 +93,12 @@ class NavigationSkillContainer(Module):
 
         if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
-        tf = self.tf.get("map", "base_link", time_tolerance=2.0)
-        if not tf:
-            return "Could not get the robot's current transform."
 
-        position = tf.translation
-        rotation = tf.rotation.to_euler()
+        if not self._latest_odom:
+            return "No odometry data received yet, cannot tag location."
+
+        position = self._latest_odom.position
+        rotation = self._latest_odom.orientation
 
         location = RobotLocation(
             name=location_name,

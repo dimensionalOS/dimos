@@ -35,7 +35,7 @@ class MockedGpsNavSkill(GpsNavSkillContainer):
         self._max_valid_distance = 50000
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_set_gps_travel_points(agent_setup) -> None:
     history = agent_setup(
         blueprints=[FakeGPS.blueprint(), MockedGpsNavSkill.blueprint()],
@@ -50,7 +50,7 @@ def test_set_gps_travel_points(agent_setup) -> None:
     assert "success" in history[-1].content.lower()
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_set_gps_travel_points_multiple(agent_setup) -> None:
     history = agent_setup(
         blueprints=[FakeGPS.blueprint(), MockedGpsNavSkill.blueprint()],

@@ -101,7 +101,8 @@ def test_classmethods() -> None:
     nav._close_module()
 
 
-@pytest.mark.module
+@pytest.mark.slow
+@pytest.mark.skipif_in_ci
 def test_basic_deployment(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)
 
@@ -136,4 +137,7 @@ def test_basic_deployment(dimos) -> None:
     assert nav.odom_msg_count >= 8
     assert nav.lidar_msg_count >= 8
 
-    dimos.shutdown()
+    nav.stop()
+    nav.stop_rpc_client()
+    robot.stop_rpc_client()
+    dimos.close_all()

@@ -212,69 +212,8 @@ jobs:
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      cmd: "pytest && pytest -m ros" # run tests that depend on ros as well
+      cmd: "pytest --durations=0 -m 'not (tool or mujoco)'"
       dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
-
-  run-tests:
-    needs: [check-changes, dev]
-    if: ${{
-      always() &&
-      needs.check-changes.result == 'success' &&
-      (needs.check-changes.outputs.tests == 'true' ||
-       needs.check-changes.outputs.python == 'true' ||
-       needs.check-changes.outputs.dev == 'true')
-      }}
-    uses: ./.github/workflows/tests.yml
-    secrets: inherit
-    with:
-      cmd: "pytest"
-      dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
-
-  # we run in parallel with normal tests for speed
-  run-heavy-tests:
-    needs: [check-changes, dev]
-    if: ${{
-      always() &&
-      needs.check-changes.result == 'success' &&
-      (needs.check-changes.outputs.tests == 'true' ||
-       needs.check-changes.outputs.python == 'true' ||
-       needs.check-changes.outputs.dev == 'true')
-      }}
-    uses: ./.github/workflows/tests.yml
-    secrets: inherit
-    with:
-      cmd: "pytest -m heavy"
-      dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
-
-  run-lcm-tests:
-    needs: [check-changes, dev]
-    if: ${{
-      always() &&
-      needs.check-changes.result == 'success' &&
-      (needs.check-changes.outputs.tests == 'true' ||
-       needs.check-changes.outputs.python == 'true' ||
-       needs.check-changes.outputs.dev == 'true')
-      }}
-    uses: ./.github/workflows/tests.yml
-    secrets: inherit
-    with:
-      cmd: "pytest -m lcm"
-      dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
-
-  run-integration-tests:
-    needs: [check-changes, dev]
-    if: ${{
-      always() &&
-      needs.check-changes.result == 'success' &&
-      (needs.check-changes.outputs.tests == 'true' ||
-       needs.check-changes.outputs.python == 'true' ||
-       needs.check-changes.outputs.dev == 'true')
-      }}
-    uses: ./.github/workflows/tests.yml
-    secrets: inherit
-    with:
-      cmd: "pytest -m integration"
-      dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-mypy:
     needs: [check-changes, ros-dev]
@@ -292,43 +231,8 @@ jobs:
       cmd: "MYPYPATH=/opt/ros/humble/lib/python3.10/site-packages mypy dimos"
       dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
-  # Run module tests directly to avoid pytest forking issues
-  # run-module-tests:
-  #   needs: [check-changes, dev]
-  #   if: ${{
-  #     always() &&
-  #     needs.check-changes.result == 'success' &&
-  #     ((needs.dev.result == 'success') ||
-  #     (needs.dev.result == 'skipped' &&
-  #     needs.check-changes.outputs.tests == 'true'))
-  #     }}
-  #   runs-on: [self-hosted, x64, 16gb]
-  #   container:
-  #     image: ghcr.io/dimensionalos/dev:${{ needs.check-changes.outputs.dev == 'true' && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
-  #   steps:
-  #     - name: Fix permissions
-  #       run: |
-  #         sudo chown -R $USER:$USER ${{ github.workspace }} || true
-  #
-  #     - uses: actions/checkout@v4
-  #       with:
-  #         lfs: true
-  #
-  #     - name: Configure Git LFS
-  #       run: |
-  #         git config --global --add safe.directory '*'
-  #         git lfs install
-  #         git lfs fetch
-  #         git lfs checkout
-  #
-  #     - name: Run module tests
-  #       env:
-  #         CI: "true"
-  #       run: |
-  #         /entrypoint.sh bash -c "pytest -m module"
-
   ci-complete:
-    needs: [check-changes, ros, python, ros-python, dev, ros-dev, run-tests, run-heavy-tests, run-lcm-tests, run-integration-tests, run-ros-tests, run-mypy]
+    needs: [check-changes, ros, python, ros-python, dev, ros-dev, run-ros-tests, run-mypy]
     runs-on: [self-hosted, Linux]
     if: always()
     steps:

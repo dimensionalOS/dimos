@@ -17,6 +17,9 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from rerun._baseclasses import Archetype
+
 from dimos_lcm.nav_msgs import Odometry as LCMOdometry
 import numpy as np
 
@@ -213,4 +216,20 @@ class Odometry(Timestamped):
             f"  Orientation: [roll={self.roll:.3f}, pitch={self.pitch:.3f}, yaw={self.yaw:.3f}]\n"
             f"  Linear Velocity: [{self.vx:.3f}, {self.vy:.3f}, {self.vz:.3f}]\n"
             f"  Angular Velocity: [{self.wx:.3f}, {self.wy:.3f}, {self.wz:.3f}]"
+        )
+
+    def to_rerun(self) -> Archetype:
+        """Convert to rerun Transform3D for visualizing the pose."""
+        import rerun as rr
+
+        return rr.Transform3D(
+            translation=[self.x, self.y, self.z],
+            rotation=rr.Quaternion(
+                xyzw=[
+                    self.orientation.x,
+                    self.orientation.y,
+                    self.orientation.z,
+                    self.orientation.w,
+                ]
+            ),
         )

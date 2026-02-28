@@ -65,6 +65,9 @@ yolo11n.pt
 
 *mobileclip*
 /results
+**/cpp/result
 
 CLAUDE.MD
 /assets/teleop_certs/
+
+/.mcp.json

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Generic
 
 from dimos.protocol.pubsub.spec import MsgT, PubSub, TopicT
+from dimos.utils.human import human_bytes, human_duration, human_number
 
 MsgGen = Callable[[int], tuple[TopicT, MsgT]]
 
@@ -39,33 +40,6 @@ class Case(Generic[TopicT, MsgT]):
 
 
 TestData = Sequence[Case[Any, Any]]
-
-
-def _format_mib(value: float) -> str:
-    """Format bytes as MiB with intelligent rounding.
-
-    >= 10 MiB: integer (e.g., "42")
-    1-10 MiB: 1 decimal (e.g., "2.5")
-    < 1 MiB: 2 decimals (e.g., "0.07")
-    """
-    mib = value / (1024**2)
-    if mib >= 10:
-        return f"{mib:.0f}"
-    if mib >= 1:
-        return f"{mib:.1f}"
-    return f"{mib:.2f}"
-
-
-def _format_iec(value: float, concise: bool = False, decimals: int = 2) -> str:
-    """Format bytes with IEC units (Ki/Mi/Gi = 1024^1/2/3)"""
-    k = 1024.0
-    units = ["B", "K", "M", "G", "T"] if concise else ["B", "KiB", "MiB", "GiB", "TiB"]
-
-    for unit in units[:-1]:
-        if abs(value) < k:
-            return f"{value:.{decimals}f}{unit}" if concise else f"{value:.{decimals}f} {unit}"
-        value /= k
-    return f"{value:.{decimals}f}{units[-1]}" if concise else f"{value:.{decimals}f} {units[-1]}"
 
 
 @dataclass
@@ -133,11 +107,13 @@ class BenchmarkResults:
             recv_style = "yellow" if r.receive_time > 0.1 else "dim"
             table.add_row(
                 r.transport,
-                _format_iec(r.msg_size_bytes, decimals=0),
+                human_bytes(r.msg_size_bytes, decimals=0),
                 f"{r.msgs_sent:,}",
                 f"{r.msgs_received:,}",
                 f"{r.throughput_msgs:,.0f}",
-                _format_mib(r.throughput_bytes),
+                (lambda m: f"{m:.2f}" if m < 1 else f"{m:.1f}" if m < 10 else f"{m:.0f}")(
+                    r.throughput_bytes / 1024**2
+                ),
                 f"[{recv_style}]{r.receive_time * 1000:.0f}ms[/{recv_style}]",
                 f"[{loss_style}]{r.loss_pct:.1f}%[/{loss_style}]",
             )
@@ -211,7 +187,7 @@ class BenchmarkResults:
             return gradient[int(t * (len(gradient) - 1))]
 
         reset = "\033[0m"
-        size_labels = [_format_iec(s, concise=True, decimals=0) for s in sizes]
+        size_labels = [human_bytes(s, concise=True, decimals=0) for s in sizes]
         col_w = max(8, max(len(s) for s in size_labels) + 1)
         transport_w = max(len(t) for t in transports) + 1
 
@@ -236,31 +212,23 @@ class BenchmarkResults:
     def print_heatmap(self) -> None:
         """Print msgs/sec heatmap."""
 
-        def fmt(v: float) -> str:
-            return f"{v / 1000:.1f}k" if v >= 1000 else f"{v:.0f}"
-
-        self._print_heatmap("Msgs/sec", lambda r: r.throughput_msgs, fmt)
+        self._print_heatmap("Msgs/sec", lambda r: r.throughput_msgs, human_number)
 
     def print_bandwidth_heatmap(self) -> None:
         """Print bandwidth heatmap."""
 
         def fmt(v: float) -> str:
-            return _format_iec(v, concise=True, decimals=1)
+            return human_bytes(v, concise=True, decimals=1)
 
         self._print_heatmap("Bandwidth (IEC)", lambda r: r.throughput_bytes, fmt)
 
     def print_latency_heatmap(self) -> None:
         """Print latency heatmap (time waiting for messages after publishing)."""
 
-        def fmt(v: float) -> str:
-            if v >= 1:
-                return f"{v:.1f}s"
-            return f"{v * 1000:.0f}ms"
-
         self._print_heatmap(
             "Latency",
             lambda r: r.receive_time,
-            fmt,
+            lambda v: human_duration(v, signed=False),
             high_is_good=False,
         )
 

@@ -609,22 +609,20 @@ class PointCloud2(Timestamped):
     def to_rerun(
         self,
         voxel_size: float = 0.05,
-        colormap: str | None = "turbo",
+        colormap: str | None = None,
         colors: list[int] | None = None,
-        mode: str = "boxes",
+        mode: str = "points",
         size: float | None = None,
         fill_mode: str = "solid",
         **kwargs: object,
     ) -> Archetype:
-        import rerun as rr
-
-        """Convert to Rerun Points3D or Boxes3D archetype.
+        """Convert to Rerun archetype for visualization.
 
         Args:
             voxel_size: size for visualization
             colormap: Optional colormap name (e.g., "turbo", "viridis") to color by height
             colors: Optional RGB color [r, g, b] for all points (0-255)
-            mode: Visualization mode - "points" for spheres, "boxes" for cubes (default)
+            mode: "points" for raw points, "boxes" for cubes (default), or "spheres" for sized spheres
             size: Box size for mode="boxes" (e.g., voxel_size). Defaults to radii*2.
             fill_mode: Fill mode for boxes - "solid", "majorwireframe", or "densewireframe"
             **kwargs: Additional args (ignored for compatibility)
@@ -632,14 +630,17 @@ class PointCloud2(Timestamped):
         Returns:
             rr.Points3D or rr.Boxes3D archetype for logging to Rerun
         """
+        import rerun as rr
+
         points, _ = self.as_numpy()
         if len(points) == 0:
-            return rr.Points3D([]) if mode == "points" else rr.Boxes3D(centers=[])
+            return rr.Points3D([]) if mode != "boxes" else rr.Boxes3D(centers=[])
 
+        if colors is None and colormap is None:
+            colormap = "turbo"  # Default colormap if no colors provided
         # Determine colors
         point_colors = None
         if colormap is not None:
-            # Color by height (z-coordinate)
             z = points[:, 2]
             z_norm = (z - z.min()) / (z.max() - z.min() + 1e-8)
             cmap = _get_matplotlib_cmap(colormap)
@@ -647,10 +648,19 @@ class PointCloud2(Timestamped):
         elif colors is not None:
             point_colors = colors
 
-        if mode == "boxes":
-            # Use boxes for voxel visualization
+        if mode == "points":
+            return rr.Points3D(
+                positions=points,
+                colors=point_colors,
+            )
+        elif mode == "boxes":
             box_size = size if size is not None else voxel_size
             half = box_size / 2
+            # Snap points to voxel grid centers so boxes tile properly
+            points = np.floor(points / box_size) * box_size + half
+            points, unique_idx = np.unique(points, axis=0, return_index=True)
+            if point_colors is not None and isinstance(point_colors, np.ndarray):
+                point_colors = point_colors[unique_idx]
             return rr.Boxes3D(
                 centers=points,
                 half_sizes=[half, half, half],

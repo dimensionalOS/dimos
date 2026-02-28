@@ -51,7 +51,7 @@ logger = setup_logger()
 
 
 class Drone(Robot):
-    """Generic MAVLink-based drone with video and depth capabilities."""
+    """Generic MAVLink-based drone with video capabilities."""
 
     def __init__(
         self,
@@ -164,8 +164,6 @@ class Drone(Robot):
 
         # Configure LCM transports
         self.camera.color_image.transport = core.LCMTransport("/drone/color_image", Image)
-        self.camera.depth_image.transport = core.LCMTransport("/drone/depth_image", Image)
-        self.camera.depth_colorized.transport = core.LCMTransport("/drone/depth_colorized", Image)
         self.camera.camera_info.transport = core.LCMTransport("/drone/camera_info", CameraInfo)
         self.camera.camera_pose.transport = core.LCMTransport("/drone/camera_pose", PoseStamped)
 

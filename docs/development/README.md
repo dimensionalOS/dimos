@@ -56,7 +56,7 @@ uv pip install -e '.[base,dev,manipulation,misc,unitree,drone]'
 # setup pre-commit
 pre-commit install
 
-# test the install (takes about 3 minutes)
+# test the install (takes about 1 minute)
 uv run pytest dimos
 ```
 
@@ -70,38 +70,6 @@ You can install them with:
 uv add git+https://github.com/openai/CLIP.git
 uv add git+https://github.com/facebookresearch/detectron2.git
 ```
-
-### Optional: DDS Transport Support
-
-The `dds` extra provides DDS (Data Distribution Service) transport support via [Eclipse Cyclone DDS](https://cyclonedds.io/docs/cyclonedds-python/latest/). This requires installing system libraries before the Python package can be built.
-
-**Ubuntu/Debian:**
-
-```bash
-# Install the CycloneDDS development library
-sudo apt install cyclonedds-dev
-
-# Create a compatibility directory structure
-# (required because Ubuntu's multiarch layout doesn't match the expected CMake layout)
-sudo mkdir -p /opt/cyclonedds/{lib,bin,include}
-sudo ln -sf /usr/lib/x86_64-linux-gnu/libddsc.so* /opt/cyclonedds/lib/
-sudo ln -sf /usr/lib/x86_64-linux-gnu/libcycloneddsidl.so* /opt/cyclonedds/lib/
-sudo ln -sf /usr/bin/idlc /opt/cyclonedds/bin/
-sudo ln -sf /usr/bin/ddsperf /opt/cyclonedds/bin/
-sudo ln -sf /usr/include/dds /opt/cyclonedds/include/
-
-# Install with the dds extra
-CYCLONEDDS_HOME=/opt/cyclonedds uv pip install -e '.[dds]'
-```
-
-To install all extras including DDS:
-
-```bash
-CYCLONEDDS_HOME=/opt/cyclonedds uv sync --extra dds
-```
-
-<!-- Enable this option once the dockerfile (ghcr.io/dimensionalos/ros-python:dev) is public and debugged! -->
-<!-- ## Setup Option B: Dev Containers (Recommended)
 
 ### Why pick this option? (pros/cons/when-to-use)
 
@@ -156,8 +124,6 @@ The script will:
 * Pull `ghcr.io/dimensionalos/dev:dev` if not present (external contributors: we plan to mirror to Docker Hub).
 
 You’ll land in the workspace as **root** with all project tooling available.
-
-</details> -->
 
 ## Setup Option B: Nix Flake + direnv
 
@@ -256,7 +222,6 @@ This will save the rerun data to `rerun.json` in the current directory.
 ## Where is `<thing>` located? (Architecture)
 
 * If you want to add a `dimos run <your_thing>` command see [dimos_run.md](/docs/development/dimos_run.md)
-* If you want to add a camera driver see [depth_camera_integration.md](/docs/development/depth_camera_integration.md)
 * For edits to manipulation see [manipulation](/dimos/hardware/manipulators/README.md) and the related modules under `dimos/manipulation/`.
 * `dimos/core/`: Is where stuff like `Module`, `In`, `Out`, and `RPC` live.
 * `dimos/robot/`: Robot-specific modules live here.

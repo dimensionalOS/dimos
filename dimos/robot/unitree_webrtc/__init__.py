@@ -20,7 +20,6 @@ import sys
 
 _ALIAS_MODULES = {
     "demo_error_on_name_conflicts": "dimos.robot.unitree.demo_error_on_name_conflicts",
-    "depth_module": "dimos.robot.unitree.depth_module",
     "keyboard_teleop": "dimos.robot.unitree.keyboard_teleop",
     "mujoco_connection": "dimos.robot.unitree.mujoco_connection",
     "type": "dimos.robot.unitree.type",

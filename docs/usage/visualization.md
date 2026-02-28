@@ -7,7 +7,7 @@ Dimos supports three visualization backends: Rerun (web or native) and Foxglove.
 Choose your viewer backend via the CLI (preferred):
 
 ```bash
-# Rerun native viewer (default) - native Rerun window + teleop panel at http://localhost:7779
+# Rerun web viewer (default) - Full vis dashboard and teleop panel in browser
 dimos run unitree-go2
 
 # Explicitly select the viewer backend:
@@ -19,10 +19,11 @@ dimos --viewer-backend foxglove run unitree-go2
 Alternative (environment variable):
 
 ```bash
-VIEWER_BACKEND=rerun dimos run unitree-go2
-
 # Rerun web viewer - Full dashboard in browser
 VIEWER_BACKEND=rerun-web dimos run unitree-go2
+
+# Rerun native viewer - native Rerun window + teleop panel at http://localhost:7779
+VIEWER_BACKEND=rerun dimos run unitree-go2
 
 # Foxglove - Use Foxglove Studio instead of Rerun
 VIEWER_BACKEND=foxglove dimos run unitree-go2
@@ -57,6 +58,28 @@ VIEWER_BACKEND=foxglove dimos run unitree-go2
 - Open layout: `assets/foxglove_dashboards/old/foxglove_unitree_lcm_dashboard.json`
 
 ---
+
+## Rendering with Custom Blueprints
+
+To enable rerun within your own blueprint simply include `RerunBridgeModule`:
+
+```python
+from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+
+camera_demo = autoconnect(
+    CameraModule.blueprint(),
+    RerunBridgeModule.blueprint(
+        viewer_mode="native", # native (desktop), web (browser), none (headless)
+    ),
+)
+
+if __name__ == "__main__":
+    camera_demo.build().loop()
+```
+
+Every LCM stream, such as `color_image` (output by CameraModule), that uses a data type (like `Image`) that has a `.to_rerun` method will get rendered (`rr.log`) using the LCM topic as the rerun entity path. In other words: to render something, simply log it to a stream and it will automatically be available in rerun.
 
 ## Performance Tuning
 

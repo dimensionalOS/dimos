@@ -555,7 +555,7 @@ class WorldObstacleMonitor:
                 entry = self._object_cache.get(oid)
                 if entry is None:
                     continue
-                obj, first_seen, last_seen = entry
+                obj, _first_seen, _last_seen = entry
                 if not isinstance(obj, Object):
                     continue
                 result.append(

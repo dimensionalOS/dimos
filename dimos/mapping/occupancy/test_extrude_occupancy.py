@@ -18,7 +18,7 @@ from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.utils.data import get_data
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_generate_mujoco_scene(occupancy) -> None:
     with open(get_data("expected_occupancy_scene.xml")) as f:
         expected = f.read()

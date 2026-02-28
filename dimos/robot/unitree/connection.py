@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import functools
 import threading
 import time
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
@@ -34,7 +34,6 @@ from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untype
     WebRTCConnectionMethod,
 )
 
-from dimos.core import rpc
 from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs import Pose, Transform, Twist
 from dimos.msgs.sensor_msgs import Image, PointCloud2
@@ -228,7 +227,7 @@ class UnitreeWebRTCConnection(Resource):
         )
 
     # Generic sync API call (we jump into the client thread)
-    def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
+    def publish_request(self, topic: str, data: dict[Any, Any]) -> Any:
         future = asyncio.run_coroutine_threadsafe(
             self.conn.datachannel.pub_sub.publish_request_new(topic, data), self.loop
         )
@@ -275,25 +274,13 @@ class UnitreeWebRTCConnection(Resource):
     def lowstate_stream(self) -> Observable[LowStateMsg]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
 
-    def standup_ai(self) -> bool:
-        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})  # type: ignore[no-any-return]
-
-    def standup_normal(self) -> bool:
-        self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]})
-        time.sleep(0.5)
-        self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["RecoveryStand"]})
-        return True
-
-    @rpc
     def standup(self) -> bool:
-        if self.mode == "ai":
-            return self.standup_ai()
-        else:
-            return self.standup_normal()
+        return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]}))
 
-    @rpc
     def liedown(self) -> bool:
-        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})  # type: ignore[no-any-return]
+        return bool(
+            self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
+        )
 
     async def handstand(self):  # type: ignore[no-untyped-def]
         return self.publish_request(
@@ -301,7 +288,6 @@ class UnitreeWebRTCConnection(Resource):
             {"api_id": SPORT_CMD["Standup"], "parameter": {"data": True}},
         )
 
-    @rpc
     def color(self, color: VUI_COLOR = VUI_COLOR.RED, colortime: int = 60) -> bool:
         return self.publish_request(  # type: ignore[no-any-return]
             RTC_TOPIC["VUI"],

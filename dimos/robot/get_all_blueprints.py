@@ -12,13 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import difflib
+import sys
+from typing import NoReturn
+
+import typer
+
 from dimos.core.blueprints import Blueprint
 from dimos.robot.all_blueprints import all_blueprints, all_modules
+
+all_names = sorted(set(all_blueprints.keys()) | set(all_modules.keys()))
+
+
+def _fail_unknown(name: str, candidates: list[str]) -> NoReturn:
+    typer.echo(typer.style(f"Unknown blueprint or module: {name}", fg=typer.colors.RED), err=True)
+    suggestions = difflib.get_close_matches(name, candidates, n=5, cutoff=0.4)
+    if suggestions:
+        typer.echo("Did you mean one of these?", err=True)
+        for s in suggestions:
+            typer.echo(f"  {s}", err=True)
+    sys.exit(1)
 
 
 def get_blueprint_by_name(name: str) -> Blueprint:
     if name not in all_blueprints:
-        raise ValueError(f"Unknown blueprint set name: {name}")
+        _fail_unknown(name, list(all_blueprints.keys()))
     module_path, attr = all_blueprints[name].split(":")
     module = __import__(module_path, fromlist=[attr])
     return getattr(module, attr)  # type: ignore[no-any-return]
@@ -26,6 +44,16 @@ def get_blueprint_by_name(name: str) -> Blueprint:
 
 def get_module_by_name(name: str) -> Blueprint:
     if name not in all_modules:
-        raise ValueError(f"Unknown module name: {name}")
-    python_module = __import__(all_modules[name], fromlist=[name])
-    return getattr(python_module, name)()  # type: ignore[no-any-return]
+        _fail_unknown(name, list(all_modules.keys()))
+    attr_name = name.replace("-", "_")
+    python_module = __import__(all_modules[name], fromlist=[attr_name])
+    return getattr(python_module, attr_name)()  # type: ignore[no-any-return]
+
+
+def get_by_name(name: str) -> Blueprint:
+    if name in all_blueprints:
+        return get_blueprint_by_name(name)
+    elif name in all_modules:
+        return get_module_by_name(name)
+    else:
+        _fail_unknown(name, all_names)

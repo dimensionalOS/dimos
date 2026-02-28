@@ -1,6 +1,5 @@
 name: code-cleanup
 on:
-  push:
   pull_request:
 
 permissions:

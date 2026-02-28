@@ -15,7 +15,8 @@
 from typing import Protocol
 
 from dimos.core import Out
-from dimos.msgs.sensor_msgs import CameraInfo, Image as ImageMsg, PointCloud2
+from dimos.msgs.nav_msgs.Odometry import Odometry as OdometryMsg
+from dimos.msgs.sensor_msgs import CameraInfo, Image as ImageMsg, Imu, PointCloud2
 
 
 class Image(Protocol):
@@ -34,3 +35,17 @@ class DepthCamera(Camera):
 
 class Pointcloud(Protocol):
     pointcloud: Out[PointCloud2]
+
+
+class IMU(Protocol):
+    imu: Out[Imu]
+
+
+class Odometry(Protocol):
+    odometry: Out[OdometryMsg]
+
+
+class Lidar(Protocol):
+    """LiDAR sensor providing point clouds."""
+
+    lidar: Out[PointCloud2]

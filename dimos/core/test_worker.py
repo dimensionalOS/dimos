@@ -82,7 +82,7 @@ def worker_manager():
         manager.close_all()
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_worker_manager_basic(worker_manager):
     module = worker_manager.deploy(SimpleModule)
     module.start()
@@ -99,7 +99,7 @@ def test_worker_manager_basic(worker_manager):
     module.stop()
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_worker_manager_multiple_different_modules(worker_manager):
     module1 = worker_manager.deploy(SimpleModule)
     module2 = worker_manager.deploy(AnotherModule)
@@ -120,7 +120,7 @@ def test_worker_manager_multiple_different_modules(worker_manager):
     module2.stop()
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_worker_manager_parallel_deployment(worker_manager):
     modules = worker_manager.deploy_parallel(
         [

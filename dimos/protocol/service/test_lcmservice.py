@@ -36,7 +36,9 @@ from dimos.protocol.service.system_configurator import (
 
 class TestConfigureSystemForLcm:
     def test_creates_linux_checks_on_linux(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Linux"):
+        with patch(
+            "dimos.protocol.service.system_configurator.platform.system", return_value="Linux"
+        ):
             with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
                 autoconf()
                 mock_configure.assert_called_once()
@@ -47,7 +49,9 @@ class TestConfigureSystemForLcm:
                 assert checks[0].loopback_interface == "lo"
 
     def test_creates_macos_checks_on_darwin(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Darwin"):
+        with patch(
+            "dimos.protocol.service.system_configurator.platform.system", return_value="Darwin"
+        ):
             with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
                 autoconf()
                 mock_configure.assert_called_once()
@@ -59,14 +63,18 @@ class TestConfigureSystemForLcm:
                 assert checks[0].loopback_interface == "lo0"
 
     def test_passes_check_only_flag(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Linux"):
+        with patch(
+            "dimos.protocol.service.system_configurator.platform.system", return_value="Linux"
+        ):
             with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
                 autoconf(check_only=True)
                 mock_configure.assert_called_once()
                 assert mock_configure.call_args[1]["check_only"] is True
 
     def test_logs_error_on_unsupported_system(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Windows"):
+        with patch(
+            "dimos.protocol.service.system_configurator.platform.system", return_value="Windows"
+        ):
             with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
                 with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
                     autoconf()

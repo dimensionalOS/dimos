@@ -27,7 +27,6 @@ from dimos.core import Module, Out, rpc
 from dimos.models.vl.openai import OpenAIVlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.experimental.temporal_memory import TemporalMemory, TemporalMemoryConfig
-from dimos.protocol import pubsub
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
@@ -36,8 +35,6 @@ from dimos.utils.testing import TimedSensorReplay
 load_dotenv()
 
 logger = setup_logger()
-
-pubsub.lcm.autoconf()
 
 
 class VideoReplayModule(Module):
@@ -79,9 +76,9 @@ class VideoReplayModule(Module):
         logger.info("VideoReplayModule stopped")
 
 
-@pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM replay + dataset not CI-safe.")
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
-@pytest.mark.neverending
+@pytest.mark.skipif_in_ci
+@pytest.mark.skipif_no_openai
+@pytest.mark.slow
 class TestTemporalMemoryModule:
     @pytest.fixture(scope="function")
     def temp_dir(self):
@@ -224,7 +221,3 @@ class TestTemporalMemoryModule:
         assert (output_path / "frames_index.jsonl").exists(), "frames_index.jsonl should exist"
 
         logger.info("All temporal memory module tests passed!")
-
-
-if __name__ == "__main__":
-    pytest.main(["-v", "-s", __file__])

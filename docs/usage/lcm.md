@@ -1,9 +1,29 @@
-
 # LCM Messages
 
-[LCM (Lightweight Communications and Marshalling)](https://github.com/lcm-proj/lcm) is a message-passing system with bindings for many languages (C, C++, Python, Java, Lua, Go). While LCM includes a UDP multicast transport, its real power is the message definition format - classes that can encode themselves to a compact binary representation.
+DimOS uses [LCM (Lightweight Communications and Marshalling)](https://github.com/lcm-proj/lcm) for inter-process communication on a local machine (similar to how ROS uses DDS). LCM is a simple [UDP multicast](https://lcm-proj.github.io/lcm/content/udp-multicast-protocol.html#lcm-udp-multicast-protocol-description) pubsub protocol with a straightforward [message definition language](https://lcm-proj.github.io/lcm/content/lcm-type-ref.html#lcm-type-specification-language).
 
-Dimos uses LCM message definitions for all inter-module communication. Because messages serialize to binary, they can be sent over any transport - not just LCM's UDP multicast, but also shared memory, Redis, WebSockets, or any other channel.
+The LCM project provides pubsub clients and code generators for many languages. For us the power of LCM is its message definition format, multi-language classes that encode themselves to a compact binary format. This means LCM messages can be sent over any transport (WebSocket, SSH, shared memory, etc.) between differnt programming languages.
+
+Our messages are ported from ROS (they are structurally compatible in order to facilitate easy communication to ROS if needed)
+Repo that hosts our message definitions and autogenerators is at [dimos-lcm](https://github.com/dimensionalOS/dimos-lcm/)
+
+our LCM implementation significantly [outperforms ROS for local communication](/docs/usage/transports/index.md#benchmarks)
+
+## Supported languages
+
+Apart from python, we have examples of LCM integrations for:
+- [**C++**](/examples/language-interop/cpp/README.md)
+- [**TypeScript**](/examples/language-interop/ts/README.md)
+- [**Lua**](/examples/language-interop/lua/README.md)
+
+In our [/examples/language-interop/](/examples/language-interop/) dir
+
+Types generated (but no examples yet) for:
+[**C#**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/csharp) and [**Java**](https://github.com/dimensionalOS/dimos-lcm/tree/main/generated/java)
+
+### Native Modules
+
+Given LCM is so portable, we can easily run dimos [Modules](/docs/usage/modules.md) written in [third party languages](/docs/usage/native_modules.md)
 
 ## dimos-lcm Package
 

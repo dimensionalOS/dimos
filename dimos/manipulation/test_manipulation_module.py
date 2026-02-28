@@ -149,7 +149,7 @@ class TestManipulationModuleIntegration:
         """Test planning to a joint configuration."""
         module._on_joint_state(joint_state_zeros)
 
-        target = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+        target = JointState(position=[0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1])
         success = module.plan_to_joints(target)
 
         assert success is True
@@ -203,7 +203,7 @@ class TestManipulationModuleIntegration:
         """Test that trajectory joint names are translated for coordinator."""
         module._on_joint_state(joint_state_zeros)
 
-        success = module.plan_to_joints([0.05] * 7)
+        success = module.plan_to_joints(JointState(position=[0.05] * 7))
         assert success is True
 
         traj = module._planned_trajectories["test_arm"]
@@ -224,7 +224,7 @@ class TestCoordinatorIntegration:
         """Test execute sends trajectory to coordinator."""
         module._on_joint_state(joint_state_zeros)
 
-        success = module.plan_to_joints([0.05] * 7)
+        success = module.plan_to_joints(JointState(position=[0.05] * 7))
         assert success is True
 
         # Mock the coordinator client
@@ -253,7 +253,7 @@ class TestCoordinatorIntegration:
         """Test handling of coordinator rejection."""
         module._on_joint_state(joint_state_zeros)
 
-        module.plan_to_joints([0.05] * 7)
+        module.plan_to_joints(JointState(position=[0.05] * 7))
 
         # Mock coordinator to reject
         mock_client = MagicMock()
@@ -273,7 +273,7 @@ class TestCoordinatorIntegration:
         module._on_joint_state(joint_state_zeros)
 
         # Plan - should go through PLANNING -> COMPLETED
-        module.plan_to_joints([0.05] * 7)
+        module.plan_to_joints(JointState(position=[0.05] * 7))
         assert module._state == ManipulationState.COMPLETED
 
         # Reset works from COMPLETED
@@ -281,7 +281,7 @@ class TestCoordinatorIntegration:
         assert module._state == ManipulationState.IDLE
 
         # Plan again
-        module.plan_to_joints([0.05] * 7)
+        module.plan_to_joints(JointState(position=[0.05] * 7))
 
         # Mock coordinator
         mock_client = MagicMock()

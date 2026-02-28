@@ -1,5 +1,6 @@
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointCommand import JointCommand
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.Joy import Joy
@@ -10,6 +11,7 @@ __all__ = [
     "CameraInfo",
     "Image",
     "ImageFormat",
+    "Imu",
     "JointCommand",
     "JointState",
     "Joy",
