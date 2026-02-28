@@ -15,7 +15,7 @@
 """Live TUI for per-worker resource stats over LCM.
 
 Usage:
-    uv run python -m dimos.utils.cli.resourcespy [--topic /dimos/resource_stats]
+    uv run python -m dimos.utils.cli.dtop [--topic /dimos/resource_stats]
 """
 
 from __future__ import annotations
@@ -32,14 +32,21 @@ from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
 from dimos.utils.cli import theme
 
 
+def _heat(ratio: float) -> str:
+    """Map 0..1 ratio to a cyan → yellow → red gradient."""
+    cyan = Color.parse(theme.CYAN)
+    yellow = Color.parse(theme.YELLOW)
+    red = Color.parse(theme.RED)
+    if ratio <= 0.5:
+        return cyan.blend(yellow, ratio * 2).hex
+    return yellow.blend(red, (ratio - 0.5) * 2).hex
+
+
 def _bar(value: float, max_val: float, width: int = 12) -> Text:
     """Render a tiny colored bar."""
     ratio = min(value / max_val, 1.0) if max_val > 0 else 0.0
     filled = int(ratio * width)
-    cyan = Color.parse(theme.CYAN)
-    yellow = Color.parse(theme.YELLOW)
-    color = cyan.blend(yellow, ratio).hex
-    return Text("█" * filled + "░" * (width - filled), style=color)
+    return Text("█" * filled + "░" * (width - filled), style=_heat(ratio))
 
 
 def _fmt_mb(val: float) -> Text:
@@ -49,10 +56,7 @@ def _fmt_mb(val: float) -> Text:
 
 
 def _fmt_pct(val: float) -> Text:
-    cyan = Color.parse(theme.CYAN)
-    yellow = Color.parse(theme.YELLOW)
-    color = cyan.blend(yellow, min(val / 100.0, 1.0)).hex
-    return Text(f"{val:.0f}%", style=color)
+    return Text(f"{val:.0f}%", style=_heat(min(val / 100.0, 1.0)))
 
 
 def _fmt_time(seconds: float) -> Text:
@@ -94,7 +98,6 @@ class ResourceSpyApp(App):  # type: ignore[type-arg]
         self._lcm = PickleLCM(autoconf=True)
         self._lock = threading.Lock()
         self._latest: dict[str, Any] | None = None
-        self._snap_count = 0
 
     def compose(self) -> ComposeResult:
         table: DataTable = DataTable(zebra_stripes=True, cursor_type=None)  # type: ignore[type-arg, arg-type]
@@ -128,7 +131,6 @@ class ResourceSpyApp(App):  # type: ignore[type-arg]
     def _on_msg(self, msg: dict[str, Any], _topic: str) -> None:
         with self._lock:
             self._latest = msg
-            self._snap_count += 1
 
     def _refresh(self) -> None:
         with self._lock:

@@ -32,6 +32,9 @@ if TYPE_CHECKING:
 
 _MB = 1024 * 1024
 
+# Cache Process objects so cpu_percent(interval=None) has a previous sample.
+_proc_cache: dict[int, psutil.Process] = {}
+
 
 @dataclass(frozen=True)
 class WorkerStats:
@@ -59,7 +62,10 @@ def collect_process_stats(
 ) -> WorkerStats:
     """Collect resource stats for a single process by PID."""
     try:
-        proc = psutil.Process(pid)
+        proc = _proc_cache.get(pid)
+        if proc is None or not proc.is_running():
+            proc = psutil.Process(pid)
+            _proc_cache[pid] = proc
         with proc.oneshot():
             cpu_pct = proc.cpu_percent(interval=None)
             ct = proc.cpu_times()
@@ -100,6 +106,7 @@ def collect_process_stats(
                 modules=modules or [],
             )
     except (psutil.NoSuchProcess, psutil.AccessDenied):
+        _proc_cache.pop(pid, None)
         return WorkerStats(pid=pid, worker_id=worker_id, alive=False, modules=modules or [])
 
 
