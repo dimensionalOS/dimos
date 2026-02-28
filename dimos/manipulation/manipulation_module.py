@@ -46,8 +46,8 @@ from dimos.manipulation.planning import (
     create_planner,
 )
 from dimos.manipulation.planning.monitor import WorldMonitor
-from dimos.msgs.geometry_msgs import Pose, PoseArray, Quaternion, Vector3
-from dimos.msgs.sensor_msgs import JointState, PointCloud2
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.sensor_msgs import JointState
 from dimos.msgs.trajectory_msgs import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
