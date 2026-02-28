@@ -176,7 +176,6 @@ class PersonFollowSkillContainer(Module):
 
         with self._lock:
             if self._tracker is None:
-                # Here to prevent unwanted imports in the file.
                 from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
 
                 self._tracker = EdgeTAMProcessor()

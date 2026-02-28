@@ -56,7 +56,6 @@ class SpatialVectorDB:
         """
         self.collection_name = collection_name
 
-        # Here to prevent unwanted imports in the file.
         import chromadb
 
         # Use provided client or create in-memory client

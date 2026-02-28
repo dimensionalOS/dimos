@@ -103,7 +103,6 @@ class Agent(Module[AgentConfig]):
             model = MockModel(json_path=self.config.model_fixture)
 
         with self._lock:
-            # Here to prevent unwanted imports in the file.
             from langchain.agents import create_agent
 
             self._state_graph = create_agent(

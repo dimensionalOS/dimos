@@ -69,7 +69,6 @@ def vlm_detection_to_detection2d(
     Returns:
         Detection2DBBox instance or None if invalid
     """
-    # Here to prevent unwanted imports in the file.
     from dimos.perception.detection.type import Detection2DBBox
 
     # Validate list/tuple structure
@@ -255,7 +254,6 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
     def query_detections(
         self, image: Image, query: str, **kwargs: object
     ) -> ImageDetections2D[Detection2DBBox]:
-        # Here to prevent unwanted imports in the file.
         from dimos.perception.detection.type import ImageDetections2D
 
         full_query = f"""show me bounding boxes in pixels for this query: `{query}`
@@ -316,7 +314,6 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
         Returns:
             ImageDetections2D containing Detection2DPoint instances
         """
-        # Here to prevent unwanted imports in the file.
         from dimos.perception.detection.type import ImageDetections2D
 
         full_query = f"""Show me point coordinates in pixels for this query: `{query}`

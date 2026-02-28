@@ -59,7 +59,6 @@ class NavigationSkillContainer(Module):
         super().__init__()
         self._skill_started = False
 
-        # Here to prevent unwanted imports in the file.
         from dimos.models.vl.qwen import QwenVlModel
 
         self._vl_model = QwenVlModel()

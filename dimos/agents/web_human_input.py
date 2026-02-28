@@ -52,7 +52,6 @@ class WebInput(Module):
 
         normalizer = AudioNormalizer()
 
-        # Here to prevent unwanted imports in the file.
         from dimos.stream.audio.stt.node_whisper import WhisperNode
 
         stt_node = WhisperNode()
