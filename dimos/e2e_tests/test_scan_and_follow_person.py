@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ from dimos.e2e_tests.lcm_spy import LcmSpy
 @pytest.mark.skipif_in_ci
 @pytest.mark.skipif_no_openai
 @pytest.mark.mujoco
-def test_person_follow(
+def test_scan_and_person_follow(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[[str], DimosCliCall],
     human_input: Callable[[str], None],
@@ -47,13 +47,13 @@ def test_person_follow(
 
     start_person_track(
         [
+            (-3.35, -0.51),
             (-2.60, 1.28),
             (4.80, 0.21),
             (4.14, -6.0),
             (0.59, -3.79),
-            (-3.35, -0.51),
         ]
     )
-    human_input("follow the person in beige pants")
+    human_input("lookout for a person (any person) and when you see him, follow him")
 
-    lcm_spy.wait_until_odom_position(4.2, -3, threshold=1.5)
+    lcm_spy.wait_until_odom_position(4.2, -3, threshold=1.5, timeout=100.0)

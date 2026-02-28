@@ -2116,6 +2116,7 @@ requires-dist = [
     { name = "types-networkx", marker = "extra == 'dev'", specifier = ">=3.5.0.20251001,<4" },
     { name = "types-protobuf", marker = "extra == 'dev'", specifier = ">=6.32.1.20250918,<7" },
     { name = "types-psutil", marker = "extra == 'dev'", specifier = ">=7.0.0.20251001,<8" },
+    { name = "types-psutil", marker = "extra == 'dev'", specifier = ">=7.2.2.20260130,<8" },
     { name = "types-psycopg2", marker = "extra == 'dev'", specifier = ">=2.9.21.20251012" },
     { name = "types-pysocks", marker = "extra == 'dev'", specifier = ">=1.7.1.20251001,<2" },
     { name = "types-pytz", marker = "extra == 'dev'", specifier = ">=2025.2.0.20250809,<2026" },

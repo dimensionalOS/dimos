@@ -34,7 +34,6 @@ from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import Image
-from dimos.protocol import pubsub
 from dimos.spec.utils import Spec
 
 # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
@@ -177,8 +176,6 @@ def test_global_config() -> None:
 
 @pytest.mark.slow
 def test_build_happy_path() -> None:
-    pubsub.lcm.autoconf()
-
     blueprint_set = autoconnect(module_a(), module_b(), module_c())
 
     coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
@@ -289,7 +286,6 @@ def test_that_remapping_can_resolve_conflicts() -> None:
 @pytest.mark.slow
 def test_remapping() -> None:
     """Test that remapping streams works correctly."""
-    pubsub.lcm.autoconf()
 
     # Create blueprint with remapping
     blueprint_set = autoconnect(
@@ -478,6 +474,35 @@ def test_module_ref_spec() -> None:
         assert mod2.calc.compute2(3.0, 0.5) == 3.5
     finally:
         coordinator.stop()
+
+
+@pytest.mark.slow
+def test_disabled_modules_are_skipped_during_build() -> None:
+    blueprint_set = autoconnect(module_a(), module_b(), module_c()).disabled_modules(ModuleC)
+
+    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
+
+    try:
+        assert coordinator.get_instance(ModuleA) is not None
+        assert coordinator.get_instance(ModuleB) is not None
+
+        assert coordinator.get_instance(ModuleC) is None
+    finally:
+        coordinator.stop()
+
+
+def test_autoconnect_merges_disabled_modules() -> None:
+    bp_a = Blueprint(
+        blueprints=module_a().blueprints,
+        disabled_modules_tuple=(ModuleA,),
+    )
+    bp_b = Blueprint(
+        blueprints=module_b().blueprints,
+        disabled_modules_tuple=(ModuleB,),
+    )
+
+    merged = autoconnect(bp_a, bp_b)
+    assert merged.disabled_modules_tuple == (ModuleA, ModuleB)
 
 
 @pytest.mark.slow

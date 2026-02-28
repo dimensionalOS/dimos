@@ -102,12 +102,13 @@ main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
+    disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
 ) -> None:
     """Start a robot blueprint"""
     logger.info("Starting DimOS")
 
     from dimos.core.blueprints import autoconnect
-    from dimos.robot.get_all_blueprints import get_by_name
+    from dimos.robot.get_all_blueprints import get_by_name, get_module_by_name
     from dimos.utils.logging_config import setup_exception_handler
 
     setup_exception_handler()
@@ -116,6 +117,11 @@ def run(
     global_config.update(**cli_config_overrides)
 
     blueprint = autoconnect(*map(get_by_name, robot_types))
+
+    if disable:
+        disabled_classes = tuple(get_module_by_name(name).blueprints[0].module for name in disable)
+        blueprint = blueprint.disabled_modules(*disabled_classes)
+
     dimos = blueprint.build(cli_config_overrides=cli_config_overrides)
     dimos.loop()
 
