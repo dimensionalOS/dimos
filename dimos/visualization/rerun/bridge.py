@@ -123,7 +123,7 @@ class RerunConvertible(Protocol):
     def to_rerun(self) -> RerunData: ...
 
 
-ViewerMode = Literal["native", "web", "none"]
+ViewerMode = Literal["native", "web", "connect", "none"]
 
 
 def _default_blueprint() -> Blueprint:
@@ -158,6 +158,7 @@ class Config(ModuleConfig):
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
     viewer_mode: ViewerMode = "native"
+    connect_url: str = "rerun+http://127.0.0.1:9877/proxy"
     memory_limit: str = "25%"
 
     # Blueprint factory: callable(rrb) -> Blueprint for viewer layout configuration
@@ -265,6 +266,8 @@ class RerunBridgeModule(Module):
         elif self.config.viewer_mode == "web":
             server_uri = rr.serve_grpc()
             rr.serve_web_viewer(connect_to=server_uri, open_browser=False)
+        elif self.config.viewer_mode == "connect":
+            rr.connect_grpc(self.config.connect_url)
         # "none" - just init, no viewer (connect externally)
 
         if self.config.blueprint:
