@@ -34,7 +34,7 @@ from dimos.perception.detection.type.detection3d.base import Detection3D
 if TYPE_CHECKING:
     from dimos_lcm.sensor_msgs import CameraInfo
 
-    from dimos.perception.detection.type.detection2d import ImageDetections2D
+    from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 
 @dataclass(kw_only=True)
@@ -95,7 +95,7 @@ class Object(Detection3D):
 
     def get_oriented_bounding_box(self) -> Any:
         """Get oriented bounding box of the pointcloud."""
-        return self.pointcloud.get_oriented_bounding_box()
+        return self.pointcloud.oriented_bounding_box
 
     def scene_entity_label(self) -> str:
         """Get label for scene visualization."""

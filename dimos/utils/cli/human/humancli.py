@@ -29,7 +29,7 @@ from textual.containers import Container
 from textual.geometry import Size
 from textual.widgets import Input, RichLog
 
-from dimos.core import pLCMTransport
+from dimos.core.transport import pLCMTransport
 from dimos.utils.cli import theme
 from dimos.utils.generic import truncate_display_string
 

@@ -135,7 +135,7 @@ unitree_go2 = autoconnect(
     cost_mapper(),                        # 2D costmap generation
     replanning_a_star_planner(),          # path planning
     wavefront_frontier_explorer(),        # exploration
-).global_config(n_dask_workers=6, robot_model="unitree_go2")
+).global_config(n_workers=6, robot_model="unitree_go2")
 
 to_svg(unitree_go2, "assets/go2_blueprint.svg")
 ```

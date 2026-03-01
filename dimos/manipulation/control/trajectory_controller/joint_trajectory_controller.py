@@ -34,8 +34,9 @@ import threading
 import time
 from typing import Any
 
-from dimos.core import In, Module, Out, rpc
-from dimos.core.module import ModuleConfig
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryState, TrajectoryStatus
 from dimos.utils.logging_config import setup_logger

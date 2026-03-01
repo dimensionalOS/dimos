@@ -14,7 +14,7 @@
 
 from typing import Protocol
 
-from dimos.core import In, Out
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.nav_msgs import Path
 
@@ -23,9 +23,4 @@ class Nav(Protocol):
     goal_req: In[PoseStamped]
     goal_active: Out[PoseStamped]
     path_active: Out[Path]
-    ctrl: Out[Twist]
-
-    # identity quaternion (Quaternion(0,0,0,1)) represents "no rotation requested"
-    def navigate_to_target(self, target: PoseStamped) -> None: ...
-
-    def stop_navigating(self) -> None: ...
+    cmd_vel: Out[Twist]

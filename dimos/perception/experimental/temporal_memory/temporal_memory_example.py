@@ -23,18 +23,26 @@ This example demonstrates how to:
 """
 
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from dotenv import load_dotenv
 
-from dimos import core
+from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
 
 from .temporal_memory import TemporalMemoryConfig
 from .temporal_memory_deploy import deploy
 
+if TYPE_CHECKING:
+    from dimos.spec import Camera
+
 # Load environment variables
 load_dotenv()
+
+
+def _create_webcam() -> Webcam:
+    return Webcam(camera_index=0)
 
 
 def example_usage() -> None:
@@ -46,16 +54,17 @@ def example_usage() -> None:
 
     try:
         # Create Dimos cluster
-        dimos = core.start(1)
+        dimos = ModuleCoordinator()
+        dimos.start()
         # Deploy camera module
-        camera = dimos.deploy(CameraModule, hardware=lambda: Webcam(camera_index=0))  # type: ignore[attr-defined]
+        camera = dimos.deploy(CameraModule, hardware=_create_webcam)  # type: ignore[attr-defined]
         camera.start()
 
         # Deploy temporal memory using the deploy function
         output_dir = Path("./temporal_memory_output")
         temporal_memory = deploy(
             dimos,
-            camera,
+            cast("Camera", camera),
             vlm=None,  # Will auto-create OpenAIVlModel if None
             config=TemporalMemoryConfig(
                 fps=1.0,  # Process 1 frame per second
@@ -130,7 +139,7 @@ def example_usage() -> None:
         if camera is not None:
             camera.stop()
         if dimos is not None:
-            dimos.close_all()  # type: ignore[attr-defined]
+            dimos.stop()
 
 
 if __name__ == "__main__":

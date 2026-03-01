@@ -18,18 +18,13 @@ import time
 
 import pytest
 
-from dimos.core import (
-    In,
-    LCMTransport,
-    Module,
-    pLCMTransport,
-    rpc,
-)
-from dimos.core.testing import MockRobotClient, dimos
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In
+from dimos.core.testing import MockRobotClient
+from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree.type.odometry import Odometry
-
-assert dimos
 
 
 class SubscriberBase(Module):
@@ -212,7 +207,6 @@ def test_subscription(dimos, subscriber_class) -> None:
     robot.stop()
     subscriber.stop_rpc_client()
     robot.stop_rpc_client()
-    dimos.close_all()
 
 
 @pytest.mark.slow
@@ -245,7 +239,6 @@ def test_get_next(dimos) -> None:
     robot.stop()
     subscriber.stop_rpc_client()
     robot.stop_rpc_client()
-    dimos.close_all()
 
 
 @pytest.mark.slow
@@ -285,4 +278,3 @@ def test_hot_getter(dimos) -> None:
     robot.stop()
     subscriber.stop_rpc_client()
     robot.stop_rpc_client()
-    dimos.close_all()

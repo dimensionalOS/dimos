@@ -165,7 +165,7 @@
     <button id="teleop-btn">HOLD TO TELEOP</button>
 
     <script type="module">
-        import { encodePacket, geometry_msgs, std_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
+        import { geometry_msgs, std_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
 
         // ============================================
         // State
@@ -183,11 +183,6 @@
         let ws = null;
         let wsConnected = false;
         let wsSendInterval = null;
-
-        // LCM channels
-        const SENSOR_CHANNEL = "/phone_sensors#geometry_msgs.TwistStamped";
-        const BUTTON_CHANNEL = "/phone_button#std_msgs.Bool";
-
         // ============================================
         // DOM
         // ============================================
@@ -280,7 +275,7 @@
             if (wsConnected) { disconnectWS(); return; }
 
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}`;
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
 
             try {
                 ws = new WebSocket(wsUrl);
@@ -347,11 +342,11 @@
                     })
                 })
             });
-            ws.send(encodePacket(SENSOR_CHANNEL, twistStamped));
+            ws.send(twistStamped.encode());
 
             // --- Send teleop button as Bool ---
             const boolMsg = new std_msgs.Bool({ data: teleopActive ? 1 : 0 });
-            ws.send(encodePacket(BUTTON_CHANNEL, boolMsg));
+            ws.send(boolMsg.encode());
 
             updateDisplay();
         }

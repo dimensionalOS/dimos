@@ -18,12 +18,10 @@
 from dimos.core.blueprints import autoconnect
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
-from dimos.utils.monitoring import utilization
 
 _perception_and_memory = autoconnect(
     spatial_memory(),
     object_tracking(frame_id="camera_link"),
-    utilization(),
 )
 
 __all__ = ["_perception_and_memory"]

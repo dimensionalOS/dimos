@@ -26,7 +26,7 @@ mid360_fastlio = autoconnect(
             "world/lidar": lambda grid: grid.to_rerun(voxel_size=voxel_size, mode="boxes"),
         }
     ),
-).global_config(n_dask_workers=2, robot_model="mid360_fastlio2")
+).global_config(n_workers=2, robot_model="mid360_fastlio2")
 
 mid360_fastlio_voxels = autoconnect(
     FastLio2.blueprint(),
@@ -37,7 +37,7 @@ mid360_fastlio_voxels = autoconnect(
             "world/lidar": None,
         }
     ),
-).global_config(n_dask_workers=3, robot_model="mid360_fastlio2_voxels")
+).global_config(n_workers=3, robot_model="mid360_fastlio2_voxels")
 
 mid360_fastlio_voxels_native = autoconnect(
     FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=3.0),
@@ -47,4 +47,4 @@ mid360_fastlio_voxels_native = autoconnect(
             "world/global_map": lambda grid: grid.to_rerun(voxel_size=voxel_size, mode="boxes"),
         }
     ),
-).global_config(n_dask_workers=2, robot_model="mid360_fastlio2")
+).global_config(n_workers=2, robot_model="mid360_fastlio2")

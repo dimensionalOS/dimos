@@ -30,12 +30,10 @@ class Adder(Module):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("dask", [False, True])
-def test_can_call_tool(dask, agent_setup):
+def test_can_call_tool(agent_setup):
     history = agent_setup(
         blueprints=[Adder.blueprint()],
         messages=[HumanMessage("What is 33333 + 100? Use the tool.")],
-        dask=dask,
     )
 
     assert "33433" in history[-1].content
@@ -67,8 +65,7 @@ class UserRegistration(Module):
 
 
 @pytest.mark.slow
-@pytest.mark.parametrize("dask", [False, True])
-def test_can_call_again_on_error(dask, agent_setup):
+def test_can_call_again_on_error(agent_setup):
     history = agent_setup(
         blueprints=[UserRegistration.blueprint()],
         messages=[
@@ -76,7 +73,6 @@ def test_can_call_again_on_error(dask, agent_setup):
                 "Register a user named 'Paul'. If there are errors, just try again until you succeed."
             )
         ],
-        dask=dask,
     )
 
     assert any(message.content == "User name registered successfully." for message in history)

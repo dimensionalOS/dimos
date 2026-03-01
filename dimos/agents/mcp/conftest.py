@@ -43,7 +43,6 @@ def agent_setup(request):
         *,
         blueprints,
         messages: list[BaseMessage],
-        dask: bool = False,
         system_prompt: str | None = None,
         fixture: str | None = None,
     ) -> list[BaseMessage]:
@@ -78,10 +77,7 @@ def agent_setup(request):
             AgentTestRunner.blueprint(messages=messages),
         )
 
-        global_config.update(
-            viewer_backend="none",
-            dask=dask,
-        )
+        global_config.update(viewer_backend="none")
 
         nonlocal coordinator
         coordinator = blueprint.build()

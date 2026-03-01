@@ -17,20 +17,14 @@ import time
 import pytest
 from reactivex.disposable import Disposable
 
-from dimos.core import (
-    In,
-    LCMTransport,
-    Module,
-    Out,
-    pLCMTransport,
-    rpc,
-)
-from dimos.core.testing import MockRobotClient, dimos
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+from dimos.core.testing import MockRobotClient
+from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree.type.odometry import Odometry
-
-assert dimos
 
 
 class Navigation(Module):
@@ -127,17 +121,7 @@ def test_basic_deployment(dimos) -> None:
     nav.start()
 
     time.sleep(1)
-    robot.stop()
-
-    print("robot.mov_msg_count", robot.mov_msg_count)
-    print("nav.odom_msg_count", nav.odom_msg_count)
-    print("nav.lidar_msg_count", nav.lidar_msg_count)
 
     assert robot.mov_msg_count >= 8
     assert nav.odom_msg_count >= 8
     assert nav.lidar_msg_count >= 8
-
-    nav.stop()
-    nav.stop_rpc_client()
-    robot.stop_rpc_client()
-    dimos.close_all()

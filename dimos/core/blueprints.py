@@ -66,9 +66,16 @@ class _BlueprintAtom:
         streams: list[StreamRef] = []
         module_refs: list[ModuleRef] = []
 
-        # Use get_type_hints() to properly resolve string annotations.
+        # Resolve annotations using namespaces from the full MRO chain so that
+        # In/Out behind TYPE_CHECKING + `from __future__ import annotations` work.
+        # Iterate reversed MRO so the most specific class's namespace wins when
+        # parent modules shadow names (e.g. spec.perception.Image vs sensor_msgs.Image).
+        globalns: dict[str, Any] = {}
+        for c in reversed(module.__mro__):
+            if c.__module__ in sys.modules:
+                globalns.update(sys.modules[c.__module__].__dict__)
         try:
-            all_annotations = get_type_hints(module)
+            all_annotations = get_type_hints(module, globalns=globalns)
         except Exception:
             # Fallback to raw annotations if get_type_hints fails.
             all_annotations = {}
@@ -490,6 +497,7 @@ class Blueprint:
         self,
         cli_config_overrides: Mapping[str, Any] | None = None,
     ) -> ModuleCoordinator:
+        logger.info("Building the blueprint")
         global_config.update(**dict(self.global_config_overrides))
         if cli_config_overrides:
             global_config.update(**dict(cli_config_overrides))
@@ -498,6 +506,7 @@ class Blueprint:
         self._check_requirements()
         self._verify_no_name_conflicts()
 
+        logger.info("Starting the modules")
         module_coordinator = ModuleCoordinator(cfg=global_config)
         module_coordinator.start()
 

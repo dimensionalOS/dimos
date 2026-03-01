@@ -26,8 +26,7 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.models.qwen.video_query import BBox
-from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
+from dimos.models.qwen.bbox import BBox
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
@@ -37,6 +36,7 @@ from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
     from dimos.models.vl.base import VlModel
 
 logger = setup_logger()
@@ -176,6 +176,9 @@ class PersonFollowSkillContainer(Module):
 
         with self._lock:
             if self._tracker is None:
+                # Here to prevent unwanted imports in the file.
+                from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
+
                 self._tracker = EdgeTAMProcessor()
             tracker = self._tracker
             latest_image = self._latest_image
@@ -202,7 +205,7 @@ class PersonFollowSkillContainer(Module):
             "the 'stop_following' tool."
         )
 
-    def _follow_loop(self, tracker: EdgeTAMProcessor, query: str) -> None:
+    def _follow_loop(self, tracker: "EdgeTAMProcessor", query: str) -> None:
         lost_count = 0
         period = 1.0 / self._frequency
         next_time = time.monotonic()

@@ -146,45 +146,44 @@ class MockConfigurator(SystemConfigurator):
 
 
 class TestConfigureSystem:
-    def test_skips_in_ci_environment(self) -> None:
-        with patch.dict(os.environ, {"CI": "true"}):
-            mock_check = MockConfigurator(passes=False)
-            configure_system([mock_check])
-            assert not mock_check.fix_called
+    @pytest.fixture(autouse=True)
+    def non_ci_env(self, mocker):
+        mocker.patch.dict(os.environ, {"CI": ""}, clear=False)
+
+    def test_skips_in_ci_environment(self, mocker) -> None:
+        mocker.patch.dict(os.environ, {"CI": "true"})
+        mock_check = MockConfigurator(passes=False)
+        configure_system([mock_check])
+        assert not mock_check.fix_called
 
     def test_does_nothing_when_all_checks_pass(self) -> None:
-        with patch.dict(os.environ, {"CI": ""}, clear=False):
-            mock_check = MockConfigurator(passes=True)
-            configure_system([mock_check])
-            assert not mock_check.fix_called
+        mock_check = MockConfigurator(passes=True)
+        configure_system([mock_check])
+        assert not mock_check.fix_called
 
     def test_check_only_mode_does_not_fix(self) -> None:
-        with patch.dict(os.environ, {"CI": ""}, clear=False):
-            mock_check = MockConfigurator(passes=False)
-            configure_system([mock_check], check_only=True)
-            assert not mock_check.fix_called
+        mock_check = MockConfigurator(passes=False)
+        configure_system([mock_check], check_only=True)
+        assert not mock_check.fix_called
 
-    def test_prompts_user_and_fixes_on_yes(self) -> None:
-        with patch.dict(os.environ, {"CI": ""}, clear=False):
-            mock_check = MockConfigurator(passes=False)
-            with patch("typer.confirm", return_value=True):
-                configure_system([mock_check])
-                assert mock_check.fix_called
+    def test_prompts_user_and_fixes_on_yes(self, mocker) -> None:
+        mock_check = MockConfigurator(passes=False)
+        mocker.patch("typer.confirm", return_value=True)
+        configure_system([mock_check])
+        assert mock_check.fix_called
 
-    def test_does_not_fix_on_no(self) -> None:
-        with patch.dict(os.environ, {"CI": ""}, clear=False):
-            mock_check = MockConfigurator(passes=False)
-            with patch("typer.confirm", return_value=False):
-                configure_system([mock_check])
-                assert not mock_check.fix_called
+    def test_does_not_fix_on_no(self, mocker) -> None:
+        mock_check = MockConfigurator(passes=False)
+        mocker.patch("typer.confirm", return_value=False)
+        configure_system([mock_check])
+        assert not mock_check.fix_called
 
-    def test_exits_on_no_with_critical_check(self) -> None:
-        with patch.dict(os.environ, {"CI": ""}, clear=False):
-            mock_check = MockConfigurator(passes=False, is_critical=True)
-            with patch("typer.confirm", return_value=False):
-                with pytest.raises(SystemExit) as exc_info:
-                    configure_system([mock_check])
-                assert exc_info.value.code == 1
+    def test_exits_on_no_with_critical_check(self, mocker) -> None:
+        mock_check = MockConfigurator(passes=False, is_critical=True)
+        mocker.patch("typer.confirm", return_value=False)
+        with pytest.raises(SystemExit) as exc_info:
+            configure_system([mock_check])
+        assert exc_info.value.code == 1
 
 
 # ----------------------------- MulticastConfiguratorLinux tests -----------------------------

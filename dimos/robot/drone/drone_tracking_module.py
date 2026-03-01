@@ -25,7 +25,9 @@ from dimos_lcm.std_msgs import String
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.msgs.sensor_msgs import Image, ImageFormat

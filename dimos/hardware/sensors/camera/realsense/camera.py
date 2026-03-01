@@ -28,6 +28,7 @@ from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
@@ -44,8 +45,6 @@ from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
     import pyrealsense2 as rs  # type: ignore[import-not-found]
-
-    from dimos.core.stream import Out
 
 
 def default_base_transform() -> Transform:

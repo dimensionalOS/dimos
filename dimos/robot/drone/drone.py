@@ -20,18 +20,19 @@
 import functools
 import logging
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos_lcm.std_msgs import String
 from reactivex import Observable
 
-from dimos import core
 from dimos.agents.agent import agent
 from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.agents.skills.osm import OsmSkill
 from dimos.agents.web_human_input import web_input
 from dimos.core.blueprints import Blueprint, autoconnect
+from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
@@ -46,6 +47,9 @@ from dimos.robot.robot import Robot
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+
+if TYPE_CHECKING:
+    from dimos.core.rpc_client import ModuleProxy
 
 logger = setup_logger()
 
@@ -88,12 +92,12 @@ class Drone(Robot):
             RobotCapability.VISION,
         ]
 
-        self.dimos: core.DimosCluster | None = None
-        self.connection: DroneConnectionModule | None = None
-        self.camera: DroneCameraModule | None = None
-        self.tracking: DroneTrackingModule | None = None
+        self.dimos: ModuleCoordinator | None = None
+        self.connection: ModuleProxy | None = None
+        self.camera: ModuleProxy | None = None
+        self.tracking: ModuleProxy | None = None
         self.foxglove_bridge: FoxgloveBridge | None = None
-        self.websocket_vis: WebsocketVisModule | None = None
+        self.websocket_vis: ModuleProxy | None = None
 
         self._setup_directories()
 
@@ -107,7 +111,8 @@ class Drone(Robot):
         logger.info("Starting Drone robot system...")
 
         # Start DimOS cluster
-        self.dimos = core.start(4)
+        self.dimos = ModuleCoordinator()
+        self.dimos.start()
 
         # Deploy modules
         self._deploy_connection()
@@ -127,7 +132,7 @@ class Drone(Robot):
         assert self.dimos is not None
         logger.info("Deploying connection module...")
 
-        self.connection = self.dimos.deploy(  # type: ignore[attr-defined]
+        self.connection = self.dimos.deploy(
             DroneConnectionModule,
             # connection_string="replay",
             connection_string=self.connection_string,
@@ -136,19 +141,17 @@ class Drone(Robot):
         )
 
         # Configure LCM transports
-        self.connection.odom.transport = core.LCMTransport("/drone/odom", PoseStamped)
-        self.connection.gps_location.transport = core.pLCMTransport("/gps_location")
-        self.connection.gps_goal.transport = core.pLCMTransport("/gps_goal")
-        self.connection.status.transport = core.LCMTransport("/drone/status", String)
-        self.connection.telemetry.transport = core.LCMTransport("/drone/telemetry", String)
-        self.connection.video.transport = core.LCMTransport("/drone/video", Image)
-        self.connection.follow_object_cmd.transport = core.LCMTransport(
+        self.connection.odom.transport = LCMTransport("/drone/odom", PoseStamped)
+        self.connection.gps_location.transport = pLCMTransport("/gps_location")
+        self.connection.gps_goal.transport = pLCMTransport("/gps_goal")
+        self.connection.status.transport = LCMTransport("/drone/status", String)
+        self.connection.telemetry.transport = LCMTransport("/drone/telemetry", String)
+        self.connection.video.transport = LCMTransport("/drone/video", Image)
+        self.connection.follow_object_cmd.transport = LCMTransport(
             "/drone/follow_object_cmd", String
         )
-        self.connection.movecmd.transport = core.LCMTransport("/drone/cmd_vel", Vector3)
-        self.connection.movecmd_twist.transport = core.LCMTransport(
-            "/drone/tracking/cmd_vel", Twist
-        )
+        self.connection.movecmd.transport = LCMTransport("/drone/cmd_vel", Vector3)
+        self.connection.movecmd_twist.transport = LCMTransport("/drone/tracking/cmd_vel", Twist)
 
         logger.info("Connection module deployed")
 
@@ -163,9 +166,9 @@ class Drone(Robot):
         )
 
         # Configure LCM transports
-        self.camera.color_image.transport = core.LCMTransport("/drone/color_image", Image)
-        self.camera.camera_info.transport = core.LCMTransport("/drone/camera_info", CameraInfo)
-        self.camera.camera_pose.transport = core.LCMTransport("/drone/camera_pose", PoseStamped)
+        self.camera.color_image.transport = LCMTransport("/drone/color_image", Image)
+        self.camera.camera_info.transport = LCMTransport("/drone/camera_info", CameraInfo)
+        self.camera.camera_pose.transport = LCMTransport("/drone/camera_pose", PoseStamped)
 
         # Connect video from connection module to camera module
         self.camera.video.connect(self.connection.video)
@@ -183,13 +186,9 @@ class Drone(Robot):
             outdoor=self.outdoor,
         )
 
-        self.tracking.tracking_overlay.transport = core.LCMTransport(
-            "/drone/tracking_overlay", Image
-        )
-        self.tracking.tracking_status.transport = core.LCMTransport(
-            "/drone/tracking_status", String
-        )
-        self.tracking.cmd_vel.transport = core.LCMTransport("/drone/tracking/cmd_vel", Twist)
+        self.tracking.tracking_overlay.transport = LCMTransport("/drone/tracking_overlay", Image)
+        self.tracking.tracking_status.transport = LCMTransport("/drone/tracking_status", String)
+        self.tracking.cmd_vel.transport = LCMTransport("/drone/tracking/cmd_vel", Twist)
 
         self.tracking.video_input.connect(self.connection.video)
         self.tracking.follow_object_cmd.connect(self.connection.follow_object_cmd)
@@ -204,11 +203,11 @@ class Drone(Robot):
         assert self.dimos is not None
         assert self.connection is not None
         self.websocket_vis = self.dimos.deploy(WebsocketVisModule)  # type: ignore[attr-defined]
-        # self.websocket_vis.click_goal.transport = core.LCMTransport("/goal_request", PoseStamped)
-        self.websocket_vis.gps_goal.transport = core.pLCMTransport("/gps_goal")
-        # self.websocket_vis.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
-        # self.websocket_vis.stop_explore_cmd.transport = core.LCMTransport("/stop_explore_cmd", Bool)
-        self.websocket_vis.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
+        # self.websocket_vis.click_goal.transport = LCMTransport("/goal_request", PoseStamped)
+        self.websocket_vis.gps_goal.transport = pLCMTransport("/gps_goal")
+        # self.websocket_vis.explore_cmd.transport = LCMTransport("/explore_cmd", Bool)
+        # self.websocket_vis.stop_explore_cmd.transport = LCMTransport("/stop_explore_cmd", Bool)
+        self.websocket_vis.cmd_vel.transport = LCMTransport("/cmd_vel", Twist)
 
         self.websocket_vis.odom.connect(self.connection.odom)
         self.websocket_vis.gps_location.connect(self.connection.gps_location)
@@ -232,22 +231,9 @@ class Drone(Robot):
         assert self.foxglove_bridge is not None
         logger.info("Starting modules...")
 
-        # Start connection first
-        result = self.connection.start()
-        if not result:
-            logger.warning("Connection module failed to start (no drone connected?)")
-
-        # Start camera
-        result = self.camera.start()
-        if not result:
-            logger.warning("Camera module failed to start")
-
-        result = self.tracking.start()
-        if result:
-            logger.info("Tracking module started successfully")
-        else:
-            logger.warning("Tracking module failed to start")
-
+        self.connection.start()
+        self.camera.start()
+        self.tracking.start()
         self.websocket_vis.start()
 
         # Start Foxglove
@@ -377,9 +363,6 @@ class Drone(Robot):
         self.stop()
 
     def stop(self) -> None:
-        """Stop the drone system."""
-        logger.info("Stopping drone system...")
-
         if self.connection:
             self.connection.stop()
 
@@ -390,9 +373,7 @@ class Drone(Robot):
             self.foxglove_bridge.stop()
 
         if self.dimos:
-            self.dimos.close_all()  # type: ignore[attr-defined]
-
-        logger.info("Drone system stopped")
+            self.dimos.stop()
 
 
 DRONE_SYSTEM_PROMPT = """\

@@ -16,19 +16,20 @@ from concurrent.futures import ThreadPoolExecutor
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos import core
-from dimos.core import DimosCluster
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleT
 from dimos.core.resource import Resource
 from dimos.core.worker_manager import WorkerManager
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
 
+logger = setup_logger()
+
 
 class ModuleCoordinator(Resource):  # type: ignore[misc]
-    _client: DimosCluster | WorkerManager | None = None
+    _client: WorkerManager | None = None
     _global_config: GlobalConfig
     _n: int | None = None
     _memory_limit: str = "auto"
@@ -39,26 +40,30 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         n: int | None = None,
         cfg: GlobalConfig = global_config,
     ) -> None:
-        self._n = n if n is not None else cfg.n_dask_workers
+        self._n = n if n is not None else cfg.n_workers
         self._memory_limit = cfg.memory_limit
         self._global_config = cfg
         self._deployed_modules = {}
 
     def start(self) -> None:
-        if self._global_config.dask:
-            self._client = core.start(self._n, self._memory_limit)
-        else:
-            self._client = WorkerManager()
+        n = self._n if self._n is not None else 2
+        self._client = WorkerManager(n_workers=n)
+        self._client.start()
 
     def stop(self) -> None:
-        for module in reversed(self._deployed_modules.values()):
-            module.stop()
+        for module_class, module in reversed(self._deployed_modules.items()):
+            logger.info("Stopping module...", module=module_class.__name__)
+            try:
+                module.stop()
+            except Exception:
+                logger.error("Error stopping module", module=module_class.__name__, exc_info=True)
+            logger.info("Module stopped.", module=module_class.__name__)
 
         self._client.close_all()  # type: ignore[union-attr]
 
     def deploy(self, module_class: type[ModuleT], *args, **kwargs) -> "ModuleProxy":  # type: ignore[no-untyped-def]
         if not self._client:
-            raise ValueError("Trying to dimos.deploy before dask client has started")
+            raise ValueError("Trying to dimos.deploy before the client has started")
 
         module: ModuleProxy = self._client.deploy(module_class, *args, **kwargs)  # type: ignore[union-attr, attr-defined, assignment]
         self._deployed_modules[module_class] = module
@@ -70,16 +75,10 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         if not self._client:
             raise ValueError("Not started")
 
-        if isinstance(self._client, WorkerManager):
-            modules = self._client.deploy_parallel(module_specs)
-            for (module_class, _, _), module in zip(module_specs, modules, strict=True):
-                self._deployed_modules[module_class] = module  # type: ignore[assignment]
-            return modules  # type: ignore[return-value]
-        else:
-            return [
-                self.deploy(module_class, *args, **kwargs)
-                for module_class, args, kwargs in module_specs
-            ]
+        modules = self._client.deploy_parallel(module_specs)
+        for (module_class, _, _), module in zip(module_specs, modules, strict=True):
+            self._deployed_modules[module_class] = module  # type: ignore[assignment]
+        return modules  # type: ignore[return-value]
 
     def start_all_modules(self) -> None:
         modules = list(self._deployed_modules.values())

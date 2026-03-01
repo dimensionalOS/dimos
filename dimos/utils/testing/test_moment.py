@@ -13,7 +13,7 @@
 # limitations under the License.
 import time
 
-from dimos.core import LCMTransport
+from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped, Transform
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.protocol.tf import TF

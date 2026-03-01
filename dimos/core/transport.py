@@ -21,9 +21,9 @@ from typing import (
     TypeVar,
 )
 
-import dimos.core.colors as colors
 from dimos.core.stream import In, Out, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
+from dimos.utils import colors
 
 try:
     import cyclonedds as _cyclonedds  # noqa: F401
@@ -31,6 +31,7 @@ try:
     DDS_AVAILABLE = True
 except ImportError:
     DDS_AVAILABLE = False
+
 from dimos.protocol.pubsub.impl.jpeg_shm import JpegSharedMemory
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic

@@ -13,24 +13,25 @@
 # limitations under the License.
 import asyncio
 from collections.abc import Callable
-import time
 
 import pytest
 
-from dimos import core
-from dimos.core import Module, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree.type.map import Map as Mapper
 
 
 @pytest.fixture
 def dimos():
-    return core.start(2)
-
-
-@pytest.fixture
-def client():
-    return core.start(2)
+    ret = ModuleCoordinator()
+    ret.start()
+    try:
+        yield ret
+    finally:
+        ret.stop()
 
 
 class Consumer:
@@ -63,20 +64,6 @@ class Counter(Module):
 
 
 @pytest.mark.tool
-def test_wait(client) -> None:
-    counter = client.submit(Counter, actor=True).result()
-
-    async def addten(n):
-        return await counter.addten(n)
-
-    consumer = client.submit(Consumer, counter=addten, actor=True).result()
-
-    print("waitcall1", consumer.waitcall(2).result())
-    print("waitcall2", consumer.waitcall(2).result())
-    time.sleep(1)
-
-
-@pytest.mark.tool
 def test_basic(dimos) -> None:
     counter = dimos.deploy(Counter)
     consumer = dimos.deploy(
@@ -98,7 +85,7 @@ def test_basic(dimos) -> None:
 @pytest.mark.tool
 def test_mapper_start(dimos) -> None:
     mapper = dimos.deploy(Mapper)
-    mapper.lidar.transport = core.LCMTransport("/lidar", PointCloud2)
+    mapper.lidar.transport = LCMTransport("/lidar", PointCloud2)
     print("start res", mapper.start().result())
 
 

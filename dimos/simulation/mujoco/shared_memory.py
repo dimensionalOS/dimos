@@ -83,12 +83,7 @@ class ShmSet:
 
     @classmethod
     def from_sizes(cls) -> "ShmSet":
-        return cls(
-            **{
-                k: _unregister(SharedMemory(create=True, size=_shm_sizes[k]))
-                for k in _shm_sizes.keys()
-            }
-        )
+        return cls(**{k: SharedMemory(create=True, size=_shm_sizes[k]) for k in _shm_sizes.keys()})
 
     def to_names(self) -> dict[str, str]:
         return {k: getattr(self, k).name for k in _shm_sizes.keys()}

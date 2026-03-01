@@ -22,9 +22,12 @@ from reactivex.disposable import Disposable
 
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.control.coordinator import ControlCoordinator
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.hardware.manipulators.registry import adapter_registry
+
 from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.base import NavigationInterface, NavigationState

@@ -24,7 +24,7 @@ import math
 import sys
 import time
 
-from dimos import core
+from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 
 
@@ -40,12 +40,10 @@ class TargetSetter:
     def __init__(self) -> None:
         """Initialize the target setter."""
         # Create LCM transport for publishing targets
-        self.target_pub: core.LCMTransport[PoseStamped] = core.LCMTransport(
-            "/target_pose", PoseStamped
-        )
+        self.target_pub: LCMTransport[PoseStamped] = LCMTransport("/target_pose", PoseStamped)
 
         # Subscribe to current pose from controller
-        self.current_pose_sub: core.LCMTransport[PoseStamped] = core.LCMTransport(
+        self.current_pose_sub: LCMTransport[PoseStamped] = LCMTransport(
             "/xarm/current_pose", PoseStamped
         )
         self.latest_current_pose: PoseStamped | None = None

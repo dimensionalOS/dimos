@@ -172,7 +172,7 @@ Modules in DimOS automatically get a `frame_id` property. This is controlled by 
 - `frame_id_prefix` - Optional prefix for namespacing
 
 ```python
-from dimos.core import Module, ModuleConfig
+from dimos.core.module import Module, ModuleConfig
 from dataclasses import dataclass
 
 @dataclass
@@ -221,8 +221,10 @@ This example demonstrates how multiple modules publish and receive transforms. T
 import time
 import reactivex as rx
 from reactivex import operators as ops
-from dimos.core import Module, rpc, start
+from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
+from dimos.core.module_coordinator import ModuleCoordinator
 
 class RobotBaseModule(Module):
     """Publishes the robot's position in the world frame at 10Hz."""
@@ -306,16 +308,14 @@ class PerceptionModule(Module):
 
 
 if __name__ == "__main__":
-    dimos = start(3)
+    dimos = ModuleCoordinator()
+    dimos.start()
 
-    # Deploy and start modules
     robot = dimos.deploy(RobotBaseModule)
     camera = dimos.deploy(CameraModule)
     perception = dimos.deploy(PerceptionModule)
 
-    robot.start()
-    camera.start()
-    perception.start()
+    dimos.start_all_modules()
 
     time.sleep(1.0)
 

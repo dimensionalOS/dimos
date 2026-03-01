@@ -45,8 +45,10 @@ _COMMAND_CENTER_DIR = (
     FilePath(__file__).parent.parent / "command-center-extension" / "dist-standalone"
 )
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.types import LatLon
@@ -194,6 +196,10 @@ class WebsocketVisModule(Module):
 
     @rpc
     def stop(self) -> None:
+        if getattr(self, "_ws_stopped", False):
+            return
+        self._ws_stopped = True
+
         if self._uvicorn_server:
             self._uvicorn_server.should_exit = True
 

@@ -19,6 +19,7 @@ import threading
 from dotenv import load_dotenv
 import pytest
 
+from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.protocol.service.lcmservice import autoconf
 
 load_dotenv()
@@ -86,9 +87,8 @@ _before_test_threads = {}  # Map test name to set of thread IDs before test
 
 @pytest.fixture(scope="module")
 def dimos_cluster():
-    from dimos.core import start
-
-    dimos = start(4)
+    dimos = ModuleCoordinator()
+    dimos.start()
     try:
         yield dimos
     finally:

@@ -24,6 +24,6 @@ from dimos.robot.unitree.g1.blueprints.perceptive._perception_and_memory import 
 unitree_g1 = autoconnect(
     unitree_g1_basic,
     _perception_and_memory,
-).global_config(n_dask_workers=8)
+).global_config(n_workers=8)
 
 __all__ = ["unitree_g1"]

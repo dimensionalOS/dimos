@@ -116,7 +116,7 @@
             document.getElementById('status').textContent = `Error: ${msg}`;
         };
 
-        import { encodePacket, geometry_msgs, std_msgs, sensor_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
+        import { geometry_msgs, std_msgs, sensor_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.4";
 
         // WebSocket and VR state
         let ws = null;
@@ -141,7 +141,7 @@
         function setupWebSocket() {
             return new Promise((resolve, reject) => {
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.host}`;
+                const wsUrl = `${protocol}//${window.location.host}/ws`;
 
                 setStatus('Connecting to server...');
                 ws = new WebSocket(wsUrl);
@@ -202,7 +202,7 @@
                 const poseStamped = new geometry_msgs.PoseStamped({
                     header: new std_msgs.Header({
                         stamp: new std_msgs.Time({ sec: Math.floor(nowMs / 1000), nsec: (nowMs % 1000) * 1_000_000 }),
-                        frame_id: "vr_origin"
+                        frame_id: handedness
                     }),
                     pose: new geometry_msgs.Pose({
                         position: new geometry_msgs.Point({ x: pos.x, y: pos.y, z: pos.z }),
@@ -210,14 +210,8 @@
                     })
                 });
 
-                const channel = handedness === 'left'
-                    ? "/vr_left_pose#geometry_msgs.PoseStamped"
-                    : "/vr_right_pose#geometry_msgs.PoseStamped";
-
-                const packet = encodePacket(channel, poseStamped);
-
                 if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(packet);
+                    ws.send(poseStamped.encode());
                 }
 
                 // Send Joy message with all buttons and axes
@@ -259,13 +253,8 @@
                         buttons: buttons
                     });
 
-                    const joyChannel = handedness === 'left'
-                        ? "/vr_left_joy#sensor_msgs.Joy"
-                        : "/vr_right_joy#sensor_msgs.Joy";
-                    const joyPacket = encodePacket(joyChannel, joyMsg);
-
                     if (ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send(joyPacket);
+                        ws.send(joyMsg.encode());
                     }
                 }
             }

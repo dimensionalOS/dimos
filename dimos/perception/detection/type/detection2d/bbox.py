@@ -18,9 +18,8 @@ from dataclasses import dataclass
 import hashlib
 from typing import TYPE_CHECKING, Any
 
-from typing_extensions import Self
-
 if TYPE_CHECKING:
+    from typing_extensions import Self
     from ultralytics.engine.results import Results  # type: ignore[import-not-found]
 
     from dimos.msgs.sensor_msgs import Image

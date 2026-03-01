@@ -62,6 +62,7 @@ class XArmAdapter(ManipulatorAdapter):
         self._dof = dof
         self._arm: XArmAPI | None = None
         self._control_mode: ControlMode = ControlMode.POSITION
+        self._gripper_enabled: bool = False
 
     # =========================================================================
     # Connection
@@ -351,9 +352,11 @@ class XArmAdapter(ManipulatorAdapter):
         if not self._arm:
             return False
 
-        self._arm.set_gripper_enable(True)
+        if not self._gripper_enabled:
+            self._arm.set_gripper_enable(True)
+            self._gripper_enabled = True
         pos_mm = position * M_TO_MM
-        code: int = self._arm.set_gripper_position(pos_mm, wait=True)
+        code: int = self._arm.set_gripper_position(pos_mm, wait=False)
         return code == 0
 
     # =========================================================================

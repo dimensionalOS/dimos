@@ -96,7 +96,9 @@ class MyArmAdapter:  # No inheritance needed - just match the Protocol
 2. **Create the driver** (`arm.py`):
 
 ```python
-from dimos.core import Module, ModuleConfig, In, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
 from .adapter import MyArmAdapter
 
 class MyArm(Module[MyArmConfig]):

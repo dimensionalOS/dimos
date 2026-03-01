@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 import pytest
 
-from dimos.core import LCMTransport
+from dimos.core.transport import LCMTransport
 from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs import Image, ImageFormat

@@ -1,16 +1,21 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import json
 import logging
+from typing import TYPE_CHECKING
 import warnings
 
 from dimos.core.resource import Resource
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 from dimos.utils.data import get_data
 from dimos.utils.decorators import retry
 from dimos.utils.llm_utils import extract_json
+
+if TYPE_CHECKING:
+    from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +69,9 @@ def vlm_detection_to_detection2d(
     Returns:
         Detection2DBBox instance or None if invalid
     """
+    # Here to prevent unwanted imports in the file.
+    from dimos.perception.detection.type import Detection2DBBox
+
     # Validate list/tuple structure
     if not isinstance(vlm_detection, (list, tuple)):
         logger.debug(f"VLM detection is not a list/tuple: {type(vlm_detection)}")
@@ -119,6 +127,8 @@ def vlm_point_to_detection2d_point(
     Returns:
         Detection2DPoint instance or None if invalid
     """
+    from dimos.perception.detection.type import Detection2DPoint
+
     # Validate list/tuple structure
     if not isinstance(vlm_point, (list, tuple)):
         logger.debug(f"VLM point is not a list/tuple: {type(vlm_point)}")
@@ -245,6 +255,9 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
     def query_detections(
         self, image: Image, query: str, **kwargs: object
     ) -> ImageDetections2D[Detection2DBBox]:
+        # Here to prevent unwanted imports in the file.
+        from dimos.perception.detection.type import ImageDetections2D
+
         full_query = f"""show me bounding boxes in pixels for this query: `{query}`
 
         format should be:
@@ -303,6 +316,9 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
         Returns:
             ImageDetections2D containing Detection2DPoint instances
         """
+        # Here to prevent unwanted imports in the file.
+        from dimos.perception.detection.type import ImageDetections2D
+
         full_query = f"""Show me point coordinates in pixels for this query: `{query}`
 
         The format should be:

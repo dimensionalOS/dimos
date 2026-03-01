@@ -42,8 +42,9 @@ except ImportError:
     pygame = None  # type: ignore[assignment]
 
 from dimos.control.examples.cartesian_ik_jogger import JogState
-from dimos.core import Module, Out, rpc
-from dimos.core.module import ModuleConfig
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs import PoseStamped
 
 # Force X11 driver to avoid OpenGL threading issues

@@ -285,7 +285,7 @@ disposed
 
 ```python session=rx
 import time
-from dimos.core import Module
+from dimos.core.module import Module
 
 class MyModule(Module):
     def start(self):

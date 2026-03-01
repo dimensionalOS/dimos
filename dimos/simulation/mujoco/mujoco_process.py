@@ -16,6 +16,7 @@
 
 import base64
 import json
+import os
 import pickle
 import signal
 import sys
@@ -231,7 +232,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 if __name__ == "__main__":
 
     def signal_handler(_signum: int, _frame: Any) -> None:
-        sys.exit(0)
+        # os._exit is the documented way of exiting a child process immediatly.
+        os._exit(0)
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)

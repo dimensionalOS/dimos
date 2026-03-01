@@ -21,7 +21,6 @@ their XY locations and querying by location or image similarity.
 
 from typing import Any
 
-import chromadb
 import numpy as np
 
 from dimos.agents_deprecated.memory.visual_memory import VisualMemory
@@ -56,6 +55,9 @@ class SpatialVectorDB:
             embedding_provider: Optional ImageEmbeddingProvider instance for computing embeddings. If None, one will be created.
         """
         self.collection_name = collection_name
+
+        # Here to prevent unwanted imports in the file.
+        import chromadb
 
         # Use provided client or create in-memory client
         self.client = chroma_client if chroma_client is not None else chromadb.Client()

@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core import In, Module, Out, autoconnect, rpc
+from dimos.core.blueprints import autoconnect
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.visualization.rerun.bridge import RerunBridgeModule

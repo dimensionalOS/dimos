@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING
 import reactivex as rx
 import reactivex.operators as ops
 
-from dimos.core import Module, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.core.transport import pLCMTransport
 from dimos.stream.audio.node_normalizer import AudioNormalizer
-from dimos.stream.audio.stt.node_whisper import WhisperNode
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
@@ -51,6 +51,10 @@ class WebInput(Module):
         )
 
         normalizer = AudioNormalizer()
+
+        # Here to prevent unwanted imports in the file.
+        from dimos.stream.audio.stt.node_whisper import WhisperNode
+
         stt_node = WhisperNode()
 
         # Connect audio pipeline: browser audio → normalizer → whisper

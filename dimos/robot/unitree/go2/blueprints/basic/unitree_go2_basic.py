@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import platform
+from typing import Any
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
@@ -39,6 +40,38 @@ _transports_base = (
     autoconnect() if platform.system() == "Linux" else autoconnect().transports(_mac_transports)
 )
 
+
+def _convert_camera_info(camera_info: Any) -> Any:
+    return camera_info.to_rerun(
+        image_topic="/world/color_image",
+        optical_frame="camera_optical",
+    )
+
+
+def _convert_global_map(grid: Any) -> Any:
+    return grid.to_rerun(voxel_size=0.1, mode="boxes")
+
+
+def _convert_navigation_costmap(grid: Any) -> Any:
+    return grid.to_rerun(
+        colormap="Accent",
+        z_offset=0.015,
+        opacity=0.2,
+        background="#484981",
+    )
+
+
+def _static_base_link(rr: Any) -> list[Any]:
+    return [
+        rr.Boxes3D(
+            half_sizes=[0.35, 0.155, 0.2],
+            colors=[(0, 255, 127)],
+            fill_mode="wireframe",
+        ),
+        rr.Transform3D(parent_frame="tf#/base_link"),
+    ]
+
+
 rerun_config = {
     # any pubsub that supports subscribe_all and topic that supports str(topic)
     # is acceptable here
@@ -49,28 +82,13 @@ rerun_config = {
     #
     # This is unsustainable once we move to multi robot etc
     "visual_override": {
-        "world/camera_info": lambda camera_info: camera_info.to_rerun(
-            image_topic="/world/color_image",
-            optical_frame="camera_optical",
-        ),
-        "world/global_map": lambda grid: grid.to_rerun(voxel_size=0.1, mode="boxes"),
-        "world/navigation_costmap": lambda grid: grid.to_rerun(
-            colormap="Accent",
-            z_offset=0.015,
-            opacity=0.2,
-            background="#484981",
-        ),
+        "world/camera_info": _convert_camera_info,
+        "world/global_map": _convert_global_map,
+        "world/navigation_costmap": _convert_navigation_costmap,
     },
     # slapping a go2 shaped box on top of tf/base_link
     "static": {
-        "world/tf/base_link": lambda rr: [
-            rr.Boxes3D(
-                half_sizes=[0.35, 0.155, 0.2],
-                colors=[(0, 255, 127)],
-                fill_mode="wireframe",
-            ),
-            rr.Transform3D(parent_frame="tf#/base_link"),
-        ]
+        "world/tf/base_link": _static_base_link,
     },
 }
 
@@ -100,10 +118,9 @@ unitree_go2_basic = (
         go2_connection(),
         websocket_vis(),
     )
-    .global_config(n_dask_workers=4, robot_model="unitree_go2")
+    .global_config(n_workers=4, robot_model="unitree_go2")
     .configurators(ClockSyncConfigurator())
 )
-
 
 __all__ = [
     "unitree_go2_basic",

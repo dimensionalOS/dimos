@@ -15,7 +15,7 @@
 import logging
 from threading import Thread
 import time
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
@@ -23,8 +23,15 @@ import rerun.blueprint as rrb
 
 from dimos import spec
 from dimos.agents.annotation import skill
-from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
+from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.module import Module
+from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.stream import In, Out
+from dimos.core.transport import LCMTransport, pSHMTransport
+
+if TYPE_CHECKING:
+    from dimos.core.rpc_client import ModuleProxy
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
@@ -310,7 +317,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 go2_connection = GO2Connection.blueprint
 
 
-def deploy(dimos: DimosCluster, ip: str, prefix: str = "") -> GO2Connection:
+def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy":
     from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 
     connection = dimos.deploy(GO2Connection, ip)  # type: ignore[attr-defined]
@@ -327,7 +334,7 @@ def deploy(dimos: DimosCluster, ip: str, prefix: str = "") -> GO2Connection:
     connection.camera_info.transport = LCMTransport(f"{prefix}/camera_info", CameraInfo)
     connection.start()
 
-    return connection  # type: ignore[no-any-return]
+    return connection
 
 
 __all__ = ["GO2Connection", "deploy", "go2_connection"]

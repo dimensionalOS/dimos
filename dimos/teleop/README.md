@@ -1,29 +1,33 @@
 # Teleop Stack
 
-Teleoperation modules for DimOS. Currently supports Meta Quest 3 VR controllers.
+Teleoperation modules for DimOS. Supports Meta Quest 3 VR controllers and phone motion sensors.
 
 ## Architecture
 
 ```
-Quest Browser (WebXR)
+Quest/Phone Browser
     │
-    │  PoseStamped + Joy via WebSocket
+    │  LCM-encoded binary via WebSocket
     ▼
-Deno Bridge (teleop_server.ts)
+Embedded FastAPI Server (HTTPS)
     │
-    │  LCM topics
+    │  Fingerprint-based message dispatch
     ▼
-QuestTeleopModule
-    │  WebXR → robot frame transform
-    │  Pose computation + button state packing
+TeleopModule (Quest or Phone)
+    │  Frame transforms + pose/twist computation
     ▼
 PoseStamped / TwistStamped / Buttons outputs
 ```
 
+Each teleop module embeds a `RobotWebInterface` (FastAPI + uvicorn) that:
+- Serves the teleop web app at `/teleop`
+- Accepts WebSocket connections at `/ws`
+- Handles SSL certificate generation for HTTPS (required by mobile sensor APIs)
+
 ## Modules
 
 ### QuestTeleopModule
-Base teleop module. Gets controller data, computes output poses, and publishes them. Default engage: hold primary button (X/A). Subclass to customize.
+Base Quest teleop module. Gets controller data via WebSocket, computes output poses, and publishes them. Default engage: hold primary button (X/A). Subclass to customize.
 
 ### ArmTeleopModule
 Toggle-based engage — press primary button once to engage, press again to disengage.
@@ -33,6 +37,12 @@ Outputs TwistStamped (linear + angular velocity) instead of PoseStamped.
 
 ### VisualizingTeleopModule
 Adds Rerun visualization for debugging. Extends ArmTeleopModule (toggle engage).
+
+### PhoneTeleopModule
+Base phone teleop module. Receives orientation + gyro data from phone motion sensors, computes velocity commands from orientation deltas.
+
+### SimplePhoneTeleop
+Filters to mobile-base axes (linear.x, linear.y, angular.z) and publishes as `Twist`.
 
 ## Subclassing
 
@@ -60,16 +70,14 @@ teleop/
 │   ├── quest_teleop_module.py   # Base Quest teleop module
 │   ├── quest_extensions.py      # ArmTeleop, TwistTeleop, VisualizingTeleop
 │   ├── quest_types.py           # QuestControllerState, Buttons
-│   └── web/                     # Deno bridge + WebXR client
-│       ├── teleop_server.ts
-│       └── static/index.html
+│   └── web/
+│       └── static/index.html    # WebXR client
 ├── phone/
 │   ├── phone_teleop_module.py   # Base Phone teleop module
 │   ├── phone_extensions.py      # SimplePhoneTeleop
 │   ├── blueprints.py            # Pre-wired configurations
-│   └── web/                     # Deno bridge + mobile web app
-│       ├── teleop_server.ts
-│       └── static/index.html
+│   └── web/
+│       └── static/index.html    # Mobile sensor web app
 ├── utils/
 │   ├── teleop_transforms.py     # WebXR → robot frame math
 │   └── teleop_visualization.py  # Rerun visualization helpers
@@ -78,4 +86,11 @@ teleop/
 
 ## Quick Start
 
-See [Quest Web README](quest/web/README.md) for running the Deno bridge and connecting the Quest headset.
+```bash
+dimos run arm-teleop            # Quest arm teleop
+dimos run phone-go2-teleop      # Phone → Go2
+```
+
+Open `https://<host-ip>:<port>/teleop` on device. Accept the self-signed certificate.
+- Quest: port 8443
+- Phone: port 8444

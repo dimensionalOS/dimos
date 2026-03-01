@@ -21,8 +21,9 @@ from numpy.typing import NDArray
 import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.agents.annotation import skill
-from dimos.core import In, Out, rpc
+from dimos.core.core import rpc
 from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.sensor_msgs.Image import ImageFormat

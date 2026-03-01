@@ -14,7 +14,6 @@
 
 from collections.abc import Mapping
 from datetime import datetime
-import inspect
 import logging
 import logging.handlers
 import os
@@ -202,8 +201,7 @@ def setup_logger(*, level: int | None = None) -> Any:
         A configured structlog logger instance.
     """
 
-    caller_frame = inspect.stack()[1]
-    name = caller_frame.filename
+    name = sys._getframe(1).f_code.co_filename
 
     # Convert absolute path to relative path
     try:

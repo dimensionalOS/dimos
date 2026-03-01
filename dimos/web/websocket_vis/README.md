@@ -39,17 +39,17 @@ Control:
 
 ```python
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos import core
+from dimos.core.transport import LCMTransport, pLCMTransport
 
 # Deploy the WebSocket visualization module
 websocket_vis = dimos.deploy(WebsocketVisModule, port=7779)
 
 # Receive control from the Foxglove plugin.
-websocket_vis.click_goal.transport = core.LCMTransport("/goal_request", PoseStamped)
-websocket_vis.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
-websocket_vis.stop_explore_cmd.transport = core.LCMTransport("/stop_explore_cmd", Bool)
-websocket_vis.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
-websocket_vis.gps_goal.transport = core.pLCMTransport("/gps_goal")
+websocket_vis.click_goal.transport = LCMTransport("/goal_request", PoseStamped)
+websocket_vis.explore_cmd.transport = LCMTransport("/explore_cmd", Bool)
+websocket_vis.stop_explore_cmd.transport = LCMTransport("/stop_explore_cmd", Bool)
+websocket_vis.movecmd.transport = LCMTransport("/cmd_vel", Twist)
+websocket_vis.gps_goal.transport = pLCMTransport("/gps_goal")
 
 # Send visualization data to the Foxglove plugin.
 websocket_vis.robot_pose.connect(connection.odom)

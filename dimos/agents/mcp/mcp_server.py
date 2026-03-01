@@ -28,10 +28,11 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-from dimos.core import Module, rpc  # noqa: I001
-from dimos.core.rpc_client import RpcCall, RPCClient
-
 from starlette.requests import Request  # noqa: TC002
+
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.rpc_client import RpcCall, RPCClient
 
 if TYPE_CHECKING:
     import concurrent.futures

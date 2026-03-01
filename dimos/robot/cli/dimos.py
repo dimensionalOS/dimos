@@ -20,6 +20,9 @@ from dotenv import load_dotenv
 import typer
 
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 main = typer.Typer(
     help="Dimensional CLI",
@@ -101,6 +104,8 @@ def run(
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
 ) -> None:
     """Start a robot blueprint"""
+    logger.info("Starting DimOS")
+
     from dimos.core.blueprints import autoconnect
     from dimos.robot.get_all_blueprints import get_by_name
     from dimos.utils.logging_config import setup_exception_handler

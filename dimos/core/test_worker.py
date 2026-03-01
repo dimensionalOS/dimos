@@ -14,7 +14,9 @@
 
 import pytest
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.core.worker_manager import WorkerManager
 from dimos.msgs.geometry_msgs import Vector3
 
@@ -74,16 +76,24 @@ class ThirdModule(Module):
 
 
 @pytest.fixture
-def worker_manager():
-    manager = WorkerManager()
-    try:
-        yield manager
-    finally:
+def create_worker_manager():
+    manager = None
+
+    def _create(n_workers):
+        nonlocal manager
+        manager = WorkerManager(n_workers=n_workers)
+        manager.start()
+        return manager
+
+    yield _create
+
+    if manager is not None:
         manager.close_all()
 
 
 @pytest.mark.slow
-def test_worker_manager_basic(worker_manager):
+def test_worker_manager_basic(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=2)
     module = worker_manager.deploy(SimpleModule)
     module.start()
 
@@ -100,7 +110,8 @@ def test_worker_manager_basic(worker_manager):
 
 
 @pytest.mark.slow
-def test_worker_manager_multiple_different_modules(worker_manager):
+def test_worker_manager_multiple_different_modules(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=2)
     module1 = worker_manager.deploy(SimpleModule)
     module2 = worker_manager.deploy(AnotherModule)
 
@@ -121,7 +132,8 @@ def test_worker_manager_multiple_different_modules(worker_manager):
 
 
 @pytest.mark.slow
-def test_worker_manager_parallel_deployment(worker_manager):
+def test_worker_manager_parallel_deployment(create_worker_manager):
+    worker_manager = create_worker_manager(n_workers=2)
     modules = worker_manager.deploy_parallel(
         [
             (SimpleModule, (), {}),
@@ -151,3 +163,28 @@ def test_worker_manager_parallel_deployment(worker_manager):
     module1.stop()
     module2.stop()
     module3.stop()
+
+
+@pytest.mark.slow
+def test_worker_pool_modules_share_workers(create_worker_manager):
+    manager = create_worker_manager(n_workers=1)
+    module1 = manager.deploy(SimpleModule)
+    module2 = manager.deploy(AnotherModule)
+
+    module1.start()
+    module2.start()
+
+    # Verify isolated state
+    module1.increment()
+    module1.increment()
+    module2.add(10)
+
+    assert module1.get_counter() == 2
+    assert module2.get_value() == 110
+
+    # Verify only 1 worker process was used
+    assert len(manager._workers) == 1
+    assert manager._workers[0].module_count == 2
+
+    module1.stop()
+    module2.stop()

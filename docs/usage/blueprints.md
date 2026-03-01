@@ -8,7 +8,8 @@ You create a `Blueprint` from a single module (say `ConnectionModule`) with:
 
 ```python session=blueprint-ex1
 from dimos.core.blueprints import Blueprint
-from dimos.core import Module, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
 
 class ConnectionModule(Module):
     def __init__(self, arg1, arg2, kwarg='value') -> None:
@@ -100,7 +101,9 @@ Imagine you have this code:
 from functools import partial
 
 from dimos.core.blueprints import Blueprint, autoconnect
-from dimos.core import Module, rpc, Out, In
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import Out, In
 from dimos.msgs.sensor_msgs import Image
 
 class ModuleA(Module):
@@ -161,7 +164,9 @@ Sometimes you need to rename a connection to match what other modules expect. Yo
 
 ```python session=blueprint-ex2
 from dimos.core.blueprints import autoconnect
-from dimos.core import Module, rpc, Out, In
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import Out, In
 from dimos.msgs.sensor_msgs import Image
 
 class ConnectionModule(Module):
@@ -204,7 +209,8 @@ blueprint.remappings([
 Each module can optionally take global config as a `cfg` option in `__init__`. E.g.:
 
 ```python session=blueprint-ex3
-from dimos.core import Module, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.core.global_config import GlobalConfig
 
 class ModuleA(Module):
@@ -217,7 +223,7 @@ class ModuleA(Module):
 The config is normally taken from .env or from environment variables. But you can specifically override the values for a specific blueprint:
 
 ```python session=blueprint-ex3
-blueprint = ModuleA.blueprint().global_config(n_dask_workers=8)
+blueprint = ModuleA.blueprint().global_config(n_workers=8)
 ```
 
 ## Calling the methods of other modules
@@ -225,7 +231,8 @@ blueprint = ModuleA.blueprint().global_config(n_dask_workers=8)
 Imagine you have this code:
 
 ```python session=blueprint-ex3
-from dimos.core import Module, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
 
 class Drone(Module):
 
@@ -243,7 +250,8 @@ And you want to call `ModuleA.get_time` in `ModuleB.request_the_time`.
 To do this, you can request a module reference.
 
 ```python session=blueprint-ex3
-from dimos.core import Module, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
 
 class HelperModule(Module):
     drone_module: Drone
@@ -283,7 +291,8 @@ class ModuleB(Module):
 Skills are methods on a `Module` decorated with `@skill`. The agent automatically discovers all skills from launched modules at startup.
 
 ```python session=blueprint-ex4
-from dimos.core import Module, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.agents.annotation import skill
 from dimos.core.global_config import GlobalConfig
 

@@ -29,7 +29,9 @@ import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid

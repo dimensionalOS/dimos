@@ -12,16 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import multiprocessing as mp
-from multiprocessing.connection import Connection
-import traceback
-from typing import Any
+from __future__ import annotations
 
-from dimos.core.module import ModuleT
-from dimos.core.rpc_client import RPCClient
-from dimos.utils.actor_registry import ActorRegistry
+import multiprocessing as mp
+import threading
+import traceback
+from typing import TYPE_CHECKING, Any
+
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
+
+if TYPE_CHECKING:
+    from multiprocessing.connection import Connection
+
+    from dimos.core.module import ModuleT
 
 logger = setup_logger()
 
@@ -36,25 +40,65 @@ class ActorFuture:
         return self._value
 
 
+class MethodCallProxy:
+    """Proxy that wraps an Actor to support method calls returning ActorFuture.
+
+    Used as the owner of RemoteOut/RemoteIn on the parent side so that calls like
+    `owner.set_transport(name, value).result()` work through the pipe to the worker.
+    """
+
+    def __init__(self, actor: Actor) -> None:
+        self._actor = actor
+
+    def __reduce__(self) -> tuple[type, tuple[Actor]]:
+        return (MethodCallProxy, (self._actor,))
+
+    def __getattr__(self, name: str) -> Any:
+        # Don't intercept private/dunder attributes - they must follow normal lookup.
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        def _call(*args: Any, **kwargs: Any) -> ActorFuture:
+            result = self._actor._send_request_to_worker(
+                {"type": "call_method", "name": name, "args": args, "kwargs": kwargs}
+            )
+            return ActorFuture(result)
+
+        return _call
+
+
 class Actor:
     """Proxy that forwards method calls to the worker process."""
 
     def __init__(
-        self, conn: Connection | None, module_class: type[ModuleT], worker_id: int
+        self,
+        conn: Connection | None,
+        module_class: type[ModuleT],
+        worker_id: int,
+        module_id: int = 0,
+        lock: threading.Lock | None = None,
     ) -> None:
         self._conn = conn
         self._cls = module_class
         self._worker_id = worker_id
+        self._module_id = module_id
+        self._lock = lock
 
-    def __reduce__(self) -> tuple[type, tuple[None, type, int]]:
-        """Exclude the connection when pickling - it can't be used in other processes."""
-        return (Actor, (None, self._cls, self._worker_id))
+    def __reduce__(self) -> tuple[type, tuple[None, type, int, int, None]]:
+        """Exclude the connection and lock when pickling."""
+        return (Actor, (None, self._cls, self._worker_id, self._module_id, None))
 
     def _send_request_to_worker(self, request: dict[str, Any]) -> Any:
         if self._conn is None:
             raise RuntimeError("Actor connection not available - cannot send requests")
-        self._conn.send(request)
-        response = self._conn.recv()
+        request["module_id"] = self._module_id
+        if self._lock is not None:
+            with self._lock:
+                self._conn.send(request)
+                response = self._conn.recv()
+        else:
+            self._conn.send(request)
+            response = self._conn.recv()
         if response.get("error"):
             if "AttributeError" in response["error"]:  # TODO: better error handling
                 raise AttributeError(response["error"])
@@ -92,24 +136,28 @@ def reset_forkserver_context() -> None:
     _forkserver_ctx = None
 
 
-_seq_ids = SequentialIds()
+_worker_ids = SequentialIds()
+_module_ids = SequentialIds()
 
 
 class Worker:
-    def __init__(
-        self,
-        module_class: type[ModuleT],
-        args: tuple[Any, ...] = (),
-        kwargs: dict[Any, Any] | None = None,
-    ) -> None:
-        self._module_class: type[ModuleT] = module_class
-        self._args: tuple[Any, ...] = args
-        self._kwargs: dict[Any, Any] = kwargs or {}
+    """Generic worker process that can host multiple modules."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._modules: dict[int, Actor] = {}
+        self._reserved: int = 0
         self._process: Any = None
         self._conn: Connection | None = None
-        self._actor: Actor | None = None
-        self._worker_id: int = _seq_ids.next()
-        self._ready: bool = False
+        self._worker_id: int = _worker_ids.next()
+
+    @property
+    def module_count(self) -> int:
+        return len(self._modules) + self._reserved
+
+    def reserve_slot(self) -> None:
+        """Reserve a slot so _select_worker() sees the pending load."""
+        self._reserved += 1
 
     def start_process(self) -> None:
         ctx = get_forkserver_context()
@@ -118,49 +166,76 @@ class Worker:
 
         self._process = ctx.Process(
             target=_worker_entrypoint,
-            args=(child_conn, self._module_class, self._args, self._kwargs, self._worker_id),
+            args=(child_conn, self._worker_id),
             daemon=True,
         )
         self._process.start()
-        self._actor = Actor(parent_conn, self._module_class, self._worker_id)
 
-    def wait_until_ready(self) -> None:
-        if self._ready:
-            return
-        if self._actor is None:
+    def deploy_module(
+        self,
+        module_class: type[ModuleT],
+        args: tuple[Any, ...] = (),
+        kwargs: dict[Any, Any] | None = None,
+    ) -> Actor:
+        if self._conn is None:
             raise RuntimeError("Worker process not started")
 
-        worker_id = self._actor.set_ref(self._actor).result()
-        ActorRegistry.update(str(self._actor), str(worker_id))
-        self._ready = True
+        kwargs = kwargs or {}
+        module_id = _module_ids.next()
 
+        # Send deploy_module request to the worker process
+        request = {
+            "type": "deploy_module",
+            "module_id": module_id,
+            "module_class": module_class,
+            "args": args,
+            "kwargs": kwargs,
+        }
+        with self._lock:
+            self._conn.send(request)
+            response = self._conn.recv()
+
+        if response.get("error"):
+            raise RuntimeError(f"Failed to deploy module: {response['error']}")
+
+        actor = Actor(self._conn, module_class, self._worker_id, module_id, self._lock)
+        actor.set_ref(actor).result()
+
+        self._modules[module_id] = actor
+        self._reserved = max(0, self._reserved - 1)
         logger.info(
-            "Deployed module.", module=self._module_class.__name__, worker_id=self._worker_id
+            "Deployed module.",
+            module=module_class.__name__,
+            worker_id=self._worker_id,
+            module_id=module_id,
         )
-
-    def deploy(self) -> None:
-        self.start_process()
-        self.wait_until_ready()
-
-    def get_instance(self) -> RPCClient:
-        if self._actor is None:
-            raise RuntimeError("Worker not deployed")
-        return RPCClient(self._actor, self._module_class)
+        return actor
 
     def shutdown(self) -> None:
         if self._conn is not None:
             try:
-                self._conn.send({"type": "shutdown"})
-                self._conn.recv()
-            except (BrokenPipeError, EOFError):
+                with self._lock:
+                    self._conn.send({"type": "shutdown"})
+                    if self._conn.poll(timeout=5):
+                        self._conn.recv()
+                    else:
+                        logger.warning(
+                            "Worker did not respond to shutdown within 5s, closing pipe.",
+                            worker_id=self._worker_id,
+                        )
+            except (BrokenPipeError, EOFError, ConnectionResetError):
                 pass
             finally:
                 self._conn.close()
                 self._conn = None
 
         if self._process is not None:
-            self._process.join(timeout=2)
+            self._process.join(timeout=5)
             if self._process.is_alive():
+                logger.warning(
+                    "Worker still alive after 5s, terminating.",
+                    worker_id=self._worker_id,
+                )
                 self._process.terminate()
                 self._process.join(timeout=1)
             self._process = None
@@ -168,29 +243,43 @@ class Worker:
 
 def _worker_entrypoint(
     conn: Connection,
-    module_class: type[ModuleT],
-    args: tuple[Any, ...],
-    kwargs: dict[Any, Any],
     worker_id: int,
 ) -> None:
-    instance = None
+    instances: dict[int, Any] = {}
 
     try:
-        instance = module_class(*args, **kwargs)
-        instance.worker = worker_id
-
-        _worker_loop(conn, instance, worker_id)
+        _worker_loop(conn, instances, worker_id)
+    except KeyboardInterrupt:
+        logger.info("Worker got KeyboardInterrupt.", worker_id=worker_id)
     except Exception as e:
         logger.error(f"Worker process error: {e}", exc_info=True)
     finally:
-        if instance is not None:
+        for module_id, instance in reversed(list(instances.items())):
             try:
+                logger.info(
+                    "Worker stopping module...",
+                    module=type(instance).__name__,
+                    worker_id=worker_id,
+                    module_id=module_id,
+                )
                 instance.stop()
+                logger.info(
+                    "Worker module stopped.",
+                    module=type(instance).__name__,
+                    worker_id=worker_id,
+                    module_id=module_id,
+                )
+            except KeyboardInterrupt:
+                logger.warning(
+                    "KeyboardInterrupt during worker stop",
+                    module=type(instance).__name__,
+                    worker_id=worker_id,
+                )
             except Exception:
                 logger.error("Error during worker shutdown", exc_info=True)
 
 
-def _worker_loop(conn: Connection, instance: Any, worker_id: int) -> None:
+def _worker_loop(conn: Connection, instances: dict[int, Any], worker_id: int) -> None:
     while True:
         try:
             if not conn.poll(timeout=0.1):
@@ -203,12 +292,29 @@ def _worker_loop(conn: Connection, instance: Any, worker_id: int) -> None:
         try:
             req_type = request.get("type")
 
-            if req_type == "set_ref":
-                instance.ref = request.get("ref")
+            if req_type == "deploy_module":
+                module_class = request["module_class"]
+                args = request.get("args", ())
+                kwargs = request.get("kwargs", {})
+                module_id = request["module_id"]
+                instance = module_class(*args, **kwargs)
+                instances[module_id] = instance
+                response["result"] = module_id
+
+            elif req_type == "set_ref":
+                module_id = request["module_id"]
+                instances[module_id].ref = request.get("ref")
                 response["result"] = worker_id
 
             elif req_type == "getattr":
-                response["result"] = getattr(instance, request["name"])
+                module_id = request["module_id"]
+                response["result"] = getattr(instances[module_id], request["name"])
+
+            elif req_type == "call_method":
+                module_id = request["module_id"]
+                method = getattr(instances[module_id], request["name"])
+                result = method(*request.get("args", ()), **request.get("kwargs", {}))
+                response["result"] = result
 
             elif req_type == "shutdown":
                 response["result"] = True

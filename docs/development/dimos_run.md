@@ -59,7 +59,7 @@ class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
     simulation: bool = False
     replay: bool = False
-    n_dask_workers: int = 2
+    n_workers: int = 2
 ```
 
 Configuration values can be set from multiple places in order of precedence (later entries override earlier ones):

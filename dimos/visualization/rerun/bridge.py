@@ -33,8 +33,8 @@ from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
 import typer
 
-from dimos.core import Module, rpc
-from dimos.core.module import ModuleConfig
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.utils.logging_config import setup_logger

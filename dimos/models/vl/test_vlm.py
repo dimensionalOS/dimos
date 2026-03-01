@@ -7,7 +7,7 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
 )
 import pytest
 
-from dimos.core import LCMTransport
+from dimos.core.transport import LCMTransport
 from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.moondream_hosted import MoondreamHostedVlModel
 from dimos.models.vl.qwen import QwenVlModel

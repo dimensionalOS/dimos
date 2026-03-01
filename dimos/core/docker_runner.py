@@ -269,7 +269,7 @@ class DockerModule:
         return _tail_logs(self._config, self._container_name, n=n)
 
     def set_transport(self, stream_name: str, transport: Any) -> bool:
-        """Configure stream transport in container. Mirrors DaskModule.set_transport() for autoconnect()."""
+        """Configure stream transport in container. Mirrors Module.set_transport() for autoconnect()."""
         topic = getattr(transport, "topic", None)
         if topic is None:
             return False

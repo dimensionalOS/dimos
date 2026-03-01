@@ -428,9 +428,9 @@ class TestDroneFullIntegration(unittest.TestCase):
         self.pubsub_patch.stop()
         self.foxglove_patch.stop()
 
-    @patch("dimos.robot.drone.drone.core.start")
+    @patch("dimos.robot.drone.drone.ModuleCoordinator")
     @patch("dimos.utils.testing.TimedSensorReplay")
-    def test_full_system_with_replay(self, mock_replay, mock_core_start) -> None:
+    def test_full_system_with_replay(self, mock_replay, mock_coordinator_class) -> None:
         """Test full drone system initialization and operation with replay mode."""
         # Set up mock replay data
         mavlink_messages = [
@@ -477,8 +477,8 @@ class TestDroneFullIntegration(unittest.TestCase):
 
         mock_replay.side_effect = replay_side_effect
 
-        # Mock DimOS core
-        mock_core_start.return_value = self.mock_dimos
+        # Mock ModuleCoordinator
+        mock_coordinator_class.return_value = self.mock_dimos
 
         # Create drone in replay mode
         drone = Drone(connection_string="replay", video_port=5600)
@@ -557,7 +557,7 @@ class TestDroneFullIntegration(unittest.TestCase):
         # Verify cleanup was called
         mock_connection.stop.assert_called_once()
         mock_camera.stop.assert_called_once()
-        self.mock_dimos.close_all.assert_called_once()
+        self.mock_dimos.stop.assert_called_once()
 
 
 class TestDroneControlCommands(unittest.TestCase):

@@ -14,18 +14,19 @@
 
 import time
 
-from dimos import core
+from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.navigation import rosnav
-from dimos.protocol import pubsub
+from dimos.protocol.service.lcmservice import autoconf
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
 def main() -> None:
-    pubsub.lcm.autoconf()  # type: ignore[attr-defined]
-    dimos = core.start(2)
+    autoconf()
+    dimos = ModuleCoordinator()
+    dimos.start()
 
     ros_nav = rosnav.deploy(dimos)
 
@@ -52,8 +53,7 @@ def main() -> None:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("\nShutting down...")
-        ros_nav.stop()
+        dimos.stop()
 
 
 if __name__ == "__main__":

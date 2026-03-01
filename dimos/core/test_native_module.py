@@ -25,10 +25,10 @@ import time
 
 import pytest
 
-from dimos.core import DimosCluster
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
+from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
@@ -110,15 +110,16 @@ def test_process_crash_triggers_stop() -> None:
     assert mod._process is None, f"Watchdog did not clean up after process {pid} died"
 
 
-def test_manual(dimos_cluster: DimosCluster, args_file: str) -> None:
+@pytest.mark.slow
+def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
     native_module = dimos_cluster.deploy(  # type: ignore[attr-defined]
         StubNativeModule,
         some_param=2.5,
         output_file=args_file,
     )
 
-    native_module.pointcloud.transport = LCMTransport("/my/custom/lidar", PointCloud2)
-    native_module.cmd_vel.transport = LCMTransport("/cmd_vel", Twist)
+    native_module.set_transport("pointcloud", LCMTransport("/my/custom/lidar", PointCloud2))
+    native_module.set_transport("cmd_vel", LCMTransport("/cmd_vel", Twist))
     native_module.start()
     time.sleep(1)
     native_module.stop()

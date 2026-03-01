@@ -31,7 +31,7 @@ class GlobalConfig(BaseSettings):
     simulation: bool = False
     replay: bool = False
     viewer_backend: ViewerBackend = "rerun-web"
-    n_dask_workers: int = 2
+    n_workers: int = 2
     memory_limit: str = "auto"
     mujoco_camera_position: str | None = None
     mujoco_room: str | None = None
@@ -45,7 +45,6 @@ class GlobalConfig(BaseSettings):
     robot_rotation_diameter: float = 0.6
     planner_strategy: NavigationStrategy = "simple"
     planner_robot_speed: float | None = None
-    dask: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",

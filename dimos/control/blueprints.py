@@ -33,6 +33,7 @@ from __future__ import annotations
 from dimos.control.components import (
     HardwareComponent,
     HardwareType,
+    make_gripper_joints,
     make_joints,
     make_twist_base_joints,
 )
@@ -45,6 +46,7 @@ from dimos.utils.data import LfsPath
 
 _PIPER_MODEL_PATH = LfsPath("piper_description/mujoco_model/piper_no_gripper_description.xml")
 _XARM6_MODEL_PATH = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
+_XARM7_MODEL_PATH = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
 
 
 # =============================================================================
@@ -473,8 +475,8 @@ coordinator_cartesian_ik_piper = control_coordinator(
 # Teleop IK Blueprints (VR teleoperation with internal Pinocchio IK)
 # =============================================================================
 
-# Single XArm6 with TeleopIK
-coordinator_teleop_xarm6 = control_coordinator(
+# Single XArm7 with TeleopIK
+coordinator_teleop_xarm7 = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
@@ -482,21 +484,25 @@ coordinator_teleop_xarm6 = control_coordinator(
         HardwareComponent(
             hardware_id="arm",
             hardware_type=HardwareType.MANIPULATOR,
-            joints=make_joints("arm", 6),
+            joints=make_joints("arm", 7),
             adapter_type="xarm",
-            address="192.168.1.210",
+            address="192.168.2.235",
             auto_enable=True,
+            gripper_joints=make_gripper_joints("arm"),
         ),
     ],
     tasks=[
         TaskConfig(
             name="teleop_xarm",
             type="teleop_ik",
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
+            joint_names=[f"arm_joint{i + 1}" for i in range(7)],
             priority=10,
-            model_path=_XARM6_MODEL_PATH,
-            ee_joint_id=6,
+            model_path=_XARM7_MODEL_PATH,
+            ee_joint_id=7,
             hand="right",
+            gripper_joint=make_gripper_joints("arm")[0],
+            gripper_open_pos=0.85,  # xArm gripper range
+            gripper_closed_pos=0.0,
         ),
     ],
 ).transports(
@@ -715,6 +721,7 @@ __all__ = [
     "coordinator_teleop_dual",
     "coordinator_teleop_piper",
     "coordinator_teleop_xarm6",
+    "coordinator_teleop_xarm7",
     "coordinator_velocity_xarm6",
     "coordinator_xarm6",
     "coordinator_xarm7",

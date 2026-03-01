@@ -16,12 +16,10 @@
 from dimos.core.blueprints import autoconnect
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
-from dimos.utils.monitoring import utilization
 
 unitree_go2_spatial = autoconnect(
     unitree_go2,
     spatial_memory(),
-    utilization(),
-).global_config(n_dask_workers=8)
+).global_config(n_workers=8)
 
 __all__ = ["unitree_go2_spatial"]

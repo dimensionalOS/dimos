@@ -92,7 +92,7 @@ nav = autoconnect(
     cost_mapper(),
     replanning_a_star_planner(),
     wavefront_frontier_explorer(),
-).global_config(n_dask_workers=6, robot_model="unitree_go2")
+).global_config(n_workers=6, robot_model="unitree_go2")
 
 ros = nav.transports(
     {
@@ -113,10 +113,12 @@ Each **stream** on a module can use a different transport. Set `.transport` on t
 ```python ansi=false
 import time
 
-from dimos.core import In, Module, start
+from dimos.core.module import Module
+from dimos.core.stream import In
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.msgs.sensor_msgs import Image
+from dimos.core.module_coordinator import ModuleCoordinator
 
 
 class ImageListener(Module):
@@ -129,7 +131,8 @@ class ImageListener(Module):
 
 if __name__ == "__main__":
     # Start local cluster and deploy modules to separate processes
-    dimos = start(2)
+    dimos = ModuleCoordinator()
+    dimos.start()
 
     camera = dimos.deploy(CameraModule, frequency=2.0)
     listener = dimos.deploy(ImageListener)
@@ -140,8 +143,7 @@ if __name__ == "__main__":
     # Connect listener input to camera output
     listener.image.connect(camera.color_image)
 
-    camera.start()
-    listener.start()
+    dimos.start_all_modules()
 
     time.sleep(2)
     dimos.stop()

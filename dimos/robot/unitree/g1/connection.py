@@ -13,16 +13,22 @@
 # limitations under the License.
 
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from reactivex.disposable import Disposable
 
 from dimos import spec
-from dimos.core import DimosCluster, In, Module, rpc
+from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.module import Module
+from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.stream import In
 from dimos.msgs.geometry_msgs import Twist
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.core.rpc_client import ModuleProxy
 
 logger = setup_logger()
 
@@ -92,11 +98,11 @@ class G1Connection(Module):
 g1_connection = G1Connection.blueprint
 
 
-def deploy(dimos: DimosCluster, ip: str, local_planner: spec.LocalPlanner) -> G1Connection:
+def deploy(dimos: ModuleCoordinator, ip: str, local_planner: spec.LocalPlanner) -> "ModuleProxy":
     connection = dimos.deploy(G1Connection, ip)  # type: ignore[attr-defined]
     connection.cmd_vel.connect(local_planner.cmd_vel)
     connection.start()
-    return connection  # type: ignore[no-any-return]
+    return connection
 
 
 __all__ = ["G1Connection", "deploy", "g1_connection"]

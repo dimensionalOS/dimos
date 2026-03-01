@@ -15,6 +15,8 @@
 
 """G1 stack with person tracking and 3D detection."""
 
+from typing import Any
+
 from dimos_lcm.foxglove_msgs import SceneUpdate
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 
@@ -30,6 +32,11 @@ from dimos.perception.detection.moduleDB import ObjectDBModule, detection_db_mod
 from dimos.perception.detection.person_tracker import PersonTracker, person_tracker_module
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic import unitree_g1_basic
 
+
+def _person_only(det: Any) -> bool:
+    return bool(det.class_id == 0)
+
+
 unitree_g1_detection = (
     autoconnect(
         unitree_g1_basic,
@@ -40,13 +47,13 @@ unitree_g1_detection = (
         ),
         detection_db_module(
             camera_info=zed.CameraInfo.SingleWebcam,
-            filter=lambda det: det.class_id == 0,  # Filter for person class only
+            filter=_person_only,  # Filter for person class only
         ),
         person_tracker_module(
             cameraInfo=zed.CameraInfo.SingleWebcam,
         ),
     )
-    .global_config(n_dask_workers=8)
+    .global_config(n_workers=8)
     .remappings(
         [
             # Connect detection modules to camera and lidar

@@ -14,14 +14,16 @@
 
 import asyncio
 import os
-import tempfile
 import time
 
 import pytest
 from reactivex import operators as ops
 
-from dimos import core
-from dimos.core import Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.stream import Out
+from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.spatial_perception import SpatialMemory
@@ -109,113 +111,97 @@ class OdometryReplayModule(Module):
         logger.info("OdometryReplayModule stopped")
 
 
+@pytest.fixture()
+def dimos():
+    dimos = ModuleCoordinator()
+    dimos.start()
+    try:
+        yield dimos
+    finally:
+        dimos.stop()
+
+
 @pytest.mark.slow
 @pytest.mark.skipif_in_ci
-class TestSpatialMemoryModule:
-    @pytest.fixture(scope="function")
-    def temp_dir(self):
-        """Create a temporary directory for test data."""
-        # Use standard tempfile module to ensure proper permissions
-        temp_dir = tempfile.mkdtemp(prefix="spatial_memory_test_")
+@pytest.mark.asyncio
+async def test_spatial_memory_module_with_replay(dimos, tmp_path):
+    """Test SpatialMemory module with TimedSensorReplay inputs."""
+    # Get test data paths
+    data_path = get_data("unitree_office_walk")
+    video_path = os.path.join(data_path, "video")
+    odom_path = os.path.join(data_path, "odom")
 
-        yield temp_dir
+    # Deploy modules
+    # Video replay module
+    video_module = dimos.deploy(VideoReplayModule, video_path)
+    video_module.video_out.transport = LCMTransport("/test_video", Image)
 
-    @pytest.mark.asyncio
-    async def test_spatial_memory_module_with_replay(self, temp_dir):
-        """Test SpatialMemory module with TimedSensorReplay inputs."""
+    # Odometry replay module (publishes to tf system directly)
+    odom_module = dimos.deploy(OdometryReplayModule, odom_path)
 
-        # Start Dask
-        dimos = core.start(1)
+    # Spatial memory module
+    spatial_memory = dimos.deploy(
+        SpatialMemory,
+        collection_name="test_spatial_memory",
+        embedding_model="clip",
+        embedding_dimensions=512,
+        min_distance_threshold=0.5,  # 0.5m for test
+        min_time_threshold=1.0,  # 1 second
+        db_path=str(tmp_path / "chroma_db"),
+        visual_memory_path=str(tmp_path / "visual_memory.pkl"),
+        new_memory=True,
+        output_dir=str(tmp_path / "images"),
+    )
 
-        try:
-            # Get test data paths
-            data_path = get_data("unitree_office_walk")
-            video_path = os.path.join(data_path, "video")
-            odom_path = os.path.join(data_path, "odom")
+    # Connect video stream
+    spatial_memory.color_image.connect(video_module.video_out)
 
-            # Deploy modules
-            # Video replay module
-            video_module = dimos.deploy(VideoReplayModule, video_path)
-            video_module.video_out.transport = core.LCMTransport("/test_video", Image)
+    # Start all modules
+    video_module.start()
+    odom_module.start()
+    spatial_memory.start()
+    logger.info("All modules started, processing in background...")
 
-            # Odometry replay module (publishes to tf system directly)
-            odom_module = dimos.deploy(OdometryReplayModule, odom_path)
+    # Wait for frames to be processed with timeout
+    timeout = 10.0  # 10 second timeout
+    start_time = time.time()
 
-            # Spatial memory module
-            spatial_memory = dimos.deploy(
-                SpatialMemory,
-                collection_name="test_spatial_memory",
-                embedding_model="clip",
-                embedding_dimensions=512,
-                min_distance_threshold=0.5,  # 0.5m for test
-                min_time_threshold=1.0,  # 1 second
-                db_path=os.path.join(temp_dir, "chroma_db"),
-                visual_memory_path=os.path.join(temp_dir, "visual_memory.pkl"),
-                new_memory=True,
-                output_dir=os.path.join(temp_dir, "images"),
-            )
-
-            # Connect video stream
-            spatial_memory.color_image.connect(video_module.video_out)
-
-            # Start all modules
-            video_module.start()
-            odom_module.start()
-            spatial_memory.start()
-            logger.info("All modules started, processing in background...")
-
-            # Wait for frames to be processed with timeout
-            timeout = 10.0  # 10 second timeout
-            start_time = time.time()
-
-            # Keep checking stats while modules are running
-            while (time.time() - start_time) < timeout:
-                stats = spatial_memory.get_stats()
-                if stats["frame_count"] > 0 and stats["stored_frame_count"] > 0:
-                    logger.info(
-                        f"Frames processing - Frame count: {stats['frame_count']}, Stored: {stats['stored_frame_count']}"
-                    )
-                    break
-                await asyncio.sleep(0.5)
-            else:
-                # Timeout reached
-                stats = spatial_memory.get_stats()
-                logger.error(
-                    f"Timeout after {timeout}s - Frame count: {stats['frame_count']}, Stored: {stats['stored_frame_count']}"
-                )
-                raise AssertionError(f"No frames processed within {timeout} seconds")
-
-            await asyncio.sleep(2)
-
-            mid_stats = spatial_memory.get_stats()
+    # Keep checking stats while modules are running
+    while (time.time() - start_time) < timeout:
+        stats = spatial_memory.get_stats()
+        if stats["frame_count"] > 0 and stats["stored_frame_count"] > 0:
             logger.info(
-                f"Mid-test stats - Frame count: {mid_stats['frame_count']}, Stored: {mid_stats['stored_frame_count']}"
+                f"Frames processing - Frame count: {stats['frame_count']}, Stored: {stats['stored_frame_count']}"
             )
-            assert mid_stats["frame_count"] >= stats["frame_count"], (
-                "Frame count should increase or stay same"
-            )
+            break
+        await asyncio.sleep(0.5)
+    else:
+        # Timeout reached
+        stats = spatial_memory.get_stats()
+        logger.error(
+            f"Timeout after {timeout}s - Frame count: {stats['frame_count']}, Stored: {stats['stored_frame_count']}"
+        )
+        raise AssertionError(f"No frames processed within {timeout} seconds")
 
-            # Test query while modules are still running
-            try:
-                text_results = spatial_memory.query_by_text("office")
-                logger.info(f"Query by text 'office' returned {len(text_results)} results")
-                assert len(text_results) > 0, "Should have at least one result"
-            except Exception as e:
-                logger.warning(f"Query by text failed: {e}")
+    await asyncio.sleep(2)
 
-            final_stats = spatial_memory.get_stats()
-            logger.info(
-                f"Final stats - Frame count: {final_stats['frame_count']}, Stored: {final_stats['stored_frame_count']}"
-            )
+    mid_stats = spatial_memory.get_stats()
+    logger.info(
+        f"Mid-test stats - Frame count: {mid_stats['frame_count']}, Stored: {mid_stats['stored_frame_count']}"
+    )
+    assert mid_stats["frame_count"] >= stats["frame_count"], (
+        "Frame count should increase or stay same"
+    )
 
-            video_module.stop()
-            odom_module.stop()
-            spatial_memory.stop()
-            logger.info("Stopped all modules")
+    # Test query while modules are still running
+    try:
+        text_results = spatial_memory.query_by_text("office")
+        logger.info(f"Query by text 'office' returned {len(text_results)} results")
+        assert len(text_results) > 0, "Should have at least one result"
+    except Exception as e:
+        logger.warning(f"Query by text failed: {e}")
 
-            logger.info("All spatial memory module tests passed!")
-
-        finally:
-            # Cleanup
-            if "dimos" in locals():
-                dimos.close_all()
+    final_stats = spatial_memory.get_stats()
+    logger.info(
+        f"Final stats - Frame count: {final_stats['frame_count']}, Stored: {final_stats['stored_frame_count']}"
+    )

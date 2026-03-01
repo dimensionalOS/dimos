@@ -23,7 +23,9 @@ from typing import Any
 
 from dimos_lcm.sensor_msgs import CameraInfo
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header

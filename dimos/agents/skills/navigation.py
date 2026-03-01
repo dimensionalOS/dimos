@@ -21,8 +21,7 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
-from dimos.models.qwen.video_query import BBox
-from dimos.models.vl.qwen import QwenVlModel
+from dimos.models.qwen.bbox import BBox
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.sensor_msgs import Image
@@ -59,6 +58,10 @@ class NavigationSkillContainer(Module):
     def __init__(self) -> None:
         super().__init__()
         self._skill_started = False
+
+        # Here to prevent unwanted imports in the file.
+        from dimos.models.vl.qwen import QwenVlModel
+
         self._vl_model = QwenVlModel()
 
     @rpc

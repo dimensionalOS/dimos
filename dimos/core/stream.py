@@ -22,13 +22,12 @@ from typing import (
     TypeVar,
 )
 
-from dask.distributed import Actor
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
-import dimos.core.colors as colors
 from dimos.core.resource import Resource
+from dimos.utils import colors
 from dimos.utils.logging_config import setup_logger
 import dimos.utils.reactive as reactive
 from dimos.utils.reactive import backpressure
@@ -132,11 +131,7 @@ class Stream(Generic[T]):
             + " "
             + self._color_fn()(f"{self.name}[{self.type_name}]")
             + " @ "
-            + (
-                colors.orange(self.owner)  # type: ignore[arg-type]
-                if isinstance(self.owner, Actor)
-                else colors.green(self.owner)  # type: ignore[arg-type]
-            )
+            + colors.green(self.owner)  # type: ignore[arg-type]
             + ("" if not self._transport else " via " + str(self._transport))
         )
 

@@ -106,7 +106,8 @@ The `LATEST` strategy means: when the slow subscriber finishes processing, it ge
 Most module streams offer backpressured observables.
 
 ```python session=bp
-from dimos.core import Module, In
+from dimos.core.module import Module
+from dimos.core.stream import In
 from dimos.msgs.sensor_msgs import Image
 
 class MLModel(Module):

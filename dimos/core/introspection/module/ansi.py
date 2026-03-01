@@ -14,7 +14,6 @@
 
 """ANSI terminal renderer for module IO diagrams."""
 
-from dimos.core import colors
 from dimos.core.introspection.module.info import (
     ModuleInfo,
     ParamInfo,
@@ -22,6 +21,7 @@ from dimos.core.introspection.module.info import (
     SkillInfo,
     StreamInfo,
 )
+from dimos.utils import colors
 
 
 def render(info: ModuleInfo, color: bool = True) -> str:

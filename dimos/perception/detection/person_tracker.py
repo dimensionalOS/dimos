@@ -18,7 +18,9 @@ from typing import Any
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.msgs.vision_msgs import Detection2DArray

@@ -19,8 +19,8 @@ from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from dimos.agents.system_prompt import SYSTEM_PROMPT
-from dimos.core import Module, rpc
-from dimos.core.module import ModuleConfig
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.logging_config import setup_logger

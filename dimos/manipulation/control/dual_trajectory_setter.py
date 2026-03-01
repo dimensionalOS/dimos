@@ -33,7 +33,7 @@ import math
 import sys
 import time
 
-from dimos import core
+from dimos.core.transport import LCMTransport
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
 )
@@ -85,20 +85,16 @@ class DualTrajectorySetter:
         self.right = ArmState(name="right")
 
         # Publishers for trajectories
-        self.left_trajectory_pub: core.LCMTransport[JointTrajectory] = core.LCMTransport(
+        self.left_trajectory_pub: LCMTransport[JointTrajectory] = LCMTransport(
             left_trajectory_topic, JointTrajectory
         )
-        self.right_trajectory_pub: core.LCMTransport[JointTrajectory] = core.LCMTransport(
+        self.right_trajectory_pub: LCMTransport[JointTrajectory] = LCMTransport(
             right_trajectory_topic, JointTrajectory
         )
 
         # Subscribers for joint states
-        self.left_joint_sub: core.LCMTransport[JointState] = core.LCMTransport(
-            left_joint_topic, JointState
-        )
-        self.right_joint_sub: core.LCMTransport[JointState] = core.LCMTransport(
-            right_joint_topic, JointState
-        )
+        self.left_joint_sub: LCMTransport[JointState] = LCMTransport(left_joint_topic, JointState)
+        self.right_joint_sub: LCMTransport[JointState] = LCMTransport(right_joint_topic, JointState)
 
         print("DualTrajectorySetter initialized")
         print(f"  Left arm:  {left_joint_topic} -> {left_trajectory_topic}")

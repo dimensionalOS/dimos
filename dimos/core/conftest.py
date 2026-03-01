@@ -12,8 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.protocol.rpc import LCMRPC
-from dimos.protocol.rpc.spec import RPCSpec
-from dimos.protocol.tf import LCMTF, TF, PubSubTF, TFConfig, TFSpec
+import pytest
 
-__all__ = ["LCMRPC", "LCMTF", "TF", "PubSubTF", "RPCSpec", "TFConfig", "TFSpec"]
+from dimos.core.module_coordinator import ModuleCoordinator
+
+
+@pytest.fixture
+def dimos():
+    client = ModuleCoordinator()
+    client.start()
+    try:
+        yield client
+    finally:
+        client.stop()

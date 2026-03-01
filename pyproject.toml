@@ -42,10 +42,8 @@ dependencies = [
     "python-dotenv",
     "annotation-protocol>=1.4.0",
     "lazy_loader",
-
-    # Multiprocess
-    "dask[complete]==2025.5.1",
     "plum-dispatch==2.5.7",
+
     # Logging
     "structlog>=25.5.0,<26",
     "colorlog==6.9.0",
@@ -66,6 +64,7 @@ dependencies = [
     # remove this once rerun is optional in core
     "rerun-sdk>=0.20.0",
     "toolz>=1.1.0",
+    "protobuf>=6.33.5,<7",
 ]
 
 
@@ -283,7 +282,6 @@ docker = [
     "numpy>=1.26.4",
     "scipy>=1.15.1",
     "reactivex",
-    "dask[distributed]==2025.5.1",
     "plum-dispatch==2.5.7",
     "structlog>=25.5.0,<26",
     "pydantic",
@@ -334,6 +332,9 @@ ignore = ["A001", "A002", "B008", "B017", "B019", "B024", "B026", "B904", "C901"
 known-first-party = ["dimos"]
 combine-as-imports = true
 force-sort-within-sections = true
+
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-base-classes = ["dimos.core.module.Module"]
 
 [tool.mypy]
 python_version = "3.12"

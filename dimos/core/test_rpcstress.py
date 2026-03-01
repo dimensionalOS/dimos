@@ -15,7 +15,11 @@
 import threading
 import time
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.stream import In, Out
+from dimos.core.transport import pLCMTransport
 
 
 class Counter(Module):
@@ -123,11 +127,8 @@ class CounterValidator(Module):
 
 
 if __name__ == "__main__":
-    import dimos.core as core
-    from dimos.core import pLCMTransport
-
-    # Start dimos with 2 workers
-    client = core.start(2)
+    client = ModuleCoordinator()
+    client.start()
 
     # Deploy counter module
     counter = client.deploy(Counter)
@@ -168,10 +169,6 @@ if __name__ == "__main__":
     if stats["missing_numbers"]:
         print(f"  - First missing numbers: {stats['missing_numbers']}")
 
-    # Stop modules
     validator.stop()
 
-    # Shutdown dimos
-    client.shutdown()
-
-    print("[MAIN] Test complete.")
+    client.stop()

@@ -49,7 +49,9 @@ Error: Config.__init__() got an unexpected keyword argument 'something'
 
 ```python
 from dataclasses import dataclass
-from dimos.core import In, Module, Out, rpc, ModuleConfig
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
 from rich import print
 
 @dataclass

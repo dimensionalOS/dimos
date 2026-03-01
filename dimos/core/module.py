@@ -11,14 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from __future__ import annotations
-
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 import inspect
 import json
-import sys
 import threading
 from typing import (
     TYPE_CHECKING,
@@ -32,26 +30,23 @@ from typing import (
 from typing_extensions import TypeVar as TypeVarExtension
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from dimos.core.introspection.module import ModuleInfo
     from dimos.core.rpc_client import RPCClient
 
 from typing import TypeVar
 
-from dask.distributed import Actor, get_worker
 from langchain_core.tools import tool
 from reactivex.disposable import CompositeDisposable
 
-from dimos.core import colors
 from dimos.core.core import T, rpc
 from dimos.core.introspection.module import extract_module_info, render_module_io
 from dimos.core.resource import Resource
-from dimos.core.rpc_client import RpcCall  # noqa: TC001
-from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
+from dimos.core.rpc_client import RpcCall
+from dimos.core.stream import In, Out, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 from dimos.protocol.tf import LCMTF, TFSpec
+from dimos.utils import colors
 from dimos.utils.generic import classproperty
 
 
@@ -63,21 +58,6 @@ class SkillInfo:
 
 
 def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
-    # we are actually instantiating a new loop here
-    # to not interfere with an existing dask loop
-
-    # try:
-    #     # here we attempt to figure out if we are running on a dask worker
-    #     # if so we use the dask worker _loop as ours,
-    #     # and we register our RPC server
-    #     worker = get_worker()
-    #     if worker.loop:
-    #         print("using dask worker loop")
-    #         return worker.loop.asyncio_loop
-
-    # except ValueError:
-    #     ...
-
     try:
         running_loop = asyncio.get_running_loop()
         return running_loop, None
@@ -108,6 +88,8 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
     _loop_thread: threading.Thread | None
     _disposables: CompositeDisposable
     _bound_rpc_calls: dict[str, RpcCall] = {}
+    _module_closed: bool = False
+    _module_closed_lock: threading.Lock
 
     rpc_calls: list[str] = []
 
@@ -115,13 +97,10 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
+        self._module_closed_lock = threading.Lock()
         self._loop, self._loop_thread = get_loop()
         self._disposables = CompositeDisposable()
-        # we can completely override comms protocols if we want
         try:
-            # here we attempt to figure out if we are running on a dask worker
-            # if so we use the dask worker _loop as ours,
-            # and we register our RPC server
             self.rpc = self.config.rpc_transport()
             self.rpc.serve_module_rpc(self)
             self.rpc.start()  # type: ignore[attr-defined]
@@ -144,6 +123,11 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         self._close_module()
 
     def _close_module(self) -> None:
+        with self._module_closed_lock:
+            if self._module_closed:
+                return
+            self._module_closed = True
+
         self._close_rpc()
 
         # Save into local variables to avoid race when stopping concurrently
@@ -165,6 +149,12 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         if hasattr(self, "_disposables"):
             self._disposables.dispose()
 
+        # Break the In/Out -> owner -> self reference cycle so the instance
+        # can be freed by refcount instead of waiting for GC.
+        for attr in list(vars(self).values()):
+            if isinstance(attr, (In, Out)):
+                attr.owner = None
+
     def _close_rpc(self) -> None:
         if self.rpc:
             self.rpc.stop()  # type: ignore[attr-defined]
@@ -175,6 +165,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         state = self.__dict__.copy()
         # Remove unpicklable attributes
         state.pop("_disposables", None)
+        state.pop("_module_closed_lock", None)
         state.pop("_loop", None)
         state.pop("_loop_thread", None)
         state.pop("_rpc", None)
@@ -186,6 +177,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         self.__dict__.update(state)
         # Reinitialize runtime attributes
         self._disposables = CompositeDisposable()
+        self._module_closed_lock = threading.Lock()
         self._loop = None
         self._loop_thread = None
         self._rpc = None
@@ -286,7 +278,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         """Descriptor that makes io() work on both class and instance."""
 
         def __get__(
-            self, obj: ModuleBase | None, objtype: type[ModuleBase]
+            self, obj: "ModuleBase | None", objtype: "type[ModuleBase]"
         ) -> Callable[[bool], str]:
             if obj is None:
                 return objtype._io_class
@@ -295,7 +287,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
     io = _io_descriptor()
 
     @classmethod
-    def _module_info_class(cls) -> ModuleInfo:
+    def _module_info_class(cls) -> "ModuleInfo":
         """Class-level module_info() - returns ModuleInfo from annotations."""
 
         hints = get_type_hints(cls)
@@ -331,8 +323,8 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         """Descriptor that makes module_info() work on both class and instance."""
 
         def __get__(
-            self, obj: ModuleBase | None, objtype: type[ModuleBase]
-        ) -> Callable[[], ModuleInfo]:
+            self, obj: "ModuleBase | None", objtype: "type[ModuleBase]"
+        ) -> "Callable[[], ModuleInfo]":
             if obj is None:
                 return objtype._module_info_class
             # For instances, extract from actual streams
@@ -362,7 +354,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         self._bound_rpc_calls[method] = callable
 
     @rpc
-    def set_module_ref(self, name: str, module_ref: RPCClient) -> None:
+    def set_module_ref(self, name: str, module_ref: "RPCClient") -> None:
         setattr(self, name, module_ref)
 
     @overload
@@ -396,9 +388,6 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
 
 
 class Module(ModuleBase[ModuleConfigT]):
-    ref: Actor
-    worker: int
-
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Set class-level None attributes for In/Out type annotations.
 
@@ -408,14 +397,8 @@ class Module(ModuleBase[ModuleConfigT]):
         """
         super().__init_subclass__(**kwargs)
 
-        # Get type hints for this class only (not inherited ones).
-        globalns = {}
-        for c in cls.__mro__:
-            if c.__module__ in sys.modules:
-                globalns.update(sys.modules[c.__module__].__dict__)
-
         try:
-            hints = get_type_hints(cls, globalns=globalns, include_extras=True)
+            hints = get_type_hints(cls, include_extras=True)
         except (NameError, AttributeError, TypeError):
             hints = {}
 
@@ -429,20 +412,9 @@ class Module(ModuleBase[ModuleConfigT]):
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         self.ref = None  # type: ignore[assignment]
 
-        # Get type hints with proper namespace resolution for subclasses
-        # Collect namespaces from all classes in the MRO chain
-        import sys
-
-        globalns = {}
-        for cls in self.__class__.__mro__:
-            if cls.__module__ in sys.modules:
-                globalns.update(sys.modules[cls.__module__].__dict__)
-
         try:
-            hints = get_type_hints(self.__class__, globalns=globalns, include_extras=True)
+            hints = get_type_hints(self.__class__, include_extras=True)
         except (NameError, AttributeError, TypeError):
-            # If we still can't resolve hints, skip type hint processing
-            # This can happen with complex forward references
             hints = {}
 
         for name, ann in hints.items():
@@ -456,12 +428,6 @@ class Module(ModuleBase[ModuleConfigT]):
                 stream = In(inner, name, self)  # type: ignore[assignment]
                 setattr(self, name, stream)
         super().__init__(*args, **kwargs)
-
-    def set_ref(self, ref) -> int:  # type: ignore[no-untyped-def]
-        worker = get_worker()
-        self.ref = ref
-        self.worker = worker.name
-        return worker.name  # type: ignore[no-any-return]
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}"
@@ -498,14 +464,8 @@ class Module(ModuleBase[ModuleConfigT]):
             raise TypeError(f"Input {input_name} is not a valid stream")
         input_stream.connection = remote_stream
 
-    def dask_receive_msg(self, input_name: str, msg: Any) -> None:
-        getattr(self, input_name).transport.dask_receive_msg(msg)
 
-    def dask_register_subscriber(self, output_name: str, subscriber: RemoteIn[T]) -> None:
-        getattr(self, output_name).transport.dask_register_subscriber(subscriber)
-
-
-ModuleT = TypeVar("ModuleT", bound="Module")
+ModuleT = TypeVar("ModuleT", bound="Module[Any]")
 
 
 def is_module_type(value: Any) -> bool:
