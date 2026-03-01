@@ -18,7 +18,6 @@ from __future__ import annotations
 import math
 import os
 import threading
-from typing import Optional
 
 import pygame
 
@@ -57,7 +56,7 @@ class KeyboardPoseTeleop(Module):
     _screen: pygame.Surface | None = None
     _clock: pygame.time.Clock | None = None
     _font: pygame.font.Font | None = None
-    _current_pose: Optional[PoseStamped] = None
+    _current_pose: PoseStamped | None = None
 
     def __init__(self) -> None:
         super().__init__()
@@ -239,4 +238,3 @@ class KeyboardPoseTeleop(Module):
 keyboard_pose_teleop = KeyboardPoseTeleop.blueprint
 
 __all__ = ["KeyboardPoseTeleop", "keyboard_pose_teleop"]
-
