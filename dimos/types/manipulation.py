@@ -80,7 +80,7 @@ class ObjectData(TypedDict, total=False):
     # Basic detection information
     object_id: int  # Unique ID for the object
     bbox: list[float]  # Bounding box [x1, y1, x2, y2]
-    depth: float  # Depth in meters from Metric3d
+    depth: float  # Depth in meters
     confidence: float  # Detection confidence
     class_id: int  # Class ID from the detector
     label: str  # Semantic label (e.g., 'cup', 'table')

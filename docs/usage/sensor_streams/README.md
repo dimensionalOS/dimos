@@ -6,11 +6,11 @@ Dimos uses reactive streams (RxPY) to handle sensor data. This approach naturall
 
 | Guide                                        | Description                                                   |
 |----------------------------------------------|---------------------------------------------------------------|
-| [ReactiveX Fundamentals](reactivex.md)       | Observables, subscriptions, and disposables                   |
-| [Advanced Streams](advanced_streams.md)      | Backpressure, parallel subscribers, synchronous getters       |
-| [Quality-Based Filtering](quality_filter.md) | Select highest quality frames when downsampling streams       |
-| [Temporal Alignment](temporal_alignment.md)  | Match messages from multiple sensors by timestamp             |
-| [Storage & Replay](storage_replay.md)        | Record sensor streams to disk and replay with original timing |
+| [ReactiveX Fundamentals](/docs/usage/sensor_streams/reactivex.md)       | Observables, subscriptions, and disposables                   |
+| [Advanced Streams](/docs/usage/sensor_streams/advanced_streams.md)      | Backpressure, parallel subscribers, synchronous getters       |
+| [Quality-Based Filtering](/docs/usage/sensor_streams/quality_filter.md) | Select highest quality frames when downsampling streams       |
+| [Temporal Alignment](/docs/usage/sensor_streams/temporal_alignment.md)  | Match messages from multiple sensors by timestamp             |
+| [Storage & Replay](/docs/usage/sensor_streams/storage_replay.md)        | Record sensor streams to disk and replay with original timing |
 
 ## Quick Example
 

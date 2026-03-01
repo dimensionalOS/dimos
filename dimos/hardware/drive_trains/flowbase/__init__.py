@@ -12,25 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""CLI entry point for Dimensional MCP Bridge.
-
-Connects Claude Code (or other MCP clients) to a running DimOS agent.
-
-Usage:
-    python -m dimos.protocol.mcp  # Bridge to running DimOS on default port
-"""
-
-from __future__ import annotations
-
-import asyncio
-
-from dimos.protocol.mcp.bridge import main as bridge_main
-
-
-def main() -> None:
-    """Main entry point - connects to running DimOS via bridge."""
-    asyncio.run(bridge_main())
-
-
-if __name__ == "__main__":
-    main()
+"""FlowBase twist base adapter for holonomic base control via Portal RPC."""

@@ -11,9 +11,9 @@ The Unitree Go2 is DimOS's primary reference platform. Full autonomous navigatio
 ## Install
 
 First, install system dependencies for your platform:
-- [Ubuntu](../../../installation/ubuntu.md)
-- [macOS](../../../installation/osx.md)
-- [Nix](../../../installation/nix.md)
+- [Ubuntu](/docs/installation/ubuntu.md)
+- [macOS](/docs/installation/osx.md)
+- [Nix](/docs/installation/nix.md)
 
 Then install DimOS:
 
@@ -35,14 +35,33 @@ Opens the command center at [localhost:7779](http://localhost:7779) with Rerun 3
 
 ## Run on Your Go2
 
+### Pre-flight checks
+
+1. Robot is reachable and low latency <10ms, 0% packet loss
+```bash
+ping $ROBOT_IP
+```
+
+2. Built-in obstacle avoidance is on. (DimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer around tight spots)
+
+3. If video is not in sync with lidar/robot position, sync your clock with an NTP server
+
+```bash
+sudo ntpdate pool.ntp.org
+```
+or
+```bash
+sudo sntp -sS pool.ntp.org
+```
+
+### Ready to run DimOS
+
 ```bash
 export ROBOT_IP=<YOUR_GO2_IP>
 dimos run unitree-go2
 ```
 
-That's it. DimOS connects via WebRTC (no jailbreak required), starts the full navigation stack, and opens the command center.
-
-> **Tip:** Keep the Unitree built-in obstacle avoidance enabled on the robot for now. DimOS handles path planning, but the onboard obstacle avoidance provides an extra safety layer.
+That's it. DimOS connects via WebRTC (no jailbreak required), starts the full navigation stack, and opens the command center in your browser.
 
 ### What's Running
 
@@ -106,8 +125,8 @@ The agent subscribes to camera, LiDAR, and spatial memory streams — it sees wh
 
 ## Deep Dive
 
-- [Navigation Stack](../../../capabilities/navigation/native/index.md) — column-carving voxel mapping, costmap generation, A* planning
-- [Visualization](../../../usage/visualization.md) — Rerun, Foxglove, performance tuning
-- [Data Streams](../../../usage/data_streams/) — RxPY streams, backpressure, quality filtering
-- [Transports](../../../usage/transports/index.md) — LCM, SHM, DDS
-- [Blueprints](../../../usage/blueprints.md) — composing modules
+- [Navigation Stack](/docs/capabilities/navigation/native/index.md) — column-carving voxel mapping, costmap generation, A* planning
+- [Visualization](/docs/usage/visualization.md) — Rerun, Foxglove, performance tuning
+- [Data Streams](/docs/usage/data_streams) — RxPY streams, backpressure, quality filtering
+- [Transports](/docs/usage/transports/index.md) — LCM, SHM, DDS
+- [Blueprints](/docs/usage/blueprints.md) — composing modules

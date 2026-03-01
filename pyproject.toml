@@ -119,6 +119,7 @@ misc = [
 
     # Hardware SDKs
     "xarm-python-sdk>=1.17.0",
+    "portal",
 ]
 
 visualization = [
@@ -141,9 +142,6 @@ agents = [
     "openai",
     "openai-whisper",
     "sounddevice",
-
-    # MCP Server
-    "mcp>=1.0.0",
 ]
 
 web = [

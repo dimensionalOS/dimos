@@ -126,7 +126,7 @@ DJI Drone ← Wireless → DJI Controller ← USB → Android Device ← WiFi �
 ```
 drone.py                    # Main orchestrator
 ├── connection_module.py    # MAVLink communication & skills
-├── camera_module.py        # Video processing & depth estimation
+├── camera_module.py        # Video processing
 ├── tracking_module.py      # Visual servoing & object tracking
 ├── mavlink_connection.py   # Low-level MAVLink protocol
 └── dji_video_stream.py     # GStreamer video capture
@@ -241,13 +241,6 @@ drone.start()
 - **MAVLink/NED**: X=North, Y=East, Z=Down
 - **ROS/DimOS**: X=Forward, Y=Left, Z=Up
 - Automatic conversion handled internally
-
-### Depth Estimation
-Camera module can generate depth maps using Metric3D:
-```python
-# Depth published to /drone/depth and /drone/pointcloud
-# Requires GPU with 8GB+ VRAM
-```
 
 ### Foxglove Visualization
 Connect Foxglove Studio to `ws://localhost:8765` to see:
