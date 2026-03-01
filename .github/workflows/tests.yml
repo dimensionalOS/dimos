@@ -40,10 +40,8 @@ jobs:
           find .venv/lib/*/site-packages/pydrake -name '*.pyi' -delete 2>/dev/null || true
 
       - name: Run tests
-        shell: bash
         run: |
-          /entrypoint.sh bash -c "source .venv/bin/activate && ${{ inputs.cmd }} ; echo \$? > /tmp/pytest_exit" || true
-          exit $(cat /tmp/pytest_exit)
+          /entrypoint.sh bash -c "source .venv/bin/activate && ${{ inputs.cmd }}"
 
       - name: check disk space
         if: failure()
