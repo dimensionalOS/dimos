@@ -216,11 +216,11 @@ class ResourceSpyApp(App):  # type: ignore[type-arg]
 
         # Build inner content: sections separated by Rules
         parts: list[RenderableType] = []
-        for i, (role, _rs, d, mods) in enumerate(entries):
+        for i, (role, rs, d, mods) in enumerate(entries):
             if i > 0:
                 title = Text(
                     f" {role}: {mods} " if mods else f" {role} ",
-                    style=dim if stale else theme.WHITE,
+                    style=dim if stale else rs,
                 )
                 parts.append(Rule(title=title, style=border_style))
             parts.extend(self._make_lines(d, stale, ranges))
@@ -247,7 +247,7 @@ class ResourceSpyApp(App):  # type: ignore[type-arg]
     ) -> list[Text]:
         dim = "#606060"
         label1_style = dim if stale else theme.WHITE
-        label2_style = dim if stale else theme.BRIGHT_GREEN
+        label2_style = label1_style
 
         # Line 1
         line1 = Text()
