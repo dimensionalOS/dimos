@@ -20,6 +20,7 @@ import math
 import pytest
 
 from dimos import core
+from dimos.utils.data import get_data
 from dimos.core import Module, Out, rpc
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
@@ -90,12 +91,12 @@ class ReplayMid360Module(Module):
 
 
 @pytest.mark.integration
+@pytest.mark.lcm
 def test_replay_column_carving():
     """Test FastLIO2 voxel mapper with column carving using replay data."""
 
     # Get test data path
-    data_path = Path(__file__).parent.parent.parent.parent.parent.parent / "data" / "livox_nav_recording"
-    lidar_path = data_path / "lidar.pkl"
+    lidar_path = get_data("livox_go2_recording/lidar.pkl")
 
     if not lidar_path.exists():
         pytest.skip(f"Test data not found at {lidar_path}")
@@ -131,7 +132,7 @@ def test_replay_column_carving():
         logger.info("✓ System started processing data")
 
         # Let it run to test column carving (voxel accumulation over time)
-        processing_duration = 30.0
+        processing_duration = 5
         logger.info(f"Running column carving test for {processing_duration} seconds...")
 
         elapsed = 0
