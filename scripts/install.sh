@@ -235,7 +235,7 @@ parse_args() {
             --use-nix)         USE_NIX=1; shift ;;
             --no-nix)          NO_NIX=1; shift ;;
             --skip-tests)      SKIP_TESTS=1; shift ;;
-            --dry-run)         DRY_RUN=1; shift ;;
+            --dry-run)         DRY_RUN=1; NON_INTERACTIVE=1; shift ;;
             --verbose)         VERBOSE=1; shift ;;
             --help|-h)         usage ;;
             *)                 warn "unknown option: $1"; shift ;;
@@ -424,43 +424,71 @@ install_nix() {
     ok "Nix installed ($(nix --version 2>/dev/null || echo 'unknown'))"
 }
 
-handle_nix_setup() {
-    # Skip nix handling entirely if --no-nix
+prompt_setup_method() {
+    # If flags force a path, skip prompting
     if [[ "$NO_NIX" == "1" ]]; then
-        dim "  skipping Nix setup (--no-nix)"
+        SETUP_METHOD="system"
         return
     fi
-
-    # --use-nix forces nix path
     if [[ "$USE_NIX" == "1" ]]; then
         if [[ "$HAS_NIX" == "1" ]]; then
             ok "Nix detected — will use for system dependencies"
+            SETUP_METHOD="nix"
             return
         fi
         info "--use-nix specified but Nix not found, installing..."
         install_nix
-        USE_NIX=1
+        SETUP_METHOD="nix"
         return
     fi
 
-    if [[ "$HAS_NIX" == "1" ]]; then
-        printf "\n"
-        info "Nix detected on your system"
-        if prompt_yn "  ${CYAN}▸${RESET} set up DimOS with Nix? (provides system deps via nix develop)" "y"; then
-            USE_NIX=1
-            ok "will use Nix for system dependencies"
-        else
-            dim "  proceeding without Nix"
+    # Disk space warning
+    local disk_free_gb
+    disk_free_gb=$(df -BG --output=avail / 2>/dev/null | tail -1 | tr -d ' G' || echo "0")
+    if [[ "$disk_free_gb" -lt 10 ]] 2>/dev/null; then
+        warn "only ${disk_free_gb}GB disk space free — DimOS needs at least 10GB (50GB+ recommended)"
+        if ! prompt_yn "  continue anyway?" "n"; then
+            if [[ "$DRY_RUN" != "1" ]]; then die "not enough disk space"; fi
         fi
+    fi
+
+    # If Nix is available, offer choice between system packages and Nix
+    if [[ "$HAS_NIX" == "1" ]]; then
+        local choice
+        choice=$(prompt_choice \
+            "how should we set up system dependencies?" \
+            "2" \
+            "System packages  — apt/brew (simpler, uses your system package manager)" \
+            "Nix              — nix develop (reproducible, recommended if you already use Nix)")
+        case "$choice" in
+            1) SETUP_METHOD="system" ;;
+            2) SETUP_METHOD="nix" ;;
+            *) SETUP_METHOD="nix" ;;
+        esac
     elif [[ "$DETECTED_OS" == "nixos" ]]; then
         die "NixOS detected but 'nix' command not found. Your Nix installation may be broken."
     else
-        # On non-NixOS, optionally offer Nix installation
-        if prompt_yn "  ${CYAN}▸${RESET} would you like to install Nix? (recommended for reproducible system deps)" "n"; then
-            install_nix
-            USE_NIX=1
-            ok "will use Nix for system dependencies"
-        fi
+        # No Nix detected — use system packages, optionally offer Nix install
+        local choice
+        choice=$(prompt_choice \
+            "how should we set up system dependencies?" \
+            "1" \
+            "System packages  — apt/brew (simpler, recommended)" \
+            "Install Nix      — nix develop (reproducible, installs Nix first)")
+        case "$choice" in
+            1) SETUP_METHOD="system" ;;
+            2)
+                install_nix
+                SETUP_METHOD="nix"
+                ;;
+            *) SETUP_METHOD="system" ;;
+        esac
+    fi
+
+    if [[ "$SETUP_METHOD" == "nix" ]]; then
+        ok "will use Nix for system dependencies"
+    else
+        ok "will use system package manager"
     fi
 }
 
@@ -1062,8 +1090,10 @@ main() {
         fi
     fi
 
-    handle_nix_setup
-    install_system_deps
+    prompt_setup_method
+    if [[ "$SETUP_METHOD" != "nix" ]]; then
+        install_system_deps
+    fi
     install_uv
 
     # re-detect python after uv install
