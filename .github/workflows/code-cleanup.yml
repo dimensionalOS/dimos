@@ -1,6 +1,7 @@
 name: code-cleanup
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: write
