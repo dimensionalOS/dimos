@@ -12,20 +12,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-"""Compatibility package for legacy dimos.robot.unitree_webrtc imports."""
-
-from importlib import import_module
-import sys
-
-_ALIAS_MODULES = {
-    "demo_error_on_name_conflicts": "dimos.robot.unitree.demo_error_on_name_conflicts",
-    "keyboard_teleop": "dimos.robot.unitree.keyboard_teleop",
-    "mujoco_connection": "dimos.robot.unitree.mujoco_connection",
-    "type": "dimos.robot.unitree.type",
-    "unitree_g1_skill_container": "dimos.robot.unitree.g1.skill_container",
-    "unitree_skill_container": "dimos.robot.unitree.unitree_skill_container",
-}
-
-for alias, target in _ALIAS_MODULES.items():
-    sys.modules[f"{__name__}.{alias}"] = import_module(target)
