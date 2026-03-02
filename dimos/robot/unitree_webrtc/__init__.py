@@ -27,5 +27,10 @@ _ALIAS_MODULES = {
     "unitree_skill_container": "dimos.robot.unitree.unitree_skill_container",
 }
 
-for alias, target in _ALIAS_MODULES.items():
-    sys.modules[f"{__name__}.{alias}"] = import_module(target)
+
+def __getattr__(name):  # type: ignore[no-untyped-def]
+    if name in _ALIAS_MODULES:
+        module = import_module(_ALIAS_MODULES[name])
+        sys.modules[f"{__name__}.{name}"] = module
+        return module
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
