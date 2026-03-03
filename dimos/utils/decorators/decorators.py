@@ -13,15 +13,17 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from functools import wraps
+from functools import update_wrapper, wraps
 import threading
 import time
-from typing import Any, Protocol, TypeVar, cast
+from typing import Any, Generic, ParamSpec, Protocol, TypeVar, cast
 
 from .accumulators import Accumulator, LatestAccumulator
 
 _CacheResult_co = TypeVar("_CacheResult_co", covariant=True)
 _CacheReturn = TypeVar("_CacheReturn")
+_P = ParamSpec("_P")
+_F = TypeVar("_F", bound=Callable[..., Any])
 
 
 class CachedMethod(Protocol[_CacheResult_co]):
@@ -164,6 +166,48 @@ def simple_mcache(method: Callable[..., _CacheReturn]) -> CachedMethod[_CacheRet
     getter.invalidate_cache = invalidate_cache  # type: ignore[attr-defined]
 
     return cast("CachedMethod[_CacheReturn]", getter)
+
+
+class _TtlCacheWrapper(Generic[_P, _CacheReturn]):
+    """Wrapper returned by :func:`ttl_cache`."""
+
+    cache: dict[tuple[Any, ...], tuple[float, _CacheReturn]]
+
+    def __init__(self, func: Callable[_P, _CacheReturn], seconds: float) -> None:
+        self._func = func
+        self._seconds = seconds
+        self.cache = {}
+        update_wrapper(self, func)
+
+    def __call__(self, *args: _P.args, **kwargs: _P.kwargs) -> _CacheReturn:
+        self.pop_expired()
+        if args in self.cache:
+            _, val = self.cache[args]
+            return val
+        result = self._func(*args, **kwargs)
+        self.cache[args] = (time.monotonic(), result)
+        return result
+
+    def pop_expired(self) -> None:
+        """Remove all expired entries from the cache."""
+        now = time.monotonic()
+        expired = [k for k, (ts, _) in self.cache.items() if now - ts >= self._seconds]
+        for k in expired:
+            del self.cache[k]
+
+
+def ttl_cache(
+    seconds: float,
+) -> Callable[[Callable[_P, _CacheReturn]], _TtlCacheWrapper[_P, _CacheReturn]]:
+    """Cache function results by positional args with a time-to-live.
+
+    Expired entries are swept on each access.
+    """
+
+    def decorator(func: Callable[_P, _CacheReturn]) -> _TtlCacheWrapper[_P, _CacheReturn]:
+        return _TtlCacheWrapper(func, seconds)
+
+    return decorator
 
 
 def retry(max_retries: int = 3, on_exception: type[Exception] = Exception, delay: float = 0.0):  # type: ignore[no-untyped-def]

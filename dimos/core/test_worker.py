@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from dimos.core.core import rpc
@@ -20,6 +22,9 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.worker_manager import WorkerManager
 from dimos.msgs.geometry_msgs import Vector3
+
+if TYPE_CHECKING:
+    from dimos.core.resource_monitor.stats import WorkerStats
 
 
 class SimpleModule(Module):
@@ -164,6 +169,52 @@ def test_worker_manager_parallel_deployment(create_worker_manager):
     module1.stop()
     module2.stop()
     module3.stop()
+
+
+@pytest.mark.slow
+def test_collect_stats(create_worker_manager):
+    from dimos.core.resource_monitor.monitor import StatsMonitor
+
+    manager = create_worker_manager(n_workers=2)
+    module1 = manager.deploy(SimpleModule)
+    module2 = manager.deploy(AnotherModule)
+    module1.start()
+    module2.start()
+
+    # Use a capturing logger to collect stats via StatsMonitor
+    captured: list[list[WorkerStats]] = []
+
+    class CapturingLogger:
+        def log_stats(self, coordinator, workers):
+            captured.append(workers)
+
+    monitor = StatsMonitor(manager, resource_logger=CapturingLogger(), interval=0.5)
+    monitor.start()
+    import time
+
+    time.sleep(1.5)
+    monitor.stop()
+
+    assert len(captured) >= 1
+    stats = captured[-1]
+    assert len(stats) == 2
+
+    for s in stats:
+        assert s.alive is True
+        assert s.pid > 0
+        assert s.pss >= 0
+        assert s.num_threads >= 1
+        assert s.num_fds >= 0
+        assert s.io_read_bytes >= 0
+        assert s.io_write_bytes >= 0
+
+    # At least one worker should report module names
+    all_modules = [name for s in stats for name in s.modules]
+    assert "SimpleModule" in all_modules
+    assert "AnotherModule" in all_modules
+
+    module1.stop()
+    module2.stop()
 
 
 @pytest.mark.slow

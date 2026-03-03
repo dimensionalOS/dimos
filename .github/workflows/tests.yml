@@ -10,6 +10,10 @@ on:
      cmd:
        required: true
        type: string
+     upload-coverage:
+       required: false
+       type: boolean
+       default: false
 
 permissions:
   contents: read
@@ -42,6 +46,13 @@ jobs:
       - name: Run tests
         run: |
           /entrypoint.sh bash -c "source .venv/bin/activate && ${{ inputs.cmd }}"
+
+      - name: Upload coverage report
+        if: inputs.upload-coverage && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: htmlcov/
 
       - name: check disk space
         if: failure()

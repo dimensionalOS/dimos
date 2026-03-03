@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 from __future__ import annotations
 
 import multiprocessing as mp
@@ -152,6 +151,22 @@ class Worker:
     @property
     def module_count(self) -> int:
         return len(self._modules) + self._reserved
+
+    @property
+    def pid(self) -> int | None:
+        """PID of the worker process, or ``None`` if not alive."""
+        if self._process is not None and self._process.is_alive():
+            p: int | None = self._process.pid
+            return p
+        return None
+
+    @property
+    def worker_id(self) -> int:
+        return self._worker_id
+
+    @property
+    def module_names(self) -> list[str]:
+        return [actor._cls.__name__ for actor in self._modules.values()]
 
     def reserve_slot(self) -> None:
         """Reserve a slot so _select_worker() sees the pending load."""

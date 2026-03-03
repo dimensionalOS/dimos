@@ -163,6 +163,12 @@ def test_autoconnect(args_file: str) -> None:
 
         # Custom transport was applied
         assert native.pointcloud.transport.topic.topic == "/my/custom/lidar"
+
+        # Wait for the native subprocess to write the output file
+        for _ in range(50):
+            if Path(args_file).exists():
+                break
+            time.sleep(0.1)
     finally:
         coordinator.stop()
 

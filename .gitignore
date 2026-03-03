@@ -72,3 +72,8 @@ CLAUDE.MD
 
 /.mcp.json
 *.speedscope.json
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*

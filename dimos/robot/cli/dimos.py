@@ -168,6 +168,15 @@ def humancli(ctx: typer.Context) -> None:
     humancli_main()
 
 
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def top(ctx: typer.Context) -> None:
+    """Live resource monitor TUI."""
+    from dimos.utils.cli.dtop import main as dtop_main
+
+    sys.argv = ["dtop", *ctx.args]
+    dtop_main()
+
+
 topic_app = typer.Typer(help="Topic commands for pub/sub")
 main.add_typer(topic_app, name="topic")
 

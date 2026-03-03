@@ -43,6 +43,10 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
 
+    # Propagate coverage collection to subprocesses.
+    if os.environ.get("_DIMOS_COV"):
+        os.environ["COVERAGE_PROCESS_START"] = str(config.rootpath / "pyproject.toml")
+
 
 @pytest.hookimpl()
 def pytest_collection_modifyitems(config, items):

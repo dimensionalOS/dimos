@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from concurrent.futures import ThreadPoolExecutor
-import time
+import threading
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.global_config import GlobalConfig, global_config
@@ -23,6 +25,8 @@ from dimos.core.worker_manager import WorkerManager
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from dimos.core.module import Module, ModuleT
+    from dimos.core.resource_monitor.monitor import StatsMonitor
     from dimos.core.rpc_client import ModuleProxy
 
 logger = setup_logger()
@@ -33,7 +37,8 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
     _global_config: GlobalConfig
     _n: int | None = None
     _memory_limit: str = "auto"
-    _deployed_modules: dict[type[ModuleBase], "ModuleProxy"]
+    _deployed_modules: dict[type[ModuleBase], ModuleProxy]
+    _stats_monitor: StatsMonitor | None = None
 
     def __init__(
         self,
@@ -50,7 +55,17 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         self._client = WorkerManager(n_workers=n)
         self._client.start()
 
+        if self._global_config.dtop:
+            from dimos.core.resource_monitor.monitor import StatsMonitor
+
+            self._stats_monitor = StatsMonitor(self._client)
+            self._stats_monitor.start()
+
     def stop(self) -> None:
+        if self._stats_monitor is not None:
+            self._stats_monitor.stop()
+            self._stats_monitor = None
+
         for module_class, module in reversed(self._deployed_modules.items()):
             logger.info("Stopping module...", module=module_class.__name__)
             try:
@@ -66,7 +81,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         module_class: type[ModuleBase[Any]],
         global_config: GlobalConfig = global_config,
         **kwargs: Any,
-    ) -> "ModuleProxy":
+    ) -> ModuleProxy:
         if not self._client:
             raise ValueError("Trying to dimos.deploy before the client has started")
 
@@ -74,7 +89,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         self._deployed_modules[module_class] = module  # type: ignore[assignment]
         return module  # type: ignore[return-value]
 
-    def deploy_parallel(self, module_specs: list[ModuleSpec]) -> list["ModuleProxy"]:
+    def deploy_parallel(self, module_specs: list[ModuleSpec]) -> list[ModuleProxy]:
         if not self._client:
             raise ValueError("Not started")
 
@@ -97,13 +112,13 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
             if hasattr(module, "on_system_modules"):
                 module.on_system_modules(module_list)
 
-    def get_instance(self, module: type[ModuleBase]) -> "ModuleProxy":
+    def get_instance(self, module: type[ModuleBase]) -> ModuleProxy:
         return self._deployed_modules.get(module)  # type: ignore[return-value, no-any-return]
 
     def loop(self) -> None:
+        stop = threading.Event()
         try:
-            while True:
-                time.sleep(0.1)
+            stop.wait()
         except KeyboardInterrupt:
             return
         finally:

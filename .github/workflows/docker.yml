@@ -7,6 +7,7 @@ on:
     paths-ignore:
       - '**.md'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -211,7 +212,8 @@ jobs:
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
-      cmd: "pytest --durations=0 -m 'not (tool or mujoco)'"
+      cmd: "_DIMOS_COV=1 coverage run -m pytest --durations=0 -m 'not (tool or mujoco)' && coverage combine && coverage html && coverage report"
+      upload-coverage: true
       dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   run-mypy:

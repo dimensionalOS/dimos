@@ -65,6 +65,7 @@ dependencies = [
     "rerun-sdk>=0.20.0",
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
+    "psutil>=7.0.0",
 ]
 
 
@@ -76,6 +77,7 @@ humancli = "dimos.utils.cli.human.humanclianim:main"
 dimos = "dimos.robot.cli.dimos:main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
 doclinks = "dimos.utils.docs.doclinks:main"
+dtop = "dimos.utils.cli.dtop:main"
 
 [project.optional-dependencies]
 misc = [
@@ -209,7 +211,7 @@ dev = [
     "pytest-mock==3.15.0",
     "pytest-env==1.1.5",
     "pytest-timeout==2.4.0",
-    "coverage>=7.0",  # Required for numba compatibility (coverage.types)
+    "coverage>=7.0",
     "requests-mock==1.12.1",
     "terminaltexteffects==0.12.2",
     "watchdog>=3.0.0",
@@ -400,6 +402,16 @@ env = [
 addopts = "-v -r a -p no:warnings --color=yes -m 'not (tool or slow or mujoco)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+source = ["dimos"]
+parallel = true
+sigterm = true
+concurrency = ["multiprocessing", "thread"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
 
 [tool.largefiles]
 max_size_kb = 50

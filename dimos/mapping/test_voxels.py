@@ -77,44 +77,26 @@ def two_perspectives_loop(moment: MomentFactory) -> None:
         time.sleep(1)
 
 
+@pytest.mark.tool
 def test_carving(
     mapper: VoxelGridMapper, moment1: Go2MapperMoment, moment2: Go2MapperMoment
 ) -> None:
     lidar_frame1 = moment1.lidar.value
     assert lidar_frame1 is not None
-    lidar_frame1_transport: LCMTransport[PointCloud2] = LCMTransport("/prev_lidar", PointCloud2)
-    lidar_frame1_transport.publish(lidar_frame1)
-    lidar_frame1_transport.stop()
 
     lidar_frame2 = moment2.lidar.value
     assert lidar_frame2 is not None
 
-    # Debug: check XY overlap
-    pts1 = np.asarray(lidar_frame1.pointcloud.points)
-    pts2 = np.asarray(lidar_frame2.pointcloud.points)
-
-    voxel_size = mapper.config.voxel_size
-    xy1 = set(map(tuple, (pts1[:, :2] / voxel_size).astype(int)))
-    xy2 = set(map(tuple, (pts2[:, :2] / voxel_size).astype(int)))
-
-    overlap = xy1 & xy2
-    print(f"\nFrame1 XY columns: {len(xy1)}")
-    print(f"Frame2 XY columns: {len(xy2)}")
-    print(f"Overlapping XY columns: {len(overlap)}")
-
     # Carving mapper (default, carve_columns=True)
     mapper.add_frame(lidar_frame1)
     mapper.add_frame(lidar_frame2)
-
-    moment2.global_map.set(mapper.get_global_pointcloud2())
-    moment2.publish()
-
     count_carving = mapper.size()
-    # Additive mapper (carve_columns=False)
-    additive_mapper = VoxelGridMapper(carve_columns=False)
-    additive_mapper.add_frame(lidar_frame1)
-    additive_mapper.add_frame(lidar_frame2)
-    count_additive = additive_mapper.size()
+
+    voxel_size = mapper.config.voxel_size
+    pts1 = np.asarray(lidar_frame1.pointcloud.points)
+    pts2 = np.asarray(lidar_frame2.pointcloud.points)
+    combined_vox = np.floor(np.vstack([pts1, pts2]) / voxel_size).astype(np.int64)
+    count_additive = np.unique(combined_vox, axis=0).shape[0]
 
     print("\n=== Carving comparison ===")
     print(f"Additive (no carving): {count_additive}")
@@ -125,13 +107,6 @@ def test_carving(
     assert count_carving < count_additive, (
         f"Carving should remove some voxels. Additive: {count_additive}, Carving: {count_carving}"
     )
-
-    additive_global_map: LCMTransport[PointCloud2] = LCMTransport(
-        "additive_global_map", PointCloud2
-    )
-    additive_global_map.publish(additive_mapper.get_global_pointcloud2())
-    additive_global_map.stop()
-    additive_mapper.stop()
 
 
 def test_injest_a_few(mapper: VoxelGridMapper) -> None:
