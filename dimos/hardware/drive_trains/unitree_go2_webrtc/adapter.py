@@ -208,7 +208,7 @@ class UnitreeGo2WebRTCAdapter:
     def write_enable(self, enable: bool) -> bool:
         """Enable/disable the platform.
 
-        When enabling: StandUp → BalanceStand → ready for WIRELESS_CONTROLLER commands.
+        When enabling: StandUp → FreeWalk → ready for velocity commands.
         When disabling, stops motion.
         """
         conn = self._conn
@@ -221,12 +221,12 @@ class UnitreeGo2WebRTCAdapter:
                 conn.standup()
                 time.sleep(3)  # Wait for standup to complete
 
-                logger.info("Activating BalanceStand locomotion mode...")
-                conn.balance_stand()
+                logger.info("Activating FreeWalk locomotion mode...")
+                conn.free_walk()
                 time.sleep(2)  # Wait for locomotion mode to activate
 
                 self._enabled = True
-                logger.info("Go2 WebRTC enabled (BalanceStand active)")
+                logger.info("Go2 WebRTC enabled (FreeWalk active)")
                 return True
             except Exception as e:
                 logger.error(f"Failed to enable Go2 via WebRTC: {e}")
