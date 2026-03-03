@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unitree Go2 keyboard teleop via ControlCoordinator.
+"""Unitree Go2 keyboard Teleop via ControlCoordinator.
 
 WASD keys → Twist → coordinator twist_command → UnitreeGo2TwistAdapter.
 
