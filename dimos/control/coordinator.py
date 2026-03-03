@@ -25,11 +25,12 @@ Features:
 - Aggregated preemption notifications
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from dimos.control.components import (
     TWIST_SUFFIX_MAP,
@@ -62,9 +63,6 @@ from dimos.teleop.quest.quest_types import (
     Buttons,
 )
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 logger = setup_logger()
 
@@ -649,7 +647,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     # =========================================================================
 
     def _subscribe_if(
-        self, condition: bool, port: In, callback: Callable[..., object], name: str
+        self, condition: bool, port: In[Any], callback: Callable[..., object], name: str
     ) -> None:
         """Subscribe to a port if condition is met, tracking the unsub handle."""
         if not condition:
