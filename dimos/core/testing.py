@@ -14,8 +14,10 @@
 
 from threading import Event, Thread
 import time
+from typing import Any
 
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import Vector3
@@ -32,8 +34,8 @@ class MockRobotClient(Module):
 
     mov_msg_count = 0
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: Any) -> None:
+        super().__init__(global_config, **kwargs)
         self._stop_event = Event()
         self._thread = None
 

@@ -29,14 +29,12 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs import Image
 
 
-@dataclass
 class EmbeddingModelConfig(LocalModelConfig):
     """Base config for embedding models."""
 
     normalize: bool = True
 
 
-@dataclass
 class HuggingFaceEmbeddingModelConfig(HuggingFaceModelConfig):
     """Base config for HuggingFace-based embedding models."""
 

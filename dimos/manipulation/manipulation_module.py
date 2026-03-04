@@ -24,7 +24,7 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Iterable
 from enum import Enum
 import threading
 import time
@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.manipulation.planning import (
@@ -82,18 +83,17 @@ class ManipulationState(Enum):
     FAULT = 4
 
 
-@dataclass
 class ManipulationModuleConfig(ModuleConfig):
     """Configuration for ManipulationModule."""
 
-    robots: list[RobotModelConfig] = field(default_factory=list)
+    robots: Iterable[RobotModelConfig] = ()
     planning_timeout: float = 10.0
     enable_viz: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
 
 
-class ManipulationModule(Module):
+class ManipulationModule(Module[ManipulationModuleConfig]):
     """Base motion planning module with ControlCoordinator execution.
 
     - @rpc: Low-level building blocks (plan, execute, gripper)
@@ -104,14 +104,11 @@ class ManipulationModule(Module):
 
     default_config = ManipulationModuleConfig
 
-    # Type annotation for the config attribute (mypy uses this)
-    config: ManipulationModuleConfig
-
     # Input: Joint state from coordinator (for world sync)
     joint_state: In[JointState]
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: Any) -> None:
+        super().__init__(global_config, **kwargs)
 
         # State machine
         self._state = ManipulationState.IDLE

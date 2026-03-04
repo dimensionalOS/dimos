@@ -17,10 +17,11 @@ import threading
 
 import pytest
 
+from dimos.protocol.rpc import RPCSpec
 from dimos.simulation.manipulators.sim_module import SimulationModule
 
 
-class _DummyRPC:
+class _DummyRPC(RPCSpec):
     def serve_module_rpc(self, _module) -> None:  # type: ignore[no-untyped-def]
         return None
 

@@ -14,30 +14,26 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.requests import Request
 from starlette.responses import Response
 import uvicorn
-
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
-
-
-from starlette.requests import Request  # noqa: TC002
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall, RPCClient
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    import concurrent.futures
-
     from dimos.core.module import SkillInfo
+
+logger = setup_logger()
 
 
 app = FastAPI()
@@ -159,10 +155,8 @@ async def mcp_endpoint(request: Request) -> Response:
 
 
 class McpServer(Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self._uvicorn_server: uvicorn.Server | None = None
-        self._serve_future: concurrent.futures.Future[None] | None = None
+    _uvicorn_server: uvicorn.Server | None = None
+    _serve_future: concurrent.futures.Future[None] | None = None
 
     @rpc
     def start(self) -> None:

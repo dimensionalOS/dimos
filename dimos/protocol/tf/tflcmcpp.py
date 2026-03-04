@@ -13,15 +13,18 @@
 # limitations under the License.
 
 from datetime import datetime
-from typing import Union
 
 from dimos.msgs.geometry_msgs import Transform
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 from dimos.protocol.tf.tf import TFConfig, TFSpec
 
 
+class Config(TFConfig, LCMConfig):
+    """Combined config"""
+
+
 # this doesn't work due to tf_lcm_py package
-class TFLCM(TFSpec, LCMService):
+class TFLCM(TFSpec[Config], LCMService[Config]):
     """A service for managing and broadcasting transforms using LCM.
     This is not a separete module, You can include this in your module
     if you need to access transforms.
@@ -34,7 +37,7 @@ class TFLCM(TFSpec, LCMService):
     for each module.
     """
 
-    default_config = Union[TFConfig, LCMConfig]
+    default_config = Config
 
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)

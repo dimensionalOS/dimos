@@ -15,10 +15,12 @@
 from collections.abc import Callable
 import threading
 import time
+from typing import Any
 
 import pytest
 
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.core.testing import MockRobotClient
@@ -28,15 +30,15 @@ from dimos.robot.unitree.type.odometry import Odometry
 
 
 class SubscriberBase(Module):
-    sub1_msgs: list[Odometry] = None
-    sub2_msgs: list[Odometry] = None
+    sub1_msgs: list[Odometry]
+    sub2_msgs: list[Odometry]
 
-    def __init__(self) -> None:
+    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: Any) -> None:
         self.sub1_msgs = []
         self.sub2_msgs = []
         self._sub1_received = threading.Event()
         self._sub2_received = threading.Event()
-        super().__init__()
+        super().__init__(global_config, **kwargs)
 
     def _sub1_callback(self, msg) -> None:
         self.sub1_msgs.append(msg)

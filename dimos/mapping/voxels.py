@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 import time
+from typing import Any
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
@@ -34,7 +34,6 @@ from dimos.utils.reactive import backpressure
 logger = setup_logger()
 
 
-@dataclass
 class Config(ModuleConfig):
     frame_id: str = "world"
     # -1 never publishes, 0 publishes on every frame, >0 publishes at interval in seconds
@@ -52,9 +51,8 @@ class VoxelGridMapper(Module):
     lidar: In[PointCloud2]
     global_map: Out[PointCloud2]
 
-    def __init__(self, cfg: GlobalConfig = global_config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._global_config = cfg
+    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: Any) -> None:
+        super().__init__(global_config, **kwargs)
 
         dev = (
             o3c.Device(self.config.device)

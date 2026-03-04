@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 import json
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
@@ -28,6 +27,7 @@ from reactivex.disposable import Disposable
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig, SkillInfo
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.stream import In, Out
@@ -38,7 +38,6 @@ if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
 
-@dataclass
 class AgentConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-4o"
@@ -58,8 +57,8 @@ class Agent(Module[AgentConfig]):
     _thread: Thread
     _stop_event: Event
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: Any) -> None:
+        super().__init__(global_config, **kwargs)
         self._lock = RLock()
         self._state_graph = None
         self._message_queue = Queue()

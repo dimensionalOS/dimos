@@ -99,7 +99,7 @@ g1_connection = G1Connection.blueprint
 
 
 def deploy(dimos: ModuleCoordinator, ip: str, local_planner: spec.LocalPlanner) -> "ModuleProxy":
-    connection = dimos.deploy(G1Connection, ip)  # type: ignore[attr-defined]
+    connection = dimos.deploy(G1Connection, ip=ip)
     connection.cmd_vel.connect(local_planner.cmd_vel)
     connection.start()
     return connection

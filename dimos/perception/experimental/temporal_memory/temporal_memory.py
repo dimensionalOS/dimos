@@ -34,6 +34,7 @@ from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.models.vl.base import VlModel
@@ -69,6 +70,8 @@ class Frame:
 
 @dataclass
 class TemporalMemoryConfig(ModuleConfig):
+    vlm: VlModel[Any] | None = None
+
     # Frame processing
     fps: float = 1.0
     window_s: float = 2.0
@@ -100,7 +103,7 @@ class TemporalMemoryConfig(ModuleConfig):
     nearby_distance_meters: float = 5.0  # "Nearby" threshold
 
 
-class TemporalMemory(Module):
+class TemporalMemory(Module[TemporalMemoryConfig]):
     """
     builds temporal understanding of video streams using vlms.
 
@@ -110,14 +113,12 @@ class TemporalMemory(Module):
     """
 
     color_image: In[Image]
+    default_config = TemporalMemoryConfig
 
-    def __init__(
-        self, vlm: VlModel | None = None, config: TemporalMemoryConfig | None = None
-    ) -> None:
-        super().__init__()
+    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: Any) -> None:
+        super().__init__(global_config, **kwargs)
 
-        self._vlm = vlm  # Can be None for blueprint usage
-        self.config: TemporalMemoryConfig = config or TemporalMemoryConfig()
+        self._vlm = self.config.vlm  # Can be None for blueprint usage
 
         # single lock protects all state
         self._state_lock = threading.Lock()
@@ -183,7 +184,7 @@ class TemporalMemory(Module):
         )
 
     @property
-    def vlm(self) -> VlModel:
+    def vlm(self) -> VlModel[Any]:
         """Get or create VLM instance lazily."""
         if self._vlm is None:
             from dimos.models.vl.openai import OpenAIVlModel

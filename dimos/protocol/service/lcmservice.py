@@ -15,17 +15,23 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 import os
 import platform
+import sys
 import threading
 import traceback
+from typing import Any
 
-import lcm
+import lcm as lcm_mod
 
-from dimos.protocol.service.spec import Service
+from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.protocol.service.system_configurator import configure_system, lcm_configurators
 from dimos.utils.logging_config import setup_logger
+
+if sys.version_info < (3, 13):
+    from typing_extensions import TypeVar
+else:
+    from typing import TypeVar
 
 logger = setup_logger()
 
@@ -45,41 +51,38 @@ def autoconf(check_only: bool = False) -> None:
     configure_system(checks, check_only=check_only)
 
 
-@dataclass
-class LCMConfig:
+class LCMConfig(BaseConfig):
     ttl: int = 0
-    url: str | None = None
+    url: str = _DEFAULT_LCM_URL
     autoconf: bool = True
-    lcm: lcm.LCM | None = None
-
-    def __post_init__(self) -> None:
-        if self.url is None:
-            self.url = _DEFAULT_LCM_URL
+    lcm: lcm_mod.LCM | None = None
 
 
+_Config = TypeVar("_Config", bound=LCMConfig, default=LCMConfig)
 _LCM_LOOP_TIMEOUT = 50
 
 
 # this class just sets up cpp LCM instance
 # and runs its handle loop in a thread
 # higher order stuff is done by pubsub/impl/lcmpubsub.py
-class LCMService(Service[LCMConfig]):
-    default_config = LCMConfig
-    l: lcm.LCM | None
+class LCMService(Service[_Config]):
+    default_config = LCMConfig  # type: ignore[assignment]
+
+    l: lcm_mod.LCM | None
     _stop_event: threading.Event
     _l_lock: threading.Lock
     _thread: threading.Thread | None
     _call_thread_pool: ThreadPoolExecutor | None = None
     _call_thread_pool_lock: threading.RLock = threading.RLock()
 
-    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
 
         # we support passing an existing LCM instance
         if self.config.lcm:
             self.l = self.config.lcm
         else:
-            self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
+            self.l = lcm_mod.LCM(self.config.url) if self.config.url else lcm_mod.LCM()
 
         self._l_lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -114,7 +117,7 @@ class LCMService(Service[LCMConfig]):
             if self.config.lcm:
                 self.l = self.config.lcm
             else:
-                self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
+                self.l = lcm_mod.LCM(self.config.url) if self.config.url else lcm_mod.LCM()
 
         try:
             autoconf(check_only=not self.config.autoconf)

@@ -13,9 +13,9 @@
 # limitations under the License.
 
 from collections import deque
-from dataclasses import dataclass
 import threading
 import time
+from typing import Any
 
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 from dimos.utils.human import human_bytes
@@ -94,20 +94,19 @@ class Topic:
         return f"topic({self.name})"
 
 
-@dataclass
 class LCMSpyConfig(LCMConfig):
     topic_history_window: float = 60.0
 
 
-class LCMSpy(LCMService, Topic):
+class LCMSpy(LCMService[LCMSpyConfig], Topic):
     default_config = LCMSpyConfig
     topic = dict[str, Topic]
     graph_log_window: float = 1.0
     topic_class: type[Topic] = Topic
 
-    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        Topic.__init__(self, name="total", history_window=self.config.topic_history_window)  # type: ignore[attr-defined]
+        Topic.__init__(self, name="total", history_window=self.config.topic_history_window)
         self.topic = {}  # type: ignore[assignment]
 
     def start(self) -> None:
@@ -144,7 +143,6 @@ class GraphTopic(Topic):
         self.bandwidth_history.append(kbps)
 
 
-@dataclass
 class GraphLCMSpyConfig(LCMSpyConfig):
     graph_log_window: float = 1.0
 
@@ -156,9 +154,9 @@ class GraphLCMSpy(LCMSpy, GraphTopic):
     graph_log_stop_event: threading.Event = threading.Event()
     topic_class: type[Topic] = GraphTopic
 
-    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        GraphTopic.__init__(self, name="total", history_window=self.config.topic_history_window)  # type: ignore[attr-defined]
+        GraphTopic.__init__(self, name="total", history_window=self.config.topic_history_window)
 
     def start(self) -> None:
         super().start()

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.worker_manager import WorkerManager
@@ -99,7 +100,7 @@ def create_worker_manager():
 @pytest.mark.slow
 def test_worker_manager_basic(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
-    module = worker_manager.deploy(SimpleModule)
+    module = worker_manager.deploy(SimpleModule, global_config, {})
     module.start()
 
     result = module.increment()
@@ -117,8 +118,8 @@ def test_worker_manager_basic(create_worker_manager):
 @pytest.mark.slow
 def test_worker_manager_multiple_different_modules(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
-    module1 = worker_manager.deploy(SimpleModule)
-    module2 = worker_manager.deploy(AnotherModule)
+    module1 = worker_manager.deploy(SimpleModule, global_config, {})
+    module2 = worker_manager.deploy(AnotherModule, global_config, {})
 
     module1.start()
     module2.start()
@@ -175,8 +176,8 @@ def test_collect_stats(create_worker_manager):
     from dimos.core.resource_monitor.monitor import StatsMonitor
 
     manager = create_worker_manager(n_workers=2)
-    module1 = manager.deploy(SimpleModule)
-    module2 = manager.deploy(AnotherModule)
+    module1 = manager.deploy(SimpleModule, global_config, {})
+    module2 = manager.deploy(AnotherModule, global_config, {})
     module1.start()
     module2.start()
 
@@ -219,8 +220,8 @@ def test_collect_stats(create_worker_manager):
 @pytest.mark.slow
 def test_worker_pool_modules_share_workers(create_worker_manager):
     manager = create_worker_manager(n_workers=1)
-    module1 = manager.deploy(SimpleModule)
-    module2 = manager.deploy(AnotherModule)
+    module1 = manager.deploy(SimpleModule, global_config, {})
+    module2 = manager.deploy(AnotherModule, global_config, {})
 
     module1.start()
     module2.start()

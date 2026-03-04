@@ -30,7 +30,7 @@ logger = setup_logger()
 
 def extract_time_window(
     question: str,
-    vlm: "VlModel",
+    vlm: "VlModel[Any]",
     latest_frame: "Image | None" = None,
 ) -> float | None:
     """Extract time window from question using VLM with example-based learning.
