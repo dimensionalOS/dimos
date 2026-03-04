@@ -1958,6 +1958,9 @@ unitree = [
     { name = "unitree-webrtc-connect-leshy" },
     { name = "uvicorn" },
 ]
+viewer = [
+    { name = "dimos-viewer" },
+]
 visualization = [
     { name = "rerun-sdk" },
 ]
@@ -1987,6 +1990,7 @@ requires-dist = [
     { name = "dimos", extras = ["dev"], marker = "extra == 'dds'" },
     { name = "dimos-lcm" },
     { name = "dimos-lcm", marker = "extra == 'docker'" },
+    { name = "dimos-viewer", marker = "extra == 'viewer'", specifier = ">=0.30.0a1" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'manipulation'", specifier = "==1.45.0" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin' and extra == 'manipulation'", specifier = ">=1.40.0" },
     { name = "edgetam-dimos", marker = "extra == 'misc'" },
@@ -2128,7 +2132,7 @@ requires-dist = [
     { name = "xformers", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=0.0.20" },
     { name = "yapf", marker = "extra == 'misc'", specifier = "==0.40.2" },
 ]
-provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "manipulation", "cpu", "cuda", "dev", "psql", "sim", "drone", "dds", "docker", "base"]
+provides-extras = ["viewer", "misc", "visualization", "agents", "web", "perception", "unitree", "manipulation", "cpu", "cuda", "dev", "psql", "sim", "drone", "dds", "docker", "base"]
 
 [[package]]
 name = "dimos-lcm"
@@ -2143,6 +2147,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/9e/d8/6e366f73f54733872d8c487a5ebd0ffd2eae2f0242d65b3552cdf71f5771/dimos_lcm-0.1.2.tar.gz", hash = "sha256:a0e193f974afdf07907be427a639e695ddd68c160e4737f847a53a1902674c30", size = 122337, upload-time = "2026-01-30T15:44:38.458Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a1/a9/9d938d6a84c873e3ea4765541a0babd216dfe730fc6c1044a63b4ab1097e/dimos_lcm-0.1.2-py3-none-any.whl", hash = "sha256:fb65258388e8658d0ff94577d6cb5e7c3d657070556a4289ad1b322939503552", size = 588426, upload-time = "2026-01-30T15:44:37.093Z" },
+]
+
+[[package]]
+name = "dimos-viewer"
+version = "0.30.0a1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/85/92/fb718bc8c1050df8f99d0edcb79101a08549c2ce403fcca78609b12c5a30/dimos_viewer-0.30.0a1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:69a5f12810e4efd2cf4c3c9214a5fa9bc71a027c486f2a742d34ac8337e6a5df", size = 34623892, upload-time = "2026-03-04T18:56:43.646Z" },
+    { url = "https://files.pythonhosted.org/packages/76/aa/f394c6579a4871780752b66b7425a4189a709b11014d7a87e0af1e3ceefb/dimos_viewer-0.30.0a1-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:e33492ff1f2877a562b0748d5c39e69ae469732abac4ed5b872c8259b649ab5b", size = 40671671, upload-time = "2026-03-04T18:56:47.227Z" },
 ]
 
 [[package]]

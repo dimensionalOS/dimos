@@ -80,6 +80,9 @@ doclinks = "dimos.utils.docs.doclinks:main"
 dtop = "dimos.utils.cli.dtop:main"
 
 [project.optional-dependencies]
+viewer = [
+    "dimos-viewer>=0.30.0a1",
+]
 misc = [
     # Core requirements
     "cerebras-cloud-sdk",
