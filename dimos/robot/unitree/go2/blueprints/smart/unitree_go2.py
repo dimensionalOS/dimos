@@ -19,7 +19,16 @@ from dimos.mapping.voxels import voxel_mapper
 from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
 from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
+from dimos.control.coordinator import control_coordinator
 
+# Coordinator blueprint
+coordinator = control_coordinator(
+    tick_rate=100.0,
+    hardware=[],  # Will be added via auto-setup
+    tasks=[],  # PathFollowerTask added via auto-setup
+)
+
+# Blueprint with coordinator-based path following
 unitree_go2 = autoconnect(
     unitree_go2_basic,
     voxel_mapper(voxel_size=0.1),
@@ -28,4 +37,8 @@ unitree_go2 = autoconnect(
     wavefront_frontier_explorer(),
 ).global_config(n_workers=7, robot_model="unitree_go2")
 
-__all__ = ["unitree_go2"]
+
+# Keep old name for backward compatibility (but it's the same now)
+unitree_go2_with_coordinator = unitree_go2
+
+__all__ = ["unitree_go2", "unitree_go2_with_coordinator"]
