@@ -270,8 +270,13 @@ class RerunBridgeModule(Module):
                     executable_name="dimos-viewer",
                     memory_limit=self.config.memory_limit,
                 )
+            except ImportError:
+                pass  # dimos-viewer not installed
             except Exception:
-                pass  # dimos-viewer not installed, rr.spawn will use stock rerun
+                logger.warning(
+                    "dimos-viewer found but failed to spawn, falling back to stock rerun",
+                    exc_info=True,
+                )
             rr.spawn(connect=True, memory_limit=self.config.memory_limit)
         elif self.config.viewer_mode == "web":
             server_uri = rr.serve_grpc()
