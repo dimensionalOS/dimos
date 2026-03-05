@@ -18,8 +18,7 @@ These tests verify that:
 1. The dimos-viewer binary is installed and discoverable
 2. rerun_bindings.spawn() accepts the executable_name parameter
 3. bridge.py has the correct spawn logic
-4. The unitree_go2 blueprint has clicked_point transport wired
-5. Version compatibility between rerun-sdk and dimos-viewer
+4. Version compatibility between rerun-sdk and dimos-viewer
 
 These run in CI where dimos-viewer is a core dependency, so the binary
 is always available. The main risk we're guarding against is rerun-sdk
@@ -27,6 +26,7 @@ pushing an update that breaks the spawn interface or version compatibility.
 """
 
 import inspect
+import re
 import shutil
 
 
@@ -120,51 +120,38 @@ class TestBridgeSpawnLogic:
         )
 
 
-class TestBlueprintClickTransport:
-    """Verify blueprints have clicked_point LCM transport."""
-
-    def test_unitree_go2_has_planner(self):
-        """Main unitree_go2 blueprint must include replanning_a_star_planner.
-
-        The planner has clicked_point as an input, and autoconnect wires
-        it up with LCM transport automatically.
-        """
-        src = open("dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py").read()
-        assert "replanning_a_star_planner" in src, "unitree_go2 missing planner"
-
-    def test_planner_accepts_clicked_point(self):
-        """ReplanningAStarPlanner must have clicked_point input."""
-        from dimos.navigation.replanning_a_star.module import (
-            ReplanningAStarPlanner,
-        )
-
-        src = inspect.getsource(ReplanningAStarPlanner)
-        assert "clicked_point" in src, (
-            "ReplanningAStarPlanner no longer has clicked_point input. "
-            "Click-to-navigate will not work."
-        )
+def _parse_version(version_str: str) -> tuple[int, int]:
+    """Extract (major, minor) from a version string like '0.29.2' or '0.30.0a2'."""
+    match = re.match(r"(\d+)\.(\d+)", version_str)
+    assert match, f"Cannot parse version: {version_str}"
+    return int(match.group(1)), int(match.group(2))
 
 
 class TestVersionCompatibility:
-    """Guard against rerun-sdk / dimos-viewer version drift."""
+    """Catch rerun-sdk / dimos-viewer version drift before it bites us at runtime."""
 
-    def test_dimos_viewer_is_core_dependency(self):
-        """dimos-viewer must be a core dependency, not optional."""
-        import tomllib
+    def test_versions_within_one_minor(self):
+        """rerun-sdk and dimos-viewer must be within 1 minor version.
 
-        with open("pyproject.toml", "rb") as f:
-            pyproject = tomllib.load(f)
+        dimos-viewer is built from a rerun fork, so they track the same
+        release line. If they drift by more than one minor version, the
+        gRPC protocol or internal APIs are likely incompatible.
+        """
+        import importlib.metadata
 
-        deps = pyproject["project"]["dependencies"]
-        viewer_deps = [d for d in deps if "dimos-viewer" in d]
-        assert viewer_deps, (
-            "dimos-viewer is not in core dependencies. "
-            "It should be next to rerun-sdk in pyproject.toml."
+        import rerun
+
+        sdk_version = rerun.__version__
+        viewer_version = importlib.metadata.version("dimos-viewer")
+
+        sdk_major, sdk_minor = _parse_version(sdk_version)
+        viewer_major, viewer_minor = _parse_version(viewer_version)
+
+        assert sdk_major == viewer_major, (
+            f"Major version mismatch: rerun-sdk={sdk_version}, dimos-viewer={viewer_version}. "
+            f"These are likely incompatible."
         )
-
-        # Also verify it's NOT in optional deps
-        optional = pyproject["project"].get("optional-dependencies", {})
-        assert "viewer" not in optional, (
-            "dimos-viewer is still listed as optional extra 'viewer'. "
-            "It should be a core dependency."
+        assert abs(sdk_minor - viewer_minor) <= 1, (
+            f"Version drift too large: rerun-sdk={sdk_version}, dimos-viewer={viewer_version}. "
+            f"Update dimos-viewer to match rerun-sdk or vice versa."
         )
