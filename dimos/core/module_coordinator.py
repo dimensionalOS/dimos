@@ -129,11 +129,16 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         # Deploy worker modules in parallel via WorkerManager
         worker_results = self._client.deploy_parallel(worker_specs) if worker_specs else []
 
-        # Deploy docker modules (each gets its own DockerModule)
-        docker_results: list[Any] = []
-        for module_class, args, kwargs in docker_specs:
-            dm = self._deploy_docker(module_class, *args, **kwargs)
-            docker_results.append(dm)
+        # Deploy docker modules in parallel (each starts its own container)
+        if docker_specs:
+            with ThreadPoolExecutor(max_workers=len(docker_specs)) as executor:
+                futures = [
+                    executor.submit(self._deploy_docker, module_class, *args, **kwargs)
+                    for module_class, args, kwargs in docker_specs
+                ]
+                docker_results: list[Any] = [f.result() for f in futures]
+        else:
+            docker_results: list[Any] = []
 
         # Reassemble results in original order
         results: list[Any] = []
