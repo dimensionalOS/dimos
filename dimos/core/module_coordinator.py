@@ -85,8 +85,8 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
             deployed_module = DockerModule(module_class, *args, **kwargs)
         else:
             deployed_module = self._client.deploy(module_class, *args, **kwargs)
-        self._deployed_modules[module_class] = module  # type: ignore[assignment]
-        return module  # type: ignore[return-value]
+        self._deployed_modules[module_class] = deployed_module
+        return deployed_module
 
     def deploy_parallel(
         self, module_specs: list[tuple[type[ModuleT], tuple[Any, ...], dict[str, Any]]]
