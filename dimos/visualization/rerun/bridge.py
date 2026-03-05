@@ -259,6 +259,21 @@ class RerunBridgeModule(Module):
         rr.init("dimos")
 
         if self.config.viewer_mode == "native":
+            try:
+                import rerun_bindings
+
+                rerun_bindings.spawn(
+                    port=RERUN_GRPC_PORT,
+                    executable_name="dimos-viewer",
+                    memory_limit=self.config.memory_limit,
+                )
+            except ImportError:
+                pass  # dimos-viewer not installed
+            except Exception:
+                logger.warning(
+                    "dimos-viewer found but failed to spawn, falling back to stock rerun",
+                    exc_info=True,
+                )
             rr.spawn(connect=True, memory_limit=self.config.memory_limit)
         elif self.config.viewer_mode == "web":
             server_uri = rr.serve_grpc()
