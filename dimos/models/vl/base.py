@@ -1,23 +1,21 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import json
 import logging
-import sys
+from typing import TYPE_CHECKING
 import warnings
 
 from dimos.core.resource import Resource
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
-from dimos.protocol.service.spec import BaseConfig, Configurable
+from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 from dimos.utils.data import get_data
 from dimos.utils.decorators import retry
 from dimos.utils.llm_utils import extract_json
 
-if sys.version_info < (3, 13):
-    from typing_extensions import TypeVar
-else:
-    from typing import TypeVar
+if TYPE_CHECKING:
+    from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
 
 logger = logging.getLogger(__name__)
 
@@ -161,17 +159,15 @@ def vlm_point_to_detection2d_point(
     )
 
 
-class VlModelConfig(BaseConfig):
+@dataclass
+class VlModelConfig:
     """Configuration for VlModel."""
 
     auto_resize: tuple[int, int] | None = None
     """Optional (width, height) tuple. If set, images are resized to fit."""
 
 
-_VlConfig = TypeVar("_VlConfig", bound=VlModelConfig)
-
-
-class VlModel(Captioner, Resource, Configurable[_VlConfig]):
+class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
     """Vision-language model that can answer questions about images.
 
     Inherits from Captioner, providing a default caption() implementation
@@ -180,7 +176,8 @@ class VlModel(Captioner, Resource, Configurable[_VlConfig]):
     Implements Resource interface for lifecycle management.
     """
 
-    default_config: type[_VlConfig] = VlModelConfig  # type: ignore[assignment]
+    default_config = VlModelConfig
+    config: VlModelConfig
 
     def _prepare_image(self, image: Image) -> tuple[Image, float]:
         """Prepare image for inference, applying any configured transformations.

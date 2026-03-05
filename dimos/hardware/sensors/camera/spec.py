@@ -13,19 +13,19 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import TypeVar
+from typing import Generic, Protocol, TypeVar
 
 from reactivex.observable import Observable
 
 from dimos.msgs.geometry_msgs import Quaternion, Transform
 from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.service.spec import BaseConfig, Configurable
+from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 
 OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
 
 
-class CameraConfig(BaseConfig):
+class CameraConfig(Protocol):
     frame_id_prefix: str | None
     width: int
     height: int
@@ -35,7 +35,7 @@ class CameraConfig(BaseConfig):
 CameraConfigT = TypeVar("CameraConfigT", bound=CameraConfig)
 
 
-class CameraHardware(ABC, Configurable[CameraConfigT]):
+class CameraHardware(ABC, Configurable[CameraConfigT], Generic[CameraConfigT]):
     @abstractmethod
     def image_stream(self) -> Observable[Image]:
         pass

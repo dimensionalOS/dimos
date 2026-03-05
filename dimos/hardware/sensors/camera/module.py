@@ -22,6 +22,7 @@ import reactivex as rx
 from dimos.agents.annotation import skill
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import CameraHardware
@@ -54,9 +55,16 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
 
-    default_config = CameraModuleConfig
     hardware: CameraHardware[Any]
-    _latest_image: Image | None = None
+
+    config: CameraModuleConfig
+    default_config = CameraModuleConfig
+    _global_config: GlobalConfig
+
+    def __init__(self, *args: Any, cfg: GlobalConfig = global_config, **kwargs: Any) -> None:
+        self._global_config = cfg
+        self._latest_image: Image | None = None
+        super().__init__(*args, **kwargs)
 
     @rpc
     def start(self) -> None:

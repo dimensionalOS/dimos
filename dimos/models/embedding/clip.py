@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 from functools import cached_property
 
 from PIL import Image as PILImage
@@ -24,6 +25,7 @@ from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEm
 from dimos.msgs.sensor_msgs import Image
 
 
+@dataclass
 class CLIPModelConfig(HuggingFaceEmbeddingModelConfig):
     model_name: str = "openai/clip-vit-base-patch32"
     dtype: torch.dtype = torch.float32

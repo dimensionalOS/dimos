@@ -18,15 +18,15 @@ from pathlib import Path
 
 from dimos.msgs.sensor_msgs.CameraInfo import CalibrationProvider
 
+# Check if ZED SDK is available
 try:
-    import pyzed.sl  # noqa: F401
+    import pyzed.sl as sl  # noqa: F401
 
-    # This awkwardness is needed as pytest implicitly imports this to collect
-    # the test in this directory.
     HAS_ZED_SDK = True
 except ImportError:
     HAS_ZED_SDK = False
 
+# Only import ZED classes if SDK is available
 if HAS_ZED_SDK:
     from dimos.hardware.sensors.camera.zed.camera import ZEDCamera, ZEDModule, zed_camera
 else:
@@ -43,7 +43,7 @@ else:
                 "ZED SDK not installed. Please install pyzed package to use ZED camera functionality."
             )
 
-    def zed_camera(*args: object, **kwargs: object) -> None:  # type: ignore[misc,no-redef]
+    def zed_camera(*args: object, **kwargs: object) -> None:  # type: ignore[no-redef]
         raise ModuleNotFoundError(
             "ZED SDK not installed. Please install pyzed package to use ZED camera functionality.",
             name="pyzed",

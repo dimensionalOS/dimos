@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from functools import cached_property
 import os
 from typing import Any
@@ -9,6 +10,7 @@ from dimos.models.vl.base import VlModel, VlModelConfig
 from dimos.msgs.sensor_msgs import Image
 
 
+@dataclass
 class QwenVlModelConfig(VlModelConfig):
     """Configuration for Qwen VL model."""
 
@@ -16,8 +18,9 @@ class QwenVlModelConfig(VlModelConfig):
     api_key: str | None = None
 
 
-class QwenVlModel(VlModel[QwenVlModelConfig]):
+class QwenVlModel(VlModel):
     default_config = QwenVlModelConfig
+    config: QwenVlModelConfig
 
     @cached_property
     def _client(self) -> OpenAI:

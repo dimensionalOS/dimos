@@ -16,9 +16,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
-from dimos.protocol.service.spec import BaseConfig, Service
+from dimos.protocol.service.spec import Service
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -65,7 +66,8 @@ def bridge(
     return pubsub1.subscribe_all(pass_msg)
 
 
-class BridgeConfig(BaseConfig, Generic[TopicFrom, TopicTo, MsgFrom, MsgTo]):
+@dataclass
+class BridgeConfig(Generic[TopicFrom, TopicTo, MsgFrom, MsgTo]):
     """Configuration for a one-way bridge."""
 
     source: AllPubSub[TopicFrom, MsgFrom]

@@ -6,21 +6,20 @@ import moondream as md  # type: ignore[import-untyped]
 import numpy as np
 from PIL import Image as PILImage
 
-from dimos.models.vl.base import VlModel, VlModelConfig
+from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
 
 
-class Config(VlModelConfig):
-    api_key: str | None = None
+class MoondreamHostedVlModel(VlModel):
+    _api_key: str | None
 
-
-class MoondreamHostedVlModel(VlModel[Config]):
-    default_config = Config
+    def __init__(self, api_key: str | None = None) -> None:
+        self._api_key = api_key
 
     @cached_property
     def _client(self) -> md.vl:
-        api_key = self.config.api_key or os.getenv("MOONDREAM_API_KEY")
+        api_key = self._api_key or os.getenv("MOONDREAM_API_KEY")
         if not api_key:
             raise ValueError(
                 "Moondream API key must be provided or set in MOONDREAM_API_KEY environment variable"

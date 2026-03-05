@@ -39,6 +39,9 @@ class Navigation(Module):
     @rpc
     def navigate_to(self, target: Vector3) -> bool: ...
 
+    def __init__(self) -> None:
+        super().__init__()
+
     @rpc
     def start(self) -> None:
         def _odom(msg) -> None:

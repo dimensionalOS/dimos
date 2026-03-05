@@ -34,6 +34,9 @@ class GpsNavSkillContainer(Module):
     gps_location: In[LatLon]
     gps_goal: Out[LatLon]
 
+    def __init__(self) -> None:
+        super().__init__()
+
     @rpc
     def start(self) -> None:
         super().start()

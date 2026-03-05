@@ -22,6 +22,7 @@ Extends ManipulationModule with perception integration and long-horizon skills:
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import math
 from pathlib import Path
 import time
@@ -31,8 +32,7 @@ from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.docker_runner import DockerModule as DockerRunner
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.stream import In
+from dimos.core.stream import In  # noqa: TC001
 from dimos.manipulation.grasping.graspgen_module import GraspGenModule
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
@@ -40,7 +40,7 @@ from dimos.manipulation.manipulation_module import (
 )
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.perception.detection.type.detection3d.object import (
-    Object as DetObject,
+    Object as DetObject,  # noqa: TC001
 )
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -56,6 +56,7 @@ _GRASPGEN_VIZ_CONTAINER_DIR = "/output/graspgen"
 _GRASPGEN_VIZ_CONTAINER_PATH = f"{_GRASPGEN_VIZ_CONTAINER_DIR}/visualization.json"
 
 
+@dataclass
 class PickAndPlaceModuleConfig(ManipulationModuleConfig):
     """Configuration for PickAndPlaceModule (adds GraspGen settings)."""
 
@@ -67,8 +68,8 @@ class PickAndPlaceModuleConfig(ManipulationModuleConfig):
     graspgen_grasp_threshold: float = -1.0
     graspgen_filter_collisions: bool = False
     graspgen_save_visualization_data: bool = False
-    graspgen_visualization_output_path: Path = (
-        Path.home() / ".dimos" / "graspgen" / "visualization.json"
+    graspgen_visualization_output_path: Path = field(
+        default_factory=lambda: Path.home() / ".dimos" / "graspgen" / "visualization.json"
     )
 
 
@@ -89,8 +90,8 @@ class PickAndPlaceModule(ManipulationModule):
     # Input: Objects from perception (for obstacle integration)
     objects: In[list[DetObject]]
 
-    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: Any) -> None:
-        super().__init__(global_config, **kwargs)
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
 
         # GraspGen Docker runner (lazy initialized on first generate_grasps call)
         self._graspgen: DockerRunner | None = None

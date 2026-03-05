@@ -31,16 +31,22 @@ class FakeOdom(Module):
 
 
 class MockedStopNavSkill(NavigationSkillContainer):
-    _skill_started = True
     rpc_calls: list[str] = []
+
+    def __init__(self):
+        Module.__init__(self)
+        self._skill_started = True
 
     def _cancel_goal_and_stop(self):
         pass
 
 
 class MockedExploreNavSkill(NavigationSkillContainer):
-    _skill_started = True
     rpc_calls: list[str] = []
+
+    def __init__(self):
+        Module.__init__(self)
+        self._skill_started = True
 
     def _start_exploration(self, timeout):
         return "Exploration completed successfuly"
@@ -50,8 +56,11 @@ class MockedExploreNavSkill(NavigationSkillContainer):
 
 
 class MockedSemanticNavSkill(NavigationSkillContainer):
-    _skill_started = True
     rpc_calls: list[str] = []
+
+    def __init__(self):
+        Module.__init__(self)
+        self._skill_started = True
 
     def _navigate_by_tagged_location(self, query):
         return None

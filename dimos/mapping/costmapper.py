@@ -40,14 +40,16 @@ class Config(ModuleConfig):
     config: OccupancyConfig = Field(default_factory=HeightCostConfig)
 
 
-class CostMapper(Module[Config]):
+class CostMapper(Module):
     default_config = Config
+    config: Config
 
     global_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
 
-    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: object) -> None:
-        super().__init__(global_config, **kwargs)
+    def __init__(self, cfg: GlobalConfig = global_config, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._global_config = cfg
 
     @rpc
     def start(self) -> None:

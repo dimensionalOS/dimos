@@ -40,6 +40,7 @@ Example usage::
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field, fields
 import enum
 import inspect
 import json
@@ -47,21 +48,12 @@ import os
 from pathlib import Path
 import signal
 import subprocess
-import sys
 import threading
 from typing import IO, Any
 
-from pydantic import Field
-
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.utils.logging_config import setup_logger
-
-if sys.version_info < (3, 13):
-    from typing_extensions import TypeVar
-else:
-    from typing import TypeVar
 
 logger = setup_logger()
 
@@ -71,14 +63,15 @@ class LogFormat(enum.Enum):
     JSON = "json"
 
 
+@dataclass(kw_only=True)
 class NativeModuleConfig(ModuleConfig):
     """Configuration for a native (C/C++) subprocess module."""
 
     executable: str
     build_command: str | None = None
     cwd: str | None = None
-    extra_args: list[str] = Field(default_factory=list)
-    extra_env: dict[str, str] = Field(default_factory=dict)
+    extra_args: list[str] = field(default_factory=list)
+    extra_env: dict[str, str] = field(default_factory=dict)
     shutdown_timeout: float = 10.0
     log_format: LogFormat = LogFormat.TEXT
 
@@ -92,29 +85,26 @@ class NativeModuleConfig(ModuleConfig):
         or its parents) and converts them to ``["--name", str(value)]`` pairs.
         Skips fields whose values are ``None`` and fields in ``cli_exclude``.
         """
-        ignore_fields = {f for f in NativeModuleConfig.model_fields}
+        ignore_fields = {f.name for f in fields(NativeModuleConfig)}
         args: list[str] = []
-        for f in self.__class__.model_fields:
-            if f in ignore_fields:
+        for f in fields(self):
+            if f.name in ignore_fields:
                 continue
-            if f in self.cli_exclude:
+            if f.name in self.cli_exclude:
                 continue
-            val = getattr(self, f)
+            val = getattr(self, f.name)
             if val is None:
                 continue
             if isinstance(val, bool):
-                args.extend([f"--{f}", str(val).lower()])
+                args.extend([f"--{f.name}", str(val).lower()])
             elif isinstance(val, list):
-                args.extend([f"--{f}", ",".join(str(v) for v in val)])
+                args.extend([f"--{f.name}", ",".join(str(v) for v in val)])
             else:
-                args.extend([f"--{f}", str(val)])
+                args.extend([f"--{f.name}", str(val)])
         return args
 
 
-_NativeConfig = TypeVar("_NativeConfig", bound=NativeModuleConfig, default=NativeModuleConfig)
-
-
-class NativeModule(Module[_NativeConfig]):
+class NativeModule(Module[NativeModuleConfig]):
     """Module that wraps a native executable as a managed subprocess.
 
     Subclass this, declare In/Out ports, and set ``default_config`` to a
@@ -128,13 +118,13 @@ class NativeModule(Module[_NativeConfig]):
     LCM topics directly.  On ``stop()``, the process receives SIGTERM.
     """
 
-    default_config: type[_NativeConfig] = NativeModuleConfig  # type: ignore[assignment]
+    default_config: type[NativeModuleConfig] = NativeModuleConfig
     _process: subprocess.Popen[bytes] | None = None
     _watchdog: threading.Thread | None = None
     _stopping: bool = False
 
-    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: Any) -> None:
-        super().__init__(global_config, **kwargs)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._resolve_paths()
 
     @rpc

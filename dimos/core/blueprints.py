@@ -17,6 +17,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import cached_property, reduce
+import inspect
 import operator
 import sys
 from types import MappingProxyType
@@ -26,18 +27,13 @@ if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module, ModuleBase, ModuleSpec, is_module_type
+from dimos.core.module import Module, is_module_type
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
 from dimos.spec.utils import Spec, is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
-
-if sys.version_info >= (3, 11):
-    from typing import Self
-else:
-    from typing import Any as Self
 
 logger = setup_logger()
 
@@ -52,18 +48,21 @@ class StreamRef:
 @dataclass(frozen=True)
 class ModuleRef:
     name: str
-    spec: type[Spec] | type[ModuleBase]
+    spec: type[Spec] | type[Module]
 
 
 @dataclass(frozen=True)
 class _BlueprintAtom:
-    kwargs: dict[str, Any]
-    module: type[ModuleBase[Any]]
+    module: type[Module]
     streams: tuple[StreamRef, ...]
     module_refs: tuple[ModuleRef, ...]
+    args: tuple[Any, ...]
+    kwargs: dict[str, Any]
 
     @classmethod
-    def create(cls, module: type[ModuleBase[Any]], kwargs: dict[str, Any]) -> Self:
+    def create(
+        cls, module: type[Module], args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> "_BlueprintAtom":
         streams: list[StreamRef] = []
         module_refs: list[ModuleRef] = []
 
@@ -104,6 +103,7 @@ class _BlueprintAtom:
             module=module,
             streams=tuple(streams),
             module_refs=tuple(module_refs),
+            args=args,
             kwargs=kwargs,
         )
 
@@ -115,15 +115,15 @@ class Blueprint:
         default_factory=lambda: MappingProxyType({})
     )
     global_config_overrides: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
-    remapping_map: Mapping[tuple[type[ModuleBase], str], str | type[ModuleBase] | type[Spec]] = (
-        field(default_factory=lambda: MappingProxyType({}))
+    remapping_map: Mapping[tuple[type[Module], str], str | type[Module] | type[Spec]] = field(
+        default_factory=lambda: MappingProxyType({})
     )
     requirement_checks: tuple[Callable[[], str | None], ...] = field(default_factory=tuple)
     configurator_checks: "tuple[SystemConfigurator, ...]" = field(default_factory=tuple)
 
     @classmethod
-    def create(cls, module: type[ModuleBase], **kwargs: Any) -> "Blueprint":
-        blueprint = _BlueprintAtom.create(module, kwargs)
+    def create(cls, module: type[Module], *args: Any, **kwargs: Any) -> "Blueprint":
+        blueprint = _BlueprintAtom.create(module, args, kwargs)
         return cls(blueprints=(blueprint,))
 
     def transports(self, transports: dict[tuple[str, type], Any]) -> "Blueprint":
@@ -147,10 +147,7 @@ class Blueprint:
         )
 
     def remappings(
-        self,
-        remappings: list[
-            tuple[type[ModuleBase[Any]], str, str | type[ModuleBase[Any]] | type[Spec]]
-        ],
+        self, remappings: list[tuple[type[Module], str, str | type[Module] | type[Spec]]]
     ) -> "Blueprint":
         remappings_dict = dict(self.remapping_map)
         for module, old, new in remappings:
@@ -188,8 +185,8 @@ class Blueprint:
     def _check_ambiguity(
         self,
         requested_method_name: str,
-        interface_methods: Mapping[str, list[tuple[type[ModuleBase], Callable[..., Any]]]],
-        requesting_module: type[ModuleBase],
+        interface_methods: Mapping[str, list[tuple[type[Module], Callable[..., Any]]]],
+        requesting_module: type[Module],
     ) -> None:
         if (
             requested_method_name in interface_methods
@@ -298,9 +295,13 @@ class Blueprint:
     def _deploy_all_modules(
         self, module_coordinator: ModuleCoordinator, global_config: GlobalConfig
     ) -> None:
-        module_specs: list[ModuleSpec] = []
+        module_specs: list[tuple[type[Module], tuple[Any, ...], dict[str, Any]]] = []
         for blueprint in self.blueprints:
-            module_specs.append((blueprint.module, global_config, blueprint.kwargs))
+            kwargs = {**blueprint.kwargs}
+            sig = inspect.signature(blueprint.module.__init__)
+            if "cfg" in sig.parameters:
+                kwargs["cfg"] = global_config
+            module_specs.append((blueprint.module, blueprint.args, kwargs))
 
         module_coordinator.deploy_parallel(module_specs)
 
@@ -420,12 +421,12 @@ class Blueprint:
         rpc_methods_dot = {}
 
         # Track interface methods to detect ambiguity.
-        interface_methods: defaultdict[str, list[tuple[type[ModuleBase], Callable[..., Any]]]] = (
+        interface_methods: defaultdict[str, list[tuple[type[Module], Callable[..., Any]]]] = (
             defaultdict(list)
         )  # interface_name_method -> [(module_class, method)]
-        interface_methods_dot: defaultdict[
-            str, list[tuple[type[ModuleBase], Callable[..., Any]]]
-        ] = defaultdict(list)  # interface_name.method -> [(module_class, method)]
+        interface_methods_dot: defaultdict[str, list[tuple[type[Module], Callable[..., Any]]]] = (
+            defaultdict(list)
+        )  # interface_name.method -> [(module_class, method)]
 
         for blueprint in self.blueprints:
             for method_name in blueprint.module.rpcs.keys():  # type: ignore[attr-defined]

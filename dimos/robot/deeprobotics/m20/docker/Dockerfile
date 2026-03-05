@@ -18,6 +18,10 @@ FROM ${BASE_IMAGE}
 COPY . /opt/dimos/src
 # Create .git marker so get_data() uses local source instead of cloning from GitHub
 RUN mkdir -p /opt/dimos/src/.git
+# Decompress command_center.html from LFS archive (LFS pull won't work without real .git)
+RUN if [ -f /opt/dimos/src/data/.lfs/command_center.html.tar.gz ]; then \
+        tar -xzf /opt/dimos/src/data/.lfs/command_center.html.tar.gz -C /opt/dimos/src/data/ ; \
+    fi
 RUN /opt/dimos-venv/bin/pip install --no-cache-dir -e "/opt/dimos/src[agents]" && \
     /opt/dimos-venv/bin/pip install --no-cache-dir --ignore-installed matplotlib
 

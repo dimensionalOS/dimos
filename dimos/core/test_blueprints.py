@@ -114,13 +114,14 @@ module_c = ModuleC.blueprint
 
 
 def test_get_connection_set() -> None:
-    assert _BlueprintAtom.create(CatModule, kwargs={"k": "v"}) == _BlueprintAtom(
+    assert _BlueprintAtom.create(CatModule, args=("arg1",), kwargs={"k": "v"}) == _BlueprintAtom(
         module=CatModule,
         streams=(
             StreamRef(name="pet_cat", type=Petting, direction="in"),
             StreamRef(name="scratches", type=Scratch, direction="out"),
         ),
         module_refs=(),
+        args=("arg1",),
         kwargs={"k": "v"},
     )
 
@@ -137,6 +138,7 @@ def test_autoconnect() -> None:
                     StreamRef(name="data2", type=Data2, direction="out"),
                 ),
                 module_refs=(),
+                args=(),
                 kwargs={},
             ),
             _BlueprintAtom(
@@ -147,6 +149,7 @@ def test_autoconnect() -> None:
                     StreamRef(name="data3", type=Data3, direction="out"),
                 ),
                 module_refs=(),
+                args=(),
                 kwargs={},
             ),
         )
@@ -343,11 +346,11 @@ def test_future_annotations_support() -> None:
     """
 
     # Test that streams are properly extracted from modules with future annotations
-    out_blueprint = _BlueprintAtom.create(FutureModuleOut, kwargs={})
+    out_blueprint = _BlueprintAtom.create(FutureModuleOut, args=(), kwargs={})
     assert len(out_blueprint.streams) == 1
     assert out_blueprint.streams[0] == StreamRef(name="data", type=FutureData, direction="out")
 
-    in_blueprint = _BlueprintAtom.create(FutureModuleIn, kwargs={})
+    in_blueprint = _BlueprintAtom.create(FutureModuleIn, args=(), kwargs={})
     assert len(in_blueprint.streams) == 1
     assert in_blueprint.streams[0] == StreamRef(name="data", type=FutureData, direction="in")
 

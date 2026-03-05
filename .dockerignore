@@ -45,7 +45,9 @@ build/
 
 # Large data files (LFS cache is 15GB+ and never needed in containers)
 data/
-!data/command_center.html
+!data/.lfs/
+data/.lfs/*
+!data/.lfs/command_center.html.tar.gz
 
 # Model files (can be downloaded at runtime)
 *.pt

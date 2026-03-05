@@ -15,6 +15,7 @@
 """Simulator-agnostic manipulator simulation module."""
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 import threading
 import time
@@ -23,7 +24,6 @@ from typing import Any
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
@@ -31,6 +31,7 @@ from dimos.simulation.engines import EngineType, get_engine
 from dimos.simulation.manipulators.sim_manip_interface import SimManipInterface
 
 
+@dataclass(kw_only=True)
 class SimulationModuleConfig(ModuleConfig):
     engine: EngineType
     config_path: Path | Callable[[], Path]
@@ -41,6 +42,7 @@ class SimulationModule(Module[SimulationModuleConfig]):
     """Module wrapper for manipulator simulation across engines."""
 
     default_config = SimulationModuleConfig
+    config: SimulationModuleConfig
 
     joint_state: Out[JointState]
     robot_state: Out[RobotState]
@@ -49,8 +51,8 @@ class SimulationModule(Module[SimulationModuleConfig]):
 
     MIN_CONTROL_RATE = 1.0
 
-    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: Any) -> None:
-        super().__init__(global_config, **kwargs)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
         self._backend: SimManipInterface | None = None
         self._control_rate = 100.0
         self._monitor_rate = 100.0

@@ -26,7 +26,26 @@ authors = [
 version = "0.0.10.post1"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
-readme = "README.md"
+readme = {file = "README.md", content-type = "text/markdown"}
+license = {text = "Apache-2.0"}
+keywords = ["robotics", "ros", "agents", "dimos", "dimensional", "openclaw", "roboclaw", "humanoid", "unitree"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+]
 
 dependencies = [
     # Transport Protocols
@@ -63,6 +82,7 @@ dependencies = [
     # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
     # remove this once rerun is optional in core
     "rerun-sdk>=0.20.0",
+    "dimos-viewer>=0.30.0a2",
     "toolz>=1.1.0",
     "av>=16.1.0",
     "python-socketio>=5.16.1",
@@ -80,6 +100,12 @@ dimos = "dimos.robot.cli.dimos:main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
 doclinks = "dimos.utils.docs.doclinks:main"
 dtop = "dimos.utils.cli.dtop:main"
+
+[project.urls]
+Homepage = "https://dimensionalos.com"
+Repository = "https://github.com/dimensionalOS/dimos"
+Issues = "https://github.com/dimensionalOS/dimos/issues"
+Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
 misc = [
@@ -126,6 +152,7 @@ misc = [
 
 visualization = [
     "rerun-sdk>=0.20.0",
+    "dimos-viewer>=0.30.0a2",
 ]
 
 agents = [
@@ -326,12 +353,8 @@ exclude = [
 
 [tool.ruff.lint]
 extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH"]
-ignore = [
-    # TODO: All of these should be fixed, but it's easier commit autofixes first
-    "A001", "A002", "B008", "B017", "B019", "B024", "B026", "B904", "C901", "E402", "E501", "E721", "E722", "E741", "F811", "F821", "F821", "F821", "N801", "N802", "N803", "N806", "N817", "N999", "RUF003", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "UP007",
-    # This breaks runtime type checking (both for us, and users introspecting our APIs)
-    "TC001", "TC002", "TC003"
-]
+# TODO: All of these should be fixed, but it's easier commit autofixes first
+ignore = ["A001", "A002", "B008", "B017", "B019", "B024", "B026", "B904", "C901", "E402", "E501", "E721", "E722", "E741", "F811", "F821", "F821", "F821", "N801", "N802", "N803", "N806", "N817", "N999", "RUF003", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "UP007"]
 
 [tool.ruff.lint.per-file-ignores]
 "dimos/models/Detic/*" = ["ALL"]

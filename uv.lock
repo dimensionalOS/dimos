@@ -1683,6 +1683,7 @@ dependencies = [
     { name = "annotation-protocol" },
     { name = "colorlog" },
     { name = "dimos-lcm" },
+    { name = "dimos-viewer" },
     { name = "lazy-loader" },
     { name = "llvmlite" },
     { name = "numba" },
@@ -1731,6 +1732,7 @@ agents = [
 base = [
     { name = "anthropic" },
     { name = "bitsandbytes", marker = "sys_platform == 'linux'" },
+    { name = "dimos-viewer" },
     { name = "fastapi" },
     { name = "ffmpeg-python" },
     { name = "filterpy" },
@@ -1928,6 +1930,7 @@ sim = [
 unitree = [
     { name = "anthropic" },
     { name = "bitsandbytes", marker = "sys_platform == 'linux'" },
+    { name = "dimos-viewer" },
     { name = "fastapi" },
     { name = "ffmpeg-python" },
     { name = "filterpy" },
@@ -1959,6 +1962,7 @@ unitree = [
     { name = "uvicorn" },
 ]
 visualization = [
+    { name = "dimos-viewer" },
     { name = "rerun-sdk" },
 ]
 web = [
@@ -1987,6 +1991,8 @@ requires-dist = [
     { name = "dimos", extras = ["dev"], marker = "extra == 'dds'" },
     { name = "dimos-lcm" },
     { name = "dimos-lcm", marker = "extra == 'docker'" },
+    { name = "dimos-viewer", specifier = ">=0.30.0a2" },
+    { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = ">=0.30.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'manipulation'", specifier = "==1.45.0" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin' and extra == 'manipulation'", specifier = ">=1.40.0" },
     { name = "edgetam-dimos", marker = "extra == 'misc'" },
@@ -2143,6 +2149,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/9e/d8/6e366f73f54733872d8c487a5ebd0ffd2eae2f0242d65b3552cdf71f5771/dimos_lcm-0.1.2.tar.gz", hash = "sha256:a0e193f974afdf07907be427a639e695ddd68c160e4737f847a53a1902674c30", size = 122337, upload-time = "2026-01-30T15:44:38.458Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a1/a9/9d938d6a84c873e3ea4765541a0babd216dfe730fc6c1044a63b4ab1097e/dimos_lcm-0.1.2-py3-none-any.whl", hash = "sha256:fb65258388e8658d0ff94577d6cb5e7c3d657070556a4289ad1b322939503552", size = 588426, upload-time = "2026-01-30T15:44:37.093Z" },
+]
+
+[[package]]
+name = "dimos-viewer"
+version = "0.30.0a2"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5f/c0/97ed394f078e3e50a55076a86517bf422f75e75f0f85ccfae824c00877b9/dimos_viewer-0.30.0a2-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:2e64a509d617a4111106b661073e8ef7f416a1007a4c273bc2b6687128c63861", size = 34622193, upload-time = "2026-03-04T22:11:54.575Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/8e/75113b27ec4e63e42e361fd5acd09b65c17a8c67963b745834ecbece0004/dimos_viewer-0.30.0a2-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:600dcb51bbdb239b57c6826493b45ae0fab6b760d42350fca849f1815a6c4b85", size = 40670030, upload-time = "2026-03-04T22:11:57.509Z" },
+    { url = "https://files.pythonhosted.org/packages/86/05/d92d21223d0e3c0b51c264fb4ab1575eae7e76e776279ff7d2ba28291152/dimos_viewer-0.30.0a2-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:5a1f1f0e2dd9f6977903ec33cddfcad18f48c670d10bcb0a5313bd211f323d6e", size = 34622193, upload-time = "2026-03-04T22:12:00.467Z" },
+    { url = "https://files.pythonhosted.org/packages/96/ea/e49443c35d8fdbdcbcfbcdbc7a96a19dd28c15a2ac70b94baad1d4dda862/dimos_viewer-0.30.0a2-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:b936d624708afe4795e1b88fed908576252435a2419b037da2de7c558590a870", size = 40669950, upload-time = "2026-03-04T22:12:05.088Z" },
+    { url = "https://files.pythonhosted.org/packages/44/bc/88d4ecaf1e013b4125d860be20b4194545bd83436268835847e5d556b589/dimos_viewer-0.30.0a2-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:559cfb985028e7acf956ac98432693211459733221c87b8be920d0eb04eb6510", size = 34622194, upload-time = "2026-03-04T21:20:09.199Z" },
+    { url = "https://files.pythonhosted.org/packages/89/cd/28f099b33fd9d6487d849f47409721f9dde7d7435571b06030d8757852af/dimos_viewer-0.30.0a2-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:684c15c66bd32b0f065dda79cef582356975972f7f0e0c5337ec621d34481e2b", size = 40670051, upload-time = "2026-03-04T21:20:13.039Z" },
 ]
 
 [[package]]

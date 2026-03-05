@@ -13,24 +13,17 @@
 # limitations under the License.
 
 from abc import ABC
-from typing import Any, Generic, TypeVar
-
-from pydantic import BaseModel
-
-
-class BaseConfig(BaseModel):
-    model_config = {"arbitrary_types_allowed": True}
-
+from typing import Generic, TypeVar
 
 # Generic type for service configuration
-ConfigT = TypeVar("ConfigT", bound=BaseConfig)
+ConfigT = TypeVar("ConfigT")
 
 
 class Configurable(Generic[ConfigT]):
     default_config: type[ConfigT]
 
-    def __init__(self, **kwargs: Any) -> None:
-        self.config = self.default_config(**kwargs)
+    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        self.config: ConfigT = self.default_config(**kwargs)
 
 
 class Service(Configurable[ConfigT], ABC):

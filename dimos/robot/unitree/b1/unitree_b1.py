@@ -92,9 +92,9 @@ class UnitreeB1(Robot, Resource):
 
         logger.info("Deploying connection module...")
         if self.test_mode:
-            self.connection = self._dimos.deploy(MockB1ConnectionModule, ip=self.ip, port=self.port)  # type: ignore[assignment]
+            self.connection = self._dimos.deploy(MockB1ConnectionModule, self.ip, self.port)  # type: ignore[assignment]
         else:
-            self.connection = self._dimos.deploy(B1ConnectionModule, ip=self.ip, port=self.port)  # type: ignore[assignment]
+            self.connection = self._dimos.deploy(B1ConnectionModule, self.ip, self.port)  # type: ignore[assignment]
 
         # Configure LCM transports for connection (matching G1 pattern)
         self.connection.cmd_vel.transport = LCMTransport("/cmd_vel", TwistStamped)  # type: ignore[attr-defined]

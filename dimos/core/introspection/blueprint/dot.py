@@ -31,7 +31,7 @@ from dimos.core.introspection.utils import (
     color_for_string,
     sanitize_id,
 )
-from dimos.core.module import ModuleBase
+from dimos.core.module import Module
 from dimos.utils.cli import theme
 
 
@@ -82,11 +82,11 @@ def render(
         ignored_modules = DEFAULT_IGNORED_MODULES
 
     # Collect all outputs: (name, type) -> list of producer modules
-    producers: dict[tuple[str, type], list[type[ModuleBase]]] = defaultdict(list)
+    producers: dict[tuple[str, type], list[type[Module]]] = defaultdict(list)
     # Collect all inputs: (name, type) -> list of consumer modules
-    consumers: dict[tuple[str, type], list[type[ModuleBase]]] = defaultdict(list)
+    consumers: dict[tuple[str, type], list[type[Module]]] = defaultdict(list)
     # Module name -> module class (for getting package info)
-    module_classes: dict[str, type[ModuleBase]] = {}
+    module_classes: dict[str, type[Module]] = {}
 
     for bp in blueprint_set.blueprints:
         module_classes[bp.module.__name__] = bp.module
@@ -117,7 +117,7 @@ def render(
         active_channels[key] = color_for_string(TYPE_COLORS, label)
 
     # Group modules by package
-    def get_group(mod_class: type[ModuleBase]) -> str:
+    def get_group(mod_class: type[Module]) -> str:
         module_path = mod_class.__module__
         parts = module_path.split(".")
         if len(parts) >= 2 and parts[0] == "dimos":

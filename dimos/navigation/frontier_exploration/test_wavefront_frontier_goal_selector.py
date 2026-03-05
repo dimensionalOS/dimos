@@ -262,7 +262,7 @@ def test_frontier_ranking(explorer) -> None:
         # Note: Goals might be closer than safe_distance if that's the best available frontier
         # The safe_distance is used for scoring, not as a hard constraint
         print(
-            f"Distance to obstacles: {obstacle_dist:.2f}m (safe distance: {explorer.config.safe_distance}m)"
+            f"Distance to obstacles: {obstacle_dist:.2f}m (safe distance: {explorer.safe_distance}m)"
         )
 
         print(f"Frontier ranking test passed - selected goal at ({goal1.x:.2f}, {goal1.y:.2f})")

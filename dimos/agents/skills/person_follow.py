@@ -14,7 +14,7 @@
 
 from threading import Event, RLock, Thread
 import time
-from typing import Any
+from typing import TYPE_CHECKING
 
 from langchain_core.messages import HumanMessage
 import numpy as np
@@ -23,12 +23,10 @@ from reactivex.disposable import Disposable
 from dimos.agents.agent import AgentSpec
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.global_config import GlobalConfig
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.models.qwen.bbox import BBox
-from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
-from dimos.models.vl.base import VlModel
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
@@ -37,15 +35,14 @@ from dimos.navigation.visual_servoing.detection_navigation import DetectionNavig
 from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
 from dimos.utils.logging_config import setup_logger
 
+if TYPE_CHECKING:
+    from dimos.models.segmentation.edge_tam import EdgeTAMProcessor
+    from dimos.models.vl.base import VlModel
+
 logger = setup_logger()
 
 
-class Config(ModuleConfig):
-    camera_info: CameraInfo
-    use_3d_navigation: bool = False
-
-
-class PersonFollowSkillContainer(Module[Config]):
+class PersonFollowSkillContainer(Module):
     """Skill container for following a person.
 
     This skill uses:
@@ -55,8 +52,6 @@ class PersonFollowSkillContainer(Module[Config]):
     - Does not do obstacle avoidance; assumes a clear path.
     """
 
-    default_config = Config
-
     color_image: In[Image]
     global_map: In[PointCloud2]
     cmd_vel: Out[Twist]
@@ -65,24 +60,30 @@ class PersonFollowSkillContainer(Module[Config]):
     _frequency: float = 20.0  # Hz - control loop frequency
     _max_lost_frames: int = 15  # number of frames to wait before declaring person lost
 
-    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: Any) -> None:
-        super().__init__(global_config, **kwargs)
+    def __init__(
+        self,
+        camera_info: CameraInfo,
+        cfg: GlobalConfig,
+        use_3d_navigation: bool = False,
+    ) -> None:
+        super().__init__()
+        self._global_config: GlobalConfig = cfg
+        self._use_3d_navigation: bool = use_3d_navigation
         self._latest_image: Image | None = None
         self._latest_pointcloud: PointCloud2 | None = None
-        # Use VlModel to keep usage in this class generic
-        self._vl_model: VlModel[Any] = QwenVlModel()
+        self._vl_model: VlModel = QwenVlModel()
         self._tracker: EdgeTAMProcessor | None = None
         self._thread: Thread | None = None
         self._should_stop: Event = Event()
         self._lock = RLock()
 
         # Use MuJoCo camera intrinsics in simulation mode
-        camera_info = self.config.camera_info
         if self._global_config.simulation:
             from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
             camera_info = MujocoConnection.camera_info_static
 
+        self._camera_info = camera_info
         self._visual_servo = VisualServoing2D(camera_info, self._global_config.simulation)
         self._detection_navigation = DetectionNavigation(self.tf, camera_info)
 
@@ -90,7 +91,7 @@ class PersonFollowSkillContainer(Module[Config]):
     def start(self) -> None:
         super().start()
         self._disposables.add(Disposable(self.color_image.subscribe(self._on_color_image)))
-        if self.config.use_3d_navigation:
+        if self._use_3d_navigation:
             self._disposables.add(Disposable(self.global_map.subscribe(self._on_pointcloud)))
 
     @rpc
@@ -229,7 +230,7 @@ class PersonFollowSkillContainer(Module[Config]):
                 lost_count = 0
                 best_detection = max(detections.detections, key=lambda d: d.bbox_2d_volume())
 
-                if self.config.use_3d_navigation:
+                if self._use_3d_navigation:
                     with self._lock:
                         pointcloud = self._latest_pointcloud
                     if pointcloud is None:

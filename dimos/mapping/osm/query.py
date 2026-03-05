@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import re
-from typing import Any
 
 from dimos.mapping.osm.osm import MapImage
 from dimos.mapping.types import LatLon
@@ -26,9 +25,7 @@ _JSON = "Please only respond with valid JSON."
 logger = setup_logger()
 
 
-def query_for_one_position(
-    vl_model: VlModel[Any], map_image: MapImage, query: str
-) -> LatLon | None:
+def query_for_one_position(vl_model: VlModel, map_image: MapImage, query: str) -> LatLon | None:
     full_query = f"{_PROLOGUE} {query} {_JSON} If there's a match return the x, y coordinates from the image. Example: `[123, 321]`. If there's no match return `null`."
     response = vl_model.query(map_image.image, full_query)
     coords = tuple(map(int, re.findall(r"\d+", response)))
@@ -38,7 +35,7 @@ def query_for_one_position(
 
 
 def query_for_one_position_and_context(
-    vl_model: VlModel[Any], map_image: MapImage, query: str, robot_position: LatLon
+    vl_model: VlModel, map_image: MapImage, query: str, robot_position: LatLon
 ) -> tuple[LatLon, str] | None:
     example = '{"coordinates": [123, 321], "description": "A Starbucks on 27th Street"}'
     x, y = map_image.latlon_to_pixel(robot_position)

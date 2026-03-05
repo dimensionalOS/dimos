@@ -17,6 +17,7 @@
 FakeZEDModule - Replays recorded ZED data for testing without hardware.
 """
 
+from dataclasses import dataclass
 import functools
 import logging
 
@@ -24,7 +25,6 @@ from dimos_lcm.sensor_msgs import CameraInfo
 import numpy as np
 
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs import PoseStamped
@@ -37,8 +37,8 @@ from dimos.utils.testing import TimedSensorReplay
 logger = setup_logger(level=logging.INFO)
 
 
+@dataclass
 class FakeZEDModuleConfig(ModuleConfig):
-    recording_path: str
     frame_id: str = "zed_camera"
 
 
@@ -54,17 +54,18 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
     pose: Out[PoseStamped]
 
     default_config = FakeZEDModuleConfig
+    config: FakeZEDModuleConfig
 
-    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: object) -> None:
+    def __init__(self, recording_path: str, **kwargs: object) -> None:
         """
         Initialize FakeZEDModule with recording path.
 
         Args:
             recording_path: Path to recorded data directory
         """
-        super().__init__(global_config, **kwargs)
+        super().__init__(**kwargs)
 
-        self.recording_path = self.config.recording_path
+        self.recording_path = recording_path
         self._running = False
 
         # Initialize TF publisher

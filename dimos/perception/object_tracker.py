@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 import threading
 import time
-from typing import Any
 
 import cv2
 
@@ -29,7 +29,6 @@ from numpy.typing import NDArray
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
@@ -52,10 +51,9 @@ from dimos.utils.transform_utils import (
 logger = setup_logger()
 
 
+@dataclass
 class ObjectTrackingConfig(ModuleConfig):
     frame_id: str = "camera_link"
-    reid_threshold: int = 10
-    reid_fail_tolerance: int = 5
 
 
 class ObjectTracking(Module[ObjectTrackingConfig]):
@@ -72,8 +70,11 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
     tracked_overlay: Out[Image]  # Visualization output
 
     default_config = ObjectTrackingConfig
+    config: ObjectTrackingConfig
 
-    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: Any) -> None:
+    def __init__(
+        self, reid_threshold: int = 10, reid_fail_tolerance: int = 5, **kwargs: object
+    ) -> None:
         """
         Initialize an object tracking module using OpenCV's CSRT tracker with ORB re-ID.
 
@@ -85,9 +86,11 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
                                  tracking is stopped.
         """
         # Call parent Module init
-        super().__init__(global_config, **kwargs)
+        super().__init__(**kwargs)
 
         self.camera_intrinsics = None
+        self.reid_threshold = reid_threshold
+        self.reid_fail_tolerance = reid_fail_tolerance
 
         self.tracker = None
         self.tracking_bbox = None  # Stores (x, y, w, h) for tracker initialization
@@ -273,7 +276,7 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
                         good_matches += 1
             self.last_good_matches = good_matches_list  # Store good matches for visualization
 
-        return good_matches >= self.config.reid_threshold
+        return good_matches >= self.reid_threshold
 
     def _start_tracking_thread(self) -> None:
         """Start the tracking thread."""
@@ -386,7 +389,7 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
 
         # Determine final success
         if tracker_succeeded:
-            if self.reid_fail_count >= self.config.reid_fail_tolerance:
+            if self.reid_fail_count >= self.reid_fail_tolerance:
                 logger.warning(
                     f"Re-ID failed consecutively {self.reid_fail_count} times. Target lost."
                 )
@@ -586,11 +589,11 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
                 f"REID: WARMING UP ({self.tracking_frame_count}/{self.reid_warmup_frames})"
             )
             status_color = (255, 255, 0)  # Yellow
-        elif len(self.last_good_matches) >= self.config.reid_threshold:
+        elif len(self.last_good_matches) >= self.reid_threshold:
             status_text = "REID: CONFIRMED"
             status_color = (0, 255, 0)  # Green
         else:
-            status_text = f"REID: WEAK ({self.reid_fail_count}/{self.config.reid_fail_tolerance})"
+            status_text = f"REID: WEAK ({self.reid_fail_count}/{self.reid_fail_tolerance})"
             status_color = (0, 165, 255)  # Orange
 
         cv2.putText(

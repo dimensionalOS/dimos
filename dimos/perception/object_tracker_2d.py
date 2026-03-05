@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 import logging
 import threading
 import time
-from typing import Any
 
 import cv2
 
@@ -33,7 +33,6 @@ from numpy.typing import NDArray
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs import Image, ImageFormat
@@ -44,6 +43,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger(level=logging.INFO)
 
 
+@dataclass
 class ObjectTracker2DConfig(ModuleConfig):
     frame_id: str = "camera_link"
 
@@ -57,10 +57,11 @@ class ObjectTracker2D(Module[ObjectTracker2DConfig]):
     tracked_overlay: Out[Image]  # Visualization output
 
     default_config = ObjectTracker2DConfig
+    config: ObjectTracker2DConfig
 
-    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: Any) -> None:
+    def __init__(self, **kwargs: object) -> None:
         """Initialize 2D object tracking module using OpenCV's CSRT tracker."""
-        super().__init__(global_config, **kwargs)
+        super().__init__(**kwargs)
 
         # Tracker state
         self.tracker = None

@@ -17,7 +17,6 @@ from typing import Any
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.mapping.google_maps.google_maps import GoogleMaps
@@ -33,8 +32,8 @@ class GoogleMapsSkillContainer(Module):
 
     gps_location: In[LatLon]
 
-    def __init__(self, global_config: GlobalConfig = global_config, **kwargs: Any) -> None:
-        super().__init__(global_config, **kwargs)
+    def __init__(self) -> None:
+        super().__init__()
         self._client = GoogleMaps()
         self._started = True
         self._max_valid_distance = 20000  # meters
