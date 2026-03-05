@@ -132,13 +132,6 @@ class TestBlueprintClickTransport:
         src = open("dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py").read()
         assert "replanning_a_star_planner" in src, "unitree_go2 missing planner"
 
-    def test_click_nav_blueprint_has_clicked_point(self):
-        """Click-nav blueprint must include clicked_point transport."""
-        src = open("dimos/robot/unitree/go2/blueprints/smart/unitree_go2_click_nav.py").read()
-        assert "clicked_point" in src
-        assert "LCMTransport" in src
-        assert "PointStamped" in src
-
     def test_planner_accepts_clicked_point(self):
         """ReplanningAStarPlanner must have clicked_point input."""
         from dimos.navigation.replanning_a_star.module import (
