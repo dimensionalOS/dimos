@@ -27,6 +27,21 @@ version = "0.0.10.post1"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
 readme = "README.md"
+license = {text = "Apache-2.0"}
+keywords = ["robotics", "ros", "autonomous", "ai", "agents", "dimos"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
 
 dependencies = [
     # Transport Protocols
@@ -78,6 +93,12 @@ dimos = "dimos.robot.cli.dimos:main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
 doclinks = "dimos.utils.docs.doclinks:main"
 dtop = "dimos.utils.cli.dtop:main"
+
+[project.urls]
+Homepage = "https://github.com/dimensionalOS/dimos"
+Repository = "https://github.com/dimensionalOS/dimos"
+Issues = "https://github.com/dimensionalOS/dimos/issues"
+Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
 misc = [
