@@ -123,12 +123,14 @@ class TestBridgeSpawnLogic:
 class TestBlueprintClickTransport:
     """Verify blueprints have clicked_point LCM transport."""
 
-    def test_unitree_go2_has_clicked_point(self):
-        """Main unitree_go2 blueprint must include clicked_point transport."""
+    def test_unitree_go2_has_planner(self):
+        """Main unitree_go2 blueprint must include replanning_a_star_planner.
+
+        The planner has clicked_point as an input, and autoconnect wires
+        it up with LCM transport automatically.
+        """
         src = open("dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py").read()
-        assert "clicked_point" in src, "unitree_go2 missing clicked_point"
-        assert "LCMTransport" in src, "unitree_go2 missing LCMTransport"
-        assert "PointStamped" in src, "unitree_go2 missing PointStamped"
+        assert "replanning_a_star_planner" in src, "unitree_go2 missing planner"
 
     def test_click_nav_blueprint_has_clicked_point(self):
         """Click-nav blueprint must include clicked_point transport."""

@@ -14,28 +14,18 @@
 # limitations under the License.
 
 from dimos.core.blueprints import autoconnect
-from dimos.core.transport import LCMTransport
 from dimos.mapping.costmapper import cost_mapper
 from dimos.mapping.voxels import voxel_mapper
-from dimos.msgs.geometry_msgs import PointStamped
 from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
 from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
-unitree_go2 = (
-    autoconnect(
-        unitree_go2_basic,
-        voxel_mapper(voxel_size=0.1),
-        cost_mapper(),
-        replanning_a_star_planner(),
-        wavefront_frontier_explorer(),
-    )
-    .transports(
-        {
-            ("clicked_point", PointStamped): LCMTransport("/clicked_point", PointStamped),
-        }
-    )
-    .global_config(n_workers=7, robot_model="unitree_go2")
-)
+unitree_go2 = autoconnect(
+    unitree_go2_basic,
+    voxel_mapper(voxel_size=0.1),
+    cost_mapper(),
+    replanning_a_star_planner(),
+    wavefront_frontier_explorer(),
+).global_config(n_workers=7, robot_model="unitree_go2")
 
 __all__ = ["unitree_go2"]
