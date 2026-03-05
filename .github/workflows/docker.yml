@@ -58,6 +58,8 @@ jobs:
 
             tests:
               - dimos/**
+              - pyproject.toml
+              - uv.lock
 
       - name: Determine Branch Tag
         id: set-tag
