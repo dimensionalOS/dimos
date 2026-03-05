@@ -28,7 +28,7 @@ description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
 readme = "README.md"
 license = {text = "Apache-2.0"}
-keywords = ["robotics", "ros", "autonomous", "ai", "agents", "dimos"]
+keywords = ["robotics", "ros", "agents", "dimos", "dimensional", "openclaw", "roboclaw", "humanoid", "unitree"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
