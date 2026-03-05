@@ -97,8 +97,19 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         if not self._client:
             raise ValueError("Not started")
 
-        docker_specs = [spec for spec in module_specs if is_docker_module(spec[0])]
-        worker_specs = [spec for spec in module_specs if not is_docker_module(spec[0])]
+        # Split by type, tracking original indices for reassembly
+        docker_indices: list[int] = []
+        worker_indices: list[int] = []
+        docker_specs: list[tuple[type[ModuleT], tuple[Any, ...], dict[str, Any]]] = []
+        worker_specs: list[tuple[type[ModuleT], tuple[Any, ...], dict[str, Any]]] = []
+        # the i is needed for maintaining order on the returned output
+        for i, spec in enumerate(module_specs):
+            if is_docker_module(spec[0]):
+                docker_indices.append(i)
+                docker_specs.append(spec)
+            else:
+                worker_indices.append(i)
+                worker_specs.append(spec)
 
         worker_results: list[Any] = []
         docker_results: list[Any] = []
@@ -112,12 +123,16 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
                         )
                     )
         finally:
-            results = worker_results + docker_results
+            # Reassemble results in original input order
+            results: list[Any] = [None] * len(module_specs)
+            for idx, mod in zip(worker_indices, worker_results, strict=False):
+                results[idx] = mod
+            for idx, mod in zip(docker_indices, docker_results, strict=False):
+                results[idx] = mod
             # Register whatever succeeded so stop() can clean them up
-            for (module_class, _, _), module in zip(
-                worker_specs + docker_specs, results, strict=False
-            ):
-                self._deployed_modules[module_class] = module
+            for spec, module in zip(module_specs, results, strict=False):
+                if module is not None:
+                    self._deployed_modules[spec[0]] = module
 
         return results
 
