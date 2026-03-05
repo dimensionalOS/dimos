@@ -67,6 +67,7 @@ class GlobalPlanner(Resource):
     _replan_goal_tolerance: float = 0.5
     _max_replan_attempts: int = 10
     _stuck_time_window: float = 8.0
+    _stuck_threshold: float = 0.4
     _max_path_deviation: float = 0.9
 
     def __init__(self, global_config: GlobalConfig) -> None:
@@ -78,7 +79,12 @@ class GlobalPlanner(Resource):
         self._local_planner = LocalPlanner(
             self._global_config, self._navigation_map, self._goal_tolerance
         )
-        self._position_tracker = PositionTracker(self._stuck_time_window)
+
+        stuck_threshold = self._stuck_threshold
+        if global_config.simulation:
+            stuck_threshold = 1.0
+
+        self._position_tracker = PositionTracker(self._stuck_time_window, stuck_threshold)
         self._replan_limiter = ReplanLimiter()
         self._disposables = CompositeDisposable()
         self._stop_planner = Event()
