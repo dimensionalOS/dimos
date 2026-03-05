@@ -1990,7 +1990,7 @@ requires-dist = [
     { name = "dimos", extras = ["dev"], marker = "extra == 'dds'" },
     { name = "dimos-lcm" },
     { name = "dimos-lcm", marker = "extra == 'docker'" },
-    { name = "dimos-viewer", marker = "extra == 'viewer'", specifier = ">=0.30.0a1" },
+    { name = "dimos-viewer", marker = "extra == 'viewer'", specifier = ">=0.30.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'manipulation'", specifier = "==1.45.0" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin' and extra == 'manipulation'", specifier = ">=1.40.0" },
     { name = "edgetam-dimos", marker = "extra == 'misc'" },
@@ -2151,11 +2151,15 @@ wheels = [
 
 [[package]]
 name = "dimos-viewer"
-version = "0.30.0a1"
+version = "0.30.0a2"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/85/92/fb718bc8c1050df8f99d0edcb79101a08549c2ce403fcca78609b12c5a30/dimos_viewer-0.30.0a1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:69a5f12810e4efd2cf4c3c9214a5fa9bc71a027c486f2a742d34ac8337e6a5df", size = 34623892, upload-time = "2026-03-04T18:56:43.646Z" },
-    { url = "https://files.pythonhosted.org/packages/76/aa/f394c6579a4871780752b66b7425a4189a709b11014d7a87e0af1e3ceefb/dimos_viewer-0.30.0a1-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:e33492ff1f2877a562b0748d5c39e69ae469732abac4ed5b872c8259b649ab5b", size = 40671671, upload-time = "2026-03-04T18:56:47.227Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/c0/97ed394f078e3e50a55076a86517bf422f75e75f0f85ccfae824c00877b9/dimos_viewer-0.30.0a2-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:2e64a509d617a4111106b661073e8ef7f416a1007a4c273bc2b6687128c63861", size = 34622193, upload-time = "2026-03-04T22:11:54.575Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/8e/75113b27ec4e63e42e361fd5acd09b65c17a8c67963b745834ecbece0004/dimos_viewer-0.30.0a2-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:600dcb51bbdb239b57c6826493b45ae0fab6b760d42350fca849f1815a6c4b85", size = 40670030, upload-time = "2026-03-04T22:11:57.509Z" },
+    { url = "https://files.pythonhosted.org/packages/86/05/d92d21223d0e3c0b51c264fb4ab1575eae7e76e776279ff7d2ba28291152/dimos_viewer-0.30.0a2-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:5a1f1f0e2dd9f6977903ec33cddfcad18f48c670d10bcb0a5313bd211f323d6e", size = 34622193, upload-time = "2026-03-04T22:12:00.467Z" },
+    { url = "https://files.pythonhosted.org/packages/96/ea/e49443c35d8fdbdcbcfbcdbc7a96a19dd28c15a2ac70b94baad1d4dda862/dimos_viewer-0.30.0a2-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:b936d624708afe4795e1b88fed908576252435a2419b037da2de7c558590a870", size = 40669950, upload-time = "2026-03-04T22:12:05.088Z" },
+    { url = "https://files.pythonhosted.org/packages/44/bc/88d4ecaf1e013b4125d860be20b4194545bd83436268835847e5d556b589/dimos_viewer-0.30.0a2-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:559cfb985028e7acf956ac98432693211459733221c87b8be920d0eb04eb6510", size = 34622194, upload-time = "2026-03-04T21:20:09.199Z" },
+    { url = "https://files.pythonhosted.org/packages/89/cd/28f099b33fd9d6487d849f47409721f9dde7d7435571b06030d8757852af/dimos_viewer-0.30.0a2-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:684c15c66bd32b0f065dda79cef582356975972f7f0e0c5337ec621d34481e2b", size = 40670051, upload-time = "2026-03-04T21:20:13.039Z" },
 ]
 
 [[package]]

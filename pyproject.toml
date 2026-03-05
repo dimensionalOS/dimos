@@ -81,7 +81,7 @@ dtop = "dimos.utils.cli.dtop:main"
 
 [project.optional-dependencies]
 viewer = [
-    "dimos-viewer>=0.30.0a1",
+    "dimos-viewer>=0.30.0a2",
 ]
 misc = [
     # Core requirements
