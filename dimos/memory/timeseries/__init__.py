@@ -16,7 +16,7 @@
 from dimos.memory.timeseries.base import TimeSeriesStore
 from dimos.memory.timeseries.inmemory import InMemoryStore
 from dimos.memory.timeseries.pickledir import PickleDirStore
-from dimos.memory.timeseries.sqlite import SqliteStore
+from dimos.memory.timeseries.sqlite import SqliteTSStore
 
 
 def __getattr__(name: str):  # type: ignore[no-untyped-def]
@@ -35,7 +35,7 @@ __all__ = [
     "InMemoryStore",
     "PickleDirStore",
     "PostgresStore",
-    "SqliteStore",
+    "SqliteTSStore",
     "TimeSeriesStore",
     "reset_db",
 ]

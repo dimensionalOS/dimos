@@ -24,7 +24,7 @@ from dimos.memory.timeseries.base import TimeSeriesStore
 from dimos.memory.timeseries.inmemory import InMemoryStore
 from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.memory.timeseries.pickledir import PickleDirStore
-from dimos.memory.timeseries.sqlite import SqliteStore
+from dimos.memory.timeseries.sqlite import SqliteTSStore
 from dimos.types.timestamped import Timestamped
 
 
@@ -60,7 +60,7 @@ def make_pickle_dir_store(tmpdir: str) -> TimeSeriesStore[SampleData]:
 
 
 def make_sqlite_store(tmpdir: str) -> TimeSeriesStore[SampleData]:
-    return SqliteStore[SampleData](Path(tmpdir) / "test.db")
+    return SqliteTSStore[SampleData](Path(tmpdir) / "test.db")
 
 
 def make_legacy_pickle_store(tmpdir: str) -> TimeSeriesStore[SampleData]:
@@ -71,7 +71,7 @@ def make_legacy_pickle_store(tmpdir: str) -> TimeSeriesStore[SampleData]:
 testdata: list[tuple[object, str]] = [
     (lambda _: make_in_memory_store(), "InMemoryStore"),
     (lambda tmpdir: make_pickle_dir_store(tmpdir), "PickleDirStore"),
-    (lambda tmpdir: make_sqlite_store(tmpdir), "SqliteStore"),
+    (lambda tmpdir: make_sqlite_store(tmpdir), "SqliteTSStore"),
     (lambda tmpdir: make_legacy_pickle_store(tmpdir), "LegacyPickleStore"),
 ]
 

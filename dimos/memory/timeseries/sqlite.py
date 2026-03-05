@@ -37,24 +37,24 @@ def _validate_identifier(name: str) -> str:
     return name
 
 
-class SqliteStore(TimeSeriesStore[T]):
+class SqliteTSStore(TimeSeriesStore[T]):
     """SQLite backend for sensor data. Good for indexed queries and single-file storage.
 
     Data is stored as pickled BLOBs with timestamp as indexed column.
 
     Usage:
         # Named store (uses data/ directory, auto-downloads from LFS if needed)
-        store = SqliteStore("recordings/lidar")  # -> data/recordings/lidar.db
+        store = SqliteTSStore("recordings/lidar")  # -> data/recordings/lidar.db
         store.save(data)  # saves using data.ts
 
         # Absolute path
-        store = SqliteStore("/path/to/sensors.db")
+        store = SqliteTSStore("/path/to/sensors.db")
 
         # In-memory (for testing)
-        store = SqliteStore(":memory:")
+        store = SqliteTSStore(":memory:")
 
         # Multiple tables in one DB
-        store = SqliteStore("recordings/sensors", table="lidar")
+        store = SqliteTSStore("recordings/sensors", table="lidar")
     """
 
     def __init__(self, name: str | Path, table: str = "sensor_data") -> None:

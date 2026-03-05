@@ -1,7 +1,9 @@
 # Questions
 
 1. "where was I when this log line was added?"
-- pose lookup from a timestamp
+- pose lookup, corelating to log lines found
+- assume log line has a pose associated
+- assume there are multiple log lines matching a search
 
 2. "how long have I been observing the red socks currently in view?"
 - how many times did I see them before?
