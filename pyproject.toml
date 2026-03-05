@@ -26,7 +26,7 @@ authors = [
 version = "0.0.10.post1"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
-readme = "README.md"
+readme = {file = "README.md", content-type = "text/markdown"}
 license = {text = "Apache-2.0"}
 keywords = ["robotics", "ros", "agents", "dimos", "dimensional", "openclaw", "roboclaw", "humanoid", "unitree"]
 classifiers = [
@@ -41,6 +41,10 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
 ]
 
 dependencies = [
@@ -95,7 +99,7 @@ doclinks = "dimos.utils.docs.doclinks:main"
 dtop = "dimos.utils.cli.dtop:main"
 
 [project.urls]
-Homepage = "https://github.com/dimensionalOS/dimos"
+Homepage = "https://dimensionalos.com"
 Repository = "https://github.com/dimensionalOS/dimos"
 Issues = "https://github.com/dimensionalOS/dimos/issues"
 Changelog = "https://github.com/dimensionalOS/dimos/releases"
