@@ -19,6 +19,7 @@ from dimos.mapping.voxels import voxel_mapper
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     wavefront_frontier_explorer,
 )
+from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
@@ -28,6 +29,7 @@ unitree_go2 = autoconnect(
     cost_mapper(),
     replanning_a_star_planner(),
     wavefront_frontier_explorer(),
+    PatrollingModule.blueprint(),
 ).global_config(n_workers=7, robot_model="unitree_go2")
 
 __all__ = ["unitree_go2"]

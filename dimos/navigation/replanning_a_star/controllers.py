@@ -104,12 +104,12 @@ class PController:
         return velocity
 
     def _angular_twist(self, angular_velocity: float) -> Twist:
-        # In simulation, add a small forward velocity to help the locomotion
-        # policy execute rotation (some policies don't handle pure in-place rotation).
-        linear_x = 0.18 if self._global_config.simulation else 0.0
+        # In simulation, we need stroger values
+        if self._global_config.simulation and abs(angular_velocity) < 0.8:
+            angular_velocity = 0.8 * np.sign(angular_velocity)
 
         return Twist(
-            linear=Vector3(linear_x, 0.0, 0.0),
+            linear=Vector3(0.0, 0.0, 0.0),
             angular=Vector3(0.0, 0.0, angular_velocity),
         )
 

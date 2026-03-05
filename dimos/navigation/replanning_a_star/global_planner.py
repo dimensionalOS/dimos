@@ -60,13 +60,14 @@ class GlobalPlanner(Resource):
     _replan_event: Event
     _replan_reason: StopMessage | None
     _lock: RLock
+    _safe_goal_clearance: float
 
     _safe_goal_tolerance: float = 4.0
     _goal_tolerance: float = 0.2
     _rotation_tolerance: float = math.radians(15)
     _replan_goal_tolerance: float = 0.5
-    _max_replan_attempts: int = 10
     _stuck_time_window: float = 8.0
+    _stuck_threshold: float = 0.4
     _max_path_deviation: float = 0.9
 
     def __init__(self, global_config: GlobalConfig) -> None:
@@ -78,13 +79,19 @@ class GlobalPlanner(Resource):
         self._local_planner = LocalPlanner(
             self._global_config, self._navigation_map, self._goal_tolerance
         )
-        self._position_tracker = PositionTracker(self._stuck_time_window)
+
+        stuck_threshold = self._stuck_threshold
+        if global_config.simulation:
+            stuck_threshold = 1.0
+
+        self._position_tracker = PositionTracker(self._stuck_time_window, stuck_threshold)
         self._replan_limiter = ReplanLimiter()
         self._disposables = CompositeDisposable()
         self._stop_planner = Event()
         self._replan_event = Event()
         self._replan_reason = None
         self._lock = RLock()
+        self._reset_safe_goal_clearance()
 
     def start(self) -> None:
         self._local_planner.start()
@@ -126,6 +133,13 @@ class GlobalPlanner(Resource):
         self._replan_limiter.reset()
         self._plan_path()
 
+    def set_safe_goal_clearance(self, clearance: float) -> None:
+        with self._lock:
+            self._safe_goal_clearance = clearance
+
+    def reset_safe_goal_clearance(self) -> None:
+        self._reset_safe_goal_clearance()
+
     def cancel_goal(self, *, but_will_try_again: bool = False, arrived: bool = False) -> None:
         logger.info("Cancelling goal.", but_will_try_again=but_will_try_again, arrived=arrived)
 
@@ -142,6 +156,10 @@ class GlobalPlanner(Resource):
 
         if not but_will_try_again:
             self.goal_reached.on_next(Bool(arrived))
+
+    def set_replanning_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._replanning_enabled = enabled
 
     def get_state(self) -> NavigationState:
         return self._local_planner.get_state()
@@ -267,6 +285,10 @@ class GlobalPlanner(Resource):
             self.cancel_goal(arrived=True)
             return
 
+        if not self._replanning_enabled:
+            self.cancel_goal()
+            return
+
         if not self._replan_limiter.can_retry(current_odom.position):
             self.cancel_goal()
             return
@@ -291,6 +313,10 @@ class GlobalPlanner(Resource):
         safe_goal = self._find_safe_goal(current_goal.position)
 
         if not safe_goal:
+            logger.warning(
+                "No safe goal found.", x=round(current_goal.x, 3), y=round(current_goal.y, 3)
+            )
+            self.cancel_goal()
             return
 
         path = self._find_wide_path(safe_goal, current_odom.position)
@@ -299,6 +325,7 @@ class GlobalPlanner(Resource):
             logger.warning(
                 "No path found to the goal.", x=round(safe_goal.x, 3), y=round(safe_goal.y, 3)
             )
+            self.cancel_goal()
             return
 
         resampled_path = smooth_resample_path(path, current_goal, 0.1)
@@ -331,7 +358,7 @@ class GlobalPlanner(Resource):
             goal,
             algorithm="bfs_contiguous",
             cost_threshold=CostValues.OCCUPIED,
-            min_clearance=self._global_config.robot_rotation_diameter / 2,
+            min_clearance=self._safe_goal_clearance,
             max_search_distance=self._safe_goal_tolerance,
         )
 
@@ -346,3 +373,7 @@ class GlobalPlanner(Resource):
         logger.info("Found safe goal.", x=round(safe_goal.x, 2), y=round(safe_goal.y, 2))
 
         return safe_goal
+
+    def _reset_safe_goal_clearance(self) -> None:
+        with self._lock:
+            self._safe_goal_clearance = self._global_config.robot_rotation_diameter / 2
