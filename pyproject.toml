@@ -63,6 +63,7 @@ dependencies = [
     # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
     # remove this once rerun is optional in core
     "rerun-sdk>=0.20.0",
+    "dimos-viewer>=0.30.0a2",
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
@@ -80,9 +81,6 @@ doclinks = "dimos.utils.docs.doclinks:main"
 dtop = "dimos.utils.cli.dtop:main"
 
 [project.optional-dependencies]
-viewer = [
-    "dimos-viewer>=0.30.0a2",
-]
 misc = [
     # Core requirements
     "cerebras-cloud-sdk",
@@ -127,6 +125,7 @@ misc = [
 
 visualization = [
     "rerun-sdk>=0.20.0",
+    "dimos-viewer>=0.30.0a2",
 ]
 
 agents = [

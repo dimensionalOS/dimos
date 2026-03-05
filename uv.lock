@@ -1683,6 +1683,7 @@ dependencies = [
     { name = "annotation-protocol" },
     { name = "colorlog" },
     { name = "dimos-lcm" },
+    { name = "dimos-viewer" },
     { name = "lazy-loader" },
     { name = "llvmlite" },
     { name = "numba" },
@@ -1731,6 +1732,7 @@ agents = [
 base = [
     { name = "anthropic" },
     { name = "bitsandbytes", marker = "sys_platform == 'linux'" },
+    { name = "dimos-viewer" },
     { name = "fastapi" },
     { name = "ffmpeg-python" },
     { name = "filterpy" },
@@ -1928,6 +1930,7 @@ sim = [
 unitree = [
     { name = "anthropic" },
     { name = "bitsandbytes", marker = "sys_platform == 'linux'" },
+    { name = "dimos-viewer" },
     { name = "fastapi" },
     { name = "ffmpeg-python" },
     { name = "filterpy" },
@@ -1958,10 +1961,8 @@ unitree = [
     { name = "unitree-webrtc-connect-leshy" },
     { name = "uvicorn" },
 ]
-viewer = [
-    { name = "dimos-viewer" },
-]
 visualization = [
+    { name = "dimos-viewer" },
     { name = "rerun-sdk" },
 ]
 web = [
@@ -1990,7 +1991,8 @@ requires-dist = [
     { name = "dimos", extras = ["dev"], marker = "extra == 'dds'" },
     { name = "dimos-lcm" },
     { name = "dimos-lcm", marker = "extra == 'docker'" },
-    { name = "dimos-viewer", marker = "extra == 'viewer'", specifier = ">=0.30.0a2" },
+    { name = "dimos-viewer", specifier = ">=0.30.0a2" },
+    { name = "dimos-viewer", marker = "extra == 'visualization'", specifier = ">=0.30.0a2" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform == 'darwin' and extra == 'manipulation'", specifier = "==1.45.0" },
     { name = "drake", marker = "platform_machine != 'aarch64' and sys_platform != 'darwin' and extra == 'manipulation'", specifier = ">=1.40.0" },
     { name = "edgetam-dimos", marker = "extra == 'misc'" },
@@ -2132,7 +2134,7 @@ requires-dist = [
     { name = "xformers", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=0.0.20" },
     { name = "yapf", marker = "extra == 'misc'", specifier = "==0.40.2" },
 ]
-provides-extras = ["viewer", "misc", "visualization", "agents", "web", "perception", "unitree", "manipulation", "cpu", "cuda", "dev", "psql", "sim", "drone", "dds", "docker", "base"]
+provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "manipulation", "cpu", "cuda", "dev", "psql", "sim", "drone", "dds", "docker", "base"]
 
 [[package]]
 name = "dimos-lcm"
