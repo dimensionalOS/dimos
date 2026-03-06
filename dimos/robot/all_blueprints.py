@@ -87,6 +87,7 @@ all_blueprints = {
     "xarm7-planner-coordinator": "dimos.manipulation.manipulation_blueprints:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.manipulation.manipulation_blueprints:xarm7_planner_coordinator_agent",
     "xarm7-trajectory-sim": "dimos.simulation.sim_blueprints:xarm7_trajectory_sim",
+    "agibot-nav-test": "dimos.robot.agibot.blueprints.test.agibot_nav_test:agibot_nav_test",
 }
 
 
