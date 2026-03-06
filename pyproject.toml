@@ -192,7 +192,13 @@ perception = [
 
 unitree = [
     "dimos[base]",
-    "unitree-webrtc-connect-leshy>=2.0.7"
+    "unitree-webrtc-connect-leshy>=2.0.7",
+]
+
+unitree-dds = [
+    "dimos[unitree]",
+    "unitree-sdk2py-dimos>=1.0.1",
+    "cyclonedds>=0.10.5",
 ]
 
 manipulation = [
@@ -403,6 +409,7 @@ module = [
     "tf2_msgs.*",
     "torchreid",
     "ultralytics.*",
+    "unitree_sdk2py.*",
     "unitree_webrtc_connect.*",
     "xarm.*",
 ]

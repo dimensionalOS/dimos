@@ -183,7 +183,7 @@ class UnitreeWebRTCConnection(Resource):
             self.stop_timer.cancel()
 
         # Auto-stop after 0.5 seconds if no new commands
-        self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop)
+        self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop_movement)
         self.stop_timer.daemon = True
         self.stop_timer.start()
 
@@ -193,7 +193,7 @@ class UnitreeWebRTCConnection(Resource):
                 future = asyncio.run_coroutine_threadsafe(async_move_duration(), self.loop)
                 future.result()
                 # Stop after duration
-                self.stop()
+                self.stop_movement()
             else:
                 # Single command for continuous movement
                 future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
@@ -277,6 +277,16 @@ class UnitreeWebRTCConnection(Resource):
     def standup(self) -> bool:
         return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]}))
 
+    def balance_stand(self) -> bool:
+        """Activate BalanceStand mode — enables WIRELESS_CONTROLLER joystick commands."""
+        return bool(
+            self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
+        )
+
+    def free_walk(self) -> bool:
+        """Activate FreeWalk locomotion mode — enables walking and velocity commands."""
+        return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["FreeWalk"]}))
+
     def liedown(self) -> bool:
         return bool(
             self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
@@ -349,17 +359,11 @@ class UnitreeWebRTCConnection(Resource):
         """
         return self.video_stream()  # type: ignore[no-any-return]
 
-    def stop(self) -> bool:  # type: ignore[no-redef]
-        """Stop the robot's movement.
-
-        Returns:
-            bool: True if stop command was sent successfully
-        """
-        # Cancel timer since we're explicitly stopping
+    def stop_movement(self) -> None:
+        """Cancel the auto-stop timer (used by move() for continuous commands)."""
         if self.stop_timer:
             self.stop_timer.cancel()
             self.stop_timer = None
-        return True
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""
