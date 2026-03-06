@@ -16,8 +16,21 @@ RUN apt-get update && apt-get install -y \
     wget \
     net-tools \
     sudo \
-    pre-commit
+    pre-commit \
+    cmake \
+    build-essential
 
+# Build CycloneDDS 0.10.5 from source (Ubuntu 22.04 apt only has ~0.9.x,
+# but the Python cyclonedds package requires >=0.10.5 headers)
+RUN git clone --branch 0.10.5 --depth 1 https://github.com/eclipse-cyclonedds/cyclonedds.git /tmp/cyclonedds && \
+    mkdir /tmp/cyclonedds/build && \
+    cd /tmp/cyclonedds/build && \
+    cmake -DCMAKE_INSTALL_PREFIX=/opt/cyclonedds .. && \
+    cmake --build . --parallel $(nproc) && \
+    cmake --install . && \
+    rm -rf /tmp/cyclonedds
+
+ENV CYCLONEDDS_HOME=/opt/cyclonedds
 
 # Configure git to trust any directory (resolves dubious ownership issues in containers)
 RUN git config --global --add safe.directory '*'
