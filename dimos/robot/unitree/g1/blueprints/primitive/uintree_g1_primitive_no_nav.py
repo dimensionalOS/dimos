@@ -84,9 +84,9 @@ if global_config.viewer_backend == "foxglove":
 
     _with_vis = autoconnect(foxglove_bridge())
 elif global_config.viewer_backend.startswith("rerun"):
-    from dimos.visualization.rerun.bridge import rerun_bridge
+    from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
 
-    _with_vis = autoconnect(rerun_bridge(**rerun_config))
+    _with_vis = autoconnect(rerun_bridge(viewer_mode=_resolve_viewer_mode(), **rerun_config))
 else:
     _with_vis = autoconnect()
 
