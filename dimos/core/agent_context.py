@@ -67,7 +67,6 @@ def generate_context(
         "dimos status              # show running instance",
         "dimos stop                # stop the instance",
         "dimos stop --force        # force kill (SIGKILL)",
-        "dimos restart             # restart with same args",
         "dimos mcp list-tools      # list available MCP tools",
         "dimos mcp call <tool>     # call a tool",
         "dimos mcp status          # module/skill info via MCP",
@@ -89,7 +88,9 @@ def generate_context(
     lines.append("")
     lines.append("Use `dimos mcp list-tools` for full schema, or call via:")
     lines.append("```")
-    lines.append('curl -s localhost:9990/mcp -d \'{"jsonrpc":"2.0","id":1,"method":"tools/list"}\'')
+    lines.append(
+        f'curl -s localhost:{mcp_port}/mcp -d \'{"jsonrpc":"2.0","id":1,"method":"tools/list"}\''
+    )
     lines.append("```")
     lines.append("")
 

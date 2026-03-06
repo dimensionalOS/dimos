@@ -340,7 +340,13 @@ def mcp_call_tool(
             arguments[key] = value
 
     result = _mcp_call("tools/call", {"name": tool_name, "arguments": arguments})
+    if "error" in result:
+        typer.echo(f"Error: {result['error'].get('message', 'unknown error')}", err=True)
+        raise typer.Exit(1)
     content = result.get("result", {}).get("content", [])
+    if not content:
+        typer.echo("No output from tool", err=True)
+        raise typer.Exit(1)
     for item in content:
         typer.echo(item.get("text", str(item)))
 

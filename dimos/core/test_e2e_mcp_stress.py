@@ -72,14 +72,15 @@ def mcp_blueprint():
 
 
 @pytest.fixture()
-def mcp_entry(mcp_blueprint):
+def mcp_entry(mcp_blueprint, tmp_path):
     """Create registry entry for the running blueprint."""
+    log_dir = tmp_path / "stress-logs"
     entry = RunEntry(
         run_id=f"stress-{datetime.now(timezone.utc).strftime('%H%M%S%f')}",
         pid=os.getpid(),
         blueprint="stress-test",
         started_at=datetime.now(timezone.utc).isoformat(),
-        log_dir="/tmp/dimos-stress-test",
+        log_dir=str(log_dir),
         cli_args=["stress-test"],
         config_overrides={"n_workers": 1},
     )
@@ -209,11 +210,14 @@ class TestMCPLifecycle:
         assert "StressTestModule" in modules
         assert "echo" in modules["StressTestModule"]
 
-    def test_mcp_dead_after_stop(self, mcp_blueprint):
+    def test_mcp_dead_after_stop(self):
         """After coordinator.stop(), MCP should stop responding."""
-        assert _wait_for_mcp()
+        global_config.update(viewer_backend="none", n_workers=1)
+        bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
+        coord = bp.build()
+        assert _wait_for_mcp(), "MCP server did not start"
 
-        mcp_blueprint.stop()
+        coord.stop()
         assert _wait_for_mcp_down(), "MCP server did not stop"
 
 
