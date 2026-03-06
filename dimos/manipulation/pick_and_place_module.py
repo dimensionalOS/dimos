@@ -245,10 +245,58 @@ class PickAndPlaceModule(ManipulationModule):
         """Generate grasp poses for the given point cloud via GraspGen Docker module."""
         try:
             graspgen = self._get_graspgen()
-            return graspgen.generate_grasps(pointcloud, scene_pointcloud)  # type: ignore[no-any-return]
+            return graspgen.generate_grasps(pointcloud, scene_pointcloud, rpc_timeout=300)  # type: ignore[no-any-return]
         except Exception as e:
             logger.error(f"Grasp generation failed: {e}")
             return None
+
+    @rpc
+    def visualize_grasps(
+        self,
+        poses: list[Pose],
+        max_grasps: int = 100,
+    ) -> bool:
+        """Render grasp candidates as gripper wireframes in MeshCat."""
+        import numpy as np
+        from pydrake.geometry import Box, Rgba
+        from pydrake.math import RigidTransform
+
+        from dimos.manipulation.grasping import visualize_grasps as viz_grasps
+        from dimos.msgs.geometry_msgs import Transform
+
+        meshcat = self._world_monitor.world._meshcat
+
+        W = viz_grasps.GRIPPER_WIDTH / 2.0
+        FL = viz_grasps.FINGER_LENGTH
+        PD = viz_grasps.PALM_DEPTH
+        TUBE = 0.004
+
+        parts = [
+            ("palm", Box(W * 2, TUBE, TUBE), [0, 0, -FL]),
+            ("left", Box(TUBE, TUBE, FL * 1.25), [-W, 0, -0.375 * FL]),
+            ("right", Box(TUBE, TUBE, FL * 1.25), [W, 0, -0.375 * FL]),
+            ("approach", Box(TUBE, TUBE, PD), [0, 0, -FL - PD / 2]),
+        ]
+
+        meshcat.Delete("grasps")
+
+        num = min(len(poses), max_grasps)
+        for i in range(num):
+            t = i / max(num - 1, 1)
+            rgba = Rgba(min(1.0, 2 * t), max(0.0, 1.0 - t), 0.0, 0.8)
+            grasp_mat = Transform(
+                translation=poses[i].position,
+                rotation=poses[i].orientation,
+            ).to_matrix()
+            for name, shape, xyz in parts:
+                local = np.eye(4)
+                local[:3, 3] = xyz
+                path = f"grasps/grasp_{i}/{name}"
+                meshcat.SetObject(path, shape, rgba)
+                meshcat.SetTransform(path, RigidTransform(grasp_mat @ local))
+
+        logger.info(f"Visualized {num}/{len(poses)} grasp poses in MeshCat")
+        return True
 
     # =========================================================================
     # Pick/Place Helpers

@@ -21,6 +21,7 @@ all_blueprints = {
     "arm-teleop-piper": "dimos.teleop.quest.blueprints:arm_teleop_piper",
     "arm-teleop-visualizing": "dimos.teleop.quest.blueprints:arm_teleop_visualizing",
     "arm-teleop-xarm7": "dimos.teleop.quest.blueprints:arm_teleop_xarm7",
+    "bt-pick-place-agent": "dimos.manipulation.manipulation_blueprints:bt_pick_place_agent",
     "coordinator-basic": "dimos.control.blueprints:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.control.blueprints:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.control.blueprints:coordinator_cartesian_ik_piper",

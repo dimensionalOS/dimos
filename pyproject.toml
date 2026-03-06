@@ -84,6 +84,8 @@ dependencies = [
     "rerun-sdk>=0.20.0",
     "dimos-viewer>=0.30.0a2",
     "toolz>=1.1.0",
+    # Behavior Trees
+    "py-trees>=2.2,<3",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
 ]

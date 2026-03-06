@@ -36,11 +36,13 @@ from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense import realsense_camera
+from dimos.manipulation.bt.pick_place_module import PickPlaceModule
 from dimos.manipulation.manipulation_module import manipulation_module
 from dimos.manipulation.pick_and_place_module import pick_and_place_module
 from dimos.manipulation.planning.spec import RobotModelConfig
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import JointState
+from dimos.perception.detection.detectors.yoloe import YoloePromptMode
 from dimos.perception.object_scene_registration import object_scene_registration_module
 from dimos.robot.foxglove_bridge import foxglove_bridge  # TODO: migrate to rerun
 from dimos.utils.data import get_data
@@ -220,6 +222,13 @@ def _make_xarm7_config(
     if add_gripper:
         xacro_args["add_gripper"] = "true"
 
+    # xArm7 joint limits from URDF (xarm7.urdf.xacro with limited=true)
+    # Without these, the planner defaults to +- pi which rejects valid joint
+    # positions beyond 3.14 rad (joints 1,3,5,7 go to +- 2Pi).
+    _TWO_PI = 2.0 * math.pi
+    joint_limits_lower = [-_TWO_PI, -2.059, -_TWO_PI, -0.19198, -_TWO_PI, -1.69297, -_TWO_PI]
+    joint_limits_upper = [_TWO_PI, 2.0944, _TWO_PI, 3.927, _TWO_PI, math.pi, _TWO_PI]
+
     return RobotModelConfig(
         name=name,
         urdf_path=_get_xarm_urdf_path(),
@@ -237,6 +246,8 @@ def _make_xarm7_config(
         coordinator_task_name=coordinator_task,
         gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=tf_extra_links or [],
+        joint_limits_lower=joint_limits_lower,
+        joint_limits_upper=joint_limits_upper,
         # Home configuration: arm extended forward, elbow up (safe observe pose)
         home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
@@ -417,13 +428,23 @@ xarm_perception = (
             ],
             planning_timeout=10.0,
             enable_viz=True,
+            graspgen_topk_num_grasps=400,
+            graspgen_save_visualization_data=True,
         ),
         realsense_camera(
             base_frame_id="link7",
             base_transform=_XARM_PERCEPTION_CAMERA_TRANSFORM,
         ),
-        object_scene_registration_module(target_frame="world"),
-        foxglove_bridge(),  # TODO: migrate to rerun
+        object_scene_registration_module(target_frame="world", prompt_mode=YoloePromptMode.PROMPT),
+        foxglove_bridge(
+            shm_channels=[
+                "/image#sensor_msgs.Image",
+                "/overlay#foxglove_msgs.ImageAnnotations",
+                "/pointcloud#sensor_msgs.PointCloud2",
+                "/lidar#sensor_msgs.PointCloud2",
+                "/map#sensor_msgs.PointCloud2",
+            ],
+        ),
     )
     .transports(
         {
@@ -471,10 +492,43 @@ xarm_perception_agent = autoconnect(
     Agent.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
 
+_BT_AGENT_SYSTEM_PROMPT = """\
+You are a robotic manipulation assistant controlling an xArm7 robot arm.
+
+Available skills:
+- pick: Pick up an object by name. Uses DL-based grasp generation with retry and verification. \
+The BT automatically scans and detects the object.
+- place: Place a held object at x, y, z position (meters, world frame).
+- place_back: ONLY when user says "put it back" or "return the object". \
+Releases the object at its original pick position.
+- pick_and_place: Pick an object and place it at target location.
+- go_home: Move arm to home/safe position. Use for "come back", "go back", \
+"return home", "come here". Keeps held object — does NOT release it.
+- stop: Emergency stop — cancels motion and opens gripper.
+
+IMPORTANT: "come back", "go back", "return" = go_home (keeps object). \
+"put it back", "return the object" = place_back (releases object). \
+When in doubt, use go_home.
+
+Workflow: Just call pick with the object name — the BT handles scanning automatically. \
+If the user mentions a named location (e.g. "the box"), ask for or remember its \
+coordinates from conversation and use place(x, y, z) directly. \
+Do NOT sequence low-level operations. Use pick/place for all manipulation.
+For robot_name parameters, always omit or pass None (single-arm setup).
+"""
+
+# BT Agent mode, DL grasps via GraspGen Docker (requires GPU + Docker build)
+bt_pick_place_agent = autoconnect(
+    xarm_perception,
+    PickPlaceModule.blueprint(),
+    Agent.blueprint(system_prompt=_BT_AGENT_SYSTEM_PROMPT),
+)
+
 
 __all__ = [
     "PIPER_GRIPPER_COLLISION_EXCLUSIONS",
     "XARM_GRIPPER_COLLISION_EXCLUSIONS",
+    "bt_pick_place_agent",
     "dual_xarm6_planner",
     "xarm6_planner_only",
     "xarm7_planner_coordinator",

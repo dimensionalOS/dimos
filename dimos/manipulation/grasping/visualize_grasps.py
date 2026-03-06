@@ -26,7 +26,7 @@ GRIPPER_WIDTH = 0.086
 FINGER_LENGTH = 0.052
 PALM_DEPTH = 0.04
 MAX_GRASPS = 100
-VISUALIZATION_FILE = "/tmp/grasp_visualization.json"
+VISUALIZATION_FILE = str(Path.home() / ".dimos" / "graspgen" / "visualization.json")
 
 
 def create_gripper_geometry(transform: np.ndarray[Any, Any], color: list[float]) -> list[Any]:

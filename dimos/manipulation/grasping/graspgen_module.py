@@ -92,7 +92,14 @@ class GraspGenModule(Module[GraspGenConfig]):
         """Generate grasp poses for the given pointcloud."""
         try:
             points = self._extract_points(pointcloud)
+            logger.info(
+                f"[GraspGenModule] Input pointcloud: {len(points)} points, "
+                f"frame_id='{pointcloud.frame_id}'"
+            )
             if len(points) < 10:
+                logger.warning(
+                    f"[GraspGenModule] Pointcloud too small ({len(points)} < 10) — skipping inference"
+                )
                 return None
 
             # Run inference (with optional collision filtering)
@@ -101,17 +108,24 @@ class GraspGenModule(Module[GraspGenConfig]):
                 scene_points = self._extract_points(scene_pointcloud)
             grasps, scores = self._run_inference(points, scene_points)
             if len(grasps) == 0:
+                logger.warning(
+                    f"[GraspGenModule] Inference returned 0 grasps from {len(points)} points"
+                )
                 return None
 
             # Convert and publish results
             pose_array = self._grasps_to_pose_array(grasps, scores, pointcloud.frame_id)
             self.grasps.publish(pose_array)
+            logger.info(
+                f"[GraspGenModule] Generated {len(pose_array.poses)} grasps "
+                f"(from {len(points)} points)"
+            )
 
             if self.config.save_visualization_data:
                 self._save_visualization_data(points, grasps, scores, pointcloud.frame_id)
             return pose_array
         except Exception as e:
-            logger.error(f"Grasp generation failed: {e}")
+            logger.error(f"[GraspGenModule] Grasp generation failed: {e}")
             return None
 
     def _initialize_graspgen(self) -> bool:
@@ -165,6 +179,7 @@ class GraspGenModule(Module[GraspGenConfig]):
         self, object_pc: np.ndarray[Any, Any], scene_pc: np.ndarray[Any, Any] | None = None
     ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
         if self._sampler is None:
+            logger.warning("[GraspGenModule] Sampler not initialized — cannot run inference")
             return np.array([]), np.array([])
 
         from grasp_gen.grasp_server import GraspGenSampler  # type: ignore[import-not-found]
@@ -180,14 +195,29 @@ class GraspGenModule(Module[GraspGenConfig]):
         if len(object_pc) > OUTLIER_REMOVAL_THRESHOLD:
             pc_filtered, _ = point_cloud_outlier_removal(pc_torch)
             object_pc_filtered = pc_filtered.numpy()
+            logger.info(
+                f"[GraspGenModule] Outlier removal: {len(object_pc)} → {len(object_pc_filtered)} points"
+            )
             if len(object_pc_filtered) < MIN_POINTS_FOR_INFERENCE:
+                logger.warning(
+                    f"[GraspGenModule] After outlier removal only {len(object_pc_filtered)} points "
+                    f"(< {MIN_POINTS_FOR_INFERENCE}), reverting to original {len(object_pc)} points"
+                )
                 object_pc_filtered = object_pc
         else:
             object_pc_filtered = object_pc
 
         if len(object_pc_filtered) < MIN_POINTS_FOR_INFERENCE:
+            logger.warning(
+                f"[GraspGenModule] Too few points for inference: "
+                f"{len(object_pc_filtered)} < {MIN_POINTS_FOR_INFERENCE}"
+            )
             return np.array([]), np.array([])
 
+        logger.info(
+            f"[GraspGenModule] Running inference with {len(object_pc_filtered)} points "
+            f"(num_grasps={self.config.num_grasps}, topk={self.config.topk_num_grasps})"
+        )
         grasps, scores = GraspGenSampler.run_inference(
             object_pc_filtered,
             self._sampler,
@@ -198,6 +228,7 @@ class GraspGenModule(Module[GraspGenConfig]):
         )
 
         if len(grasps) == 0:
+            logger.warning("[GraspGenModule] Model returned 0 grasps after inference")
             return np.array([]), np.array([])
 
         grasps_np = grasps.cpu().numpy()

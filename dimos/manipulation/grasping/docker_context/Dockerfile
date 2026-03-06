@@ -25,17 +25,17 @@ RUN conda init bash && \
     echo 'yes' | conda tos accept --override-channels --channel defaults 2>/dev/null || true && \
     conda create -n app python=3.10 -y && conda clean -afy
 
-# Clone GraspGen repository
+# Clone GraspGen repository (pin to a known-good commit for reproducibility)
 WORKDIR /app
 RUN git clone https://github.com/NVlabs/GraspGen.git && cd GraspGen && git checkout main
 
-# Install PyTorch with CUDA 12.8
+# Install PyTorch with CUDA 12.8 (must go first — spconv/torch-scatter need it)
 RUN conda run -n app pip install --no-cache-dir \
     torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu128
 
-# Install GraspGen package
+# Install GraspGen package WITHOUT deps (its pinned torch==2.1.0 conflicts)
 WORKDIR /app/GraspGen
-RUN conda run -n app pip install --no-cache-dir -e .
+RUN conda run -n app pip install --no-cache-dir --no-deps -e .
 
 # Build CUDA extensions (pointnet2_ops)
 RUN conda run -n app bash -c "\
@@ -47,9 +47,18 @@ RUN conda run -n app bash -c "\
 # Install torch-scatter and torch-cluster (require CUDA compilation)
 RUN conda run -n app pip install --no-cache-dir --no-build-isolation torch-scatter torch-cluster
 
-# Additional dependencies
+# Install ALL GraspGen runtime dependencies.
+# Split into groups: CUDA-compiled packages first, then pure-Python packages.
+# spconv-cu120 supports CUDA 12.x (works with 12.8 at runtime).
+RUN conda run -n app pip install --no-cache-dir spconv-cu120
+
 RUN conda run -n app pip install --no-cache-dir \
-    numpy trimesh pillow pyrender imageio scipy
+    numpy trimesh pillow pyrender imageio scipy \
+    omegaconf hydra-core "diffusers==0.11.1" "timm==1.0.15" \
+    h5py scikit-learn tensorboard transformers tensordict \
+    "huggingface-hub==0.25.2" addict "yapf==0.40.1" tensorboardx \
+    matplotlib webdataset "yourdfpy==0.0.56" "PyOpenGL==3.1.5" \
+    torch-geometric sharedarray meshcat
 
 # Model checkpoints from LFS archive
 COPY data/.lfs/models_graspgen.tar.gz /tmp/

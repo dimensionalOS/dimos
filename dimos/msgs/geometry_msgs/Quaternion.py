@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from io import BytesIO
+import math
 import struct
 from typing import TYPE_CHECKING, BinaryIO, TypeAlias
 
@@ -245,6 +246,16 @@ class Quaternion(LCMQuaternion):  # type: ignore[misc]
         if norm == 0:
             raise ZeroDivisionError("Cannot normalize zero quaternion")
         return Quaternion(self.x / norm, self.y / norm, self.z / norm, self.w / norm)
+
+    def angular_distance(self, other: Quaternion) -> float:
+        """Return the angular distance (in radians) between two unit quaternions.
+
+        Uses the formula: angle = 2 * arccos(|q1 · q2|), which gives the
+        minimum rotation angle between the two orientations (range [0, pi]).
+        """
+        dot = abs(self.x * other.x + self.y * other.y + self.z * other.z + self.w * other.w)
+        dot = min(dot, 1.0)  # clamp for numerical safety
+        return 2.0 * math.acos(dot)
 
     def rotate_vector(self, vector: Vector3) -> Vector3:
         """Rotate a 3D vector by this quaternion.

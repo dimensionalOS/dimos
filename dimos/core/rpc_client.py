@@ -66,7 +66,9 @@ class RpcCall:
                 self._stop_rpc_client()
             return None
 
-        result, unsub_fn = self._rpc.call_sync(f"{self._remote_name}/{self._name}", (args, kwargs))  # type: ignore[arg-type]
+        timeout = kwargs.pop("rpc_timeout", None)
+        sync_args: dict[str, float] = {"rpc_timeout": timeout} if timeout is not None else {}
+        result, unsub_fn = self._rpc.call_sync(f"{self._remote_name}/{self._name}", (args, kwargs), **sync_args)  # type: ignore[arg-type]
         self._unsub_fns.append(unsub_fn)
         return result
 
