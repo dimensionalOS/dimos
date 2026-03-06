@@ -18,6 +18,8 @@ import importlib
 import pickle
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
+from dimos.msgs.sensor_msgs.Image import Image
+
 if TYPE_CHECKING:
     from dimos.msgs.protocol import DimosMsg
 
@@ -103,23 +105,10 @@ class PickleCodec:
         return pickle.loads(data)
 
 
-_POSE_CODEC: LcmCodec | None = None
-
-
-def _pose_codec() -> LcmCodec:
-    global _POSE_CODEC
-    if _POSE_CODEC is None:
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-
-        _POSE_CODEC = LcmCodec(PoseStamped)
-    return _POSE_CODEC
-
-
-def codec_for_type(payload_type: type | None) -> LcmCodec | JpegCodec | PickleCodec:
+def codec_for_type(payload_type: type | None) -> Codec[Any]:
     """Auto-select codec based on payload type."""
     if payload_type is not None:
         # Image → JPEG by default (much smaller than LCM raw pixels)
-        from dimos.msgs.sensor_msgs.Image import Image
 
         if issubclass(payload_type, Image):
             return JpegCodec()

@@ -37,8 +37,7 @@ from typing import TYPE_CHECKING, Any
 from reactivex.subject import Subject
 
 from dimos.memory.codec import (
-    JpegCodec,
-    LcmCodec,
+    Codec,
     PickleCodec,
     codec_for_type,
     module_path_to_type,
@@ -369,7 +368,7 @@ class SqliteStreamBackend:
         table: str,
         *,
         pose_provider: PoseProvider | None = None,
-        codec: LcmCodec | JpegCodec | PickleCodec | None = None,
+        codec: Codec[Any] | None = None,
     ) -> None:
         _validate_identifier(table)
         self._conn = conn
@@ -506,7 +505,7 @@ class SqliteEmbeddingBackend(SqliteStreamBackend):
         vec_dimensions: int | None = None,
         pose_provider: PoseProvider | None = None,
         parent_table: str | None = None,
-        codec: LcmCodec | JpegCodec | PickleCodec | None = None,
+        codec: Codec[Any] | None = None,
     ) -> None:
         super().__init__(conn, table, pose_provider=pose_provider, codec=codec)
         self._vec_dimensions = vec_dimensions
@@ -657,7 +656,7 @@ class SqliteTextBackend(SqliteStreamBackend):
         *,
         tokenizer: str = "unicode61",
         pose_provider: PoseProvider | None = None,
-        codec: LcmCodec | JpegCodec | PickleCodec | None = None,
+        codec: Codec[Any] | None = None,
     ) -> None:
         super().__init__(conn, table, pose_provider=pose_provider, codec=codec)
         self._tokenizer = tokenizer
