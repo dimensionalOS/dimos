@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # =============================================================================
 # DimOS Navigation Docker Image
 # =============================================================================
@@ -5,23 +6,16 @@
 # Multi-stage build for ROS 2 navigation with SLAM support.
 # Includes both arise_slam and FASTLIO2 - select at runtime via LOCALIZATION_METHOD.
 #
-# Supported configurations:
-#   - ROS distributions: humble, jazzy
-#   - SLAM methods: arise_slam (default), fastlio (set LOCALIZATION_METHOD=fastlio)
-#
-# Build:
-#   ./build.sh --humble    # Build for ROS 2 Humble
-#   ./build.sh --jazzy     # Build for ROS 2 Jazzy
-#
-# Run:
-#   ./start.sh --hardware --route-planner                          # Uses arise_slam
-#   LOCALIZATION_METHOD=fastlio ./start.sh --hardware --route-planner  # Uses FASTLIO2
+# The ros-navigation-autonomy-stack repo is cloned at build time via SSH.
+# Build with:  docker build --ssh default ...
 #
 # =============================================================================
 
 # Build argument for ROS distribution (default: humble)
 ARG ROS_DISTRO=humble
 ARG TARGETARCH
+# Pinned git ref for ros-navigation-autonomy-stack (branch, tag, or commit SHA)
+ARG NAV_STACK_REF=fastlio2
 
 # -----------------------------------------------------------------------------
 # Platform-specific base images
@@ -37,6 +31,7 @@ FROM ros:${ROS_DISTRO}-ros-base AS base-arm64
 FROM base-${TARGETARCH} AS builder
 
 ARG ROS_DISTRO
+ARG NAV_STACK_REF
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ROS_DISTRO=${ROS_DISTRO}
 ENV WORKSPACE=/ros2_ws
@@ -48,6 +43,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake \
     build-essential \
     python3-colcon-common-extensions \
+    # SSH client for private repo clone
+    openssh-client \
     # Libraries needed for building
     libpcl-dev \
     libgoogle-glog-dev \
@@ -143,8 +140,13 @@ RUN if [ "${TARGETARCH}" = "arm64" ]; then \
 # Create workspace
 RUN mkdir -p ${WORKSPACE}/src
 
-# Copy autonomy stack source
-COPY docker/navigation/ros-navigation-autonomy-stack ${WORKSPACE}/src/ros-navigation-autonomy-stack
+# Clone autonomy stack source via SSH (requires --ssh default at build time)
+RUN --mount=type=ssh \
+    mkdir -p ~/.ssh && \
+    ssh-keyscan github.com >> ~/.ssh/known_hosts && \
+    git clone -b ${NAV_STACK_REF} --depth 1 \
+        git@github.com:dimensionalOS/ros-navigation-autonomy-stack.git \
+        ${WORKSPACE}/src/ros-navigation-autonomy-stack
 
 # On arm64, replace pre-built x86_64 or-tools with arm64 built version
 RUN if [ "${TARGETARCH}" = "arm64" ] && [ -d "/opt/or-tools" ]; then \
@@ -371,7 +373,7 @@ RUN if [ "${TARGETARCH}" = "arm64" ] && ls /opt/open3d-wheel/open3d*.whl 1>/dev/
 # Copy dimos source and install as editable package
 # The volume mount at runtime will overlay /workspace/dimos, but the editable
 # install creates a link that will use the volume-mounted files
-COPY pyproject.toml setup.py /workspace/dimos/
+COPY pyproject.toml /workspace/dimos/
 COPY dimos /workspace/dimos/dimos
 RUN /opt/dimos-venv/bin/pip install --no-cache-dir -e "/workspace/dimos[unitree]"
 
@@ -382,126 +384,22 @@ RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \
     echo "export RMW_IMPLEMENTATION=rmw_fastrtps_cpp" >> ~/.bashrc && \
     echo "export FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml" >> ~/.bashrc
 
-# Copy helper scripts
-COPY docker/navigation/run_both.sh /usr/local/bin/run_both.sh
-COPY docker/navigation/ros_launch_wrapper.py /usr/local/bin/ros_launch_wrapper.py
+# Copy helper scripts (paths relative to repo root build context)
 COPY docker/navigation/foxglove_utility/twist_relay.py /usr/local/bin/twist_relay.py
 COPY docker/navigation/foxglove_utility/goal_autonomy_relay.py /usr/local/bin/goal_autonomy_relay.py
-RUN chmod +x /usr/local/bin/run_both.sh /usr/local/bin/ros_launch_wrapper.py /usr/local/bin/twist_relay.py /usr/local/bin/goal_autonomy_relay.py
+COPY dimos/navigation/rosnav/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/twist_relay.py /usr/local/bin/goal_autonomy_relay.py /usr/local/bin/entrypoint.sh
 
 # Set up udev rules for motor controller
 RUN mkdir -p /etc/udev/rules.d && \
     echo 'SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", MODE="0666", GROUP="dialout"' \
     > /etc/udev/rules.d/99-motor-controller.rules
 
-# Set up entrypoint script
-RUN echo '#!/bin/bash\n\
-set -e\n\
-\n\
-# Mark git directories as safe\n\
-git config --global --add safe.directory /workspace/dimos 2>/dev/null || true\n\
-git config --global --add safe.directory /ros2_ws/src/ros-navigation-autonomy-stack 2>/dev/null || true\n\
-\n\
-# Source ROS setup\n\
-source /opt/ros/${ROS_DISTRO}/setup.bash\n\
-source ${WORKSPACE}/install/setup.bash\n\
-\n\
-# Activate Python virtual environment\n\
-source /opt/dimos-venv/bin/activate\n\
-\n\
-# DDS Configuration (FastDDS)\n\
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp\n\
-export FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml\n\
-\n\
-# Use custom DDS config if provided via mount\n\
-if [ -f "/ros2_ws/config/custom_fastdds.xml" ]; then\n\
-    export FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/custom_fastdds.xml\n\
-    echo "Using custom FastDDS configuration"\n\
-fi\n\
-\n\
-# Export ROBOT_CONFIG_PATH for autonomy stack\n\
-export ROBOT_CONFIG_PATH="${ROBOT_CONFIG_PATH:-mechanum_drive}"\n\
-\n\
-# Hardware-specific configurations\n\
-if [ "${HARDWARE_MODE}" = "true" ]; then\n\
-    # Set network buffer sizes for WiFi data transmission\n\
-    if [ "${ENABLE_WIFI_BUFFER}" = "true" ]; then\n\
-        sysctl -w net.core.rmem_max=67108864 net.core.rmem_default=67108864 2>/dev/null || true\n\
-        sysctl -w net.core.wmem_max=67108864 net.core.wmem_default=67108864 2>/dev/null || true\n\
-    fi\n\
-    \n\
-    # Configure network interface for Mid-360 lidar if specified\n\
-    if [ -n "${LIDAR_INTERFACE}" ] && [ -n "${LIDAR_COMPUTER_IP}" ]; then\n\
-        ip addr add ${LIDAR_COMPUTER_IP}/24 dev ${LIDAR_INTERFACE} 2>/dev/null || true\n\
-        ip link set ${LIDAR_INTERFACE} up 2>/dev/null || true\n\
-    fi\n\
-    \n\
-    # Generate MID360_config.json if LIDAR_COMPUTER_IP and LIDAR_IP are set\n\
-    if [ -n "${LIDAR_COMPUTER_IP}" ] && [ -n "${LIDAR_IP}" ]; then\n\
-        cat > ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config/MID360_config.json <<EOF\n\
-{\n\
-  "lidar_summary_info": {\n\
-    "lidar_type": 8\n\
-  },\n\
-  "MID360": {\n\
-    "lidar_net_info": {\n\
-      "cmd_data_port": 56100,\n\
-      "push_msg_port": 56200,\n\
-      "point_data_port": 56300,\n\
-      "imu_data_port": 56400,\n\
-      "log_data_port": 56500\n\
-    },\n\
-    "host_net_info": {\n\
-      "cmd_data_ip": "${LIDAR_COMPUTER_IP}",\n\
-      "cmd_data_port": 56101,\n\
-      "push_msg_ip": "${LIDAR_COMPUTER_IP}",\n\
-      "push_msg_port": 56201,\n\
-      "point_data_ip": "${LIDAR_COMPUTER_IP}",\n\
-      "point_data_port": 56301,\n\
-      "imu_data_ip": "${LIDAR_COMPUTER_IP}",\n\
-      "imu_data_port": 56401,\n\
-      "log_data_ip": "${LIDAR_COMPUTER_IP}",\n\
-      "log_data_port": 56501\n\
-    }\n\
-  },\n\
-  "lidar_configs": [\n\
-    {\n\
-      "ip": "${LIDAR_IP}",\n\
-      "pcl_data_type": 1,\n\
-      "pattern_mode": 0,\n\
-      "extrinsic_parameter": {\n\
-        "roll": 0.0,\n\
-        "pitch": 0.0,\n\
-        "yaw": 0.0,\n\
-        "x": 0,\n\
-        "y": 0,\n\
-        "z": 0\n\
-      }\n\
-    }\n\
-  ]\n\
-}\n\
-EOF\n\
-        # Also copy to installed location where the driver actually reads from\n\
-        cp ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config/MID360_config.json \\\n\
-           ${WORKSPACE}/install/livox_ros_driver2/share/livox_ros_driver2/config/MID360_config.json 2>/dev/null || true\n\
-        echo "Generated MID360_config.json with LIDAR_COMPUTER_IP=${LIDAR_COMPUTER_IP} and LIDAR_IP=${LIDAR_IP}"\n\
-    fi\n\
-    \n\
-    # Display Robot IP configuration if set\n\
-    if [ -n "${ROBOT_IP}" ]; then\n\
-        echo "Robot IP configured on local network: ${ROBOT_IP}"\n\
-    fi\n\
-fi\n\
-\n\
-# Execute the command\n\
-exec "$@"' > /ros_entrypoint.sh && \
-    chmod +x /ros_entrypoint.sh
-
 # Working directory
 WORKDIR ${DIMOS_PATH}
 
-# Set the entrypoint
-ENTRYPOINT ["/ros_entrypoint.sh"]
+# Default entrypoint (overridden at docker run time by DockerModule)
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 
 # Default command
 CMD ["bash"]

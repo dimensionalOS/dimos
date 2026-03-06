@@ -111,7 +111,8 @@ class ROSNavConfig(DockerModuleConfig):
     docker_shm_size: str = "8g"
     docker_entrypoint: str = "/usr/local/bin/entrypoint.sh"
     docker_file: Path = Path(__file__).parent / "Dockerfile"
-    docker_build_context: Path = Path(__file__).parent.parent.parent
+    docker_build_context: Path = Path(__file__).parent.parent.parent.parent
+    docker_build_ssh: bool = True
     docker_gpus: str | None = None
     docker_extra_args: list[str] = field(default_factory=lambda: ["--cap-add=NET_ADMIN"])
     docker_env: dict[str, str] = field(
@@ -128,8 +129,8 @@ class ROSNavConfig(DockerModuleConfig):
             "UNITY_BRIDGE_CONNECT_TIMEOUT_SEC": "60",
         }
     )
-    docker_volumes: list = field(default_factory=lambda: [])
-    docker_devices: list = field(
+    docker_volumes: list[tuple[str, str, str]] = field(default_factory=lambda: [])
+    docker_devices: list[str] = field(
         default_factory=lambda: [
             "/dev/input:/dev/input",
             *(["/dev/dri:/dev/dri"] if Path("/dev/dri").exists() else []),
@@ -214,7 +215,7 @@ class ROSNavConfig(DockerModuleConfig):
 
         self.docker_env["QT_X11_NO_MITSHM"] = "1"
 
-        repo_root = Path(__file__).parent.parent.parent
+        repo_root = Path(__file__).parent.parent.parent.parent
         sim_data_dir = str(repo_root / "docker" / "navigation" / "unity_models")
         self.docker_volumes += [
             # X11 socket for display forwarding (RViz, Unity)

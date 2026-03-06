@@ -61,6 +61,7 @@ class DockerModuleConfig(ModuleConfig):
     docker_file: Path | None = None  # Required on host for building, not needed in container
     docker_build_context: Path | None = None
     docker_build_args: dict[str, str] = field(default_factory=dict)
+    docker_build_ssh: bool = False  # Pass --ssh default to docker build (for private repo clones)
 
     # Identity
     docker_container_name: str | None = None

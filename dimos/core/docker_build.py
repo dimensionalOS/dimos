@@ -98,6 +98,8 @@ def build_image(cfg: DockerModuleConfig) -> None:
 
     context = cfg.docker_build_context or cfg.docker_file.parent
     cmd = [_docker_bin(cfg), "build", "-t", cfg.docker_image, "-f", str(dockerfile)]
+    if cfg.docker_build_ssh:
+        cmd.extend(["--ssh", "default"])
     for k, v in cfg.docker_build_args.items():
         cmd.extend(["--build-arg", f"{k}={v}"])
     cmd.append(str(context))
