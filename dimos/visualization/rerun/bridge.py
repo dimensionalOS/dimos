@@ -142,6 +142,22 @@ def _default_blueprint() -> Blueprint:
     )
 
 
+# Maps global_config.viewer_backend -> bridge viewer_mode.
+# Evaluated at blueprint construction time (main process), not in start() (worker process).
+_BACKEND_TO_MODE: dict[str, ViewerMode] = {
+    "rerun": "native",
+    "rerun-web": "web",
+    "rerun-connect": "connect",
+    "none": "none",
+}
+
+
+def _resolve_viewer_mode() -> ViewerMode:
+    from dimos.core.global_config import global_config
+
+    return _BACKEND_TO_MODE.get(global_config.viewer_backend, "native")
+
+
 @dataclass
 class Config(ModuleConfig):
     """Configuration for RerunBridgeModule."""
@@ -157,7 +173,7 @@ class Config(ModuleConfig):
 
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
-    viewer_mode: ViewerMode | None = None  # None = auto-detect from global_config.viewer_backend
+    viewer_mode: ViewerMode = field(default_factory=_resolve_viewer_mode)
     connect_url: str = "rerun+http://127.0.0.1:9877/proxy"
     memory_limit: str = "25%"
 
@@ -252,32 +268,13 @@ class RerunBridgeModule(Module):
         else:
             rr.log(entity_path, cast("Archetype", rerun_data))
 
-    # Maps global_config.viewer_backend -> bridge viewer_mode
-    _BACKEND_TO_MODE: dict[str, ViewerMode] = {
-        "rerun": "native",
-        "rerun-web": "web",
-        "rerun-connect": "connect",
-        "none": "none",
-    }
-
     @rpc
     def start(self) -> None:
         import rerun as rr
 
         super().start()
 
-        # Auto-detect viewer_mode from global_config if not explicitly set
-        if self.config.viewer_mode is None:
-            from dimos.core.global_config import global_config
-
-            self.config.viewer_mode = self._BACKEND_TO_MODE.get(
-                global_config.viewer_backend, "native"
-            )
-            logger.info(
-                "Viewer mode auto-detected",
-                viewer_backend=global_config.viewer_backend,
-                viewer_mode=self.config.viewer_mode,
-            )
+        logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
 
         # Initialize and spawn Rerun viewer
         rr.init("dimos")
