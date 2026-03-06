@@ -32,7 +32,7 @@ from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
 
 if TYPE_CHECKING:
     from dimos.control.components import HardwareComponent, HardwareId, JointName, JointState
-    from dimos.hardware.drive_trains.spec import TwistBaseAdapter
+    from dimos.hardware.drive_trains.spec import HardwareAdapter, TwistBaseAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class ConnectedHardware:
         self._current_mode: ControlMode | None = None
 
     @property
-    def adapter(self) -> ManipulatorAdapter:
+    def adapter(self) -> HardwareAdapter:
         """The underlying hardware adapter."""
         return self._adapter
 
@@ -264,7 +264,7 @@ class ConnectedTwistBase(ConnectedHardware):
         self._current_mode: ControlMode | None = None
 
     @property
-    def adapter(self) -> TwistBaseAdapter:  # type: ignore[override]
+    def adapter(self) -> TwistBaseAdapter:
         """The underlying twist base adapter."""
         return self._twist_adapter
 
