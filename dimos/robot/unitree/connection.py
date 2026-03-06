@@ -118,7 +118,28 @@ class UnitreeWebRTCConnection(Resource):
         self.thread.start()
 
         if not self.connection_ready.wait(timeout=CONNECT_TIMEOUT):
+            # Cancel the async connection task and disconnect to avoid leaving
+            # a half-open WebRTC session on the robot side (which would cause
+            # the next connection attempt to hang as well).
+            async def _cleanup() -> None:
+                if self.task is not None:
+                    self.task.cancel()
+                    try:
+                        await self.task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                if hasattr(self, "conn") and self.conn is not None:
+                    try:
+                        await self.conn.disconnect()
+                    except Exception:
+                        pass
+
             if self.loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(_cleanup(), self.loop)
+                try:
+                    future.result(timeout=5.0)
+                except Exception:
+                    pass
                 self.loop.call_soon_threadsafe(self.loop.stop)
             if self.thread.is_alive():
                 self.thread.join(timeout=2.0)
