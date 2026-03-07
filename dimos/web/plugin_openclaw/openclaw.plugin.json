@@ -1,0 +1,19 @@
+{
+  "id": "dimos",
+  "name": "Dimensional MCP Bridge",
+  "description": "Exposes tools from the dimos MCP server as OpenClaw agent tools",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mcpHost": {
+        "type": "string",
+        "description": "DimOS MCP server host (defaults to '127.0.0.1')"
+      },
+      "mcpPort": {
+        "type": "number",
+        "description": "DimOS MCP server port (defaults to 9990)"
+      }
+    }
+  }
+}
