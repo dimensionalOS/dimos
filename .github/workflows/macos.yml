@@ -58,7 +58,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --all-extras --no-extra dds --frozen
+          uv sync --all-extras --no-extra dds --no-extra cuda --frozen
 
       - name: Check disk usage
         run: |
@@ -101,7 +101,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --all-extras --no-extra dds --frozen
+          uv sync --all-extras --no-extra dds --no-extra cuda --frozen
 
       - name: Run mypy
         run: |
