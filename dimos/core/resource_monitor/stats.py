@@ -90,12 +90,8 @@ class IoStats(TypedDict):
 def _collect_io(proc: psutil.Process) -> IoStats:
     """Collect IO counters in bytes. Call inside oneshot()."""
     try:
-        # io_counters() is not available on all platforms (e.g., macOS)
-        if hasattr(proc, "io_counters"):
-            io = proc.io_counters()
-            return IoStats(io_read_bytes=io.read_bytes, io_write_bytes=io.write_bytes)
-        else:
-            return IoStats(io_read_bytes=0, io_write_bytes=0)
+        io = proc.io_counters()
+        return IoStats(io_read_bytes=io.read_bytes, io_write_bytes=io.write_bytes)
     except (psutil.AccessDenied, AttributeError):
         return IoStats(io_read_bytes=0, io_write_bytes=0)
 
