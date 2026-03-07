@@ -140,6 +140,7 @@ agents = [
     # Audio
     "openai",
     "openai-whisper",
+    "faster-whisper",
     "sounddevice",
 
     # MCP Server
