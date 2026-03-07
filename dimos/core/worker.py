@@ -157,9 +157,16 @@ class Worker:
     @property
     def pid(self) -> int | None:
         """PID of the worker process, or ``None`` if not alive."""
-        if self._process is not None and self._process.is_alive():
-            p: int | None = self._process.pid
-            return p
+        if self._process is None:
+            return None
+        try:
+            if self._process.is_alive():
+                return self._process.pid  # type: ignore[return-value]
+        except AssertionError:
+            # After daemonize() we are no longer the parent process;
+            # is_alive() asserts _parent_pid == os.getpid().  Fall back to
+            # the stored pid attribute which is still valid.
+            return self._process.pid  # type: ignore[return-value]
         return None
 
     @property

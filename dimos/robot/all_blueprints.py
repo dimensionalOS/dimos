@@ -80,6 +80,7 @@ all_blueprints = {
     "unitree-go2-ros": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_ros:unitree_go2_ros",
     "unitree-go2-spatial": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial:unitree_go2_spatial",
     "unitree-go2-temporal-memory": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_temporal_memory:unitree_go2_temporal_memory",
+    "stress-test": "dimos.core.tests.stress_test_blueprint:stress_test",
     "unitree-go2-vlm-stream-test": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_vlm_stream_test:unitree_go2_vlm_stream_test",
     "xarm-perception": "dimos.manipulation.manipulation_blueprints:xarm_perception",
     "xarm-perception-agent": "dimos.manipulation.manipulation_blueprints:xarm_perception_agent",
