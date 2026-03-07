@@ -35,4 +35,4 @@ demo_object_scene_registration = autoconnect(
     object_scene_registration_module(target_frame="world", prompt_mode=YoloePromptMode.LRPC),
     foxglove_bridge(),
     agent(),
-).global_config(viewer_backend="foxglove")
+).global_config(viewer="foxglove")
