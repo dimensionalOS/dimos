@@ -111,10 +111,46 @@ class UnitreeWebRTCConnection(Resource):
             self.task = self.loop.create_task(async_connect())
             self.loop.run_forever()
 
+        CONNECT_TIMEOUT = 30  # seconds
+
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=start_background_loop, daemon=True)
         self.thread.start()
-        self.connection_ready.wait()
+
+        if not self.connection_ready.wait(timeout=CONNECT_TIMEOUT):
+            # Cancel the async connection task and disconnect to avoid leaving
+            # a half-open WebRTC session on the robot side (which would cause
+            # the next connection attempt to hang as well).
+            async def _cleanup() -> None:
+                if self.task is not None:
+                    self.task.cancel()
+                    try:
+                        await self.task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+                if hasattr(self, "conn") and self.conn is not None:
+                    try:
+                        await self.conn.disconnect()
+                    except Exception:
+                        pass
+
+            if self.loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(_cleanup(), self.loop)
+                try:
+                    future.result(timeout=5.0)
+                except Exception:
+                    pass
+                self.loop.call_soon_threadsafe(self.loop.stop)
+            if self.thread.is_alive():
+                self.thread.join(timeout=2.0)
+            raise TimeoutError(
+                f"WebRTC connection to {self.ip} timed out after {CONNECT_TIMEOUT}s. "
+                "Common causes:\n"
+                "  - Another WebRTC client is connected (close the Unitree mobile app)\n"
+                "  - Robot is unreachable on the network\n"
+                "  - Port 9991 (encrypted SDP) is not responding\n"
+                "Tip: only one WebRTC client can connect to the Go2 at a time."
+            )
 
     def start(self) -> None:
         pass
