@@ -53,6 +53,9 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      - name: Install system dependencies
+        run: brew install portaudio
+
       - name: Install dependencies
         run: |
           uv sync --extra dev --extra agents --extra web --extra visualization --extra sim --extra manipulation --extra drone --extra psql --extra misc --extra perception --extra unitree --extra base --frozen
@@ -92,6 +95,9 @@ jobs:
 
       - name: Set up Python
         run: uv python install 3.12
+
+      - name: Install system dependencies
+        run: brew install portaudio
 
       - name: Install dependencies
         run: |
