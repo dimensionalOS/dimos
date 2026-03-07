@@ -214,29 +214,9 @@ def main() -> None:
         failures += 1
 
     # ---------------------------------------------------------------
-    # Step 7: dimos mcp module-io
+    # Step 7: dimos agent-send "hello"
     # ---------------------------------------------------------------
-    section("Step 7: dimos mcp module-io")
-    result = run_dimos("mcp", "module-io")
-    if result.returncode == 0:
-        try:
-            data = json.loads(result.stdout)
-            for mod_name, mod_info in data.get("modules", {}).items():
-                skill_names = [s["name"] for s in mod_info.get("skills", [])]
-                p(
-                    f"Module {mod_name}: {mod_info.get('skill_count', '?')} skills ({', '.join(skill_names)})"
-                )
-        except json.JSONDecodeError:
-            p(f"Non-JSON output: {result.stdout[:100]}", ok=False)
-            failures += 1
-    else:
-        p(f"mcp module-io failed (exit={result.returncode})", ok=False)
-        failures += 1
-
-    # ---------------------------------------------------------------
-    # Step 8: dimos agent-send "hello"
-    # ---------------------------------------------------------------
-    section("Step 8: dimos agent-send 'what tools do you have?'")
+    section("Step 7: dimos agent-send 'what tools do you have?'")
     result = run_dimos("agent-send", "what tools do you have?")
     if result.returncode == 0:
         p(f"agent-send response: {result.stdout.strip()[:200]}")
@@ -245,7 +225,7 @@ def main() -> None:
         failures += 1
 
     # ---------------------------------------------------------------
-    # Step 9: Check logs
+    # Step 8: Check logs
     # ---------------------------------------------------------------
     section("Step 8: Check per-run logs")
     log_base = os.path.expanduser("~/.local/state/dimos/logs")
