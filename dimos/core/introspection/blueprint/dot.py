@@ -51,6 +51,11 @@ DEFAULT_IGNORED_MODULES = {
     # "FoxgloveBridge",
 }
 
+# Modules only ignored when show_disconnected is False (compact view)
+_COMPACT_ONLY_IGNORED_MODULES = {
+    "WebsocketVisModule",
+}
+
 
 def render(
     blueprint_set: Blueprint,
@@ -58,6 +63,7 @@ def render(
     layout: set[LayoutAlgo] | None = None,
     ignored_streams: set[tuple[str, str]] | None = None,
     ignored_modules: set[str] | None = None,
+    show_disconnected: bool = False,
 ) -> str:
     """Generate a hub-style DOT graph from a Blueprint.
 
@@ -69,6 +75,8 @@ def render(
         layout: Set of layout algorithms to apply. Default is none (let graphviz decide).
         ignored_streams: Set of (name, type_name) tuples to ignore.
         ignored_modules: Set of module names to ignore.
+        show_disconnected: If True, show streams that have a producer but no consumer
+            (or vice versa) as dashed stub nodes.
 
     Returns:
         A string in DOT format showing modules as nodes, type nodes as
@@ -79,7 +87,10 @@ def render(
     if ignored_streams is None:
         ignored_streams = DEFAULT_IGNORED_CONNECTIONS
     if ignored_modules is None:
-        ignored_modules = DEFAULT_IGNORED_MODULES
+        if show_disconnected:
+            ignored_modules = DEFAULT_IGNORED_MODULES - _COMPACT_ONLY_IGNORED_MODULES
+        else:
+            ignored_modules = DEFAULT_IGNORED_MODULES
 
     # Collect all outputs: (name, type) -> list of producer modules
     producers: dict[tuple[str, type], list[type[Module]]] = defaultdict(list)
@@ -115,6 +126,23 @@ def render(
             continue
         label = f"{name}:{type_name}"
         active_channels[key] = color_for_string(TYPE_COLORS, label)
+
+    # Find disconnected channels (producer-only or consumer-only)
+    disconnected_channels: dict[tuple[str, type], str] = {}
+    if show_disconnected:
+        all_keys = set(producers.keys()) | set(consumers.keys())
+        for key in all_keys:
+            if key in active_channels:
+                continue
+            name, type_ = key
+            type_name = type_.__name__
+            if (name, type_name) in ignored_streams:
+                continue
+            relevant_modules = producers.get(key, []) + consumers.get(key, [])
+            if all(m.__name__ in ignored_modules for m in relevant_modules):
+                continue
+            label = f"{name}:{type_name}"
+            disconnected_channels[key] = color_for_string(TYPE_COLORS, label)
 
     # Group modules by package
     def get_group(mod_class: type[Module]) -> str:
@@ -218,6 +246,37 @@ def render(
                 continue
             lines.append(f'    {node_id} -> {consumer.__name__} [color="{color}"];')
 
+    # Disconnected channels (dashed stub nodes)
+    if disconnected_channels:
+        lines.append("")
+        lines.append("    // Disconnected streams")
+        for key, color in sorted(
+            disconnected_channels.items(), key=lambda x: f"{x[0][0]}:{x[0][1].__name__}"
+        ):
+            name, type_ = key
+            type_name = type_.__name__
+            node_id = sanitize_id(f"chan_{name}_{type_name}")
+            label = f"{name}:{type_name}"
+            lines.append(
+                f'    {node_id} [label="{label}", shape=note, '
+                f'style="filled,dashed", fillcolor="{color}15", color="{color}", '
+                f'fontcolor="{color}", width=0, height=0, margin="0.1,0.05", fontsize=10];'
+            )
+
+            for producer in producers.get(key, []):
+                if producer.__name__ in ignored_modules:
+                    continue
+                lines.append(
+                    f"    {producer.__name__} -> {node_id} "
+                    f'[color="{color}", style=dashed, arrowhead=none];'
+                )
+            for consumer in consumers.get(key, []):
+                if consumer.__name__ in ignored_modules:
+                    continue
+                lines.append(
+                    f'    {node_id} -> {consumer.__name__} [color="{color}", style=dashed];'
+                )
+
     lines.append("}")
     return "\n".join(lines)
 
@@ -227,6 +286,7 @@ def render_svg(
     output_path: str,
     *,
     layout: set[LayoutAlgo] | None = None,
+    show_disconnected: bool = False,
 ) -> None:
     """Generate an SVG file from a Blueprint using graphviz.
 
@@ -234,13 +294,14 @@ def render_svg(
         blueprint_set: The blueprint set to visualize.
         output_path: Path to write the SVG file.
         layout: Set of layout algorithms to apply.
+        show_disconnected: If True, show streams with no matching counterpart.
     """
     import subprocess
 
     if layout is None:
         layout = set()
 
-    dot_code = render(blueprint_set, layout=layout)
+    dot_code = render(blueprint_set, layout=layout, show_disconnected=show_disconnected)
     engine = "fdp" if LayoutAlgo.FDP in layout else "dot"
     result = subprocess.run(
         [engine, "-Tsvg", "-o", output_path],
