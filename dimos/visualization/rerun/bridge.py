@@ -142,7 +142,7 @@ def _default_blueprint() -> Blueprint:
     )
 
 
-# Maps global_config.viewer_backend -> bridge viewer_mode.
+# Maps global_config.viewer -> bridge viewer_mode.
 # Evaluated at blueprint construction time (main process), not in start() (worker process).
 _BACKEND_TO_MODE: dict[str, ViewerMode] = {
     "rerun": "native",
@@ -155,7 +155,7 @@ _BACKEND_TO_MODE: dict[str, ViewerMode] = {
 def _resolve_viewer_mode() -> ViewerMode:
     from dimos.core.global_config import global_config
 
-    return _BACKEND_TO_MODE.get(global_config.viewer_backend, "native")
+    return _BACKEND_TO_MODE.get(global_config.viewer, "native")
 
 
 @dataclass
