@@ -193,3 +193,100 @@ class TestModuleCoordinatorDockerRouting:
         assert mock_dm.stop.call_count == 1
         # Worker manager also closed
         mock_worker_mgr.close_all.assert_called_once()
+
+
+class TestDockerModuleGetattr:
+    """Tests for DockerModule.__getattr__ avoiding infinite recursion."""
+
+    def test_getattr_no_recursion_when_rpcs_not_set(self):
+        """If __init__ fails before self.rpcs is assigned, __getattr__ must not recurse."""
+        from dimos.core.docker_runner import DockerModule
+
+        dm = DockerModule.__new__(DockerModule)
+        # Don't set rpcs, _module_class, or any instance attrs — simulates early __init__ failure
+        with pytest.raises(AttributeError):
+            _ = dm.some_method
+
+    def test_getattr_no_recursion_on_cleanup_attrs(self):
+        """Accessing cleanup-related attrs before they exist must raise, not recurse."""
+        from dimos.core.docker_runner import DockerModule
+
+        dm = DockerModule.__new__(DockerModule)
+        # These are accessed during _cleanup() — if rpcs isn't set, they must not recurse
+        for attr in ("rpc", "config", "_container_name", "_unsub_fns"):
+            with pytest.raises(AttributeError):
+                getattr(dm, attr)
+
+    def test_getattr_delegates_to_rpc_when_rpcs_set(self):
+        from dimos.core.docker_runner import DockerModule
+        from dimos.core.rpc_client import RpcCall
+
+        dm = DockerModule.__new__(DockerModule)
+        dm.rpcs = {"do_thing"}
+
+        # _module_class needs a real method with __name__ for RpcCall
+        class FakeMod:
+            def do_thing(self) -> None: ...
+
+        dm._module_class = FakeMod
+        dm.rpc = MagicMock()
+        dm.remote_name = "FakeMod"
+        dm._unsub_fns = []
+
+        result = dm.do_thing
+        assert isinstance(result, RpcCall)
+
+    def test_getattr_raises_for_unknown_method(self):
+        from dimos.core.docker_runner import DockerModule
+
+        dm = DockerModule.__new__(DockerModule)
+        dm.rpcs = {"do_thing"}
+
+        with pytest.raises(AttributeError, match="not found"):
+            _ = dm.nonexistent
+
+
+class TestDockerModuleCleanupReconnect:
+    """Tests for DockerModule._cleanup with docker_reconnect_container."""
+
+    def test_cleanup_skips_stop_when_reconnect(self):
+        from dimos.core.docker_runner import DockerModule
+
+        with patch.object(DockerModule, "__init__", lambda self: None):
+            dm = DockerModule.__new__(DockerModule)
+            dm._running = True
+            dm._container_name = "test_container"
+            dm._unsub_fns = []
+            dm.rpc = MagicMock()
+            dm.remote_name = "TestModule"
+
+            # reconnect mode: should NOT stop/rm the container
+            dm.config = FakeDockerConfig(docker_reconnect_container=True)
+            with (
+                patch("dimos.core.docker_runner._run") as mock_run,
+                patch("dimos.core.docker_runner._remove_container") as mock_rm,
+            ):
+                dm._cleanup()
+                mock_run.assert_not_called()
+                mock_rm.assert_not_called()
+
+    def test_cleanup_stops_container_when_not_reconnect(self):
+        from dimos.core.docker_runner import DockerModule
+
+        with patch.object(DockerModule, "__init__", lambda self: None):
+            dm = DockerModule.__new__(DockerModule)
+            dm._running = True
+            dm._container_name = "test_container"
+            dm._unsub_fns = []
+            dm.rpc = MagicMock()
+            dm.remote_name = "TestModule"
+
+            # normal mode: should stop and rm the container
+            dm.config = FakeDockerConfig(docker_reconnect_container=False)
+            with (
+                patch("dimos.core.docker_runner._run") as mock_run,
+                patch("dimos.core.docker_runner._remove_container") as mock_rm,
+            ):
+                dm._cleanup()
+                mock_run.assert_called_once()  # docker stop
+                mock_rm.assert_called_once()  # docker rm -f
