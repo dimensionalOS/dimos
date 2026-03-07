@@ -270,6 +270,7 @@ dev = [
     "types-tensorflow>=2.18.0.20251008,<3",
     "types-tqdm>=4.67.0.20250809,<5",
     "types-psycopg2>=2.9.21.20251012",
+    "types-psutil>=7.2.2.20260130,<8",
 
     # Tools
     "py-spy",

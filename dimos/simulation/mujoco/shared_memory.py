@@ -108,6 +108,10 @@ class ShmReader:
         control_array: NDArray[Any] = np.ndarray((2,), dtype=np.int32, buffer=self.shm.control.buf)
         return bool(control_array[1] == 1)  # stop flag
 
+    def signal_stop(self) -> None:
+        control_array: NDArray[Any] = np.ndarray((2,), dtype=np.int32, buffer=self.shm.control.buf)
+        control_array[1] = 1  # Set stop flag
+
     def write_video(self, pixels: NDArray[Any]) -> None:
         video_array: NDArray[Any] = np.ndarray(
             (VIDEO_HEIGHT, VIDEO_WIDTH, 3), dtype=np.uint8, buffer=self.shm.video.buf

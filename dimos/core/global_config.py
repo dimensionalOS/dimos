@@ -18,6 +18,7 @@ from typing import Literal, TypeAlias
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.mapping.occupancy.path_map import NavigationStrategy
+from dimos.models.vl.create_vl_model import VlModelName
 
 ViewerBackend: TypeAlias = Literal["rerun", "rerun-web", "rerun-connect", "foxglove", "none"]
 
@@ -46,6 +47,7 @@ class GlobalConfig(BaseSettings):
     planner_strategy: NavigationStrategy = "simple"
     planner_robot_speed: float | None = None
     dtop: bool = False
+    detection_model: VlModelName = "moondream"
 
     model_config = SettingsConfigDict(
         env_file=".env",
