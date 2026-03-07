@@ -285,6 +285,8 @@ def restart(
         if isinstance(value, bool):
             if value:
                 cmd.append(flag)
+            else:
+                cmd.append(f"--no-{key.replace('_', '-')}")
         else:
             cmd.extend([flag, str(value)])
     cmd.append("run")
