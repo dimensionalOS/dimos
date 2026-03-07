@@ -25,7 +25,6 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.service.system_configurator import ClockSyncConfigurator
 from dimos.robot.unitree.go2.connection import go2_connection
-from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
 # Mac has some issue with high bandwidth UDP, so we use pSHMTransport for color_image
 # actually we can use pSHMTransport for all platforms, and for all streams
@@ -109,12 +108,15 @@ elif global_config.viewer_backend.startswith("rerun"):
 else:
     with_vis = _transports_base
 
+# Command center web UI only serves the browser dashboard (rerun-web).
+_base_modules = [with_vis, go2_connection()]
+if global_config.viewer_backend == "rerun-web":
+    from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
+
+    _base_modules.append(websocket_vis())
+
 unitree_go2_basic = (
-    autoconnect(
-        with_vis,
-        go2_connection(),
-        websocket_vis(),
-    )
+    autoconnect(*_base_modules)
     .global_config(n_workers=4, robot_model="unitree_go2")
     .configurators(ClockSyncConfigurator())
 )

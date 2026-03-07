@@ -33,7 +33,6 @@ from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Bool
 from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
 
 def _convert_camera_info(camera_info: Any) -> Any:
@@ -116,16 +115,21 @@ _camera = (
     else autoconnect()
 )
 
+# Command center web UI only serves the browser dashboard (rerun-web).
+_base_modules = [
+    _with_vis,
+    _camera,
+    voxel_mapper(voxel_size=0.1),
+    cost_mapper(),
+    wavefront_frontier_explorer(),
+]
+if global_config.viewer_backend == "rerun-web":
+    from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
+
+    _base_modules.append(websocket_vis())
+
 uintree_g1_primitive_no_nav = (
-    autoconnect(
-        _with_vis,
-        _camera,
-        voxel_mapper(voxel_size=0.1),
-        cost_mapper(),
-        wavefront_frontier_explorer(),
-        # Visualization
-        websocket_vis(),
-    )
+    autoconnect(*_base_modules)
     .global_config(n_workers=4, robot_model="unitree_g1")
     .transports(
         {
