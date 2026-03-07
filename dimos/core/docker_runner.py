@@ -307,15 +307,16 @@ class DockerModule(ModuleProxyProtocol):
             with suppress(Exception):
                 unsub()
         self._unsub_fns.clear()
-        with suppress(Exception):
-            _run(
-                [self.config.docker_bin, "stop", self._container_name],
-                timeout=DOCKER_STOP_TIMEOUT,
-            )
-        with suppress(Exception):
-            _remove_container(self.config, self._container_name)
+        if not self.config.docker_reconnect_container:
+            with suppress(Exception):
+                _run(
+                    [self.config.docker_bin, "stop", self._container_name],
+                    timeout=DOCKER_STOP_TIMEOUT,
+                )
+            with suppress(Exception):
+                _remove_container(self.config, self._container_name)
         self._running = False
-        logger.info(f"Stopped container: {self._container_name}")
+        logger.info(f"Cleaned up container handle: {self._container_name}")
 
     def status(self) -> dict[str, Any]:
         cfg = self.config
@@ -337,10 +338,11 @@ class DockerModule(ModuleProxyProtocol):
         return bool(result)
 
     def __getattr__(self, name: str) -> Any:
-        if name in self.rpcs:
+        rpcs = self.__dict__.get("rpcs")
+        if rpcs is not None and name in rpcs:
             original_method = getattr(self._module_class, name, None)
             return RpcCall(original_method, self.rpc, name, self.remote_name, self._unsub_fns, None)
-        raise AttributeError(f"{name} not found on {self._module_class.__name__}")
+        raise AttributeError(f"{name} not found on {type(self).__name__}")
 
     # Docker command building (split into focused helpers for readability)
 

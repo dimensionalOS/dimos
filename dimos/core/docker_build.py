@@ -65,7 +65,7 @@ def _convert_dockerfile(dockerfile: Path) -> Path:
 
     logger.info(f"Converting {dockerfile.name} to DimOS format")
 
-    converted = dockerfile.parent / f".{dockerfile.name}.dimos"
+    converted = dockerfile.parent / f".{dockerfile.name}.ignore"
     converted.write_text(content.rstrip() + "\n" + DIMOS_FOOTER.lstrip("\n"))
     return converted
 
