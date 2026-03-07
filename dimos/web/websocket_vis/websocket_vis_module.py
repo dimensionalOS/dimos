@@ -148,6 +148,17 @@ class WebsocketVisModule(Module):
     def start(self) -> None:
         super().start()
 
+        # Only start the web server for rerun-web (web dashboard with
+        # Rerun iframe + command center).  For native rerun / foxglove /
+        # none the web server is unnecessary and would fail if the port
+        # is already in use.
+        if self._global_config.viewer_backend != "rerun-web":
+            logger.info(
+                "Command center web server skipped",
+                viewer=self._global_config.viewer_backend,
+            )
+            return
+
         self._create_server()
 
         self._start_broadcast_loop()
@@ -155,8 +166,6 @@ class WebsocketVisModule(Module):
         self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
         self._uvicorn_server_thread.start()
 
-        # Auto-open browser only for rerun-web (dashboard with Rerun iframe + command center)
-        # For rerun and foxglove, users access the command center manually if needed
         if self._global_config.viewer_backend == "rerun-web":
             url = f"http://localhost:{self.port}/"
             logger.info(f"Dimensional Command Center: {url}")
