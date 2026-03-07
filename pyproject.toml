@@ -150,7 +150,7 @@ misc = [
 
 visualization = [
     "rerun-sdk>=0.20.0",
-    "dimos-viewer>=0.30.0a2",
+    "dimos-viewer>=0.30.0a4",
 ]
 
 agents = [
