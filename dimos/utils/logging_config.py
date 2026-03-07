@@ -38,6 +38,39 @@ logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 _LOG_FILE_PATH = None
 
+_RUN_LOG_DIR: Path | None = None
+
+
+def set_run_log_dir(log_dir: str | Path) -> None:
+    """Set per-run log directory. Call BEFORE blueprint.build().
+
+    Updates the global path AND migrates any existing FileHandlers on
+    stdlib loggers so that logs written after this call go to the new
+    directory.  Workers spawned after this call inherit the env var.
+    """
+    global _RUN_LOG_DIR, _LOG_FILE_PATH
+    log_dir = Path(log_dir)
+    _RUN_LOG_DIR = log_dir
+    _RUN_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    new_path = log_dir / "main.jsonl"
+    _LOG_FILE_PATH = new_path
+    os.environ["DIMOS_RUN_LOG_DIR"] = str(log_dir)
+
+    # Migrate existing FileHandlers to the new path
+    for logger_name in list(logging.Logger.manager.loggerDict):
+        logger_obj = logging.getLogger(logger_name)
+        for i, handler in enumerate(logger_obj.handlers):
+            if isinstance(handler, logging.FileHandler) and handler.baseFilename != str(new_path):
+                handler.close()
+                new_handler = logging.FileHandler(new_path, mode="a", encoding="utf-8")
+                new_handler.setLevel(handler.level)
+                new_handler.setFormatter(handler.formatter)
+                logger_obj.handlers[i] = new_handler
+
+
+def get_run_log_dir() -> Path | None:
+    return _RUN_LOG_DIR
+
 
 def _get_log_directory() -> Path:
     # Check if running from a git repository
@@ -61,6 +94,13 @@ def _get_log_directory() -> Path:
 
 
 def _get_log_file_path() -> Path:
+    if _RUN_LOG_DIR is not None:
+        return _RUN_LOG_DIR / "main.jsonl"
+    env_log_dir = os.environ.get("DIMOS_RUN_LOG_DIR")
+    if env_log_dir:
+        p = Path(env_log_dir)
+        p.mkdir(parents=True, exist_ok=True)
+        return p / "main.jsonl"
     log_dir = _get_log_directory()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     pid = os.getpid()
@@ -229,21 +269,24 @@ def setup_logger(*, level: int | None = None) -> Any:
     console_formatter = structlog.stdlib.ProcessorFormatter(
         processor=_compact_console_processor,
     )
+
     console_handler.setFormatter(console_formatter)
     stdlib_logger.addHandler(console_handler)
 
-    # Create rotating file handler with JSON formatting.
-    file_handler = logging.handlers.RotatingFileHandler(
+    # Plain FileHandler (not RotatingFileHandler) — rotation is unsafe with
+    # forkserver workers writing to the same file. Per-run logs are scoped to
+    # a single run so unbounded growth is not a concern.
+    file_handler = logging.FileHandler(
         log_file_path,
         mode="a",
-        maxBytes=10 * 1024 * 1024,  # 10MiB
-        backupCount=20,
         encoding="utf-8",
     )
+
     file_handler.setLevel(level)
     file_formatter = structlog.stdlib.ProcessorFormatter(
         processor=structlog.processors.JSONRenderer(),
     )
+
     file_handler.setFormatter(file_formatter)
     stdlib_logger.addHandler(file_handler)
 

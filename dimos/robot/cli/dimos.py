@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import inspect
 import sys
 from typing import Any, get_args, get_origin
@@ -102,22 +104,156 @@ main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
+    daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
 ) -> None:
     """Start a robot blueprint"""
+    from datetime import datetime, timezone
+    import os
+
     logger.info("Starting DimOS")
 
     from dimos.core.blueprints import autoconnect
+    from dimos.core.run_registry import (
+        LOG_BASE_DIR,
+        RunEntry,
+        check_port_conflicts,
+        cleanup_stale,
+        generate_run_id,
+    )
     from dimos.robot.get_all_blueprints import get_by_name
-    from dimos.utils.logging_config import setup_exception_handler
+    from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
 
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
     global_config.update(**cli_config_overrides)
 
+    # Clean stale registry entries
+    stale = cleanup_stale()
+    if stale:
+        logger.info(f"Cleaned {stale} stale run entries")
+
+    # Port conflict check
+    conflict = check_port_conflicts()
+    if conflict:
+        typer.echo(
+            f"Error: Ports in use by {conflict.run_id} (PID {conflict.pid}). "
+            f"Run 'dimos stop' first.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    blueprint_name = "-".join(robot_types)
+    run_id = generate_run_id(blueprint_name)
+    log_dir = LOG_BASE_DIR / run_id
+
+    # Route structured logs (main.jsonl) to the per-run directory.
+    # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
+    set_run_log_dir(log_dir)
+
     blueprint = autoconnect(*map(get_by_name, robot_types))
-    dimos = blueprint.build(cli_config_overrides=cli_config_overrides)
-    dimos.loop()
+    coordinator = blueprint.build(cli_config_overrides=cli_config_overrides)
+
+    if daemon:
+        from dimos.core.daemon import (
+            daemonize,
+            install_signal_handlers,
+        )
+
+        # Health check before daemonizing — catch early crashes
+        if not coordinator.health_check():
+            typer.echo("Error: health check failed — a worker process died.", err=True)
+            coordinator.stop()
+            raise typer.Exit(1)
+
+        n_workers = coordinator.n_workers
+        n_modules = coordinator.n_modules
+        typer.echo(f"✓ All modules started ({n_modules} modules, {n_workers} workers)")
+        typer.echo("✓ Health check passed")
+        typer.echo("✓ DimOS running in background\n")
+        typer.echo(f"  Run ID:    {run_id}")
+        typer.echo(f"  Log:       {log_dir}")
+        typer.echo("  Stop:      dimos stop")
+        typer.echo("  Status:    dimos status")
+
+        daemonize(log_dir)
+
+        entry = RunEntry(
+            run_id=run_id,
+            pid=os.getpid(),
+            blueprint=blueprint_name,
+            started_at=datetime.now(timezone.utc).isoformat(),
+            log_dir=str(log_dir),
+            cli_args=list(robot_types),
+            config_overrides=cli_config_overrides,
+        )
+        entry.save()
+        install_signal_handlers(entry, coordinator)
+        coordinator.loop()
+    else:
+        entry = RunEntry(
+            run_id=run_id,
+            pid=os.getpid(),
+            blueprint=blueprint_name,
+            started_at=datetime.now(timezone.utc).isoformat(),
+            log_dir=str(log_dir),
+            cli_args=list(robot_types),
+            config_overrides=cli_config_overrides,
+        )
+        entry.save()
+        try:
+            coordinator.loop()
+        finally:
+            entry.remove()
+
+
+@main.command()
+def status() -> None:
+    """Show the running DimOS instance."""
+    from datetime import datetime, timezone
+
+    from dimos.core.run_registry import get_most_recent
+
+    entry = get_most_recent(alive_only=True)
+    if not entry:
+        typer.echo("No running DimOS instance")
+        return
+
+    try:
+        started = datetime.fromisoformat(entry.started_at)
+        age = datetime.now(timezone.utc) - started
+        hours, remainder = divmod(int(age.total_seconds()), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        uptime = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m {seconds}s"
+    except Exception:
+        uptime = "unknown"
+
+    typer.echo(f"  Run ID:    {entry.run_id}")
+    typer.echo(f"  PID:       {entry.pid}")
+    typer.echo(f"  Blueprint: {entry.blueprint}")
+    typer.echo(f"  Uptime:    {uptime}")
+    typer.echo(f"  Log:       {entry.log_dir}")
+
+
+@main.command()
+def stop(
+    force: bool = typer.Option(False, "--force", "-f", help="Force kill (SIGKILL)"),
+) -> None:
+    """Stop the running DimOS instance."""
+
+    from dimos.core.run_registry import get_most_recent
+
+    entry = get_most_recent(alive_only=True)
+    if not entry:
+        typer.echo("No running DimOS instance", err=True)
+        raise typer.Exit(1)
+
+    from dimos.core.run_registry import stop_entry
+
+    sig_name = "SIGKILL" if force else "SIGTERM"
+    typer.echo(f"Stopping {entry.run_id} (PID {entry.pid}) with {sig_name}...")
+    msg, _ok = stop_entry(entry, force=force)
+    typer.echo(f"  {msg}")
 
 
 @main.command()

@@ -157,7 +157,15 @@ DimOS has been tested and validated on the following hardware configurations:
 
 # Installation
 
-## System Install
+## Interactive Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dev/scripts/install.sh | bash
+```
+
+> See [`scripts/install.sh --help`](scripts/install.sh) for non-interactive and advanced options.
+
+## Manual System Install
 
 To set up your system dependencies, follow one of these guides:
 
@@ -296,6 +304,15 @@ uv sync --all-extras --no-extra dds
 # Run fast test suite
 uv run pytest dimos
 ```
+
+> **Headless / Server Ubuntu (EC2, Docker, WSL2, CI)**
+>
+> If you're running on a headless machine without a display server, you'll need OpenGL libraries that aren't installed by default:
+> ```sh
+> sudo apt-get install -y libgl1 libegl1
+> ```
+> Without these, Open3D and MuJoCo will fail with `OSError: libGL.so.1: cannot open shared object file`.
+> Nix users (`nix develop`) don't need this — the flake already provides `libGL`, `libGLU`, and `mesa`.
 
 ## Multi Language Support
 
