@@ -188,10 +188,6 @@ def run(
         )
         entry.save()
 
-        from dimos.core.agent_context import generate_context
-
-        generate_context(coordinator, blueprint_name, run_id, log_dir)
-
         install_signal_handlers(entry, coordinator)
         coordinator.loop()
     else:
@@ -205,10 +201,6 @@ def run(
             config_overrides=cli_config_overrides,
         )
         entry.save()
-
-        from dimos.core.agent_context import generate_context
-
-        generate_context(coordinator, blueprint_name, run_id, log_dir)
 
         try:
             coordinator.loop()

@@ -24,13 +24,10 @@ import time
 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
-from dimos.core.stream import Out
 
 
 class StressTestModule(Module):
     """Minimal module exposing test skills via MCP."""
-
-    heartbeat: Out[str]
 
     @skill
     def echo(self, message: str) -> str:

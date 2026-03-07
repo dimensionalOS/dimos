@@ -122,7 +122,7 @@ def _handle_dimos_status(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]
         req_id,
         {
             "pid": os.getpid(),
-            "modules": list({s.class_name for s in skills}),
+            "modules": list(dict.fromkeys(s.class_name for s in skills)),
             "skills": [s.func_name for s in skills],
             "skill_count": len(skills),
         },
