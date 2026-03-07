@@ -70,7 +70,7 @@ _console = Console(force_terminal=True, highlight=False)
 
 def _render_text(text: Text) -> str:
     with _console.capture() as cap:
-        _console.print(text, end="")
+        _console.print(text, end="", soft_wrap=True)
     return cap.get()
 
 
@@ -127,14 +127,6 @@ class Stream(Generic[T]):
         )
         return clone
 
-    def __repr__(self) -> str:
-        cls = type(self).__name__
-        type_name = self._payload_type.__name__ if self._payload_type else "?"
-        name = self._backend.stream_name if self._backend else "unbound"
-        head = f'{cls}[{type_name}]("{name}")'
-        query_str = str(self._query)
-        return f"{head} | {query_str}" if query_str else head
-
     def _rich_text(self) -> Text:
         t = Text()
         cls = type(self).__name__
@@ -152,6 +144,9 @@ class Stream(Generic[T]):
             t.append(" | ", style="dim")
             t.append_text(query_text)
         return t
+
+    def __repr__(self) -> str:
+        return self._rich_text().plain
 
     def __str__(self) -> str:
         return _render_text(self._rich_text())
@@ -496,19 +491,6 @@ class TransformStream(Stream[R]):
         self._live = live
         self._backfill_only = backfill_only
 
-    def __repr__(self) -> str:
-        type_name = self._transformer.output_type.__name__ if self._transformer.output_type else "?"
-        xf_name = type(self._transformer).__name__
-        flags: list[str] = []
-        if self._live:
-            flags.append("live=True")
-        if self._backfill_only:
-            flags.append("backfill_only=True")
-        flag_str = ", " + ", ".join(flags) if flags else ""
-        head = f"TransformStream[{type_name}]({self._source!r} -> {xf_name}{flag_str})"
-        query_str = str(self._query)
-        return f"{head} | {query_str}" if query_str else head
-
     def _rich_text(self) -> Text:
         t = Text()
         type_name = self._transformer.output_type.__name__ if self._transformer.output_type else "?"
@@ -533,6 +515,9 @@ class TransformStream(Stream[R]):
             t.append(" | ", style="dim")
             t.append_text(query_text)
         return t
+
+    def __repr__(self) -> str:
+        return self._rich_text().plain
 
     def __str__(self) -> str:
         return _render_text(self._rich_text())

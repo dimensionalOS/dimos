@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for Stream.__repr__ and Filter.__str__."""
+"""Tests for Stream repr/str and Filter.__str__."""
 
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ class TestFilterStr:
         assert str(f) == "lineage(embeddings -> direct)"
 
 
-# ── Stream __repr__ ───────────────────────────────────────────────────
+# ── Stream __str__ ────────────────────────────────────────────────────
 
 
 @pytest.fixture()
@@ -91,52 +91,61 @@ def session():
 class TestStreamRepr:
     def test_basic_stream(self, session) -> None:
         s = session.stream("images", int)
+        print(s)
         assert repr(s) == 'Stream[int]("images")'
 
     def test_chain(self, session) -> None:
-        s = session.stream("images", int)
-        r = repr(s.after(3.0).filter_tags(cam="front").limit(10))
-        assert r == "Stream[int](\"images\") | after(t=3.0) | tags(cam='front') | limit(10)"
+        s = session.stream("images", int).after(3.0).filter_tags(cam="front").limit(10)
+        print(s)
+        assert repr(s) == "Stream[int](\"images\") | after(t=3.0) | tags(cam='front') | limit(10)"
 
     def test_order_and_offset(self, session) -> None:
-        s = session.stream("images", int)
-        r = repr(s.order_by("ts", desc=True).offset(5).limit(10))
-        assert r == 'Stream[int]("images") | order(ts, desc) | limit(10) | offset(5)'
+        s = session.stream("images", int).order_by("ts", desc=True).offset(5).limit(10)
+        print(s)
+        assert repr(s) == 'Stream[int]("images") | order(ts, desc) | limit(10) | offset(5)'
 
     def test_text_stream(self, session) -> None:
         ts = session.text_stream("logs")
+        print(ts)
         assert repr(ts) == 'TextStream[str]("logs")'
 
     def test_text_search(self, session) -> None:
-        ts = session.text_stream("logs")
-        r = repr(ts.search_text("error"))
-        assert r == "TextStream[str](\"logs\") | text('error')"
+        ts = session.text_stream("logs").search_text("error")
+        print(ts)
+        assert repr(ts) == "TextStream[str](\"logs\") | text('error')"
 
     def test_embedding_stream(self, session) -> None:
         es = session.embedding_stream("clip", vec_dimensions=512)
+        print(es)
         assert repr(es) == 'EmbeddingStream[Embedding]("clip")'
 
     def test_transform_stream(self, session) -> None:
         s = session.stream("images", int)
         xf = PerItemTransformer(lambda x: x)
-        r = repr(s.transform(xf, live=True))
-        assert r == 'TransformStream[?](Stream[int]("images") -> PerItemTransformer, live=True)'
+        t = s.transform(xf, live=True)
+        print(t)
+        assert (
+            repr(t) == 'TransformStream[?](Stream[int]("images") -> PerItemTransformer, live=True)'
+        )
 
     def test_transform_backfill_only(self, session) -> None:
         s = session.stream("images", int)
         xf = PerItemTransformer(lambda x: x)
-        r = repr(s.transform(xf, backfill_only=True))
+        t = s.transform(xf, backfill_only=True)
+        print(t)
         assert (
-            r
+            repr(t)
             == 'TransformStream[?](Stream[int]("images") -> PerItemTransformer, backfill_only=True)'
         )
 
     def test_unbound_stream(self) -> None:
         s = Stream(payload_type=int)
+        print(s)
         assert repr(s) == 'Stream[int]("unbound")'
 
     def test_no_payload_type(self) -> None:
         s = Stream()
+        print(s)
         assert repr(s) == 'Stream[?]("unbound")'
 
     def test_materialized_transform(self, session) -> None:
@@ -144,6 +153,7 @@ class TestStreamRepr:
         s.append(1, ts=1.0)
         xf = PerItemTransformer(lambda x: x * 2)
         derived = s.transform(xf).store("doubled", int)
+        print(derived)
         assert repr(derived) == 'Stream[int]("doubled")'
 
     def test_transform_with_typed_transformer(self, session) -> None:
@@ -154,19 +164,22 @@ class TestStreamRepr:
         s = session.stream("images", int)
         model = MagicMock()
         xf = EmbeddingTransformer(model)
-        r = repr(s.transform(xf, live=True))
+        t = s.transform(xf, live=True)
+        print(t)
         assert (
-            r
+            repr(t)
             == 'TransformStream[Embedding](Stream[int]("images") -> EmbeddingTransformer, live=True)'
         )
 
     def test_embedding_stream_from_source(self, session) -> None:
         session.stream("images", int)
-        es = session.embedding_stream("clip", vec_dimensions=512, parent_table="images")
-        assert (
-            repr(es.after(5.0).limit(3))
-            == 'EmbeddingStream[Embedding]("clip") | after(t=5.0) | limit(3)'
+        es = (
+            session.embedding_stream("clip", vec_dimensions=512, parent_table="images")
+            .after(5.0)
+            .limit(3)
         )
+        print(es)
+        assert repr(es) == 'EmbeddingStream[Embedding]("clip") | after(t=5.0) | limit(3)'
 
     def test_ivan(self, session) -> None:
         from unittest.mock import MagicMock
