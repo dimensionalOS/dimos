@@ -50,7 +50,7 @@ if not os.path.exists(VENV_PYTHON):
     VENV_PYTHON = sys.executable
 
 
-def run_dimos(*args: str, timeout: float = 30) -> subprocess.CompletedProcess:
+def run_dimos(*args: str, timeout: float = 30) -> subprocess.CompletedProcess[str]:
     """Run a dimos CLI command."""
     cmd = [VENV_PYTHON, "-m", "dimos.robot.cli.dimos", *args]
     env = {**os.environ, "CI": "1", "PYTHONPATH": REPO_DIR}

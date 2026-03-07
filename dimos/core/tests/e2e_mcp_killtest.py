@@ -34,10 +34,12 @@ from __future__ import annotations
 
 import argparse
 import multiprocessing
+import multiprocessing.synchronize
 import os
 import signal
 import sys
 import time
+from typing import Any
 
 import requests
 
@@ -45,8 +47,8 @@ MCP_PORT = 9990
 MCP_URL = f"http://localhost:{MCP_PORT}/mcp"
 
 
-def mcp_call(method: str, params: dict | None = None) -> dict:
-    payload: dict = {"jsonrpc": "2.0", "id": 1, "method": method}
+def mcp_call(method: str, params: dict[str, object] | None = None) -> Any:
+    payload: dict[str, object] = {"jsonrpc": "2.0", "id": 1, "method": method}
     if params:
         payload["params"] = params
     resp = requests.post(MCP_URL, json=payload, timeout=10)
@@ -86,7 +88,7 @@ def wait_for_mcp_down(timeout: float = 10.0) -> bool:
     return False
 
 
-def run_blueprint_in_process(ready_event: multiprocessing.Event) -> None:
+def run_blueprint_in_process(ready_event: multiprocessing.synchronize.Event) -> None:
     os.environ["CI"] = "1"
     from dimos.agents.mcp.mcp_server import McpServer
     from dimos.core.blueprints import autoconnect
@@ -224,6 +226,7 @@ def run_kill_restart_cycle(cycle: int) -> int:
 
     # KILL
     section(f"CYCLE {cycle}: SIGKILL \u2192 simulating crash")
+    assert proc.pid is not None
     os.kill(proc.pid, signal.SIGKILL)
     proc.join(10)
     p(f"Process killed (pid={proc.pid}, exitcode={proc.exitcode})")
@@ -260,6 +263,7 @@ def run_kill_restart_cycle(cycle: int) -> int:
 
     # Clean shutdown
     section(f"CYCLE {cycle}: Clean shutdown")
+    assert proc2.pid is not None
     os.kill(proc2.pid, signal.SIGTERM)
     proc2.join(10)
     if proc2.exitcode is not None:
