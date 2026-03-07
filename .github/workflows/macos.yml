@@ -70,7 +70,7 @@ jobs:
         run: |
           # Same as dimos autoconf for macOS (skipped when CI=1)
           sudo route add -net 224.0.0.0/4 -interface lo0 || true
-          sudo sysctl -w kern.ipc.maxsockbuf=8388608
+          sudo sysctl -w kern.ipc.maxsockbuf=6291456
           sudo sysctl -w net.inet.udp.recvspace=2097152
           sudo sysctl -w net.inet.udp.maxdgram=65535
 
