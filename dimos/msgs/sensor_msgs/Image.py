@@ -377,15 +377,21 @@ class Image(Timestamped):
 
     @property
     def sharpness(self) -> float:
-        """Return sharpness score."""
-        gray = self.to_grayscale()
-        sx = cv2.Sobel(gray.data, cv2.CV_32F, 1, 0, ksize=5)
-        sy = cv2.Sobel(gray.data, cv2.CV_32F, 0, 1, ksize=5)
-        magnitude = cv2.magnitude(sx, sy)
-        mean_mag = float(magnitude.mean())
-        if mean_mag <= 0:
+        """Return sharpness score.
+
+        Downsamples to ~160px wide before computing Laplacian variance
+        for fast evaluation (~10-20x cheaper than full-res Sobel).
+        """
+        gray = self.to_grayscale().data
+        # Downsample to ~160px wide for cheap evaluation
+        h, w = gray.shape[:2]
+        if w > 160:
+            scale = 160.0 / w
+            gray = cv2.resize(gray, (160, int(h * scale)), interpolation=cv2.INTER_AREA)
+        lap_var = cv2.Laplacian(gray, cv2.CV_32F).var()
+        if lap_var <= 0:
             return 0.0
-        return float(np.clip((np.log10(mean_mag + 1) - 1.7) / 2.0, 0.0, 1.0))
+        return float(np.clip((np.log10(lap_var + 1) - 1.0) / 3.0, 0.0, 1.0))
 
     def save(self, filepath: str) -> bool:
         arr = self.to_opencv()

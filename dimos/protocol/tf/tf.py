@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from functools import reduce
 from typing import TypeVar
 
-from dimos.memory.timeseries.inmemory import InMemoryStore
+from dimos.memory_old.timeseries.inmemory import InMemoryStore
 from dimos.msgs.geometry_msgs import PoseStamped, Transform
 from dimos.msgs.tf2_msgs import TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic

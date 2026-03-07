@@ -17,7 +17,7 @@ from collections.abc import Iterator
 
 from sortedcontainers import SortedKeyList  # type: ignore[import-untyped]
 
-from dimos.memory.timeseries.base import T, TimeSeriesStore
+from dimos.memory_old.timeseries.base import T, TimeSeriesStore
 
 
 class InMemoryStore(TimeSeriesStore[T]):

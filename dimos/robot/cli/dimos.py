@@ -177,6 +177,15 @@ def top(ctx: typer.Context) -> None:
     dtop_main()
 
 
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def ps(ctx: typer.Context) -> None:
+    """List running worker processes (non-interactive)."""
+    from dimos.utils.cli.dps import main as dps_main
+
+    sys.argv = ["dps", *ctx.args]
+    dps_main()
+
+
 topic_app = typer.Typer(help="Topic commands for pub/sub")
 main.add_typer(topic_app, name="topic")
 

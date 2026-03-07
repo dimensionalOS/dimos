@@ -19,7 +19,7 @@ import pytest
 from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.memory.timeseries.inmemory import InMemoryStore
+from dimos.memory_old.timeseries.inmemory import InMemoryStore
 from dimos.msgs.sensor_msgs import Image
 from dimos.types.timestamped import (
     Timestamped,

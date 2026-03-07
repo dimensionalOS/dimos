@@ -50,7 +50,7 @@ def gradient(
 
     # Compute distance transform (distance to nearest obstacle in cells)
     # Unknown cells are treated as if they don't exist for distance calculation
-    distance_cells = ndimage.distance_transform_edt(1 - obstacle_map)
+    distance_cells: np.ndarray = ndimage.distance_transform_edt(1 - obstacle_map)  # type: ignore[assignment]
 
     # Convert to meters and clip to max distance
     distance_meters = np.clip(distance_cells * occupancy_grid.resolution, 0, max_distance)

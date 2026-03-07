@@ -20,7 +20,7 @@ import os
 from pathlib import Path
 import pickle
 
-from dimos.memory.timeseries.base import T, TimeSeriesStore
+from dimos.memory_old.timeseries.base import T, TimeSeriesStore
 from dimos.utils.data import get_data, get_data_dir
 
 

@@ -136,7 +136,7 @@ class Florence2Model(HuggingFaceModel, Captioner):
             )
 
         # Decode all
-        generated_texts = self._processor.batch_decode(generated_ids, skip_special_tokens=False)
+        generated_texts = self._processor.batch_decode(generated_ids, skip_special_tokens=True)
 
         # Parse outputs
         captions = []

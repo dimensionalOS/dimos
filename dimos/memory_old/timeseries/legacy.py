@@ -30,7 +30,7 @@ from reactivex.disposable import CompositeDisposable, Disposable
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
-from dimos.memory.timeseries.base import T, TimeSeriesStore
+from dimos.memory_old.timeseries.base import T, TimeSeriesStore
 from dimos.utils.data import get_data, get_data_dir
 
 

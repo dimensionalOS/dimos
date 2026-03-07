@@ -21,7 +21,7 @@ import psycopg2  # type: ignore[import-untyped]
 import psycopg2.extensions  # type: ignore[import-untyped]
 
 from dimos.core.resource import Resource
-from dimos.memory.timeseries.base import T, TimeSeriesStore
+from dimos.memory_old.timeseries.base import T, TimeSeriesStore
 
 # Valid SQL identifier: alphanumeric and underscores, not starting with digit
 _VALID_IDENTIFIER = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")

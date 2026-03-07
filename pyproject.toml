@@ -62,7 +62,6 @@ dependencies = [
     "annotation-protocol>=1.4.0",
     "lazy_loader",
     "plum-dispatch==2.5.7",
-
     # Logging
     "structlog>=25.5.0,<26",
     "colorlog==6.9.0",
@@ -86,6 +85,7 @@ dependencies = [
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
+    "sqlite-vec>=0.1.6",
 ]
 
 
@@ -98,6 +98,7 @@ dimos = "dimos.robot.cli.dimos:main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
 doclinks = "dimos.utils.docs.doclinks:main"
 dtop = "dimos.utils.cli.dtop:main"
+dps = "dimos.utils.cli.dps:main"
 
 [project.urls]
 Homepage = "https://dimensionalos.com"
@@ -270,6 +271,7 @@ dev = [
     "types-tensorflow>=2.18.0.20251008,<3",
     "types-tqdm>=4.67.0.20250809,<5",
     "types-psycopg2>=2.9.21.20251012",
+    "scipy-stubs>=1.15.0",
 
     # Tools
     "py-spy",
@@ -399,6 +401,7 @@ module = [
     "rclpy.*",
     "sam2.*",
     "sensor_msgs.*",
+    "sqlite_vec",
     "std_msgs.*",
     "tf2_msgs.*",
     "torchreid",

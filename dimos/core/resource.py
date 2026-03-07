@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
+
+from reactivex.abc import DisposableBase
 
 
-class Resource(ABC):
+class Resource(DisposableBase):
     @abstractmethod
     def start(self) -> None: ...
 

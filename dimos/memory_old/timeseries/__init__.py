@@ -13,19 +13,19 @@
 # limitations under the License.
 """Time series storage and replay."""
 
-from dimos.memory.timeseries.base import TimeSeriesStore
-from dimos.memory.timeseries.inmemory import InMemoryStore
-from dimos.memory.timeseries.pickledir import PickleDirStore
-from dimos.memory.timeseries.sqlite import SqliteStore
+from dimos.memory_old.timeseries.base import TimeSeriesStore
+from dimos.memory_old.timeseries.inmemory import InMemoryStore
+from dimos.memory_old.timeseries.pickledir import PickleDirStore
+from dimos.memory_old.timeseries.sqlite import SqliteTSStore
 
 
 def __getattr__(name: str):  # type: ignore[no-untyped-def]
     if name == "PostgresStore":
-        from dimos.memory.timeseries.postgres import PostgresStore
+        from dimos.memory_old.timeseries.postgres import PostgresStore
 
         return PostgresStore
     if name == "reset_db":
-        from dimos.memory.timeseries.postgres import reset_db
+        from dimos.memory_old.timeseries.postgres import reset_db
 
         return reset_db
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -35,7 +35,7 @@ __all__ = [
     "InMemoryStore",
     "PickleDirStore",
     "PostgresStore",
-    "SqliteStore",
+    "SqliteTSStore",
     "TimeSeriesStore",
     "reset_db",
 ]

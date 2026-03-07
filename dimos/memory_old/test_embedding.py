@@ -14,7 +14,7 @@
 
 import pytest
 
-from dimos.memory.embedding import EmbeddingMemory, SpatialEntry
+from dimos.memory_old.embedding import EmbeddingMemory, SpatialEntry
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay

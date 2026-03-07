@@ -29,23 +29,28 @@ from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
+from dimos.types.timestamped import Timestamped
 from dimos.utils.reactive import getter_hot
+
+
+@dataclass
+class SpatialEntry(Timestamped):
+    pose: PoseStamped
+
+
+@dataclass
+class SpatialImage(SpatialEntry):
+    image: Image
+
+
+@dataclass
+class SpatialEmbedding(SpatialImage):
+    embedding: Embedding
 
 
 @dataclass
 class Config(ModuleConfig):
     embedding_model: EmbeddingModel = field(default_factory=CLIPModel)
-
-
-@dataclass
-class SpatialEntry:
-    image: Image
-    pose: PoseStamped
-
-
-@dataclass
-class SpatialEmbedding(SpatialEntry):
-    embedding: Embedding
 
 
 class EmbeddingMemory(Module[Config]):
@@ -83,13 +88,13 @@ class EmbeddingMemory(Module[Config]):
             ops.map(self._store_spatial_entry),
         ).subscribe(print)
 
-    def _try_create_spatial_entry(self, img: Image) -> Observable[SpatialEntry]:
+    def _try_create_spatial_entry(self, img: Image) -> Observable[SpatialImage]:
         pose = self.tf.get_pose("world", "base_link")
         if not pose:
             return rx.empty()
-        return rx.of(SpatialEntry(image=img, pose=pose))
+        return rx.of(SpatialImage(image=img, pose=pose))
 
-    def _embed_spatial_entry(self, spatial_entry: SpatialEntry) -> SpatialEmbedding:
+    def _embed_spatial_entry(self, spatial_entry: SpatialImage) -> SpatialEmbedding:
         embedding = cast("Embedding", self.config.embedding_model.embed(spatial_entry.image))
         return SpatialEmbedding(
             image=spatial_entry.image,
