@@ -21,6 +21,7 @@ Encapsulates ROS transport and topic remapping for Unitree robots.
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
+import platform
 import threading
 import time
 from typing import Any
@@ -116,7 +117,7 @@ class ROSNavConfig(DockerModuleConfig):
     docker_build_ssh: bool = True
     docker_build_args: dict[str, str] = field(
         default_factory=lambda: {
-            "TARGETARCH": "arm64" if __import__("platform").machine() == "aarch64" else "amd64"
+            "TARGETARCH": "arm64" if platform.machine() == "aarch64" else "amd64"
         }
     )
     docker_gpus: str | None = None
@@ -229,8 +230,9 @@ class ROSNavConfig(DockerModuleConfig):
             ("/tmp/.X11-unix", "/tmp/.X11-unix", "rw"),
             # Mount live dimos source so the module is always up-to-date
             (str(repo_root), "/workspace/dimos", "rw"),
-            # Mount DDS config (fastdds.xml) from host
-            (str(repo_root / "docker" / "navigation" / "config"), "/ros2_ws/config", "rw"),
+            # Mount DDS config (fastdds.xml) from host — single file mount
+            # avoids shadowing the entire /ros2_ws/config directory
+            (str(Path(__file__).parent / "fastdds.xml"), "/ros2_ws/config/fastdds.xml", "ro"),
             # Note: most of the mounts below are only needed for development
             # Mount entrypoint script so changes don't require a rebuild
             (
