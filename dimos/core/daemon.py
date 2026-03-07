@@ -32,26 +32,17 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 # ---------------------------------------------------------------------------
-# Health check
+# Health check (delegates to ModuleCoordinator.health_check)
 # ---------------------------------------------------------------------------
 
 
 def health_check(coordinator: ModuleCoordinator) -> bool:
     """Verify all coordinator workers are alive after build.
 
-    Since ``blueprint.build()`` is synchronous, every module should be
-    started by the time this runs.  We just confirm no worker has died.
+    .. deprecated:: 0.1.0
+        Use ``coordinator.health_check()`` directly.
     """
-    if coordinator.n_workers == 0:
-        logger.error("health_check: no workers found")
-        return False
-
-    for w in coordinator.workers:
-        if w.pid is None:
-            logger.error("health_check: worker died", worker_id=w.worker_id)
-            return False
-
-    return True
+    return coordinator.health_check()
 
 
 # ---------------------------------------------------------------------------

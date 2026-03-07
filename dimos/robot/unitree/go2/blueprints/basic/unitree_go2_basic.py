@@ -93,30 +93,21 @@ rerun_config = {
 }
 
 
-match global_config.viewer_backend:
-    case "foxglove":
-        from dimos.robot.foxglove_bridge import foxglove_bridge
+if global_config.viewer_backend == "foxglove":
+    from dimos.robot.foxglove_bridge import foxglove_bridge
 
-        with_vis = autoconnect(
-            _transports_base,
-            foxglove_bridge(shm_channels=["/color_image#sensor_msgs.Image"]),
-        )
-    case "rerun":
-        from dimos.visualization.rerun.bridge import rerun_bridge
+    with_vis = autoconnect(
+        _transports_base,
+        foxglove_bridge(shm_channels=["/color_image#sensor_msgs.Image"]),
+    )
+elif global_config.viewer_backend.startswith("rerun"):
+    from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
 
-        with_vis = autoconnect(_transports_base, rerun_bridge(**rerun_config))
-    case "rerun-connect":
-        from dimos.visualization.rerun.bridge import rerun_bridge
-
-        with_vis = autoconnect(
-            _transports_base, rerun_bridge(viewer_mode="connect", **rerun_config)
-        )
-    case "rerun-web":
-        from dimos.visualization.rerun.bridge import rerun_bridge
-
-        with_vis = autoconnect(_transports_base, rerun_bridge(viewer_mode="web", **rerun_config))
-    case _:
-        with_vis = _transports_base
+    with_vis = autoconnect(
+        _transports_base, rerun_bridge(viewer_mode=_resolve_viewer_mode(), **rerun_config)
+    )
+else:
+    with_vis = _transports_base
 
 unitree_go2_basic = (
     autoconnect(

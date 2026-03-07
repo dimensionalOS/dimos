@@ -162,7 +162,7 @@ class TestPortConflicts:
 # Health check tests
 # ---------------------------------------------------------------------------
 
-from dimos.core.daemon import health_check
+from dimos.core.module_coordinator import ModuleCoordinator
 
 
 def _mock_worker(pid: int | None = 1234, worker_id: int = 0):
@@ -173,9 +173,11 @@ def _mock_worker(pid: int | None = 1234, worker_id: int = 0):
     return w
 
 
-def _mock_coordinator(workers: list | None = None):
-    """Create a mock ModuleCoordinator with controllable workers/n_workers."""
-    coord = mock.MagicMock()
+def _mock_coordinator(workers: list | None = None) -> ModuleCoordinator:
+    """Create a ModuleCoordinator with mocked internals and controllable workers."""
+    coord = mock.MagicMock(spec=ModuleCoordinator)
+    # Bind the real health_check method so it runs actual logic
+    coord.health_check = ModuleCoordinator.health_check.__get__(coord)
     if workers is not None:
         coord.workers = workers
         coord.n_workers = len(workers)
@@ -191,23 +193,23 @@ class TestHealthCheck:
     def test_all_healthy(self):
         workers = [_mock_worker(pid=os.getpid(), worker_id=i) for i in range(3)]
         coord = _mock_coordinator(workers)
-        assert health_check(coord) is True
+        assert coord.health_check() is True
 
     def test_dead_worker(self):
         dead = _mock_worker(pid=None, worker_id=0)
         coord = _mock_coordinator([dead])
-        assert health_check(coord) is False
+        assert coord.health_check() is False
 
     def test_no_workers(self):
         coord = _mock_coordinator(workers=[])
-        assert health_check(coord) is False
+        assert coord.health_check() is False
 
     def test_partial_death(self):
         w1 = _mock_worker(pid=os.getpid(), worker_id=0)
         w2 = _mock_worker(pid=os.getpid(), worker_id=1)
         w3 = _mock_worker(pid=None, worker_id=2)
         coord = _mock_coordinator([w1, w2, w3])
-        assert health_check(coord) is False
+        assert coord.health_check() is False
 
 
 # ---------------------------------------------------------------------------

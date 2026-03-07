@@ -24,7 +24,6 @@ import pytest
 from typer.testing import CliRunner
 
 from dimos.core.blueprints import autoconnect
-from dimos.core.daemon import health_check
 from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.run_registry import (
@@ -129,7 +128,7 @@ class TestDaemonE2E:
         assert len(coordinator.workers) == 1
         assert coordinator.n_modules == 2
 
-        assert health_check(coordinator), "Health check should pass"
+        assert coordinator.health_check(), "Health check should pass"
 
         runs = list_runs(alive_only=True)
         assert len(runs) == 1
@@ -145,7 +144,7 @@ class TestDaemonE2E:
         for w in coordinator_2w.workers:
             assert w.pid is not None, f"Worker {w.worker_id} has no PID"
 
-        assert health_check(coordinator_2w), "Health check should pass"
+        assert coordinator_2w.health_check(), "Health check should pass"
 
     def test_health_check_detects_dead_worker(self, coordinator):
         """Kill a worker process — health check should fail."""
@@ -161,7 +160,7 @@ class TestDaemonE2E:
                 break
             time.sleep(0.1)
 
-        assert not health_check(coordinator), "Health check should FAIL"
+        assert not coordinator.health_check(), "Health check should FAIL"
 
     def test_registry_entry_details(self, coordinator):
         """Verify all fields are correctly persisted in the JSON registry."""

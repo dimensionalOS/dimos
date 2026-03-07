@@ -62,6 +62,23 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         """Number of active workers."""
         return len(self.workers)
 
+    def health_check(self) -> bool:
+        """Verify all workers are alive after build.
+
+        Since ``blueprint.build()`` is synchronous, every module should be
+        started by the time this runs.  We just confirm no worker has died.
+        """
+        if self.n_workers == 0:
+            logger.error("health_check: no workers found")
+            return False
+
+        for w in self.workers:
+            if w.pid is None:
+                logger.error("health_check: worker died", worker_id=w.worker_id)
+                return False
+
+        return True
+
     @property
     def n_modules(self) -> int:
         """Number of deployed modules."""
