@@ -30,7 +30,7 @@ class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
     simulation: bool = False
     replay: bool = False
-    viewer_backend: ViewerBackend = "rerun-web"
+    viewer_backend: ViewerBackend = "rerun"
     n_workers: int = 2
     memory_limit: str = "auto"
     mujoco_camera_position: str | None = None
