@@ -68,18 +68,37 @@ jobs:
 
       - name: Configure LCM networking
         run: |
-          # Multicast route for LCM (same as dimos autoconf for macOS)
+          # Enable multicast on loopback interface
           sudo route add -net 224.0.0.0/4 -interface lo0 || true
+          sudo ifconfig lo0 multicast
+
+          # Configure LCM to use localhost-only networking (avoid multicast issues)
+          export LCM_DEFAULT_URL="udpm://127.0.0.1:7667?ttl=0"
+          echo "LCM_DEFAULT_URL=udpm://127.0.0.1:7667?ttl=0" >> $GITHUB_ENV
+
           # UDP buffer sizes
           sudo sysctl -w kern.ipc.maxsockbuf=6291456
           sudo sysctl -w net.inet.udp.recvspace=2097152
           sudo sysctl -w net.inet.udp.maxdgram=65535
+
+          # Additional networking for LCM
+          sudo sysctl -w net.inet.ip.forwarding=1
+          sudo sysctl -w net.inet.ip.ttl=255
+
+          # Debug network configuration
+          echo "=== Network Interface Status ==="
+          ifconfig lo0
+          echo "=== Multicast Routes ==="
+          netstat -rn | grep 224 || echo "No multicast routes found"
+          echo "=== LCM Environment ==="
+          echo "LCM_DEFAULT_URL: $LCM_DEFAULT_URL"
 
       - name: Run tests
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+          LCM_DEFAULT_URL: "udpm://127.0.0.1:7667?ttl=0"
           CI: "1"
         run: |
           source .venv/bin/activate
