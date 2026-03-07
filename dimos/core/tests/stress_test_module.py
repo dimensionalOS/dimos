@@ -52,5 +52,5 @@ class StressTestModule(Module):
 
         return f"pid={os.getpid()}, module={self.__class__.__name__}"
 
-    def start(self):
+    def start(self) -> None:
         super().start()
