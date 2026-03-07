@@ -315,6 +315,9 @@ def mcp_list_tools() -> None:
     import json
 
     result = _mcp_call("tools/list")
+    if "error" in result:
+        typer.echo(f"Error: {result['error'].get('message', 'unknown error')}", err=True)
+        raise typer.Exit(1)
     tools = result.get("result", {}).get("tools", [])
     typer.echo(json.dumps(tools, indent=2))
 
@@ -345,8 +348,8 @@ def mcp_call_tool(
         raise typer.Exit(1)
     content = result.get("result", {}).get("content", [])
     if not content:
-        typer.echo("No output from tool", err=True)
-        raise typer.Exit(1)
+        typer.echo("(no output)")
+        return
     for item in content:
         typer.echo(item.get("text", str(item)))
 
@@ -357,6 +360,9 @@ def mcp_status() -> None:
     import json
 
     result = _mcp_call("dimos/status")
+    if "error" in result:
+        typer.echo(f"Error: {result['error'].get('message', 'unknown error')}", err=True)
+        raise typer.Exit(1)
     data = result.get("result", {})
     typer.echo(json.dumps(data, indent=2))
 
@@ -367,25 +373,11 @@ def mcp_modules() -> None:
     import json
 
     result = _mcp_call("dimos/list_modules")
-    data = result.get("result", {})
-    typer.echo(json.dumps(data, indent=2))
-
-
-@mcp_app.command("module-io")
-def mcp_module_io(
-    port: int = typer.Option(9990, "--port", "-p", help="MCP server port"),
-) -> None:
-    """Show detailed module IO: skills with parameters and descriptions."""
-    result = _mcp_call("dimos/module_io", port=port)
     if "error" in result:
-        typer.echo(f"Error: {result['error'].get('message', 'unknown')}", err=True)
+        typer.echo(f"Error: {result['error'].get('message', 'unknown error')}", err=True)
         raise typer.Exit(1)
     data = result.get("result", {})
-    for mod_name, mod_info in data.get("modules", {}).items():
-        typer.echo(f"\n{mod_name} ({mod_info['skill_count']} skills):")
-        for skill in mod_info.get("skills", []):
-            desc = f" — {skill['description']}" if skill.get("description") else ""
-            typer.echo(f"  {skill['name']}{desc}")
+    typer.echo(json.dumps(data, indent=2))
 
 
 @main.command("agent-send")

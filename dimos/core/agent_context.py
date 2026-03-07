@@ -90,7 +90,9 @@ def generate_context(
     lines.append("Use `dimos mcp list-tools` for full schema, or call via:")
     lines.append("```")
     curl_example = (
-        f'curl -s localhost:{mcp_port}/mcp -d \'{{"jsonrpc":"2.0","id":1,"method":"tools/list"}}\''
+        f"curl -s localhost:{mcp_port}/mcp "
+        '-H "Content-Type: application/json" '
+        '-d \'{"jsonrpc":"2.0","id":1,"method":"tools/list"}\''
     )
     lines.append(curl_example)
     lines.append("```")

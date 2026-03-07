@@ -176,15 +176,6 @@ def test_mcp_basic_ops() -> int:
         p(f"agent_send failed: {e}", ok=False)
         failures += 1
 
-    # dimos/module_io
-    try:
-        result = mcp_call("dimos/module_io")
-        assert "StressTestModule" in result["result"]["modules"]
-        p(f"module_io \u2192 {result['result']['module_count']} modules")
-    except Exception as e:
-        p(f"module_io failed: {e}", ok=False)
-        failures += 1
-
     # rapid burst
     try:
         for i in range(10):

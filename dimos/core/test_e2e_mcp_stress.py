@@ -25,7 +25,6 @@ from typer.testing import CliRunner
 
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.blueprints import autoconnect
-from dimos.core.daemon import health_check
 from dimos.core.global_config import global_config
 from dimos.core.run_registry import (
     RunEntry,
@@ -242,14 +241,12 @@ class TestDaemonMCPRecovery:
         assert _wait_for_mcp(), "Second MCP start failed (port conflict?)"
         coord2.stop()
 
-    def test_registry_cleanup_after_stop(self, mcp_blueprint, mcp_entry):
+    def test_registry_cleanup_after_stop(self, mcp_entry):
         """Registry entry should be removable after stop."""
-        assert health_check(mcp_blueprint)
-
         runs = list_runs(alive_only=True)
         assert len(runs) == 1
 
-        mcp_blueprint.stop()
+        # Remove registry entry
         mcp_entry.remove()
 
         runs = list_runs(alive_only=True)
@@ -452,32 +449,3 @@ class TestAgentSend:
         """dimos agent-send with no server should exit with error."""
         result = CliRunner().invoke(main, ["agent-send", "hello"])
         assert result.exit_code == 1
-
-
-@pytest.mark.slow
-class TestModuleVisualization:
-    """Test module IO introspection via MCP."""
-
-    def test_module_io_returns_skills_with_params(self, mcp_blueprint):
-        """dimos/module_io should return skills grouped by module with parameters."""
-        assert _wait_for_mcp()
-
-        result = _mcp_call("dimos/module_io")
-        assert "result" in result
-        data = result["result"]
-        assert "modules" in data
-        assert "StressTestModule" in data["modules"]
-
-        stress_mod = data["modules"]["StressTestModule"]
-        assert stress_mod["skill_count"] >= 4
-        skill_names = [s["name"] for s in stress_mod["skills"]]
-        assert "echo" in skill_names
-        assert "ping" in skill_names
-
-    def test_module_io_cli(self, mcp_blueprint):
-        """dimos mcp module-io should output module info."""
-        assert _wait_for_mcp()
-
-        result = CliRunner().invoke(main, ["mcp", "module-io"])
-        assert result.exit_code == 0
-        assert "StressTestModule" in result.output

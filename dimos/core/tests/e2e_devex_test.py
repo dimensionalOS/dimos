@@ -24,11 +24,10 @@ is using DimOS for the first time:
 4. dimos mcp call echo             (call a tool)
 5. dimos mcp status                (module info)
 6. dimos mcp modules               (module-skill mapping)
-7. dimos mcp module-io             (introspect module IO)
-8. dimos agent-send "hello"        (send to agent)
-9. Check logs for responses
-10. dimos stop                     (clean shutdown)
-11. dimos status                   (verify stopped)
+7. dimos agent-send "hello"        (send to agent)
+8. Check logs for responses
+9. dimos stop                     (clean shutdown)
+10. dimos status                   (verify stopped)
 
 Usage:
     python -m dimos.core.tests.e2e_devex_test
@@ -248,7 +247,7 @@ def main() -> None:
     # ---------------------------------------------------------------
     # Step 9: Check logs
     # ---------------------------------------------------------------
-    section("Step 9: Check per-run logs")
+    section("Step 8: Check per-run logs")
     log_base = os.path.expanduser("~/.local/state/dimos/logs")
     if os.path.isdir(log_base):
         runs = sorted(os.listdir(log_base), reverse=True)
@@ -279,9 +278,9 @@ def main() -> None:
         failures += 1
 
     # ---------------------------------------------------------------
-    # Step 10: dimos stop
+    # Step 9: dimos stop
     # ---------------------------------------------------------------
-    section("Step 10: dimos stop")
+    section("Step 9: dimos stop")
     result = run_dimos("stop")
     print(f"  output: {result.stdout.strip()[:200]}")
     if result.returncode == 0:
@@ -294,9 +293,9 @@ def main() -> None:
     time.sleep(2)
 
     # ---------------------------------------------------------------
-    # Step 11: dimos status (verify stopped)
+    # Step 10: dimos status (verify stopped)
     # ---------------------------------------------------------------
-    section("Step 11: dimos status (verify stopped)")
+    section("Step 10: dimos status (verify stopped)")
     result = run_dimos("status")
     print(f"  output: {result.stdout.strip()[:200]}")
     if (
