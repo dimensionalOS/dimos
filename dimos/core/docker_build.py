@@ -33,10 +33,11 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# Timeout for quick Docker commands
+_BUILD_HASH_LABEL = "dimos.build.hash"
+
 DOCKER_CMD_TIMEOUT = 20
 
-# Sentinel value to detect already-converted Dockerfiles (UUID ensures uniqueness)
+# the way of detecting already-converted Dockerfiles (UUID ensures uniqueness)
 DIMOS_SENTINEL = "DIMOS-MODULE-CONVERSION-427593ae-c6e8-4cf1-9b2d-ee81a420a5dc"
 
 # Footer appended to Dockerfiles for DimOS module conversion
@@ -54,28 +55,6 @@ ENTRYPOINT ["/dimos/entrypoint.sh"]
 """
 
 
-def _run(cmd: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
-    """Run a command and return the result."""
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
-
-
-def _run_streaming(cmd: list[str]) -> int:
-    """Run command and stream output to terminal. Returns exit code."""
-    result = subprocess.run(cmd, text=True)
-    return result.returncode
-
-
-def _docker_bin(cfg: DockerModuleConfig) -> str:
-    """Get docker binary path."""
-    return cfg.docker_bin or "docker"
-
-
-def _image_exists(docker_bin: str, image_name: str) -> bool:
-    """Check if a Docker image exists locally."""
-    r = _run([docker_bin, "image", "inspect", image_name], timeout=DOCKER_CMD_TIMEOUT)
-    return r.returncode == 0
-
-
 def _convert_dockerfile(dockerfile: Path) -> Path:
     """Append DimOS footer to Dockerfile. Returns path to converted file."""
     content = dockerfile.read_text()
@@ -91,9 +70,6 @@ def _convert_dockerfile(dockerfile: Path) -> Path:
     return converted
 
 
-_BUILD_HASH_LABEL = "dimos.build.hash"
-
-
 def _compute_build_hash(cfg: DockerModuleConfig) -> str:
     """Hash Dockerfile contents, build args, and build context path."""
     assert cfg.docker_file is not None
@@ -106,7 +82,7 @@ def _compute_build_hash(cfg: DockerModuleConfig) -> str:
 
 def _get_image_build_hash(docker_bin: str, image_name: str) -> str | None:
     """Read the build hash label from an existing Docker image."""
-    r = _run(
+    r = subprocess.run(
         [
             docker_bin,
             "image",
@@ -115,7 +91,10 @@ def _get_image_build_hash(docker_bin: str, image_name: str) -> str | None:
             '{{index .Config.Labels "' + _BUILD_HASH_LABEL + '"}}',
             image_name,
         ],
+        capture_output=True,
+        text=True,
         timeout=DOCKER_CMD_TIMEOUT,
+        check=False,
     )
     if r.returncode != 0:
         return None
@@ -133,7 +112,7 @@ def build_image(cfg: DockerModuleConfig) -> None:
     dockerfile = _convert_dockerfile(cfg.docker_file)
 
     context = cfg.docker_build_context or cfg.docker_file.parent
-    cmd = [_docker_bin(cfg), "build", "-t", cfg.docker_image, "-f", str(dockerfile)]
+    cmd = [cfg.docker_bin, "build", "-t", cfg.docker_image, "-f", str(dockerfile)]
     cmd.extend(["--label", f"{_BUILD_HASH_LABEL}={build_hash}"])
     if cfg.docker_build_ssh:
         cmd.extend(["--ssh", "default"])
@@ -142,14 +121,21 @@ def build_image(cfg: DockerModuleConfig) -> None:
     cmd.append(str(context))
 
     logger.info(f"Building Docker image: {cfg.docker_image}")
-    exit_code = _run_streaming(cmd)
-    if exit_code != 0:
-        raise RuntimeError(f"Docker build failed with exit code {exit_code}")
+    result = subprocess.run(cmd, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"Docker build failed with exit code {result.returncode}")
 
 
 def image_exists(cfg: DockerModuleConfig) -> bool:
     """Check if the configured Docker image exists locally."""
-    return _image_exists(_docker_bin(cfg), cfg.docker_image)
+    r = subprocess.run(
+        [cfg.docker_bin, "image", "inspect", cfg.docker_image],
+        capture_output=True,
+        text=True,
+        timeout=DOCKER_CMD_TIMEOUT,
+        check=False,
+    )
+    return r.returncode == 0
 
 
 __all__ = [

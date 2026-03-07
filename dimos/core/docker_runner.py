@@ -128,25 +128,20 @@ def _run(cmd: list[str], *, timeout: float | None = None) -> subprocess.Complete
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
 
 
-def _docker_bin(cfg: DockerModuleConfig) -> str:
-    """Get docker binary path, defaulting to 'docker' if empty/None."""
-    return cfg.docker_bin or "docker"
-
-
 def _remove_container(cfg: DockerModuleConfig, name: str) -> None:
-    _run([_docker_bin(cfg), "rm", "-f", name], timeout=DOCKER_CMD_TIMEOUT)
+    _run([cfg.docker_bin, "rm", "-f", name], timeout=DOCKER_CMD_TIMEOUT)
 
 
 def _is_container_running(cfg: DockerModuleConfig, name: str) -> bool:
     r = _run(
-        [_docker_bin(cfg), "inspect", "-f", "{{.State.Running}}", name],
+        [cfg.docker_bin, "inspect", "-f", "{{.State.Running}}", name],
         timeout=DOCKER_STATUS_TIMEOUT,
     )
     return r.returncode == 0 and r.stdout.strip() == "true"
 
 
 def _tail_logs(cfg: DockerModuleConfig, name: str, n: int = LOG_TAIL_LINES) -> str:
-    r = _run([_docker_bin(cfg), "logs", "--tail", str(n), name], timeout=DOCKER_CMD_TIMEOUT)
+    r = _run([cfg.docker_bin, "logs", "--tail", str(n), name], timeout=DOCKER_CMD_TIMEOUT)
     out = (r.stdout or "").rstrip()
     err = (r.stderr or "").rstrip()
     return out + ("\n" + err if err else "")
@@ -221,14 +216,14 @@ class DockerModule(ModuleProxyProtocol):
         try:
             if config.docker_file is not None:
                 current_hash = _compute_build_hash(config)
-                stored_hash = _get_image_build_hash(_docker_bin(config), config.docker_image)
+                stored_hash = _get_image_build_hash(config.docker_bin, config.docker_image)
                 if current_hash != stored_hash:
                     logger.info(f"Building {config.docker_image}")
                     build_image(config)
             elif not image_exists(config):
                 logger.info(f"Pulling {config.docker_image}")
                 r = _run(
-                    [_docker_bin(config), "pull", config.docker_image],
+                    [config.docker_bin, "pull", config.docker_image],
                     timeout=config.docker_pull_timeout,
                 )
                 if r.returncode != 0:
@@ -245,7 +240,7 @@ class DockerModule(ModuleProxyProtocol):
                 else:
                     logger.info(f"Stopping existing container: {self._container_name}")
                     _run(
-                        [_docker_bin(config), "stop", self._container_name],
+                        [config.docker_bin, "stop", self._container_name],
                         timeout=DOCKER_STOP_TIMEOUT,
                     )
 
@@ -313,7 +308,7 @@ class DockerModule(ModuleProxyProtocol):
         self._unsub_fns.clear()
         with suppress(Exception):
             _run(
-                [_docker_bin(self.config), "stop", self._container_name],
+                [self.config.docker_bin, "stop", self._container_name],
                 timeout=DOCKER_STOP_TIMEOUT,
             )
         with suppress(Exception):
@@ -353,7 +348,7 @@ class DockerModule(ModuleProxyProtocol):
         cfg = self.config
         self._validate_config(cfg)
 
-        cmd = [_docker_bin(cfg), "run", "-d"]
+        cmd = [cfg.docker_bin, "run", "-d"]
         self._add_lifecycle_args(cmd, cfg)
         self._add_network_args(cmd, cfg)
         self._add_port_args(cmd, cfg)
