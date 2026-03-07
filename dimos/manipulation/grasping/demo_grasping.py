@@ -45,4 +45,4 @@ demo_grasping = autoconnect(
     ),
     foxglove_bridge(),
     agent(),
-).global_config(viewer_backend="foxglove")
+).global_config(viewer="foxglove")

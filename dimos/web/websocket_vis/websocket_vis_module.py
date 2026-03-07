@@ -107,7 +107,7 @@ class WebsocketVisModule(Module):
 
         Args:
             port: Port to run the web server on
-            cfg: Optional global config for viewer backend settings
+            cfg: Optional global config for viewer settings
         """
         super().__init__(**kwargs)
         self._global_config = cfg
@@ -157,7 +157,7 @@ class WebsocketVisModule(Module):
 
         # Auto-open browser only for rerun-web (dashboard with Rerun iframe + command center)
         # For rerun and foxglove, users access the command center manually if needed
-        if self._global_config.viewer_backend == "rerun-web":
+        if self._global_config.viewer == "rerun-web":
             url = f"http://localhost:{self.port}/"
             logger.info(f"Dimensional Command Center: {url}")
 
@@ -234,7 +234,7 @@ class WebsocketVisModule(Module):
         async def serve_index(request):  # type: ignore[no-untyped-def]
             """Serve appropriate HTML based on viewer mode."""
             # If running native Rerun, redirect to standalone command center
-            if self._global_config.viewer_backend != "rerun-web":
+            if self._global_config.viewer != "rerun-web":
                 return RedirectResponse(url="/command-center")
 
             # Otherwise serve full dashboard with Rerun iframe

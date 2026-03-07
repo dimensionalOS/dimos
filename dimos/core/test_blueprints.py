@@ -39,7 +39,7 @@ from dimos.spec.utils import Spec
 
 # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
 _BUILD_WITHOUT_RERUN = {
-    "cli_config_overrides": {"viewer_backend": "none"},
+    "cli_config_overrides": {"viewer": "none"},
 }
 
 
