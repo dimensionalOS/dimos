@@ -1,0 +1,103 @@
+name: macos
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - '**.md'
+      - 'docker/**'
+      - '.github/workflows/docker.yml'
+      - '.github/workflows/_docker-build-template.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check-changes:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.filter.outputs.python }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            python:
+              - 'dimos/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.github/workflows/macos.yml'
+
+  macos-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.should-run == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: |
+          uv sync --extra dev --extra agents --extra web --extra visualization --extra sim --extra manipulation --extra drone --extra psql --frozen
+
+      - name: Check disk usage
+        run: |
+          df -h .
+          du -sh .venv/ || true
+
+      - name: Run tests
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+          CI: "1"
+        run: |
+          source .venv/bin/activate
+          python -m pytest --durations=10 -m 'not (tool or mujoco)'
+
+      - name: Check disk usage (post-test)
+        if: always()
+        run: df -h .
+
+  macos-mypy:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.should-run == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: |
+          uv sync --extra dev --extra agents --extra web --extra visualization --extra sim --extra manipulation --extra drone --extra psql --frozen
+
+      - name: Run mypy
+        run: |
+          source .venv/bin/activate
+          mypy dimos

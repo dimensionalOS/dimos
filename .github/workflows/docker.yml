@@ -236,7 +236,7 @@ jobs:
       dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   ci-complete:
-    needs: [check-changes, ros, python, ros-python, dev, ros-dev, run-tests, run-mypy, macos-tests, macos-mypy]
+    needs: [check-changes, ros, python, ros-python, dev, ros-dev, run-tests, run-mypy]
     runs-on: [self-hosted, Linux]
     if: always()
     steps:
@@ -247,80 +247,3 @@ jobs:
           exit 1
       - name: CI passed
         run: echo "✅ All CI checks passed or were intentionally skipped"
-
-  # ---------------------------------------------------------------------------
-  # macOS CI (no Docker — bare metal Apple Silicon)
-  # ---------------------------------------------------------------------------
-
-  macos-tests:
-    needs: [check-changes]
-    if: ${{
-      always() &&
-      needs.check-changes.result == 'success' &&
-      (needs.check-changes.outputs.tests == 'true' ||
-       needs.check-changes.outputs.python == 'true')
-      }}
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: false
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Install dependencies
-        run: |
-          uv sync --all-extras --no-extra cuda --no-extra cpu --no-extra dds --no-extra unitree --frozen
-
-      - name: Check disk usage
-        run: |
-          df -h .
-          du -sh .venv/ || true
-
-      - name: Run tests
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
-          CI: "1"
-        run: |
-          source .venv/bin/activate
-          coverage run -m pytest --durations=10 -m 'not (tool or mujoco)'
-          coverage report
-
-      - name: Check disk usage (post-test)
-        if: always()
-        run: df -h .
-
-  macos-mypy:
-    needs: [check-changes]
-    if: ${{
-      always() &&
-      needs.check-changes.result == 'success' &&
-      (needs.check-changes.outputs.tests == 'true' ||
-       needs.check-changes.outputs.python == 'true')
-      }}
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: false
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Install dependencies
-        run: |
-          uv sync --all-extras --no-extra cuda --no-extra cpu --no-extra dds --no-extra unitree --frozen
-
-      - name: Run mypy
-        run: |
-          source .venv/bin/activate
-          mypy dimos
