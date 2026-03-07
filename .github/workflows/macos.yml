@@ -68,29 +68,11 @@ jobs:
 
       - name: Configure LCM networking
         run: |
-          # Enable multicast on loopback interface
+          # Same as dimos autoconf for macOS (skipped when CI=1)
           sudo route add -net 224.0.0.0/4 -interface lo0 || true
-
-          # Configure LCM to use localhost-only networking (avoid multicast issues)
-          export LCM_DEFAULT_URL="udpm://127.0.0.1:7667?ttl=0"
-          echo "LCM_DEFAULT_URL=udpm://127.0.0.1:7667?ttl=0" >> $GITHUB_ENV
-
-          # UDP buffer sizes
-          sudo sysctl -w kern.ipc.maxsockbuf=6291456
+          sudo sysctl -w kern.ipc.maxsockbuf=8388608
           sudo sysctl -w net.inet.udp.recvspace=2097152
           sudo sysctl -w net.inet.udp.maxdgram=65535
-
-          # Additional networking for LCM
-          sudo sysctl -w net.inet.ip.forwarding=1
-          sudo sysctl -w net.inet.ip.ttl=255
-
-          # Debug network configuration
-          echo "=== Network Interface Status ==="
-          ifconfig lo0
-          echo "=== Multicast Routes ==="
-          netstat -rn | grep 224 || echo "No multicast routes found"
-          echo "=== LCM Environment ==="
-          echo "LCM_DEFAULT_URL: $LCM_DEFAULT_URL"
 
       - name: Run tests
         env:
