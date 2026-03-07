@@ -3,7 +3,6 @@
 import threading
 import time
 from dataclasses import dataclass
-from functools import cache
 from typing import Any
 
 import numpy as np
@@ -29,11 +28,13 @@ class AudioCapture:
         self._stream: sd.InputStream | None = None
         self._observer: Any = None
         self._lock = threading.Lock()
+        self._audio_stream: Observable[Audio] | None = None
 
     @property
-    @cache
     def audio_stream(self) -> Observable[Audio]:
         """Create an observable that starts/stops audio capture on subscription."""
+        if self._audio_stream is not None:
+            return self._audio_stream
 
         def subscribe(observer: Any, scheduler: Any = None) -> Any:
             with self._lock:
@@ -51,7 +52,8 @@ class AudioCapture:
 
             return dispose
 
-        return create(subscribe)
+        self._audio_stream = create(subscribe)
+        return self._audio_stream
 
     def start(self) -> None:
         if self._stream:

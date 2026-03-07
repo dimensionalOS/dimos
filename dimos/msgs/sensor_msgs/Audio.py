@@ -66,4 +66,6 @@ class Audio(Timestamped):
         ts, sample_rate, channels, data_len = struct.unpack("<dIII", data[:20])
         payload = data[20:]
         arr = np.frombuffer(payload, dtype=np.float32)
+        if len(arr) != data_len:
+            raise ValueError(f"Decoded data length {len(arr)} does not match header {data_len}")
         return cls(data=arr, sample_rate=sample_rate, channels=channels, ts=ts)

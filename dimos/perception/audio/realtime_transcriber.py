@@ -51,16 +51,19 @@ class RealtimeTranscriber:
         self._buffer = np.array([], dtype=np.float32)
         self._buffer_lock = threading.Lock()
         self._observer: Any = None
+        self._transcription_stream: Observable[TranscriptionResult] | None = None
 
     @property
     def transcription_stream(self) -> Observable[TranscriptionResult]:
         """Observable stream of transcription results."""
+        if self._transcription_stream is None:
+            def subscribe(observer: Any, scheduler: Any = None) -> Any:
+                self._observer = observer
+                return lambda: setattr(self, "_observer", None)
 
-        def subscribe(observer: Any, scheduler: Any = None) -> Any:
-            self._observer = observer
-            return lambda: setattr(self, "_observer", None)
-
-        return create(subscribe)
+            self._transcription_stream = create(subscribe)
+        
+        return self._transcription_stream
 
     def on_audio(self, msg: Audio) -> None:
         """Process incoming audio message."""
@@ -68,6 +71,7 @@ class RealtimeTranscriber:
             # Basic warning - resampling would be needed here for robustness
             print(f"Warning: Audio sample rate {msg.sample_rate} != {self.sample_rate}")
 
+        audio_snapshot = None
         with self._buffer_lock:
             # Append new data
             self._buffer = np.concatenate((self._buffer, msg.data))
@@ -75,18 +79,22 @@ class RealtimeTranscriber:
             # Check if we have enough data
             buffer_duration = len(self._buffer) / self.sample_rate
             if buffer_duration >= self.min_buffer_seconds:
-                self._transcribe()
+                audio_snapshot = self._buffer.copy()
+                self._buffer = np.array([], dtype=np.float32)
 
-    def _transcribe(self) -> None:
+        if audio_snapshot is not None:
+            self._transcribe(audio_snapshot)
+
+    def _transcribe(self, audio_buffer: np.ndarray) -> None:
         """Transcribe the current buffer."""
         try:
             # Run transcription
             # beam_size=5 is standard. vad_filter=True helps ignore silence.
             segments, info = self.model.transcribe(
-                self._buffer,
+                audio_buffer,
                 beam_size=5,
                 vad_filter=True,
-                language="en" if "en" in self.model.model.is_multilingual else None,
+                language="en" if not self.model.is_multilingual else None,
             )
 
             # Consume generator to get text
@@ -106,6 +114,3 @@ class RealtimeTranscriber:
                 self._observer.on_error(e)
             else:
                 print(f"Transcription error: {e}")
-        finally:
-            # Clear buffer after transcription (naive approach)
-            self._buffer = np.array([], dtype=np.float32)
