@@ -114,6 +114,46 @@ async def _handle_tools_call(
     return _jsonrpc_result_text(req_id, str(result))
 
 
+def _handle_dimos_status(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]:
+    """Return running modules, skills, and server info."""
+    import os
+
+    return _jsonrpc_result(
+        req_id,
+        {
+            "pid": os.getpid(),
+            "modules": list(dict.fromkeys(s.class_name for s in skills)),
+            "skills": [s.func_name for s in skills],
+            "skill_count": len(skills),
+        },
+    )
+
+
+def _handle_dimos_list_modules(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]:
+    """Return module names and their skills."""
+    modules: dict[str, list[str]] = {}
+    for s in skills:
+        modules.setdefault(s.class_name, []).append(s.func_name)
+    return _jsonrpc_result(req_id, {"modules": modules})
+
+
+def _handle_dimos_agent_send(req_id: Any, params: dict[str, Any]) -> dict[str, Any]:
+    """Route a message to the agent's human_input stream via LCM."""
+    message = params.get("message", "")
+    if not message:
+        return _jsonrpc_error(req_id, -32602, "Missing 'message' parameter")
+
+    # Publish on /human_input LCM channel (same as HumanCLI)
+    try:
+        from dimos.core.transport import pLCMTransport
+
+        transport: pLCMTransport[str] = pLCMTransport("/human_input")
+        transport.publish(message)
+        return _jsonrpc_result_text(req_id, f"Message sent to agent: {message[:100]}")
+    except Exception as e:
+        return _jsonrpc_error(req_id, -32000, f"Failed to send: {e}")
+
+
 async def handle_request(
     request: dict[str, Any],
     skills: list[SkillInfo],
@@ -138,6 +178,12 @@ async def handle_request(
         return _handle_tools_list(req_id, skills)
     if method == "tools/call":
         return await _handle_tools_call(req_id, params, rpc_calls)
+    if method == "dimos/status":
+        return _handle_dimos_status(req_id, skills)
+    if method == "dimos/list_modules":
+        return _handle_dimos_list_modules(req_id, skills)
+    if method == "dimos/agent_send":
+        return _handle_dimos_agent_send(req_id, params)
     return _jsonrpc_error(req_id, -32601, f"Unknown: {method}")
 
 

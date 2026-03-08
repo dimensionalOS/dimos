@@ -256,6 +256,131 @@ def stop(
     typer.echo(f"  {msg}")
 
 
+# ---------------------------------------------------------------------------
+# MCP subcommands
+# ---------------------------------------------------------------------------
+
+mcp_app = typer.Typer(help="Interact with the running MCP server")
+main.add_typer(mcp_app, name="mcp")
+
+
+def _mcp_call(
+    method: str, params: dict[str, Any] | None = None, port: int = 9990
+) -> dict[str, Any]:
+    """Send a JSON-RPC request to the running MCP server."""
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    payload: dict[str, Any] = {"jsonrpc": "2.0", "id": 1, "method": method}
+    if params:
+        payload["params"] = params
+
+    data = _json.dumps(payload).encode()
+    req = urllib.request.Request(
+        f"http://localhost:{port}/mcp",
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result: dict[str, Any] = _json.loads(resp.read())
+            return result
+    except urllib.error.URLError:
+        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
+        raise typer.Exit(1)
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@mcp_app.command("list-tools")
+def mcp_list_tools() -> None:
+    """List available MCP tools (skills)."""
+    import json
+
+    result = _mcp_call("tools/list")
+    if "error" in result:
+        typer.echo(f"Error: {result['error'].get('message', 'unknown error')}", err=True)
+        raise typer.Exit(1)
+    tools = result.get("result", {}).get("tools", [])
+    typer.echo(json.dumps(tools, indent=2))
+
+
+@mcp_app.command("call")
+def mcp_call_tool(
+    tool_name: str = typer.Argument(..., help="Tool name to call"),
+    args: list[str] = typer.Option([], "--arg", "-a", help="Arguments as key=value"),
+) -> None:
+    """Call an MCP tool by name."""
+    import json
+
+    arguments = {}
+    for arg in args:
+        if "=" not in arg:
+            typer.echo(f"Error: argument must be key=value, got: {arg}", err=True)
+            raise typer.Exit(1)
+        key, value = arg.split("=", 1)
+        # Try to parse as JSON for non-string types
+        try:
+            arguments[key] = json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            arguments[key] = value
+
+    result = _mcp_call("tools/call", {"name": tool_name, "arguments": arguments})
+    if "error" in result:
+        typer.echo(f"Error: {result['error'].get('message', 'unknown error')}", err=True)
+        raise typer.Exit(1)
+    content = result.get("result", {}).get("content", [])
+    if not content:
+        typer.echo("(no output)")
+        return
+    for item in content:
+        typer.echo(item.get("text", str(item)))
+
+
+@mcp_app.command("status")
+def mcp_status() -> None:
+    """Show MCP server status (modules, skills)."""
+    import json
+
+    result = _mcp_call("dimos/status")
+    if "error" in result:
+        typer.echo(f"Error: {result['error'].get('message', 'unknown error')}", err=True)
+        raise typer.Exit(1)
+    data = result.get("result", {})
+    typer.echo(json.dumps(data, indent=2))
+
+
+@mcp_app.command("modules")
+def mcp_modules() -> None:
+    """List deployed modules and their skills."""
+    import json
+
+    result = _mcp_call("dimos/list_modules")
+    if "error" in result:
+        typer.echo(f"Error: {result['error'].get('message', 'unknown error')}", err=True)
+        raise typer.Exit(1)
+    data = result.get("result", {})
+    typer.echo(json.dumps(data, indent=2))
+
+
+@main.command("agent-send")
+def agent_send(
+    message: str = typer.Argument(..., help="Message to send to the running agent"),
+    port: int = typer.Option(9990, "--port", "-p", help="MCP server port"),
+) -> None:
+    """Send a message to the running DimOS agent via MCP."""
+    result = _mcp_call("dimos/agent_send", {"message": message}, port=port)
+    if "error" in result:
+        typer.echo(f"Error: {result['error'].get('message', 'unknown')}", err=True)
+        raise typer.Exit(1)
+    content = result.get("result", {}).get("content", [])
+    for item in content:
+        typer.echo(item.get("text", str(item)))
+
+
 @main.command()
 def show_config(ctx: typer.Context) -> None:
     """Show current config settings and their values."""
