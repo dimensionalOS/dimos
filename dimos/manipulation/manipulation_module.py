@@ -87,6 +87,9 @@ class ManipulationModuleConfig(ModuleConfig):
     enable_viz: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
+    # Safe waypoint joints to move through before returning to init.
+    # Set to None to disable.
+    safe_waypoint: list[float] | None = None
 
 
 class ManipulationModule(Module[ManipulationModuleConfig]):
@@ -1004,6 +1007,11 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
 
         pose = Pose(Vector3(x, y, z), orientation)
 
+        # If EE is low, lift up first to clear obstacles
+        err = self._lift_if_low(robot_name)
+        if err:
+            return err
+
         if not self.plan_to_pose(pose, robot_name):
             return f"Error: Planning failed — pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision"
 
@@ -1092,6 +1100,21 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         """
         if self._init_joints is None:
             return "Error: No init joints captured — robot may not have reported joint state yet"
+
+        # Lift if EE is low before moving to init
+        err = self._lift_if_low(robot_name)
+        if err:
+            return err
+
+        # Move through safe waypoint before going to init
+        if self.config.safe_waypoint is not None:
+            logger.info("Moving to safe waypoint before init...")
+            goal = JointState(position=self.config.safe_waypoint)
+            if not self.plan_to_joints(goal, robot_name):
+                return "Error: Failed to plan path to safe waypoint"
+            err = self._preview_execute_wait(robot_name)
+            if err:
+                return err
 
         logger.info(
             f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in self._init_joints.position)}]..."

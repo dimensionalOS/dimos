@@ -184,6 +184,7 @@ def _make_xarm7_config(
     add_gripper: bool = False,
     gripper_hardware_id: str | None = None,
     tf_extra_links: list[str] | None = None,
+    scan_joints: list[list[float]] | None = None,
 ) -> RobotModelConfig:
     """Create XArm7 robot config.
 
@@ -197,6 +198,7 @@ def _make_xarm7_config(
         add_gripper: Whether to add the xarm gripper
         gripper_hardware_id: Coordinator hardware ID for gripper control
         tf_extra_links: Additional links to publish TF for (e.g., ["link7"] for camera mount)
+        scan_joints: List of joint configurations for multi-view scanning
     """
     joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
     joint_mapping = {f"{joint_prefix}{j}": j for j in joint_names} if joint_prefix else {}
@@ -229,6 +231,7 @@ def _make_xarm7_config(
         tf_extra_links=tf_extra_links or [],
         # Home configuration: arm extended forward, elbow up (safe observe pose)
         home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        scan_joints=scan_joints,
     )
 
 
@@ -387,6 +390,24 @@ _XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
     rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
 )
 
+# Scan viewpoints for multi-view object scanning (xarm7 with 45° base pitch).
+# Each entry is [j1, j2, j3, j4, j5, j6, j7] in radians.
+# j1 = base yaw, j2 = shoulder lift, j5 = wrist pitch — these vary to sweep the workspace.
+_XARM7_SCAN_JOINTS: list[list[float]] = [
+    # Center view — looking straight ahead and down
+    [-0.000, -1.2217, 0.000, 1.1345, 0.000, 1.0472, 0.000],
+    # Left view
+    [-1.3963, -1.2217, 0.7854, 2.0944, 0.3491, 1.5708, 1.5708],
+    # Center high — looking from above
+    [0.0, -1.7453, 0.0, 0.1745, 0.0, 0.4363, 0.0],
+    # Right view
+    [1.4835, -0.1745, -2.618, 1.5708, -1.7453, -1.6581, 0.5236],
+    # Center high — looking from above
+    [0.0, -1.7453, 0.0, 0.1745, 0.0, 0.4363, 0.0],
+    # Center low — closer to the table
+    [-0.000, -0.428, 0.000, 0.000, 0.000, -1.475, 0.000],
+]
+
 xarm_perception = (
     autoconnect(
         PickAndPlaceModule.blueprint(
@@ -399,10 +420,12 @@ xarm_perception = (
                     add_gripper=True,
                     gripper_hardware_id="arm",
                     tf_extra_links=["link7"],
+                    scan_joints=_XARM7_SCAN_JOINTS,
                 ),
             ],
             planning_timeout=10.0,
             enable_viz=True,
+            safe_waypoint=[0.0, -1.7453, 0.0, 0.1745, 0.0, 0.4363, 0.0],
         ),
         RealSenseCamera.blueprint(
             base_frame_id="link7",
@@ -416,21 +439,30 @@ xarm_perception = (
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
-    .global_config(viewer="foxglove")
+    .global_config(viewer_backend="foxglove", n_workers=4)
 )
 
 
 # XArm7 perception + LLM agent for agentic manipulation
+# Includes coordinator_xarm7 so everything runs in a single blueprint.
 # Skills (pick, place, move_to_pose, etc.) auto-register with the agent's SkillCoordinator.
-# Usage: dimos run coordinator-mock, then dimos run xarm-perception-agent
+# Usage: dimos run xarm-perception-agent
 _MANIPULATION_AGENT_SYSTEM_PROMPT = """\
 You are a robotic manipulation assistant controlling an xArm7 robot arm.
-
+ws://localhost:8765 LCM
+-Foxglove Bridge
 Available skills:
 - get_robot_state: Get current joint positions, end-effector pose, and gripper state.
-- scan_objects: Scan scene and list detected objects with 3D positions. Always call this first.
-- pick: Pick up an object by name. Requires scan_objects first.
-- place: Place a held object at x, y, z position.
+- look: Quick check of what objects are visible from the current camera position. \
+Does NOT move the arm. Use when the user asks "what can you see?" or "what's in front of you?".
+- scan_objects: Scan for objects — goes to init position, then refreshes detections. \
+Use before pick-and-place, after a failed attempt, or when the user asks to scan.
+- pick: Pick up an object by name. Use the EXACT object name from look/scan_objects output. \
+When multiple objects share the same name, pass the object_id (shown in brackets like [id=abc12345]) \
+to pick the specific one the user wants.
+- place: Place a held object at EXPLICIT x, y, z coordinates.
+- drop_on: Drop a held object on top of a detected object by name (e.g. "drop_on cup"). \
+Use this when the user says "drop it in/on the [object]" — it auto-corrects for camera occlusion.
 - place_back: Place a held object back at its original pick position.
 - pick_and_place: Pick an object and place it at a target location.
 - move_to_pose: Move end-effector to ABSOLUTE x, y, z (meters) with optional roll, pitch, yaw (radians).
@@ -443,16 +475,34 @@ Available skills:
 - clear_perception_obstacles: Clear detected obstacles from the planning world. \
 Use when planning fails with COLLISION_AT_START.
 
+CHOOSING BETWEEN look AND scan_objects:
+- "what can you see?" / "what's there?" → look (quick, no movement)
+- "scan everything" / "what all objects are there?" / user explicitly asks to scan → scan_objects (thorough, moves arm)
+
+CRITICAL RULES:
+- If the user asks to pick/place an object that was ALREADY detected by a previous look, \
+do NOT scan again. Just proceed with the pick/place using the already-detected object name.
+- If the user explicitly asks you to scan, ALWAYS run scan_objects. Never refuse a direct request.
+- When calling pick, use the EXACT name from the detection output. Do NOT substitute similar names \
+(e.g. if detection says "spray can", use "spray can", not "grinder").
+- When user says "drop it in/on [object]", use drop_on with the target object name. \
+When user says "drop" at a specific location, use place with z_offset +0.1m.
+- "bring it back" = pick the object, then go_init. Do NOT place it somewhere random.
+- "bring it to me", "hand it over", "give it to me" = pick the object, then move toward the user \
+(roughly X=0, Y=0.5). Only use place/place_back if the user specifies an explicit location.
 COORDINATE SYSTEM (world frame, meters): X=forward, Y=left, Z=up. Z=0 is robot base.
+User is sitting to the left roughly at X=0 Y=0.5, Z=0.05. Typical working area is X=0.3-0.7, Y=-0.5 to 0.5, Z=0.2-0.5.
+
 
 ERROR RECOVERY: If planning fails with COLLISION_AT_START, call clear_perception_obstacles \
 then reset, then retry. Detected objects may overlap the robot's current position.
 
 After pick or place, return to init with go_init unless another action follows immediately.
-Do NOT use the 'detect' or 'select' skills — use scan_objects instead.
+Do NOT use the 'detect' or 'select' skills — use look or scan_objects instead.
 """
 
 xarm_perception_agent = autoconnect(
+    coordinator_xarm7,
     xarm_perception,
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),

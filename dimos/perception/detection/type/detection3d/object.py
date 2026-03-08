@@ -69,24 +69,20 @@ class Object(Detection3D):
         Args:
             other: Another Object instance with newer detection data.
         """
-        # Accumulate pointclouds if transforms are available
-        if other.camera_transform is not None:
-            # Transform new pointcloud to world frame and add to existing
-            # transformed_pc = other.pointcloud.transform(other.camera_transform)
-            # self.pointcloud = self.pointcloud + transformed_pc
-
-            # Recompute center from accumulated pointcloud
-            self.pointcloud = other.pointcloud
-            pc_center = other.pointcloud.center
-            self.center = Vector3(pc_center.x, pc_center.y, pc_center.z)
+        # Accumulate pointclouds (both are already in world frame) for visualization,
+        # but use the latest single-detection geometry for obstacle sizing.
+        # Recomputing size from accumulated clouds inflates obstacles unrealistically.
+        if other.camera_transform is not None and self.camera_transform is not None:
+            self.pointcloud = self.pointcloud + other.pointcloud
         else:
-            # No transform available, just replace
             self.pointcloud = other.pointcloud
-            self.center = other.center
 
-        self.camera_transform = other.camera_transform
+        # Always use the latest detection's geometry (not accumulated cloud OBB)
+        self.center = other.center
         self.size = other.size
         self.pose = other.pose
+
+        self.camera_transform = other.camera_transform
         self.track_id = other.track_id
         self.mask = other.mask
         self.name = other.name
@@ -160,6 +156,7 @@ class Object(Detection3D):
         statistical_std_ratio: float = 0.5,
         voxel_downsample: float = 0.005,
         mask_erode_pixels: int = 3,
+        max_distance: float = 1.0,
     ) -> list[Object]:
         """Create 3D Objects from 2D detections and RGBD images.
 
@@ -179,6 +176,8 @@ class Object(Detection3D):
             voxel_downsample: Voxel size (meters) for downsampling before filtering. Set <= 0 to skip.
             mask_erode_pixels: Number of pixels to erode the mask by to remove
                               noisy depth edge points. Set to 0 to disable.
+            max_distance: Maximum distance from origin (meters) for object center.
+                Objects beyond this are discarded as background.
 
         Returns:
             List of Object instances with pointclouds
@@ -258,17 +257,31 @@ class Object(Detection3D):
             else:
                 frame_id = depth_image.frame_id
 
-            # Compute center from pointcloud
-            obb = pc.pointcloud.get_oriented_bounding_box()
-            center = Vector3(obb.center[0], obb.center[1], obb.center[2])
-            size = Vector3(obb.extent[0], obb.extent[1], obb.extent[2])
-            orientation = Quaternion.from_rotation_matrix(obb.R)
+            # Use axis-aligned bounding box for stable, upright obstacles.
+            aabb = pc.pointcloud.get_axis_aligned_bounding_box()
+            aabb_center = (aabb.min_bound + aabb.max_bound) / 2.0
+            aabb_extent = aabb.max_bound - aabb.min_bound
+            center = Vector3(aabb_center[0], aabb_center[1], aabb_center[2])
+
+            # Clamp X/Y (width/depth) to 6cm so obstacles fit within gripper.
+            # Z (height) is left unclamped.
+            max_wd = 0.06
+            sx = min(float(aabb_extent[0]), max_wd)
+            sy = min(float(aabb_extent[1]), max_wd)
+            sz = float(aabb_extent[2])
+            size = Vector3(sx, sy, sz)
+            orientation = Quaternion(0.0, 0.0, 0.0, 1.0)  # upright
             pose = PoseStamped(
                 ts=det.ts,
                 frame_id=frame_id,
                 position=center,
                 orientation=orientation,
             )
+
+            # Skip objects too far from origin (background detections)
+            dist = (center.x**2 + center.y**2 + center.z**2) ** 0.5
+            if dist > max_distance:
+                continue
 
             objects.append(
                 cls(

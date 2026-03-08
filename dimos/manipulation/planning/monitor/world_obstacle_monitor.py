@@ -68,7 +68,7 @@ class WorldObstacleMonitor:
         world: WorldSpec,
         lock: threading.RLock,
         detection_timeout: float = 2.0,
-        use_mesh_obstacles: bool = True,
+        use_mesh_obstacles: bool = False,
     ):
         """Create a world obstacle monitor.
 
@@ -489,6 +489,29 @@ class WorldObstacleMonitor:
                 logger.debug(f"Added object obstacle '{oid}' ({obj.name}) as '{obs_id}'")
 
             return result
+
+    def remove_object_obstacle(self, object_id: str) -> bool:
+        """Remove a single object's obstacle from the planning world.
+
+        Args:
+            object_id: The object_id (or truncated prefix) to remove.
+
+        Returns:
+            True if found and removed, False otherwise.
+        """
+        with self._lock:
+            # Support truncated IDs
+            matched_oid = None
+            for oid in self._object_obstacles:
+                if oid == object_id or oid.startswith(object_id):
+                    matched_oid = oid
+                    break
+            if matched_oid is None:
+                return False
+            obs_id = self._object_obstacles.pop(matched_oid)
+            self._world.remove_obstacle(obs_id)
+            logger.info(f"Removed obstacle for object '{matched_oid}'")
+            return True
 
     def clear_perception_obstacles(self) -> int:
         """Remove all object obstacles from the planning world.
