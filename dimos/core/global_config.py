@@ -28,6 +28,7 @@ def _get_all_numbers(s: str) -> list[float]:
 
 class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
+    robot_ips: str | None = None
     simulation: bool = False
     replay: bool = False
     viewer_backend: ViewerBackend = "rerun-web"
@@ -48,6 +49,7 @@ class GlobalConfig(BaseSettings):
     mcp_port: int = 9990
     mcp_host: str = "0.0.0.0"
     dtop: bool = False
+    obstacle_avoidance: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",
