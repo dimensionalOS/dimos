@@ -14,12 +14,13 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.rpc_client import RPCClient
 from dimos.core.worker import Worker
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.safe_thread_map import safe_thread_map
 
 if TYPE_CHECKING:
     from dimos.core.module import ModuleT
@@ -65,6 +66,9 @@ class WorkerManager:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
 
+        if len(module_specs) == 0:
+            return []
+
         # Auto-start for backward compatibility
         if not self._started:
             self.start()
@@ -78,17 +82,19 @@ class WorkerManager:
             worker.reserve_slot()
             assignments.append((worker, module_class, args, kwargs))
 
-        def _deploy(
-            item: tuple[Worker, type[ModuleT], tuple[Any, ...], dict[Any, Any]],
-        ) -> RPCClient:
-            worker, module_class, args, kwargs = item
-            actor = worker.deploy_module(module_class, args=args, kwargs=kwargs)
-            return RPCClient(actor, module_class)
+        def _on_errors(
+            _outcomes: list[Any], successes: list[RPCClient], errors: list[Exception]
+        ) -> None:
+            for rpc_client in successes:
+                with suppress(Exception):
+                    rpc_client.stop_rpc_client()
+            raise ExceptionGroup("worker deploy_parallel failed", errors)
 
-        with ThreadPoolExecutor(max_workers=len(assignments)) as pool:
-            results = list(pool.map(_deploy, assignments))
-
-        return results
+        return safe_thread_map(
+            assignments,
+            lambda item: RPCClient(item[0].deploy_module(item[1], item[2], item[3]), item[1]),
+            _on_errors,
+        )
 
     @property
     def workers(self) -> list[Worker]:

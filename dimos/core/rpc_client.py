@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.stream import RemoteStream
 from dimos.core.worker import MethodCallProxy
@@ -78,6 +78,17 @@ class RpcCall:
         self._unsub_fns = []
         self._rpc = None
         self._stop_rpc_client = None
+
+
+class ModuleProxyProtocol(Protocol):
+    """Protocol for host-side handles to remote modules (worker or Docker)."""
+
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+    def set_transport(self, stream_name: str, transport: Any) -> bool: ...
+    def get_rpc_method_names(self) -> list[str]: ...
+    def set_rpc_method(self, method: str, callable: RpcCall) -> None: ...
+    def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall, ...]: ...
 
 
 class RPCClient:
