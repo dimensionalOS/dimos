@@ -15,24 +15,24 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.requests import Request  # noqa: TC002
 from starlette.responses import Response
 import uvicorn
 
+from dimos.agents.annotation import skill
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-
-from starlette.requests import Request  # noqa: TC002
-
-from dimos.core.core import rpc
-from dimos.core.module import Module
-from dimos.core.rpc_client import RpcCall, RPCClient
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -51,6 +51,11 @@ app.state.skills = []
 app.state.rpc_calls = {}
 
 
+# ---------------------------------------------------------------------------
+# JSON-RPC helpers
+# ---------------------------------------------------------------------------
+
+
 def _jsonrpc_result(req_id: Any, result: Any) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
@@ -61,6 +66,11 @@ def _jsonrpc_result_text(req_id: Any, text: str) -> dict[str, Any]:
 
 def _jsonrpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
+
+
+# ---------------------------------------------------------------------------
+# JSON-RPC handlers (standard MCP protocol only)
+# ---------------------------------------------------------------------------
 
 
 def _handle_initialize(req_id: Any) -> dict[str, Any]:
@@ -77,11 +87,11 @@ def _handle_initialize(req_id: Any) -> dict[str, Any]:
 def _handle_tools_list(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]:
     tools = []
 
-    for skill in skills:
-        schema = json.loads(skill.args_schema)
+    for s in skills:
+        schema = json.loads(s.args_schema)
         description = schema.pop("description", None)
         schema.pop("title", None)
-        tool = {"name": skill.func_name, "inputSchema": schema}
+        tool: dict[str, Any] = {"name": s.func_name, "inputSchema": schema}
         if description:
             tool["description"] = description
         tools.append(tool)
@@ -114,46 +124,6 @@ async def _handle_tools_call(
     return _jsonrpc_result_text(req_id, str(result))
 
 
-def _handle_dimos_status(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]:
-    """Return running modules, skills, and server info."""
-    import os
-
-    return _jsonrpc_result(
-        req_id,
-        {
-            "pid": os.getpid(),
-            "modules": list(dict.fromkeys(s.class_name for s in skills)),
-            "skills": [s.func_name for s in skills],
-            "skill_count": len(skills),
-        },
-    )
-
-
-def _handle_dimos_list_modules(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]:
-    """Return module names and their skills."""
-    modules: dict[str, list[str]] = {}
-    for s in skills:
-        modules.setdefault(s.class_name, []).append(s.func_name)
-    return _jsonrpc_result(req_id, {"modules": modules})
-
-
-def _handle_dimos_agent_send(req_id: Any, params: dict[str, Any]) -> dict[str, Any]:
-    """Route a message to the agent's human_input stream via LCM."""
-    message = params.get("message", "")
-    if not message:
-        return _jsonrpc_error(req_id, -32602, "Missing 'message' parameter")
-
-    # Publish on /human_input LCM channel (same as HumanCLI)
-    try:
-        from dimos.core.transport import pLCMTransport
-
-        transport: pLCMTransport[str] = pLCMTransport("/human_input")
-        transport.publish(message)
-        return _jsonrpc_result_text(req_id, f"Message sent to agent: {message[:100]}")
-    except Exception as e:
-        return _jsonrpc_error(req_id, -32000, f"Failed to send: {e}")
-
-
 async def handle_request(
     request: dict[str, Any],
     skills: list[SkillInfo],
@@ -168,7 +138,7 @@ async def handle_request(
     params = request.get("params", {}) or {}
     req_id = request.get("id")
 
-    # JSON-RPC notifications have no "id" – the server must not reply.
+    # JSON-RPC notifications have no "id" -- the server must not reply.
     if "id" not in request:
         return None
 
@@ -178,12 +148,6 @@ async def handle_request(
         return _handle_tools_list(req_id, skills)
     if method == "tools/call":
         return await _handle_tools_call(req_id, params, rpc_calls)
-    if method == "dimos/status":
-        return _handle_dimos_status(req_id, skills)
-    if method == "dimos/list_modules":
-        return _handle_dimos_list_modules(req_id, skills)
-    if method == "dimos/agent_send":
-        return _handle_dimos_agent_send(req_id, params)
     return _jsonrpc_error(req_id, -32601, f"Unknown: {method}")
 
 
@@ -202,6 +166,11 @@ async def mcp_endpoint(request: Request) -> Response:
     if result is None:
         return Response(status_code=204)
     return JSONResponse(result)
+
+
+# ---------------------------------------------------------------------------
+# McpServer Module
+# ---------------------------------------------------------------------------
 
 
 class McpServer(Module):
@@ -229,11 +198,57 @@ class McpServer(Module):
     @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:
         assert self.rpc is not None
-        app.state.skills = [skill for module in modules for skill in (module.get_skills() or [])]
+        app.state.skills = [
+            skill_info for module in modules for skill_info in (module.get_skills() or [])
+        ]
         app.state.rpc_calls = {
-            skill.func_name: RpcCall(None, self.rpc, skill.func_name, skill.class_name, [])
-            for skill in app.state.skills
+            skill_info.func_name: RpcCall(
+                None, self.rpc, skill_info.func_name, skill_info.class_name, []
+            )
+            for skill_info in app.state.skills
         }
+
+    # ------------------------------------------------------------------
+    # Introspection skills (exposed as MCP tools via tools/list)
+    # ------------------------------------------------------------------
+
+    @skill
+    def server_status(self) -> str:
+        """Get MCP server status: PID, deployed modules, and skill count."""
+        skills: list[SkillInfo] = app.state.skills
+        modules = list(dict.fromkeys(s.class_name for s in skills))
+        return json.dumps(
+            {
+                "pid": os.getpid(),
+                "modules": modules,
+                "skills": [s.func_name for s in skills],
+            }
+        )
+
+    @skill
+    def list_modules(self) -> str:
+        """List deployed modules and their skills."""
+        skills: list[SkillInfo] = app.state.skills
+        modules: dict[str, list[str]] = {}
+        for s in skills:
+            modules.setdefault(s.class_name, []).append(s.func_name)
+        return json.dumps({"modules": modules})
+
+    @skill
+    def agent_send(self, message: str) -> str:
+        """Send a message to the running DimOS agent via LCM."""
+        if not message:
+            raise ValueError("Message cannot be empty")
+
+        from dimos.core.transport import pLCMTransport
+
+        transport: pLCMTransport[str] = pLCMTransport("/human_input")
+        try:
+            transport.start()
+            transport.publish(message)
+            return f"Message sent to agent: {message[:100]}"
+        finally:
+            transport.stop()
 
     def _start_server(self, port: int | None = None) -> None:
         from dimos.core.global_config import global_config

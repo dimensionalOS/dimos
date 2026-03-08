@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MCP server e2e stress tests.
+"""MCP server integration tests.
 
 These tests build a real StressTestModule + McpServer blueprint and exercise
 every CLI command and JSON-RPC method.  They are marked ``slow`` so local
@@ -29,13 +29,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 import os
-import time
 from typing import TYPE_CHECKING
 
 import pytest
 import requests
 from typer.testing import CliRunner
 
+from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 
     from dimos.core.module_coordinator import ModuleCoordinator
 
-MCP_PORT = 9990
+MCP_URL = f"http://localhost:{global_config.mcp_port}/mcp"
 
 
 # ---------------------------------------------------------------------------
@@ -84,16 +84,16 @@ def mcp_shared(request: pytest.FixtureRequest) -> Generator[ModuleCoordinator, N
     """Build a shared StressTestModule + McpServer.  Class-scoped -- started
     once, torn down after every test in the class finishes.  Use for
     read-only tests that don't stop/restart the server."""
-    os.environ["CI"] = "1"
     global_config.update(viewer_backend="none", n_workers=1)
     bp = autoconnect(
         StressTestModule.blueprint(),
         McpServer.blueprint(),
     )
     coord = bp.build()
-    assert _wait_for_mcp(), "MCP server did not start within timeout"
+    ready = _adapter().wait_for_ready()
     yield coord
     coord.stop()
+    assert ready, "MCP server did not start within timeout"
 
 
 @pytest.fixture()
@@ -116,50 +116,9 @@ def mcp_entry(mcp_shared: ModuleCoordinator, tmp_path: object) -> Generator[RunE
     entry.remove()
 
 
-def _mcp_call(
-    method: str, params: dict[str, object] | None = None, port: int = MCP_PORT
-) -> dict[str, object]:
-    """Send a JSON-RPC request to MCP server."""
-    payload: dict[str, object] = {"jsonrpc": "2.0", "id": 1, "method": method}
-    if params:
-        payload["params"] = params
-    resp = requests.post(f"http://localhost:{port}/mcp", json=payload, timeout=10)
-    resp.raise_for_status()
-    return resp.json()  # type: ignore[no-any-return]
-
-
-def _wait_for_mcp(port: int = MCP_PORT, timeout: float = 10.0) -> bool:
-    """Poll until MCP server responds or timeout."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            resp = requests.post(
-                f"http://localhost:{port}/mcp",
-                json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
-                timeout=2,
-            )
-            if resp.status_code == 200:
-                return True
-        except requests.ConnectionError:
-            pass
-        time.sleep(0.5)
-    return False
-
-
-def _wait_for_mcp_down(port: int = MCP_PORT, timeout: float = 10.0) -> bool:
-    """Poll until MCP server stops responding."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            requests.post(
-                f"http://localhost:{port}/mcp",
-                json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
-                timeout=1,
-            )
-        except (requests.ConnectionError, requests.ReadTimeout):
-            return True
-        time.sleep(0.5)
-    return False
+def _adapter() -> McpAdapter:
+    """Return an McpAdapter using GlobalConfig port."""
+    return McpAdapter()
 
 
 # ---------------------------------------------------------------------------
@@ -173,21 +132,25 @@ class TestMCPLifecycle:
 
     def test_mcp_responds_after_build(self, mcp_shared: ModuleCoordinator) -> None:
         """After blueprint.build(), MCP should accept requests."""
-        result = _mcp_call("initialize")
+        result = _adapter().call("initialize")
         assert result["result"]["serverInfo"]["name"] == "dimensional"
 
     def test_tools_list_includes_stress_skills(self, mcp_shared: ModuleCoordinator) -> None:
         """tools/list should include echo, ping, slow, info from StressTestModule."""
-        result = _mcp_call("tools/list")
+        result = _adapter().call("tools/list")
         tool_names = {t["name"] for t in result["result"]["tools"]}
         assert "echo" in tool_names
         assert "ping" in tool_names
         assert "slow" in tool_names
         assert "info" in tool_names
+        # McpServer introspection skills
+        assert "server_status" in tool_names
+        assert "list_modules" in tool_names
+        assert "agent_send" in tool_names
 
     def test_echo_tool(self, mcp_shared: ModuleCoordinator) -> None:
         """Call echo tool -- should return the message."""
-        result = _mcp_call(
+        result = _adapter().call(
             "tools/call",
             {
                 "name": "echo",
@@ -199,29 +162,29 @@ class TestMCPLifecycle:
 
     def test_ping_tool(self, mcp_shared: ModuleCoordinator) -> None:
         """Call ping tool -- should return 'pong'."""
-        result = _mcp_call("tools/call", {"name": "ping", "arguments": {}})
+        result = _adapter().call("tools/call", {"name": "ping", "arguments": {}})
         text = result["result"]["content"][0]["text"]
         assert text == "pong"
 
     def test_info_tool_returns_pid(self, mcp_shared: ModuleCoordinator) -> None:
         """info tool should return process info."""
-        result = _mcp_call("tools/call", {"name": "info", "arguments": {}})
+        result = _adapter().call("tools/call", {"name": "info", "arguments": {}})
         text = result["result"]["content"][0]["text"]
         assert "pid=" in text
 
-    def test_dimos_status_method(self, mcp_shared: ModuleCoordinator) -> None:
-        """dimos/status should return module and skill info."""
-        result = _mcp_call("dimos/status")
-        data = result["result"]
+    def test_server_status_tool(self, mcp_shared: ModuleCoordinator) -> None:
+        """server_status tool should return module and skill info."""
+        text = _adapter().call_tool_text("server_status")
+        data = json.loads(text)
         assert "pid" in data
         assert "modules" in data
         assert "skills" in data
         assert "StressTestModule" in data["modules"]
 
-    def test_dimos_list_modules_method(self, mcp_shared: ModuleCoordinator) -> None:
-        """dimos/list_modules should group skills by module."""
-        result = _mcp_call("dimos/list_modules")
-        modules = result["result"]["modules"]
+    def test_list_modules_tool(self, mcp_shared: ModuleCoordinator) -> None:
+        """list_modules tool should group skills by module."""
+        text = _adapter().call_tool_text("list_modules")
+        modules = json.loads(text)["modules"]
         assert "StressTestModule" in modules
         assert "echo" in modules["StressTestModule"]
 
@@ -267,7 +230,7 @@ class TestMCPErrorHandling:
 
     def test_call_nonexistent_tool(self, mcp_shared: ModuleCoordinator) -> None:
         """Calling a tool that doesn't exist should return an error message."""
-        result = _mcp_call(
+        result = _adapter().call(
             "tools/call",
             {
                 "name": "nonexistent_tool_xyz",
@@ -279,7 +242,7 @@ class TestMCPErrorHandling:
 
     def test_call_tool_wrong_args(self, mcp_shared: ModuleCoordinator) -> None:
         """Calling a tool with wrong argument types should still return."""
-        result = _mcp_call(
+        result = _adapter().call(
             "tools/call",
             {
                 "name": "echo",
@@ -290,14 +253,14 @@ class TestMCPErrorHandling:
 
     def test_unknown_jsonrpc_method(self, mcp_shared: ModuleCoordinator) -> None:
         """Unknown JSON-RPC method should return error."""
-        result = _mcp_call("nonexistent/method")
+        result = _adapter().call("nonexistent/method")
         assert "error" in result
         assert result["error"]["code"] == -32601
 
     def test_mcp_handles_malformed_json(self, mcp_shared: ModuleCoordinator) -> None:
         """MCP should handle malformed JSON gracefully."""
         resp = requests.post(
-            f"http://localhost:{MCP_PORT}/mcp",
+            MCP_URL,
             data=b"not json{{{",
             headers={"Content-Type": "application/json"},
             timeout=5,
@@ -307,7 +270,7 @@ class TestMCPErrorHandling:
     def test_rapid_tool_calls(self, mcp_shared: ModuleCoordinator) -> None:
         """Fire 20 rapid echo calls -- all should succeed."""
         for i in range(20):
-            result = _mcp_call(
+            result = _adapter().call(
                 "tools/call",
                 {
                     "name": "echo",
@@ -323,22 +286,35 @@ class TestMCPErrorHandling:
         assert result.exit_code == 1
         assert "key=value" in result.output
 
+    def test_cli_call_json_args(self, mcp_shared: ModuleCoordinator) -> None:
+        """dimos mcp call --json-args should work."""
+        result = CliRunner().invoke(
+            main, ["mcp", "call", "echo", "--json-args", '{"message": "json-test"}']
+        )
+        assert result.exit_code == 0
+        assert "json-test" in result.output
+
+    def test_cli_call_bad_json_args(self, mcp_shared: ModuleCoordinator) -> None:
+        """dimos mcp call with invalid --json-args should error."""
+        result = CliRunner().invoke(main, ["mcp", "call", "echo", "--json-args", "not json"])
+        assert result.exit_code == 1
+        assert "invalid JSON" in result.output
+
 
 @pytest.mark.slow
 class TestAgentSend:
     """Test dimos agent-send CLI and MCP method."""
 
     def test_agent_send_via_mcp(self, mcp_shared: ModuleCoordinator) -> None:
-        """dimos/agent_send should route message via LCM."""
-        result = _mcp_call("dimos/agent_send", {"message": "hello agent"})
-        assert "result" in result
-        text = result["result"]["content"][0]["text"]
+        """agent_send tool should route message via LCM."""
+        text = _adapter().call_tool_text("agent_send", {"message": "hello agent"})
         assert "hello agent" in text
 
     def test_agent_send_empty_message(self, mcp_shared: ModuleCoordinator) -> None:
-        """Empty message should return error."""
-        result = _mcp_call("dimos/agent_send", {"message": ""})
-        assert "error" in result
+        """Empty message should return error text."""
+        result = _adapter().call_tool("agent_send", {"message": ""})
+        text = result.get("content", [{}])[0].get("text", "")
+        assert "error" in text.lower() or "empty" in text.lower()
 
     def test_agent_send_cli(self, mcp_shared: ModuleCoordinator) -> None:
         """dimos agent-send 'hello' should work."""
@@ -363,14 +339,14 @@ class TestDaemonMCPRecovery:
         # First run
         bp1 = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
         coord1 = bp1.build()
-        assert _wait_for_mcp(), "First MCP start failed"
+        assert _adapter().wait_for_ready(), "First MCP start failed"
         coord1.stop()
-        assert _wait_for_mcp_down(), "MCP didn't stop"
+        assert _adapter().wait_for_down(), "MCP didn't stop"
 
         # Second run -- should work without port conflicts
         bp2 = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
         coord2 = bp2.build()
-        assert _wait_for_mcp(), "Second MCP start failed (port conflict?)"
+        assert _adapter().wait_for_ready(), "Second MCP start failed (port conflict?)"
         coord2.stop()
 
     def test_registry_cleanup_after_stop(self, mcp_entry: RunEntry) -> None:
@@ -412,13 +388,13 @@ class TestMCPRapidRestart:
         for cycle in range(3):
             bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
             coord = bp.build()
-            assert _wait_for_mcp(timeout=15), f"MCP failed to start on cycle {cycle}"
+            assert _adapter().wait_for_ready(timeout=15), f"MCP failed to start on cycle {cycle}"
 
-            result = _mcp_call("tools/call", {"name": "ping", "arguments": {}})
+            result = _adapter().call("tools/call", {"name": "ping", "arguments": {}})
             assert result["result"]["content"][0]["text"] == "pong"
 
             coord.stop()
-            assert _wait_for_mcp_down(timeout=10), f"MCP failed to stop on cycle {cycle}"
+            assert _adapter().wait_for_down(timeout=10), f"MCP failed to stop on cycle {cycle}"
 
 
 @pytest.mark.slow
@@ -430,10 +406,10 @@ class TestMCPNoServer:
         global_config.update(viewer_backend="none", n_workers=1)
         bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
         coord = bp.build()
-        assert _wait_for_mcp(), "MCP server did not start"
+        assert _adapter().wait_for_ready(), "MCP server did not start"
 
         coord.stop()
-        assert _wait_for_mcp_down(), "MCP server did not stop"
+        assert _adapter().wait_for_down(), "MCP server did not stop"
 
     def test_cli_no_server_error(self) -> None:
         """dimos mcp list-tools with no server should exit with error."""

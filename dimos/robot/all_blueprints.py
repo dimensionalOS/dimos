@@ -60,7 +60,7 @@ all_blueprints = {
     "phone-go2-fleet-teleop": "dimos.teleop.phone.blueprints:phone_go2_fleet_teleop",
     "phone-go2-teleop": "dimos.teleop.phone.blueprints:phone_go2_teleop",
     "simple-phone-teleop": "dimos.teleop.phone.blueprints:simple_phone_teleop",
-    "stress-test": "dimos.core.tests.stress_test_blueprint:stress_test",
+    "demo-mcp-stress-test": "dimos.core.tests.stress_test_blueprint:demo_mcp_stress_test",
     "uintree-g1-primitive-no-nav": "dimos.robot.unitree.g1.blueprints.primitive.uintree_g1_primitive_no_nav:uintree_g1_primitive_no_nav",
     "unitree-g1": "dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1:unitree_g1",
     "unitree-g1-agentic": "dimos.robot.unitree.g1.blueprints.agentic.unitree_g1_agentic:unitree_g1_agentic",
