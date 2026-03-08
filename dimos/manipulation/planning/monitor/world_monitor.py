@@ -222,6 +222,12 @@ class WorldMonitor:
             return self._obstacle_monitor.refresh_obstacles(min_duration)
         return []
 
+    def remove_object_obstacle(self, object_id: str) -> bool:
+        """Remove a single object's obstacle from the planning world."""
+        if self._obstacle_monitor is not None:
+            return self._obstacle_monitor.remove_object_obstacle(object_id)
+        return False
+
     def clear_perception_obstacles(self) -> int:
         """Remove all perception obstacles. Returns count removed."""
         if self._obstacle_monitor is not None:

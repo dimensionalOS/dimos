@@ -73,6 +73,7 @@ class ObjectSceneRegistrationModule(Module):
         self._target_frame = target_frame
         self._prompt_mode = prompt_mode
         self._object_db = ObjectDB()
+        self._registration_paused = False
 
     @rpc
     def start(self) -> None:
@@ -110,6 +111,16 @@ class ObjectSceneRegistrationModule(Module):
 
         logger.info("ObjectSceneRegistrationModule stopped")
         super().stop()
+
+    @rpc
+    def pause_registration(self) -> None:
+        """Pause 3D object registration (2D detection still runs)."""
+        self._registration_paused = True
+
+    @rpc
+    def resume_registration(self) -> None:
+        """Resume 3D object registration."""
+        self._registration_paused = False
 
     @rpc
     def set_prompts(
@@ -309,7 +320,7 @@ class ObjectSceneRegistrationModule(Module):
         depth_image: Image,
     ) -> None:
         """Convert 2D detections to 3D and publish."""
-        if self._camera_info is None:
+        if self._camera_info is None or self._registration_paused:
             return
 
         # Cache depth image for full scene pointcloud generation
@@ -325,7 +336,7 @@ class ObjectSceneRegistrationModule(Module):
                 0.1,
             )
             if camera_transform is None:
-                logger.warning("Failed to lookup transform from camera frame to target frame")
+                logger.debug("Failed to lookup transform from camera frame to target frame")
                 return
 
         # Cache camera transform for full scene pointcloud
@@ -342,13 +353,17 @@ class ObjectSceneRegistrationModule(Module):
             return
 
         # Add objects to spatial memory database
-        objects = self._object_db.add_objects(objects)
+        self._object_db.add_objects(objects)
 
-        detections_3d = to_detection3d_array(objects)
+        # Publish ALL permanent objects so downstream consumers get the full set,
+        # not just this frame's batch (which may be a subset of what's on the table).
+        all_permanent = self._object_db.get_objects()
+
+        detections_3d = to_detection3d_array(all_permanent)
         self.detections_3d.publish(detections_3d)
-        self.objects.publish(objects)
+        self.objects.publish(all_permanent)
 
-        objects_for_pc = self._object_db.get_objects()
+        objects_for_pc = all_permanent
         aggregated_pc = aggregate_pointclouds(objects_for_pc)
         self.pointcloud.publish(aggregated_pc)
         return

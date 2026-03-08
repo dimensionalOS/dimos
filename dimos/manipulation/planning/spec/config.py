@@ -78,6 +78,8 @@ class RobotModelConfig:
     tf_extra_links: list[str] = field(default_factory=list)
     # Home/observe joint configuration for go_home skill
     home_joints: list[float] | None = None
+    # Scan viewpoint joint configurations for multi-view scanning
+    scan_joints: list[list[float]] | None = None
     # Pre-grasp offset distance in meters (along approach direction)
     pre_grasp_offset: float = 0.10
 

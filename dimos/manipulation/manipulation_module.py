@@ -91,6 +91,9 @@ class ManipulationModuleConfig(ModuleConfig):
     enable_viz: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
+    # Safe waypoint joints to move through before returning to init.
+    # Set to None to disable.
+    safe_waypoint: list[float] | None = None
 
 
 class ManipulationModule(Module):
@@ -948,6 +951,39 @@ class ManipulationModule(Module):
 
         return None
 
+    def _lift_if_low(self, robot_name: RobotName | None = None, min_z: float = 0.2) -> str | None:
+        """If the EE is below `min_z`, lift straight up first.
+
+        Uses a lower lift target (0.1m) when the arm is extended far from base
+        to stay within reachable workspace.
+
+        Returns None on success (or if no lift needed), error string on failure.
+        """
+        current_pose = self.get_ee_pose(robot_name)
+        if current_pose is None:
+            return None  # can't check, skip
+
+        if current_pose.position.z >= min_z:
+            return None  # already high enough
+
+        # If arm is extended far (XY distance from origin > 0.6m), use lower lift
+        xy_dist = (current_pose.position.x**2 + current_pose.position.y**2) ** 0.5
+        target_z = 0.1 if xy_dist > 0.6 else min_z
+
+        if current_pose.position.z >= target_z:
+            return None
+
+        lift_pose = Pose(
+            Vector3(current_pose.position.x, current_pose.position.y, target_z),
+            current_pose.orientation,
+        )
+        logger.info(
+            f"EE Z={current_pose.position.z:.3f}m is low (XY dist={xy_dist:.2f}m), lifting to Z={target_z:.3f}m"
+        )
+        if not self.plan_to_pose(lift_pose, robot_name):
+            return f"Error: Failed to plan lift from Z={current_pose.position.z:.3f}m"
+        return self._preview_execute_wait(robot_name)
+
     # =========================================================================
     # Short-Horizon Skills — Single-step actions
     # =========================================================================
@@ -1034,6 +1070,11 @@ class ManipulationModule(Module):
                 orientation = Quaternion.from_euler(Vector3(roll or 0.0, pitch or 0.0, yaw or 0.0))
 
         pose = Pose(Vector3(x, y, z), orientation)
+
+        # If EE is low, lift up first to clear obstacles
+        err = self._lift_if_low(robot_name)
+        if err:
+            return err
 
         if not self.plan_to_pose(pose, robot_name):
             return f"Error: Planning failed — pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision"
@@ -1123,6 +1164,21 @@ class ManipulationModule(Module):
         """
         if self._init_joints is None:
             return "Error: No init joints captured — robot may not have reported joint state yet"
+
+        # Lift if EE is low before moving to init
+        err = self._lift_if_low(robot_name)
+        if err:
+            return err
+
+        # Move through safe waypoint before going to init
+        if self.config.safe_waypoint is not None:
+            logger.info("Moving to safe waypoint before init...")
+            goal = JointState(position=self.config.safe_waypoint)
+            if not self.plan_to_joints(goal, robot_name):
+                return "Error: Failed to plan path to safe waypoint"
+            err = self._preview_execute_wait(robot_name)
+            if err:
+                return err
 
         logger.info(
             f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in self._init_joints.position)}]..."
