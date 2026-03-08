@@ -77,9 +77,9 @@ class DockerModuleConfig(ModuleConfig):
     )  # (host, container, proto)
 
     # Runtime resources
-    docker_gpus: str | None = "all"
-    docker_shm_size: str = "2g"
-    docker_restart_policy: str = "on-failure:3"
+    docker_gpus: str | None = None
+    docker_shm_size: str = "4g"
+    docker_restart_policy: str = "no"
 
     # Env + volumes + devices
     docker_env_files: list[str] = field(default_factory=list)
@@ -300,14 +300,15 @@ class DockerModule(ModuleProxyProtocol):
         self._cleanup()
 
     def _cleanup(self) -> None:
-        """Release all resources. Safe to call multiple times or from partial init."""
+        """Release all resources. Idempotent — safe to call from partial init or after stop()."""
         with suppress(Exception):
             self.rpc.stop()
-        for unsub in self._unsub_fns:
+        for unsub in getattr(self, "_unsub_fns", []):
             with suppress(Exception):
                 unsub()
-        self._unsub_fns.clear()
-        if not self.config.docker_reconnect_container:
+        with suppress(Exception):
+            self._unsub_fns.clear()
+        if not getattr(getattr(self, "config", None), "docker_reconnect_container", False):
             with suppress(Exception):
                 _run(
                     [self.config.docker_bin, "stop", self._container_name],

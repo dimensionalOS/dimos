@@ -22,6 +22,7 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.resource import Resource
 from dimos.core.worker_manager import WorkerManager
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.safe_thread_map import safe_thread_map
 
 if TYPE_CHECKING:
     from dimos.core.module import Module, ModuleT
@@ -147,33 +148,41 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
                 worker_indices.append(i)
                 worker_specs.append(spec)
 
-        # Intentionally sequential: worker deploys first, then docker.
-        # Both internally parallelize across their own items. Running them
-        # concurrently would add complexity for minimal gain since they use
-        # different resource pools (processes vs containers).
-        worker_results: list[Any] = []
-        docker_results: list[Any] = []
-        try:
-            worker_results = self._client.deploy_parallel(worker_specs)
-            docker_results = DockerWorkerManager.deploy_parallel(docker_specs)  # type: ignore[arg-type]
-        finally:
-            # Reassemble whatever succeeded into original input order so
-            # stop() can clean them up even if a later deploy raised.
-            # zip(strict=False) safely handles partial results (empty lists).
-            results: list[Any] = [None] * len(module_specs)
-            for idx, mod in zip(worker_indices, worker_results, strict=False):
-                results[idx] = mod
-            for idx, mod in zip(docker_indices, docker_results, strict=False):  # type: ignore[assignment]
-                results[idx] = mod
+        # Deploy worker and docker modules in parallel.
+        results: list[Any] = [None] * len(module_specs)
+
+        def _deploy_workers() -> None:
+            if not worker_specs:
+                return
+            for (index, _), module in zip(
+                worker_indices, self._client.deploy_parallel(worker_specs), strict=False
+            ):  # type: ignore[union-attr]
+                results[index] = module
+
+        def _deploy_docker() -> None:
+            if not docker_specs:
+                return
+            for (index, _), module in zip(
+                docker_indices, DockerWorkerManager.deploy_parallel(docker_specs), strict=False
+            ):  # type: ignore[arg-type]
+                results[index] = module
+
+        def _register() -> None:
             for (module_class, _, _), module in zip(module_specs, results, strict=False):
                 if module is not None:
                     self._deployed_modules[module_class] = module
 
+        def _on_errors(
+            _outcomes: list[Any], _successes: list[Any], errors: list[Exception]
+        ) -> None:
+            _register()
+            raise ExceptionGroup("deploy_parallel failed", errors)
+
+        safe_thread_map([_deploy_workers, _deploy_docker], lambda fn: fn(), _on_errors)
+        _register()
         return results
 
     def start_all_modules(self) -> None:
-        from dimos.utils.safe_thread_map import safe_thread_map
-
         modules = list(self._deployed_modules.values())
         if not modules:
             raise ValueError("No modules deployed. Call deploy() before start_all_modules().")

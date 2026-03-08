@@ -71,7 +71,7 @@ def _convert_dockerfile(dockerfile: Path) -> Path:
 
 
 def _compute_build_hash(cfg: DockerModuleConfig) -> str:
-    """Hash Dockerfile contents, build args, and SSH flag."""
+    """Hash Dockerfile contents and build args."""
     assert cfg.docker_file is not None
     digest = hashlib.sha256()
     digest.update(cfg.docker_file.read_bytes())
