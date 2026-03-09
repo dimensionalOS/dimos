@@ -275,13 +275,13 @@ def log_cmd(
     if follow:
         try:
             for line in follow_log(path):
-                typer.echo(format_line(line, json_output))
+                typer.echo(format_line(line, json_output=json_output))
         except KeyboardInterrupt:
             pass
     else:
         count = None if all_lines else lines
         for line in read_log(path, count):
-            typer.echo(format_line(line, json_output))
+            typer.echo(format_line(line, json_output=json_output))
 
 
 @main.command()
