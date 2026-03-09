@@ -7,7 +7,7 @@ Dimos supports three visualization backends: Rerun (web or native) and Foxglove.
 Choose your viewer via the CLI (preferred):
 
 ```bash
-# Rerun native viewer (default) - native dimos-viewer window + teleop at http://localhost:7779
+# Rerun native viewer (default) - dimos-viewer with built-in teleop + click-to-navigate
 dimos run unitree-go2
 
 # Explicitly select the viewer mode:
@@ -19,10 +19,10 @@ dimos --viewer foxglove run unitree-go2
 Alternative (environment variable):
 
 ```bash
-# Rerun native viewer (default) - native dimos-viewer window
+# Rerun native viewer (default) - dimos-viewer with built-in teleop + click-to-navigate
 VIEWER=rerun dimos run unitree-go2
 
-# Rerun web viewer - Full dashboard in browser + teleop panel
+# Rerun web viewer - browser dashboard + teleop at http://localhost:7779
 VIEWER=rerun-web dimos run unitree-go2
 
 # Foxglove - Use Foxglove Studio instead of Rerun
@@ -31,21 +31,23 @@ VIEWER=foxglove dimos run unitree-go2
 
 ## Viewer Modes Explained
 
-### Rerun Web (`rerun-web`)
+### Rerun Native (`rerun`) — Default
 
 **What you get:**
-- Full dashboard at http://localhost:7779
-- Rerun 3D viewer + command center sidebar in one page
-- Works in browser, no display required (headless-friendly)
+- [dimos-viewer](https://github.com/dimensionalOS/dimos-viewer), a custom Dimensional fork of Rerun with built-in keyboard teleop and click-to-navigate
+- Native desktop application (opens automatically)
+- Better performance with larger maps/higher resolution
+- No browser or web server required
 
 ---
 
-### Rerun Native (`rerun`)
+### Rerun Web (`rerun-web`)
 
 **What you get:**
-- Native Rerun application (separate window opens automatically)
-- Command center / teleop panel at http://localhost:7779
-- Better performance with larger maps/higher resolution
+- Browser-based dashboard at http://localhost:7779
+- Rerun 3D viewer + command center sidebar in one page
+- Teleop controls and goal setting via the web UI
+- Works headless (no display required)
 
 ---
 
