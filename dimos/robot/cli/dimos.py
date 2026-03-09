@@ -256,6 +256,34 @@ def stop(
     typer.echo(f"  {msg}")
 
 
+@main.command("log")
+def log_cmd(
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output"),
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
+    all_lines: bool = typer.Option(False, "--all", "-a", help="Show full log"),
+    json_output: bool = typer.Option(False, "--json", help="Raw JSONL output"),
+    run_id: str = typer.Option("", "--run", "-r", help="Specific run ID"),
+) -> None:
+    """View logs from a DimOS run."""
+    from dimos.core.log_viewer import follow_log, format_line, read_log, resolve_log_path
+
+    path = resolve_log_path(run_id)
+    if not path:
+        typer.echo("No log files found", err=True)
+        raise typer.Exit(1)
+
+    if follow:
+        try:
+            for line in follow_log(path):
+                typer.echo(format_line(line, json_output))
+        except KeyboardInterrupt:
+            pass
+    else:
+        count = None if all_lines else lines
+        for line in read_log(path, count):
+            typer.echo(format_line(line, json_output))
+
+
 @main.command()
 def show_config(ctx: typer.Context) -> None:
     """Show current config settings and their values."""
