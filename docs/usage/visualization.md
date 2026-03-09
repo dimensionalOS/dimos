@@ -7,7 +7,7 @@ Dimos supports three visualization backends: Rerun (web or native) and Foxglove.
 Choose your viewer via the CLI (preferred):
 
 ```bash
-# Rerun native viewer (default) - native dimos-viewer window
+# Rerun native viewer (default) - native dimos-viewer window + teleop at http://localhost:7779
 dimos run unitree-go2
 
 # Explicitly select the viewer mode:
@@ -44,7 +44,7 @@ VIEWER=foxglove dimos run unitree-go2
 
 **What you get:**
 - Native Rerun application (separate window opens automatically)
-- Command center at http://localhost:7779
+- Command center / teleop panel at http://localhost:7779
 - Better performance with larger maps/higher resolution
 
 ---
