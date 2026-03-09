@@ -107,7 +107,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
     ) -> None:
         get_data(self.dir_name)
         self.replay_config = {
-            "loop": kwargs.get("loop"),
+            "loop": kwargs.get("loop", True),
             "seek": kwargs.get("seek"),
             "duration": kwargs.get("duration"),
         }
