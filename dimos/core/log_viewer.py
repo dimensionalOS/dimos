@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 import json
 from pathlib import Path
 import time
@@ -26,8 +27,8 @@ from dimos.core.run_registry import get_most_recent, list_runs
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-_SKIP_KEYS = frozenset({"timestamp", "level", "logger", "event", "func_name", "lineno"})
-_COLORS = {"err": "\033[31m", "war": "\033[33m", "deb": "\033[2m"}
+_STANDARD_KEYS = {"timestamp", "level", "logger", "event", "func_name", "lineno"}
+_LEVEL_COLORS = {"err": "\033[31m", "war": "\033[33m", "deb": "\033[2m"}
 _RESET = "\033[0m"
 
 
@@ -36,64 +37,69 @@ def resolve_log_path(run_id: str = "") -> Path | None:
     if run_id:
         for entry in list_runs(alive_only=False):
             if entry.run_id == run_id:
-                path = Path(entry.log_dir) / "main.jsonl"
-                return path if path.exists() else None
+                return _log_path_if_exists(entry.log_dir)
         return None
 
-    for alive_only in (True, False):
-        result = get_most_recent(alive_only=alive_only)
-        if result is not None:
-            path = Path(result.log_dir) / "main.jsonl"
-            if path.exists():
-                return path
+    # Prefer alive run, fall back to most recent stopped run.
+    alive = get_most_recent(alive_only=True)
+    if alive is not None:
+        return _log_path_if_exists(alive.log_dir)
+    recent = get_most_recent(alive_only=False)
+    if recent is not None:
+        return _log_path_if_exists(recent.log_dir)
     return None
 
 
-def format_line(raw: str, json_output: bool = False) -> str:
-    """Parse a JSONL line into human-readable format.
+def format_line(raw: str, *, json_output: bool = False) -> str:
+    """Format a JSONL log line for display.
 
-    Default format: ``HH:MM:SS [lvl] logger_name       event extras``
-    With *json_output*: returns the raw line stripped.
+    Default: ``HH:MM:SS [lvl] logger           event  k=v …``
     """
     if json_output:
         return raw.rstrip()
     try:
-        d: dict[str, object] = json.loads(raw)
+        rec: dict[str, object] = json.loads(raw)
     except json.JSONDecodeError:
         return raw.rstrip()
 
-    ts = str(d.get("timestamp", ""))
-    time_str = ts[11:19] if len(ts) > 19 else ts
+    ts = str(rec.get("timestamp", ""))
+    hms = ts[11:19] if len(ts) >= 19 else ts
+    level = str(rec.get("level", "?"))[:3]
+    logger = Path(str(rec.get("logger", "?"))).name
+    event = str(rec.get("event", ""))
+    color = _LEVEL_COLORS.get(level, "")
 
-    level = str(d.get("level", "?"))[:3]
-    logger = Path(str(d.get("logger", "?"))).name
-    event = str(d.get("event", ""))
-
-    extras = " ".join(f"{k}={v}" for k, v in d.items() if k not in _SKIP_KEYS)
-    color = _COLORS.get(level, "")
-
-    line = f"{time_str} {color}[{level}]{_RESET} {logger:17} {event}"
+    extras = " ".join(f"{k}={v}" for k, v in rec.items() if k not in _STANDARD_KEYS)
+    line = f"{hms} {color}[{level}]{_RESET} {logger:17} {event}"
     if extras:
         line += f"  {extras}"
     return line
 
 
 def read_log(path: Path, count: int | None = 50) -> list[str]:
-    """Read last *count* lines from a log file.  ``None`` returns all."""
+    """Read last *count* lines from a log file (``None`` = all)."""
+    if count is None:
+        return path.read_text().splitlines(keepends=True)
+    # Only keep the tail — avoids loading the full file into a list.
+    tail: deque[str] = deque(maxlen=count)
     with open(path) as f:
-        lines = f.readlines()
-    if count is not None:
-        lines = lines[-count:]
-    return lines
+        for line in f:
+            tail.append(line)
+    return list(tail)
 
 
 def follow_log(path: Path) -> Iterator[str]:
     """Yield new lines as they appear (``tail -f`` style)."""
     with open(path) as f:
-        f.seek(0, 2)  # seek to end
+        f.seek(0, 2)
         while True:
             line = f.readline()
             if line:
                 yield line
             else:
                 time.sleep(0.1)
+
+
+def _log_path_if_exists(log_dir: str) -> Path | None:
+    path = Path(log_dir) / "main.jsonl"
+    return path if path.exists() else None
