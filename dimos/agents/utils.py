@@ -17,6 +17,10 @@ from typing import Any
 
 from langchain_core.messages.base import BaseMessage
 
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
+
 CYAN = "\033[36m"
 YELLOW = "\033[33m"
 GREEN = "\033[32m"
@@ -77,6 +81,21 @@ def pretty_print_langchain_message(msg: BaseMessage) -> None:
 
     if first_line:
         print(f"{time_str} {type_str}")
+
+    # Also log to structlog so agent messages appear in per-run JSONL logs.
+    _log_message(msg_type, content, tool_calls)
+
+
+def _log_message(msg_type: str, content: object, tool_calls: list[dict[str, Any]]) -> None:
+    """Write agent message to structlog (per-run JSONL)."""
+    content_str = str(content)[:500] if content else ""
+    if tool_calls:
+        tools = [{"name": tc.get("name"), "args": tc.get("args")} for tc in tool_calls]
+        logger.info("Agent message", msg_type=msg_type, content=content_str, tool_calls=tools)
+    elif content_str:
+        logger.info("Agent message", msg_type=msg_type, content=content_str)
+    else:
+        logger.info("Agent message", msg_type=msg_type)
 
 
 def _try_to_remove_url_data(content: Any) -> Any:

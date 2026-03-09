@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
@@ -107,20 +108,30 @@ async def _handle_tools_call(
 
     rpc_call = rpc_calls.get(name)
     if rpc_call is None:
+        logger.warning("MCP tool not found", tool=name)
         return _jsonrpc_result_text(req_id, f"Tool not found: {name}")
+
+    logger.info("MCP tool call", tool=name, args=args)
+    t0 = time.monotonic()
 
     try:
         result = await asyncio.get_event_loop().run_in_executor(None, lambda: rpc_call(**args))
     except Exception as e:
-        logger.exception("Error running tool", tool_name=name, exc_info=True)
+        logger.exception("MCP tool error", tool=name, duration=f"{time.monotonic() - t0:.3f}s")
         return _jsonrpc_result_text(req_id, f"Error running tool '{name}': {e}")
 
+    duration = f"{time.monotonic() - t0:.3f}s"
+
     if result is None:
+        logger.info("MCP tool done (async)", tool=name, duration=duration)
         return _jsonrpc_result_text(req_id, "It has started. You will be updated later.")
 
+    response = str(result)[:200]
     if hasattr(result, "agent_encode"):
+        logger.info("MCP tool done", tool=name, duration=duration, response=response)
         return _jsonrpc_result(req_id, {"content": result.agent_encode()})
 
+    logger.info("MCP tool done", tool=name, duration=duration, response=response)
     return _jsonrpc_result_text(req_id, str(result))
 
 
