@@ -19,6 +19,7 @@ import json
 import sys
 from typing import Any, get_args, get_origin
 
+import click
 from dotenv import load_dotenv
 import requests
 import typer
@@ -288,10 +289,29 @@ def mcp_list_tools() -> None:
     typer.echo(json.dumps(tools, indent=2))
 
 
+class _KeyValueType(click.ParamType):
+    """Parse KEY=VALUE arguments, auto-converting JSON values."""
+
+    name = "KEY=VALUE"
+
+    def convert(
+        self, value: str, param: click.Parameter | None, ctx: click.Context | None
+    ) -> tuple[str, Any]:
+        if "=" not in value:
+            self.fail(f"expected KEY=VALUE, got: {value}", param, ctx)
+        key, val = value.split("=", 1)
+        try:
+            return (key, json.loads(val))
+        except (json.JSONDecodeError, ValueError):
+            return (key, val)
+
+
 @mcp_app.command("call")
 def mcp_call_tool(
     tool_name: str = typer.Argument(..., help="Tool name to call"),
-    args: list[str] = typer.Option([], "--arg", "-a", help="Arguments as key=value"),
+    args: list[tuple[str, Any]] = typer.Option(
+        [], "--arg", "-a", click_type=_KeyValueType(), help="Arguments as key=value"
+    ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
 ) -> None:
     """Call an MCP tool by name."""
@@ -303,15 +323,7 @@ def mcp_call_tool(
             typer.echo(f"Error: invalid JSON in --json-args: {e}", err=True)
             raise typer.Exit(1)
     else:
-        for arg in args:
-            if "=" not in arg:
-                typer.echo(f"Error: argument must be key=value, got: {arg}", err=True)
-                raise typer.Exit(1)
-            key, value = arg.split("=", 1)
-            try:
-                arguments[key] = json.loads(value)
-            except (json.JSONDecodeError, ValueError):
-                arguments[key] = value
+        arguments = dict(args)
 
     try:
         result = _get_adapter().call_tool(tool_name, arguments)
