@@ -81,7 +81,10 @@ class McpAdapter:
             payload["params"] = params
 
         resp = requests.post(self.url, json=payload, timeout=self.timeout)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as e:
+            raise McpError(f"HTTP {resp.status_code}: {e}") from e
         return resp.json()  # type: ignore[no-any-return]
 
     # ------------------------------------------------------------------

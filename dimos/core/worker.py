@@ -162,7 +162,9 @@ class Worker:
             return None
         try:
             # Signal 0 just checks if the process is alive.
-            pid: int = self._process.pid  # type: ignore[assignment]
+            pid: int | None = self._process.pid
+            if pid is None:
+                return None
             os.kill(pid, 0)
             return pid
         except OSError:
