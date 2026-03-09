@@ -84,7 +84,7 @@ def mcp_shared(request: pytest.FixtureRequest) -> Generator[ModuleCoordinator, N
     """Build a shared StressTestModule + McpServer.  Class-scoped -- started
     once, torn down after every test in the class finishes.  Use for
     read-only tests that don't stop/restart the server."""
-    global_config.update(viewer_backend="none", n_workers=1)
+    global_config.update(viewer="none", n_workers=1)
     bp = autoconnect(
         StressTestModule.blueprint(),
         McpServer.blueprint(),
@@ -283,8 +283,8 @@ class TestMCPErrorHandling:
     def test_cli_call_tool_wrong_arg_format(self, mcp_shared: ModuleCoordinator) -> None:
         """dimos mcp call with bad --arg format should error."""
         result = CliRunner().invoke(main, ["mcp", "call", "echo", "--arg", "no_equals_sign"])
-        assert result.exit_code == 1
-        assert "key=value" in result.output
+        assert result.exit_code == 2  # click ParamType validation error
+        assert "KEY=VALUE" in result.output
 
     def test_cli_call_json_args(self, mcp_shared: ModuleCoordinator) -> None:
         """dimos mcp call --json-args should work."""
@@ -334,7 +334,7 @@ class TestDaemonMCPRecovery:
 
     def test_restart_after_clean_stop(self) -> None:
         """Stop then start again -- MCP should come back."""
-        global_config.update(viewer_backend="none", n_workers=1)
+        global_config.update(viewer="none", n_workers=1)
 
         # First run
         bp1 = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
@@ -383,7 +383,7 @@ class TestMCPRapidRestart:
 
     def test_three_restart_cycles(self) -> None:
         """Start -> stop -> start 3 times -- no port conflicts."""
-        global_config.update(viewer_backend="none", n_workers=1)
+        global_config.update(viewer="none", n_workers=1)
 
         for cycle in range(3):
             bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
@@ -403,7 +403,7 @@ class TestMCPNoServer:
 
     def test_mcp_dead_after_stop(self) -> None:
         """After coordinator.stop(), MCP should stop responding."""
-        global_config.update(viewer_backend="none", n_workers=1)
+        global_config.update(viewer="none", n_workers=1)
         bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
         coord = bp.build()
         assert _adapter().wait_for_ready(), "MCP server did not start"

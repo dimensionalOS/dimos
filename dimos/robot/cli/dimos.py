@@ -309,7 +309,7 @@ class _KeyValueType(click.ParamType):
 @mcp_app.command("call")
 def mcp_call_tool(
     tool_name: str = typer.Argument(..., help="Tool name to call"),
-    args: list[tuple[str, Any]] = typer.Option(
+    args: list[str] = typer.Option(
         [], "--arg", "-a", click_type=_KeyValueType(), help="Arguments as key=value"
     ),
     json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
@@ -323,7 +323,7 @@ def mcp_call_tool(
             typer.echo(f"Error: invalid JSON in --json-args: {e}", err=True)
             raise typer.Exit(1)
     else:
-        arguments = dict(args)
+        arguments = dict(args)  # _KeyValueType returns (key, val) tuples
 
     try:
         result = _get_adapter().call_tool(tool_name, arguments)

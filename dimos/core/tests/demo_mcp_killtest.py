@@ -95,7 +95,7 @@ def run_blueprint_in_process(ready_event: multiprocessing.synchronize.Event) -> 
     from dimos.core.global_config import global_config
     from dimos.core.tests.stress_test_module import StressTestModule
 
-    global_config.update(viewer_backend="none", n_workers=1)
+    global_config.update(viewer="none", n_workers=1)
     bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
     coord = bp.build()
     ready_event.set()
