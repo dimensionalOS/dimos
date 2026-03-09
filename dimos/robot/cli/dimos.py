@@ -273,11 +273,20 @@ def log_cmd(
         raise typer.Exit(1)
 
     if follow:
+        import signal
+
+        _stop = False
+
+        def _on_sigint(_sig: int, _frame: object) -> None:
+            nonlocal _stop
+            _stop = True
+
+        prev = signal.signal(signal.SIGINT, _on_sigint)
         try:
-            for line in follow_log(path):
+            for line in follow_log(path, stop=lambda: _stop):
                 typer.echo(format_line(line, json_output=json_output))
-        except KeyboardInterrupt:
-            pass
+        finally:
+            signal.signal(signal.SIGINT, prev)
     else:
         count = None if all_lines else lines
         for line in read_log(path, count):

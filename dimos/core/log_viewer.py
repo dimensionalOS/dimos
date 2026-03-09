@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 from dimos.core.run_registry import get_most_recent, list_runs
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 _STANDARD_KEYS = {"timestamp", "level", "logger", "event", "func_name", "lineno"}
 _LEVEL_COLORS = {"err": "\033[31m", "war": "\033[33m", "deb": "\033[2m"}
@@ -88,11 +88,15 @@ def read_log(path: Path, count: int | None = 50) -> list[str]:
     return list(tail)
 
 
-def follow_log(path: Path) -> Iterator[str]:
-    """Yield new lines as they appear (``tail -f`` style)."""
+def follow_log(path: Path, stop: Callable[[], bool] | None = None) -> Iterator[str]:
+    """Yield new lines as they appear (``tail -f`` style).
+
+    *stop* is an optional callable; when it returns ``True`` the
+    generator exits cleanly.
+    """
     with open(path) as f:
         f.seek(0, 2)
-        while True:
+        while stop is None or not stop():
             line = f.readline()
             if line:
                 yield line
