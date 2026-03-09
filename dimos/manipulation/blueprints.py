@@ -439,7 +439,7 @@ xarm_perception = (
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
-    .global_config(viewer_backend="foxglove", n_workers=4)
+    .global_config(viewer="foxglove", n_workers=4)
 )
 
 
