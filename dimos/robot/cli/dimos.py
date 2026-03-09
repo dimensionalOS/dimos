@@ -323,7 +323,8 @@ def mcp_call_tool(
             typer.echo(f"Error: invalid JSON in --json-args: {e}", err=True)
             raise typer.Exit(1)
     else:
-        arguments = dict(args)  # _KeyValueType returns (key, val) tuples
+        # _KeyValueType.convert() returns (key, val) tuples at runtime
+        arguments = dict(args)  # type: ignore[arg-type]
 
     try:
         result = _get_adapter().call_tool(tool_name, arguments)
