@@ -166,7 +166,7 @@ This is a bit primitive. We'd like to write a higher-order API for recording ful
 
 ```python skip
 class ReplayConnection(UnitreeWebRTCConnection):
-    dir_name = "unitree_go2_bigoffice"
+    dir_name = "go2_sf_office"
 
     def __init__(self, **kwargs) -> None:
         get_data(self.dir_name)

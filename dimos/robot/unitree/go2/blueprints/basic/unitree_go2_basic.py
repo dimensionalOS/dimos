@@ -93,14 +93,14 @@ rerun_config = {
 }
 
 
-if global_config.viewer_backend == "foxglove":
+if global_config.viewer == "foxglove":
     from dimos.robot.foxglove_bridge import foxglove_bridge
 
     with_vis = autoconnect(
         _transports_base,
         foxglove_bridge(shm_channels=["/color_image#sensor_msgs.Image"]),
     )
-elif global_config.viewer_backend.startswith("rerun"):
+elif global_config.viewer.startswith("rerun"):
     from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
 
     with_vis = autoconnect(

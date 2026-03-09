@@ -148,7 +148,7 @@ def test_autoconnect(args_file: str) -> None:
         },
     )
 
-    coordinator = blueprint.global_config(viewer_backend="none").build()
+    coordinator = blueprint.global_config(viewer="none").build()
     try:
         # Validate blueprint wiring: all modules deployed
         native = coordinator.get_instance(StubNativeModule)  # type: ignore[type-var]

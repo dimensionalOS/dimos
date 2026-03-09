@@ -4,29 +4,29 @@ Dimos supports three visualization backends: Rerun (web or native) and Foxglove.
 
 ## Quick Start
 
-Choose your viewer backend via the CLI (preferred):
+Choose your viewer via the CLI (preferred):
 
 ```bash
 # Rerun web viewer (default) - Full vis dashboard and teleop panel in browser
 dimos run unitree-go2
 
-# Explicitly select the viewer backend:
-dimos --viewer-backend rerun run unitree-go2
-dimos --viewer-backend rerun-web run unitree-go2
-dimos --viewer-backend foxglove run unitree-go2
+# Explicitly select the viewer mode:
+dimos --viewer rerun run unitree-go2
+dimos --viewer rerun-web run unitree-go2
+dimos --viewer foxglove run unitree-go2
 ```
 
 Alternative (environment variable):
 
 ```bash
 # Rerun web viewer - Full dashboard in browser
-VIEWER_BACKEND=rerun-web dimos run unitree-go2
+VIEWER=rerun-web dimos run unitree-go2
 
 # Rerun native viewer - native Rerun window + teleop panel at http://localhost:7779
-VIEWER_BACKEND=rerun dimos run unitree-go2
+VIEWER=rerun dimos run unitree-go2
 
 # Foxglove - Use Foxglove Studio instead of Rerun
-VIEWER_BACKEND=foxglove dimos run unitree-go2
+VIEWER=foxglove dimos run unitree-go2
 ```
 
 ## Viewer Modes Explained
