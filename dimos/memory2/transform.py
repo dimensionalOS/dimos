@@ -30,7 +30,7 @@ class Transformer(ABC, Generic[T, R]):
     """Transforms a stream of observations lazily via iterator -> iterator.
 
     Pull from upstream, yield transformed observations. Naturally supports
-    batching, windowing, fan-out. No flush() needed — the generator cleans
+    batching, windowing, fan-out. The generator cleans
     up when upstream exhausts.
     """
 

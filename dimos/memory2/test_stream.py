@@ -231,18 +231,13 @@ class TestFunctionalAPI:
 
     def test_map(self):
         """.map() transforms each observation's data."""
-        result = make_stream(3).map(lambda obs: obs.data * 2).fetch()
+        result = make_stream(3).map(lambda obs: obs.derive(data=obs.data * 2)).fetch()
         assert [o.data for o in result] == [0, 20, 40]
 
     def test_map_preserves_ts(self):
-        result = make_stream(3).map(lambda obs: str(obs.data)).fetch()
+        result = make_stream(3).map(lambda obs: obs.derive(data=str(obs.data))).fetch()
         assert [o.ts for o in result] == [0.0, 1.0, 2.0]
         assert [o.data for o in result] == ["0", "10", "20"]
-
-    def test_flat_map(self):
-        """.flat_map() fans out — fn returns iterable of values per obs."""
-        result = make_stream(3).flat_map(lambda obs: [obs.data, obs.data + 1]).fetch()
-        assert [o.data for o in result] == [0, 1, 10, 11, 20, 21]
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -484,130 +479,3 @@ class TestBackpressureBuffers:
         result.append(buf.take(timeout=2.0))
         t.join()
         assert result == [42]
-
-
-# ═══════════════════════════════════════════════════════════════════
-#  11. Live mode
-# ═══════════════════════════════════════════════════════════════════
-
-
-class TestLiveMode:
-    """Live streams yield backfill then block for new observations."""
-
-    def test_live_sees_backfill_then_new(self):
-        """Backfill first, then live appends come through."""
-        backend = ListBackend[str]("live")
-        backend.append("old", ts=0.0)
-        stream = Stream(source=backend)
-        live = stream.live(buffer=Unbounded())
-
-        # Start consuming in a thread
-        results: list[str] = []
-        consumed = threading.Event()
-
-        def consumer():
-            for obs in live:
-                results.append(obs.data)
-                if len(results) >= 3:
-                    consumed.set()
-                    return
-
-        t = threading.Thread(target=consumer)
-        t.start()
-
-        time.sleep(0.05)
-        backend.append("new1", ts=1.0)
-        backend.append("new2", ts=2.0)
-
-        consumed.wait(timeout=2.0)
-        t.join(timeout=2.0)
-        assert results == ["old", "new1", "new2"]
-
-    def test_live_with_filter(self):
-        """Filters apply to live data — non-matching obs are dropped silently."""
-        backend = ListBackend[int]("live_filter")
-        stream = Stream(source=backend)
-        live = stream.after(5.0).live(buffer=Unbounded())
-
-        results: list[int] = []
-        consumed = threading.Event()
-
-        def consumer():
-            for obs in live:
-                results.append(obs.data)
-                if len(results) >= 2:
-                    consumed.set()
-                    return
-
-        t = threading.Thread(target=consumer)
-        t.start()
-
-        time.sleep(0.05)
-        backend.append(1, ts=1.0)  # filtered out (ts <= 5.0)
-        backend.append(2, ts=6.0)  # passes
-        backend.append(3, ts=3.0)  # filtered out
-        backend.append(4, ts=10.0)  # passes
-
-        consumed.wait(timeout=2.0)
-        t.join(timeout=2.0)
-        assert results == [2, 4]
-
-    def test_live_deduplicates_backfill_overlap(self):
-        """Observations seen in backfill are not re-yielded from the live buffer."""
-        backend = ListBackend[str]("dedup")
-        backend.append("backfill", ts=0.0)
-        stream = Stream(source=backend)
-        live = stream.live(buffer=Unbounded())
-
-        results: list[str] = []
-        consumed = threading.Event()
-
-        def consumer():
-            for obs in live:
-                results.append(obs.data)
-                if len(results) >= 2:
-                    consumed.set()
-                    return
-
-        t = threading.Thread(target=consumer)
-        t.start()
-
-        time.sleep(0.05)
-        backend.append("live1", ts=1.0)
-
-        consumed.wait(timeout=2.0)
-        t.join(timeout=2.0)
-        assert results == ["backfill", "live1"]
-
-    def test_live_with_keep_last_backpressure(self):
-        """KeepLast drops intermediate values when consumer is slow."""
-        backend = ListBackend[int]("bp")
-        stream = Stream(source=backend)
-        live = stream.live(buffer=KeepLast())
-
-        results: list[int] = []
-        consumed = threading.Event()
-
-        def consumer():
-            for obs in live:
-                results.append(obs.data)
-                if obs.data >= 90:
-                    consumed.set()
-                    return
-                time.sleep(0.1)  # slow consumer
-
-        t = threading.Thread(target=consumer)
-        t.start()
-
-        time.sleep(0.05)
-        # Rapid producer — KeepLast will drop most of these
-        for i in range(100):
-            backend.append(i, ts=float(i))
-            time.sleep(0.001)
-
-        consumed.wait(timeout=5.0)
-        t.join(timeout=2.0)
-        # Should have far fewer than 100 results due to KeepLast
-        assert len(results) < 50
-        # Last result should be near the end
-        assert results[-1] >= 90

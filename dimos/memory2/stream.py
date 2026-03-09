@@ -33,7 +33,7 @@ from dimos.memory2.filter import (
 from dimos.memory2.transform import FnTransformer, Transformer
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator
+    from collections.abc import Callable, Iterator
 
     from reactivex.abc import DisposableBase
 
@@ -41,9 +41,6 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 R = TypeVar("R")
-
-# Source is either a Backend or a (upstream_stream, transformer) pair.
-_Source = Backend[Any] | tuple["Stream[Any]", Transformer[Any, Any]]
 
 
 class Stream(Generic[T]):
@@ -56,13 +53,15 @@ class Stream(Generic[T]):
 
     def __init__(
         self,
-        source: _Source,
+        source: Backend[T] | Stream[Any],
         *,
+        xf: Transformer[Any, T] | None = None,
         query: StreamQuery = StreamQuery(),
         _live_buf: BackpressureBuffer[Observation[Any]] | None = None,
         _live_sub: DisposableBase | None = None,
     ) -> None:
         self._source = source
+        self._xf = xf
         self._query = query
         self._live_buf = _live_buf
         self._live_sub = _live_sub  # kept alive for lifetime of stream
@@ -73,7 +72,7 @@ class Stream(Generic[T]):
         return self._build_iter()
 
     def _build_iter(self) -> Iterator[Observation[T]]:
-        if isinstance(self._source, tuple):
+        if isinstance(self._source, Stream):
             it = self._iter_transform()
         else:
             # Backend handles all query application
@@ -87,9 +86,8 @@ class Stream(Generic[T]):
 
     def _iter_transform(self) -> Iterator[Observation[T]]:
         """Iterate a transform source, applying query filters in Python."""
-        assert isinstance(self._source, tuple)
-        upstream_stream, xf = self._source
-        it: Iterator[Observation[T]] = xf(iter(upstream_stream))
+        assert isinstance(self._source, Stream) and self._xf is not None
+        it: Iterator[Observation[T]] = self._xf(iter(self._source))
 
         # Apply filters as Python predicates
         filters = self._query.filters
@@ -149,7 +147,13 @@ class Stream(Generic[T]):
             limit_val=overrides.get("limit_val", q.limit_val),
             offset_val=overrides.get("offset_val", q.offset_val),
         )
-        return Stream(self._source, query=new_q, _live_buf=self._live_buf, _live_sub=self._live_sub)
+        return Stream(
+            self._source,
+            xf=self._xf,
+            query=new_q,
+            _live_buf=self._live_buf,
+            _live_sub=self._live_sub,
+        )
 
     def _with_filter(self, f: Filter) -> Stream[T]:
         return self._replace_query(filters=(*self._query.filters, f))
@@ -187,29 +191,18 @@ class Stream(Generic[T]):
         """Filter by arbitrary predicate on the full Observation."""
         return self._with_filter(PredicateFilter(pred))
 
-    def map(self, fn: Callable[[Observation[T]], Any]) -> Stream[Any]:
+    def map(self, fn: Callable[[Observation[T]], Observation[R]]) -> Stream[Any]:
         """Transform each observation's data via callable."""
-        return self.transform(FnTransformer(lambda obs: obs.derive(data=fn(obs))))
-
-    def flat_map(self, fn: Callable[[Observation[T]], Iterable[Any]]) -> Stream[Any]:
-        """Map that fans out — fn returns iterable of data values per observation."""
-
-        class _FlatMapXf(Transformer[T, Any]):
-            def __call__(self, upstream: Iterator[Observation[T]]) -> Iterator[Observation[Any]]:
-                for obs in upstream:
-                    for item in fn(obs):
-                        yield obs.derive(data=item)
-
-        return self.transform(_FlatMapXf())
+        return self.transform(FnTransformer(lambda obs: fn(obs)))
 
     # ── Transform ───────────────────────────────────────────────────
 
-    def transform(self, xf: Transformer[Any, Any]) -> Stream[Any]:
+    def transform(self, xf: Transformer[T, R]) -> Stream[R]:
         """Wrap this stream with a transformer. Returns a new lazy Stream.
 
         When iterated, calls xf(iter(self)) — pulls lazily through the chain.
         """
-        return Stream(source=(self, xf), query=StreamQuery())
+        return Stream(source=self, xf=xf, query=StreamQuery())
 
     # ── Live mode ───────────────────────────────────────────────────
 
@@ -223,7 +216,7 @@ class Stream(Generic[T]):
         Default buffer: KeepLast(). Subscribes to the backend BEFORE backfill
         starts and deduplicates by observation id.
         """
-        if isinstance(self._source, tuple):
+        if isinstance(self._source, Stream):
             raise TypeError(
                 "Cannot call .live() on a transform stream. "
                 "Call .live() on the source stream, then .transform()."
@@ -252,7 +245,7 @@ class Stream(Generic[T]):
 
     def count(self) -> int:
         """Count matching observations."""
-        if isinstance(self._source, Backend) and not isinstance(self._source, tuple):
+        if isinstance(self._source, Backend):
             return self._source.count(self._query)
         return sum(1 for _ in self)
 
@@ -271,6 +264,6 @@ class Stream(Generic[T]):
         tags: dict[str, Any] | None = None,
     ) -> Observation[T]:
         """Append to the backing store. Only works if source is a Backend."""
-        if isinstance(self._source, tuple):
+        if isinstance(self._source, Stream):
             raise TypeError("Cannot append to a transform stream. Append to the source stream.")
         return self._source.append(payload, ts=ts, pose=pose, tags=tags)
