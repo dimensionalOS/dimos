@@ -120,7 +120,7 @@ class ROSNavConfig(DockerModuleConfig):
             "TARGETARCH": "arm64" if platform.machine() == "aarch64" else "amd64"
         }
     )
-    docker_gpus: str | None = None
+    docker_gpus: str | None = "all"
     docker_extra_args: list[str] = field(default_factory=lambda: ["--cap-add=NET_ADMIN"])
     docker_env: dict[str, str] = field(
         default_factory=lambda: {
@@ -450,8 +450,15 @@ class ROSNav(Module):
     def _on_ros_tf(self, msg: ROSTFMessage) -> None:
         ros_tf = _tfmessage_from_ros(msg)
 
+        # In hardware/bagfile mode the SLAM initialises the sensor at the
+        # map-frame origin, placing the ground plane at z = −vehicleHeight.
+        # Shift the world frame down so that ground aligns with z = 0 in
+        # Rerun.  In simulation the map frame already has ground at z = 0.
+        is_sim = self.config.mode in ("simulation", "unity_sim")
+        z_offset = 0.0 if is_sim else -self.config.vehicle_height
+
         map_to_world_tf = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
+            translation=Vector3(0.0, 0.0, z_offset),
             rotation=euler_to_quaternion(Vector3(0.0, 0.0, 0.0)),
             frame_id="map",
             child_frame_id="world",

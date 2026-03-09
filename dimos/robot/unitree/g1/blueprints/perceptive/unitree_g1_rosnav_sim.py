@@ -38,38 +38,13 @@ from dimos.visualization.vis_module import vis_module
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
 
-def _static_sim_camera(rr: Any) -> list[Any]:
-    """Camera TF chain for the sim equirectangular camera.
-
-    base_link → camera_link  at [0.05, 0, 0.6]  (sim render offset)
-    camera_link → camera_optical  with ROS optical rotation (-90° Z then -90° X)
-    """
-    return [
-        rr.Transform3D(
-            parent_frame="tf#/base_link",
-            translation=[0.05, 0.0, 0.6],
-        ),
-    ]
-
-
-def _static_sim_camera_optical(rr: Any) -> list[Any]:
-    """Optical frame: rotated so +Z points into the image plane."""
-    # ROS optical convention: rotate -90° around Z then -90° around X
-    # quaternion [0.5, -0.5, 0.5, -0.5]  (x, y, z, w)
-    return [
-        rr.Transform3D(
-            parent_frame="world/tf/camera_link",
-            rotation=rr.Quaternion(xyzw=[0.5, -0.5, 0.5, -0.5]),
-        ),
-    ]
-
-
 def _static_sim_pinhole(rr: Any) -> list[Any]:
-    """Pinhole camera approximation for the 360° equirectangular sim image.
+    """Pinhole + transform for the sim equirectangular camera.
 
-    The sim produces 1920x640 BGR equirectangular frames.  We approximate this
-    with a wide-FOV pinhole (≈120° horizontal) so Rerun can project the image
-    without the "2D visualizers require pinhole ancestor" warning.
+    Connects ``world/color_image`` directly to ``tf#/base_link`` with the
+    combined camera-link translation [0.05, 0, 0.6] and ROS optical-frame
+    rotation so that Rerun can resolve the full transform chain to the view
+    root without intermediate entity-path hops.
     """
     width, height = 1920, 640
     hfov_rad = math.radians(120.0)
@@ -83,7 +58,11 @@ def _static_sim_pinhole(rr: Any) -> list[Any]:
             principal_point=[cx, cy],
             camera_xyz=rr.ViewCoordinates.RDF,
         ),
-        rr.Transform3D(parent_frame="world/tf/camera_optical"),
+        rr.Transform3D(
+            parent_frame="tf#/base_link",
+            translation=[0.05, 0.0, 0.6],
+            rotation=rr.Quaternion(xyzw=[0.5, -0.5, 0.5, -0.5]),
+        ),
     ]
 
 
@@ -98,8 +77,6 @@ _vis_sim = vis_module(
         },
         "static": {
             "world/tf/base_link": _static_base_link,
-            "world/tf/camera_link": _static_sim_camera,
-            "world/tf/camera_optical": _static_sim_camera_optical,
             "world/color_image": _static_sim_pinhole,
         },
     },
