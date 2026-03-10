@@ -20,9 +20,11 @@ Usage:
     dimos run coordinator-mock
     dimos run xarm-perception
 
-    # Agentic (LLM agent with skills):
+    # Agentic (LLM agent with skills -  requires librealsense2 installed):
     dimos run coordinator-mock
     dimos run xarm-perception-agent
+
+
 """
 
 import math
