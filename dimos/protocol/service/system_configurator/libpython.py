@@ -22,9 +22,9 @@ This configurator creates a symlink so mjpython can find the library.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 import platform
 import sys
-from pathlib import Path
 
 from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
