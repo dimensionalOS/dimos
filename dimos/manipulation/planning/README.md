@@ -5,19 +5,22 @@ Motion planning for robotic manipulators. Backend-agnostic design with Drake imp
 ## Quick Start
 
 ```bash
-# Terminal 1: Mock coordinator
-dimos run coordinator-mock
+# 1. Verify manipulation dependencies load correctly (standalone, no hardware):
+dimos run xarm6-planner-only
 
-# Terminal 2: Manipulation planner
-dimos run xarm7-planner-coordinator
+# 2. Keyboard teleop with mock coordinator:
+dimos run coordinator-mock          # terminal 1
+dimos run keyboard-teleop-xarm7     # terminal 2
 
-# Terminal 3: IPython client
-python -m dimos.manipulation.planning.examples.manipulation_client
+# 3. Interactive RPC client (plan, preview, execute from Python):
+dimos run coordinator-mock          # terminal 1
+dimos run xarm7-planner-coordinator # terminal 2
+python -i -m dimos.manipulation.planning.examples.manipulation_client  # terminal 3
 ```
 
-In IPython:
+In the interactive client:
 ```python
-joints()                # Get current joints
+joints()                # Get current joint positions
 plan([0.1] * 7)         # Plan to target
 preview()               # Preview in Meshcat (url() for link)
 execute()               # Execute via coordinator
@@ -146,8 +149,7 @@ planning/
 ├── monitor/                 # WorldMonitor (live state sync)
 ├── trajectory_generator/    # Time-parameterized trajectories
 └── examples/
-    ├── planning_tester.py        # Standalone CLI tester
-    └── manipulation_client.py    # IPython RPC client
+    └── manipulation_client.py    # Interactive RPC client (python -i)
 ```
 
 ## Obstacle Types
