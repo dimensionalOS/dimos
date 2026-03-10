@@ -71,4 +71,6 @@ class LibPythonConfiguratorMacOS(SystemConfigurator):
                 symlink_path.symlink_to(real_path)
                 logger.warning("Created symlink %s -> %s for mjpython", symlink_path, real_path)
             except OSError as error:
-                logger.warning("Failed to create symlink %s -> %s: %s", symlink_path, real_path, error)
+                logger.warning(
+                    "Failed to create symlink %s -> %s: %s", symlink_path, real_path, error
+                )
