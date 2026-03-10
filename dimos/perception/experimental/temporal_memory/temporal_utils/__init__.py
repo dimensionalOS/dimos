@@ -12,12 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Temporal memory utilities for temporal memory. includes helper functions
-and prompts that are used to build the prompt for the VLM.
-"""
+"""Temporal memory utilities."""
 
-# Re-export everything from submodules
 from .graph_utils import build_graph_context, extract_time_window
 from .helpers import clamp_text, format_timestamp, is_scene_stale, next_entity_id_hint
 from .parsers import parse_batch_distance_response, parse_window_response
@@ -30,31 +26,21 @@ from .prompts import (
     build_window_prompt,
     get_structured_output_format,
 )
-from .state import apply_summary_update, default_state, update_state_from_window
 
 __all__ = [
-    # Schema
     "WINDOW_RESPONSE_SCHEMA",
-    # State management
-    "apply_summary_update",
-    # Prompts
     "build_batch_distance_estimation_prompt",
     "build_distance_estimation_prompt",
-    # Graph utils
     "build_graph_context",
     "build_query_prompt",
     "build_summary_prompt",
     "build_window_prompt",
-    # Helpers
     "clamp_text",
-    "default_state",
     "extract_time_window",
     "format_timestamp",
     "get_structured_output_format",
     "is_scene_stale",
     "next_entity_id_hint",
-    # Parsers
     "parse_batch_distance_response",
     "parse_window_response",
-    "update_state_from_window",
 ]
