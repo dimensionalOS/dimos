@@ -202,6 +202,7 @@ manipulation = [
 
     # Hardware SDKs
     "piper-sdk",
+    "pyrealsense2",
     "xarm-python-sdk>=1.17.0",
 
     # Visualization (Optional)
