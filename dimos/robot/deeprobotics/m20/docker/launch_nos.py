@@ -77,7 +77,7 @@ bp = autoconnect(
         rotation_threshold=math.radians(45),
     ),
     wavefront_frontier_explorer(),
-    m20_connection(ip=AOS_ETH0, enable_ros=True, lidar_height=0.57),
+    m20_connection(ip=AOS_ETH0, enable_ros=True, lidar_height=0.47),
     rerun_bridge(
         viewer_mode="web",
         memory_limit="512MB",
