@@ -67,7 +67,7 @@ bp = autoconnect(
     voxel_mapper(voxel_size=0.05, publish_interval=1.0, max_height=0.7),
     cost_mapper(config=HeightCostConfig(
         max_height=0.7, resolution=0.05, ignore_noise=0.05, can_climb=0.25,
-        smoothing=5.0, floor_z=-0.5,
+        smoothing=5.0,
     )),
     replanning_a_star_planner(
         max_linear_speed=1.0,
@@ -77,7 +77,7 @@ bp = autoconnect(
         rotation_threshold=math.radians(45),
     ),
     wavefront_frontier_explorer(),
-    m20_connection(ip=AOS_ETH0, enable_ros=True),
+    m20_connection(ip=AOS_ETH0, enable_ros=True, lidar_height=0.57),
     rerun_bridge(
         viewer_mode="web",
         memory_limit="512MB",

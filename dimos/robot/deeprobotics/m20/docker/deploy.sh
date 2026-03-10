@@ -272,6 +272,13 @@ case "${CMD}" in
             exit 1
         fi
 
+        # Start container if not running (docker cp needs a running container)
+        if ! remote_ssh docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+            echo "Container not running — starting it first..."
+            remote_ssh docker start ${CONTAINER_NAME}
+            sleep 2
+        fi
+
         sync_source
 
         # Copy updated source into the running container.

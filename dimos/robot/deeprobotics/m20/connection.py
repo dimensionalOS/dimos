@@ -150,10 +150,12 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
         camera_stream: str = "video1",
         bridge_host: str | None = None,
         bridge_port: int = 9731,
+        lidar_height: float = 0.0,
         *args: Any,
         **kwargs: Any,
     ) -> None:
         self._global_config = global_config
+        self._lidar_height = lidar_height
 
         ip = ip if ip is not None else self._global_config.robot_ip
 
@@ -419,9 +421,22 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
 
     # --- TF publishing ---
 
-    @classmethod
-    def _odom_to_tf(cls, odom: PoseStamped) -> list[Transform]:
-        """Convert odometry to TF transforms (base_link + camera frames)."""
+    @staticmethod
+    def _odom_to_tf(odom: PoseStamped, lidar_height: float = 0.0) -> list[Transform]:
+        """Convert odometry to TF transforms (base_link + camera frames).
+
+        Args:
+            odom: Raw odometry pose from lio_perception.
+            lidar_height: Height of lidar above ground (m). Shifts the ODOM
+                frame so that ground level ≈ z=0 in the world frame.
+        """
+        if lidar_height:
+            odom = PoseStamped(
+                position=Vector3(odom.position.x, odom.position.y, odom.position.z + lidar_height),
+                orientation=odom.orientation,
+                frame_id=odom.frame_id,
+                ts=odom.ts,
+            )
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.1),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -445,7 +460,7 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        transforms = self._odom_to_tf(msg)
+        transforms = self._odom_to_tf(msg, self._lidar_height)
         self.tf.publish(*transforms)
         if self.odom.transport:
             self.odom.publish(msg)
