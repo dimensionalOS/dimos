@@ -141,5 +141,5 @@ class EntityMarkers(Timestamped):
         return self.encode()
 
     @classmethod
-    def lcm_decode(cls, data: bytes, **kwargs: object) -> "EntityMarkers":
+    def lcm_decode(cls, data: bytes, **kwargs: object) -> EntityMarkers:
         return cls.decode(data)
