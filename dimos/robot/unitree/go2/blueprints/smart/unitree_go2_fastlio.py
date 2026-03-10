@@ -21,7 +21,9 @@ from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
 from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 from dimos.utils.logging_config import setup_logger
-from dimos.core import Module, In, Out, rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+from dimos.core.core import rpc
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, PoseStamped
 from dimos.msgs.nav_msgs import Odometry
