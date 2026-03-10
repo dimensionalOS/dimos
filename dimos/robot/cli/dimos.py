@@ -14,14 +14,22 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import inspect
+import json
+import os
 import sys
+import time
 from typing import Any, get_args, get_origin
 
+import click
 from dotenv import load_dotenv
+import requests
 import typer
 
+from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -105,11 +113,9 @@ def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
+    disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
 ) -> None:
     """Start a robot blueprint"""
-    from datetime import datetime, timezone
-    import os
-
     logger.info("Starting DimOS")
 
     from dimos.core.blueprints import autoconnect
@@ -120,7 +126,7 @@ def run(
         cleanup_stale,
         generate_run_id,
     )
-    from dimos.robot.get_all_blueprints import get_by_name
+    from dimos.robot.get_all_blueprints import get_by_name, get_module_by_name
     from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
 
     setup_exception_handler()
@@ -152,6 +158,11 @@ def run(
     set_run_log_dir(log_dir)
 
     blueprint = autoconnect(*map(get_by_name, robot_types))
+
+    if disable:
+        disabled_classes = tuple(get_module_by_name(name).blueprints[0].module for name in disable)
+        blueprint = blueprint.disabled_modules(*disabled_classes)
+
     coordinator = blueprint.build(cli_config_overrides=cli_config_overrides)
 
     if daemon:
@@ -176,6 +187,8 @@ def run(
         typer.echo("  Stop:      dimos stop")
         typer.echo("  Status:    dimos status")
 
+        coordinator.suppress_console()
+
         daemonize(log_dir)
 
         entry = RunEntry(
@@ -186,6 +199,7 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
+            original_argv=sys.argv,
         )
         entry.save()
         install_signal_handlers(entry, coordinator)
@@ -199,6 +213,7 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
+            original_argv=sys.argv,
         )
         entry.save()
         try:
@@ -210,10 +225,6 @@ def run(
 @main.command()
 def status() -> None:
     """Show the running DimOS instance."""
-    from datetime import datetime, timezone
-
-    from dimos.core.run_registry import get_most_recent
-
     entry = get_most_recent(alive_only=True)
     if not entry:
         typer.echo("No running DimOS instance")
@@ -241,14 +252,10 @@ def stop(
 ) -> None:
     """Stop the running DimOS instance."""
 
-    from dimos.core.run_registry import get_most_recent
-
     entry = get_most_recent(alive_only=True)
     if not entry:
         typer.echo("No running DimOS instance", err=True)
         raise typer.Exit(1)
-
-    from dimos.core.run_registry import stop_entry
 
     sig_name = "SIGKILL" if force else "SIGTERM"
     typer.echo(f"Stopping {entry.run_id} (PID {entry.pid}) with {sig_name}...")
@@ -291,6 +298,170 @@ def log_cmd(
         count = None if all_lines else lines
         for line in read_log(path, count):
             typer.echo(format_line(line, json_output=json_output))
+mcp_app = typer.Typer(help="Interact with the running MCP server")
+main.add_typer(mcp_app, name="mcp")
+
+
+def _get_adapter() -> McpAdapter:
+    """Get an McpAdapter from the latest RunEntry or default URL."""
+    from dimos.agents.mcp.mcp_adapter import McpAdapter
+
+    return McpAdapter.from_run_entry()
+
+
+@mcp_app.command("list-tools")
+def mcp_list_tools() -> None:
+    """List available MCP tools (skills)."""
+    try:
+        tools = _get_adapter().list_tools()
+    except requests.ConnectionError:
+        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
+        raise typer.Exit(1)
+    except McpError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    typer.echo(json.dumps(tools, indent=2))
+
+
+class _KeyValueType(click.ParamType):
+    """Parse KEY=VALUE arguments, auto-converting JSON values."""
+
+    name = "KEY=VALUE"
+
+    def convert(
+        self, value: str, param: click.Parameter | None, ctx: click.Context | None
+    ) -> tuple[str, Any]:
+        if "=" not in value:
+            self.fail(f"expected KEY=VALUE, got: {value}", param, ctx)
+        key, val = value.split("=", 1)
+        try:
+            return (key, json.loads(val))
+        except (json.JSONDecodeError, ValueError):
+            return (key, val)
+
+
+@mcp_app.command("call")
+def mcp_call_tool(
+    tool_name: str = typer.Argument(..., help="Tool name to call"),
+    args: list[str] = typer.Option(
+        [], "--arg", "-a", click_type=_KeyValueType(), help="Arguments as key=value"
+    ),
+    json_args: str = typer.Option("", "--json-args", "-j", help="Arguments as JSON string"),
+) -> None:
+    """Call an MCP tool by name."""
+    arguments: dict[str, Any] = {}
+    if json_args:
+        try:
+            arguments = json.loads(json_args)
+        except json.JSONDecodeError as e:
+            typer.echo(f"Error: invalid JSON in --json-args: {e}", err=True)
+            raise typer.Exit(1)
+    else:
+        # _KeyValueType.convert() returns (key, val) tuples at runtime
+        arguments = dict(args)  # type: ignore[arg-type]
+
+    try:
+        result = _get_adapter().call_tool(tool_name, arguments)
+    except requests.ConnectionError:
+        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
+        raise typer.Exit(1)
+    except McpError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    content = result.get("content", [])
+    if not content:
+        typer.echo("(no output)")
+        return
+    for item in content:
+        typer.echo(item.get("text", str(item)))
+
+
+@mcp_app.command("status")
+def mcp_status() -> None:
+    """Show MCP server status (modules, skills)."""
+    try:
+        data = _get_adapter().call_tool_text("server_status")
+    except requests.ConnectionError:
+        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
+        raise typer.Exit(1)
+    except McpError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    # server_status returns JSON string -- pretty-print it
+    try:
+        typer.echo(json.dumps(json.loads(data), indent=2))
+    except (json.JSONDecodeError, ValueError):
+        typer.echo(data)
+
+
+@mcp_app.command("modules")
+def mcp_modules() -> None:
+    """List deployed modules and their skills."""
+    try:
+        data = _get_adapter().call_tool_text("list_modules")
+    except requests.ConnectionError:
+        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
+        raise typer.Exit(1)
+    except McpError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    try:
+        typer.echo(json.dumps(json.loads(data), indent=2))
+    except (json.JSONDecodeError, ValueError):
+        typer.echo(data)
+
+
+@main.command("agent-send")
+def agent_send_cmd(
+    message: str = typer.Argument(..., help="Message to send to the running agent"),
+) -> None:
+    """Send a message to the running DimOS agent via MCP."""
+    try:
+        text = _get_adapter().call_tool_text("agent_send", {"message": message})
+    except requests.ConnectionError:
+        typer.echo("Error: no running MCP server (is DimOS running?)", err=True)
+        raise typer.Exit(1)
+    except McpError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+    typer.echo(text)
+
+
+@main.command()
+def restart(
+    force: bool = typer.Option(False, "--force", "-f", help="Force kill before restarting"),
+) -> None:
+    """Restart the running DimOS instance with the same arguments."""
+    entry = get_most_recent(alive_only=True)
+    if not entry:
+        typer.echo("No running DimOS instance to restart", err=True)
+        raise typer.Exit(1)
+
+    if not entry.original_argv:
+        typer.echo("Cannot restart: run entry missing original command", err=True)
+        raise typer.Exit(1)
+
+    # Save argv and pid before stopping (stop removes the entry)
+    argv = entry.original_argv
+    old_pid = entry.pid
+
+    typer.echo(f"Restarting {entry.run_id} ({entry.blueprint})...")
+    msg, _ok = stop_entry(entry, force=force)
+    typer.echo(f"  {msg}")
+
+    # Wait for the old process to fully exit so ports are released.
+    for _ in range(20):  # up to 2s
+        if not is_pid_alive(old_pid):
+            break
+        time.sleep(0.1)
+
+    typer.echo(f"  Running: {' '.join(argv)}")
+    try:
+        os.execvp(argv[0], argv)
+    except OSError as exc:
+        typer.echo(f"Error: failed to restart — {exc}", err=True)
+        raise typer.Exit(1)
 
 
 @main.command()

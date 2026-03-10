@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,15 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.blueprints import autoconnect
-from dimos.perception.perceive_loop_skill import PerceiveLoopSkill
-from dimos.perception.spatial_perception import spatial_memory
-from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
+from collections.abc import Callable
 
-unitree_go2_spatial = autoconnect(
-    unitree_go2,
-    spatial_memory(),
-    PerceiveLoopSkill.blueprint(),
-).global_config(n_workers=8)
-
-__all__ = ["unitree_go2_spatial"]
+StartPersonTrack = Callable[[list[tuple[float, float]]], None]

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,15 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Stress test blueprint: StressTestModule + McpServer.
+
+Lightweight, no hardware. Used for e2e daemon/MCP lifecycle testing.
+"""
+
+from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.blueprints import autoconnect
-from dimos.perception.perceive_loop_skill import PerceiveLoopSkill
-from dimos.perception.spatial_perception import spatial_memory
-from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
+from dimos.core.tests.stress_test_module import StressTestModule
 
-unitree_go2_spatial = autoconnect(
-    unitree_go2,
-    spatial_memory(),
-    PerceiveLoopSkill.blueprint(),
-).global_config(n_workers=8)
+demo_mcp_stress_test = autoconnect(
+    StressTestModule.blueprint(),
+    McpServer.blueprint(),
+)
 
-__all__ = ["unitree_go2_spatial"]
+__all__ = ["demo_mcp_stress_test"]

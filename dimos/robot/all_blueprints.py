@@ -46,6 +46,7 @@ all_blueprints = {
     "demo-google-maps-skill": "dimos.agents.skills.demo_google_maps_skill:demo_google_maps_skill",
     "demo-gps-nav": "dimos.agents.skills.demo_gps_nav:demo_gps_nav",
     "demo-grasping": "dimos.manipulation.grasping.demo_grasping:demo_grasping",
+    "demo-mcp-stress-test": "dimos.core.tests.stress_test_blueprint:demo_mcp_stress_test",
     "demo-object-scene-registration": "dimos.perception.demo_object_scene_registration:demo_object_scene_registration",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
     "demo-skill": "dimos.agents.skills.demo_skill:demo_skill",

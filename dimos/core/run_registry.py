@@ -52,6 +52,7 @@ class RunEntry:
     cli_args: list[str] = field(default_factory=list)
     config_overrides: dict[str, object] = field(default_factory=dict)
     grpc_port: int = 9877
+    original_argv: list[str] = field(default_factory=list)
 
     @property
     def registry_path(self) -> Path:

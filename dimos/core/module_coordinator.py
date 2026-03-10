@@ -84,6 +84,11 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         """Number of deployed modules."""
         return len(self._deployed_modules)
 
+    def suppress_console(self) -> None:
+        """Silence console output in all worker processes."""
+        if self._client is not None:
+            self._client.suppress_console()
+
     def start(self) -> None:
         n = self._n if self._n is not None else 2
         self._client = WorkerManager(n_workers=n)
