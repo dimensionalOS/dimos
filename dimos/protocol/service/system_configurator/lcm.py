@@ -146,15 +146,20 @@ class MulticastConfiguratorMacOS(SystemConfigurator):
         ]
 
     def check(self) -> bool:
-        # `netstat -nr` shows the routing table. We search for a 224/4 route entry.
+        # `netstat -nr` shows the routing table. We search for a 224/4 route entry
+        # that points to the loopback interface (lo0). The route often exists on
+        # en0 (WiFi/Ethernet), which causes cross-process LCM communication to fail.
         try:
             result = subprocess.run(["netstat", "-nr"], capture_output=True, text=True)
             if result.returncode != 0:
                 print(f"ERROR: `netstat -nr` rc={result.returncode} stderr={result.stderr!r}")
                 return False
 
-            route_ok = ("224.0.0.0/4" in result.stdout) or ("224.0.0/4" in result.stdout)
-            return bool(route_ok)
+            for line in result.stdout.splitlines():
+                if "224.0.0.0/4" in line or "224.0.0/4" in line:
+                    if self.loopback_interface in line:
+                        return True
+            return False
         except Exception as error:
             print(f"ERROR: failed checking multicast route via netstat: {error}")
             return False
