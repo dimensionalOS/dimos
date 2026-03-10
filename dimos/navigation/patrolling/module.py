@@ -90,6 +90,11 @@ class PatrollingModule(Module):
             self._patrol_thread.start()
         return "Patrol started. Use `stop_patrol` to stop."
 
+    @rpc
+    def is_patrolling(self) -> bool:
+        with self._patrol_lock:
+            return self._patrol_thread is not None and self._patrol_thread.is_alive()
+
     @skill
     def stop_patrol(self) -> str:
         """Stop the ongoing patrol."""

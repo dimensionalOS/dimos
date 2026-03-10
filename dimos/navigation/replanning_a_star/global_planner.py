@@ -52,6 +52,7 @@ class GlobalPlanner(Resource):
 
     _global_config: GlobalConfig
     _navigation_map: NavigationMap
+    _navigation_map_near: NavigationMap
     _local_planner: LocalPlanner
     _position_tracker: PositionTracker
     _replan_limiter: ReplanLimiter
@@ -69,13 +70,15 @@ class GlobalPlanner(Resource):
     _stuck_time_window: float = 8.0
     _stuck_threshold: float = 0.4
     _max_path_deviation: float = 0.9
+    _replanning_enabled: bool = True
 
     def __init__(self, global_config: GlobalConfig) -> None:
         self.path = Subject()
         self.goal_reached = Subject()
 
         self._global_config = global_config
-        self._navigation_map = NavigationMap(self._global_config)
+        self._navigation_map = NavigationMap(self._global_config, "voronoi")
+        self._navigation_map_near = NavigationMap(self._global_config, "gradient")
         self._local_planner = LocalPlanner(
             self._global_config, self._navigation_map, self._goal_tolerance
         )
@@ -124,6 +127,7 @@ class GlobalPlanner(Resource):
 
     def handle_global_costmap(self, msg: OccupancyGrid) -> None:
         self._navigation_map.update(msg)
+        self._navigation_map_near.update(msg)
 
     def handle_goal_request(self, goal: PoseStamped) -> None:
         logger.info("Got new goal", goal=str(goal))
@@ -339,7 +343,9 @@ class GlobalPlanner(Resource):
         sizes_to_try: list[float] = [1.1]
 
         for size in sizes_to_try:
-            costmap = self._navigation_map.make_gradient_costmap(size)
+            distance = robot_pos.distance(goal)
+            navigation_map = self._navigation_map if distance > 1.5 else self._navigation_map_near
+            costmap = navigation_map.make_gradient_costmap(size)
             path = min_cost_astar(costmap, goal, robot_pos)
             if path and path.poses:
                 logger.info(f"Found path {size}x robot width.")

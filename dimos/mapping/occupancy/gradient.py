@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 import numpy as np
 from scipy import ndimage  # type: ignore[import-untyped]
@@ -21,6 +21,9 @@ from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+
+GradientStrategy: TypeAlias = Literal["gradient", "voronoi"]
 
 
 def gradient(

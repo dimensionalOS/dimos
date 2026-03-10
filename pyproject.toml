@@ -261,6 +261,7 @@ dev = [
     "types-gevent>=25.4.0.20250915,<26",
     "types-greenlet>=3.2.0.20250915,<4",
     "types-jmespath>=1.0.2.20250809,<2",
+    "types-requests>=2.32.4.20260107,<3",
     "types-jsonschema>=4.25.1.20251009,<5",
     "types-networkx>=3.5.0.20251001,<4",
     "types-protobuf>=6.32.1.20250918,<7",
