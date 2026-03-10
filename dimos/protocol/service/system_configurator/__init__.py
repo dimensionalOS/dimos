@@ -30,6 +30,7 @@ from dimos.protocol.service.system_configurator.lcm import (
     MulticastConfiguratorLinux,
     MulticastConfiguratorMacOS,
 )
+from dimos.protocol.service.system_configurator.libpython import LibPythonConfiguratorMacOS
 
 
 # TODO: This is a configurator API issue and inserted here temporarily
@@ -56,6 +57,7 @@ def lcm_configurators() -> list[SystemConfigurator]:
             MulticastConfiguratorMacOS(loopback_interface="lo0"),
             BufferConfiguratorMacOS(),
             MaxFileConfiguratorMacOS(),  # TODO: this is not LCM related and shouldn't be here at all
+            LibPythonConfiguratorMacOS(),
         ]
     return []
 
@@ -65,6 +67,7 @@ __all__ = [
     "BufferConfiguratorLinux",
     "BufferConfiguratorMacOS",
     "ClockSyncConfigurator",
+    "LibPythonConfiguratorMacOS",
     "MaxFileConfiguratorMacOS",
     "MulticastConfiguratorLinux",
     "MulticastConfiguratorMacOS",
