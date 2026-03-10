@@ -23,10 +23,29 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.9"
+version = "0.0.10.post1"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
-readme = "README.md"
+readme = {file = "README.md", content-type = "text/markdown"}
+license = {text = "Apache-2.0"}
+keywords = ["robotics", "ros", "agents", "dimos", "dimensional", "openclaw", "roboclaw", "humanoid", "unitree"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+]
 
 dependencies = [
     # Transport Protocols
@@ -37,22 +56,20 @@ dependencies = [
     "scipy>=1.15.1",
     "pin>=3.3.0",  # Pinocchio IK library
     "reactivex",
-    "asyncio==3.4.3",
     "sortedcontainers==2.4.0",
     "pydantic",
     "python-dotenv",
     "annotation-protocol>=1.4.0",
     "lazy_loader",
-
-    # Multiprocess
-    "dask[complete]==2025.5.1",
     "plum-dispatch==2.5.7",
+
     # Logging
     "structlog>=25.5.0,<26",
     "colorlog==6.9.0",
     # Core Msgs
     "opencv-python",
-    "open3d",
+    "open3d-unofficial-arm; platform_system == 'Linux' and platform_machine == 'aarch64'",
+    "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
     # CLI
     "pydantic-settings>=2.11.0,<3",
     "textual==3.7.1",
@@ -65,7 +82,10 @@ dependencies = [
     # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
     # remove this once rerun is optional in core
     "rerun-sdk>=0.20.0",
+    "dimos-viewer>=0.30.0a2",
     "toolz>=1.1.0",
+    "protobuf>=6.33.5,<7",
+    "psutil>=7.0.0",
 ]
 
 
@@ -77,6 +97,13 @@ humancli = "dimos.utils.cli.human.humanclianim:main"
 dimos = "dimos.robot.cli.dimos:main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
 doclinks = "dimos.utils.docs.doclinks:main"
+dtop = "dimos.utils.cli.dtop:main"
+
+[project.urls]
+Homepage = "https://dimensionalos.com"
+Repository = "https://github.com/dimensionalOS/dimos"
+Issues = "https://github.com/dimensionalOS/dimos/issues"
+Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
 misc = [
@@ -118,10 +145,12 @@ misc = [
 
     # Hardware SDKs
     "xarm-python-sdk>=1.17.0",
+    "portal",
 ]
 
 visualization = [
     "rerun-sdk>=0.20.0",
+    "dimos-viewer>=0.30.0a4",
 ]
 
 agents = [
@@ -140,9 +169,6 @@ agents = [
     "openai",
     "openai-whisper",
     "sounddevice",
-
-    # MCP Server
-    "mcp>=1.0.0",
 ]
 
 web = [
@@ -171,7 +197,8 @@ unitree = [
 
 manipulation = [
     # Planning (Drake)
-    "drake>=1.40.0",
+    "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
+    "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
 
     # Hardware SDKs
     "piper-sdk",
@@ -195,13 +222,11 @@ cpu = [
 ]
 
 cuda = [
-    "cupy-cuda12x==13.6.0",
-    "nvidia-nvimgcodec-cu12[all]",
-    "onnxruntime-gpu>=1.17.1", # Only versions supporting both cuda11 and cuda12
+    "cupy-cuda12x==13.6.0; platform_machine == 'x86_64'",
+    "nvidia-nvimgcodec-cu12[all]; platform_machine == 'x86_64'",
+    "onnxruntime-gpu>=1.17.1; platform_machine == 'x86_64'", # Only versions supporting both cuda11 and cuda12
     "ctransformers[cuda]==0.2.27",
-    "mmengine>=0.10.3",
-    "mmcv>=2.1.0",
-    "xformers>=0.0.20",
+    "xformers>=0.0.20; platform_machine == 'x86_64'",
 ]
 
 dev = [
@@ -213,7 +238,7 @@ dev = [
     "pytest-mock==3.15.0",
     "pytest-env==1.1.5",
     "pytest-timeout==2.4.0",
-    "coverage>=7.0",  # Required for numba compatibility (coverage.types)
+    "coverage>=7.0",
     "requests-mock==1.12.1",
     "terminaltexteffects==0.12.2",
     "watchdog>=3.0.0",
@@ -245,6 +270,7 @@ dev = [
     "types-tensorflow>=2.18.0.20251008,<3",
     "types-tqdm>=4.67.0.20250809,<5",
     "types-psycopg2>=2.9.21.20251012",
+    "types-psutil>=7.2.2.20260130,<8",
 
     # Tools
     "py-spy",
@@ -286,24 +312,24 @@ docker = [
     "numpy>=1.26.4",
     "scipy>=1.15.1",
     "reactivex",
-    "dask[distributed]==2025.5.1",
     "plum-dispatch==2.5.7",
     "structlog>=25.5.0,<26",
     "pydantic",
     "pydantic-settings>=2.11.0,<3",
     "typer>=0.19.2,<1",
+    "requests>=2.28",
     "opencv-python-headless",
     "lcm",
     "sortedcontainers",
     "PyTurboJPEG",
     "rerun-sdk",
-    "open3d"
+    "open3d-unofficial-arm; platform_system == 'Linux' and platform_machine == 'aarch64'",
+    "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
 ]
 
 base = [
     "dimos[agents,web,perception,visualization,sim]",
 ]
-
 
 [tool.ruff]
 line-length = 100
@@ -338,6 +364,9 @@ known-first-party = ["dimos"]
 combine-as-imports = true
 force-sort-within-sections = true
 
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-base-classes = ["dimos.core.module.Module"]
+
 [tool.mypy]
 python_version = "3.12"
 incremental = true
@@ -353,15 +382,20 @@ module = [
     "dimos_lcm.*",
     "etils",
     "geometry_msgs.*",
+    "lazy_loader",
     "mujoco",
     "mujoco_playground.*",
     "nav_msgs.*",
     "open_clip",
+    "pinocchio",
     "piper_sdk.*",
     "plotext",
     "plum.*",
+    "portal",
     "pycuda",
     "pycuda.*",
+    "pydrake",
+    "pydrake.*",
     "pyzed",
     "pyzed.*",
     "rclpy.*",
@@ -372,7 +406,6 @@ module = [
     "torchreid",
     "ultralytics.*",
     "unitree_webrtc_connect.*",
-    "watchdog.*",
     "xarm.*",
 ]
 ignore_missing_imports = true
@@ -381,28 +414,29 @@ ignore_missing_imports = true
 module = ["dimos.rxpy_backpressure", "dimos.rxpy_backpressure.*"]
 follow_imports = "skip"
 
+[[tool.mypy.overrides]]
+module = ["pydrake", "pydrake.*"]
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
-markers = [
-    "heavy: resource heavy test",
-    "tool: dev tooling",
-    "ros: depend on ros",
-    "lcm: tests that run actual LCM bus (can't execute in CI)",
-    "module: tests that need to run directly as modules",
-    "gpu: tests that require GPU",
-    "cuda: tests which require CUDA (specifically CUDA not just GPU acceleration)",
-    "e2e: end to end tests",
-    "integration: slower integration tests",
-    "neverending: they don't finish",
-    "mujoco: tests which open mujoco",
-]
 env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "-v -p no:warnings -ra --color=yes -m 'not (vis or exclude or tool or lcm or ros or heavy or gpu or module or e2e or integration or neverending or mujoco)'"
+addopts = "-v -r a -p no:warnings --color=yes -m 'not (tool or slow or mujoco)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+source = ["dimos"]
+parallel = true
+sigterm = true
+concurrency = ["multiprocessing", "thread"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
 
 [tool.largefiles]
 max_size_kb = 50
@@ -411,4 +445,5 @@ ignore = [
     "*/package-lock.json",
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
+    "dimos/manipulation/manipulation_module.py",
 ]

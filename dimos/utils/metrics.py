@@ -20,7 +20,8 @@ from typing import Any, TypeVar, cast
 from dimos_lcm.std_msgs import Float32
 import rerun as rr
 
-from dimos.core import LCMTransport, Transport
+from dimos.core.stream import Transport
+from dimos.core.transport import LCMTransport
 
 F = TypeVar("F", bound=Callable[..., Any])
 

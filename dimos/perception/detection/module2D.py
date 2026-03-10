@@ -23,8 +23,10 @@ from reactivex.observable import Observable
 from reactivex.subject import Subject
 
 from dimos import spec
-from dimos.core import DimosCluster, In, Module, Out, rpc
-from dimos.core.module import ModuleConfig
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
@@ -158,12 +160,12 @@ class Detection2DModule(Module):
 
 
 def deploy(  # type: ignore[no-untyped-def]
-    dimos: DimosCluster,
+    dimos: ModuleCoordinator,
     camera: spec.Camera,
     prefix: str = "/detector2d",
     **kwargs,
 ) -> Detection2DModule:
-    from dimos.core import LCMTransport
+    from dimos.core.transport import LCMTransport
 
     detector = Detection2DModule(**kwargs)
     detector.color_image.connect(camera.color_image)

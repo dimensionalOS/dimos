@@ -32,11 +32,6 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture
-def fixture_dir() -> Path:
-    return FIXTURE_DIR
-
-
-@pytest.fixture
 def agent_setup(request):
     coordinator = None
     transports: list[pLCMTransport] = []
@@ -47,7 +42,6 @@ def agent_setup(request):
         *,
         blueprints,
         messages: list[BaseMessage],
-        dask: bool = False,
         system_prompt: str | None = None,
         fixture: str | None = None,
     ) -> list[BaseMessage]:
@@ -84,10 +78,7 @@ def agent_setup(request):
             AgentTestRunner.blueprint(messages=messages),
         )
 
-        global_config.update(
-            viewer_backend="none",
-            dask=dask,
-        )
+        global_config.update(viewer="none")
 
         nonlocal coordinator
         coordinator = blueprint.build()

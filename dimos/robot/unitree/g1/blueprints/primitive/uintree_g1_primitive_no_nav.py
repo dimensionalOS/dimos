@@ -15,9 +15,12 @@
 
 """Minimal G1 stack without navigation, used as a base for larger blueprints."""
 
+from typing import Any
+
 from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos.core.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera import zed
 from dimos.hardware.sensors.camera.module import camera_module  # type: ignore[attr-defined]
@@ -29,10 +32,75 @@ from dimos.msgs.nav_msgs import Odometry, Path
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Bool
 from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
-from dimos.robot.foxglove_bridge import foxglove_bridge
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
-uintree_g1_primitive_no_nav = (
+
+def _convert_camera_info(camera_info: Any) -> Any:
+    return camera_info.to_rerun(
+        image_topic="/world/color_image",
+        optical_frame="camera_optical",
+    )
+
+
+def _convert_global_map(grid: Any) -> Any:
+    return grid.to_rerun(voxel_size=0.1, mode="boxes")
+
+
+def _convert_navigation_costmap(grid: Any) -> Any:
+    return grid.to_rerun(
+        colormap="Accent",
+        z_offset=0.015,
+        opacity=0.2,
+        background="#484981",
+    )
+
+
+def _static_base_link(rr: Any) -> list[Any]:
+    return [
+        rr.Boxes3D(
+            half_sizes=[0.2, 0.15, 0.75],
+            colors=[(0, 255, 127)],
+            fill_mode="MajorWireframe",
+        ),
+        rr.Transform3D(parent_frame="tf#/base_link"),
+    ]
+
+
+rerun_config = {
+    "pubsubs": [LCM(autoconf=True)],
+    "visual_override": {
+        "world/camera_info": _convert_camera_info,
+        "world/global_map": _convert_global_map,
+        "world/navigation_costmap": _convert_navigation_costmap,
+    },
+    "static": {
+        "world/tf/base_link": _static_base_link,
+    },
+}
+
+if global_config.viewer == "foxglove":
+    from dimos.robot.foxglove_bridge import foxglove_bridge
+
+    _with_vis = autoconnect(foxglove_bridge())
+elif global_config.viewer.startswith("rerun"):
+    from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
+
+    _with_vis = autoconnect(rerun_bridge(viewer_mode=_resolve_viewer_mode(), **rerun_config))
+else:
+    _with_vis = autoconnect()
+
+
+def _create_webcam() -> Webcam:
+    return Webcam(
+        camera_index=0,
+        fps=15,
+        stereo_slice="left",
+        camera_info=zed.CameraInfo.SingleWebcam,
+    )
+
+
+_camera = (
     autoconnect(
         camera_module(
             transform=Transform(
@@ -41,21 +109,24 @@ uintree_g1_primitive_no_nav = (
                 frame_id="sensor",
                 child_frame_id="camera_link",
             ),
-            hardware=lambda: Webcam(
-                camera_index=0,
-                fps=15,
-                stereo_slice="left",
-                camera_info=zed.CameraInfo.SingleWebcam,
-            ),
+            hardware=_create_webcam,
         ),
+    )
+    if not global_config.simulation
+    else autoconnect()
+)
+
+uintree_g1_primitive_no_nav = (
+    autoconnect(
+        _with_vis,
+        _camera,
         voxel_mapper(voxel_size=0.1),
         cost_mapper(),
         wavefront_frontier_explorer(),
         # Visualization
         websocket_vis(),
-        foxglove_bridge(),
     )
-    .global_config(n_dask_workers=4, robot_model="unitree_g1")
+    .global_config(n_workers=4, robot_model="unitree_g1")
     .transports(
         {
             # G1 uses Twist for movement commands
@@ -74,9 +145,9 @@ uintree_g1_primitive_no_nav = (
             ("goal_pose", PoseStamped): LCMTransport("/goal_pose", PoseStamped),
             ("goal_reached", Bool): LCMTransport("/goal_reached", Bool),
             ("cancel_goal", Bool): LCMTransport("/cancel_goal", Bool),
-            # Camera topics (if camera module is added)
-            ("color_image", Image): LCMTransport("/g1/color_image", Image),
-            ("camera_info", CameraInfo): LCMTransport("/g1/camera_info", CameraInfo),
+            # Camera topics
+            ("color_image", Image): LCMTransport("/color_image", Image),
+            ("camera_info", CameraInfo): LCMTransport("/camera_info", CameraInfo),
         }
     )
 )

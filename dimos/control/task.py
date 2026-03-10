@@ -28,10 +28,14 @@ Use the t_now passed in CoordinatorState.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from dimos.control.components import JointName
 from dimos.hardware.manipulators.spec import ControlMode
+
+if TYPE_CHECKING:
+    from dimos.msgs.geometry_msgs import Pose, PoseStamped
+    from dimos.teleop.quest.quest_types import Buttons
 
 # =============================================================================
 # Data Types
@@ -287,11 +291,52 @@ class ControlTask(Protocol):
         """
         ...
 
+    def on_buttons(self, msg: Buttons) -> bool:
+        """Handle button state from teleop controllers."""
+        ...
+
+    def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
+        """Handle incoming cartesian command (target or delta pose)."""
+        ...
+
+    def set_target_by_name(self, positions: dict[str, float], t_now: float) -> bool:
+        """Handle servo position commands by joint name."""
+        ...
+
+    def set_velocities_by_name(self, velocities: dict[str, float], t_now: float) -> bool:
+        """Handle velocity commands by joint name."""
+        ...
+
+
+class BaseControlTask(ControlTask):
+    """Base class with no-op defaults for optional listener methods.
+
+    Inherit from this to avoid implementing empty methods
+    in tasks that don't need them. Only override what your task uses.
+    """
+
+    def on_buttons(self, msg: Buttons) -> bool:
+        """No-op default."""
+        return False
+
+    def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
+        """No-op default."""
+        return False
+
+    def set_target_by_name(self, positions: dict[str, float], t_now: float) -> bool:
+        """No-op default."""
+        return False
+
+    def set_velocities_by_name(self, velocities: dict[str, float], t_now: float) -> bool:
+        """No-op default."""
+        return False
+
 
 __all__ = [
+    # Protocol + Base
+    "BaseControlTask",
     # Types
     "ControlMode",
-    # Protocol
     "ControlTask",
     "CoordinatorState",
     "JointCommandOutput",

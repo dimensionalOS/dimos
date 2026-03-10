@@ -29,7 +29,9 @@ from typing import Any
 
 import reactivex as rx
 
-from dimos.core import In, Module, ModuleConfig, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Twist, Vector3
 
 
@@ -102,21 +104,12 @@ class SimpleRobot(Module[SimpleRobotConfig]):
 if __name__ == "__main__":
     import argparse
 
-    from dimos.core import LCMTransport
+    from dimos.core.transport import LCMTransport
 
     parser = argparse.ArgumentParser(description="Simple virtual robot")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--selftest", action="store_true", help="Run demo movements")
     args = parser.parse_args()
-
-    # If running in a dimos cluster we'd call
-    #
-    # from dimos.core import start
-    # dimos = start()
-    # robot = dimos.deploy(SimpleRobot)
-    #
-    # but this is a standalone example
-    # and we don't mind running in the main thread
 
     robot = SimpleRobot()
     robot.pose.transport = LCMTransport("/odom", PoseStamped)

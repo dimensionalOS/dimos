@@ -29,7 +29,7 @@ class MockedUnitreeSkill(UnitreeSkillContainer):
         self._bound_rpc_calls["GO2Connection.publish_request"] = lambda *args, **kwargs: None
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_pounce(agent_setup) -> None:
     history = agent_setup(
         blueprints=[MockedUnitreeSkill.blueprint()],

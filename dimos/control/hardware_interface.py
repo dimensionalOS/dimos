@@ -14,10 +14,12 @@
 
 """Connected hardware for the ControlCoordinator.
 
-Wraps ManipulatorAdapter with coordinator-specific features:
-- Namespaced joint names (e.g., "left_joint1")
-- Unified read/write interface
-- Hold-last-value for partial commands
+Provides two wrapper types:
+- ConnectedHardware: Wraps ManipulatorAdapter for joint-controlled arms
+- ConnectedTwistBase: Wraps TwistBaseAdapter for velocity-commanded platforms
+
+Both share the same duck-type interface (read_state, write_command, etc.)
+so the tick loop treats them uniformly.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
 
 if TYPE_CHECKING:
     from dimos.control.components import HardwareComponent, HardwareId, JointName, JointState
+    from dimos.hardware.drive_trains.spec import TwistBaseAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +65,9 @@ class ConnectedHardware:
 
         self._adapter = adapter
         self._component = component
-        self._joint_names = component.joints
+        self._arm_joint_names: list[JointName] = list(component.joints)
+        self._gripper_joints: list[JointName] = list(component.gripper_joints)
+        self._joint_names: list[JointName] = component.all_joints
 
         # Track last commanded values for hold-last behavior
         self._last_commanded: dict[str, float] = {}
@@ -111,14 +116,26 @@ class ConnectedHardware:
         velocities = self._adapter.read_joint_velocities()
         efforts = self._adapter.read_joint_efforts()
 
-        return {
+        result: dict[JointName, JointState] = {
             name: JointState(
                 position=positions[i],
                 velocity=velocities[i],
                 effort=efforts[i],
             )
-            for i, name in enumerate(self._joint_names)
+            for i, name in enumerate(self._arm_joint_names)
         }
+
+        # Append gripper joint(s) via adapter gripper method
+        if self._gripper_joints:
+            gripper_pos = self._adapter.read_gripper_position()
+            for gj in self._gripper_joints:
+                result[gj] = JointState(
+                    position=gripper_pos if gripper_pos is not None else 0.0,
+                    velocity=0.0,
+                    effort=0.0,
+                )
+
+        return result
 
     def write_command(self, commands: dict[str, float], mode: ControlMode) -> bool:
         """Write commands - allows partial joint sets, holds last for missing.
@@ -150,8 +167,8 @@ class ConnectedHardware:
                 )
                 self._warned_unknown_joints.add(joint_name)
 
-        # Build ordered list for adapter
-        ordered = self._build_ordered_command()
+        # Build ordered list for arm joints only
+        arm_ordered = [self._last_commanded[name] for name in self._arm_joint_names]
 
         # Switch control mode if needed
         if mode != self._current_mode:
@@ -160,25 +177,43 @@ class ConnectedHardware:
                 return False
             self._current_mode = mode
 
-        # Send to adapter
+        # Send arm joints to adapter
+        arm_ok: bool
         match mode:
             case ControlMode.POSITION | ControlMode.SERVO_POSITION:
-                return self._adapter.write_joint_positions(ordered)
+                arm_ok = self._adapter.write_joint_positions(arm_ordered)
             case ControlMode.VELOCITY:
-                return self._adapter.write_joint_velocities(ordered)
+                arm_ok = self._adapter.write_joint_velocities(arm_ordered)
             case ControlMode.TORQUE:
                 logger.warning(f"Hardware {self.hardware_id} does not support torque mode")
-                return False
+                arm_ok = False
             case _:
-                return False
+                arm_ok = False
+
+        # Send gripper joints via adapter gripper method
+        gripper_ok = True
+        for gj in self._gripper_joints:
+            if gj in self._last_commanded:
+                gripper_ok = (
+                    self._adapter.write_gripper_position(self._last_commanded[gj]) and gripper_ok
+                )
+
+        return arm_ok and gripper_ok
 
     def _initialize_last_commanded(self) -> None:
         """Initialize last_commanded with current hardware positions."""
         for _ in range(10):
             try:
                 current = self._adapter.read_joint_positions()
-                for i, name in enumerate(self._joint_names):
+                for i, name in enumerate(self._arm_joint_names):
                     self._last_commanded[name] = current[i]
+
+                # Initialize gripper joint(s) from adapter
+                if self._gripper_joints:
+                    gripper_pos = self._adapter.read_gripper_position()
+                    for gj in self._gripper_joints:
+                        self._last_commanded[gj] = gripper_pos if gripper_pos is not None else 0.0
+
                 self._initialized = True
                 return
             except Exception:
@@ -193,6 +228,98 @@ class ConnectedHardware:
         return [self._last_commanded[name] for name in self._joint_names]
 
 
+class ConnectedTwistBase(ConnectedHardware):
+    """Runtime wrapper for a twist base connected to the coordinator.
+
+    Inherits from ConnectedHardware and overrides behavior for
+    velocity-commanded platforms (holonomic bases, drones, quadrupeds, etc.).
+
+    Key differences from ConnectedHardware:
+    - Positions come from odometry (or zeros if unavailable)
+    - Efforts are always zero
+    - write_command always sends velocities regardless of mode
+    - No retry loop for initialization (twist bases start at zero velocity)
+    """
+
+    _twist_adapter: TwistBaseAdapter
+
+    def __init__(
+        self,
+        adapter: TwistBaseAdapter,
+        component: HardwareComponent,
+    ) -> None:
+        from dimos.hardware.drive_trains.spec import TwistBaseAdapter as TwistBaseAdapterProto
+
+        if not isinstance(adapter, TwistBaseAdapterProto):
+            raise TypeError("adapter must implement TwistBaseAdapter")
+
+        self._twist_adapter = adapter
+        self._component = component
+        self._joint_names = component.joints
+
+        # Twist bases start at zero velocity — no need to read from hardware
+        self._last_commanded: dict[str, float] = {name: 0.0 for name in self._joint_names}
+        self._initialized = True
+        self._warned_unknown_joints: set[str] = set()
+        self._current_mode: ControlMode | None = None
+
+    @property
+    def adapter(self) -> TwistBaseAdapter:  # type: ignore[override]
+        """The underlying twist base adapter."""
+        return self._twist_adapter
+
+    def disconnect(self) -> None:
+        """Disconnect the underlying adapter."""
+        self._twist_adapter.disconnect()
+
+    def read_state(self) -> dict[JointName, JointState]:
+        """Read state as {joint_name: JointState}.
+
+        Positions come from odometry (zeros if unavailable).
+        Velocities from adapter. Efforts are always zero.
+        """
+        from dimos.control.components import JointState
+
+        velocities = self._twist_adapter.read_velocities()
+        odometry = self._twist_adapter.read_odometry()
+        positions = odometry if odometry is not None else [0.0] * self.dof
+
+        return {
+            name: JointState(
+                position=positions[i],
+                velocity=velocities[i],
+                effort=0.0,
+            )
+            for i, name in enumerate(self._joint_names)
+        }
+
+    def write_command(self, commands: dict[str, float], _mode: ControlMode) -> bool:
+        """Write velocity commands — always sends velocities regardless of mode.
+
+        Args:
+            commands: {joint_name: velocity} - can be partial
+            _mode: Control mode (ignored — twist bases always use velocity)
+
+        Returns:
+            True if command was sent successfully
+        """
+        # Update last commanded for joints we received
+        for joint_name, value in commands.items():
+            if joint_name in self._last_commanded:
+                self._last_commanded[joint_name] = value
+            elif joint_name not in self._warned_unknown_joints:
+                logger.warning(
+                    f"TwistBase {self.hardware_id} received command for unknown joint "
+                    f"{joint_name}. Valid joints: {self._joint_names}"
+                )
+                self._warned_unknown_joints.add(joint_name)
+
+        # Build ordered velocity list and send
+        ordered = self._build_ordered_command()
+        return self._twist_adapter.write_velocities(ordered)
+
+
 __all__ = [
     "ConnectedHardware",
+    "ConnectedTwistBase",
 ]

@@ -15,7 +15,7 @@
 
 # Copyright 2025-2026 Dimensional Inc.
 
-"""Camera module for drone with depth estimation."""
+"""Camera module for drone."""
 
 import threading
 import time
@@ -23,11 +23,12 @@ from typing import Any
 
 from dimos_lcm.sensor_msgs import CameraInfo
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
-from dimos.perception.common.utils import colorize_depth
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -35,15 +36,13 @@ logger = setup_logger()
 
 class DroneCameraModule(Module):
     """
-    Camera module for drone that processes RGB images to generate depth using Metric3D.
+    Camera module for drone
 
     Subscribes to:
         - /video: RGB camera images from drone
 
     Publishes:
         - /drone/color_image: RGB camera images
-        - /drone/depth_image: Depth images from Metric3D
-        - /drone/depth_colorized: Colorized depth
         - /drone/camera_info: Camera calibration
         - /drone/camera_pose: Camera pose from TF
     """
@@ -53,8 +52,6 @@ class DroneCameraModule(Module):
 
     # Outputs
     color_image: Out[Image]
-    depth_image: Out[Image]
-    depth_colorized: Out[Image]
     camera_info: Out[CameraInfo]
     camera_pose: Out[PoseStamped]
 
@@ -64,7 +61,6 @@ class DroneCameraModule(Module):
         world_frame_id: str = "world",
         camera_frame_id: str = "camera_link",
         base_frame_id: str = "base_link",
-        gt_depth_scale: float = 2.0,
         **kwargs: Any,
     ) -> None:
         """Initialize drone camera module.
@@ -73,7 +69,6 @@ class DroneCameraModule(Module):
             camera_intrinsics: [fx, fy, cx, cy]
             camera_frame_id: TF frame for camera
             base_frame_id: TF frame for drone base
-            gt_depth_scale: Depth scale factor
         """
         super().__init__(**kwargs)
 
@@ -84,10 +79,6 @@ class DroneCameraModule(Module):
         self.camera_frame_id = camera_frame_id
         self.base_frame_id = base_frame_id
         self.world_frame_id = world_frame_id
-        self.gt_depth_scale = gt_depth_scale
-
-        # Metric3D for depth
-        self.metric3d: Any = None  # Lazy-loaded Metric3D model
 
         # Processing state
         self._running = False
@@ -104,7 +95,6 @@ class DroneCameraModule(Module):
             logger.warning("Camera module already running")
             return
 
-        # Start processing thread for depth (which will init Metric3D and handle video)
         self._running = True
         self._stop_processing.clear()
         self._processing_thread = threading.Thread(target=self._processing_loop, daemon=True)
@@ -121,22 +111,9 @@ class DroneCameraModule(Module):
         # Publish color image immediately
         self.color_image.publish(frame)
 
-        # Store for depth processing
         self._latest_frame = frame
 
     def _processing_loop(self) -> None:
-        """Process depth estimation in background."""
-        # Initialize Metric3D in the background thread
-        if self.metric3d is None:
-            try:
-                from dimos.models.depth.metric3d import Metric3D
-
-                self.metric3d = Metric3D(camera_intrinsics=self.camera_intrinsics)
-                logger.info("Metric3D initialized")
-            except Exception as e:
-                logger.warning(f"Metric3D not available: {e}")
-                self.metric3d = None
-
         # Subscribe to video once connection is available
         subscribed = False
         while not subscribed and not self._stop_processing.is_set():
@@ -151,12 +128,10 @@ class DroneCameraModule(Module):
                 logger.debug(f"Waiting for video connection: {e}")
                 time.sleep(0.1)
 
-        logger.info("Depth processing loop started")
-
         _reported_error = False
 
         while not self._stop_processing.is_set():
-            if self._latest_frame is not None and self.metric3d is not None:
+            if self._latest_frame is not None:
                 try:
                     frame = self._latest_frame
                     self._latest_frame = None
@@ -164,33 +139,8 @@ class DroneCameraModule(Module):
                     # Get numpy array from Image
                     img_array = frame.data
 
-                    # Generate depth
-                    depth_array = self.metric3d.infer_depth(img_array) / self.gt_depth_scale
-
                     # Create header
                     header = Header(self.camera_frame_id)
-
-                    # Publish depth
-                    depth_msg = Image(
-                        data=depth_array,
-                        format=ImageFormat.DEPTH,
-                        frame_id=header.frame_id,
-                        ts=header.ts,
-                    )
-                    self.depth_image.publish(depth_msg)
-
-                    # Publish colorized depth
-                    depth_colorized_array = colorize_depth(
-                        depth_array, max_depth=10.0, overlay_stats=True
-                    )
-                    if depth_colorized_array is not None:
-                        depth_colorized_msg = Image(
-                            data=depth_colorized_array,
-                            format=ImageFormat.RGB,
-                            frame_id=header.frame_id,
-                            ts=header.ts,
-                        )
-                        self.depth_colorized.publish(depth_colorized_msg)
 
                     # Publish camera info
                     self._publish_camera_info(header, img_array.shape)
@@ -201,11 +151,9 @@ class DroneCameraModule(Module):
                 except Exception as e:
                     if not _reported_error:
                         _reported_error = True
-                        logger.error(f"Error processing depth: {e}")
+                        logger.error(f"Error processing frame: {e}")
             else:
                 time.sleep(0.01)
-
-        logger.info("Depth processing loop stopped")
 
     def _publish_camera_info(self, header: Header, shape: tuple[int, ...]) -> None:
         """Publish camera calibration info."""
@@ -278,9 +226,5 @@ class DroneCameraModule(Module):
         # Wait for thread
         if self._processing_thread and self._processing_thread.is_alive():
             self._processing_thread.join(timeout=2.0)
-
-        # Cleanup Metric3D
-        if self.metric3d:
-            self.metric3d.cleanup()
 
         logger.info("Camera module stopped")

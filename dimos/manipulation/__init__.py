@@ -20,10 +20,18 @@ from dimos.manipulation.manipulation_module import (
     ManipulationState,
     manipulation_module,
 )
+from dimos.manipulation.pick_and_place_module import (
+    PickAndPlaceModule,
+    PickAndPlaceModuleConfig,
+    pick_and_place_module,
+)
 
 __all__ = [
     "ManipulationModule",
     "ManipulationModuleConfig",
     "ManipulationState",
+    "PickAndPlaceModule",
+    "PickAndPlaceModuleConfig",
     "manipulation_module",
+    "pick_and_place_module",
 ]

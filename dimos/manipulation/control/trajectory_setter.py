@@ -32,7 +32,7 @@ import math
 import sys
 import time
 
-from dimos import core
+from dimos.core.transport import LCMTransport
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
 )
@@ -64,15 +64,13 @@ class TrajectorySetter:
         self.arm_type = arm_type.lower()
 
         # Publisher for trajectories
-        self.trajectory_pub: core.LCMTransport[JointTrajectory] = core.LCMTransport(
+        self.trajectory_pub: LCMTransport[JointTrajectory] = LCMTransport(
             "/trajectory", JointTrajectory
         )
 
         # Subscribe to arm-specific joint state topic
         joint_state_topic = f"/{self.arm_type}/joint_states"
-        self.joint_state_sub: core.LCMTransport[JointState] = core.LCMTransport(
-            joint_state_topic, JointState
-        )
+        self.joint_state_sub: LCMTransport[JointState] = LCMTransport(joint_state_topic, JointState)
         self.latest_joint_state: JointState | None = None
 
         # Will be set dynamically from joint_state

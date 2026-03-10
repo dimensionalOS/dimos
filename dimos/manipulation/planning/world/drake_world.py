@@ -266,17 +266,18 @@ class DrakeWorld(WorldSpec):
         """Weld robot base to world if not already welded in URDF."""
         base_body = self._plant.GetBodyByName(config.base_link, model_instance)
 
-        # Check if URDF already has world_joint
-        try:
-            world_joint = self._plant.GetJointByName("world_joint", model_instance)
+        # Check if any joint already connects world to base_link
+        for joint_index in self._plant.GetJointIndices(model_instance):
+            joint = self._plant.get_joint(joint_index)
             if (
-                world_joint.parent_body().name() == "world"
-                and world_joint.child_body().name() == config.base_link
+                joint.parent_body().name() == "world"
+                and joint.child_body().name() == config.base_link
             ):
-                logger.info("URDF has 'world_joint', skipping weld")
+                logger.info(
+                    f"URDF already has joint '{joint.name()}' welding "
+                    f"world→{config.base_link}, skipping weld"
+                )
                 return
-        except RuntimeError:
-            pass
 
         # Weld base to world
         base_transform = self._pose_to_rigid_transform(config.base_pose)

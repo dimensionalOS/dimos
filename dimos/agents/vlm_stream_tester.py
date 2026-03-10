@@ -17,7 +17,8 @@ import time
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from dimos.core import Module, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.logging_config import setup_logger

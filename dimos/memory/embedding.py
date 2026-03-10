@@ -20,8 +20,9 @@ import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.core import In, rpc
+from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In
 from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.geometry_msgs import PoseStamped

@@ -17,9 +17,10 @@ import time
 
 from reactivex import operators as ops
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import ModuleConfig
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
 from dimos.mapping.pointclouds.occupancy import (
     OCCUPANCY_ALGOS,
     HeightCostConfig,

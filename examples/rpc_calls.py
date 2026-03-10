@@ -14,8 +14,9 @@
 
 from typing import Protocol
 
-from dimos.core import Module, rpc
 from dimos.core.blueprints import autoconnect
+from dimos.core.core import rpc
+from dimos.core.module import Module
 from dimos.spec.utils import Spec
 
 

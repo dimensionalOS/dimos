@@ -106,14 +106,12 @@ class LCMSpyApp(App):  # type: ignore[type-arg]
         for t in topics:
             freq = t.freq(5.0)
             kbps = t.kbps(5.0)
-            bw_val, bw_unit = t.kbps_hr(5.0)
-            total_val, total_unit = t.total_traffic_hr()
 
             self.table.add_row(  # type: ignore[union-attr]
                 topic_text(t.name),
                 Text(f"{freq:.1f}", style=gradient(10, freq)),
-                Text(f"{bw_val} {bw_unit.value}/s", style=gradient(1024 * 3, kbps)),
-                Text(f"{total_val} {total_unit.value}"),
+                Text(t.kbps_hr(5.0), style=gradient(1024 * 3, kbps)),
+                Text(t.total_traffic_hr()),
             )
 
 

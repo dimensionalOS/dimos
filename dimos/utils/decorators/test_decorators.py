@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from dimos.utils.decorators import RollingAverageAccumulator, limit, retry, simple_mcache
+from dimos.utils.decorators import RollingAverageAccumulator, limit, retry, simple_mcache, ttl_cache
 
 
 def test_limit() -> None:
@@ -316,3 +316,77 @@ def test_simple_mcache_separate_instances() -> None:
     obj1.expensive.invalidate_cache(obj1)
     assert obj1.expensive() == 3
     assert obj2.expensive() == 2  # still cached
+
+
+def test_ttl_cache_returns_cached_value() -> None:
+    """Test that ttl_cache returns cached results within TTL."""
+    call_count = 0
+
+    @ttl_cache(1.0)
+    def expensive(x: int) -> int:
+        nonlocal call_count
+        call_count += 1
+        return x * 2
+
+    assert expensive(5) == 10
+    assert call_count == 1
+
+    # Second call should be cached
+    assert expensive(5) == 10
+    assert call_count == 1
+
+    # Different args should compute
+    assert expensive(3) == 6
+    assert call_count == 2
+
+
+def test_ttl_cache_expires() -> None:
+    """Test that ttl_cache recomputes after TTL expires."""
+    call_count = 0
+
+    @ttl_cache(0.05)
+    def expensive(x: int) -> int:
+        nonlocal call_count
+        call_count += 1
+        return x * 2
+
+    assert expensive(5) == 10
+    assert call_count == 1
+
+    time.sleep(0.1)
+
+    # Should recompute after TTL
+    assert expensive(5) == 10
+    assert call_count == 2
+
+
+def test_ttl_cache_sweep_on_access() -> None:
+    """Test that expired entries are swept on the next access."""
+
+    @ttl_cache(0.05)
+    def expensive(x: int) -> int:
+        return x * 2
+
+    expensive(1)
+    expensive(2)
+    assert len(expensive.cache) == 2
+    time.sleep(0.1)
+
+    # Next call sweeps expired entries
+    expensive(3)
+    assert (1,) not in expensive.cache
+    assert (2,) not in expensive.cache
+    assert (3,) in expensive.cache
+
+
+def test_ttl_cache_manual_cache_cleanup() -> None:
+    """Test that evict() removes a specific cache entry."""
+
+    @ttl_cache(10.0)
+    def expensive(x: int) -> int:
+        return x * 2
+
+    expensive(1)
+    assert (1,) in expensive.cache
+    del expensive.cache[(1,)]
+    assert (1,) not in expensive.cache

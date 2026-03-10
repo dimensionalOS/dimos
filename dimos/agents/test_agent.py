@@ -29,13 +29,11 @@ class Adder(Module):
         return str(x + y)
 
 
-@pytest.mark.integration
-@pytest.mark.parametrize("dask", [False, True])
-def test_can_call_tool(dask, agent_setup):
+@pytest.mark.slow
+def test_can_call_tool(agent_setup):
     history = agent_setup(
         blueprints=[Adder.blueprint()],
         messages=[HumanMessage("What is 33333 + 100? Use the tool.")],
-        dask=dask,
     )
 
     assert "33433" in history[-1].content
@@ -68,9 +66,8 @@ class UserRegistration(Module):
         return "User name registered successfully."
 
 
-@pytest.mark.integration
-@pytest.mark.parametrize("dask", [False, True])
-def test_can_call_again_on_error(dask, agent_setup):
+@pytest.mark.slow
+def test_can_call_again_on_error(agent_setup):
     history = agent_setup(
         blueprints=[UserRegistration.blueprint()],
         messages=[
@@ -78,7 +75,6 @@ def test_can_call_again_on_error(dask, agent_setup):
                 "Register a user named 'Paul'. If there are errors, just try again until you succeed."
             )
         ],
-        dask=dask,
     )
 
     assert any(message.content == "User name registered successfully." for message in history)
@@ -120,7 +116,7 @@ class NavigationSkill(Module):
         return f"Going to the {description}."
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_multiple_tool_calls_with_multiple_messages(agent_setup):
     history = agent_setup(
         blueprints=[MultipleTools.blueprint(), NavigationSkill.blueprint()],
@@ -174,7 +170,7 @@ def test_multiple_tool_calls_with_multiple_messages(agent_setup):
     assert len(go_to_location_calls) == 2
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_prompt(agent_setup):
     history = agent_setup(
         blueprints=[],
@@ -192,7 +188,7 @@ class Visualizer(Module):
         return Image.from_file(get_data("cafe-smol.jpg")).to_rgb()
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 def test_image(agent_setup):
     history = agent_setup(
         blueprints=[Visualizer.blueprint()],

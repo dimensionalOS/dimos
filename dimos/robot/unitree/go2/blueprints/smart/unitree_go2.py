@@ -26,6 +26,6 @@ unitree_go2 = autoconnect(
     cost_mapper(),
     replanning_a_star_planner(),
     wavefront_frontier_explorer(),
-).global_config(n_dask_workers=6, robot_model="unitree_go2")
+).global_config(n_workers=7, robot_model="unitree_go2")
 
 __all__ = ["unitree_go2"]

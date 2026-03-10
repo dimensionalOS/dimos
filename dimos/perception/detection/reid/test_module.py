@@ -14,7 +14,7 @@
 
 import pytest
 
-from dimos.core import LCMTransport
+from dimos.core.transport import LCMTransport
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
 from dimos.perception.detection.reid.module import ReidModule

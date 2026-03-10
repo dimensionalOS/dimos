@@ -120,13 +120,11 @@ class NativeModule(Module[NativeModuleConfig]):
 
     default_config: type[NativeModuleConfig] = NativeModuleConfig  # type: ignore[assignment]
     _process: subprocess.Popen[bytes] | None = None
-    _io_threads: list[threading.Thread]
     _watchdog: threading.Thread | None = None
     _stopping: bool = False
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._io_threads = []
         self._resolve_paths()
 
     @rpc
@@ -159,10 +157,6 @@ class NativeModule(Module[NativeModuleConfig]):
         logger.info("Native process started", pid=self._process.pid)
 
         self._stopping = False
-        self._io_threads = [
-            self._start_reader(self._process.stdout, "info"),
-            self._start_reader(self._process.stderr, "warning"),
-        ]
         self._watchdog = threading.Thread(target=self._watch_process, daemon=True)
         self._watchdog.start()
 
@@ -180,26 +174,23 @@ class NativeModule(Module[NativeModuleConfig]):
                 )
                 self._process.kill()
                 self._process.wait(timeout=5)
-        for t in self._io_threads:
-            t.join(timeout=2)
         if self._watchdog is not None and self._watchdog is not threading.current_thread():
             self._watchdog.join(timeout=2)
         self._watchdog = None
-        self._io_threads = []
         self._process = None
         super().stop()
-
-    def _start_reader(self, stream: IO[bytes] | None, level: str) -> threading.Thread:
-        """Spawn a daemon thread that pipes a subprocess stream through the logger."""
-        t = threading.Thread(target=self._read_log_stream, args=(stream, level), daemon=True)
-        t.start()
-        return t
 
     def _watch_process(self) -> None:
         """Block until the native process exits; trigger stop() if it crashed."""
         if self._process is None:
             return
+
+        stdout_t = self._start_reader(self._process.stdout, "info")
+        stderr_t = self._start_reader(self._process.stderr, "warning")
         rc = self._process.wait()
+        stdout_t.join(timeout=2)
+        stderr_t.join(timeout=2)
+
         if self._stopping:
             return
         logger.error(
@@ -208,6 +199,12 @@ class NativeModule(Module[NativeModuleConfig]):
             returncode=rc,
         )
         self.stop()
+
+    def _start_reader(self, stream: IO[bytes] | None, level: str) -> threading.Thread:
+        """Spawn a daemon thread that pipes a subprocess stream through the logger."""
+        t = threading.Thread(target=self._read_log_stream, args=(stream, level), daemon=True)
+        t.start()
+        return t
 
     def _read_log_stream(self, stream: IO[bytes] | None, level: str) -> None:
         if stream is None:
@@ -260,11 +257,13 @@ class NativeModule(Module[NativeModuleConfig]):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        stdout_reader = self._start_reader(proc.stdout, "info")
-        stderr_reader = self._start_reader(proc.stderr, "warning")
-        proc.wait()
-        stdout_reader.join(timeout=2)
-        stderr_reader.join(timeout=2)
+        stdout, stderr = proc.communicate()
+        for line in stdout.decode("utf-8", errors="replace").splitlines():
+            if line.strip():
+                logger.info(line)
+        for line in stderr.decode("utf-8", errors="replace").splitlines():
+            if line.strip():
+                logger.warning(line)
         if proc.returncode != 0:
             raise RuntimeError(
                 f"Build command failed (exit {proc.returncode}): {self.config.build_command}"

@@ -20,7 +20,7 @@ from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.perception.detection.type.detection2d import Detection2DBBox
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 # Filters take Detection2DBBox, PointCloud2, CameraInfo, Transform and return filtered PointCloud2 or None
 PointCloudFilter = Callable[

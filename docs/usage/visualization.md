@@ -4,47 +4,50 @@ Dimos supports three visualization backends: Rerun (web or native) and Foxglove.
 
 ## Quick Start
 
-Choose your viewer backend via the CLI (preferred):
+Choose your viewer via the CLI (preferred):
 
 ```bash
-# Rerun native viewer (default) - native Rerun window + teleop panel at http://localhost:7779
+# Rerun native viewer (default) - dimos-viewer with built-in teleop + click-to-navigate
 dimos run unitree-go2
 
-# Explicitly select the viewer backend:
-dimos --viewer-backend rerun run unitree-go2
-dimos --viewer-backend rerun-web run unitree-go2
-dimos --viewer-backend foxglove run unitree-go2
+# Explicitly select the viewer mode:
+dimos --viewer rerun run unitree-go2
+dimos --viewer rerun-web run unitree-go2
+dimos --viewer foxglove run unitree-go2
 ```
 
 Alternative (environment variable):
 
 ```bash
-VIEWER_BACKEND=rerun dimos run unitree-go2
+# Rerun native viewer (default) - dimos-viewer with built-in teleop + click-to-navigate
+VIEWER=rerun dimos run unitree-go2
 
-# Rerun web viewer - Full dashboard in browser
-VIEWER_BACKEND=rerun-web dimos run unitree-go2
+# Rerun web viewer - browser dashboard + teleop at http://localhost:7779
+VIEWER=rerun-web dimos run unitree-go2
 
 # Foxglove - Use Foxglove Studio instead of Rerun
-VIEWER_BACKEND=foxglove dimos run unitree-go2
+VIEWER=foxglove dimos run unitree-go2
 ```
 
 ## Viewer Modes Explained
 
-### Rerun Web (`rerun-web`)
+### Rerun Native (`rerun`) — Default
 
 **What you get:**
-- Full dashboard at http://localhost:7779
-- Rerun 3D viewer + command center sidebar in one page
-- Works in browser, no display required (headless-friendly)
+- [dimos-viewer](https://github.com/dimensionalOS/dimos-viewer), a custom Dimensional fork of Rerun with built-in keyboard teleop and click-to-navigate
+- Native desktop application (opens automatically)
+- Better performance with larger maps/higher resolution
+- No browser or web server required
 
 ---
 
-### Rerun Native (`rerun`)
+### Rerun Web (`rerun-web`)
 
 **What you get:**
-- Native Rerun application (separate window opens automatically)
-- Command center at http://localhost:7779
-- Better performance with larger maps/higher resolution
+- Browser-based dashboard at http://localhost:7779
+- Rerun 3D viewer + command center sidebar in one page
+- Teleop controls and goal setting via the web UI
+- Works headless (no display required)
 
 ---
 
@@ -57,6 +60,28 @@ VIEWER_BACKEND=foxglove dimos run unitree-go2
 - Open layout: `assets/foxglove_dashboards/old/foxglove_unitree_lcm_dashboard.json`
 
 ---
+
+## Rendering with Custom Blueprints
+
+To enable rerun within your own blueprint simply include `RerunBridgeModule`:
+
+```python
+from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+
+camera_demo = autoconnect(
+    CameraModule.blueprint(),
+    RerunBridgeModule.blueprint(
+        viewer_mode="native", # native (desktop), web (browser), none (headless)
+    ),
+)
+
+if __name__ == "__main__":
+    camera_demo.build().loop()
+```
+
+Every LCM stream, such as `color_image` (output by CameraModule), that uses a data type (like `Image`) that has a `.to_rerun` method will get rendered (`rr.log`) using the LCM topic as the rerun entity path. In other words: to render something, simply log it to a stream and it will automatically be available in rerun.
 
 ## Performance Tuning
 

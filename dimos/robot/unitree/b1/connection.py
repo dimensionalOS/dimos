@@ -24,7 +24,9 @@ import time
 
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs import Int32

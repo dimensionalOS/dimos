@@ -1,154 +1,221 @@
+
 <div align="center">
-   <img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/64f13b39-da06-4f58-add0-cfc44f04db4e" /> </a>
-    <h4 align="center">Program Atoms</h4>
-    <h4 align="center">The Agentive Operating System for Generalist Robotics</h4>
 
+<img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/15283d94-ad95-42c9-abd5-6565a222a837" />
 
-<br>
+<h2>The Agentive Operating System for Generalist Robotics</h2>
 
 [![Discord](https://img.shields.io/discord/1341146487186391173?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/dimos)
 [![Stars](https://img.shields.io/github/stars/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/stargazers)
 [![Forks](https://img.shields.io/github/forks/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/fork)
 [![Contributors](https://img.shields.io/github/contributors/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/graphs/contributors)
-<br>
 ![Nix](https://img.shields.io/badge/Nix-flakes-5277C3?style=flat-square&logo=NixOS&logoColor=white)
 ![NixOS](https://img.shields.io/badge/NixOS-supported-5277C3?style=flat-square&logo=NixOS&logoColor=white)
-![CUDA](https://img.shields.io/badge/CUDA-12.x-76B900?style=flat-square&logo=nvidia&logoColor=white)
+![CUDA](https://img.shields.io/badge/CUDA-supported-76B900?style=flat-square&logo=nvidia&logoColor=white)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
 
-<p align="center">
-  <a href="#the-dimensional-framework">Features</a> •
-  <a href="#installation">Installation</a> •
-  <a href="#documentation">Documentation</a> •
-  <a href="#development">Development</a> •
-  <a href="#contributing">Contributing</a>
-</p>
+<big><big>
+
+[Hardware](#hardware) •
+[Installation](#installation) •
+[Development](#development) •
+[Multi Language](#multi-language-support) •
+[ROS](#ros-interop)
+
+⚠️ **Alpha Pre-Release: Expect Breaking Changes** ⚠️
+
+</big></big>
 
 </div>
 
-> \[!NOTE]
->
-> ⚠️ **Alpha Pre-Release: Expect Breaking Changes** ⚠️
+# Intro
 
-# The Dimensional Framework
+Dimensional is the modern operating system for generalist robotics. We are setting the next-generation SDK standard, integrating with the majority of robot manufacturers.
 
-Dimensional is the open-source, universal operating system for generalist robotics. On DimOS, developers
-can design, build, and run physical ("dimensional") applications that run on any humanoid, quadruped,
-drone, or wheeled embodiment.
+With a simple install and no ROS required, build physical applications entirely in python that run on any humanoid, quadruped, or drone.
 
-**Programming physical robots is now as simple as programming digital software**: Composable, Modular, Repeatable.
+Dimensional is agent native -- "vibecode" your robots in natural language and build (local & hosted) multi-agent systems that work seamlessly with your hardware. Agents run as native modules — subscribing to any embedded stream, from perception (lidar, camera) and spatial memory down to control loops and motor drivers.
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <a href="docs/capabilities/navigation/readme.md"><img src="assets/readme/navigation.gif" alt="Navigation" width="100%"></a>
+    </td>
+    <td align="center" width="50%">
+      <a href="docs/capabilities/perception/readme.md"><img src="assets/readme/perception.png" alt="Perception" width="100%"></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <h3><a href="docs/capabilities/navigation/readme.md">Navigation and Mapping</a></h3>
+      SLAM, dynamic obstacle avoidance, route planning, and autonomous exploration — via both DimOS native and ROS<br><a href="https://x.com/stash_pomichter/status/2010471593806545367">Watch video</a>
+    </td>
+    <td align="center" width="50%">
+      <h3><a href="docs/capabilities/perception/readme.md">Perception</a></h3>
+      Detectors, 3d projections, VLMs, Audio processing
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <a href="docs/capabilities/agents/readme.md"><img src="assets/readme/agentic_control.gif" alt="Agents" width="100%"></a>
+    </td>
+    <td align="center" width="50%">
+      <img src="assets/readme/spatial_memory.gif" alt="Spatial Memory" width="100%"></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <h3><a href="docs/capabilities/agents/readme.md">Agentive Control, MCP</a></h3>
+      "hey Robot, go find the kitchen"<br><a href="https://x.com/stash_pomichter/status/2015912688854200322">Watch video</a>
+    </td>
+    <td align="center" width="50%">
+      <h3>Spatial Memory</a></h3>
+      Spatio-temporal RAG, Dynamic memory, Object localization and permanence<br><a href="https://x.com/stash_pomichter/status/1980741077205414328">Watch video</a>
+    </td>
+  </tr>
+</table>
 
-Core Features:
-- **Navigation:** Production navigation stack for any robot with lidar: SLAM, terrain analysis, collision
-  avoidance, route planning, exploration.
-- **Dashboard:** The DimOS command center gives developers the tooling to debug, visualize, compose, and
-  test dimensional applications in real-time. Control your robot via waypoint, agent query, keyboard,
-  VR, more.
-- **Modules:** Standalone components (equivalent to ROS nodes) that publish and subscribe to typed
-  In/Out streams that communicate over DimOS transports. The primary components of Dimensional.
-- **Agents (experimental):** DimOS agents understand physical space, subscribe to sensor streams, and call
-  **physical** tools. Emergence appears when agents have physical agency.
-- **MCP (experimental):** Vibecode robots by giving your AI editor (Cursor, Claude Code) MCP access to run
-  physical commands (move forward 1 meter, jump, etc.).
-- **Manipulation (unreleased)** Classical (OMPL, IK, GraspGen), Agentive (TAMP), and VLA-native manipulation stack runs out-of-the-box on any DimOS supported arm embodiment.
-- **Transport/Middleware:** DimOS native Python transport supports LCM, DDS, and SHM, plus ROS 2.
-- **Robot integrations:** We integrate with the majority of hardware OEMs and are moving fast to cover
-  them all. Supported and/or immediate roadmap:
 
-  | Category | Platforms |
-  | --- | --- |
-  | Quadrupeds | Unitree Go2, Unitree B1, AGIBOT D1 Max/Pro, Dobot Rover |
-  | Drones | DJI Mavic 2, Holybro x500 |
-  | Humanoids | Unitree G1, Booster K1, AGIBOT X2, ABIBOT A2 |
-  | Arms | OpenARMs, xARM 6/7, AgileX Piper, HighTorque Pantera |
+# Hardware
 
-# Getting Started
+<table>
+  <tr>
+    <td align="center" width="20%">
+      <h3>Quadruped</h3>
+      <img width="245" height="1" src="assets/readme/spacer.png">
+    </td>
+    <td align="center" width="20%">
+      <h3>Humanoid</h3>
+      <img width="245" height="1" src="assets/readme/spacer.png">
+    </td>
+    <td align="center" width="20%">
+      <h3>Arm</h3>
+      <img width="245" height="1" src="assets/readme/spacer.png">
+    </td>
+    <td align="center" width="20%">
+      <h3>Drone</h3>
+      <img width="245" height="1" src="assets/readme/spacer.png">
+    </td>
+    <td align="center" width="20%">
+      <h3>Misc</h3>
+      <img width="245" height="1" src="assets/readme/spacer.png">
+    </td>
+  </tr>
 
-## Installation
+  <tr>
+    <td align="center" width="20%">
+      🟩 <a href="docs/platforms/quadruped/go2/index.md">Unitree Go2 pro/air</a><br>
+      🟥 <a href="dimos/robot/unitree/b1">Unitree B1</a><br>
+    </td>
+    <td align="center" width="20%">
+      🟨 <a href="docs/platforms/humanoid/g1/index.md">Unitree G1</a><br>
+    </td>
+    <td align="center" width="20%">
+      🟥 <a href="docs/todo.md">Xarm</a><br>
+      🟥 <a href="docs/todo.md">AgileX Piper</a><br>
+    </td>
+    <td align="center" width="20%">
+      🟥 <a href="dimos/robot/drone">Mavlink</a><br>
+      🟥 <a href="dimos/robot/drone">DJI SDK</a><br>
+    </td>
+    <td align="center" width="20%">
+      🟥 <a href="https://github.com/dimensionalOS/openFT-sensor">Force Torque Sensor</a><br>
+    </td>
+  </tr>
+</table>
+<br>
+<div align="right">
+🟩 stable 🟨 beta 🟧 alpha 🟥 experimental
 
-Supported/tested matrix:
+</div>
 
-| Platform | Status | Tested | Required System deps |
-| --- | --- | --- | --- |
-| Linux | supported | Ubuntu 22.04, 24.04 | See below |
-| macOS | experimental beta | not CI-tested | `brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo python; export ARCHFLAGS="-arch $(uname -m)"` |
 
-Note: macOS is usable but expect inconsistent/flaky behavior (rather than hard errors/crashes). Setting `ARCHFLAGS` is likely optional, but some systems it is required to avoid a `clang` error.
+# System Requirements
+
+## Tested and Supported Hardware
+
+DimOS has been tested and validated on the following hardware configurations:
+
+### GPU
+- **NVIDIA RTX 4070 or better** (for perception, VLMs, and AI features)
+- CUDA support required
+- Minimum 8GB VRAM recommended
+
+### CPU
+- **Intel Core i7 (recent generation) or better**
+- AMD Ryzen 7 or better
+- Multi-core recommended for distributed execution
+
+### Memory
+- **16GB RAM minimum**
+- 32GB+ recommended for larger models and multi-robot deployments
+
+### Storage
+- **50GB+ free disk space**
+- SSD strongly recommended for model loading and data logging
+
+> **Note:** DimOS may run on older hardware (e.g., NVIDIA 3000-series GPUs), but performance and stability are not guaranteed. If you encounter issues, please upgrade to the recommended specifications above.
+
+# Installation
+
+## Interactive Install
 
 ```sh
-sudo apt-get update
-sudo apt-get install -y curl g++ portaudio19-dev git-lfs libturbojpeg python3-dev
-# install uv for python
-curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH="$HOME/.local/bin:$PATH"
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dev/scripts/install.sh | bash
 ```
 
-Option 1: Install in a virtualenv
+> See [`scripts/install.sh --help`](scripts/install.sh) for non-interactive and advanced options.
 
-```sh
+## Manual System Install
 
-uv venv && . .venv/bin/activate
-uv pip install 'dimos[base,unitree]'
-# replay recorded data to test that the system is working
-# IMPORTANT: First replay run will show a black rerun window while 2.4 GB downloads from LFS
+To set up your system dependencies, follow one of these guides:
+
+- 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
+- 🟩 [NixOS / General Linux](docs/installation/nix.md)
+- 🟧 [macOS](docs/installation/osx.md)
+
+## Python Install
+
+### Quickstart
+
+```bash
+uv venv --python "3.12"
+source .venv/bin/activate
+uv pip install dimos[base,unitree]
+
+# Replay a recorded Go2 session (no hardware needed)
+# NOTE: First run will show a black rerun window while ~2.4 GB downloads from LFS
 dimos --replay run unitree-go2
 ```
 
-Option 2: Run without installing
+```bash
+# Install with simulation support
+uv pip install dimos[base,unitree,sim]
 
-```sh
-uvx --from 'dimos[base,unitree]' dimos --replay run unitree-go2
+# Run Go2 in MuJoCo simulation
+dimos --simulation run unitree-go2
+
+# Run G1 humanoid in simulation
+dimos --simulation run unitree-g1-sim
 ```
 
-### Test Installation
-
-#### Control a robot in a simulation (no robot required)
-
-
-```sh
-export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
-# ignore the warp warnings
-dimos --viewer-backend rerun-web --simulation run unitree-go2
-```
-
-#### Control a real robot (Unitree Go2 over WebRTC)
-
-```sh
+```bash
+# Control a real robot (Unitree Go2 over WebRTC)
 export ROBOT_IP=<YOUR_ROBOT_IP>
-dimos --viewer-backend rerun-web run unitree-go2
+dimos run unitree-go2
 ```
 
-After running dimOS open http://localhost:7779 to control robot movement.
+# Usage
 
-#### Dimensional Agents
+## Use DimOS as a Library
 
-> \[!NOTE]
->
-> **Experimental Beta: Potential unstoppable robot sentience**
-
-```sh
-export OPENAI_API_KEY=<your private key>
-dimos --viewer-backend rerun-web run unitree-go2-agentic
-```
-
-After running that, open a new terminal and run the following to start giving instructions to the agent.
-```sh
-# activate the venv in this new terminal
-source .venv/bin/activate
-
-# then tell the agent "explore the room"
-# then tell it to go to something, ex: "go to the door"
-humancli
-```
-
-# The Dimensional Library
-
-### Modules
-
-Modules are subsystems on a robot that operate autonomously and communicate with other subsystems using standardized messages. See below a simple robot connection module that sends streams of continuous `cmd_vel` to the robot and recieves `color_image` to a simple `Listener` module.
+See below a simple robot connection module that sends streams of continuous `cmd_vel` to the robot and receives `color_image` to a simple `Listener` module. DimOS Modules are subsystems on a robot that communicate with other modules using standardized messages.
 
 ```py
 import threading, time, numpy as np
-from dimos.core import In, Module, Out, rpc, autoconnect
+from dimos.core.blueprints import autoconnect
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 
@@ -184,16 +251,17 @@ if __name__ == "__main__":
     ).build().loop()
 ```
 
-### Blueprints
+## Blueprints
 
-Blueprints are how robots are constructed on Dimensional; instructions for how to construct and wire modules. You compose them with
+Blueprints are instructions for how to construct and wire modules. We compose them with
 `autoconnect(...)`, which connects streams by `(name, type)` and returns a `Blueprint`.
 
 Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `In[]` and `Out[]` message types.
 
 A blueprint example that connects the image stream from a robot to an LLM Agent for reasoning and action execution.
 ```py
-from dimos.core import autoconnect, LCMTransport
+from dimos.core.blueprints import autoconnect
+from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree.go2.connection import go2_connection
 from dimos.agents.agent import agent
@@ -208,45 +276,53 @@ if __name__ == "__main__":
     blueprint.build().loop()
 ```
 
+## Library API
+
+- [Modules](docs/usage/modules.md)
+- [LCM](docs/usage/lcm.md)
+- [Blueprints](docs/usage/blueprints.md)
+- [Transports](docs/usage/transports/index.md)
+- [Data Streams](docs/usage/data_streams/README.md)
+- [Configuration](docs/usage/configuration.md)
+- [Visualization](docs/usage/visualization.md)
+
+## Demos
+
+<img src="assets/readme/dimos_demo.gif" alt="DimOS Demo" width="100%">
+
 # Development
 
+## Develop on DimOS
+
 ```sh
-GIT_LFS_SKIP_SMUDGE=1 git clone -b dev https://github.com/dimensionalOS/dimos.git
+export GIT_LFS_SKIP_SMUDGE=1
+git clone -b dev https://github.com/dimensionalOS/dimos.git
 cd dimos
+
+uv sync --all-extras --no-extra dds
+
+# Run fast test suite
+uv run pytest dimos
 ```
 
-Then pick one of two development paths:
+> **Headless / Server Ubuntu (EC2, Docker, WSL2, CI)**
+>
+> If you're running on a headless machine without a display server, you'll need OpenGL libraries that aren't installed by default:
+> ```sh
+> sudo apt-get install -y libgl1 libegl1
+> ```
+> Without these, Open3D and MuJoCo will fail with `OSError: libGL.so.1: cannot open shared object file`.
+> Nix users (`nix develop`) don't need this — the flake already provides `libGL`, `libGLU`, and `mesa`.
 
-Option A: Devcontainer
-```sh
-./bin/dev
-```
+## Multi Language Support
 
-Option B: Editable install with uv
-```sh
-uv venv && . .venv/bin/activate
-uv pip install -e '.[base,dev]'
-```
+Python is our glue and prototyping language, but we support many languages via LCM interop.
 
-For system deps, Nix setups, and testing, see `/docs/development/README.md`.
+Check our language interop examples:
+- [C++](examples/language-interop/cpp/)
+- [Lua](examples/language-interop/lua/)
+- [TypeScript](examples/language-interop/ts/)
 
-### Monitoring & Debugging
+## ROS interop
 
-DimOS comes with a number of monitoring tools:
-- Run `lcmspy` to see how fast messages are being published on streams.
-- Run `agentspy` to see the agent's status over time.
-- If you suspect there is a bug within DimOS itself, you can enable extreme logging by prefixing the dimos command with `DIMOS_LOG_LEVEL=DEBUG RERUN_SAVE=1 `. Ex: `DIMOS_LOG_LEVEL=DEBUG RERUN_SAVE=1 dimos --replay run unitree-go2`
-
-
-# Documentation
-
-Concepts:
-- [Modules](/docs/usage/modules.md): The building blocks of DimOS, modules run in parallel and are singleton python classes.
-- [Streams](/docs/usage/sensor_streams/index.md): How modules communicate, a Pub / Sub system.
-- [Blueprints](/dimos/core/README_BLUEPRINTS.md): a way to group modules together and define their connections to each other.
-- [RPC](/dimos/core/README_BLUEPRINTS.md#calling-the-methods-of-other-modules): how one module can call a method on another module (arguments get serialized to JSON-like binary data).
-- [Skills](/dimos/core/README_BLUEPRINTS.md#defining-skills): An RPC function, except it can be called by an AI agent (a tool for an AI).
-
-## Contributing
-
-We welcome contributions! See our [Bounty List](https://docs.google.com/spreadsheets/d/1tzYTPvhO7Lou21cU6avSWTQOhACl5H8trSvhtYtsk8U/edit?usp=sharing) for open requests for contributions. If you would like to suggest a feature or sponsor a bounty, open an issue.
+For researchers, we can talk to ROS directly via [ROS Transports](docs/usage/transports/index.md), or host dockerized ROS deployments as first-class DimOS modules, allowing you easy installation and portability

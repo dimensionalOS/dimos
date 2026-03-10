@@ -60,6 +60,7 @@ __getattr__, __dir__, __all__ = lazy.attach(
             "HardwareType",
             "JointName",
             "JointState",
+            "make_gripper_joints",
             "make_joints",
         ],
         "coordinator": [

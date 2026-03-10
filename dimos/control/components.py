@@ -25,7 +25,6 @@ TaskName = str
 class HardwareType(Enum):
     MANIPULATOR = "manipulator"
     BASE = "base"
-    GRIPPER = "gripper"
 
 
 @dataclass(frozen=True)
@@ -43,11 +42,12 @@ class HardwareComponent:
 
     Attributes:
         hardware_id: Unique identifier, also used as joint name prefix
-        hardware_type: Type of hardware (MANIPULATOR, BASE, GRIPPER)
+        hardware_type: Type of hardware (MANIPULATOR, BASE)
         joints: List of joint names (e.g., ["arm_joint1", "arm_joint2", ...])
         adapter_type: Adapter type ("mock", "xarm", "piper")
         address: Connection address - IP for TCP, port for CAN
         auto_enable: Whether to auto-enable servos
+        gripper_joints: Joints that use adapter gripper methods (separate from joints).
     """
 
     hardware_id: HardwareId
@@ -56,6 +56,24 @@ class HardwareComponent:
     adapter_type: str = "mock"
     address: str | None = None
     auto_enable: bool = True
+    gripper_joints: list[JointName] = field(default_factory=list)
+
+    @property
+    def all_joints(self) -> list[JointName]:
+        """All joints: arm joints + gripper joints."""
+        return self.joints + self.gripper_joints
+
+
+def make_gripper_joints(hardware_id: HardwareId) -> list[JointName]:
+    """Create gripper joint names for a hardware device.
+
+    Args:
+        hardware_id: The hardware identifier (e.g., "arm")
+
+    Returns:
+        List of joint names like ["arm_gripper"]
+    """
+    return [f"{hardware_id}_gripper"]
 
 
 def make_joints(hardware_id: HardwareId, dof: int) -> list[JointName]:
@@ -71,12 +89,48 @@ def make_joints(hardware_id: HardwareId, dof: int) -> list[JointName]:
     return [f"{hardware_id}_joint{i + 1}" for i in range(dof)]
 
 
+# Maps virtual joint suffix → (Twist group, Twist field)
+TWIST_SUFFIX_MAP: dict[str, tuple[str, str]] = {
+    "vx": ("linear", "x"),
+    "vy": ("linear", "y"),
+    "vz": ("linear", "z"),
+    "wx": ("angular", "x"),
+    "wy": ("angular", "y"),
+    "wz": ("angular", "z"),
+}
+
+_DEFAULT_TWIST_SUFFIXES = ["vx", "vy", "wz"]
+
+
+def make_twist_base_joints(
+    hardware_id: HardwareId,
+    suffixes: list[str] | None = None,
+) -> list[JointName]:
+    """Create virtual joint names for a twist base.
+
+    Args:
+        hardware_id: The hardware identifier (e.g., "base")
+        suffixes: Velocity DOF suffixes. Defaults to ["vx", "vy", "wz"] (holonomic).
+
+    Returns:
+        List of joint names like ["base_vx", "base_vy", "base_wz"]
+    """
+    suffixes = suffixes or _DEFAULT_TWIST_SUFFIXES
+    for s in suffixes:
+        if s not in TWIST_SUFFIX_MAP:
+            raise ValueError(f"Unknown twist suffix '{s}'. Valid: {list(TWIST_SUFFIX_MAP)}")
+    return [f"{hardware_id}_{s}" for s in suffixes]
+
+
 __all__ = [
+    "TWIST_SUFFIX_MAP",
     "HardwareComponent",
     "HardwareId",
     "HardwareType",
     "JointName",
     "JointState",
     "TaskName",
+    "make_gripper_joints",
     "make_joints",
+    "make_twist_base_joints",
 ]

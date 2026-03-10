@@ -20,13 +20,18 @@ from dimos.hardware.sensors.camera.webcam import Webcam
 
 demo_agent = autoconnect(Agent.blueprint())
 
+
+def _create_webcam() -> Webcam:
+    return Webcam(
+        camera_index=0,
+        fps=15,
+        camera_info=zed.CameraInfo.SingleWebcam,
+    )
+
+
 demo_agent_camera = autoconnect(
     Agent.blueprint(),
     camera_module(
-        hardware=lambda: Webcam(
-            camera_index=0,
-            fps=15,
-            camera_info=zed.CameraInfo.SingleWebcam,
-        ),
+        hardware=_create_webcam,
     ),
 )

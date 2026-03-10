@@ -25,31 +25,45 @@ Features:
 - Aggregated preemption notifications
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
+from pathlib import Path
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
-from dimos.control.components import HardwareComponent, HardwareId, JointName, TaskName
-from dimos.control.hardware_interface import ConnectedHardware
+from dimos.control.components import (
+    TWIST_SUFFIX_MAP,
+    HardwareComponent,
+    HardwareId,
+    HardwareType,
+    JointName,
+    TaskName,
+)
+from dimos.control.hardware_interface import ConnectedHardware, ConnectedTwistBase
 from dimos.control.task import ControlTask
 from dimos.control.tick_loop import TickLoop
-from dimos.core import In, Module, Out, rpc
-from dimos.core.module import ModuleConfig
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
+from dimos.hardware.drive_trains.spec import (
+    TwistBaseAdapter,
+)
+from dimos.hardware.manipulators.spec import ManipulatorAdapter
 from dimos.msgs.geometry_msgs import (
-    PoseStamped,  # noqa: TC001 - needed at runtime for In[PoseStamped]
+    PoseStamped,
+    Twist,
 )
 from dimos.msgs.sensor_msgs import (
-    JointState,  # noqa: TC001 - needed at runtime for Out[JointState]
+    JointState,
+)
+from dimos.teleop.quest.quest_types import (
+    Buttons,
 )
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from dimos.hardware.manipulators.spec import ManipulatorAdapter
 
 logger = setup_logger()
 
@@ -65,20 +79,29 @@ class TaskConfig:
 
     Attributes:
         name: Task name (e.g., "traj_arm")
-        type: Task type ("trajectory", "servo", "velocity", "cartesian_ik")
+        type: Task type ("trajectory", "servo", "velocity", "cartesian_ik", "teleop_ik")
         joint_names: List of joint names this task controls
         priority: Task priority (higher wins arbitration)
-        model_path: Path to URDF/MJCF for IK solver (cartesian_ik only)
-        ee_joint_id: End-effector joint ID in model (cartesian_ik only)
+        model_path: Path to URDF/MJCF for IK solver (cartesian_ik/teleop_ik only)
+        ee_joint_id: End-effector joint ID in model (cartesian_ik/teleop_ik only)
+        hand: "left" or "right" controller hand (teleop_ik only)
+        gripper_joint: Joint name for gripper virtual joint
+        gripper_open_pos: Gripper position at trigger 0.0
+        gripper_closed_pos: Gripper position at trigger 1.0
     """
 
     name: str
     type: str = "trajectory"
     joint_names: list[str] = field(default_factory=lambda: [])
     priority: int = 10
-    # Cartesian IK specific
-    model_path: str | None = None
+    # Cartesian IK / Teleop IK specific
+    model_path: str | Path | None = None
     ee_joint_id: int = 6
+    hand: Literal["left", "right"] | None = None  # teleop_ik only
+    # Teleop IK gripper specific
+    gripper_joint: str | None = None
+    gripper_open_pos: float = 0.0
+    gripper_closed_pos: float = 0.0
 
 
 @dataclass
@@ -145,6 +168,12 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     # Uses frame_id as task name for routing
     cartesian_command: In[PoseStamped]
 
+    # Input: Streaming twist commands for velocity-commanded platforms
+    twist_command: In[Twist]
+
+    # Input: Teleop buttons for engage/disengage signaling
+    buttons: In[Buttons]
+
     config: ControlCoordinatorConfig
     default_config = ControlCoordinatorConfig
 
@@ -168,6 +197,8 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         # Subscription handles for streaming commands
         self._joint_command_unsub: Callable[[], None] | None = None
         self._cartesian_command_unsub: Callable[[], None] | None = None
+        self._twist_command_unsub: Callable[[], None] | None = None
+        self._buttons_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -199,7 +230,11 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
     def _setup_hardware(self, component: HardwareComponent) -> None:
         """Connect and add a single hardware adapter."""
-        adapter = self._create_adapter(component)
+        adapter: ManipulatorAdapter | TwistBaseAdapter
+        if component.hardware_type == HardwareType.BASE:
+            adapter = self._create_twist_base_adapter(component)
+        else:
+            adapter = self._create_adapter(component)
 
         if not adapter.connect():
             raise RuntimeError(f"Failed to connect to {component.adapter_type} adapter")
@@ -218,6 +253,16 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         from dimos.hardware.manipulators.registry import adapter_registry
 
         return adapter_registry.create(
+            component.adapter_type,
+            dof=len(component.joints),
+            address=component.address,
+        )
+
+    def _create_twist_base_adapter(self, component: HardwareComponent) -> TwistBaseAdapter:
+        """Create a twist base adapter from component config."""
+        from dimos.hardware.drive_trains.registry import twist_base_adapter_registry
+
+        return twist_base_adapter_registry.create(
             component.adapter_type,
             dof=len(component.joints),
             address=component.address,
@@ -276,6 +321,26 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 ),
             )
 
+        elif task_type == "teleop_ik":
+            from dimos.control.tasks.teleop_task import TeleopIKTask, TeleopIKTaskConfig
+
+            if cfg.model_path is None:
+                raise ValueError(f"TeleopIKTask '{cfg.name}' requires model_path in TaskConfig")
+
+            return TeleopIKTask(
+                cfg.name,
+                TeleopIKTaskConfig(
+                    joint_names=cfg.joint_names,
+                    model_path=cfg.model_path,
+                    ee_joint_id=cfg.ee_joint_id,
+                    priority=cfg.priority,
+                    hand=cfg.hand,
+                    gripper_joint=cfg.gripper_joint,
+                    gripper_open_pos=cfg.gripper_open_pos,
+                    gripper_closed_pos=cfg.gripper_closed_pos,
+                ),
+            )
+
         else:
             raise ValueError(f"Unknown task type: {task_type}")
 
@@ -286,19 +351,35 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     @rpc
     def add_hardware(
         self,
-        adapter: ManipulatorAdapter,
+        adapter: ManipulatorAdapter | TwistBaseAdapter,
         component: HardwareComponent,
     ) -> bool:
         """Register a hardware adapter with the coordinator."""
+        is_base = component.hardware_type == HardwareType.BASE
+
+        if is_base != isinstance(adapter, TwistBaseAdapter):
+            raise TypeError(
+                f"Hardware type / adapter mismatch for '{component.hardware_id}': "
+                f"hardware_type={component.hardware_type.value} but got "
+                f"{type(adapter).__name__}"
+            )
+
         with self._hardware_lock:
             if component.hardware_id in self._hardware:
                 logger.warning(f"Hardware {component.hardware_id} already registered")
                 return False
 
-            connected = ConnectedHardware(
-                adapter=adapter,
-                component=component,
-            )
+            if isinstance(adapter, TwistBaseAdapter):
+                connected: ConnectedHardware = ConnectedTwistBase(
+                    adapter=adapter,
+                    component=component,
+                )
+            else:
+                connected = ConnectedHardware(
+                    adapter=adapter,
+                    component=component,
+                )
+
             self._hardware[component.hardware_id] = connected
 
             for joint_name in connected.joint_names:
@@ -437,14 +518,14 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                     continue
 
                 # Route to servo tasks (position control)
-                if hasattr(task, "set_target_by_name") and msg.position:
+                if msg.position:
                     positions_by_name = dict(zip(msg.name, msg.position, strict=False))
-                    task.set_target_by_name(positions_by_name, t_now)  # type: ignore[attr-defined]
+                    task.set_target_by_name(positions_by_name, t_now)
 
                 # Route to velocity tasks (velocity control)
-                elif hasattr(task, "set_velocities_by_name") and msg.velocity:
+                elif msg.velocity:
                     velocities_by_name = dict(zip(msg.name, msg.velocity, strict=False))
-                    task.set_velocities_by_name(velocities_by_name, t_now)  # type: ignore[attr-defined]
+                    task.set_velocities_by_name(velocities_by_name, t_now)
 
     def _on_cartesian_command(self, msg: PoseStamped) -> None:
         """Route incoming PoseStamped to CartesianIKTask by task name.
@@ -464,11 +545,41 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 logger.warning(f"Cartesian command for unknown task: {task_name}")
                 return
 
-            # Route to CartesianIKTask
-            if hasattr(task, "set_target_pose"):
-                task.set_target_pose(msg, t_now)  # type: ignore[attr-defined]
-            else:
-                logger.warning(f"Task {task_name} does not support set_target_pose")
+            task.on_cartesian_command(msg, t_now)
+
+    def _on_twist_command(self, msg: Twist) -> None:
+        """Convert Twist → virtual joint velocities and route via _on_joint_command.
+
+        Maps Twist fields to virtual joints using suffix convention:
+        base_vx ← linear.x, base_vy ← linear.y, base_wz ← angular.z, etc.
+        """
+        names: list[str] = []
+        velocities: list[float] = []
+
+        with self._hardware_lock:
+            for hw in self._hardware.values():
+                if hw.component.hardware_type != HardwareType.BASE:
+                    continue
+                for joint_name in hw.joint_names:
+                    # Extract suffix (e.g., "base_vx" → "vx")
+                    suffix = joint_name.rsplit("_", 1)[-1]
+                    mapping = TWIST_SUFFIX_MAP.get(suffix)
+                    if mapping is None:
+                        continue
+                    group, axis = mapping
+                    value = getattr(getattr(msg, group), axis)
+                    names.append(joint_name)
+                    velocities.append(value)
+
+        if names:
+            joint_state = JointState(name=names, velocity=velocities)
+            self._on_joint_command(joint_state)
+
+    def _on_buttons(self, msg: Buttons) -> None:
+        """Forward button state to all tasks."""
+        with self._task_lock:
+            for task in self._tasks.values():
+                task.on_buttons(msg)
 
     @rpc
     def task_invoke(
@@ -510,6 +621,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             if hw is None:
                 logger.warning(f"Hardware '{hardware_id}' not found for gripper command")
                 return False
+            if isinstance(hw, ConnectedTwistBase):
+                logger.warning(f"Hardware '{hardware_id}' is a twist base, no gripper support")
+                return False
             return hw.adapter.write_gripper_position(position)
 
     @rpc
@@ -522,6 +636,8 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         with self._hardware_lock:
             hw = self._hardware.get(hardware_id)
             if hw is None:
+                return None
+            if isinstance(hw, ConnectedTwistBase):
                 return None
             return hw.adapter.read_gripper_position()
 
@@ -561,35 +677,46 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         streaming_types = ("servo", "velocity")
         has_streaming = any(t.type in streaming_types for t in self.config.tasks)
         if has_streaming:
-            # Only subscribe if transport is configured
             try:
-                if self.joint_command.transport:
-                    self._joint_command_unsub = self.joint_command.subscribe(self._on_joint_command)
-                    logger.info("Subscribed to joint_command for streaming tasks")
-                else:
-                    logger.warning(
-                        "Streaming tasks configured but no transport set for joint_command. "
-                        "Use task_invoke RPC or set transport via blueprint."
-                    )
-            except Exception as e:
-                logger.warning(f"Could not subscribe to joint_command: {e}")
+                self._joint_command_unsub = self.joint_command.subscribe(self._on_joint_command)
+                logger.info("Subscribed to joint_command for streaming tasks")
+            except Exception:
+                logger.warning(
+                    "Streaming tasks configured but could not subscribe to joint_command. "
+                    "Use task_invoke RPC or set transport via blueprint."
+                )
 
         # Subscribe to cartesian commands if any cartesian_ik tasks configured
-        has_cartesian_ik = any(t.type == "cartesian_ik" for t in self.config.tasks)
+        has_cartesian_ik = any(t.type in ("cartesian_ik", "teleop_ik") for t in self.config.tasks)
         if has_cartesian_ik:
             try:
-                if self.cartesian_command.transport:
-                    self._cartesian_command_unsub = self.cartesian_command.subscribe(
-                        self._on_cartesian_command
-                    )
-                    logger.info("Subscribed to cartesian_command for CartesianIK tasks")
-                else:
-                    logger.warning(
-                        "CartesianIK tasks configured but no transport set for cartesian_command. "
-                        "Use task_invoke RPC or set transport via blueprint."
-                    )
-            except Exception as e:
-                logger.warning(f"Could not subscribe to cartesian_command: {e}")
+                self._cartesian_command_unsub = self.cartesian_command.subscribe(
+                    self._on_cartesian_command
+                )
+                logger.info("Subscribed to cartesian_command for CartesianIK/TeleopIK tasks")
+            except Exception:
+                logger.warning(
+                    "CartesianIK/TeleopIK tasks configured but could not subscribe to cartesian_command. "
+                    "Use task_invoke RPC or set transport via blueprint."
+                )
+
+        # Subscribe to twist commands if any twist base hardware configured
+        has_twist_base = any(c.hardware_type == HardwareType.BASE for c in self.config.hardware)
+        if has_twist_base:
+            try:
+                self._twist_command_unsub = self.twist_command.subscribe(self._on_twist_command)
+                logger.info("Subscribed to twist_command for twist base control")
+            except Exception:
+                logger.warning(
+                    "Twist base configured but could not subscribe to twist_command. "
+                    "Use task_invoke RPC or set transport via blueprint."
+                )
+
+        # Subscribe to buttons if any teleop_ik tasks configured (engage/disengage)
+        has_teleop_ik = any(t.type == "teleop_ik" for t in self.config.tasks)
+        if has_teleop_ik:
+            self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
+            logger.info("Subscribed to buttons for engage/disengage")
 
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
 
@@ -605,6 +732,12 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         if self._cartesian_command_unsub:
             self._cartesian_command_unsub()
             self._cartesian_command_unsub = None
+        if self._twist_command_unsub:
+            self._twist_command_unsub()
+            self._twist_command_unsub = None
+        if self._buttons_unsub:
+            self._buttons_unsub()
+            self._buttons_unsub = None
 
         if self._tick_loop:
             self._tick_loop.stop()

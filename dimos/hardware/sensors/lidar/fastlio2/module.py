@@ -32,9 +32,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from dimos.core import Out  # noqa: TC001
 from dimos.core.native_module import NativeModule, NativeModuleConfig
+from dimos.core.stream import Out  # noqa: TC001
 from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_CMD_DATA_PORT,
     SDK_HOST_CMD_DATA_PORT,
@@ -141,3 +142,7 @@ __all__ = [
     "FastLio2Config",
     "fastlio2_module",
 ]
+
+# Verify protocol port compliance (mypy will flag missing ports)
+if TYPE_CHECKING:
+    FastLio2()

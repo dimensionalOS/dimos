@@ -22,6 +22,10 @@ from dimos.control.tasks.servo_task import (
     JointServoTask,
     JointServoTaskConfig,
 )
+from dimos.control.tasks.teleop_task import (
+    TeleopIKTask,
+    TeleopIKTaskConfig,
+)
 from dimos.control.tasks.trajectory_task import (
     JointTrajectoryTask,
     JointTrajectoryTaskConfig,
@@ -40,4 +44,6 @@ __all__ = [
     "JointTrajectoryTaskConfig",
     "JointVelocityTask",
     "JointVelocityTaskConfig",
+    "TeleopIKTask",
+    "TeleopIKTaskConfig",
 ]

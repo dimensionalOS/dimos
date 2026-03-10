@@ -172,7 +172,7 @@ arm_driver = XArmDriver(config=XArmDriverConfig(ip_address="192.168.1.235"))
 controller = CartesianMotionController(arm_driver=arm_driver)
 
 # Set up LCM transports for target_pose and current_pose
-from dimos.core import LCMTransport
+from dimos.core.transport import LCMTransport
 controller.target_pose.connection = LCMTransport("/target_pose", PoseStamped)
 controller.current_pose.connection = LCMTransport("/xarm/current_pose", PoseStamped)
 

@@ -31,6 +31,7 @@ from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.spec import perception
+from dimos.visualization.rerun.bridge import rerun_bridge
 
 
 def default_transform() -> Transform:
@@ -128,6 +129,7 @@ camera_module = CameraModule.blueprint
 
 demo_camera = autoconnect(
     camera_module(),
+    rerun_bridge(),
 )
 
 __all__ = ["CameraModule", "camera_module"]

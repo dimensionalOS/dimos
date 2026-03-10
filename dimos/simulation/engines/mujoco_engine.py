@@ -21,7 +21,7 @@ import time
 from typing import TYPE_CHECKING
 
 import mujoco
-import mujoco.viewer as viewer  # type: ignore[import-untyped]
+import mujoco.viewer as viewer  # type: ignore[import-untyped,import-not-found]
 
 from dimos.simulation.engines.base import SimulationEngine
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings

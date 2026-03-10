@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
@@ -25,7 +25,9 @@ from reactivex.observable import Observable
 from dimos import spec
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
+from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
+from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
@@ -37,9 +39,7 @@ from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
-    from dask.distributed import Client as DimosCluster
-else:
-    DimosCluster = Any
+    from dimos.core.rpc_client import ModuleProxy
 
 
 class Detection3DModule(Detection2DModule):
@@ -202,14 +202,12 @@ class Detection3DModule(Detection2DModule):
 
 
 def deploy(  # type: ignore[no-untyped-def]
-    dimos: DimosCluster,
+    dimos: ModuleCoordinator,
     lidar: spec.Pointcloud,
     camera: spec.Camera,
     prefix: str = "/detector3d",
     **kwargs,
-) -> Detection3DModule:
-    from dimos.core import LCMTransport
-
+) -> "ModuleProxy":
     detector = dimos.deploy(Detection3DModule, camera_info=camera.hardware_camera_info, **kwargs)  # type: ignore[attr-defined]
 
     detector.image.connect(camera.color_image)
@@ -229,7 +227,7 @@ def deploy(  # type: ignore[no-untyped-def]
 
     detector.start()
 
-    return detector  # type: ignore[no-any-return]
+    return detector
 
 
 detection3d_module = Detection3DModule.blueprint

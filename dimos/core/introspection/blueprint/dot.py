@@ -48,7 +48,6 @@ DEFAULT_IGNORED_CONNECTIONS = {("odom", "PoseStamped")}
 
 DEFAULT_IGNORED_MODULES = {
     "WebsocketVisModule",
-    "UtilizationModule",
     # "FoxgloveBridge",
 }
 

@@ -25,7 +25,9 @@ os.environ["SDL_VIDEODRIVER"] = "x11"
 
 import time
 
-from dimos.core import Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
 from dimos.msgs.std_msgs import Int32
 

@@ -14,7 +14,7 @@
 
 from typing import Protocol
 
-from dimos.core import Out
+from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs import Twist
 
 

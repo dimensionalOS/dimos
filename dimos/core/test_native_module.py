@@ -20,9 +20,7 @@ The echo script writes received CLI args to a temp file for assertions.
 
 from dataclasses import dataclass
 import json
-import os
 from pathlib import Path
-import tempfile
 import time
 
 import pytest
@@ -30,6 +28,7 @@ import pytest
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
+from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
@@ -41,16 +40,9 @@ _ECHO = str(Path(__file__).parent / "tests" / "native_echo.py")
 
 
 @pytest.fixture
-def args_file():
-    """Temp file where native_echo.py writes the CLI args it received."""
-    fd, path = tempfile.mkstemp(suffix=".json", prefix="native_echo_")
-    os.close(fd)
-    os.unlink(path)
-    try:
-        yield path
-    finally:
-        if os.path.exists(path):
-            os.unlink(path)
+def args_file(tmp_path: Path) -> str:
+    """Temp file path where native_echo.py writes the CLI args it received."""
+    return str(tmp_path / "native_echo_args.json")
 
 
 def read_json_file(path: str) -> dict[str, str]:
@@ -70,7 +62,9 @@ def read_json_file(path: str) -> dict[str, str]:
 @dataclass(kw_only=True)
 class StubNativeConfig(NativeModuleConfig):
     executable: str = _ECHO
-    log_format: LogFormat = LogFormat.JSON
+    log_format: LogFormat = LogFormat.TEXT
+    output_file: str | None = None
+    die_after: float | None = None
     some_param: float = 1.5
 
 
@@ -100,7 +94,7 @@ class StubProducer(Module):
 
 def test_process_crash_triggers_stop() -> None:
     """When the native process dies unexpectedly, the watchdog calls stop()."""
-    mod = StubNativeModule(extra_env={"NATIVE_ECHO_DIE_AFTER": "0.2"})
+    mod = StubNativeModule(die_after=0.2)
     mod.pointcloud.transport = LCMTransport("/pc", PointCloud2)
     mod.start()
 
@@ -116,15 +110,16 @@ def test_process_crash_triggers_stop() -> None:
     assert mod._process is None, f"Watchdog did not clean up after process {pid} died"
 
 
-def test_manual(dimos_cluster, args_file) -> None:
-    native_module = dimos_cluster.deploy(
+@pytest.mark.slow
+def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
+    native_module = dimos_cluster.deploy(  # type: ignore[attr-defined]
         StubNativeModule,
         some_param=2.5,
-        extra_env={"NATIVE_ECHO_OUTPUT": args_file},
+        output_file=args_file,
     )
 
-    native_module.pointcloud.transport = LCMTransport("/my/custom/lidar", PointCloud2)
-    native_module.cmd_vel.transport = LCMTransport("/cmd_vel", Twist)
+    native_module.set_transport("pointcloud", LCMTransport("/my/custom/lidar", PointCloud2))
+    native_module.set_transport("cmd_vel", LCMTransport("/cmd_vel", Twist))
     native_module.start()
     time.sleep(1)
     native_module.stop()
@@ -132,17 +127,18 @@ def test_manual(dimos_cluster, args_file) -> None:
     assert read_json_file(args_file) == {
         "cmd_vel": "/cmd_vel#geometry_msgs.Twist",
         "pointcloud": "/my/custom/lidar#sensor_msgs.PointCloud2",
+        "output_file": args_file,
         "some_param": "2.5",
     }
 
 
-@pytest.mark.heavy
-def test_autoconnect(args_file) -> None:
+@pytest.mark.slow
+def test_autoconnect(args_file: str) -> None:
     """autoconnect passes correct topic args to the native subprocess."""
     blueprint = autoconnect(
         StubNativeModule.blueprint(
             some_param=2.5,
-            extra_env={"NATIVE_ECHO_OUTPUT": args_file},
+            output_file=args_file,
         ),
         StubConsumer.blueprint(),
         StubProducer.blueprint(),
@@ -152,10 +148,10 @@ def test_autoconnect(args_file) -> None:
         },
     )
 
-    coordinator = blueprint.global_config(viewer_backend="none").build()
+    coordinator = blueprint.global_config(viewer="none").build()
     try:
         # Validate blueprint wiring: all modules deployed
-        native = coordinator.get_instance(StubNativeModule)
+        native = coordinator.get_instance(StubNativeModule)  # type: ignore[type-var]
         consumer = coordinator.get_instance(StubConsumer)
         producer = coordinator.get_instance(StubProducer)
         assert native is not None
@@ -169,6 +165,12 @@ def test_autoconnect(args_file) -> None:
 
         # Custom transport was applied
         assert native.pointcloud.transport.topic.topic == "/my/custom/lidar"
+
+        # Wait for the native subprocess to write the output file
+        for _ in range(50):
+            if Path(args_file).exists():
+                break
+            time.sleep(0.1)
     finally:
         coordinator.stop()
 
@@ -176,5 +178,6 @@ def test_autoconnect(args_file) -> None:
         "cmd_vel": "/cmd_vel#geometry_msgs.Twist",
         "pointcloud": "/my/custom/lidar#sensor_msgs.PointCloud2",
         "imu": "/imu#sensor_msgs.Imu",
+        "output_file": args_file,
         "some_param": "2.5",
     }

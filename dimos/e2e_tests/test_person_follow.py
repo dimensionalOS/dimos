@@ -12,49 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Generator
-import os
-import threading
+from collections.abc import Callable
 import time
 
 import pytest
 
+from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
-from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
-
-StartPersonTrack = Callable[[list[tuple[float, float]]], None]
 
 
-@pytest.fixture
-def start_person_track() -> Generator[StartPersonTrack, None, None]:
-    publisher: PersonTrackPublisher | None = None
-    stop_event = threading.Event()
-    thread: threading.Thread | None = None
-
-    def start(track: list[tuple[float, float]]) -> None:
-        nonlocal publisher, thread
-        publisher = PersonTrackPublisher(track)
-
-        def run_person_track() -> None:
-            while not stop_event.is_set():
-                publisher.tick()
-                time.sleep(1 / 60)
-
-        thread = threading.Thread(target=run_person_track, daemon=True)
-        thread.start()
-
-    yield start
-
-    stop_event.set()
-    if thread is not None:
-        thread.join(timeout=1.0)
-    if publisher is not None:
-        publisher.stop()
-
-
-@pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
+@pytest.mark.skipif_in_ci
+@pytest.mark.skipif_no_openai
 @pytest.mark.mujoco
 def test_person_follow(
     lcm_spy: LcmSpy,
@@ -62,12 +31,17 @@ def test_person_follow(
     human_input: Callable[[str], None],
     start_person_track: StartPersonTrack,
 ) -> None:
-    start_blueprint("--mujoco-start-pos", "-6.18 0.96", "run", "unitree-go2-agentic")
+    start_blueprint(
+        "--mujoco-start-pos",
+        "-6.18 0.96",
+        "run",
+        "--disable",
+        "spatial-memory",
+        "unitree-go2-agentic",
+    )
 
-    lcm_spy.save_topic("/rpc/HumanInput/start/res")
-    lcm_spy.wait_for_saved_topic("/rpc/HumanInput/start/res", timeout=120.0)
-    lcm_spy.save_topic("/agent")
-    lcm_spy.wait_for_saved_topic_content("/agent", b"AIMessage", timeout=120.0)
+    lcm_spy.save_topic("/rpc/Agent/on_system_modules/res")
+    lcm_spy.wait_for_saved_topic("/rpc/Agent/on_system_modules/res", timeout=120.0)
 
     time.sleep(5)
 

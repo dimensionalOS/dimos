@@ -18,7 +18,8 @@ Both the config dataclass and pubsub topics get converted to CLI args passed dow
 
 ```python no-result session=nativemodule
 from dataclasses import dataclass
-from dimos.core import Out, LCMTransport
+from dimos.core.stream import Out
+from dimos.core.transport import LCMTransport
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sensor_msgs.Imu import Imu
@@ -229,7 +230,7 @@ For language interop examples (subscribing to DimOS topics from C++, TypeScript,
 The Livox Mid-360 LiDAR driver is a complete example at [`dimos/hardware/sensors/lidar/livox/module.py`](/dimos/hardware/sensors/lidar/livox/module.py):
 
 ```python skip
-from dimos.core import Out
+from dimos.core.stream import Out
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sensor_msgs.Imu import Imu

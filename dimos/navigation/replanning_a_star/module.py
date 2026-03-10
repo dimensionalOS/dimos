@@ -17,9 +17,11 @@ import os
 from dimos_lcm.std_msgs import Bool, String
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.msgs.geometry_msgs import PoseStamped, Twist
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs import PointStamped, PoseStamped, Twist
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.navigation.replanning_a_star.global_planner import GlobalPlanner
@@ -29,6 +31,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     odom: In[PoseStamped]  # TODO: Use TF.
     global_costmap: In[OccupancyGrid]
     goal_request: In[PoseStamped]
+    clicked_point: In[PointStamped]
     target: In[PoseStamped]
 
     goal_reached: Out[Bool]
@@ -57,6 +60,14 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
             Disposable(self.goal_request.subscribe(self._planner.handle_goal_request))
         )
         self._disposables.add(Disposable(self.target.subscribe(self._planner.handle_goal_request)))
+
+        self._disposables.add(
+            Disposable(
+                self.clicked_point.subscribe(
+                    lambda pt: self._planner.handle_goal_request(pt.to_pose_stamped())
+                )
+            )
+        )
 
         self._disposables.add(self._planner.path.subscribe(self.path.publish))
 

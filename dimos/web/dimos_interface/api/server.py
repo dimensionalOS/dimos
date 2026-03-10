@@ -31,6 +31,7 @@ import asyncio
 import io
 from pathlib import Path
 from queue import Empty, Queue
+import subprocess
 from threading import Lock
 import time
 
@@ -65,7 +66,6 @@ class FastAPIServer(EdgeIO):
         audio_subject=None,
         **streams,
     ) -> None:
-        print("Starting FastAPIServer initialization...")  # Debug print
         super().__init__(dev_name, edge_type)
         self.app = FastAPI()
         self._server: uvicorn.Server | None = None
@@ -119,9 +119,7 @@ class FastAPIServer(EdgeIO):
                 self.text_disposables[key] = disposable
                 self.disposables.add(disposable)
 
-        print("Setting up routes...")  # Debug print
         self.setup_routes()
-        print("FastAPIServer initialization complete")  # Debug print
 
     def process_frame_fastapi(self, frame):  # type: ignore[no-untyped-def]
         """Convert frame to JPEG format for streaming."""
@@ -353,12 +351,56 @@ class FastAPIServer(EdgeIO):
         for key in self.streams:
             self.app.get(f"/video_feed/{key}")(self.create_video_feed_route(key))  # type: ignore[no-untyped-call]
 
-    def run(self) -> None:
+    @staticmethod
+    def _ensure_certs(certs_dir: Path) -> tuple[str, str]:
+        """Return (cert_path, key_path), generating self-signed certs if needed.
+        HTTPS is required by browsers for sensor APIs (DeviceOrientation)"""
+        cert_path = certs_dir / "cert.pem"
+        key_path = certs_dir / "key.pem"
+
+        if cert_path.exists() and key_path.exists():
+            return str(cert_path), str(key_path)
+
+        certs_dir.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-keyout",
+                str(key_path),
+                "-out",
+                str(cert_path),
+                "-days",
+                "365",
+                "-nodes",
+                "-subj",
+                "/CN=localhost",
+            ],
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to generate certificates: {result.stderr.decode()}")
+        return str(cert_path), str(key_path)
+
+    def run(self, ssl: bool = False, ssl_certs_dir: Path | str | None = None) -> None:
+        ssl_certfile = None
+        ssl_keyfile = None
+
+        if ssl:
+            if ssl_certs_dir is None:
+                raise ValueError("ssl_certs_dir is required when ssl=True")
+            ssl_certfile, ssl_keyfile = self._ensure_certs(Path(ssl_certs_dir))
+
         config = uvicorn.Config(
             self.app,
             host=self.host,
             port=self.port,
             log_level="error",  # Reduce verbosity
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
         )
         self._server = uvicorn.Server(config)
         self._server.run()

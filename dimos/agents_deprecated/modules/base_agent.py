@@ -20,7 +20,9 @@ from typing import Any
 from dimos.agents_deprecated.agent_message import AgentMessage
 from dimos.agents_deprecated.agent_types import AgentResponse
 from dimos.agents_deprecated.memory.base import AbstractAgentSemanticMemory
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
 

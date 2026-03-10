@@ -12,30 +12,52 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
+from __future__ import annotations
 
-from dimos.core.module import ModuleT
+from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING, Any
+
 from dimos.core.rpc_client import RPCClient
 from dimos.core.worker import Worker
-from dimos.utils.actor_registry import ActorRegistry
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.core.module import ModuleT
 
 logger = setup_logger()
 
 
 class WorkerManager:
-    def __init__(self) -> None:
+    def __init__(self, n_workers: int = 2) -> None:
+        self._n_workers = n_workers
         self._workers: list[Worker] = []
         self._closed = False
+        self._started = False
+
+    def start(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        for _ in range(self._n_workers):
+            worker = Worker()
+            worker.start_process()
+            self._workers.append(worker)
+        logger.info("Worker pool started.", n_workers=self._n_workers)
+
+    def _select_worker(self) -> Worker:
+        return min(self._workers, key=lambda w: w.module_count)
 
     def deploy(self, module_class: type[ModuleT], *args: Any, **kwargs: Any) -> RPCClient:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
 
-        worker = Worker(module_class, args=args, kwargs=kwargs)
-        worker.deploy()
-        self._workers.append(worker)
-        return worker.get_instance()
+        # Auto-start for backward compatibility
+        if not self._started:
+            self.start()
+
+        worker = self._select_worker()
+        actor = worker.deploy_module(module_class, args=args, kwargs=kwargs)
+        return RPCClient(actor, module_class)
 
     def deploy_parallel(
         self, module_specs: list[tuple[type[ModuleT], tuple[Any, ...], dict[Any, Any]]]
@@ -43,17 +65,39 @@ class WorkerManager:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
 
-        workers: list[Worker] = []
+        # Auto-start for backward compatibility
+        if not self._started:
+            self.start()
+
+        # Pre-assign workers sequentially (so least-loaded accounting is
+        # correct), then deploy concurrently via threads. The per-worker lock
+        # serializes deploys that land on the same worker process.
+        assignments: list[tuple[Worker, type[ModuleT], tuple[Any, ...], dict[Any, Any]]] = []
         for module_class, args, kwargs in module_specs:
-            worker = Worker(module_class, args=args, kwargs=kwargs)
-            worker.start_process()
-            workers.append(worker)
+            worker = self._select_worker()
+            worker.reserve_slot()
+            assignments.append((worker, module_class, args, kwargs))
 
-        for worker in workers:
-            worker.wait_until_ready()
-            self._workers.append(worker)
+        def _deploy(
+            item: tuple[Worker, type[ModuleT], tuple[Any, ...], dict[Any, Any]],
+        ) -> RPCClient:
+            worker, module_class, args, kwargs = item
+            actor = worker.deploy_module(module_class, args=args, kwargs=kwargs)
+            return RPCClient(actor, module_class)
 
-        return [worker.get_instance() for worker in workers]
+        with ThreadPoolExecutor(max_workers=len(assignments)) as pool:
+            results = list(pool.map(_deploy, assignments))
+
+        return results
+
+    def suppress_console(self) -> None:
+        """Tell all workers to redirect stdout/stderr to /dev/null."""
+        for worker in self._workers:
+            worker.suppress_console()
+
+    @property
+    def workers(self) -> list[Worker]:
+        return list(self._workers)
 
     def close_all(self) -> None:
         if self._closed:
@@ -69,6 +113,5 @@ class WorkerManager:
                 logger.error(f"Error shutting down worker: {e}", exc_info=True)
 
         self._workers.clear()
-        ActorRegistry.clear()
 
         logger.info("All workers shut down")

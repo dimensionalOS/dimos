@@ -112,7 +112,7 @@ def broadcast(  # type: ignore[no-untyped-def]
         ImageAnnotations,
     )
 
-    from dimos.core import LCMTransport
+    from dimos.core.transport import LCMTransport
     from dimos.msgs.geometry_msgs import PoseStamped
 
     lidar_transport = LCMTransport("/lidar", PointCloud2)  # type: ignore[var-annotated]

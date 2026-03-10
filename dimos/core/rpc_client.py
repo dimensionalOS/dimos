@@ -15,6 +15,8 @@
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from dimos.core.stream import RemoteStream
+from dimos.core.worker import MethodCallProxy
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -136,7 +138,15 @@ class RPCClient:
 
         # return super().__getattr__(name)
         # Try to avoid recursion by directly accessing attributes that are known
-        return self.actor_instance.__getattr__(name)
+        result = self.actor_instance.__getattr__(name)
+
+        # When streams are returned from the worker, their owner is a pickled
+        # Actor with no connection. Replace it with a MethodCallProxy that can
+        # talk to the worker through the parent-side Actor's pipe.
+        if isinstance(result, RemoteStream):
+            result.owner = MethodCallProxy(self.actor_instance)
+
+        return result
 
 
 if TYPE_CHECKING:

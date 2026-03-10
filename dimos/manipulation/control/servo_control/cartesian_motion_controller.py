@@ -32,8 +32,9 @@ import threading
 import time
 from typing import Any
 
-from dimos.core import In, Module, Out, rpc
-from dimos.core.module import ModuleConfig
+from dimos.core.core import rpc
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Twist, Vector3
 from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 from dimos.utils.logging_config import setup_logger

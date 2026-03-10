@@ -15,6 +15,7 @@
 # frame_ipc.py
 # Python 3.9+
 from abc import ABC, abstractmethod
+from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 import os
 import time
@@ -24,6 +25,20 @@ import numpy as np
 _UNLINK_ON_GC = os.getenv("DIMOS_IPC_UNLINK_ON_GC", "0").lower() not in ("0", "false", "no")
 
 
+def _unregister(shm: SharedMemory) -> SharedMemory:
+    """Remove a SharedMemory segment from the resource tracker.
+
+    We manage lifecycle explicitly via close()/unlink(), so the resource
+    tracker must not attempt cleanup on process exit — that causes KeyError
+    spam when multiple processes share the same named segment.
+    """
+    try:
+        resource_tracker.unregister(shm._name, "shared_memory")  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    return shm
+
+
 def _open_shm_with_retry(name: str) -> SharedMemory:
     tries = int(os.getenv("DIMOS_IPC_ATTACH_RETRIES", "40"))  # ~40 tries
     base_ms = float(os.getenv("DIMOS_IPC_ATTACH_BACKOFF_MS", "5"))  # 5 ms
@@ -31,17 +46,12 @@ def _open_shm_with_retry(name: str) -> SharedMemory:
     last = None
     for i in range(tries):
         try:
-            return SharedMemory(name=name)
+            return _unregister(SharedMemory(name=name))
         except FileNotFoundError as e:
             last = e
             # exponential backoff, capped
             time.sleep(min((base_ms * (2**i)), cap_ms) / 1000.0)
     raise FileNotFoundError(f"SHM not found after {tries} retries: {name}") from last
-
-
-def _sanitize_shm_name(name: str) -> str:
-    #  Python's SharedMemory expects names like 'psm_abc', without leading '/'
-    return name.lstrip("/") if isinstance(name, str) else name
 
 
 # ---------------------------
@@ -100,7 +110,6 @@ class FrameChannel(ABC):
         ...
 
 
-from multiprocessing.shared_memory import SharedMemory
 import os
 import weakref
 
@@ -108,7 +117,8 @@ import weakref
 def _safe_unlink(name: str) -> None:
     try:
         shm = SharedMemory(name=name)
-        shm.unlink()
+        shm.unlink()  # unlink() calls resource_tracker.unregister()
+        shm.close()
     except FileNotFoundError:
         pass
     except Exception:
@@ -135,15 +145,18 @@ class CpuShmChannel(FrameChannel):
 
         def _create_or_open(name: str, size: int):  # type: ignore[no-untyped-def]
             try:
+                # Owner: leave registered because unlink() will unregister, and
+                # the tracker serves as safety net if the process crashes.
                 shm = SharedMemory(create=True, size=size, name=name)
                 owner = True
             except FileExistsError:
-                shm = SharedMemory(name=name)  # attach existing
+                # Reader: unregister because we only close(), never unlink().
+                shm = _unregister(SharedMemory(name=name))
                 owner = False
             return shm, owner
 
         if data_name is None or ctrl_name is None:
-            # fallback: random names (old behavior)
+            # Fallback: random names (old behavior) -> always owner
             self._shm_data = SharedMemory(create=True, size=2 * self._nbytes)
             self._shm_ctrl = SharedMemory(create=True, size=24)
             self._is_owner = True

@@ -23,7 +23,7 @@ from dimos_lcm.vision_msgs import ObjectHypothesis, ObjectHypothesisWithPose
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection3D
-from dimos.perception.detection.type.detection2d import Detection2DBBox
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 
 @dataclass

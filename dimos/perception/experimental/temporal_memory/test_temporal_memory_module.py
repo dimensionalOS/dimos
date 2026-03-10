@@ -15,19 +15,20 @@
 import asyncio
 import os
 import pathlib
-import tempfile
 import time
 
 from dotenv import load_dotenv
 import pytest
 from reactivex import operators as ops
 
-from dimos import core
-from dimos.core import Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.stream import Out
+from dimos.core.transport import LCMTransport
 from dimos.models.vl.openai import OpenAIVlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.experimental.temporal_memory import TemporalMemory, TemporalMemoryConfig
-from dimos.protocol import pubsub
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
@@ -36,8 +37,6 @@ from dimos.utils.testing import TimedSensorReplay
 load_dotenv()
 
 logger = setup_logger()
-
-pubsub.lcm.autoconf()
 
 
 class VideoReplayModule(Module):
@@ -79,22 +78,19 @@ class VideoReplayModule(Module):
         logger.info("VideoReplayModule stopped")
 
 
-@pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM replay + dataset not CI-safe.")
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
-@pytest.mark.neverending
+@pytest.mark.skipif_in_ci
+@pytest.mark.skipif_no_openai
+@pytest.mark.slow
 class TestTemporalMemoryModule:
-    @pytest.fixture(scope="function")
-    def temp_dir(self):
-        """Create a temporary directory for test data."""
-        temp_dir = tempfile.mkdtemp(prefix="temporal_memory_test_")
-        yield temp_dir
-
     @pytest.fixture(scope="function")
     def dimos_cluster(self):
         """Create and cleanup Dimos cluster."""
-        dimos = core.start(1)
-        yield dimos
-        dimos.close_all()
+        dimos = ModuleCoordinator()
+        dimos.start()
+        try:
+            yield dimos
+        finally:
+            dimos.stop()
 
     @pytest.fixture(scope="function")
     def video_module(self, dimos_cluster):
@@ -102,7 +98,7 @@ class TestTemporalMemoryModule:
         data_path = get_data("unitree_office_walk")
         video_path = os.path.join(data_path, "video")
         video_module = dimos_cluster.deploy(VideoReplayModule, video_path)
-        video_module.video_out.transport = core.LCMTransport("/test_video", Image)
+        video_module.video_out.transport = LCMTransport("/test_video", Image)
         yield video_module
         try:
             video_module.stop()
@@ -110,9 +106,9 @@ class TestTemporalMemoryModule:
             logger.warning(f"Failed to stop video_module: {e}")
 
     @pytest.fixture(scope="function")
-    def temporal_memory(self, dimos_cluster, temp_dir):
+    def temporal_memory(self, dimos_cluster, tmp_path):
         """Create and cleanup temporal memory module."""
-        output_dir = os.path.join(temp_dir, "temporal_memory_output")
+        output_dir = os.path.join(tmp_path, "temporal_memory_output")
         # Create OpenAIVlModel instance
         api_key = os.getenv("OPENAI_API_KEY")
         vlm = OpenAIVlModel(api_key=api_key)
@@ -137,7 +133,7 @@ class TestTemporalMemoryModule:
 
     @pytest.mark.asyncio
     async def test_temporal_memory_module_with_replay(
-        self, dimos_cluster, video_module, temporal_memory, temp_dir
+        self, dimos_cluster, video_module, temporal_memory, tmp_path
     ):
         """Test TemporalMemory module with TimedSensorReplay inputs."""
         # Connect streams
@@ -216,7 +212,7 @@ class TestTemporalMemoryModule:
         await asyncio.sleep(0.5)
 
         # Verify files were created - stop() already saved them
-        output_dir = os.path.join(temp_dir, "temporal_memory_output")
+        output_dir = os.path.join(tmp_path, "temporal_memory_output")
         output_path = pathlib.Path(output_dir)
         assert output_path.exists(), f"Output directory should exist: {output_dir}"
         assert (output_path / "state.json").exists(), "state.json should exist"
@@ -224,7 +220,3 @@ class TestTemporalMemoryModule:
         assert (output_path / "frames_index.jsonl").exists(), "frames_index.jsonl should exist"
 
         logger.info("All temporal memory module tests passed!")
-
-
-if __name__ == "__main__":
-    pytest.main(["-v", "-s", __file__])

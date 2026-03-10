@@ -16,7 +16,9 @@
 import logging
 import time
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Joy
 from dimos.msgs.std_msgs.Bool import Bool

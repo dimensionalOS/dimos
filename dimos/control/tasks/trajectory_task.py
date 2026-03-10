@@ -26,8 +26,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from dimos.control.task import (
+    BaseControlTask,
     ControlMode,
-    ControlTask,
     CoordinatorState,
     JointCommandOutput,
     ResourceClaim,
@@ -51,7 +51,7 @@ class JointTrajectoryTaskConfig:
     priority: int = 10
 
 
-class JointTrajectoryTask(ControlTask):
+class JointTrajectoryTask(BaseControlTask):
     """Passive trajectory execution task.
 
     Unlike JointTrajectoryController which owns a thread, this task

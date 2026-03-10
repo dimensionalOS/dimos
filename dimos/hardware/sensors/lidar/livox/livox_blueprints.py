@@ -19,4 +19,4 @@ from dimos.visualization.rerun.bridge import rerun_bridge
 mid360 = autoconnect(
     Mid360.blueprint(),
     rerun_bridge(),
-).global_config(n_dask_workers=2, robot_model="mid360")
+).global_config(n_workers=2, robot_model="mid360")

@@ -18,7 +18,7 @@ import numpy as np
 from open3d.geometry import PointCloud
 import pytest
 
-from dimos.core import LCMTransport
+from dimos.core.transport import LCMTransport
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.mapping.pointclouds.occupancy import (
     height_cost_occupancy,

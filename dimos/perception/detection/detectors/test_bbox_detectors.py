@@ -16,7 +16,7 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 import pytest
 from reactivex.disposable import CompositeDisposable
 
-from dimos.core import LCMTransport
+from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import Detection2D, ImageDetections2D
 

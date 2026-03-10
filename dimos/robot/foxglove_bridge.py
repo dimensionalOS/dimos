@@ -21,11 +21,14 @@ from dimos_lcm.foxglove_bridge import (
     FoxgloveBridge as LCMFoxgloveBridge,
 )
 
-from dimos.core import DimosCluster, Module, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.global_config import GlobalConfig
+    from dimos.core.rpc_client import ModuleProxy
 
 logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)
 logging.getLogger("FoxgloveServer").setLevel(logging.ERROR)
@@ -55,11 +58,9 @@ class FoxgloveBridge(Module):
     def start(self) -> None:
         super().start()
 
-        # Skip if Rerun is the selected viewer backend
-        if self._global_config and self._global_config.viewer_backend.startswith("rerun"):
-            logger.info(
-                "Foxglove bridge skipped", viewer_backend=self._global_config.viewer_backend
-            )
+        # Skip if Rerun is the selected viewer
+        if self._global_config and self._global_config.viewer.startswith("rerun"):
+            logger.info("Foxglove bridge skipped", viewer=self._global_config.viewer)
             return
 
         def run_bridge() -> None:
@@ -97,9 +98,9 @@ class FoxgloveBridge(Module):
 
 
 def deploy(
-    dimos: DimosCluster,
+    dimos: ModuleCoordinator,
     shm_channels: list[str] | None = None,
-) -> FoxgloveBridge:
+) -> "ModuleProxy":
     if shm_channels is None:
         shm_channels = [
             "/image#sensor_msgs.Image",
@@ -111,7 +112,7 @@ def deploy(
         shm_channels=shm_channels,
     )
     foxglove_bridge.start()
-    return foxglove_bridge  # type: ignore[no-any-return]
+    return foxglove_bridge
 
 
 foxglove_bridge = FoxgloveBridge.blueprint

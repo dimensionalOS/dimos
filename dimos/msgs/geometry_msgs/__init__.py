@@ -1,3 +1,5 @@
+from dimos.msgs.geometry_msgs.Point import Point
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Pose import Pose, PoseLike, to_pose
 from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -14,6 +16,8 @@ from dimos.msgs.geometry_msgs.Wrench import Wrench
 from dimos.msgs.geometry_msgs.WrenchStamped import WrenchStamped
 
 __all__ = [
+    "Point",
+    "PointStamped",
     "Pose",
     "PoseArray",
     "PoseLike",

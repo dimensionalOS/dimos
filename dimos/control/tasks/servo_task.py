@@ -27,8 +27,8 @@ from dataclasses import dataclass
 import threading
 
 from dimos.control.task import (
+    BaseControlTask,
     ControlMode,
-    ControlTask,
     CoordinatorState,
     JointCommandOutput,
     ResourceClaim,
@@ -53,7 +53,7 @@ class JointServoTaskConfig:
     timeout: float = 0.5  # 500ms default timeout
 
 
-class JointServoTask(ControlTask):
+class JointServoTask(BaseControlTask):
     """Streaming joint position control for teleoperation/visual servoing.
 
     Accepts target positions via set_target() or set_target_by_name() and

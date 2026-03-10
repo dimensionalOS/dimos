@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from dimos.core import In, Out
+    from dimos.core.stream import In, Out
     from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
     from dimos.msgs.trajectory_msgs import JointTrajectory as JointTrajectoryMsg, TrajectoryState
 

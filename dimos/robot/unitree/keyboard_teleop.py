@@ -18,7 +18,9 @@ import threading
 
 import pygame
 
-from dimos.core import Module, Out, rpc
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs import Twist, Vector3
 
 # Force X11 driver to avoid OpenGL threading issues

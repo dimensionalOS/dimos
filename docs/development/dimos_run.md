@@ -3,7 +3,7 @@
 #### Warning: If you just want to run a blueprint you don't need to add it to `dimos run`:
 
 `your_code.py`
-```py
+```python
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic as example_blueprint
 
 if __name__ == "__main__":
@@ -31,7 +31,7 @@ dimos run unitree-go2-agentic
 You can dynamically connect additional modules. For example:
 
 ```bash
-dimos run unitree-go2 --extra-module agent --extra-module navigation_skill
+dimos run unitree-go2 keyboard-teleop
 ```
 
 ## Adding your own
@@ -59,7 +59,7 @@ class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
     simulation: bool = False
     replay: bool = False
-    n_dask_workers: int = 2
+    n_workers: int = 2
 ```
 
 Configuration values can be set from multiple places in order of precedence (later entries override earlier ones):

@@ -13,7 +13,3 @@
 # limitations under the License.
 
 """Teleoperation modules for DimOS."""
-
-from dimos.teleop.base import TeleopProtocol
-
-__all__ = ["TeleopProtocol"]

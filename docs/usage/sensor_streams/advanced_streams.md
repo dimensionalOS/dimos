@@ -1,6 +1,6 @@
 # Advanced Stream Handling
 
-> **Prerequisite:** Read [ReactiveX Fundamentals](reactivex.md) first for Observable basics.
+> **Prerequisite:** Read [ReactiveX Fundamentals](/docs/usage/sensor_streams/reactivex.md) first for Observable basics.
 
 ## Backpressure and Parallel Subscribers to Hardware
 
@@ -106,7 +106,8 @@ The `LATEST` strategy means: when the slow subscriber finishes processing, it ge
 Most module streams offer backpressured observables.
 
 ```python session=bp
-from dimos.core import Module, In
+from dimos.core.module import Module
+from dimos.core.stream import In
 from dimos.msgs.sensor_msgs import Image
 
 class MLModel(Module):
@@ -126,7 +127,7 @@ class MLModel(Module):
 
 Sometimes you don't want a stream, you just want to call a function and get the latest value.
 
-If you are doing this periodically as a part of a processing loop, it is very likely that your code will be much cleaner and safer using actual reactivex pipeline. So bias towards checking our [reactivex quick guide](reactivex.md) and [official docs](https://rxpy.readthedocs.io/)
+If you are doing this periodically as a part of a processing loop, it is very likely that your code will be much cleaner and safer using actual reactivex pipeline. So bias towards checking our [reactivex quick guide](/docs/usage/sensor_streams/reactivex.md) and [official docs](https://rxpy.readthedocs.io/)
 
 (TODO we should actually make this example actually executable)
 

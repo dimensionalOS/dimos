@@ -23,10 +23,9 @@ Uses standard Twist interface for velocity commands.
 import logging
 import os
 
-from dimos import core
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.resource import Resource
-from dimos.core.transport import ROSTransport
+from dimos.core.transport import LCMTransport, ROSTransport
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs import Int32
@@ -98,10 +97,10 @@ class UnitreeB1(Robot, Resource):
             self.connection = self._dimos.deploy(B1ConnectionModule, self.ip, self.port)  # type: ignore[assignment]
 
         # Configure LCM transports for connection (matching G1 pattern)
-        self.connection.cmd_vel.transport = core.LCMTransport("/cmd_vel", TwistStamped)  # type: ignore[attr-defined]
-        self.connection.mode_cmd.transport = core.LCMTransport("/b1/mode", Int32)  # type: ignore[attr-defined]
-        self.connection.odom_in.transport = core.LCMTransport("/state_estimation", Odometry)  # type: ignore[attr-defined]
-        self.connection.odom_pose.transport = core.LCMTransport("/odom", PoseStamped)  # type: ignore[attr-defined]
+        self.connection.cmd_vel.transport = LCMTransport("/cmd_vel", TwistStamped)  # type: ignore[attr-defined]
+        self.connection.mode_cmd.transport = LCMTransport("/b1/mode", Int32)  # type: ignore[attr-defined]
+        self.connection.odom_in.transport = LCMTransport("/state_estimation", Odometry)  # type: ignore[attr-defined]
+        self.connection.odom_pose.transport = LCMTransport("/odom", PoseStamped)  # type: ignore[attr-defined]
 
         # Configure ROS transports for connection
         self.connection.ros_cmd_vel.transport = ROSTransport("/cmd_vel", TwistStamped)  # type: ignore[attr-defined]
@@ -113,8 +112,8 @@ class UnitreeB1(Robot, Resource):
             from dimos.robot.unitree.b1.joystick_module import JoystickModule
 
             self.joystick = self._dimos.deploy(JoystickModule)  # type: ignore[assignment]
-            self.joystick.twist_out.transport = core.LCMTransport("/cmd_vel", TwistStamped)  # type: ignore[attr-defined]
-            self.joystick.mode_out.transport = core.LCMTransport("/b1/mode", Int32)  # type: ignore[attr-defined]
+            self.joystick.twist_out.transport = LCMTransport("/cmd_vel", TwistStamped)  # type: ignore[attr-defined]
+            self.joystick.mode_out.transport = LCMTransport("/b1/mode", Int32)  # type: ignore[attr-defined]
             logger.info("Joystick module deployed - pygame window will open")
 
         self._dimos.start_all_modules()

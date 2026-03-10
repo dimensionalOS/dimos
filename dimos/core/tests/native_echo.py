@@ -15,33 +15,34 @@
 
 """Echo binary for NativeModule tests.
 
-Dumps CLI args as a JSON log line to stdout, then waits for SIGTERM.
-
-Env vars:
-    NATIVE_ECHO_OUTPUT: path to write CLI args as JSON
-    NATIVE_ECHO_DIE_AFTER: seconds to wait before exiting with code 42
+Parses --output_file and --die_after from CLI args, writes remaining
+args as JSON to the output file, then waits for SIGTERM.
 """
 
+import argparse
 import json
-import os
 import signal
 import sys
 import time
 
+print("this message goes to stdout")
+print("this message goes to stderr", file=sys.stderr)
+
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 
-output_path = os.environ.get("NATIVE_ECHO_OUTPUT")
-if output_path:
-    with open(output_path, "w") as f:
-        json.dump(sys.argv[1:], f)
-else:
-    json.dump({"event": "echo_args", "args": sys.argv[1:]}, sys.stdout)
-    sys.stdout.write("\n")
-    sys.stdout.flush()
+parser = argparse.ArgumentParser()
+parser.add_argument("--output_file", default=None)
+parser.add_argument("--die_after", type=float, default=None)
+args, _ = parser.parse_known_args()
 
-die_after = os.environ.get("NATIVE_ECHO_DIE_AFTER")
-if die_after:
-    time.sleep(float(die_after))
+if args.output_file:
+    with open(args.output_file, "w") as f:
+        json.dump(sys.argv[1:], f)
+
+print("my args:", json.dumps(sys.argv[1:]))
+
+if args.die_after is not None:
+    time.sleep(args.die_after)
     sys.exit(42)
 
 signal.pause()

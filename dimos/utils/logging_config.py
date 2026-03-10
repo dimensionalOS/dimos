@@ -14,7 +14,6 @@
 
 from collections.abc import Mapping
 from datetime import datetime
-import inspect
 import logging
 import logging.handlers
 import os
@@ -39,6 +38,45 @@ logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 _LOG_FILE_PATH = None
 
+_RUN_LOG_DIR: Path | None = None
+
+
+def set_run_log_dir(log_dir: str | Path) -> None:
+    """Set per-run log directory. Call BEFORE blueprint.build().
+
+    Updates the global path AND migrates any existing FileHandlers on
+    stdlib loggers so that logs written after this call go to the new
+    directory.  Workers spawned after this call inherit the env var.
+    """
+    global _RUN_LOG_DIR, _LOG_FILE_PATH
+    log_dir = Path(log_dir)
+    _RUN_LOG_DIR = log_dir
+    _RUN_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    new_path = log_dir / "main.jsonl"
+    _LOG_FILE_PATH = new_path
+    os.environ["DIMOS_RUN_LOG_DIR"] = str(log_dir)
+
+    # Migrate existing FileHandlers to the new path
+    for logger_name in list(logging.Logger.manager.loggerDict):
+        logger_obj = logging.getLogger(logger_name)
+        for i, handler in enumerate(logger_obj.handlers):
+            if isinstance(handler, logging.FileHandler) and handler.baseFilename != str(new_path):
+                handler.close()
+                new_handler = logging.handlers.RotatingFileHandler(
+                    new_path,
+                    mode="a",
+                    maxBytes=10 * 1024 * 1024,  # 10 MiB
+                    backupCount=20,
+                    encoding="utf-8",
+                )
+                new_handler.setLevel(handler.level)
+                new_handler.setFormatter(handler.formatter)
+                logger_obj.handlers[i] = new_handler
+
+
+def get_run_log_dir() -> Path | None:
+    return _RUN_LOG_DIR
+
 
 def _get_log_directory() -> Path:
     # Check if running from a git repository
@@ -62,6 +100,13 @@ def _get_log_directory() -> Path:
 
 
 def _get_log_file_path() -> Path:
+    if _RUN_LOG_DIR is not None:
+        return _RUN_LOG_DIR / "main.jsonl"
+    env_log_dir = os.environ.get("DIMOS_RUN_LOG_DIR")
+    if env_log_dir:
+        p = Path(env_log_dir)
+        p.mkdir(parents=True, exist_ok=True)
+        return p / "main.jsonl"
     log_dir = _get_log_directory()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     pid = os.getpid()
@@ -106,6 +151,92 @@ def _configure_structlog() -> Path:
     return _LOG_FILE_PATH
 
 
+_CONSOLE_PATH_WIDTH = 30
+_CONSOLE_USE_COLORS = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+_CONSOLE_LEVEL_COLORS = {
+    "dbg": "\033[1;36m",  # bold cyan
+    "inf": "\033[1;32m",  # bold green
+    "war": "\033[1;33m",  # bold yellow
+    "err": "\033[1;31m",  # bold red
+    "cri": "\033[1;31m",  # bold red
+}
+_CONSOLE_RESET = "\033[0m"
+_CONSOLE_FIXED = "\033[2m"  # dim
+_CONSOLE_TEXT = "\033[0;34m"  # blue
+_CONSOLE_KEY = "\033[0;36m"  # cyan
+_CONSOLE_VAL = "\033[0;35m"  # magenta
+_CONSOLE_EQ = "\033[0;37m"  # white
+
+
+def _compact_console_processor(logger: Any, method_name: str, event_dict: Mapping[str, Any]) -> str:
+    """Format log lines as: HH:MM:SS.mmm[lvl][file.py              ] Event key=value ..."""
+    event_dict = dict(event_dict)
+
+    # Time — HH:MM:SS.mmm
+    timestamp = event_dict.pop("timestamp", "")
+    if timestamp:
+        try:
+            dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            time_str = dt.strftime("%H:%M:%S") + f".{dt.microsecond // 1000:03d}"
+        except (ValueError, AttributeError):
+            time_str = str(timestamp)[:12]
+    else:
+        now = datetime.now()
+        time_str = now.strftime("%H:%M:%S") + f".{now.microsecond // 1000:03d}"
+
+    # Level — 3-letter lowercase abbreviation
+    level = event_dict.pop("level", "???")
+    level_short = level[:3].lower()
+
+    # File path — fixed width, truncated from the left, padded on the right
+    file_path = event_dict.pop("logger", "")
+    if len(file_path) > _CONSOLE_PATH_WIDTH:
+        file_path = file_path[-_CONSOLE_PATH_WIDTH:]
+    file_path = f"{file_path:<{_CONSOLE_PATH_WIDTH}s}"
+
+    # Event message
+    event = event_dict.pop("event", "")
+
+    # Remove internal / callsite / exception fields
+    for key in (
+        "func_name",
+        "lineno",
+        "exception",
+        "exc_info",
+        "exception_type",
+        "exception_message",
+        "traceback_lines",
+        "_record",
+        "_from_structlog",
+    ):
+        event_dict.pop(key, None)
+
+    # Assemble the line
+    if _CONSOLE_USE_COLORS:
+        R = _CONSOLE_RESET
+        color = _CONSOLE_LEVEL_COLORS.get(level_short, "")
+        line = (
+            f"{_CONSOLE_FIXED}{time_str}{R}"
+            f"{color}[{level_short}]{R}"
+            f"{_CONSOLE_FIXED}[{file_path}]{R} "
+            f"{_CONSOLE_TEXT}{event}{R}"
+        )
+        if event_dict:
+            kv_parts = " ".join(
+                f"{_CONSOLE_KEY}{k}{_CONSOLE_EQ}={_CONSOLE_VAL}{v}{R}"
+                for k, v in sorted(event_dict.items())
+            )
+            line += " " + kv_parts
+    else:
+        kv_str = " ".join(f"{k}={v}" for k, v in sorted(event_dict.items()))
+        line = f"{time_str} [{level_short}][{file_path}] {event}"
+        if kv_str:
+            line += " " + kv_str
+
+    return line
+
+
 def setup_logger(*, level: int | None = None) -> Any:
     """Set up a structured logger using structlog.
 
@@ -116,8 +247,7 @@ def setup_logger(*, level: int | None = None) -> Any:
         A configured structlog logger instance.
     """
 
-    caller_frame = inspect.stack()[1]
-    name = caller_frame.filename
+    name = sys._getframe(1).f_code.co_filename
 
     # Convert absolute path to relative path
     try:
@@ -140,55 +270,33 @@ def setup_logger(*, level: int | None = None) -> Any:
     stdlib_logger.setLevel(level)
     stdlib_logger.propagate = False
 
-    # Create console handler with pretty formatting.
-    # We use exception_formatter=None because we handle exceptions
-    # separately with Rich in the global exception handler
-
-    console_renderer = structlog.dev.ConsoleRenderer(
-        colors=True,
-        pad_event=60,
-        force_colors=False,
-        sort_keys=True,
-        # Don't format exceptions in console logs
-        exception_formatter=None,  # type: ignore[arg-type]
-    )
-
-    # Wrapper to remove callsite info and exception details before rendering to console.
-    def console_processor_without_callsite(
-        logger: Any, method_name: str, event_dict: Mapping[str, Any]
-    ) -> str:
-        event_dict = dict(event_dict)
-        # Remove callsite info
-        event_dict.pop("func_name", None)
-        event_dict.pop("lineno", None)
-        # Remove exception fields since we handle them with Rich
-        event_dict.pop("exception", None)
-        event_dict.pop("exc_info", None)
-        event_dict.pop("exception_type", None)
-        event_dict.pop("exception_message", None)
-        event_dict.pop("traceback_lines", None)
-        return console_renderer(logger, method_name, event_dict)
-
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(level)
     console_formatter = structlog.stdlib.ProcessorFormatter(
-        processor=console_processor_without_callsite,
+        processor=_compact_console_processor,
     )
+
     console_handler.setFormatter(console_formatter)
     stdlib_logger.addHandler(console_handler)
 
-    # Create rotating file handler with JSON formatting.
+    # RotatingFileHandler with a size cap to prevent unbounded log growth.
+    # Multiple forkserver workers may each open their own handler to the same
+    # file — a concurrent rotate can lose a few lines, but that is far
+    # preferable to unbounded growth causing OOM on resource-constrained
+    # devices (cameras + LCM at 30 fps can write ~100 MB/min of JSON logs).
     file_handler = logging.handlers.RotatingFileHandler(
         log_file_path,
         mode="a",
-        maxBytes=10 * 1024 * 1024,  # 10MiB
+        maxBytes=10 * 1024 * 1024,  # 10 MiB
         backupCount=20,
         encoding="utf-8",
     )
+
     file_handler.setLevel(level)
     file_formatter = structlog.stdlib.ProcessorFormatter(
         processor=structlog.processors.JSONRenderer(),
     )
+
     file_handler.setFormatter(file_formatter)
     stdlib_logger.addHandler(file_handler)
 

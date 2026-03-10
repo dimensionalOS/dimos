@@ -18,7 +18,8 @@ import argparse
 import logging
 import time
 
-from dimos import core
+from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.gstreamer.gstreamer_camera import GstreamerCameraModule
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
@@ -61,8 +62,8 @@ def main() -> None:
     pubsub.lcm.autoconf()  # type: ignore[attr-defined]
 
     # Start dimos
-    logger.info("Starting dimos...")
-    dimos = core.start(8)
+    dimos = ModuleCoordinator()
+    dimos.start()
 
     # Deploy the GStreamer camera module
     logger.info(f"Deploying GStreamer TCP camera module (connecting to {args.host}:{args.port})...")
@@ -75,7 +76,7 @@ def main() -> None:
     )
 
     # Set up LCM transport for the video output
-    camera.video.transport = core.LCMTransport("/zed/video", Image)
+    camera.video.transport = LCMTransport("/zed/video", Image)
 
     # Counter for received frames
     frame_count = [0]
@@ -123,9 +124,7 @@ def main() -> None:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
-        camera.stop()
-        logger.info("Stopped.")
+        dimos.stop()
 
 
 if __name__ == "__main__":

@@ -363,27 +363,27 @@ class PointCloud2(Timestamped):
         colors = np.asarray(self.pointcloud.colors) if self.pointcloud.has_colors() else None
         return points, colors
 
-    @functools.cache
-    def get_axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
+    @functools.cached_property
+    def axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
         """Get axis-aligned bounding box of the point cloud."""
         return self.pointcloud.get_axis_aligned_bounding_box()
 
-    @functools.cache
-    def get_oriented_bounding_box(self) -> o3d.geometry.OrientedBoundingBox:
+    @functools.cached_property
+    def oriented_bounding_box(self) -> o3d.geometry.OrientedBoundingBox:
         """Get oriented bounding box of the point cloud."""
         return self.pointcloud.get_oriented_bounding_box()
 
-    @functools.cache
-    def get_bounding_box_dimensions(self) -> tuple[float, float, float]:
+    @functools.cached_property
+    def bounding_box_dimensions(self) -> tuple[float, float, float]:
         """Get dimensions (width, height, depth) of axis-aligned bounding box."""
-        bbox = self.get_axis_aligned_bounding_box()
+        bbox = self.axis_aligned_bounding_box
         extent = bbox.get_extent()
         return tuple(extent)
 
     def bounding_box_intersects(self, other: PointCloud2) -> bool:
         # Get axis-aligned bounding boxes
-        bbox1 = self.get_axis_aligned_bounding_box()
-        bbox2 = other.get_axis_aligned_bounding_box()
+        bbox1 = self.axis_aligned_bounding_box
+        bbox2 = other.axis_aligned_bounding_box
 
         # Get min and max bounds
         min1 = bbox1.get_min_bound()
@@ -609,7 +609,7 @@ class PointCloud2(Timestamped):
     def to_rerun(
         self,
         voxel_size: float = 0.05,
-        colormap: str | None = "turbo",
+        colormap: str | None = None,
         colors: list[int] | None = None,
         mode: str = "points",
         size: float | None = None,
@@ -636,6 +636,8 @@ class PointCloud2(Timestamped):
         if len(points) == 0:
             return rr.Points3D([]) if mode != "boxes" else rr.Boxes3D(centers=[])
 
+        if colors is None and colormap is None:
+            colormap = "turbo"  # Default colormap if no colors provided
         # Determine colors
         point_colors = None
         if colormap is not None:

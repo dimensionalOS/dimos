@@ -28,7 +28,10 @@ from dimos_lcm.std_msgs import Bool
 import numpy as np
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.agents.annotation import skill
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.stream import In, Out
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
@@ -100,7 +103,7 @@ class WavefrontFrontierExplorer(Module):
     # LCM outputs
     goal_request: Out[PoseStamped]
 
-    def __init__(  # type: ignore[no-untyped-def]
+    def __init__(
         self,
         min_frontier_perimeter: float = 0.5,
         occupancy_threshold: int = 99,
@@ -110,7 +113,6 @@ class WavefrontFrontierExplorer(Module):
         info_gain_threshold: float = 0.03,
         num_no_gain_attempts: int = 2,
         goal_timeout: float = 15.0,
-        **kwargs,
     ) -> None:
         """
         Initialize the frontier explorer.
@@ -122,7 +124,7 @@ class WavefrontFrontierExplorer(Module):
             info_gain_threshold: Minimum percentage increase in costmap information required to continue exploration (0.05 = 5%)
             num_no_gain_attempts: Maximum number of consecutive attempts with no information gain
         """
-        super().__init__(**kwargs)
+        super().__init__()
         self.min_frontier_perimeter = min_frontier_perimeter
         self.occupancy_threshold = occupancy_threshold
         self.safe_distance = safe_distance
@@ -148,8 +150,6 @@ class WavefrontFrontierExplorer(Module):
         self.exploration_active = False
         self.exploration_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
-
-        logger.info("WavefrontFrontierExplorer module initialized")
 
     @rpc
     def start(self) -> None:
@@ -737,6 +737,16 @@ class WavefrontFrontierExplorer(Module):
         ):
             self.exploration_thread.join(timeout=2.0)
 
+        # Publish current location as goal to stop the robot.
+        if self.latest_odometry is not None:
+            goal = PoseStamped(
+                position=self.latest_odometry.position,
+                orientation=self.latest_odometry.orientation,
+                frame_id="world",
+                ts=self.latest_odometry.ts,
+            )
+            self.goal_request.publish(goal)
+
         logger.info("Stopped autonomous frontier exploration")
         return True
 
@@ -813,6 +823,26 @@ class WavefrontFrontierExplorer(Module):
                         f"No frontier found (attempt {consecutive_failures}/{max_consecutive_failures}). Retrying in 2 seconds..."
                     )
                     threading.Event().wait(2.0)
+
+    @skill
+    def begin_exploration(self) -> str:
+        """Command the robot to move around and explore the area. Cancelled with end_exploration."""
+        started = self.explore()
+        if not started:
+            return "Exploration skill is already active. Use end_exploration to stop before starting again."
+        return (
+            "Started exploration skill. The robot is now moving. Use end_exploration "
+            "to stop. You also need to cancel before starting a new movement tool."
+        )
+
+    @skill
+    def end_exploration(self) -> str:
+        """Cancel the exploration. The robot will stop moving and remain where it is."""
+        stopped = self.stop_exploration()
+        if stopped:
+            return "Stopped exploration. The robot has stopped moving."
+        else:
+            return "Exploration skill was not active, so nothing was stopped."
 
 
 wavefront_frontier_explorer = WavefrontFrontierExplorer.blueprint

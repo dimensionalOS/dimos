@@ -12,10 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.hardware.sensors.camera.realsense.camera import (
-    RealSenseCamera,
-    RealSenseCameraConfig,
-    realsense_camera,
-)
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dimos.hardware.sensors.camera.realsense.camera import (
+        RealSenseCamera,
+        RealSenseCameraConfig,
+        realsense_camera,
+    )
 
 __all__ = ["RealSenseCamera", "RealSenseCameraConfig", "realsense_camera"]
+
+
+def __getattr__(name: str) -> object:
+    if name in __all__:
+        from dimos.hardware.sensors.camera.realsense.camera import (
+            RealSenseCamera,
+            RealSenseCameraConfig,
+            realsense_camera,
+        )
+
+        globals().update(
+            RealSenseCamera=RealSenseCamera,
+            RealSenseCameraConfig=RealSenseCameraConfig,
+            realsense_camera=realsense_camera,
+        )
+        return globals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

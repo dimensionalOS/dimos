@@ -24,15 +24,7 @@ import traceback
 import lcm
 
 from dimos.protocol.service.spec import Service
-from dimos.protocol.service.system_configurator import (
-    BufferConfiguratorLinux,
-    BufferConfiguratorMacOS,
-    MaxFileConfiguratorMacOS,
-    MulticastConfiguratorLinux,
-    MulticastConfiguratorMacOS,
-    SystemConfigurator,
-    configure_system,
-)
+from dimos.protocol.service.system_configurator import configure_system, lcm_configurators
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -46,22 +38,9 @@ _DEFAULT_LCM_URL = os.getenv(
 
 
 def autoconf(check_only: bool = False) -> None:
-    # check multicast and buffer sizes
-    system = platform.system()
-    checks: list[SystemConfigurator] = []
-    if system == "Linux":
-        checks = [
-            MulticastConfiguratorLinux(loopback_interface="lo"),
-            BufferConfiguratorLinux(),
-        ]
-    elif system == "Darwin":
-        checks = [
-            MulticastConfiguratorMacOS(loopback_interface="lo0"),
-            BufferConfiguratorMacOS(),
-            MaxFileConfiguratorMacOS(),
-        ]
-    else:
-        logger.error(f"System configuration not supported on {system}")
+    checks = lcm_configurators()
+    if not checks:
+        logger.error(f"System configuration not supported on {platform.system()}")
         return
     configure_system(checks, check_only=check_only)
 

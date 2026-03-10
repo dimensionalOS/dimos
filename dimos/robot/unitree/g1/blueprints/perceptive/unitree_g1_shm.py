@@ -26,13 +26,13 @@ unitree_g1_shm = autoconnect(
     unitree_g1.transports(
         {
             ("color_image", Image): pSHMTransport(
-                "/g1/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+                "/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
             ),
         }
     ),
     foxglove_bridge(
         shm_channels=[
-            "/g1/color_image#sensor_msgs.Image",
+            "/color_image#sensor_msgs.Image",
         ]
     ),
 )

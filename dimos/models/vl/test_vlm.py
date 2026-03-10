@@ -7,7 +7,7 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
 )
 import pytest
 
-from dimos.core import LCMTransport
+from dimos.core.transport import LCMTransport
 from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.moondream_hosted import MoondreamHostedVlModel
 from dimos.models.vl.qwen import QwenVlModel
@@ -32,7 +32,8 @@ if TYPE_CHECKING:
         (QwenVlModel, "Qwen"),
     ],
 )
-@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.skipif_in_ci
 def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> None:
     if model_class is MoondreamHostedVlModel and 'MOONDREAM_API_KEY' not in os.environ:
         pytest.skip("Need MOONDREAM_API_KEY to run")
@@ -104,7 +105,8 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
         (QwenVlModel, "Qwen"),
     ],
 )
-@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.skipif_in_ci
 def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> None:
     """Test VLM point detection capabilities."""
 
@@ -172,7 +174,8 @@ def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> 
         (MoondreamVlModel, "Moondream"),
     ],
 )
-@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.skipif_in_ci
 def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
     """Test query_multi optimization - single image, multiple queries."""
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
@@ -222,7 +225,7 @@ def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
     ],
 )
 @pytest.mark.tool
-@pytest.mark.gpu
+@pytest.mark.slow
 def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
     """Test query_batch optimization - multiple images, same query."""
     from dimos.utils.testing import TimedSensorReplay
@@ -275,7 +278,8 @@ def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
         (QwenVlModel, [None, (512, 512), (256, 256)]),
     ],
 )
-@pytest.mark.gpu
+@pytest.mark.slow
+@pytest.mark.skipif_in_ci
 def test_vlm_resize(
     model_class: "type[VlModel]",
     sizes: list[tuple[int, int] | None],

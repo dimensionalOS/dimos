@@ -30,11 +30,24 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.components import (
+    HardwareComponent,
+    HardwareType,
+    make_gripper_joints,
+    make_joints,
+    make_twist_base_joints,
+)
 from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.sensor_msgs import JointState
+from dimos.teleop.quest.quest_types import Buttons
+from dimos.utils.data import LfsPath
+
+_PIPER_MODEL_PATH = LfsPath("piper_description/mujoco_model/piper_no_gripper_description.xml")
+_XARM6_MODEL_PATH = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
+_XARM7_MODEL_PATH = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
+
 
 # =============================================================================
 # Single Arm Blueprints
@@ -391,14 +404,6 @@ coordinator_combined_xarm6 = control_coordinator(
 # =============================================================================
 
 
-def _get_piper_model_path() -> str:
-    """Get path to Piper MJCF model for IK solver."""
-    from dimos.utils.data import get_data
-
-    piper_path = get_data("piper_description")
-    return str(piper_path / "mujoco_model" / "piper_no_gripper_description.xml")
-
-
 # Mock 6-DOF arm with CartesianIK
 coordinator_cartesian_ik_mock = control_coordinator(
     tick_rate=100.0,
@@ -418,7 +423,7 @@ coordinator_cartesian_ik_mock = control_coordinator(
             type="cartesian_ik",
             joint_names=[f"arm_joint{i + 1}" for i in range(6)],
             priority=10,
-            model_path=_get_piper_model_path(),
+            model_path=_PIPER_MODEL_PATH,
             ee_joint_id=6,
         ),
     ],
@@ -452,7 +457,7 @@ coordinator_cartesian_ik_piper = control_coordinator(
             type="cartesian_ik",
             joint_names=[f"arm_joint{i + 1}" for i in range(6)],
             priority=10,
-            model_path=_get_piper_model_path(),
+            model_path=_PIPER_MODEL_PATH,
             ee_joint_id=6,
         ),
     ],
@@ -462,6 +467,214 @@ coordinator_cartesian_ik_piper = control_coordinator(
         ("cartesian_command", PoseStamped): LCMTransport(
             "/coordinator/cartesian_command", PoseStamped
         ),
+    }
+)
+
+
+# =============================================================================
+# Teleop IK Blueprints (VR teleoperation with internal Pinocchio IK)
+# =============================================================================
+
+# Single XArm7 with TeleopIK
+coordinator_teleop_xarm7 = control_coordinator(
+    tick_rate=100.0,
+    publish_joint_state=True,
+    joint_state_frame_id="coordinator",
+    hardware=[
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 7),
+            adapter_type="xarm",
+            address="192.168.2.235",
+            auto_enable=True,
+            gripper_joints=make_gripper_joints("arm"),
+        ),
+    ],
+    tasks=[
+        TaskConfig(
+            name="teleop_xarm",
+            type="teleop_ik",
+            joint_names=[f"arm_joint{i + 1}" for i in range(7)],
+            priority=10,
+            model_path=_XARM7_MODEL_PATH,
+            ee_joint_id=7,
+            hand="right",
+            gripper_joint=make_gripper_joints("arm")[0],
+            gripper_open_pos=0.85,  # xArm gripper range
+            gripper_closed_pos=0.0,
+        ),
+    ],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+    }
+)
+
+# Single Piper with TeleopIK
+coordinator_teleop_piper = control_coordinator(
+    tick_rate=100.0,
+    publish_joint_state=True,
+    joint_state_frame_id="coordinator",
+    hardware=[
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 6),
+            adapter_type="piper",
+            address="can0",
+            auto_enable=True,
+        ),
+    ],
+    tasks=[
+        TaskConfig(
+            name="teleop_piper",
+            type="teleop_ik",
+            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
+            priority=10,
+            model_path=_PIPER_MODEL_PATH,
+            ee_joint_id=6,
+            hand="left",
+        ),
+    ],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+    }
+)
+
+# Dual arm teleop: XArm6 + Piper with TeleopIK
+coordinator_teleop_dual = control_coordinator(
+    tick_rate=100.0,
+    publish_joint_state=True,
+    joint_state_frame_id="coordinator",
+    hardware=[
+        HardwareComponent(
+            hardware_id="xarm_arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("xarm_arm", 6),
+            adapter_type="xarm",
+            address="192.168.1.210",
+            auto_enable=True,
+        ),
+        HardwareComponent(
+            hardware_id="piper_arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("piper_arm", 6),
+            adapter_type="piper",
+            address="can0",
+            auto_enable=True,
+        ),
+    ],
+    tasks=[
+        TaskConfig(
+            name="teleop_xarm",
+            type="teleop_ik",
+            joint_names=[f"xarm_arm_joint{i + 1}" for i in range(6)],
+            priority=10,
+            model_path=_XARM6_MODEL_PATH,
+            ee_joint_id=6,
+            hand="left",
+        ),
+        TaskConfig(
+            name="teleop_piper",
+            type="teleop_ik",
+            joint_names=[f"piper_arm_joint{i + 1}" for i in range(6)],
+            priority=10,
+            model_path=_PIPER_MODEL_PATH,
+            ee_joint_id=6,
+            hand="right",
+        ),
+    ],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+    }
+)
+
+
+# =============================================================================
+# Twist Base Blueprints (velocity-commanded platforms)
+# =============================================================================
+
+# Mock holonomic twist base (3-DOF: vx, vy, wz)
+_base_joints = make_twist_base_joints("base")
+coordinator_mock_twist_base = control_coordinator(
+    hardware=[
+        HardwareComponent(
+            hardware_id="base",
+            hardware_type=HardwareType.BASE,
+            joints=_base_joints,
+            adapter_type="mock_twist_base",
+        ),
+    ],
+    tasks=[
+        TaskConfig(
+            name="vel_base",
+            type="velocity",
+            joint_names=_base_joints,
+            priority=10,
+        ),
+    ],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
+    }
+)
+
+
+# =============================================================================
+# Mobile Manipulation Blueprints (arm + twist base)
+# =============================================================================
+
+# Mock arm (7-DOF) + mock holonomic base (3-DOF)
+_mm_base_joints = make_twist_base_joints("base")
+coordinator_mobile_manip_mock = control_coordinator(
+    hardware=[
+        HardwareComponent(
+            hardware_id="arm",
+            hardware_type=HardwareType.MANIPULATOR,
+            joints=make_joints("arm", 7),
+            adapter_type="mock",
+        ),
+        HardwareComponent(
+            hardware_id="base",
+            hardware_type=HardwareType.BASE,
+            joints=_mm_base_joints,
+            adapter_type="mock_twist_base",
+        ),
+    ],
+    tasks=[
+        TaskConfig(
+            name="traj_arm",
+            type="trajectory",
+            joint_names=[f"arm_joint{i + 1}" for i in range(7)],
+            priority=10,
+        ),
+        TaskConfig(
+            name="vel_base",
+            type="velocity",
+            joint_names=_mm_base_joints,
+            priority=10,
+        ),
+    ],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
     }
 )
 
@@ -496,11 +709,19 @@ __all__ = [
     # Dual arm
     "coordinator_dual_mock",
     "coordinator_dual_xarm",
+    # Mobile manipulation
+    "coordinator_mobile_manip_mock",
     # Single arm
     "coordinator_mock",
+    # Twist base
+    "coordinator_mock_twist_base",
     "coordinator_piper",
     "coordinator_piper_xarm",
+    # Teleop IK
+    "coordinator_teleop_dual",
+    "coordinator_teleop_piper",
     "coordinator_teleop_xarm6",
+    "coordinator_teleop_xarm7",
     "coordinator_velocity_xarm6",
     "coordinator_xarm6",
     "coordinator_xarm7",

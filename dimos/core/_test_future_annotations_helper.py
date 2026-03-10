@@ -21,7 +21,7 @@ This file exists because `from __future__ import annotations` affects the entire
 from __future__ import annotations
 
 from dimos.core.module import Module
-from dimos.core.stream import In, Out  # noqa
+from dimos.core.stream import In, Out
 
 
 class FutureData:

@@ -16,24 +16,24 @@
 Blueprints for manipulation module integration with ControlCoordinator.
 
 Usage:
-    # Start coordinator first, then planner:
-    coordinator = xarm7_planner_coordinator.build()
-    coordinator.loop()
+    # Non-agentic (manual RPC):
+    dimos run coordinator-mock
+    dimos run xarm-perception
 
-    # Plan and execute via RPC client:
-    from dimos.manipulation.planning.examples.manipulation_client import ManipulationClient
-    client = ManipulationClient()
-    client.plan_to_joints([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
-    client.execute()
+    # Agentic (LLM agent with skills):
+    dimos run coordinator-mock
+    dimos run xarm-perception-agent
 """
 
 import math
 from pathlib import Path
 
+from dimos.agents.agent import Agent
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense import realsense_camera
 from dimos.manipulation.manipulation_module import manipulation_module
+from dimos.manipulation.pick_and_place_module import pick_and_place_module
 from dimos.manipulation.planning.spec import RobotModelConfig
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import JointState
@@ -176,6 +176,7 @@ def _make_xarm6_config(
         max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
+        home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
 
 
@@ -232,6 +233,8 @@ def _make_xarm7_config(
         coordinator_task_name=coordinator_task,
         gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=tf_extra_links or [],
+        # Home configuration: arm extended forward, elbow up (safe observe pose)
+        home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
 
 
@@ -272,6 +275,7 @@ def _make_piper_config(
         max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
+        home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
 
 
@@ -325,6 +329,43 @@ xarm7_planner_coordinator = manipulation_module(
 )
 
 
+# XArm7 planner + LLM agent for testing base ManipulationModule skills
+# No perception — uses the base module's planning + gripper skills only.
+# Usage: dimos run coordinator-mock, then dimos run xarm7-planner-coordinator-agent
+_BASE_MANIPULATION_AGENT_SYSTEM_PROMPT = """\
+You are a robotic manipulation assistant controlling an xArm7 robot arm.
+
+Available skills:
+- get_robot_state: Get current joint positions, end-effector pose, and gripper state.
+- move_to_pose: Move end-effector to ABSOLUTE x, y, z (meters) with optional roll, pitch, yaw (radians).
+- move_to_joints: Move to a joint configuration (comma-separated radians).
+- open_gripper / close_gripper / set_gripper: Control the gripper.
+- go_home: Move to the home/observe position.
+- go_init: Return to the startup position.
+- reset: Clear a FAULT state and return to IDLE. Use this when a motion fails.
+
+COORDINATE SYSTEM (world frame, meters):
+- X axis = forward (away from the robot base)
+- Y axis = left
+- Z axis = up
+- Z=0 is the robot base level; typical working height is Z = 0.2-0.5
+
+CRITICAL WORKFLOW for relative movement requests (e.g. "move 20cm forward"):
+1. Call get_robot_state to get the current EE pose.
+2. Add the requested offset to the CURRENT position. Example: if EE is at \
+(0.3, 0.0, 0.4) and user says "move 20cm forward", target is (0.5, 0.0, 0.4).
+3. Call move_to_pose with the computed ABSOLUTE target.
+NEVER pass only the offset as coordinates — that would send the robot to near-origin.
+
+ERROR RECOVERY: If a motion fails or the state becomes FAULT, call reset before retrying.
+"""
+
+xarm7_planner_coordinator_agent = autoconnect(
+    xarm7_planner_coordinator,
+    Agent.blueprint(system_prompt=_BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
+)
+
+
 # XArm7 with eye-in-hand RealSense camera for perception-based manipulation
 # TF chain: world → link7 (ManipulationModule) → camera_link (RealSense)
 # Usage: dimos run coordinator-mock, then dimos run xarm-perception
@@ -335,7 +376,7 @@ _XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
 
 xarm_perception = (
     autoconnect(
-        manipulation_module(
+        pick_and_place_module(
             robots=[
                 _make_xarm7_config(
                     "arm",
@@ -362,7 +403,45 @@ xarm_perception = (
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
-    .global_config(viewer_backend="foxglove")
+    .global_config(viewer="foxglove")
+)
+
+
+# XArm7 perception + LLM agent for agentic manipulation
+# Skills (pick, place, move_to_pose, etc.) auto-register with the agent's SkillCoordinator.
+# Usage: dimos run coordinator-mock, then dimos run xarm-perception-agent
+_MANIPULATION_AGENT_SYSTEM_PROMPT = """\
+You are a robotic manipulation assistant controlling an xArm7 robot arm.
+
+Available skills:
+- get_robot_state: Get current joint positions, end-effector pose, and gripper state.
+- scan_objects: Scan scene and list detected objects with 3D positions. Always call this first.
+- pick: Pick up an object by name. Requires scan_objects first.
+- place: Place a held object at x, y, z position.
+- place_back: Place a held object back at its original pick position.
+- pick_and_place: Pick an object and place it at a target location.
+- move_to_pose: Move end-effector to ABSOLUTE x, y, z (meters) with optional roll, pitch, yaw (radians).
+- move_to_joints: Move to a joint configuration (comma-separated radians).
+- open_gripper / close_gripper / set_gripper: Control the gripper.
+- go_home: Move to the home/observe position.
+- go_init: Return to the startup position.
+- get_scene_info: Get full robot state, detected objects, and scene info.
+- reset: Clear a FAULT state and return to IDLE.
+- clear_perception_obstacles: Clear detected obstacles from the planning world. \
+Use when planning fails with COLLISION_AT_START.
+
+COORDINATE SYSTEM (world frame, meters): X=forward, Y=left, Z=up. Z=0 is robot base.
+
+ERROR RECOVERY: If planning fails with COLLISION_AT_START, call clear_perception_obstacles \
+then reset, then retry. Detected objects may overlap the robot's current position.
+
+After pick or place, return to init with go_init unless another action follows immediately.
+Do NOT use the 'detect' or 'select' skills — use scan_objects instead.
+"""
+
+xarm_perception_agent = autoconnect(
+    xarm_perception,
+    Agent.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
 
 
@@ -372,5 +451,7 @@ __all__ = [
     "dual_xarm6_planner",
     "xarm6_planner_only",
     "xarm7_planner_coordinator",
+    "xarm7_planner_coordinator_agent",
     "xarm_perception",
+    "xarm_perception_agent",
 ]

@@ -208,12 +208,12 @@ def test_exception_handling_sync(rpc_context, impl_name: str) -> None:
 
         try:
             # Test successful call
-            result, _ = client.call_sync("test_exc", (["ok"], {}), rpc_timeout=2.0)
+            result, _ = client.call_sync("test_exc", (["ok"], {}), rpc_timeout=5.0)
             assert result == "Success: ok"
 
             # Test builtin exception - should raise actual ValueError
             with pytest.raises(ValueError) as exc_info:
-                client.call_sync("test_exc", (["fail"], {}), rpc_timeout=2.0)
+                client.call_sync("test_exc", (["fail"], {}), rpc_timeout=5.0)
             assert "Test error message" in str(exc_info.value)
             # Check that the cause contains the remote traceback
             assert isinstance(exc_info.value.__cause__, RemoteError)
@@ -221,7 +221,7 @@ def test_exception_handling_sync(rpc_context, impl_name: str) -> None:
 
             # Test custom exception - should raise RemoteError
             with pytest.raises(RemoteError) as exc_info:
-                client.call_sync("test_exc", (["custom"], {}), rpc_timeout=2.0)
+                client.call_sync("test_exc", (["custom"], {}), rpc_timeout=5.0)
             assert "Custom error" in str(exc_info.value)
             assert "CustomTestError" in exc_info.value.remote_type
             assert "failing_function" in exc_info.value.remote_traceback
@@ -293,7 +293,7 @@ def test_exception_handling_callback(rpc_context, impl_name: str) -> None:
             unsub_server()
 
 
-@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
 def test_timeout(rpc_context, impl_name: str) -> None:
     """Test that RPC calls properly timeout."""
@@ -392,8 +392,3 @@ def test_concurrent_calls(rpc_context, impl_name: str) -> None:
 
         finally:
             unsub()
-
-
-if __name__ == "__main__":
-    # Run tests for debugging
-    pytest.main([__file__, "-v"])

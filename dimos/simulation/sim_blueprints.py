@@ -21,12 +21,11 @@ from dimos.msgs.sensor_msgs import (  # type: ignore[attr-defined]
 )
 from dimos.msgs.trajectory_msgs import JointTrajectory
 from dimos.simulation.manipulators.sim_module import simulation
-from dimos.utils.data import get_data
+from dimos.utils.data import LfsPath
 
 xarm7_trajectory_sim = simulation(
     engine="mujoco",
-    config_path=lambda: get_data("xarm7")
-    / "scene.xml",  # avoid triggering LFS downloads during tests
+    config_path=LfsPath("xarm7/scene.xml"),
     headless=True,
 ).transports(
     {

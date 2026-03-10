@@ -34,7 +34,7 @@ Below we set up replay of real camera and lidar data from the Unitree Go2 robot.
 <details>
 <summary>Stream Setup</summary>
 
-You can read more about [sensor storage here](storage_replay.md) and [LFS data storage here](/docs/development/large_file_management.md).
+You can read more about [sensor storage here](/docs/usage/sensor_streams/storage_replay.md) and [LFS data storage here](/docs/development/large_file_management.md).
 
 ```python session=align no-result
 from reactivex import Subject
@@ -44,8 +44,8 @@ from reactivex import operators as ops
 import reactivex as rx
 
 # Load recorded Go2 sensor streams
-video_replay = TimedSensorReplay("unitree_go2_bigoffice/video")
-lidar_replay = TimedSensorReplay("unitree_go2_bigoffice/lidar")
+video_replay = TimedSensorReplay("go2_sf_office/video")
+lidar_replay = TimedSensorReplay("go2_sf_office/lidar")
 
 # This is a bit tricky. We find the first video frame timestamp, then add 2 seconds to it.
 seek_ts = video_replay.first_timestamp() + 2
@@ -196,7 +196,7 @@ plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 
 ## Combine Frame Alignment with a Quality Filter
 
-More on [quality filtering here](quality_filter.md).
+More on [quality filtering here](/docs/usage/sensor_streams/quality_filter.md).
 
 ```python session=align
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier

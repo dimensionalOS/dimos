@@ -18,7 +18,6 @@ import atexit
 from dataclasses import dataclass, field
 import threading
 import time
-from typing import TYPE_CHECKING
 
 import cv2
 import pyzed.sl as sl
@@ -27,6 +26,7 @@ import reactivex as rx
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
@@ -40,9 +40,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.spec import perception
 from dimos.utils.reactive import backpressure
-
-if TYPE_CHECKING:
-    from dimos.core.stream import Out
 
 
 def default_base_transform() -> Transform:
