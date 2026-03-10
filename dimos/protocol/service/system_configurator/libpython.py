@@ -49,7 +49,7 @@ class LibPythonConfiguratorMacOS(SystemConfigurator):
 
         for dylib in real_lib.glob("libpython*.dylib"):
             target = venv_lib / dylib.name
-            if not target.exists():
+            if not target.exists() and not target.is_symlink():
                 self._missing.append((target, dylib))
 
         return not self._missing
@@ -64,6 +64,11 @@ class LibPythonConfiguratorMacOS(SystemConfigurator):
 
     def fix(self) -> None:
         for symlink_path, real_path in self._missing:
-            symlink_path.parent.mkdir(parents=True, exist_ok=True)
-            symlink_path.symlink_to(real_path)
-            logger.warning("Created symlink %s -> %s for mjpython", symlink_path, real_path)
+            try:
+                symlink_path.parent.mkdir(parents=True, exist_ok=True)
+                if symlink_path.is_symlink():
+                    symlink_path.unlink()
+                symlink_path.symlink_to(real_path)
+                logger.warning("Created symlink %s -> %s for mjpython", symlink_path, real_path)
+            except OSError as error:
+                logger.warning("Failed to create symlink %s -> %s: %s", symlink_path, real_path, error)
