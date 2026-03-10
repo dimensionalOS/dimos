@@ -49,7 +49,7 @@ class LibPythonConfiguratorMacOS(SystemConfigurator):
 
         for dylib in real_lib.glob("libpython*.dylib"):
             target = venv_lib / dylib.name
-            if not target.exists() and not target.is_symlink():
+            if not target.exists():
                 self._missing.append((target, dylib))
 
         return not self._missing
