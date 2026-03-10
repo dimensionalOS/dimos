@@ -298,6 +298,8 @@ def log_cmd(
         count = None if all_lines else lines
         for line in read_log(path, count):
             typer.echo(format_line(line, json_output=json_output))
+
+
 mcp_app = typer.Typer(help="Interact with the running MCP server")
 main.add_typer(mcp_app, name="mcp")
 
