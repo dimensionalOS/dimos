@@ -492,7 +492,12 @@ class EntityGraphDB:
 
     # ==================== Bulk Save ====================
 
-    def save_window_data(self, parsed: dict[str, Any], timestamp_s: float) -> None:
+    def save_window_data(
+        self,
+        parsed: dict[str, Any],
+        timestamp_s: float,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         """Save parsed window data (entities and relations) to the graph database."""
         try:
             for entity in parsed.get("new_entities", []):
@@ -501,6 +506,7 @@ class EntityGraphDB:
                     entity_type=entity["type"],
                     descriptor=entity.get("descriptor", "unknown"),
                     timestamp_s=timestamp_s,
+                    metadata=metadata,
                 )
             for entity in parsed.get("entities_present", []):
                 if isinstance(entity, dict) and "id" in entity:
@@ -511,6 +517,7 @@ class EntityGraphDB:
                             entity_type=entity.get("type", "unknown"),
                             descriptor=descriptor,
                             timestamp_s=timestamp_s,
+                            metadata=metadata,
                         )
                     else:
                         existing = self.get_entity(entity["id"])
@@ -520,6 +527,7 @@ class EntityGraphDB:
                                 entity_type=existing["entity_type"],
                                 descriptor=existing["descriptor"],
                                 timestamp_s=timestamp_s,
+                                metadata=metadata,
                             )
             for relation in parsed.get("relations", []):
                 subject_id = (

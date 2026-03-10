@@ -418,8 +418,8 @@ class TestJSONLLogging:
 # ======================================================================
 
 
-class TestRerunVisualization:
-    def test_visualize_graph_calls_rerun(self, tmp_path: Path) -> None:
+class TestEntityMarkers:
+    def test_publish_entity_markers(self, tmp_path: Path) -> None:
         db_dir = tmp_path / "db"
         db_dir.mkdir()
 
@@ -432,24 +432,42 @@ class TestRerunVisualization:
                 config=TemporalMemoryConfig(db_dir=str(db_dir), visualize=True),
             )
 
-        # Populate DB
-        tm._graph_db.upsert_entity("E1", "person", "walking person", 1.0)
-        tm._graph_db.upsert_entity("E2", "object", "table", 1.0)
-        tm._graph_db.add_relation("near", "E1", "E2", 0.9, 1.0)
+        # Populate DB with world positions
+        tm._graph_db.upsert_entity(
+            "E1", "person", "walking person", 1.0,
+            metadata={"world_x": 1.0, "world_y": 2.0, "world_z": 0.0},
+        )
+        tm._graph_db.upsert_entity(
+            "E2", "object", "table", 1.0,
+            metadata={"world_x": 3.0, "world_y": 4.0, "world_z": 0.0},
+        )
 
-        parsed = {"caption": "A person near a table"}
+        # Mock the output stream publish
+        tm.entity_markers = MagicMock()
+        tm._publish_entity_markers()
 
-        with patch("rerun.log"):
-            with patch("rerun.GraphNodes") as mock_nodes:
-                with patch("rerun.GraphEdges") as mock_edges:
-                    with patch("rerun.TextDocument") as mock_text:
-                        tm._visualize_graph(parsed, 1.0)
-
-        # Should have called rr.log at least once for nodes
-        mock_nodes.assert_called_once()
-        mock_edges.assert_called_once()
-        mock_text.assert_called_once_with("A person near a table")
+        # Should have published EntityMarkers
+        tm.entity_markers.publish.assert_called_once()
+        msg = tm.entity_markers.publish.call_args[0][0]
+        assert len(msg.markers) == 2
+        ids = {m.entity_id for m in msg.markers}
+        assert ids == {"E1", "E2"}
+        e1 = next(m for m in msg.markers if m.entity_id == "E1")
+        assert e1.x == 1.0
+        assert e1.y == 2.0
         tm.stop()
+
+    def test_markers_to_rerun(self) -> None:
+        from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
+
+        markers = EntityMarkers(markers=[
+            Marker("E1", "person walking", "person", 1.0, 2.0, 0.3),
+            Marker("E2", "wooden table", "object", 3.0, 4.0, 0.3),
+        ])
+        archetype = markers.to_rerun()
+        # Should return rr.Points3D
+        import rerun as rr
+        assert isinstance(archetype, rr.Points3D)
 
 
 # ======================================================================

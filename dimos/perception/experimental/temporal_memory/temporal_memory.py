@@ -36,8 +36,10 @@ from reactivex.disposable import Disposable
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.stream import In
+from dimos.core.stream import In, Out
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.utils.logging_config import get_run_log_dir, setup_logger
 
@@ -112,6 +114,8 @@ class TemporalMemory(Module):
     """
 
     color_image: In[Image]
+    odometry: In[Odometry]
+    entity_markers: Out[EntityMarkers]
 
     def __init__(
         self,
@@ -135,6 +139,11 @@ class TemporalMemory(Module):
 
         self._stopped = False
         self._distance_threads: list[threading.Thread] = []
+
+        # Robot pose for entity world positioning
+        self._robot_x: float = 0.0
+        self._robot_y: float = 0.0
+        self._robot_z: float = 0.0
 
         # CLIP filter
         self._clip_filter: CLIPFrameFilter | None = None
@@ -231,51 +240,38 @@ class TemporalMemory(Module):
     # Rerun visualization
     # ------------------------------------------------------------------
 
-    def _visualize_graph(self, parsed: dict[str, Any], timestamp_s: float) -> None:
+    def _publish_entity_markers(self) -> None:
+        """Publish entity positions as 3D markers for Rerun overlay on the map."""
         if not self._config.visualize:
             return
         try:
-            import rerun as rr
-
-            # In multi-process deployments, rr.log() is a silent no-op when
-            # no recording exists (e.g. worker process without bridge).
-            # This is fine — the bridge is the canonical Rerun entry point.
-
             all_entities = self._graph_db.get_all_entities()
             if not all_entities:
                 return
 
-            entity_ids = [e["entity_id"] for e in all_entities]
-            labels = [f"{e['entity_id']}: {(e['descriptor'] or '')[:30]}" for e in all_entities]
-
-            type_colors = {
-                "person": (255, 100, 100),
-                "object": (100, 255, 100),
-                "location": (100, 100, 255),
-            }
-            colors = [type_colors.get(e["entity_type"], (200, 200, 200)) for e in all_entities]
-
-            rr.log(
-                "temporal_memory/entity_graph",
-                rr.GraphNodes(node_ids=entity_ids, labels=labels, colors=colors),
-            )
-
-            recent_relations = self._graph_db.get_recent_relations(limit=50)
-            if recent_relations:
-                edges = [(r["subject_id"], r["object_id"]) for r in recent_relations]
-                rr.log(
-                    "temporal_memory/entity_graph",
-                    rr.GraphEdges(edges=edges, graph_type="directed"),
+            markers: list[Marker] = []
+            for e in all_entities:
+                meta = e.get("metadata") or {}
+                x = meta.get("world_x")
+                y = meta.get("world_y")
+                z = meta.get("world_z")
+                if x is None or y is None:
+                    continue
+                markers.append(
+                    Marker(
+                        entity_id=e["entity_id"],
+                        label=(e.get("descriptor") or "")[:40],
+                        entity_type=e.get("entity_type", "object"),
+                        x=x,
+                        y=y,
+                        z=(z or 0.0) + 0.3,  # Offset up so labels float above ground
+                    )
                 )
 
-            caption = parsed.get("caption", "")
-            if caption:
-                rr.log("temporal_memory/caption", rr.TextDocument(caption))
-
-        except ImportError:
-            pass
+            if markers:
+                self.entity_markers.publish(EntityMarkers(markers=markers))
         except Exception as e:
-            logger.debug(f"rerun visualization error: {e}")
+            logger.debug(f"entity marker publish error: {e}")
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -296,6 +292,15 @@ class TemporalMemory(Module):
         )
         unsub_image = self.color_image.subscribe(frame_subject.on_next)
         self._disposables.add(Disposable(unsub_image))
+
+        # Odometry tracking for entity world positioning
+        def _on_odom(msg: Odometry) -> None:
+            self._robot_x = msg.position.x
+            self._robot_y = msg.position.y
+            self._robot_z = msg.position.z
+
+        unsub_odom = self.odometry.subscribe(_on_odom)
+        self._disposables.add(Disposable(unsub_odom))
 
         # Periodic window analysis
         self._disposables.add(
@@ -405,12 +410,16 @@ class TemporalMemory(Module):
         )
         self._recent_windows.append(parsed)
 
-        # Save to graph DB
+        # Save to graph DB with robot world position
         if self._graph_db:
-            self._graph_db.save_window_data(parsed, w_end)
+            self._graph_db.save_window_data(
+                parsed,
+                w_end,
+                metadata={"world_x": self._robot_x, "world_y": self._robot_y, "world_z": self._robot_z},
+            )
 
-        # Rerun visualization
-        self._visualize_graph(parsed, w_end)
+        # Publish entity markers for Rerun 3D overlay
+        self._publish_entity_markers()
 
         # VLM Call #3: rolling summary
         if needs_summary:
