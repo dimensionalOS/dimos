@@ -21,12 +21,12 @@ as labeled colored points overlaid on the 3D scene.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from io import BytesIO
 import json
 import struct
 import time
-from dataclasses import dataclass, field
-from io import BytesIO
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from rerun._baseclasses import Archetype
@@ -96,7 +96,7 @@ class EntityMarkers(Timestamped):
         return buf.getvalue()
 
     @classmethod
-    def _decode_one(cls, buf: BytesIO) -> "EntityMarkers":
+    def _decode_one(cls, buf: BytesIO) -> EntityMarkers:
         (length,) = struct.unpack(">I", buf.read(4))
         payload = json.loads(buf.read(length).decode())
         markers = [
@@ -113,12 +113,12 @@ class EntityMarkers(Timestamped):
         return cls(markers=markers)
 
     @classmethod
-    def decode(cls, data: bytes) -> "EntityMarkers":
+    def decode(cls, data: bytes) -> EntityMarkers:
         return cls._decode_one(BytesIO(data))
 
     # -- Rerun conversion --
 
-    def to_rerun(self) -> "Archetype":
+    def to_rerun(self) -> Archetype:
         import rerun as rr
 
         if not self.markers:

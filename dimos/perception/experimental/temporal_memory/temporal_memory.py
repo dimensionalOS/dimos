@@ -39,8 +39,8 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
+from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
 from dimos.utils.logging_config import get_run_log_dir, setup_logger
 
 from . import temporal_utils as tu
@@ -415,7 +415,11 @@ class TemporalMemory(Module):
             self._graph_db.save_window_data(
                 parsed,
                 w_end,
-                metadata={"world_x": self._robot_x, "world_y": self._robot_y, "world_z": self._robot_z},
+                metadata={
+                    "world_x": self._robot_x,
+                    "world_y": self._robot_y,
+                    "world_z": self._robot_z,
+                },
             )
 
         # Publish entity markers for Rerun 3D overlay

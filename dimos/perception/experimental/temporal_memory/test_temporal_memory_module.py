@@ -434,11 +434,17 @@ class TestEntityMarkers:
 
         # Populate DB with world positions
         tm._graph_db.upsert_entity(
-            "E1", "person", "walking person", 1.0,
+            "E1",
+            "person",
+            "walking person",
+            1.0,
             metadata={"world_x": 1.0, "world_y": 2.0, "world_z": 0.0},
         )
         tm._graph_db.upsert_entity(
-            "E2", "object", "table", 1.0,
+            "E2",
+            "object",
+            "table",
+            1.0,
             metadata={"world_x": 3.0, "world_y": 4.0, "world_z": 0.0},
         )
 
@@ -460,13 +466,16 @@ class TestEntityMarkers:
     def test_markers_to_rerun(self) -> None:
         from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
 
-        markers = EntityMarkers(markers=[
-            Marker("E1", "person walking", "person", 1.0, 2.0, 0.3),
-            Marker("E2", "wooden table", "object", 3.0, 4.0, 0.3),
-        ])
+        markers = EntityMarkers(
+            markers=[
+                Marker("E1", "person walking", "person", 1.0, 2.0, 0.3),
+                Marker("E2", "wooden table", "object", 3.0, 4.0, 0.3),
+            ]
+        )
         archetype = markers.to_rerun()
         # Should return rr.Points3D
         import rerun as rr
+
         assert isinstance(archetype, rr.Points3D)
 
 
