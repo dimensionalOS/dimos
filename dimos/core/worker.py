@@ -13,8 +13,10 @@
 # limitations under the License.
 from __future__ import annotations
 
+import logging
 import multiprocessing
 import os
+import sys
 import threading
 import traceback
 from typing import TYPE_CHECKING, Any
@@ -234,6 +236,16 @@ class Worker:
         )
         return actor
 
+    def suppress_console(self) -> None:
+        if self._conn is None:
+            return
+        try:
+            with self._lock:
+                self._conn.send({"type": "suppress_console"})
+                self._conn.recv()
+        except (BrokenPipeError, EOFError, ConnectionResetError):
+            pass
+
     def shutdown(self) -> None:
         if self._conn is not None:
             try:
@@ -262,6 +274,23 @@ class Worker:
                 self._process.terminate()
                 self._process.join(timeout=1)
             self._process = None
+
+
+def _suppress_console_output() -> None:
+    """Redirect stdout/stderr to /dev/null and strip console handlers."""
+    devnull = open(os.devnull, "w")
+    os.dup2(devnull.fileno(), sys.stdout.fileno())
+    os.dup2(devnull.fileno(), sys.stderr.fileno())
+    devnull.close()
+
+    # Remove StreamHandlers.
+    for name in list(logging.Logger.manager.loggerDict):
+        lg = logging.getLogger(name)
+        lg.handlers = [
+            h
+            for h in lg.handlers
+            if not isinstance(h, logging.StreamHandler) or isinstance(h, logging.FileHandler)
+        ]
 
 
 def _worker_entrypoint(
@@ -338,6 +367,10 @@ def _worker_loop(conn: Connection, instances: dict[int, Any], worker_id: int) ->
                 method = getattr(instances[module_id], request["name"])
                 result = method(*request.get("args", ()), **request.get("kwargs", {}))
                 response["result"] = result
+
+            elif req_type == "suppress_console":
+                _suppress_console_output()
+                response["result"] = True
 
             elif req_type == "shutdown":
                 response["result"] = True

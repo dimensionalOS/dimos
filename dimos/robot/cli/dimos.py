@@ -182,6 +182,8 @@ def run(
         typer.echo("  Stop:      dimos stop")
         typer.echo("  Status:    dimos status")
 
+        coordinator.suppress_console()
+
         daemonize(log_dir)
 
         entry = RunEntry(
