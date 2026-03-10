@@ -171,7 +171,7 @@ class OdometryToOdom(Module):
 unitree_go2_fastlio = (
     autoconnect(
         unitree_go2_basic,
-        FastLio2.blueprint(voxel_size=VOXEL_SIZE, map_voxel_size=VOXEL_SIZE, map_freq=-1),
+        FastLio2.blueprint(voxel_size=VOXEL_SIZE, map_voxel_size=VOXEL_SIZE, map_freq=-1, lidar_ip="192.168.1.157"),
         TransformToRobot.blueprint(
             angle_of_mid_360_on_robot=ANGLE_OF_MID_360_ON_ROBOT,
             height_of_mid_360_on_robot=HEIGHT_OF_MID_360_ON_ROBOT,
@@ -182,7 +182,6 @@ unitree_go2_fastlio = (
         cost_mapper(),
         replanning_a_star_planner(),
         wavefront_frontier_explorer(),
-        rerun_bridge(),
     )
     .remappings(
         [
