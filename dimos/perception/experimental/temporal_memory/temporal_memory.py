@@ -163,8 +163,14 @@ class TemporalMemory(Module):
         self._graph_db = EntityGraphDB(db_path=db_path)
 
         # Per-run JSONL log
+        # get_run_log_dir() checks the in-process global; fall back to the
+        # env var which is inherited by forkserver worker processes.
         self._jsonl_path: Path | None = None
         run_log_dir = get_run_log_dir()
+        if run_log_dir is None:
+            env_dir = os.environ.get("DIMOS_RUN_LOG_DIR")
+            if env_dir:
+                run_log_dir = Path(env_dir)
         if run_log_dir:
             tm_log_dir = run_log_dir / "temporal_memory"
             tm_log_dir.mkdir(parents=True, exist_ok=True)
@@ -219,8 +225,26 @@ class TemporalMemory(Module):
     # Rerun visualization
     # ------------------------------------------------------------------
 
+    def _ensure_rerun(self) -> bool:
+        """Lazily connect to Rerun from this worker process."""
+        if hasattr(self, "_rr_connected"):
+            return self._rr_connected
+        try:
+            import rerun as rr
+
+            rr.init("dimos", spawn=False)
+            rr.connect_grpc("rerun+http://127.0.0.1:9876/proxy")
+            self._rr_connected = True
+            logger.info("connected to Rerun gRPC for visualization")
+        except Exception as e:
+            logger.debug(f"rerun connect failed (visualization disabled): {e}")
+            self._rr_connected = False
+        return self._rr_connected
+
     def _visualize_graph(self, parsed: dict[str, Any], timestamp_s: float) -> None:
         if not self._config.visualize:
+            return
+        if not self._ensure_rerun():
             return
         try:
             import rerun as rr
@@ -486,6 +510,7 @@ class TemporalMemory(Module):
                 e["id"] for e in snap.entity_roster if isinstance(e, dict) and "id" in e
             ]
             if all_entity_ids:
+                logger.info(f"query: building graph context for {len(all_entity_ids)} entities")
                 graph_context = tu.build_graph_context(
                     graph_db=self._graph_db,
                     entity_ids=all_entity_ids,
@@ -496,6 +521,9 @@ class TemporalMemory(Module):
                 )
                 context["graph_knowledge"] = graph_context
 
+        logger.info(
+            f"query: calling VLM with {len(context.get('currently_present_entities', []))} present entities"
+        )
         qr = self._analyzer.answer_query(question, context, latest.image)
         if qr is None:
             return "error: VLM query failed"
