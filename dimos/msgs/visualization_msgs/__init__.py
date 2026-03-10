@@ -13,3 +13,7 @@
 # limitations under the License.
 
 """Visualization message types."""
+
+from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers
+
+__all__ = ["EntityMarkers"]

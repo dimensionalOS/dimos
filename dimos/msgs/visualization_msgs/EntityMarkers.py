@@ -134,3 +134,12 @@ class EntityMarkers(Timestamped):
             colors=colors,
             radii=[0.15] * len(self.markers),
         )
+
+    # -- LCM compat (so autoconnect assigns LCMTransport, not pLCM) --
+
+    def lcm_encode(self) -> bytes:
+        return self.encode()
+
+    @classmethod
+    def lcm_decode(cls, data: bytes, **kwargs: object) -> "EntityMarkers":
+        return cls.decode(data)
