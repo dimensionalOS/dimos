@@ -34,7 +34,6 @@ from reactivex import Subject, interval
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
-from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -88,7 +87,9 @@ class TemporalMemoryConfig(ModuleConfig):
     temperature: float = 0.2
 
     # Storage
-    db_dir: str | Path | None = None  # Persistent DB dir (default: memory/temporal/)
+    db_dir: str | Path | None = (
+        None  # Persistent DB dir (default: ~/.local/state/dimos/temporal_memory/)
+    )
     new_memory: bool = False  # Clear persistent DB on start
 
     # Visualization
@@ -149,18 +150,20 @@ class TemporalMemory(Module):
             logger.warning("clip not available")
             self._use_clip_filtering = False
 
-        # Persistent DB
-        db_dir = (
-            Path(self._config.db_dir)
-            if self._config.db_dir
-            else DIMOS_PROJECT_ROOT / "memory" / "temporal"
-        )
+        # Persistent DB — stored in XDG state dir (same root as per-run logs)
+        if self._config.db_dir:
+            db_dir = Path(self._config.db_dir)
+        else:
+            xdg = os.environ.get("XDG_STATE_HOME")
+            state_root = Path(xdg) / "dimos" if xdg else Path.home() / ".local" / "state" / "dimos"
+            db_dir = state_root / "temporal_memory"
         db_dir.mkdir(parents=True, exist_ok=True)
         db_path = db_dir / "entity_graph.db"
         if self._config.new_memory and db_path.exists():
             db_path.unlink()
             logger.info("Deleted existing DB (new_memory=True)")
         self._graph_db = EntityGraphDB(db_path=db_path)
+        logger.info(f"persistent DB: {db_path}")
 
         # Per-run JSONL log
         # get_run_log_dir() checks the in-process global; fall back to the
@@ -175,6 +178,9 @@ class TemporalMemory(Module):
             tm_log_dir = run_log_dir / "temporal_memory"
             tm_log_dir.mkdir(parents=True, exist_ok=True)
             self._jsonl_path = tm_log_dir / "temporal_memory.jsonl"
+            logger.info(f"per-run JSONL: {self._jsonl_path}")
+        else:
+            logger.warning("no run log dir found — JSONL logging disabled")
 
         logger.info(
             f"TemporalMemory init: fps={self._config.fps}, "
@@ -225,29 +231,15 @@ class TemporalMemory(Module):
     # Rerun visualization
     # ------------------------------------------------------------------
 
-    def _ensure_rerun(self) -> bool:
-        """Lazily connect to Rerun from this worker process."""
-        if hasattr(self, "_rr_connected"):
-            return self._rr_connected
-        try:
-            import rerun as rr
-
-            rr.init("dimos", spawn=False)
-            rr.connect_grpc("rerun+http://127.0.0.1:9876/proxy")
-            self._rr_connected = True
-            logger.info("connected to Rerun gRPC for visualization")
-        except Exception as e:
-            logger.debug(f"rerun connect failed (visualization disabled): {e}")
-            self._rr_connected = False
-        return self._rr_connected
-
     def _visualize_graph(self, parsed: dict[str, Any], timestamp_s: float) -> None:
         if not self._config.visualize:
             return
-        if not self._ensure_rerun():
-            return
         try:
             import rerun as rr
+
+            # In multi-process deployments, rr.log() is a silent no-op when
+            # no recording exists (e.g. worker process without bridge).
+            # This is fine — the bridge is the canonical Rerun entry point.
 
             all_entities = self._graph_db.get_all_entities()
             if not all_entities:

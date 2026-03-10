@@ -334,21 +334,17 @@ class TestPersistence:
 
         # new_memory should delete it
         with patch(
-            "dimos.perception.experimental.temporal_memory.temporal_memory.DIMOS_PROJECT_ROOT",
-            tmp_path,
+            "dimos.perception.experimental.temporal_memory.temporal_memory.get_run_log_dir",
+            return_value=None,
         ):
-            with patch(
-                "dimos.perception.experimental.temporal_memory.temporal_memory.get_run_log_dir",
-                return_value=None,
-            ):
-                tm = TemporalMemory(
-                    vlm=MagicMock(),
-                    config=TemporalMemoryConfig(db_dir=str(db_dir), new_memory=True),
-                )
-                # DB should be empty since we cleared it
-                stats = tm._graph_db.get_stats()
-                assert stats["entities"] == 0
-                tm.stop()
+            tm = TemporalMemory(
+                vlm=MagicMock(),
+                config=TemporalMemoryConfig(db_dir=str(db_dir), new_memory=True),
+            )
+            # DB should be empty since we cleared it
+            stats = tm._graph_db.get_stats()
+            assert stats["entities"] == 0
+            tm.stop()
 
     def test_persistent_memory_survives(self, tmp_path: Path) -> None:
         db_dir = tmp_path / "memory" / "temporal"
@@ -362,20 +358,16 @@ class TestPersistence:
 
         # new_memory=False (default) should keep data
         with patch(
-            "dimos.perception.experimental.temporal_memory.temporal_memory.DIMOS_PROJECT_ROOT",
-            tmp_path,
+            "dimos.perception.experimental.temporal_memory.temporal_memory.get_run_log_dir",
+            return_value=None,
         ):
-            with patch(
-                "dimos.perception.experimental.temporal_memory.temporal_memory.get_run_log_dir",
-                return_value=None,
-            ):
-                tm = TemporalMemory(
-                    vlm=MagicMock(),
-                    config=TemporalMemoryConfig(db_dir=str(db_dir), new_memory=False),
-                )
-                stats = tm._graph_db.get_stats()
-                assert stats["entities"] == 1
-                tm.stop()
+            tm = TemporalMemory(
+                vlm=MagicMock(),
+                config=TemporalMemoryConfig(db_dir=str(db_dir), new_memory=False),
+            )
+            stats = tm._graph_db.get_stats()
+            assert stats["entities"] == 1
+            tm.stop()
 
 
 # ======================================================================
@@ -391,17 +383,13 @@ class TestJSONLLogging:
         log_dir.mkdir(parents=True)
 
         with patch(
-            "dimos.perception.experimental.temporal_memory.temporal_memory.DIMOS_PROJECT_ROOT",
-            tmp_path,
+            "dimos.perception.experimental.temporal_memory.temporal_memory.get_run_log_dir",
+            return_value=log_dir,
         ):
-            with patch(
-                "dimos.perception.experimental.temporal_memory.temporal_memory.get_run_log_dir",
-                return_value=log_dir,
-            ):
-                tm = TemporalMemory(
-                    vlm=MagicMock(),
-                    config=TemporalMemoryConfig(db_dir=str(db_dir)),
-                )
+            tm = TemporalMemory(
+                vlm=MagicMock(),
+                config=TemporalMemoryConfig(db_dir=str(db_dir)),
+            )
 
         jsonl_path = log_dir / "temporal_memory" / "temporal_memory.jsonl"
         assert tm._jsonl_path == jsonl_path
@@ -436,17 +424,13 @@ class TestRerunVisualization:
         db_dir.mkdir()
 
         with patch(
-            "dimos.perception.experimental.temporal_memory.temporal_memory.DIMOS_PROJECT_ROOT",
-            tmp_path,
+            "dimos.perception.experimental.temporal_memory.temporal_memory.get_run_log_dir",
+            return_value=None,
         ):
-            with patch(
-                "dimos.perception.experimental.temporal_memory.temporal_memory.get_run_log_dir",
-                return_value=None,
-            ):
-                tm = TemporalMemory(
-                    vlm=MagicMock(),
-                    config=TemporalMemoryConfig(db_dir=str(db_dir), visualize=True),
-                )
+            tm = TemporalMemory(
+                vlm=MagicMock(),
+                config=TemporalMemoryConfig(db_dir=str(db_dir), visualize=True),
+            )
 
         # Populate DB
         tm._graph_db.upsert_entity("E1", "person", "walking person", 1.0)
