@@ -44,7 +44,7 @@ def _drone_rerun_blueprint():
 
     return rrb.Blueprint(
         rrb.Horizontal(
-            rrb.Spatial2DView(origin="world/color_image", name="Camera"),
+            rrb.Spatial2DView(origin="world/video", name="Camera"),
             rrb.Spatial3DView(
                 origin="world",
                 name="3D",
