@@ -117,7 +117,7 @@ class FrameWindowAccumulator:
             if not self._buffer:
                 return None
             current_time = self._buffer[-1].timestamp_s
-            if current_time - self._last_analysis_time < self.stride_s:
+            if abs(current_time - self._last_analysis_time) < self.stride_s:
                 return None
             frames_needed = max(1, int(self.fps * self.window_s))
             if len(self._buffer) < frames_needed:
