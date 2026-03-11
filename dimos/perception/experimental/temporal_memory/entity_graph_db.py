@@ -141,7 +141,7 @@ class EntityGraphDB:
             ON CONFLICT(entity_id) DO UPDATE SET
                 last_seen_ts = ?,
                 descriptor = COALESCE(excluded.descriptor, descriptor),
-                metadata = COALESCE(excluded.metadata, metadata)
+                metadata = COALESCE(metadata, excluded.metadata)
             """,
             (
                 entity_id,

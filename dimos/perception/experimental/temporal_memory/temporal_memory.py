@@ -270,6 +270,7 @@ class TemporalMemory(Module):
 
             if markers:
                 self.entity_markers.publish(EntityMarkers(markers=markers))
+                logger.info(f"[temporal-memory] published {len(markers)} entity markers to Rerun")
         except Exception as e:
             logger.debug(f"entity marker publish error: {e}")
 
@@ -284,11 +285,22 @@ class TemporalMemory(Module):
         self._accumulator.set_start_time(time.time())
 
         # Frame ingest via reactive pipeline
+        self._frame_count = 0
+        self._odom_count = 0
         frame_subject: Subject[Image] = Subject()
+
+        def _on_frame(img: Image) -> None:
+            self._accumulator.add_frame(img, time.time())
+            self._frame_count += 1
+            if self._frame_count % 20 == 1:
+                logger.info(
+                    f"[temporal-memory] frames={self._frame_count}, "
+                    f"odom={self._odom_count}, "
+                    f"buffered={len(self._accumulator._buffer)}"
+                )
+
         self._disposables.add(
-            frame_subject.pipe(sharpness_barrier(self._config.fps)).subscribe(
-                lambda img: self._accumulator.add_frame(img, time.time())
-            )
+            frame_subject.pipe(sharpness_barrier(self._config.fps)).subscribe(_on_frame)
         )
         unsub_image = self.color_image.subscribe(frame_subject.on_next)
         self._disposables.add(Disposable(unsub_image))
@@ -298,6 +310,7 @@ class TemporalMemory(Module):
             self._robot_x = msg.position.x
             self._robot_y = msg.position.y
             self._robot_z = msg.position.z
+            self._odom_count += 1
 
         unsub_odom = self.odom.subscribe(_on_odom)
         self._disposables.add(Disposable(unsub_odom))
@@ -351,6 +364,9 @@ class TemporalMemory(Module):
 
         window_frames = self._accumulator.try_extract_window()
         if window_frames is None:
+            logger.debug(
+                f"[temporal-memory] no window ready (buffered={len(self._accumulator._buffer)})"
+            )
             return
         w_start, w_end = window_frames[0].timestamp_s, window_frames[-1].timestamp_s
 
@@ -373,6 +389,31 @@ class TemporalMemory(Module):
         parsed = result.parsed
         if "_error" in parsed:
             logger.error(f"parse error: {parsed['_error']}")
+
+        # Log insights to terminal for user visibility
+        caption = parsed.get("window", {}).get("caption") or parsed.get("caption", "")
+        new_entities = parsed.get("new_entities", [])
+        entities_present = parsed.get("entities_present", [])
+        relations = parsed.get("relations", [])
+        if caption:
+            logger.info(f"[temporal-memory] caption: {caption[:200]}")
+        if new_entities:
+            names = ", ".join(
+                f"{e.get('id')}({e.get('type', '?')}): {e.get('descriptor', '?')[:40]}"
+                for e in new_entities
+            )
+            logger.info(f"[temporal-memory] NEW entities: {names}")
+        if entities_present:
+            ids = ", ".join(
+                e.get("id", "?") if isinstance(e, dict) else str(e) for e in entities_present
+            )
+            logger.info(f"[temporal-memory] entities present: {ids}")
+        if relations:
+            rels = ", ".join(
+                f"{r.get('subject', '?')}-[{r.get('type', '?')}]->{r.get('object', '?')}"
+                for r in relations
+            )
+            logger.info(f"[temporal-memory] relations: {rels}")
 
         # Log raw VLM response
         self._log_jsonl(
@@ -449,7 +490,7 @@ class TemporalMemory(Module):
                     "summary": sr.summary_text,
                 }
             )
-            logger.info(f"updated summary: {sr.summary_text[:100]}...")
+            logger.info(f"[temporal-memory] SUMMARY: {sr.summary_text[:300]}")
 
     # ------------------------------------------------------------------
     # Query (agent skill)
