@@ -18,7 +18,6 @@
 """Main Drone robot class for DimOS."""
 
 import functools
-import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -36,7 +35,6 @@ from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
-from dimos.protocol import pubsub
 from dimos.robot.drone.camera_module import DroneCameraModule
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
@@ -55,7 +53,12 @@ logger = setup_logger()
 
 
 class Drone(Robot):
-    """Generic MAVLink-based drone with video capabilities."""
+    """Generic MAVLink-based drone with video capabilities.
+
+    .. deprecated::
+        Use :func:`drone_basic` or :func:`drone_agentic` blueprints instead.
+        This class-based Robot pattern is deprecated in favor of blueprint composition.
+    """
 
     def __init__(
         self,
@@ -419,56 +422,3 @@ def drone_agentic(
             (DroneTrackingModule, "cmd_vel", "movecmd_twist"),
         ]
     )
-
-
-def main() -> None:
-    """Main entry point for drone system."""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="DimOS Drone System")
-    parser.add_argument("--replay", action="store_true", help="Use recorded data for testing")
-
-    parser.add_argument(
-        "--outdoor",
-        action="store_true",
-        help="Outdoor mode - use GPS only, no velocity integration",
-    )
-    args = parser.parse_args()
-
-    # Configure logging
-    setup_logger(level=logging.INFO)
-
-    # Suppress verbose loggers
-    logging.getLogger("distributed").setLevel(logging.WARNING)
-    logging.getLogger("asyncio").setLevel(logging.WARNING)
-
-    if args.replay:
-        connection = "replay"
-        print("\n🔄 REPLAY MODE - Using drone replay data")
-    else:
-        connection = os.getenv("DRONE_CONNECTION", "udp:0.0.0.0:14550")
-    video_port = int(os.getenv("DRONE_VIDEO_PORT", "5600"))
-
-    print(f"""
-╔══════════════════════════════════════════╗
-║         DimOS Mavlink Drone Runner       ║
-╠══════════════════════════════════════════╣
-║  MAVLink: {connection:<30} ║
-║  Video:   UDP port {video_port:<22}║
-║  Foxglove: http://localhost:8765         ║
-╚══════════════════════════════════════════╝
-    """)
-
-    pubsub.lcm.autoconf()  # type: ignore[attr-defined]
-
-    blueprint = drone_agentic(
-        connection_string=connection,
-        video_port=video_port,
-        outdoor=args.outdoor,
-    )
-
-    blueprint.build().loop()
-
-
-if __name__ == "__main__":
-    main()
