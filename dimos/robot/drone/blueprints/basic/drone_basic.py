@@ -19,6 +19,7 @@
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.service.system_configurator import ClockSyncConfigurator
 from dimos.robot.drone.camera_module import DroneCameraModule
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
@@ -70,16 +71,20 @@ video_port = 5600
 if global_config.replay:
     connection_string = "replay"
 
-drone_basic = autoconnect(
-    with_vis,
-    DroneConnectionModule.blueprint(
-        connection_string=connection_string,
-        video_port=video_port,
-        outdoor=False,
-    ),
-    DroneCameraModule.blueprint(camera_intrinsics=[1000.0, 1000.0, 960.0, 540.0]),
-    websocket_vis(),
-).global_config(n_workers=4, robot_model="drone")
+drone_basic = (
+    autoconnect(
+        with_vis,
+        DroneConnectionModule.blueprint(
+            connection_string=connection_string,
+            video_port=video_port,
+            outdoor=False,
+        ),
+        DroneCameraModule.blueprint(camera_intrinsics=[1000.0, 1000.0, 960.0, 540.0]),
+        websocket_vis(),
+    )
+    .global_config(n_workers=4, robot_model="drone")
+    .configurators(ClockSyncConfigurator())
+)
 
 
 __all__ = [

@@ -21,7 +21,6 @@ __getattr__, __dir__, __all__ = lazy.attach(
     submod_attrs={
         "camera_module": ["DroneCameraModule"],
         "connection_module": ["DroneConnectionModule"],
-        "drone": ["Drone"],
         "mavlink_connection": ["MavlinkConnection"],
     },
 )

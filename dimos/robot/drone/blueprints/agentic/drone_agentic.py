@@ -23,6 +23,7 @@ from dimos.agents.web_human_input import web_input
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.service.system_configurator import ClockSyncConfigurator
 from dimos.robot.drone.camera_module import DroneCameraModule
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
@@ -111,6 +112,7 @@ drone_agentic = (
         ]
     )
     .global_config(n_workers=4, robot_model="drone")
+    .configurators(ClockSyncConfigurator())
 )
 
 

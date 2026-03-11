@@ -29,7 +29,8 @@ from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
-from dimos.robot.drone.drone import Drone
+
+# Drone class removed - use blueprints instead
 from dimos.robot.drone.mavlink_connection import FakeMavlinkConnection, MavlinkConnection
 
 
@@ -406,6 +407,7 @@ class TestReplayMode(unittest.TestCase):
                 module.stop()
 
 
+@unittest.skip("Skipped: TestDroneFullIntegration tests deprecated Drone class")
 class TestDroneFullIntegration(unittest.TestCase):
     """Full integration test of Drone class with replay mode."""
 
