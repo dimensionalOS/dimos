@@ -41,25 +41,6 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-def _camera_info_static() -> CameraInfo:
-    """Camera intrinsics for rerun visualization (matches Go2 convention)."""
-    fx, fy, cx, cy = (819.553492, 820.646595, 625.284099, 336.808987)
-    width, height = (1280, 720)
-
-    return CameraInfo(
-        frame_id="camera_optical",
-        height=height,
-        width=width,
-        distortion_model="plumb_bob",
-        D=[0.0, 0.0, 0.0, 0.0, 0.0],
-        K=[fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
-        R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        P=[fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
-        binning_x=0,
-        binning_y=0,
-    )
-
-
 class G1SimConnection(G1ConnectionBase):
     cmd_vel: In[Twist]
     lidar: Out[PointCloud2]
@@ -114,7 +95,8 @@ class G1SimConnection(G1ConnectionBase):
         super().stop()
 
     def _publish_camera_info_loop(self) -> None:
-        info = _camera_info_static()
+        assert self.connection is not None
+        info = self.connection.camera_info_static
         while not self._stop_event.is_set():
             self.camera_info.publish(info)
             self._stop_event.wait(1.0)
