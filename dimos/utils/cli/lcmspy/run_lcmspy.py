@@ -80,8 +80,11 @@ class LCMSpyApp(App):  # type: ignore[type-arg]
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
-        # start LCM before .run() takes over the terminal (raw mode),
-        # because autoconf uses typer.confirm() which deadlocks inside a TUI.
+        # Warn about missing system config before entering TUI raw mode.
+        from dimos.protocol.service.lcmservice import autoconf
+
+        autoconf(check_only=True)
+
         self.spy = GraphLCMSpy(graph_log_window=0.5)
         self.spy.start()
         self.table: DataTable | None = None  # type: ignore[type-arg]
