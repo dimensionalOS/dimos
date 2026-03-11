@@ -37,19 +37,19 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 <table>
   <tr>
     <td align="center" width="50%">
-      <a href="docs/capabilities/navigation/readme.md"><img src="assets/readme/navigation.gif" alt="Navigation" width="100%"></a>
+      <a href="docs/capabilities/navigation/native/index.md"><img src="assets/readme/navigation.gif" alt="Navigation" width="100%"></a>
     </td>
     <td align="center" width="50%">
-      <a href="docs/capabilities/perception/readme.md"><img src="assets/readme/perception.png" alt="Perception" width="100%"></a>
+      <img src="assets/readme/perception.png" alt="Perception" width="100%">
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
-      <h3><a href="docs/capabilities/navigation/readme.md">Navigation and Mapping</a></h3>
+      <h3><a href="docs/capabilities/navigation/native/index.md">Navigation and Mapping</a></h3>
       SLAM, dynamic obstacle avoidance, route planning, and autonomous exploration — via both DimOS native and ROS<br><a href="https://x.com/stash_pomichter/status/2010471593806545367">Watch video</a>
     </td>
     <td align="center" width="50%">
-      <h3><a href="docs/capabilities/perception/readme.md">Perception</a></h3>
+      <h3>Perception</h3>
       Detectors, 3d projections, VLMs, Audio processing
     </td>
   </tr>
