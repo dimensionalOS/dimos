@@ -42,6 +42,10 @@ Available functions:
     collision_free(joints) Check if config is collision-free
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
@@ -49,22 +53,22 @@ from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 _client = RPCClient(None, ManipulationModule)
 
 
-def joints(robot_name=None):
+def joints(robot_name: str | None = None) -> list[float] | None:
     """Get current joint positions."""
     return _client.get_current_joints(robot_name)
 
 
-def ee(robot_name=None):
+def ee(robot_name: str | None = None) -> Pose | None:
     """Get end-effector pose."""
     return _client.get_ee_pose(robot_name)
 
 
-def state():
+def state() -> str:
     """Get module state."""
     return _client.get_state()
 
 
-def plan(target_joints, robot_name=None):
+def plan(target_joints: list[float], robot_name: str | None = None) -> bool:
     """Plan to joint configuration. e.g. plan([0.1]*7)"""
     from dimos.msgs.sensor_msgs import JointState
 
@@ -72,7 +76,15 @@ def plan(target_joints, robot_name=None):
     return _client.plan_to_joints(js, robot_name)
 
 
-def plan_pose(x, y, z, roll=None, pitch=None, yaw=None, robot_name=None):
+def plan_pose(
+    x: float,
+    y: float,
+    z: float,
+    roll: float | None = None,
+    pitch: float | None = None,
+    yaw: float | None = None,
+    robot_name: str | None = None,
+) -> bool:
     """Plan to Cartesian pose. Preserves current orientation if rpy not given."""
     orientation = Quaternion(0, 0, 0, 1)
     if roll is not None or pitch is not None or yaw is not None:
@@ -81,17 +93,17 @@ def plan_pose(x, y, z, roll=None, pitch=None, yaw=None, robot_name=None):
     return _client.plan_to_pose(target, robot_name)
 
 
-def preview(duration=3.0, robot_name=None):
+def preview(duration: float = 3.0, robot_name: str | None = None) -> bool:
     """Preview planned path in Meshcat."""
     return _client.preview_path(duration, robot_name)
 
 
-def execute(robot_name=None):
+def execute(robot_name: str | None = None) -> bool:
     """Execute planned trajectory via coordinator."""
     return _client.execute(robot_name)
 
 
-def home(robot_name=None):
+def home(robot_name: str | None = None) -> bool:
     """Plan and execute move to home position."""
     from dimos.msgs.sensor_msgs import JointState
 
@@ -102,55 +114,59 @@ def home(robot_name=None):
     return False
 
 
-def url():
+def url() -> str | None:
     """Get Meshcat visualization URL."""
     return _client.get_visualization_url()
 
 
-def robots():
+def robots() -> list[str]:
     """List configured robots."""
     return _client.list_robots()
 
 
-def info(robot_name=None):
+def info(robot_name: str | None = None) -> dict[str, Any] | None:
     """Get robot config details."""
     return _client.get_robot_info(robot_name)
 
 
-def gripper(position, robot_name=None):
+def gripper(position: float, robot_name: str | None = None) -> str:
     """Set gripper position (0.0=closed, 0.85=open)."""
     return _client.set_gripper(position, robot_name)
 
 
-def add_box(name, x, y, z, w=0.05, h=0.05, d=0.05):
+def add_box(
+    name: str, x: float, y: float, z: float, w: float = 0.05, h: float = 0.05, d: float = 0.05
+) -> str | None:
     """Add a box obstacle. e.g. add_box("cube", 0.3, 0, 0.2)"""
     pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
     return _client.add_obstacle(name, pose, "box", [w, h, d], None)
 
 
-def add_sphere(name, x, y, z, radius=0.05):
+def add_sphere(name: str, x: float, y: float, z: float, radius: float = 0.05) -> str | None:
     """Add a sphere obstacle. e.g. add_sphere("ball", 0.3, 0, 0.2)"""
     pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
     return _client.add_obstacle(name, pose, "sphere", [radius], None)
 
 
-def add_cylinder(name, x, y, z, radius=0.03, height=0.1):
+def add_cylinder(
+    name: str, x: float, y: float, z: float, radius: float = 0.03, height: float = 0.1
+) -> str | None:
     """Add a cylinder obstacle. e.g. add_cylinder("can", 0.3, 0, 0.2)"""
     pose = Pose(position=Vector3(x=x, y=y, z=z), orientation=Quaternion(0, 0, 0, 1))
     return _client.add_obstacle(name, pose, "cylinder", [radius, height], None)
 
 
-def remove(obstacle_id):
+def remove(obstacle_id: str) -> bool:
     """Remove an obstacle by ID (returned from add_*)."""
     return _client.remove_obstacle(obstacle_id)
 
 
-def collision_free(target_joints, robot_name=None):
+def collision_free(target_joints: list[float], robot_name: str | None = None) -> bool:
     """Check if a joint configuration is collision-free."""
     return _client.is_collision_free(target_joints, robot_name)
 
 
-def commands():
+def commands() -> None:
     """Print available functions and raw RPC methods."""
     print("=== Client Functions ===")
     for name, obj in sorted(globals().items()):
@@ -159,7 +175,7 @@ def commands():
             print(f"  {name:25s} {doc}")
 
 
-def stop():
+def stop() -> None:
     """Stop the RPC client."""
     _client.stop_rpc_client()
 
