@@ -32,7 +32,8 @@ class GlobalConfig(BaseSettings):
     robot_ips: str | None = None
     simulation: bool = False
     replay: bool = False
-    replay_dir: str = "go2_sf_office"  # Replay dataset directory name under data/
+    replay_dir: str = "go2_sf_office"
+    new_memory: bool = False
     viewer: ViewerBackend = "rerun"
     n_workers: int = 2
     memory_limit: str = "auto"

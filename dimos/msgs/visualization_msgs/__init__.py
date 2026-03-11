@@ -12,19 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Temporal memory package."""
+"""Visualization message types."""
 
-from .frame_window_accumulator import Frame, FrameWindowAccumulator
-from .temporal_memory import TemporalMemory, TemporalMemoryConfig, temporal_memory
-from .temporal_state import TemporalState
-from .window_analyzer import WindowAnalyzer
+from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers
 
-__all__ = [
-    "Frame",
-    "FrameWindowAccumulator",
-    "TemporalMemory",
-    "TemporalMemoryConfig",
-    "TemporalState",
-    "WindowAnalyzer",
-    "temporal_memory",
-]
+__all__ = ["EntityMarkers"]

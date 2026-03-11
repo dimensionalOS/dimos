@@ -12,19 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Temporal memory package."""
+"""Local conftest that overrides the session-scoped autoconf fixture."""
 
-from .frame_window_accumulator import Frame, FrameWindowAccumulator
-from .temporal_memory import TemporalMemory, TemporalMemoryConfig, temporal_memory
-from .temporal_state import TemporalState
-from .window_analyzer import WindowAnalyzer
+import pytest
 
-__all__ = [
-    "Frame",
-    "FrameWindowAccumulator",
-    "TemporalMemory",
-    "TemporalMemoryConfig",
-    "TemporalState",
-    "WindowAnalyzer",
-    "temporal_memory",
-]
+
+@pytest.fixture(scope="session", autouse=True)
+def _autoconf():
+    """No-op override — autoconf requires TTY; skip in temporal_memory tests."""
+    yield
