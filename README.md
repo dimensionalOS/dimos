@@ -160,7 +160,7 @@ source .venv/bin/activate
 uv pip install 'dimos[base,unitree]'
 
 # Replay a recorded Go2 session (no hardware needed)
-# NOTE: First run will show a black rerun window while ~2.4 GB downloads from LFS
+# NOTE: First run will show a black rerun window while ~75 MB downloads from LFS
 dimos --replay run unitree-go2
 ```
 
@@ -180,23 +180,6 @@ dimos --simulation run unitree-g1-sim
 export ROBOT_IP=<YOUR_ROBOT_IP>
 dimos run unitree-go2
 ```
-
-# Agent CLI and MCP
-
-The `dimos` CLI manages the full lifecycle — run blueprints, inspect state, interact with agents, and call skills via MCP.
-
-```bash
-dimos run unitree-go2-agentic --daemon   # Start in background
-dimos status                              # Check what's running
-dimos log -f                              # Follow logs
-dimos agent-send "explore the room"       # Send agent a command
-dimos mcp list-tools                      # List available MCP skills
-dimos mcp call relative_move --arg forward=0.5  # Call a skill directly
-dimos stop                                # Shut down
-```
-
-> Full CLI reference: [docs/usage/cli.md](docs/usage/cli.md)
-
 
 # Featured Runfiles
 
@@ -224,6 +207,23 @@ dimos --robot-ip 192.168.123.161 run unitree-go2  # Connect to a specific robot
 ```
 
 > Full blueprint docs: [docs/usage/blueprints.md](docs/usage/blueprints.md)
+
+# Agent CLI and MCP
+
+The `dimos` CLI manages the full lifecycle — run blueprints, inspect state, interact with agents, and call skills via MCP.
+
+```bash
+dimos run unitree-go2-agentic --daemon   # Start in background
+dimos status                              # Check what's running
+dimos log -f                              # Follow logs
+dimos agent-send "explore the room"       # Send agent a command
+dimos mcp list-tools                      # List available MCP skills
+dimos mcp call relative_move --arg forward=0.5  # Call a skill directly
+dimos stop                                # Shut down
+```
+
+> Full CLI reference: [docs/usage/cli.md](docs/usage/cli.md)
+
 
 # Usage
 
