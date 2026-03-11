@@ -85,11 +85,16 @@ class PerceiveLoopSkill(Module):
         detection data:
         - "$bbox": the bounding box [x1, y1, x2, y2] of the best detection
         - "$label": the label/name of the detection
+        - "$image": base64-encoded JPEG of the frame the detection was made on
 
         Example:
             look_out_for(["person"], then={
                 "tool": "follow_person",
-                "args": {"query": "person", "initial_bbox": "$bbox"}
+                "args": {
+                    "query": "person",
+                    "initial_bbox": "$bbox",
+                    "initial_image": "$image",
+                }
             })
         """
 
@@ -128,7 +133,6 @@ class PerceiveLoopSkill(Module):
         return f"Stopped looking out for {active_lookout_str}"
 
     def _on_image(self, image: Image) -> None:
-        print("Received image in perceive loop skill")
         with self._lock:
             if not self._active_lookout:
                 return
@@ -161,6 +165,7 @@ class PerceiveLoopSkill(Module):
         continuation_context: dict[str, Any] = {
             "bbox": list(best.bbox),
             "label": best.name,
+            "image": image.to_base64(quality=70),
         }
         logger.info(
             "Lookout matched, dispatching continuation",
