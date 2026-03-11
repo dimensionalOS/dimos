@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache
+import time
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -170,15 +171,14 @@ def _resolve_viewer_mode() -> ViewerMode:
 class Config(ModuleConfig):
     """Configuration for RerunBridgeModule."""
 
-    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(
-        default_factory=lambda: [LCM(autoconf=True)]
-    )
+    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
 
     visual_override: dict[Glob | str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
     # Static items logged once after start. Maps entity_path -> callable(rr) returning Archetype
     static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
+    min_interval_sec: float = 0.1  # Rate-limit per entity path (default: 10 Hz max)
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
     viewer_mode: ViewerMode = field(default_factory=_resolve_viewer_mode)
@@ -199,7 +199,7 @@ class RerunBridgeModule(Module):
     Example:
         from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 
-        lcm = LCM(autoconf=True)
+        lcm = LCM()
         bridge = RerunBridgeModule(pubsubs=[lcm])
         bridge.start()
         # All messages with to_rerun() are now logged to Rerun
@@ -268,8 +268,6 @@ class RerunBridgeModule(Module):
         # messages (Path, PointStamped, TF, etc.) pass through unthrottled.
         if self.config.min_interval_sec > 0 and isinstance(msg, _HEAVY_MSG_TYPES):
             now = time.monotonic()
-            if not hasattr(self, "_last_log"):
-                self._last_log: dict[str, float] = {}
             last = self._last_log.get(entity_path, 0.0)
             if now - last < self.config.min_interval_sec:
                 return
@@ -295,6 +293,7 @@ class RerunBridgeModule(Module):
 
         super().start()
 
+        self._last_log: dict[str, float] = {}
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
 
         # Initialize and spawn Rerun viewer
@@ -365,12 +364,16 @@ def run_bridge(
     """Start a RerunBridgeModule with default LCM config and block until interrupted."""
     import signal
 
+    from dimos.protocol.service.lcmservice import autoconf
+
+    autoconf(check_only=True)
+
     bridge = RerunBridgeModule(
         viewer_mode=viewer_mode,
         memory_limit=memory_limit,
         # any pubsub that supports subscribe_all and topic that supports str(topic)
         # is acceptable here
-        pubsubs=[LCM(autoconf=True)],
+        pubsubs=[LCM()],
     )
 
     bridge.start()
