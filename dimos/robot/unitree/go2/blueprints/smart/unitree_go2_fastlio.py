@@ -27,10 +27,13 @@ from dimos.core.core import rpc
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, PoseStamped
 from dimos.msgs.nav_msgs import Odometry
+from dimos.protocol.service.system_configurator import ClockSyncConfigurator
+from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
+from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import with_vis
 from dimos.visualization.rerun.bridge import rerun_bridge
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.robot.unitree.go2.connection import GO2Connection, go2_connection
 from dimos.utils.data import get_data
 from dimos.core.module import ModuleConfig
 from dataclasses import dataclass
@@ -170,6 +173,87 @@ class OdometryToOdom(Module):
         pass
 
 
+@dataclass
+class OdometryTFPublisherConfig(ModuleConfig):
+    camera_link_x: float = 0.3
+    camera_link_y: float = 0.0
+    camera_link_z: float = 0.0
+    camera_link_qx: float = 0.0
+    camera_link_qy: float = 0.0
+    camera_link_qz: float = 0.0
+    camera_link_qw: float = 1.0
+
+
+class OdometryTFPublisher(Module):
+    """Publishes base_link and camera TFs derived from FastLIO2 odometry.
+
+    Subscribes to the ``odom`` stream (a :class:`PoseStamped` produced by
+    :class:`OdometryToOdom`) and emits three TF transforms on every tick:
+
+    * ``base_link`` — built from the odometry pose via
+      :meth:`Transform.from_pose`, giving the robot's world-frame
+      position/orientation.
+    * ``camera_link`` — configurable offset/rotation from ``base_link``
+      (defaults to 0.3 m forward, no rotation).
+    * ``camera_optical`` — fixed -90°/+90° rotation from ``camera_link``
+      matching the GO2 camera convention.
+
+    The ``camera_link`` transform is controlled by config fields:
+    ``camera_link_x/y/z`` (translation) and ``camera_link_qx/y/z/w``
+    (rotation quaternion).
+    """
+
+    default_config = OdometryTFPublisherConfig
+    config: OdometryTFPublisherConfig  # type: ignore[assignment]
+
+    odom: In[PoseStamped]
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._camera_link_translation = Vector3(
+            self.config.camera_link_x,
+            self.config.camera_link_y,
+            self.config.camera_link_z,
+        )
+        self._camera_link_rotation = Quaternion(
+            self.config.camera_link_qx,
+            self.config.camera_link_qy,
+            self.config.camera_link_qz,
+            self.config.camera_link_qw,
+        )
+
+    @rpc
+    def start(self) -> None:
+        unsub = self.odom.subscribe(self._on_odom)
+        self._disposables.add(Disposable(unsub))
+
+    def _on_odom(self, odom: PoseStamped) -> None:
+        """Convert FastLIO2 odometry pose to TF tree and publish."""
+        base_link = Transform.from_pose("base_link", odom)
+
+        camera_link = Transform(
+            translation=self._camera_link_translation,
+            rotation=self._camera_link_rotation,
+            frame_id="base_link",
+            child_frame_id="camera_link",
+            ts=odom.ts,
+        )
+
+        camera_optical = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
+            frame_id="camera_link",
+            child_frame_id="camera_optical",
+            ts=odom.ts,
+        )
+
+        self.tf.publish(base_link, camera_link, camera_optical)
+
+    @rpc
+    def stop(self) -> None:
+        pass
+
+
 unitree_go2_fastlio = (
     autoconnect(
         unitree_go2_basic,
@@ -217,7 +301,45 @@ fastlio_livox_replay = autoconnect(
     ]
 )
 
-__all__ = ["unitree_go2_fastlio"]
+_unitree_go2_basic_no_tf = (
+    autoconnect(
+        with_vis,
+        go2_connection(publish_tf=False),
+        websocket_vis(),
+    )
+    .global_config(n_workers=4, robot_model="unitree_go2")
+    .configurators(ClockSyncConfigurator())
+)
+
+unitree_go2_fastlio_no_go2tf = (
+    autoconnect(
+        _unitree_go2_basic_no_tf,
+        FastLio2.blueprint(
+            voxel_size=VOXEL_SIZE, map_voxel_size=VOXEL_SIZE, map_freq=-1, lidar_ip="192.168.1.157"
+        ),
+        TransformToRobot.blueprint(
+            angle_of_mid_360_on_robot=ANGLE_OF_MID_360_ON_ROBOT,
+            height_of_mid_360_on_robot=HEIGHT_OF_MID_360_ON_ROBOT,
+            lidar_max_height=2.0,
+        ),
+        OdometryToOdom.blueprint(),
+        OdometryTFPublisher.blueprint(),
+        VoxelGridMapper.blueprint(voxel_size=VOXEL_SIZE),
+        cost_mapper(),
+        replanning_a_star_planner(),
+        wavefront_frontier_explorer(),
+    )
+    .remappings(
+        [
+            (GO2Connection, "lidar", "lidar_null"),
+            (TransformToRobot, "lidar_untrans", "lidar"),
+            (VoxelGridMapper, "lidar", "lidar_trans"),
+        ]
+    )
+    .global_config(n_workers=6, robot_model="unitree_go2")
+)
+
+__all__ = ["unitree_go2_fastlio", "unitree_go2_fastlio_no_go2tf"]
 
 if __name__ == "__main__":
     # unitree_go2_fastlio.build().loop()

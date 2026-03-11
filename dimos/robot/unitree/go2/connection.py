@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from dataclasses import dataclass
 from threading import Thread
 import time
 from typing import TYPE_CHECKING, Any, Protocol
@@ -25,7 +26,7 @@ from dimos import spec
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, pSHMTransport
@@ -47,6 +48,11 @@ from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.testing.replay import TimedSensorReplay, TimedSensorStorage
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class GO2ConnectionConfig(ModuleConfig):
+    publish_tf: bool = True
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -170,6 +176,9 @@ class ReplayConnection(UnitreeWebRTCConnection):
 
 
 class GO2Connection(Module, spec.Camera, spec.Pointcloud):
+    default_config = GO2ConnectionConfig
+    config: GO2ConnectionConfig  # type: ignore[assignment]
+
     cmd_vel: In[Twist]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
@@ -229,7 +238,8 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
             self._latest_video_frame = image
 
         self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
-        self._disposables.add(self.connection.odom_stream().subscribe(self._publish_tf))
+        odom_handler = self._publish_tf if self.config.publish_tf else self._publish_odom_only
+        self._disposables.add(self.connection.odom_stream().subscribe(odom_handler))
         self._disposables.add(self.connection.video_stream().subscribe(onimage))
         self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
 
@@ -285,6 +295,11 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     def _publish_tf(self, msg: PoseStamped) -> None:
         transforms = self._odom_to_tf(msg)
         self.tf.publish(*transforms)
+        if self.odom.transport:
+            self.odom.publish(msg)
+
+    def _publish_odom_only(self, msg: PoseStamped) -> None:
+        """Publish odom without emitting any TF transforms (used when publish_tf=False)."""
         if self.odom.transport:
             self.odom.publish(msg)
 
@@ -352,4 +367,4 @@ def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy"
     return connection
 
 
-__all__ = ["GO2Connection", "deploy", "go2_connection", "make_connection"]
+__all__ = ["GO2Connection", "GO2ConnectionConfig", "deploy", "go2_connection", "make_connection"]
