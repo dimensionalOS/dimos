@@ -216,6 +216,7 @@ class BufferConfiguratorMacOS(SystemConfigurator):
     TARGET_BUFFER_SIZE = MAX_POSSIBLE_BUFFER_SIZE
     TARGET_RECVSPACE = MAX_POSSIBLE_RECVSPACE  # we want this to be IDEAL_RMEM_SIZE but MacOS 26 (and probably in general) doesn't support it
     TARGET_DGRAM_SIZE = MAX_POSSIBLE_DGRAM_SIZE
+    MULTICAST_PREFIX = "224.0.0.0/4"
 
     def __init__(self) -> None:
         self.needs: list[tuple[str, int]] = []
@@ -239,6 +240,17 @@ class BufferConfiguratorMacOS(SystemConfigurator):
         return "\n".join(lines)
 
     def fix(self) -> None:
+        # Delete any existing 224.0.0.0/4 route (e.g. on en0) before adding on lo0,
+        # otherwise `route add` fails with "route already in use"
+        sudo_run(
+            "route",
+            "delete",
+            "-net",
+            self.MULTICAST_PREFIX,
+            check=False,
+            text=True,
+            capture_output=True,
+        )
         for key, target in self.needs:
             _write_sysctl_int(key, target)
 
