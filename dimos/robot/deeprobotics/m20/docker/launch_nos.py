@@ -18,7 +18,7 @@ from dimos.core.global_config import global_config
 
 # Disable default rerun bridge from m20_minimal — we configure our own below
 # with memory_limit and visual_override for the NOS environment.
-global_config.update(viewer_backend="none")
+global_config.update(viewer="none")
 
 from dimos.core.blueprints import autoconnect
 from dimos.mapping.costmapper import cost_mapper
@@ -81,7 +81,7 @@ bp = autoconnect(
     rerun_bridge(
         viewer_mode="web",
         memory_limit="512MB",
-        pubsubs=[LCM(autoconf=True)],
+        pubsubs=[LCM()],
         visual_override={
             "world/global_map": _render_global_map,
             "world/navigation_costmap": _render_costmap,
