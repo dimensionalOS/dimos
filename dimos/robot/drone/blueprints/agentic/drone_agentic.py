@@ -38,26 +38,26 @@ Here are some GPS locations to remember
 5th and mission intersection: 37.782598539339695, -122.40649441875473
 6th and mission intersection: 37.781007204789354, -122.40868447123661"""
 
-# Select visualization backend based on --viewer flag
-if global_config.viewer == "foxglove":
-    from dimos.robot.foxglove_bridge import FoxgloveBridge
-
-    vis_module = FoxgloveBridge.blueprint()
-elif global_config.viewer.startswith("rerun"):
-    from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
-
-    vis_module = RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode())
-else:
-    vis_module = None
-
 # Determine connection string based on replay flag
 connection_string = "udp:0.0.0.0:14550"
 video_port = 5600
 if global_config.replay:
     connection_string = "replay"
 
-# Build module list
-_modules = [
+# Select visualization backend based on --viewer flag
+if global_config.viewer == "foxglove":
+    from dimos.robot.foxglove_bridge import foxglove_bridge
+
+    _vis = foxglove_bridge()
+elif global_config.viewer.startswith("rerun"):
+    from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
+
+    _vis = rerun_bridge(viewer_mode=_resolve_viewer_mode())
+else:
+    _vis = autoconnect()
+
+drone_agentic = autoconnect(
+    _vis,
     DroneConnectionModule.blueprint(
         connection_string=connection_string,
         video_port=video_port,
@@ -70,11 +70,7 @@ _modules = [
     OsmSkill.blueprint(),
     agent(system_prompt=DRONE_SYSTEM_PROMPT, model="gpt-4o"),
     web_input(),
-]
-if vis_module is not None:
-    _modules.insert(4, vis_module)
-
-drone_agentic = autoconnect(*_modules).remappings(
+).remappings(
     [
         (DroneTrackingModule, "video_input", "video"),
         (DroneTrackingModule, "cmd_vel", "movecmd_twist"),
