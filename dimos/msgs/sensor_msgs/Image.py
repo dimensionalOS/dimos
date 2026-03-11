@@ -58,9 +58,9 @@ def _format_to_rerun(data: np.ndarray, fmt: ImageFormat) -> Any:  # type: ignore
         case ImageFormat.RGBA:
             return rr.Image(data, color_model="RGBA")
         case ImageFormat.BGR:
-            return rr.Image(data[:, :, ::-1], color_model="RGB")
+            return rr.Image(data, color_model="BGR")
         case ImageFormat.BGRA:
-            return rr.Image(data[:, :, [2, 1, 0, 3]], color_model="RGBA")
+            return rr.Image(data, color_model="BGRA")
         case ImageFormat.GRAY:
             return rr.Image(data, color_model="L")
         case ImageFormat.GRAY16:
