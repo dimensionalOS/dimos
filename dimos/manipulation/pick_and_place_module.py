@@ -358,7 +358,7 @@ class PickAndPlaceModule(ManipulationModule):
         # Distance-adaptive occlusion offset:
         # Near (< 0.6m): small inset — grasp shifted well toward robot (front surface)
         # Far (>= 0.6m): larger inset — less toward-robot shift (grasp closer to true center)
-        inset = 0.01 if xy_dist < 0.6 else 0.05
+        inset = 0.01 if xy_dist < 0.8 else 0.05
         gx, gy = self._occlusion_offset(det.center, det.size, inset=inset)
 
         # For tall objects, grasp in the upper third instead of center
@@ -563,12 +563,17 @@ then refreshes perception obstacles.
                 logger.info(f"Grasp candidate {i + 1} approach planning failed, trying next")
                 continue  # Try next candidate
 
-            # 3. Execute approach to pre-grasp
+            # 3. Open gripper before approach
+            logger.info("Opening gripper...")
+            self._set_gripper_position(0.85, rname)
+            time.sleep(0.5)
+
+            # 4. Execute approach to pre-grasp
             err = self._preview_execute_wait(rname)
             if err:
                 return err
 
-            # 4. Move to grasp pose
+            # 5. Move to grasp pose
             logger.info("Moving to grasp position...")
             if not self.plan_to_pose(grasp_pose, rname):
                 return "Error: Grasp pose planning failed"

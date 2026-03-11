@@ -139,15 +139,10 @@ def run(
     if stale:
         logger.info(f"Cleaned {stale} stale run entries")
 
-    # Port conflict check
+    # Port conflict check (warn only, don't block)
     conflict = check_port_conflicts()
     if conflict:
-        typer.echo(
-            f"Error: Ports in use by {conflict.run_id} (PID {conflict.pid}). "
-            f"Run 'dimos stop' first.",
-            err=True,
-        )
-        raise typer.Exit(1)
+        logger.warning(f"Ports may conflict with {conflict.run_id} (PID {conflict.pid})")
 
     blueprint_name = "-".join(robot_types)
     run_id = generate_run_id(blueprint_name)

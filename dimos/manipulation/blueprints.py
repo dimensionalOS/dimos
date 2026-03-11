@@ -167,7 +167,7 @@ def _make_xarm6_config(
         collision_exclusion_pairs=XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
         auto_convert_meshes=True,
         max_velocity=1.0,
-        max_acceleration=2.0,
+        max_acceleration=1.5,
         joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
         home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -223,7 +223,7 @@ def _make_xarm7_config(
         xacro_args=xacro_args,
         collision_exclusion_pairs=XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
         auto_convert_meshes=True,
-        max_velocity=1.0,
+        max_velocity=1.2,
         max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
@@ -268,8 +268,8 @@ def _make_piper_config(
         xacro_args={},  # Piper xacro doesn't need special args
         collision_exclusion_pairs=PIPER_GRIPPER_COLLISION_EXCLUSIONS,
         auto_convert_meshes=True,
-        max_velocity=1.0,
-        max_acceleration=2.0,
+        max_velocity=2.0,
+        max_acceleration=4.0,
         joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
         home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -490,6 +490,8 @@ When user says "drop" at a specific location, use place with z_offset +0.1m.
 - "bring it back" = pick the object, then go_init. Do NOT place it somewhere random.
 - "bring it to me", "hand it over", "give it to me" = pick the object, then move toward the user \
 (roughly X=0, Y=0.5). Only use place/place_back if the user specifies an explicit location.
+- NEVER open the gripper unless the user explicitly asks to open it or you are executing a place/drop_on. \
+The gripper stays closed while holding an object — do not open it just because you moved somewhere.
 COORDINATE SYSTEM (world frame, meters): X=forward, Y=left, Z=up. Z=0 is robot base.
 User is sitting to the left roughly at X=0 Y=0.5, Z=0.05. Typical working area is X=0.3-0.7, Y=-0.5 to 0.5, Z=0.2-0.5.
 
@@ -502,7 +504,7 @@ Do NOT use the 'detect' or 'select' skills — use look or scan_objects instead.
 """
 
 xarm_perception_agent = autoconnect(
-    coordinator_xarm7,
+    # coordinator_xarm7,
     xarm_perception,
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
