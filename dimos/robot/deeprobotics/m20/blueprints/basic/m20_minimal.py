@@ -39,7 +39,7 @@ _transports_base = (
 )
 
 rerun_config = {
-    "pubsubs": [LCM(autoconf=True)],
+    "pubsubs": [LCM()],
     "visual_override": {
         "world/camera_info": lambda camera_info: camera_info.to_rerun(
             image_topic="/world/color_image",
@@ -58,7 +58,7 @@ rerun_config = {
     },
 }
 
-match global_config.viewer_backend:
+match global_config.viewer:
     case "foxglove":
         from dimos.robot.foxglove_bridge import foxglove_bridge
 

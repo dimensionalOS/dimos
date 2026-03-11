@@ -34,7 +34,7 @@ ros2 daemon stop >/dev/null 2>&1 || true
 echo "Waiting for ROS2 topics (30s timeout)..."
 wait_topic() {
     local topic=$1
-    timeout 30 bash -c "until ros2 topic echo $topic --once >/dev/null 2>&1; do sleep 1; done" \
+    timeout 30 bash -c "until ros2 topic echo \"$topic\" --once >/dev/null 2>&1; do sleep 1; done" \
         && echo "  $topic: OK" || echo "  $topic: TIMEOUT (continuing anyway)"
 }
 wait_topic /ODOM &
@@ -44,5 +44,60 @@ wait
 # Verify drdds bindings (non-fatal — falls back to UDP if unavailable)
 python3 -c "from drdds.msg import NavCmd; print('drdds available — /NAV_CMD publisher enabled')" 2>/dev/null \
     || echo "WARNING: drdds Python bindings not available — using UDP fallback (no obstacle avoidance)"
+
+# Lidar health check: if /ALIGNED_POINTS has no data after ODOM is up,
+# restart rsdriver (GOS) and lio_perception (AOS) to recover.
+# This works around a boot-order issue where the lidar driver on GOS
+# starts before the network is ready, producing empty point clouds.
+AOS_HOST="10.21.31.103"
+GOS_HOST="10.21.31.104"
+# Password for all M20 boards (single quote character)
+export SSHPASS="'"
+
+# Helper: SSH with password auth to another M20 board
+board_ssh() {
+    local host=$1; shift
+    sshpass -e ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "user@${host}" "$@" 2>/dev/null
+}
+
+# Helper: run sudo command on another M20 board
+board_sudo() {
+    local host=$1; shift
+    # SSHPASS is a single quote — pipe it to sudo -S on the remote
+    board_ssh "$host" "printf '%s\n' \"'\" | sudo -S $*"
+}
+
+check_lidar() {
+    echo "Checking lidar data (/ALIGNED_POINTS, 15s timeout)..."
+    if timeout 15 ros2 topic echo /ALIGNED_POINTS --once >/dev/null 2>&1; then
+        echo "  /ALIGNED_POINTS: OK"
+        return 0
+    fi
+    echo "  /ALIGNED_POINTS: no data — restarting lidar pipeline..."
+
+    # Restart rsdriver on GOS (lidar hardware driver)
+    board_sudo "$GOS_HOST" systemctl restart rsdriver \
+        && echo "  rsdriver (GOS): restarted" || echo "  rsdriver (GOS): restart failed"
+
+    sleep 3
+
+    # Restart lio_perception on AOS (SLAM + point cloud alignment)
+    board_sudo "$AOS_HOST" systemctl restart lio_perception \
+        && echo "  lio_perception (AOS): restarted" || echo "  lio_perception (AOS): restart failed"
+
+    # Wait for lidar to come back
+    sleep 10
+    if timeout 15 ros2 topic echo /ALIGNED_POINTS --once >/dev/null 2>&1; then
+        echo "  /ALIGNED_POINTS: recovered!"
+        return 0
+    else
+        echo "  /ALIGNED_POINTS: still no data after restart (continuing anyway)"
+        return 1
+    fi
+}
+check_lidar || true
+
+# Clean up password from environment before exec'ing the main process
+unset SSHPASS
 
 exec "$@"

@@ -15,6 +15,10 @@
 ARG BASE_IMAGE=ghcr.io/aphexcx/m20-deps:latest
 FROM ${BASE_IMAGE}
 
+# --- Layer 0: System packages ---
+RUN apt-get update && apt-get install -y --no-install-recommends openssh-client sshpass \
+    && rm -rf /var/lib/apt/lists/*
+
 # --- Layer 1: Install Python deps (cached until pyproject.toml/setup.py change) ---
 # Copy only packaging metadata so this layer survives pure source changes
 COPY pyproject.toml setup.py /opt/dimos/src/
