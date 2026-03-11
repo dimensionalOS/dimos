@@ -1,4 +1,3 @@
-
 <div align="center">
 
 <img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/15283d94-ad95-42c9-abd5-6565a222a837" />
@@ -18,11 +17,11 @@
 
 [Hardware](#hardware) •
 [Installation](#installation) •
-[Development](#development) •
-[Multi Language](#multi-language-support) •
-[ROS](#ros-interop)
+[CLI & MCP](#cli--mcp) •
+[Blueprints](#blueprints) •
+[Development](#development)
 
-⚠️ **Alpha Pre-Release: Expect Breaking Changes** ⚠️
+⚠️ **Pre-Release Beta** ⚠️
 
 </big></big>
 
@@ -110,12 +109,12 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
       🟨 <a href="docs/platforms/humanoid/g1/index.md">Unitree G1</a><br>
     </td>
     <td align="center" width="20%">
-      🟥 <a href="docs/todo.md">Xarm</a><br>
-      🟥 <a href="docs/todo.md">AgileX Piper</a><br>
+      🟨 <a href="docs/capabilities/manipulation/readme.md">Xarm</a><br>
+      🟨 <a href="docs/capabilities/manipulation/readme.md">AgileX Piper</a><br>
     </td>
     <td align="center" width="20%">
-      🟥 <a href="dimos/robot/drone">Mavlink</a><br>
-      🟥 <a href="dimos/robot/drone">DJI SDK</a><br>
+      🟧 <a href="dimos/robot/drone">MAVLink</a><br>
+      🟧 <a href="dimos/robot/drone">DJI SDK</a><br>
     </td>
     <td align="center" width="20%">
       🟥 <a href="https://github.com/dimensionalOS/openFT-sensor">Force Torque Sensor</a><br>
@@ -128,19 +127,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 </div>
 
-
-# System Requirements
-
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| GPU | NVIDIA RTX 3000+ (8 GB VRAM) | RTX 4070+ (12 GB+ VRAM) |
-| CPU | 8-core Intel / AMD | 12+ cores |
-| RAM | 16 GB | 32 GB+ |
-| Disk | 10 GB SSD | 25 GB+ SSD |
-| OS | Ubuntu 22.04, macOS 12.6+ | Ubuntu 24.04 |
-
-> GPU is optional for basic robot control. Required for perception, VLMs, and AI features.
-> Full details, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
+> Full system requirements, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
 
 # Installation
 
@@ -167,7 +154,7 @@ To set up your system dependencies, follow one of these guides:
 ```bash
 uv venv --python "3.12"
 source .venv/bin/activate
-uv pip install dimos[base,unitree]
+uv pip install 'dimos[base,unitree]'
 
 # Replay a recorded Go2 session (no hardware needed)
 # NOTE: First run will show a black rerun window while ~2.4 GB downloads from LFS
@@ -176,7 +163,7 @@ dimos --replay run unitree-go2
 
 ```bash
 # Install with simulation support
-uv pip install dimos[base,unitree,sim]
+uv pip install 'dimos[base,unitree,sim]'
 
 # Run Go2 in MuJoCo simulation
 dimos --simulation run unitree-go2
@@ -190,6 +177,39 @@ dimos --simulation run unitree-g1-sim
 export ROBOT_IP=<YOUR_ROBOT_IP>
 dimos run unitree-go2
 ```
+
+# CLI & MCP
+
+The `dimos` CLI manages the full lifecycle — run blueprints, inspect state, interact with agents, and call skills via MCP.
+
+```bash
+dimos run unitree-go2-agentic --daemon   # Start in background
+dimos status                              # Check what's running
+dimos log -f                              # Follow logs
+dimos agent-send "explore the room"       # Send agent a command
+dimos mcp list-tools                      # List available MCP skills
+dimos mcp call move --arg x=0.5           # Call a skill directly
+dimos stop                                # Shut down
+```
+
+Every [GlobalConfig](docs/usage/configuration.md) field is a CLI flag. Flags override env vars, `.env`, and blueprint defaults:
+
+```bash
+dimos --simulation --viewer rerun run unitree-go2          # simulation + Rerun
+dimos --replay --replay-dir drone/video run drone-basic    # replay a dataset
+dimos --robot-ip 192.168.123.161 run unitree-go2-agentic   # real robot
+```
+
+Standalone debug tools (no `dimos` prefix needed):
+
+```bash
+humancli     # Interactive agent chat
+lcmspy       # Monitor LCM messages
+agentspy     # Monitor agent tool calls
+dtop         # Live resource TUI
+```
+
+> Full CLI reference: [docs/usage/cli.md](docs/usage/cli.md)
 
 # Usage
 
@@ -240,35 +260,50 @@ if __name__ == "__main__":
 
 ## Blueprints
 
-Blueprints are instructions for how to construct and wire modules. We compose them with
+Blueprints are instructions for how to construct and wire modules. Compose them with
 `autoconnect(...)`, which connects streams by `(name, type)` and returns a `Blueprint`.
 
-Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `In[]` and `Out[]` message types.
+```bash
+dimos list   # See all available blueprints
+```
 
-A blueprint example that connects the image stream from a robot to an LLM Agent for reasoning and action execution.
+Blueprints compose incrementally — start simple, layer on capabilities:
+
 ```py
 from dimos.core.blueprints import autoconnect
-from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree.go2.connection import go2_connection
 from dimos.agents.agent import agent
+
+# Simple: just connect to the robot
+basic = autoconnect(go2_connection())
+
+# Add an LLM agent
+agentic = autoconnect(go2_connection(), agent())
+```
+
+Blueprints can be remapped and have transports overridden when `autoconnect()` needs help with conflicting names or types:
+
+```py
+from dimos.core.transport import LCMTransport
+from dimos.msgs.sensor_msgs import Image
 
 blueprint = autoconnect(
     go2_connection(),
     agent(),
 ).transports({("color_image", Image): LCMTransport("/color_image", Image)})
 
-# Run the blueprint
 if __name__ == "__main__":
     blueprint.build().loop()
 ```
+
+> Full docs: [Blueprints](docs/usage/blueprints.md) · [Modules](docs/usage/modules.md) · [Transports](docs/usage/transports/index.md)
 
 ## Library API
 
 - [Modules](docs/usage/modules.md)
 - [LCM](docs/usage/lcm.md)
 - [Blueprints](docs/usage/blueprints.md)
-- [Transports](docs/usage/transports/index.md)
+- [Transports](docs/usage/transports/index.md) — LCM, SHM, DDS, ROS 2
 - [Data Streams](docs/usage/data_streams/README.md)
 - [Configuration](docs/usage/configuration.md)
 - [Visualization](docs/usage/visualization.md)
@@ -309,7 +344,3 @@ Check our language interop examples:
 - [C++](examples/language-interop/cpp/)
 - [Lua](examples/language-interop/lua/)
 - [TypeScript](examples/language-interop/ts/)
-
-## ROS interop
-
-For researchers, we can talk to ROS directly via [ROS Transports](docs/usage/transports/index.md), or host dockerized ROS deployments as first-class DimOS modules, allowing you easy installation and portability
