@@ -127,9 +127,11 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 </div>
 
-> Full system requirements, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
+<div align="center">
 
-> 🤖 To run your favorite Agent (OpenClaw, Claude Code, etc.) with Dimensional, simply direct it to [AGENTS.md](AGENTS.md). It will get up to speed and start using our agent-native [CLI and MCP](#agent-cli-and-mcp) interface to build Dimensional applications.
+### 🤖 **To run your favorite Agent (OpenClaw, Claude Code, etc.) with Dimensional, simply direct it to [AGENTS.md](AGENTS.md). It will get up to speed and start using our agent-native [CLI and MCP](#agent-cli-and-mcp) interface to build Dimensional applications.**
+
+</div>
 
 # Installation
 
@@ -148,6 +150,8 @@ To set up your system dependencies, follow one of these guides:
 - 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
 - 🟩 [NixOS / General Linux](docs/installation/nix.md)
 - 🟧 [macOS](docs/installation/osx.md)
+
+> Full system requirements, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
 
 ## Python Install
 
@@ -197,31 +201,29 @@ dimos stop                                # Shut down
 > Full CLI reference: [docs/usage/cli.md](docs/usage/cli.md)
 
 
-# Featured Blueprints
+# Featured Runfiles
 
 ```bash
-dimos list   # See all available blueprints
+dimos list   # See all available runfiles
 ```
 
-| Blueprint | Robot | What it does |
-|-----------|-------|-------------|
-| `unitree-go2` | Go2 | Full navigation stack — SLAM, costmap, A* planning |
-| `unitree-go2-agentic` | Go2 | Navigation + LLM agent with natural language control |
-| `unitree-go2-agentic-mcp` | Go2 | Agentic + MCP server (expose skills over HTTP) |
-| `unitree-g1-agentic` | G1 | Humanoid agent with arm gestures and navigation |
-| `unitree-g1-agentic-sim` | G1 | Full agentic stack in MuJoCo simulation |
-| `xarm-perception-agent` | xArm | Manipulation + perception + LLM agent |
-| `drone-basic` | DJI/MAVLink | Video stream + telemetry + visualization |
-| `drone-agentic` | DJI/MAVLink | Drone + LLM agent with flight skills |
+| Run command | What it does |
+|-------------|-------------|
+| `dimos run unitree-go2` | Full Go2 navigation — SLAM, costmap, A* planning |
+| `dimos run unitree-go2-agentic` | Go2 + LLM agent with natural language control |
+| `dimos run unitree-go2-agentic-mcp` | Go2 agentic + MCP server (skills over HTTP) |
+| `dimos run unitree-g1-agentic` | G1 humanoid agent with arm gestures |
+| `dimos run unitree-g1-agentic-sim` | G1 full agentic stack in MuJoCo simulation |
+| `dimos run xarm-perception-agent` | xArm manipulation + perception + LLM agent |
+| `dimos run drone-basic` | Drone video stream + telemetry + visualization |
+| `dimos run drone-agentic` | Drone + LLM agent with flight skills |
 
-Blueprints compose incrementally — start with a connection, layer on navigation, perception, agents:
+Add flags to change the environment:
 
 ```bash
-dimos run unitree-go2                     # Navigation only
-dimos run unitree-go2-agentic             # + LLM agent
-dimos run unitree-go2-agentic-mcp         # + MCP server
-dimos --simulation run unitree-go2        # Same stack, MuJoCo sim
-dimos --replay run unitree-go2            # Replay recorded data
+dimos --simulation run unitree-go2        # MuJoCo sim instead of real hardware
+dimos --replay run unitree-go2            # Replay recorded data (no hardware needed)
+dimos --robot-ip 192.168.123.161 run unitree-go2  # Connect to a specific robot
 ```
 
 > Full blueprint docs: [docs/usage/blueprints.md](docs/usage/blueprints.md)
