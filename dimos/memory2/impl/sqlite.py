@@ -21,6 +21,7 @@ from dimos.memory2.store import Session, Store
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    import os
 
     from reactivex.abc import DisposableBase
 
@@ -81,7 +82,7 @@ class SqliteSession(Session):
 class SqliteStore(Store):
     """Store backed by a SQLite database file."""
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str | os.PathLike[str]) -> None:
         self._path = path
 
     def session(self) -> SqliteSession:

@@ -14,7 +14,10 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
+
+from dimos.core.resource import Resource
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -58,3 +61,32 @@ class LiveBackend(Backend[T], Protocol[T]):
     """Backend that also supports live subscriptions."""
 
     def subscribe(self, buf: BackpressureBuffer[Observation[T]]) -> DisposableBase: ...
+
+
+# ── Blob storage ──────────────────────────────────────────────────
+
+
+class BlobStore(Resource, ABC):
+    """Persistent storage for encoded payload blobs.
+
+    Separates payload data from metadata indexing so that large blobs
+    (images, point clouds) don't penalize metadata queries.
+
+    Extends Resource (start/stop) but does NOT manage its dependencies'
+    lifecycle — the caller owns the session / connection.
+    """
+
+    @abstractmethod
+    def put(self, stream: str, key: int, data: bytes) -> None:
+        """Store a blob for the given stream and observation id."""
+        ...
+
+    @abstractmethod
+    def get(self, stream: str, key: int) -> bytes:
+        """Retrieve a blob by stream name and observation id."""
+        ...
+
+    @abstractmethod
+    def delete(self, stream: str, key: int) -> None:
+        """Delete a blob by stream name and observation id."""
+        ...
