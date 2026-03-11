@@ -37,7 +37,29 @@ def _static_drone_body(rr):  # type: ignore
     ]
 
 
+def _drone_rerun_blueprint():
+    """Split layout: camera feed + 3D world view side by side."""
+    import rerun as rr
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial2DView(origin="world/color_image", name="Camera"),
+            rrb.Spatial3DView(
+                origin="world",
+                name="3D",
+                background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
+                line_grid=rrb.LineGrid3D(
+                    plane=rr.components.Plane3D.XY.with_distance(0.2),
+                ),
+            ),
+            column_shares=[1, 2],
+        ),
+    )
+
+
 rerun_config = {
+    "blueprint": _drone_rerun_blueprint,
     "pubsubs": [LCM()],
     "static": {
         "world/tf/base_link": _static_drone_body,
