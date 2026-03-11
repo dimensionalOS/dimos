@@ -53,6 +53,8 @@ def test_patrol_and_follow(
     start_blueprint(
         "--mujoco-start-pos",
         "-10.75 -6.78",
+        "--nerf-speed",
+        "0.3",
         "run",
         "--disable",
         "spatial-memory",

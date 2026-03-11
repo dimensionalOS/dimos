@@ -41,7 +41,7 @@ class PerceiveLoopSkill(Module):
     color_image: In[Image]
 
     _agent_spec: AgentSpec
-    _period: float = 0.5  # seconds - how often to run the perceive loop
+    _period: float = 0.1  # seconds - how often to run the perceive loop
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -128,6 +128,7 @@ class PerceiveLoopSkill(Module):
         return f"Stopped looking out for {active_lookout_str}"
 
     def _on_image(self, image: Image) -> None:
+        print("Received image in perceive loop skill")
         with self._lock:
             if not self._active_lookout:
                 return

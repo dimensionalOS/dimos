@@ -46,6 +46,7 @@ class GlobalConfig(BaseSettings):
     robot_model: str | None = None
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
+    nerf_speed: float = 1.0
     planner_robot_speed: float | None = None
     mcp_port: int = 9990
     mcp_host: str = "0.0.0.0"
