@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Basic drone blueprint with connection, camera, and visualization."""
+
+from dimos.core.blueprints import autoconnect
+from dimos.core.global_config import global_config
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.robot.drone.camera_module import DroneCameraModule
+from dimos.robot.drone.connection_module import DroneConnectionModule
+from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
+
+
+def _static_drone_body(rr):  # type: ignore
+    """Static visualization of drone body."""
+    return [
+        rr.Boxes3D(
+            half_sizes=[0.25, 0.25, 0.1],
+            colors=[(255, 100, 0)],
+            fill_mode="wireframe",
+        ),
+        rr.Transform3D(parent_frame="tf#/base_link"),
+    ]
+
+
+rerun_config = {
+    "pubsubs": [LCM(autoconf=True)],
+    "static": {
+        "world/tf/base_link": _static_drone_body,
+    },
+}
+
+# Build blueprint with conditional visualization
+_transports_base = autoconnect()
+
+if global_config.viewer == "foxglove":
+    from dimos.robot.foxglove_bridge import foxglove_bridge
+
+    with_vis = autoconnect(
+        _transports_base,
+        foxglove_bridge(),
+    )
+elif global_config.viewer.startswith("rerun"):
+    from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
+
+    with_vis = autoconnect(
+        _transports_base,
+        rerun_bridge(viewer_mode=_resolve_viewer_mode(), **rerun_config),
+    )
+else:
+    with_vis = _transports_base
+
+
+# Determine connection string based on replay flag
+connection_string = "udp:0.0.0.0:14550"
+video_port = 5600
+if global_config.replay:
+    connection_string = "replay"
+
+drone_basic = autoconnect(
+    with_vis,
+    DroneConnectionModule.blueprint(
+        connection_string=connection_string,
+        video_port=video_port,
+        outdoor=False,
+    ),
+    DroneCameraModule.blueprint(camera_intrinsics=[1000.0, 1000.0, 960.0, 540.0]),
+    websocket_vis(),
+).global_config(n_workers=4, robot_model="drone")
+
+
+__all__ = [
+    "drone_basic",
+]
