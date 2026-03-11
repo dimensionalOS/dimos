@@ -298,10 +298,17 @@ class TestMulticastConfiguratorMacOS:
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
                 configurator.fix()
-                mock_run.assert_called_once()
-                args = mock_run.call_args[0][0]
-                assert "route" in args
-                assert "224.0.0.0/4" in args
+                assert mock_run.call_count == 2
+                # First call: route delete (pre-clean stale route)
+                delete_args = mock_run.call_args_list[0][0][0]
+                assert "route" in delete_args
+                assert "delete" in delete_args
+                assert "224.0.0.0/4" in delete_args
+                # Second call: route add
+                add_args = mock_run.call_args_list[1][0][0]
+                assert "route" in add_args
+                assert "add" in add_args
+                assert "224.0.0.0/4" in add_args
 
 
 # ----------------------------- BufferConfiguratorLinux tests -----------------------------
