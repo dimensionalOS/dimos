@@ -135,7 +135,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 ## Interactive Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dev/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
 ```
 
 > See [`scripts/install.sh --help`](scripts/install.sh) for non-interactive and advanced options.
