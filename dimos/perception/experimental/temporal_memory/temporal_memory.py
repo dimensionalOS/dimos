@@ -37,7 +37,7 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
@@ -114,7 +114,7 @@ class TemporalMemory(Module):
     """
 
     color_image: In[Image]
-    odometry: In[Odometry]
+    odom: In[PoseStamped]
     entity_markers: Out[EntityMarkers]
 
     def __init__(
@@ -294,12 +294,12 @@ class TemporalMemory(Module):
         self._disposables.add(Disposable(unsub_image))
 
         # Odometry tracking for entity world positioning
-        def _on_odom(msg: Odometry) -> None:
+        def _on_odom(msg: PoseStamped) -> None:
             self._robot_x = msg.position.x
             self._robot_y = msg.position.y
             self._robot_z = msg.position.z
 
-        unsub_odom = self.odometry.subscribe(_on_odom)
+        unsub_odom = self.odom.subscribe(_on_odom)
         self._disposables.add(Disposable(unsub_odom))
 
         # Periodic window analysis
