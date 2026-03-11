@@ -194,7 +194,7 @@ dimos status                              # Check what's running
 dimos log -f                              # Follow logs
 dimos agent-send "explore the room"       # Send agent a command
 dimos mcp list-tools                      # List available MCP skills
-dimos mcp call move --arg x=0.5           # Call a skill directly
+dimos mcp call relative_move --arg forward=0.5  # Call a skill directly
 dimos stop                                # Shut down
 ```
 

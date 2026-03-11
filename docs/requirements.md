@@ -29,10 +29,10 @@ Bare `pip install dimos` installs the **core** tier. Extras add capabilities on 
 
 ```bash
 pip install dimos                           # Core only
-pip install dimos[base,unitree]             # Full stack + Unitree
-pip install dimos[base,unitree,sim]         # + MuJoCo simulation
-pip install dimos[base,unitree,drone]       # + Drone support
-pip install dimos[base,unitree,manipulation] # + Arm control
+pip install 'dimos[base,unitree]'             # Full stack + Unitree
+pip install 'dimos[base,unitree,sim]'         # + MuJoCo simulation
+pip install 'dimos[base,unitree,drone]'       # + Drone support
+pip install 'dimos[base,unitree,manipulation]' # + Arm control
 ```
 
 | Extra | What it adds | Key packages | GPU? |

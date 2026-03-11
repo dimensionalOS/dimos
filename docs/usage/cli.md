@@ -244,8 +244,8 @@ dimos mcp call <tool_name> [--arg key=value ...] [--json-args '{}']
 | `--json-args`, `-j` | Arguments as a JSON string |
 
 ```bash
-dimos mcp call move --arg x=0.5 --arg duration=2.0
-dimos mcp call move --json-args '{"x": 0.5, "duration": 2.0}'
+dimos mcp call relative_move --arg forward=0.5
+dimos mcp call relative_move --json-args '{"forward": 2.0, "left": 0, "degrees": 0}'
 dimos mcp call observe
 dimos mcp call land
 ```
