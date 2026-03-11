@@ -56,6 +56,9 @@ ANGLE_OF_MID_360_ON_ROBOT = 24  # degree
 INITIAL_HEIGHT_OF_MID_360_ON_ROBOT = 0.2  # meter
 
 
+LIDAR_MAX_HEIGHT = global_config.ceiling_height
+
+
 class ReplayMid360Module(Module):
     """Module that replays Mid360 lidar data from pickle file."""
 
@@ -114,7 +117,7 @@ class ReplayMid360Module(Module):
 class Config(ModuleConfig):
     angle_of_mid_360_on_robot: float = 0
     height_of_mid_360_on_robot: float = 0.5
-    lidar_max_height: float = 2.0
+    lidar_max_height: float = 0.2
 
 
 class TransformToRobot(Module):
@@ -160,6 +163,7 @@ class OdometryToOdom(Module):
     @rpc
     def start(self):
         self.odometry.subscribe(self._on_odom)
+
     def _on_odom(self, odometry: Odometry):
         """Convert Odometry to PoseStamped."""
 
@@ -262,7 +266,7 @@ fastlio_livox_replay = autoconnect(
     TransformToRobot.blueprint(
         angle_of_mid_360_on_robot=ANGLE_OF_MID_360_ON_ROBOT,
         height_of_mid_360_on_robot=INITIAL_HEIGHT_OF_MID_360_ON_ROBOT,
-        lidar_max_height=2.0,
+        lidar_max_height=LIDAR_MAX_HEIGHT,
     ),
     OdometryToOdom.blueprint(),
     VoxelGridMapper.blueprint(voxel_size=VOXEL_SIZE),
@@ -279,10 +283,10 @@ if global_config.viewer.startswith("rerun"):
     from dimos.visualization.rerun.bridge import _resolve_viewer_mode
 
     rerun_config["visual_override"] = {
-            **rerun_config["visual_override"],
-            "world/lidar_null": None,
-            "world/odom_null": None,
-            "world/lidar": None,
+        **rerun_config["visual_override"],
+        "world/lidar_null": None,
+        "world/odom_null": None,
+        "world/lidar": None,
     }
     _fastlio_rerun_config = rerun_config
     _with_vis_fastlio = autoconnect(
@@ -313,7 +317,7 @@ unitree_go2_backpack = (
         TransformToRobot.blueprint(
             angle_of_mid_360_on_robot=ANGLE_OF_MID_360_ON_ROBOT,
             height_of_mid_360_on_robot=INITIAL_HEIGHT_OF_MID_360_ON_ROBOT,
-            lidar_max_height=2.0,
+            lidar_max_height=LIDAR_MAX_HEIGHT,
         ),
         OdometryToOdom.blueprint(),
         OdometryTFPublisher.blueprint(),
@@ -321,7 +325,6 @@ unitree_go2_backpack = (
         cost_mapper(),
         replanning_a_star_planner(),
         wavefront_frontier_explorer(),
-
     )
     .remappings(
         [

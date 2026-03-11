@@ -52,6 +52,7 @@ class GlobalConfig(BaseSettings):
     dtop: bool = False
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"
+    ceiling_height: float = 2.0
 
     model_config = SettingsConfigDict(
         env_file=".env",
