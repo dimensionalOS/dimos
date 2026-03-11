@@ -93,10 +93,13 @@ def execute(robot_name=None):
 
 def home(robot_name=None):
     """Plan and execute move to home position."""
-    return _client.plan_to_joints(
-        _client.get_robot_info(robot_name).get("home_joints", [0.0] * 7),
-        robot_name,
-    )
+    from dimos.msgs.sensor_msgs import JointState
+
+    home_joints = _client.get_robot_info(robot_name).get("home_joints", [0.0] * 7)
+    success = _client.plan_to_joints(JointState(position=home_joints), robot_name)
+    if success:
+        return _client.execute(robot_name)
+    return False
 
 
 def url():
