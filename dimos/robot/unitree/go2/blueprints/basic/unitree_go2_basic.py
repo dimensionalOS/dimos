@@ -72,7 +72,21 @@ def _static_base_link(rr: Any) -> list[Any]:
     ]
 
 
+def _go2_rerun_blueprint() -> Any:
+    """Split layout: camera feed + 3D world view side by side."""
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial2DView(origin="world/color_image", name="Camera"),
+            rrb.Spatial3DView(origin="world", name="3D"),
+            column_shares=[1, 2],
+        ),
+    )
+
+
 rerun_config = {
+    "blueprint": _go2_rerun_blueprint,
     # any pubsub that supports subscribe_all and topic that supports str(topic)
     # is acceptable here
     "pubsubs": [LCM()],
