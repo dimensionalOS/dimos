@@ -183,28 +183,13 @@ dimos run unitree-go2
 
 # Featured Runfiles
 
-```bash
-dimos list   # See all available runfiles
-```
-
 | Run command | What it does |
 |-------------|-------------|
 | `dimos run unitree-go2` | Full Go2 navigation — SLAM, costmap, A* planning |
-| `dimos run unitree-go2-agentic` | Go2 + LLM agent with natural language control |
 | `dimos run unitree-go2-agentic-mcp` | Go2 agentic + MCP server (skills over HTTP) |
-| `dimos run unitree-g1-agentic` | G1 humanoid agent with arm gestures |
-| `dimos run unitree-g1-agentic-sim` | G1 full agentic stack in MuJoCo simulation |
-| `dimos run xarm-perception-agent` | xArm manipulation + perception + LLM agent |
-| `dimos run drone-basic` | Drone video stream + telemetry + visualization |
-| `dimos run drone-agentic` | Drone + LLM agent with flight skills |
-
-Add flags to change the environment:
-
-```bash
-dimos --simulation run unitree-go2        # MuJoCo sim instead of real hardware
-dimos --replay run unitree-go2            # Replay recorded data (no hardware needed)
-dimos --robot-ip 192.168.123.161 run unitree-go2  # Connect to a specific robot
-```
+| `dimos --simulation run unitree-g1` | G1 humanoid in MuJoCo simulation |
+| `dimos --replay run drone-basic` | Drone video + telemetry replay |
+| `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay) |
 
 > Full blueprint docs: [docs/usage/blueprints.md](docs/usage/blueprints.md)
 
