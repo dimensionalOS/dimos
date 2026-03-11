@@ -12,51 +12,45 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from reactivex.disposable import Disposable
+
+from dataclasses import dataclass
+import math
+import pickle
+import threading
+import time
+from typing import IO, Any
 
 from dimos.core.blueprints import autoconnect
+from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.module import Module, ModuleConfig
+from dimos.core.stream import In, Out
+from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.mapping.costmapper import cost_mapper
 from dimos.mapping.voxels import VoxelGridMapper
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
+from dimos.msgs.nav_msgs import Odometry
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
 from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
-from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
-from dimos.utils.logging_config import setup_logger
-from dimos.core.module import Module
-from dimos.core.stream import In, Out
-from dimos.core.core import rpc
-from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, PoseStamped
-from dimos.msgs.nav_msgs import Odometry
 from dimos.protocol.service.system_configurator import ClockSyncConfigurator
-from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import (
-    with_vis,
-    rerun_config,
     _transports_base,
+    rerun_config,
+    with_vis,
 )
-from dimos.visualization.rerun.bridge import rerun_bridge
-from dimos.core.global_config import global_config
-from dimos.mapping.pointclouds.occupancy import HeightCostConfig
-from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.robot.unitree.go2.connection import GO2Connection, go2_connection
 from dimos.utils.data import get_data
-from dimos.core.module import ModuleConfig
-from dataclasses import dataclass
-
-import pickle
-import math
-import time
-from pathlib import Path
-
+from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.bridge import rerun_bridge
+from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
 logger = setup_logger()
 
 VOXEL_SIZE = 0.05
 ANGLE_OF_MID_360_ON_ROBOT = 24  # degree
 INITIAL_HEIGHT_OF_MID_360_ON_ROBOT = 0.2  # meter
-
-
-LIDAR_MAX_HEIGHT = global_config.ceiling_height
+LIDAR_IP = "192.168.1.157"
 
 
 class ReplayMid360Module(Module):
@@ -67,15 +61,13 @@ class ReplayMid360Module(Module):
     def __init__(self) -> None:
         super().__init__()
         self.lidar_path = get_data("livox_go2_recording/lidar.pkl")
-        self.file = None
+        self.file: IO[bytes] | None = None
         self._running = False
-        self._thread = None
+        self._thread: threading.Thread | None = None
 
     @rpc
     def start(self) -> None:
         """Start replaying lidar data."""
-        import threading
-
         self.file = self.lidar_path.open("rb")
         self._running = True
         self._thread = threading.Thread(target=self._replay_loop, daemon=True)
@@ -83,7 +75,7 @@ class ReplayMid360Module(Module):
 
         logger.info(f"ReplayMid360Module started, replaying from {self.lidar_path}")
 
-    def _replay_loop(self):
+    def _replay_loop(self) -> None:
         frame_count = 0
         try:
             if not self.file:
@@ -117,7 +109,6 @@ class ReplayMid360Module(Module):
 class Config(ModuleConfig):
     angle_of_mid_360_on_robot: float = 0
     height_of_mid_360_on_robot: float = 0.5
-    lidar_max_height: float = 0.2
 
 
 class TransformToRobot(Module):
@@ -126,8 +117,9 @@ class TransformToRobot(Module):
     lidar_untrans: In[PointCloud2]
     lidar_trans: Out[PointCloud2]
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, cfg: GlobalConfig, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._lidar_max_height = cfg.ceiling_height
         self.floor_orientation = Transform(
             translation=Vector3(0, 0, self.config.height_of_mid_360_on_robot),
             rotation=Quaternion.from_euler(
@@ -136,18 +128,18 @@ class TransformToRobot(Module):
         )
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         self.lidar_untrans.subscribe(self._on_lidar)
 
-    def _on_lidar(self, pcd: PointCloud2):
+    def _on_lidar(self, pcd: PointCloud2) -> None:
         """Apply transform and filter by height before publishing."""
         transformed = pcd.transform(self.floor_orientation).filter_by_height(
-            max_height=self.config.lidar_max_height
+            max_height=self._lidar_max_height
         )
         self.lidar_trans.publish(transformed)
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         pass
 
 
@@ -161,10 +153,10 @@ class OdometryToOdom(Module):
         super().__init__()
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         self.odometry.subscribe(self._on_odom)
 
-    def _on_odom(self, odometry: Odometry):
+    def _on_odom(self, odometry: Odometry) -> None:
         """Convert Odometry to PoseStamped."""
 
         visual_pose = Quaternion.from_euler(Vector3(0, 0, odometry.pose.orientation.to_euler().z))
@@ -177,7 +169,7 @@ class OdometryToOdom(Module):
         )
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         pass
 
 
@@ -216,7 +208,7 @@ class OdometryTFPublisher(Module):
 
     odom: In[PoseStamped]
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._camera_link_translation = Vector3(
             self.config.camera_link_x,
@@ -266,7 +258,6 @@ fastlio_livox_replay = autoconnect(
     TransformToRobot.blueprint(
         angle_of_mid_360_on_robot=ANGLE_OF_MID_360_ON_ROBOT,
         height_of_mid_360_on_robot=INITIAL_HEIGHT_OF_MID_360_ON_ROBOT,
-        lidar_max_height=LIDAR_MAX_HEIGHT,
     ),
     OdometryToOdom.blueprint(),
     VoxelGridMapper.blueprint(voxel_size=VOXEL_SIZE),
@@ -282,13 +273,13 @@ fastlio_livox_replay = autoconnect(
 if global_config.viewer.startswith("rerun"):
     from dimos.visualization.rerun.bridge import _resolve_viewer_mode
 
-    rerun_config["visual_override"] = {
-        **rerun_config["visual_override"],
+    _fastlio_rerun_config = rerun_config.copy()
+    _fastlio_rerun_config["visual_override"] = {
+        **_fastlio_rerun_config["visual_override"],  # type: ignore[dict-item]
         "world/lidar_null": None,
         "world/odom_null": None,
         "world/lidar": None,
     }
-    _fastlio_rerun_config = rerun_config
     _with_vis_fastlio = autoconnect(
         _transports_base,
         rerun_bridge(viewer_mode=_resolve_viewer_mode(), **_fastlio_rerun_config),
@@ -312,12 +303,11 @@ unitree_go2_backpack = (
     autoconnect(
         _unitree_go2_basic_no_tf,
         FastLio2.blueprint(
-            voxel_size=VOXEL_SIZE, map_voxel_size=VOXEL_SIZE, map_freq=-1, lidar_ip="192.168.1.157"
+            voxel_size=VOXEL_SIZE, map_voxel_size=VOXEL_SIZE, map_freq=-1, lidar_ip=LIDAR_IP
         ),
         TransformToRobot.blueprint(
             angle_of_mid_360_on_robot=ANGLE_OF_MID_360_ON_ROBOT,
             height_of_mid_360_on_robot=INITIAL_HEIGHT_OF_MID_360_ON_ROBOT,
-            lidar_max_height=LIDAR_MAX_HEIGHT,
         ),
         OdometryToOdom.blueprint(),
         OdometryTFPublisher.blueprint(),
@@ -337,7 +327,7 @@ unitree_go2_backpack = (
     .global_config(n_workers=6, robot_model="unitree_go2")
 )
 
-__all__ = ["unitree_go2_fastlio", "unitree_go2_fastlio_no_go2tf"]
+__all__ = ["fastlio_livox_replay", "unitree_go2_backpack"]
 
 if __name__ == "__main__":
     fastlio_livox_replay.build().loop()

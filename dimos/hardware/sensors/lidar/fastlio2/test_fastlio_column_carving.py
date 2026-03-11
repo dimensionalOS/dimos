@@ -12,29 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import pickle
 import time
-from pathlib import Path
-import math
 
 import pytest
 
-from dimos import core
-from dimos.utils.data import get_data
 from dimos.core import Module, Out, rpc
-from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
-from dimos.utils.logging_config import setup_logger
-    # Build the blueprint (same as replay_object_permanence_mid360 from examples/livox_nav/module.py)
+
+# Build the blueprint (same as replay_object_permanence_mid360 from examples/livox_nav/module.py)
 from dimos.core.blueprints import autoconnect
-from dimos.visualization.rerun.bridge import rerun_bridge
 from dimos.mapping.voxels import voxel_mapper
-import math
+from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
+from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.utils.data import get_data
+from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.bridge import rerun_bridge
 
 logger = setup_logger()
 voxel_size = 0.05
 
-#TODO: add foot note about getting a failed test due to dask multithread??
+
 class ReplayMid360Module(Module):
     """Module that replays Mid360 lidar data from pickle file."""
 
@@ -107,7 +105,7 @@ def test_replay_column_carving():
     test_blueprint = autoconnect(
         ReplayMid360Module.blueprint(lidar_path=str(lidar_path)),
         voxel_mapper(voxel_size=voxel_size),
-        rerun_bridge()
+        rerun_bridge(),
     )
 
     # Build and start the application

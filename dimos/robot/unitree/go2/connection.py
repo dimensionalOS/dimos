@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 from dataclasses import dataclass
+import logging
 from threading import Thread
 import time
 from typing import TYPE_CHECKING, Any, Protocol
