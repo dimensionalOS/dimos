@@ -14,18 +14,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Agentic drone blueprint — autonomous drone with LLM agent control."""
+"""Agentic drone blueprint — autonomous drone with LLM agent control.
+
+Composes on top of drone_basic (connection + camera + vis) and adds
+tracking, mapping skills, and an LLM agent.
+"""
 
 from dimos.agents.agent import agent
 from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.agents.skills.osm import OsmSkill
 from dimos.agents.web_human_input import web_input
 from dimos.core.blueprints import autoconnect
-from dimos.core.global_config import global_config
-from dimos.robot.drone.camera_module import DroneCameraModule
-from dimos.robot.drone.connection_module import DroneConnectionModule
+from dimos.robot.drone.blueprints.basic.drone_basic import drone_basic
 from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 DRONE_SYSTEM_PROMPT = """\
 You are controlling a DJI drone with MAVLink interface.
@@ -38,34 +39,9 @@ Here are some GPS locations to remember
 5th and mission intersection: 37.782598539339695, -122.40649441875473
 6th and mission intersection: 37.781007204789354, -122.40868447123661"""
 
-# Determine connection string based on replay flag
-connection_string = "udp:0.0.0.0:14550"
-video_port = 5600
-if global_config.replay:
-    connection_string = "replay"
-
-# Select visualization backend based on --viewer flag
-if global_config.viewer == "foxglove":
-    from dimos.robot.foxglove_bridge import foxglove_bridge
-
-    _vis = foxglove_bridge()
-elif global_config.viewer.startswith("rerun"):
-    from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
-
-    _vis = rerun_bridge(viewer_mode=_resolve_viewer_mode())
-else:
-    _vis = autoconnect()
-
 drone_agentic = autoconnect(
-    _vis,
-    DroneConnectionModule.blueprint(
-        connection_string=connection_string,
-        video_port=video_port,
-        outdoor=False,
-    ),
-    DroneCameraModule.blueprint(camera_intrinsics=[1000.0, 1000.0, 960.0, 540.0]),
+    drone_basic,
     DroneTrackingModule.blueprint(outdoor=False),
-    WebsocketVisModule.blueprint(),
     GoogleMapsSkillContainer.blueprint(),
     OsmSkill.blueprint(),
     agent(system_prompt=DRONE_SYSTEM_PROMPT, model="gpt-4o"),

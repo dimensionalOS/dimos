@@ -19,7 +19,6 @@
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.protocol.service.system_configurator import ClockSyncConfigurator
 from dimos.robot.drone.camera_module import DroneCameraModule
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
@@ -31,7 +30,6 @@ def _static_drone_body(rr):  # type: ignore
         rr.Boxes3D(
             half_sizes=[0.25, 0.25, 0.1],
             colors=[(255, 100, 0)],
-            fill_mode="wireframe",
         ),
         rr.Transform3D(parent_frame="tf#/base_link"),
     ]
@@ -58,7 +56,7 @@ def _drone_rerun_blueprint():
     )
 
 
-rerun_config = {
+_rerun_config = {
     "blueprint": _drone_rerun_blueprint,
     "pubsubs": [LCM()],
     "static": {
@@ -66,26 +64,17 @@ rerun_config = {
     },
 }
 
-# Build blueprint with conditional visualization
-_transports_base = autoconnect()
-
+# Conditional visualization
 if global_config.viewer == "foxglove":
     from dimos.robot.foxglove_bridge import foxglove_bridge
 
-    with_vis = autoconnect(
-        _transports_base,
-        foxglove_bridge(),
-    )
+    _vis = foxglove_bridge()
 elif global_config.viewer.startswith("rerun"):
     from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
 
-    with_vis = autoconnect(
-        _transports_base,
-        rerun_bridge(viewer_mode=_resolve_viewer_mode(), **rerun_config),
-    )
+    _vis = rerun_bridge(viewer_mode=_resolve_viewer_mode(), **_rerun_config)
 else:
-    with_vis = _transports_base
-
+    _vis = autoconnect()
 
 # Determine connection string based on replay flag
 connection_string = "udp:0.0.0.0:14550"
@@ -93,21 +82,16 @@ video_port = 5600
 if global_config.replay:
     connection_string = "replay"
 
-drone_basic = (
-    autoconnect(
-        with_vis,
-        DroneConnectionModule.blueprint(
-            connection_string=connection_string,
-            video_port=video_port,
-            outdoor=False,
-        ),
-        DroneCameraModule.blueprint(camera_intrinsics=[1000.0, 1000.0, 960.0, 540.0]),
-        websocket_vis(),
-    )
-    .global_config(n_workers=4, robot_model="drone")
-    .configurators(ClockSyncConfigurator())
+drone_basic = autoconnect(
+    _vis,
+    DroneConnectionModule.blueprint(
+        connection_string=connection_string,
+        video_port=video_port,
+        outdoor=False,
+    ),
+    DroneCameraModule.blueprint(camera_intrinsics=[1000.0, 1000.0, 960.0, 540.0]),
+    websocket_vis(),
 )
-
 
 __all__ = [
     "drone_basic",
