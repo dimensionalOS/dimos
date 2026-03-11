@@ -14,18 +14,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Agentic drone blueprint with full autonomous capabilities."""
+"""Agentic drone blueprint — autonomous drone with LLM agent control."""
 
 from dimos.agents.agent import agent
 from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.agents.skills.osm import OsmSkill
 from dimos.agents.web_human_input import web_input
-from dimos.core.blueprints import Blueprint, autoconnect
-from dimos.protocol.service.system_configurator import ClockSyncConfigurator
+from dimos.core.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.robot.drone.camera_module import DroneCameraModule
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
-from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 DRONE_SYSTEM_PROMPT = """\
@@ -39,54 +38,48 @@ Here are some GPS locations to remember
 5th and mission intersection: 37.782598539339695, -122.40649441875473
 6th and mission intersection: 37.781007204789354, -122.40868447123661"""
 
+# Select visualization backend based on --viewer flag
+if global_config.viewer == "foxglove":
+    from dimos.robot.foxglove_bridge import FoxgloveBridge
 
-def _make_drone_agentic(
-    connection_string: str = "udp:0.0.0.0:14550",
-    video_port: int = 5600,
-    outdoor: bool = False,
-    camera_intrinsics: list[float] | None = None,
-    system_prompt: str = DRONE_SYSTEM_PROMPT,
-    model: str = "gpt-4o",
-) -> Blueprint:
-    """Build the agentic drone blueprint.
+    vis_module = FoxgloveBridge.blueprint()
+elif global_config.viewer.startswith("rerun"):
+    from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
 
-    Preserves the exact module composition and remappings from the original
-    ``Drone.drone_agentic()`` factory, including FoxgloveBridge.
-    """
-    if camera_intrinsics is None:
-        camera_intrinsics = [1000.0, 1000.0, 960.0, 540.0]
+    vis_module = RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode())
+else:
+    vis_module = None
 
-    return (
-        autoconnect(
-            DroneConnectionModule.blueprint(
-                connection_string=connection_string,
-                video_port=video_port,
-                outdoor=outdoor,
-            ),
-            DroneCameraModule.blueprint(camera_intrinsics=camera_intrinsics),
-            DroneTrackingModule.blueprint(outdoor=outdoor),
-            WebsocketVisModule.blueprint(),
-            FoxgloveBridge.blueprint(),
-            GoogleMapsSkillContainer.blueprint(),
-            OsmSkill.blueprint(),
-            agent(system_prompt=system_prompt, model=model),
-            web_input(),
-        )
-        .remappings(
-            [
-                (DroneTrackingModule, "video_input", "video"),
-                (DroneTrackingModule, "cmd_vel", "movecmd_twist"),
-            ]
-        )
-        .global_config(n_workers=4, robot_model="drone")
-        .configurators(ClockSyncConfigurator())
-    )
+# Determine connection string based on replay flag
+connection_string = "udp:0.0.0.0:14550"
+video_port = 5600
+if global_config.replay:
+    connection_string = "replay"
 
+# Build module list
+_modules = [
+    DroneConnectionModule.blueprint(
+        connection_string=connection_string,
+        video_port=video_port,
+        outdoor=False,
+    ),
+    DroneCameraModule.blueprint(camera_intrinsics=[1000.0, 1000.0, 960.0, 540.0]),
+    DroneTrackingModule.blueprint(outdoor=False),
+    WebsocketVisModule.blueprint(),
+    GoogleMapsSkillContainer.blueprint(),
+    OsmSkill.blueprint(),
+    agent(system_prompt=DRONE_SYSTEM_PROMPT, model="gpt-4o"),
+    web_input(),
+]
+if vis_module is not None:
+    _modules.insert(4, vis_module)
 
-# Module-level Blueprint instance used by the CLI registry.
-# Uses default parameters, matching the original drone_agentic() defaults.
-drone_agentic = _make_drone_agentic()
-
+drone_agentic = autoconnect(*_modules).remappings(
+    [
+        (DroneTrackingModule, "video_input", "video"),
+        (DroneTrackingModule, "cmd_vel", "movecmd_twist"),
+    ]
+)
 
 __all__ = [
     "DRONE_SYSTEM_PROMPT",
