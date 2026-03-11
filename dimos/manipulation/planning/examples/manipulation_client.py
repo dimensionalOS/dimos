@@ -16,8 +16,7 @@
 RPC client for interacting with a running ManipulationModule.
 
 Usage:
-    # Start a manipulation blueprint in another terminal first, e.g.:
-    #   dimos run coordinator-mock
+    # Start a manipulation blueprint in another terminal first:
     #   dimos run xarm7-planner-coordinator
     #
     # Then run this client:
