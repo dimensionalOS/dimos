@@ -52,7 +52,7 @@ all_blueprints = {
     "demo-skill": "dimos.agents.skills.demo_skill:demo_skill",
     "drone-agentic": "dimos.robot.drone.blueprints.agentic.drone_agentic:drone_agentic",
     "drone-basic": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic",
-    "dual-xarm6-planner": "dimos.manipulation.manipulation_blueprints:dual_xarm6_planner",
+    "dual-xarm6-planner": "dimos.manipulation.blueprints:dual_xarm6_planner",
     "keyboard-teleop-piper": "dimos.robot.manipulators.piper.blueprints:keyboard_teleop_piper",
     "keyboard-teleop-xarm6": "dimos.robot.manipulators.xarm.blueprints:keyboard_teleop_xarm6",
     "keyboard-teleop-xarm7": "dimos.robot.manipulators.xarm.blueprints:keyboard_teleop_xarm7",
