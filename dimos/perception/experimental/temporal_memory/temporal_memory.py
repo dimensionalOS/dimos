@@ -90,7 +90,7 @@ class TemporalMemoryConfig(ModuleConfig):
 
     # Storage
     db_dir: str | Path | None = (
-        None  # Persistent memory dir (default: <cwd>/memory/temporal_memory/)
+        None  # Persistent memory dir (default: ~/.local/state/dimos/temporal_memory/)
     )
     new_memory: bool = False  # Clear persistent DB on start
 
@@ -172,10 +172,11 @@ class TemporalMemory(Module):
         if self._config.db_dir:
             db_dir = Path(self._config.db_dir)
         else:
-            # Default: <cwd>/memory/temporal_memory/
-            # Robot knowledge is project-specific — lives where you run dimos from.
-            # Works for both cloned repos and pip installs.
-            db_dir = Path.cwd() / "memory" / "temporal_memory"
+            # Default: ~/.local/state/dimos/temporal_memory/
+            # XDG state dir — predictable, works for pip install and git clone.
+            xdg = os.environ.get("XDG_STATE_HOME")
+            state_root = Path(xdg) if xdg else Path.home() / ".local" / "state"
+            db_dir = state_root / "dimos" / "temporal_memory"
         db_dir.mkdir(parents=True, exist_ok=True)
         db_path = db_dir / "entity_graph.db"
         if self._config.new_memory and db_path.exists():

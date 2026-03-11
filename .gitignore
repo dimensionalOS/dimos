@@ -77,6 +77,3 @@ CLAUDE.MD
 htmlcov/
 .coverage
 .coverage.*
-
-# Temporal memory persistent data (robot knowledge)
-memory/temporal_memory/
