@@ -566,6 +566,8 @@ install_system_deps() {
             ;;
         linux)
             info "see https://github.com/dimensionalOS/dimos/?tab=readme-ov-file#installation"
+            warn "install system dependencies manually, then re-run this script"
+            return
             ;;
     esac
     ok "system dependencies ready"
