@@ -52,6 +52,8 @@ pip install dimos[base,unitree,manipulation] # + Arm control
 | `docker` | Minimal set for Docker sidecar modules | dimos-lcm, numpy, opencv-headless, rerun-sdk | No |
 | `base` | Kitchen sink (agents + web + perception + viz + sim) | All of the above | **Yes** |
 | `dev` | Linting, testing, type stubs | ruff, mypy, pytest, pre-commit | No |
+| `psql` | PostgreSQL storage | psycopg2 | No |
+| `dds` | DDS transport (CycloneDDS) | dev + cyclonedds | No |
 
 ## Headless / Server Environments
 
