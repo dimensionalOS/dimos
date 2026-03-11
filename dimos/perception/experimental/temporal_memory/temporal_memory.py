@@ -127,6 +127,15 @@ class TemporalMemory(Module):
         self._vlm_raw = vlm
         self._config: TemporalMemoryConfig = config or TemporalMemoryConfig()
 
+        # Override new_memory from GlobalConfig (CLI --new-memory flag)
+        try:
+            from dimos.core.global_config import global_config
+
+            if global_config.new_memory:
+                self._config.new_memory = True
+        except Exception:
+            pass
+
         # Components
         self._accumulator = FrameWindowAccumulator(
             max_buffer_frames=self._config.max_buffer_frames,
@@ -173,6 +182,13 @@ class TemporalMemory(Module):
             logger.info("Deleted existing DB (new_memory=True)")
         self._graph_db = EntityGraphDB(db_path=db_path)
         logger.info(f"persistent DB: {db_path}")
+
+        # Persistent JSONL — accumulates across runs (raw VLM output + parsed)
+        self._persistent_jsonl_path: Path = db_dir / "temporal_memory.jsonl"
+        if self._config.new_memory and self._persistent_jsonl_path.exists():
+            self._persistent_jsonl_path.unlink()
+            logger.info("Deleted existing persistent JSONL (new_memory=True)")
+        logger.info(f"persistent JSONL: {self._persistent_jsonl_path}")
 
         # Per-run JSONL log
         # get_run_log_dir() checks the in-process global; fall back to the
@@ -228,13 +244,20 @@ class TemporalMemory(Module):
     # ------------------------------------------------------------------
 
     def _log_jsonl(self, record: dict[str, Any]) -> None:
-        if self._jsonl_path is None:
-            return
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        # Write to per-run JSONL
+        if self._jsonl_path is not None:
+            try:
+                with open(self._jsonl_path, "a") as f:
+                    f.write(line)
+            except Exception as e:
+                logger.warning(f"per-run jsonl log failed: {e}")
+        # Write to persistent JSONL (accumulates across runs)
         try:
-            with open(self._jsonl_path, "a") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            with open(self._persistent_jsonl_path, "a") as f:
+                f.write(line)
         except Exception as e:
-            logger.warning(f"jsonl log failed: {e}")
+            logger.warning(f"persistent jsonl log failed: {e}")
 
     # ------------------------------------------------------------------
     # Rerun visualization
@@ -292,7 +315,7 @@ class TemporalMemory(Module):
         def _on_frame(img: Image) -> None:
             self._accumulator.add_frame(img, time.time())
             self._frame_count += 1
-            if self._frame_count % 20 == 1:
+            if self._frame_count == 1 or self._frame_count % 20 == 0:
                 logger.info(
                     f"[temporal-memory] frames={self._frame_count}, "
                     f"odom={self._odom_count}, "
@@ -364,9 +387,14 @@ class TemporalMemory(Module):
 
         window_frames = self._accumulator.try_extract_window()
         if window_frames is None:
-            logger.debug(
-                f"[temporal-memory] no window ready (buffered={len(self._accumulator._buffer)})"
-            )
+            if not hasattr(self, "_no_window_count"):
+                self._no_window_count = 0
+            self._no_window_count += 1
+            if self._no_window_count <= 3 or self._no_window_count % 10 == 0:
+                logger.info(
+                    f"[temporal-memory] waiting for frames "
+                    f"(buffered={len(self._accumulator._buffer)}, poll #{self._no_window_count})"
+                )
             return
         w_start, w_end = window_frames[0].timestamp_s, window_frames[-1].timestamp_s
 
