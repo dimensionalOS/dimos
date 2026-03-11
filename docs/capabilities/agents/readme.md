@@ -1,6 +1,6 @@
 # Agents
 
-LLM agents run as native DimOS modules — they subscribe to camera, LiDAR, odometry, and spatial memory streams, and control the robot through skills.
+LLM agents run as native DimOS modules. They subscribe to camera, LiDAR, odometry, and spatial memory streams and they control the robot through skills.
 
 ## Architecture
 
@@ -13,15 +13,15 @@ Human Input ──→ Agent ──→ Skill Calls ──→ Robot
 ```
 
 **Agent** (`dimos/agents/agent.py`) is a `Module` with:
-- `human_input: In[str]` — receives text from `humancli`, `WebInput`, or `agent-send`
-- `agent: Out[BaseMessage]` — publishes agent responses (text, tool calls, images)
-- `agent_idle: Out[bool]` — signals when the agent is waiting for input
+- `human_input: In[str]`: receives text from `humancli`, `WebInput`, or `agent-send`
+- `agent: Out[BaseMessage]`: publishes agent responses (text, tool calls, images)
+- `agent_idle: Out[bool]`: signals when the agent is waiting for input
 
-The agent uses LangGraph with a configurable LLM (default: `gpt-4o`). On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools.
+The agent uses LangGraph with a configurable LLM. The default is `gpt-4o` and you need to provide an `OPENAI_API_KEY` environment variable. On startup, it discovers all `@skill`-annotated methods across deployed modules via RPC and exposes them as LangChain tools.
 
 ## Skills
 
-Skills are methods decorated with `@skill` on any `Module`. The agent discovers them automatically at startup — no registration needed.
+Skills are methods decorated with `@skill` on any `Module`. The agent discovers them automatically at startup.
 
 ```python
 from dimos.agents.annotation import skill
@@ -36,9 +36,9 @@ class MySkillContainer(Module):
 ```
 
 **Rules:**
-- Parameters must be JSON-serializable primitives (`str`, `int`, `float`, `bool`, `list`, `dict`)
-- Docstrings become the tool description the LLM sees — write them clearly
-- Return a string describing the result
+- Parameters must be JSON-serializable primitives (`str`, `int`, `float`, `bool`, `list`, `dict`).
+- Docstrings become the tool description the LLM sees. Write them clearly so the agent has sufficent context.
+- The function must return a string or image which with be used by the agent to decide what to do next.
 
 ### Built-in Skills
 
@@ -61,23 +61,10 @@ class MySkillContainer(Module):
 
 ## MCP
 
-The MCP server exposes all skills as HTTP tools, allowing external agents and tools to control the robot.
+There is also an MCP implementation. It replaces the `Agent` with two modules: `McpServer` and `McpClient`.
 
-```python
-from dimos.agents.mcp.mcp_server import McpServer
-from dimos.agents.mcp.mcp_client import mcp_client
-
-# Add to any blueprint:
-mcp_blueprint = autoconnect(
-    robot_stack,
-    McpServer.blueprint(),  # HTTP server on port 9990
-    mcp_client(),            # LLM agent that fetches tools from MCP
-    skill_containers,
-)
-```
-
-- **McpServer** — FastAPI JSON-RPC server implementing the MCP protocol. Discovers skills via the same RPC mechanism as the in-process agent.
-- **McpClient** — Agent module that fetches tools from the MCP server over HTTP instead of direct RPC. Used in MCP blueprints instead of `Agent`.
+* `McpServer` exposes the methods annotated with `@skill` as MCP tools. Any external client can connect to the server to use the MCP tools.
+* `McpClient` has a LangGraph LLM which calls MCP tools from `McpServer`.
 
 CLI access:
 
@@ -102,5 +89,3 @@ dimos mcp status                                    # Server status
 | Default | `gpt-4o` | Best quality, requires `OPENAI_API_KEY` |
 | `ollama:llama3.1` | Local Ollama | Requires `ollama serve` running |
 | Custom | Any LangChain-compatible | Set via `AgentConfig(model="...")` |
-
-The `VLMAgent` (`vlm_agent.py`) is a simpler variant that processes images directly without tool use — useful for continuous visual narration or scene description.
