@@ -82,7 +82,7 @@ class TemporalMemoryConfig(ModuleConfig):
     summary_interval_s: float = 30.0
     enable_distance_estimation: bool = True
     max_distance_pairs: int = 5
-    stale_scene_threshold: float = 5.0
+    stale_scene_threshold: float = 0.0  # 0 = disabled (CLIP filter handles duplicates)
 
     # VLM parameters
     max_tokens: int = 900
@@ -400,8 +400,9 @@ class TemporalMemory(Module):
             return
         w_start, w_end = window_frames[0].timestamp_s, window_frames[-1].timestamp_s
 
-        # Skip stale scenes
+        # Skip stale scenes (frames too close together / camera not moving)
         if tu.is_scene_stale(window_frames, self._config.stale_scene_threshold):
+            logger.info(f"[temporal-memory] skipping stale window [{w_start:.1f}-{w_end:.1f}s]")
             return
 
         # Select diverse keyframes
