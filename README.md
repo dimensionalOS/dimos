@@ -129,6 +129,8 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 > Full system requirements, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
 
+> 🤖 To run your favorite Agent (OpenClaw, Claude Code, etc.) with Dimensional, simply direct it to [AGENTS.md](AGENTS.md). It will get up to speed and start using our agent-native [CLI and MCP](#agent-cli-and-mcp) interface to build Dimensional applications.
+
 # Installation
 
 ## Interactive Install
@@ -194,9 +196,35 @@ dimos stop                                # Shut down
 
 > Full CLI reference: [docs/usage/cli.md](docs/usage/cli.md)
 
-## Coding Agents
 
-To run your favorite coding agent (OpenClaw, Claude Code, Cursor, etc.) with Dimensional, simply point it at [AGENTS.md](AGENTS.md). It will get up to speed on the codebase and start using our agent-native CLI and MCP interface to build Dimensional applications.
+# Featured Blueprints
+
+```bash
+dimos list   # See all available blueprints
+```
+
+| Blueprint | Robot | What it does |
+|-----------|-------|-------------|
+| `unitree-go2` | Go2 | Full navigation stack — SLAM, costmap, A* planning |
+| `unitree-go2-agentic` | Go2 | Navigation + LLM agent with natural language control |
+| `unitree-go2-agentic-mcp` | Go2 | Agentic + MCP server (expose skills over HTTP) |
+| `unitree-g1-agentic` | G1 | Humanoid agent with arm gestures and navigation |
+| `unitree-g1-agentic-sim` | G1 | Full agentic stack in MuJoCo simulation |
+| `xarm-perception-agent` | xArm | Manipulation + perception + LLM agent |
+| `drone-basic` | DJI/MAVLink | Video stream + telemetry + visualization |
+| `drone-agentic` | DJI/MAVLink | Drone + LLM agent with flight skills |
+
+Blueprints compose incrementally — start with a connection, layer on navigation, perception, agents:
+
+```bash
+dimos run unitree-go2                     # Navigation only
+dimos run unitree-go2-agentic             # + LLM agent
+dimos run unitree-go2-agentic-mcp         # + MCP server
+dimos --simulation run unitree-go2        # Same stack, MuJoCo sim
+dimos --replay run unitree-go2            # Replay recorded data
+```
+
+> Full blueprint docs: [docs/usage/blueprints.md](docs/usage/blueprints.md)
 
 # Usage
 
