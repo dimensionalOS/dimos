@@ -30,7 +30,9 @@ class TestBridgeRateLimiter:
         """Create a RerunBridgeModule with rate limiting, no actual viewer."""
         from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-        return RerunBridgeModule(min_interval_sec=0.1)
+        b = RerunBridgeModule(min_interval_sec=0.1)
+        yield b
+        b.stop()
 
     @pytest.fixture()
     def mock_rerun(self):
@@ -40,7 +42,9 @@ class TestBridgeRateLimiter:
 
     def _make_msg(self):
         """Create a minimal RerunConvertible message."""
-        msg = MagicMock()
+        from dimos.visualization.rerun.bridge import RerunConvertible
+
+        msg = MagicMock(spec=RerunConvertible)
         archetype = MagicMock()
         archetype.__class__.__name__ = "MockArchetype"
         msg.to_rerun.return_value = archetype
@@ -108,6 +112,7 @@ class TestBridgeRateLimiter:
         for _ in range(30):
             bridge._on_message(msg, topic)
 
+        bridge.stop()
         assert mock_rerun.call_count == 30
 
     def test_effective_rate_over_time(self, bridge, mock_rerun):

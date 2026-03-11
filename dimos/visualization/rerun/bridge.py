@@ -268,6 +268,8 @@ class RerunBridgeModule(Module):
         # messages (Path, PointStamped, TF, etc.) pass through unthrottled.
         if self.config.min_interval_sec > 0 and isinstance(msg, _HEAVY_MSG_TYPES):
             now = time.monotonic()
+            if not hasattr(self, "_last_log"):
+                self._last_log: dict[str, float] = {}
             last = self._last_log.get(entity_path, 0.0)
             if now - last < self.config.min_interval_sec:
                 return
@@ -293,7 +295,7 @@ class RerunBridgeModule(Module):
 
         super().start()
 
-        self._last_log: dict[str, float] = {}
+        self._last_log.clear()
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
 
         # Initialize and spawn Rerun viewer
