@@ -83,7 +83,7 @@ config = TemporalMemoryConfig(
     temperature=0.2,            # VLM temperature
 
     # Storage
-    db_dir=None,                # Persistent DB dir (default: <repo>/memory/temporal_memory/)
+    db_dir=None,                # Persistent DB dir (default: <cwd>/memory/temporal_memory/)
     new_memory=False,           # Clear persistent DB on start
 
     # Visualization
