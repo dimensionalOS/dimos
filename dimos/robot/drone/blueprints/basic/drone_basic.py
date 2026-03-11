@@ -16,6 +16,8 @@
 
 """Basic drone blueprint with connection, camera, and visualization."""
 
+from typing import Any
+
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
@@ -24,7 +26,7 @@ from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
 
-def _static_drone_body(rr):  # type: ignore
+def _static_drone_body(rr: Any) -> list[Any]:
     """Static visualization of drone body."""
     return [
         rr.Boxes3D(
@@ -35,7 +37,7 @@ def _static_drone_body(rr):  # type: ignore
     ]
 
 
-def _drone_rerun_blueprint():
+def _drone_rerun_blueprint() -> Any:
     """Split layout: camera feed + 3D world view side by side."""
     import rerun as rr
     import rerun.blueprint as rrb
