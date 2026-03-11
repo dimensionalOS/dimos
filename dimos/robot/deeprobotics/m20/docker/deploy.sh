@@ -116,17 +116,8 @@ setup_ssh_mux() {
     fi
 }
 
-# Only prompt for sudo on commands that actually need it (systemctl, iptables)
-# Docker commands use docker group membership (no sudo needed)
-case "${CMD}" in
-    push|pull|restart|help) ;; # push is local, pull/restart only need docker (no sudo)
-    *)
-        if [ -z "${SUDO_PASS}" ]; then
-            read -sp "Sudo password for ${NOS_USER}@${NOS_HOST}: " SUDO_PASS
-            echo ""
-        fi
-        ;;
-esac
+# M20 robots all use the same sudo password
+SUDO_PASS="${SUDO_PASS:-"'"}"
 
 # Establish SSH multiplexing early (except for push which is local-only)
 if [ "${CMD}" != "push" ] && [ "${CMD}" != "help" ]; then
@@ -301,6 +292,72 @@ check_conflicts() {
     done
 }
 
+ensure_clock_synced() {
+    echo "Checking NOS clock..."
+    local nos_date
+    nos_date=$(remote_ssh date +%Y-%m-%d 2>/dev/null) || { echo "  WARNING: Could not check clock"; return 0; }
+    local current_date
+    current_date=$(date +%Y-%m-%d)
+
+    if [ "$nos_date" != "$current_date" ]; then
+        echo "  NOS clock is wrong (${nos_date}, expected ${current_date}) — fixing..."
+
+        # Ensure chrony is installed, running, and synced
+        if remote_ssh "which chronyd" >/dev/null 2>&1; then
+            remote_sudo systemctl enable --now chrony
+            remote_sudo chronyc makestep >/dev/null 2>&1 || true
+            sleep 2
+        else
+            echo "  chrony not installed — installing..."
+            remote_sudo apt-get update -qq >/dev/null 2>&1
+            remote_sudo apt-get install -y -qq chrony >/dev/null 2>&1
+            remote_sudo systemctl enable --now chrony
+            remote_sudo chronyc makestep >/dev/null 2>&1 || true
+            sleep 2
+        fi
+
+        # Verify fix
+        nos_date=$(remote_ssh date +%Y-%m-%d 2>/dev/null)
+        if [ "$nos_date" = "$current_date" ]; then
+            echo "  Clock synced via chrony ($(remote_ssh date 2>/dev/null))"
+        else
+            # Fallback: set time manually
+            echo "  chrony sync failed — setting time manually..."
+            remote_sudo date -s "$(date -u '+%Y-%m-%d %H:%M:%S')" >/dev/null 2>&1
+            echo "  Clock set to $(remote_ssh date 2>/dev/null)"
+        fi
+    else
+        # Clock date is correct, but ensure chrony is running for ongoing sync
+        if remote_ssh "which chronyd" >/dev/null 2>&1; then
+            remote_sudo systemctl enable --now chrony 2>/dev/null || true
+        fi
+        echo "  Clock OK ($(remote_ssh date 2>/dev/null))"
+    fi
+}
+
+ensure_docker_sequential_downloads() {
+    local config="/etc/docker/daemon.json"
+    if remote_ssh "cat ${config} 2>/dev/null" | grep -q '"max-concurrent-downloads"'; then
+        return 0
+    fi
+
+    echo "Setting max-concurrent-downloads=1 for reliable pulls over flaky networks..."
+    if remote_ssh "test -s ${config}" 2>/dev/null; then
+        # Existing config — merge in the setting (simple json, use python)
+        remote_sudo "python3 -c \"
+import json
+with open('${config}') as f: c = json.load(f)
+c['max-concurrent-downloads'] = 1
+with open('${config}', 'w') as f: json.dump(c, f, indent=2)
+\""
+    else
+        remote_sudo "echo '{\"max-concurrent-downloads\": 1}' > ${config}"
+    fi
+    echo "  Restarting Docker daemon to apply..."
+    remote_sudo systemctl restart docker
+    sleep 3
+}
+
 case "${CMD}" in
     push)
         echo "=== Building + Pushing M20 Docker Image ==="
@@ -330,10 +387,32 @@ case "${CMD}" in
         echo "Image: ${GHCR_IMAGE}"
         echo ""
 
-        remote_ssh docker pull "${GHCR_IMAGE}"
+        # Ensure NOS clock is correct (TLS fails with wrong date)
+        ensure_clock_synced
 
-        echo ""
-        echo "=== Pull Complete ==="
+        # Ensure sequential layer downloads (more resilient on flaky connections)
+        ensure_docker_sequential_downloads
+
+        # Retry pull on failure — docker caches completed layers so retries are cheap
+        _max_retries=5
+        _attempt=1
+        while [ $_attempt -le $_max_retries ]; do
+            echo "Pull attempt ${_attempt}/${_max_retries}..."
+            if remote_ssh docker pull "${GHCR_IMAGE}"; then
+                echo ""
+                echo "=== Pull Complete ==="
+                break
+            fi
+            if [ $_attempt -eq $_max_retries ]; then
+                echo ""
+                echo "ERROR: Pull failed after ${_max_retries} attempts."
+                echo "Cached layers are preserved — retry with: $0 pull"
+                exit 1
+            fi
+            echo "  Pull failed — retrying in 10s (cached layers preserved)..."
+            sleep 10
+            _attempt=$((_attempt + 1))
+        done
         ;;
 
     dev)
@@ -468,7 +547,7 @@ case "${CMD}" in
         echo ""
         echo "Commands:"
         echo "  push    - Build image on Mac + push to GHCR (~3-5 min)"
-        echo "  pull    - Pull latest image on NOS from GHCR (~1-3 min)"
+        echo "  pull    - Pull latest image on NOS from GHCR (auto-retries, clock sync)"
         echo "  dev     - Sync Python source into running container (~1-2 min)"
         echo "  start   - Start container (with lio health check + NAT)"
         echo "  stop    - Stop and remove container"
