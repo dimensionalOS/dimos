@@ -260,43 +260,28 @@ if __name__ == "__main__":
 
 ## Blueprints
 
-Blueprints are instructions for how to construct and wire modules. Compose them with
+Blueprints are instructions for how to construct and wire modules. We compose them with
 `autoconnect(...)`, which connects streams by `(name, type)` and returns a `Blueprint`.
 
-```bash
-dimos list   # See all available blueprints
-```
+Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `In[]` and `Out[]` message types.
 
-Blueprints compose incrementally — start simple, layer on capabilities:
-
+A blueprint example that connects the image stream from a robot to an LLM Agent for reasoning and action execution.
 ```py
 from dimos.core.blueprints import autoconnect
-from dimos.robot.unitree.go2.connection import go2_connection
-from dimos.agents.agent import agent
-
-# Simple: just connect to the robot
-basic = autoconnect(go2_connection())
-
-# Add an LLM agent
-agentic = autoconnect(go2_connection(), agent())
-```
-
-Blueprints can be remapped and have transports overridden when `autoconnect()` needs help with conflicting names or types:
-
-```py
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import Image
+from dimos.robot.unitree.go2.connection import go2_connection
+from dimos.agents.agent import agent
 
 blueprint = autoconnect(
     go2_connection(),
     agent(),
 ).transports({("color_image", Image): LCMTransport("/color_image", Image)})
 
+# Run the blueprint
 if __name__ == "__main__":
     blueprint.build().loop()
 ```
-
-> Full docs: [Blueprints](docs/usage/blueprints.md) · [Modules](docs/usage/modules.md) · [Transports](docs/usage/transports/index.md)
 
 ## Library API
 
