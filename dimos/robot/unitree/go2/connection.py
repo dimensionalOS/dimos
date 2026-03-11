@@ -87,7 +87,8 @@ def make_connection(ip: str | None, cfg: GlobalConfig) -> Go2ConnectionProtocol:
     connection_type = cfg.unitree_connection_type
 
     if ip in ("fake", "mock", "replay") or connection_type == "replay":
-        return ReplayConnection()
+        dataset = cfg.replay_dir
+        return ReplayConnection(dataset=dataset)
     elif ip == "mujoco" or connection_type == "mujoco":
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
@@ -98,13 +99,13 @@ def make_connection(ip: str | None, cfg: GlobalConfig) -> Go2ConnectionProtocol:
 
 
 class ReplayConnection(UnitreeWebRTCConnection):
-    dir_name = "go2_sf_office"
-
     # we don't want UnitreeWebRTCConnection to init
     def __init__(  # type: ignore[no-untyped-def]
         self,
+        dataset: str = "go2_sf_office",
         **kwargs,
     ) -> None:
+        self.dir_name = dataset
         get_data(self.dir_name)
         self.replay_config = {
             "loop": kwargs.get("loop", True),
