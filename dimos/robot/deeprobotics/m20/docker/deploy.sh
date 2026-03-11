@@ -13,33 +13,53 @@
 #   ./deploy.sh shell     # Open shell in running container
 #   ./deploy.sh status    # Show container + lio status
 #
+# Options:
+#   --host <hostname>     # Access robot via Tailscale (e.g., m20-781-mochi)
+#                         # Without --host: uses AOS WiFi (10.21.41.1) as gateway
+#
 # Workflows:
 #   Full deploy:  ./deploy.sh push && ./deploy.sh pull && ./deploy.sh start
 #   Iterate:      ./deploy.sh dev   (rsync + docker cp + restart, ~1-2 min)
 #   Quick restart: ./deploy.sh restart  (no sync, ~10-30 sec)
+#
+# Remote deploy (via Tailscale):
+#   ./deploy.sh push
+#   ./deploy.sh pull --host m20-781-mochi
+#   ./deploy.sh start --host m20-781-mochi
 #
 # Use `push+pull` when dependencies, Dockerfile, or C++ extensions change.
 # Use `dev` for pure Python changes — 5-10x faster.
 #
 # Prerequisites:
 #   - GHCR auth: docker login ghcr.io (Mac for push, NOS for pull)
-#   - SSH access to NOS via AOS jump host
+#   - SSH access to NOS (via AOS WiFi or Tailscale → GOS)
 #   - Docker installed on Mac and NOS
 #
-# Network: Mac → AOS WiFi (10.21.41.1) → DNAT → NOS (10.21.31.106)
+# Network modes:
+#   Local:  Mac → AOS WiFi (10.21.41.1) → DNAT → NOS (10.21.31.106)
+#   Remote: Mac → Tailscale → GOS (10.21.31.104) → DNAT → NOS (10.21.31.106)
 # Registry: Mac → internet → GHCR; NOS → GOS 5G → GHCR
 
 set -e
 
-# Parse: first arg is command, optional second/third are host/user
+# Parse: first arg is command, then --host flag, then optional positional host/user
 CMD="${1:-help}"
 shift 2>/dev/null || true
+
+REMOTE_HOST=""
+positional=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --host) REMOTE_HOST="$2"; shift 2 ;;
+        *) positional+=("$1"); shift ;;
+    esac
+done
+set -- "${positional[@]}"
 
 # Configuration
 NOS_HOST="${1:-10.21.31.106}"
 NOS_USER="${2:-user}"
-JUMP_HOST="${JUMP_HOST:-user@10.21.41.1}"
-AOS_HOST="${JUMP_HOST}"
+AOS_INTERNAL="10.21.31.103"
 DEPLOY_DIR="/opt/dimos/src"
 CONTAINER_NAME="dimos-m20"
 GHCR_IMAGE="ghcr.io/aphexcx/m20-nos:latest"
@@ -47,23 +67,59 @@ GHCR_IMAGE="ghcr.io/aphexcx/m20-nos:latest"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIMOS_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
 
+# --- Network mode ---
+# Local:  AOS WiFi is gateway (direct connection, NAT on wlan0)
+# Remote: GOS via Tailscale is gateway (NAT on tailscale0)
+if [ -n "${REMOTE_HOST}" ]; then
+    GATEWAY_HOST="${NOS_USER}@${REMOTE_HOST}"
+    JUMP_HOST="${GATEWAY_HOST}"
+    AOS_HOST="${NOS_USER}@${AOS_INTERNAL}"
+    NAT_IFACE="tailscale0"
+    ACCESS_HOST="${REMOTE_HOST}"
+    REMOTE_MODE=1
+else
+    JUMP_HOST="${JUMP_HOST:-user@10.21.41.1}"
+    GATEWAY_HOST="${JUMP_HOST}"
+    AOS_HOST="${JUMP_HOST}"
+    NAT_IFACE="wlan0"
+    ACCESS_HOST="10.21.41.1"
+    REMOTE_MODE=""
+fi
+
 # --- SSH ControlMaster multiplexing ---
 # Reuses a single TCP connection for all SSH calls, saving ~2-5s per call.
 SSH_CONTROL_DIR="/tmp/deploy-ssh-mux"
 mkdir -p "${SSH_CONTROL_DIR}"
 SSH_MUX_OPTS="-o ControlMaster=auto -o ControlPath=${SSH_CONTROL_DIR}/%r@%h:%p -o ControlPersist=600"
+
+# NOS: always reached via jump host (AOS in local, GOS in remote)
 SSH_OPTS="${SSH_MUX_OPTS} -o ProxyJump=${JUMP_HOST}"
 
+# Gateway: direct connection (AOS WiFi in local, GOS Tailscale in remote)
+GATEWAY_SSH_OPTS="${SSH_MUX_OPTS}"
+
+# AOS: direct in local mode, via GOS in remote mode
+if [ -n "${REMOTE_MODE}" ]; then
+    AOS_SSH_OPTS="${SSH_MUX_OPTS} -o ProxyJump=${GATEWAY_HOST}"
+else
+    AOS_SSH_OPTS="${SSH_MUX_OPTS}"
+fi
+
 setup_ssh_mux() {
-    # Establish persistent connections (background, non-blocking)
+    # Gateway (GOS via Tailscale or AOS via WiFi)
+    ssh -fNM ${GATEWAY_SSH_OPTS} "${GATEWAY_HOST}" 2>/dev/null || true
+    # NOS via gateway
     ssh -fNM ${SSH_MUX_OPTS} -o ProxyJump=${JUMP_HOST} "${NOS_USER}@${NOS_HOST}" 2>/dev/null || true
-    ssh -fNM ${SSH_MUX_OPTS} "${AOS_HOST}" 2>/dev/null || true
+    if [ -n "${REMOTE_MODE}" ]; then
+        # AOS via GOS (only needed in remote mode; in local mode AOS=gateway)
+        ssh -fNM ${AOS_SSH_OPTS} "${AOS_HOST}" 2>/dev/null || true
+    fi
 }
 
 # Only prompt for sudo on commands that actually need it (systemctl, iptables)
 # Docker commands use docker group membership (no sudo needed)
 case "${CMD}" in
-    push|pull|restart) ;; # push is local, pull/restart only need docker (no sudo)
+    push|pull|restart|help) ;; # push is local, pull/restart only need docker (no sudo)
     *)
         if [ -z "${SUDO_PASS}" ]; then
             read -sp "Sudo password for ${NOS_USER}@${NOS_HOST}: " SUDO_PASS
@@ -73,10 +129,14 @@ case "${CMD}" in
 esac
 
 # Establish SSH multiplexing early (except for push which is local-only)
-if [ "${CMD}" != "push" ]; then
+if [ "${CMD}" != "push" ] && [ "${CMD}" != "help" ]; then
+    [ -n "${REMOTE_MODE}" ] && echo "Remote mode: ${REMOTE_HOST} (Tailscale → GOS → NOS)"
     setup_ssh_mux
 fi
 
+# --- SSH helper functions ---
+
+# NOS (where Docker container runs)
 remote_sudo() {
     printf '%s\n' "${SUDO_PASS}" | ssh ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "sudo -S $*" 2>&1 | { grep -v '^\[sudo\] password' || true; }
 }
@@ -85,12 +145,22 @@ remote_ssh() {
     ssh ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "$@"
 }
 
+# Gateway (NAT host — GOS in remote, AOS in local)
+gateway_sudo() {
+    printf '%s\n' "${SUDO_PASS}" | ssh ${GATEWAY_SSH_OPTS} "${GATEWAY_HOST}" "sudo -S $*" 2>&1 | { grep -v '^\[sudo\] password' || true; }
+}
+
+gateway_ssh() {
+    ssh ${GATEWAY_SSH_OPTS} "${GATEWAY_HOST}" "$@"
+}
+
+# AOS (lio_perception, height_map_nav — always on AOS regardless of mode)
 aos_sudo() {
-    printf '%s\n' "${SUDO_PASS}" | ssh ${SSH_MUX_OPTS} "${AOS_HOST}" "sudo -S $*" 2>&1 | { grep -v '^\[sudo\] password' || true; }
+    printf '%s\n' "${SUDO_PASS}" | ssh ${AOS_SSH_OPTS} "${AOS_HOST}" "sudo -S $*" 2>&1 | { grep -v '^\[sudo\] password' || true; }
 }
 
 aos_ssh() {
-    ssh ${SSH_MUX_OPTS} "${AOS_HOST}" "$@"
+    ssh ${AOS_SSH_OPTS} "${AOS_HOST}" "$@"
 }
 
 # Common rsync excludes for source sync
@@ -177,14 +247,20 @@ ensure_lio_enabled() {
 }
 
 ensure_nat() {
-    echo "Ensuring AOS NAT rules for web UI + Rerun..."
+    local gw_label
+    if [ -n "${REMOTE_MODE}" ]; then
+        gw_label="GOS (${NAT_IFACE})"
+    else
+        gw_label="AOS (${NAT_IFACE})"
+    fi
+    echo "Ensuring NAT rules on ${gw_label} for web UI + Rerun..."
     for port in 7779 9876; do
-        aos_sudo iptables -t nat -C PREROUTING -i wlan0 -p tcp --dport $port \
-            -j DNAT --to-destination 10.21.31.106:$port 2>/dev/null || \
-        aos_sudo iptables -t nat -A PREROUTING -i wlan0 -p tcp --dport $port \
-            -j DNAT --to-destination 10.21.31.106:$port
+        gateway_sudo iptables -t nat -C PREROUTING -i ${NAT_IFACE} -p tcp --dport $port \
+            -j DNAT --to-destination ${NOS_HOST}:$port 2>/dev/null || \
+        gateway_sudo iptables -t nat -A PREROUTING -i ${NAT_IFACE} -p tcp --dport $port \
+            -j DNAT --to-destination ${NOS_HOST}:$port
     done
-    echo "  NAT rules OK (7779 → NOS, 9876 → NOS)"
+    echo "  NAT rules OK (${gw_label}: 7779 → NOS, 9876 → NOS)"
 }
 
 check_conflicts() {
@@ -335,8 +411,8 @@ case "${CMD}" in
         remote_ssh docker ps --filter name=${CONTAINER_NAME}
         echo ""
         echo "Access from Mac:"
-        echo "  Web UI:  http://10.21.41.1:7779/command-center"
-        echo "  Rerun:   rerun --connect rerun+http://10.21.41.1:9876/proxy"
+        echo "  Web UI:  http://${ACCESS_HOST}:7779/command-center"
+        echo "  Rerun:   rerun --connect rerun+http://${ACCESS_HOST}:9876/proxy"
         ;;
 
     stop)
@@ -388,7 +464,7 @@ case "${CMD}" in
         ;;
 
     *)
-        echo "Usage: $0 {push|pull|dev|start|stop|restart|logs|shell|status}"
+        echo "Usage: $0 <command> [--host <hostname>]"
         echo ""
         echo "Commands:"
         echo "  push    - Build image on Mac + push to GHCR (~3-5 min)"
@@ -401,10 +477,20 @@ case "${CMD}" in
         echo "  shell   - Open shell in running container"
         echo "  status  - Show container + service status"
         echo ""
+        echo "Options:"
+        echo "  --host <hostname>  Access robot via Tailscale (e.g., m20-781-mochi)"
+        echo "                     Without --host: uses AOS WiFi (10.21.41.1)"
+        echo ""
         echo "Workflows:"
-        echo "  Full deploy:   ./deploy.sh push && ./deploy.sh pull && ./deploy.sh start"
-        echo "  Iterate (fast): ./deploy.sh dev"
-        echo "  Quick restart:  ./deploy.sh restart"
+        echo "  Local (on WiFi):"
+        echo "    Full deploy:   ./deploy.sh push && ./deploy.sh pull && ./deploy.sh start"
+        echo "    Iterate (fast): ./deploy.sh dev"
+        echo "    Quick restart:  ./deploy.sh restart"
+        echo ""
+        echo "  Remote (via Tailscale):"
+        echo "    Full deploy:   ./deploy.sh push && ./deploy.sh pull --host m20-781-mochi && ./deploy.sh start --host m20-781-mochi"
+        echo "    Iterate (fast): ./deploy.sh dev --host m20-781-mochi"
+        echo "    Quick restart:  ./deploy.sh restart --host m20-781-mochi"
         exit 1
         ;;
 esac
