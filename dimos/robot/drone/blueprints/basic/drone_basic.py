@@ -38,7 +38,7 @@ def _static_drone_body(rr):  # type: ignore
 
 
 rerun_config = {
-    "pubsubs": [LCM(autoconf=True)],
+    "pubsubs": [LCM()],
     "static": {
         "world/tf/base_link": _static_drone_body,
     },
