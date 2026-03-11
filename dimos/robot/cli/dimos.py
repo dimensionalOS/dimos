@@ -134,6 +134,11 @@ def run(
     cli_config_overrides: dict[str, Any] = ctx.obj
     global_config.update(**cli_config_overrides)
 
+    # Export flags as env vars so forkserver workers inherit them.
+    # Workers fork before global_config is updated in main process.
+    if cli_config_overrides.get("new_memory"):
+        os.environ["DIMOS_NEW_MEMORY"] = "1"
+
     # Clean stale registry entries
     stale = cleanup_stale()
     if stale:

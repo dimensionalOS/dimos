@@ -127,7 +127,9 @@ class TemporalMemory(Module):
         self._vlm_raw = vlm
         self._config: TemporalMemoryConfig = config or TemporalMemoryConfig()
 
-        # Override new_memory from GlobalConfig (CLI --new-memory flag)
+        # Override new_memory from GlobalConfig (CLI --new-memory flag).
+        # GlobalConfig is updated in the main process but workers fork before
+        # that, so we also check the env var which the CLI sets pre-fork.
         try:
             from dimos.core.global_config import global_config
 
@@ -135,6 +137,8 @@ class TemporalMemory(Module):
                 self._config.new_memory = True
         except Exception:
             pass
+        if os.environ.get("DIMOS_NEW_MEMORY", "").lower() in ("1", "true"):
+            self._config.new_memory = True
 
         # Components
         self._accumulator = FrameWindowAccumulator(
