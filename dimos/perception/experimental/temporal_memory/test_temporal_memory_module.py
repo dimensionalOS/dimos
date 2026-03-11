@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import threading
@@ -651,13 +650,13 @@ class TestTemporalMemoryIntegration:
         except Exception:
             pass
 
-    @pytest.mark.asyncio
-    async def test_frames_flow_and_query(
+    def test_frames_flow_and_query(
         self, dimos_cluster, video_module, temporal_memory_module, tmp_path
     ):
         temporal_memory_module.color_image.connect(video_module.video_out)
-        video_module.start()
-        temporal_memory_module.start()
+        temporal_memory_module.start()  # subscribe first (consumer)
+        time.sleep(1)  # let subscription establish
+        video_module.start()  # then emit frames (producer)
 
         timeout = 15.0
         start_time = time.time()
@@ -665,14 +664,14 @@ class TestTemporalMemoryIntegration:
             state = temporal_memory_module.get_state()
             if state["frame_count"] >= 3:
                 break
-            await asyncio.sleep(0.5)
+            time.sleep(0.5)
         else:
             state = temporal_memory_module.get_state()
             raise AssertionError(
                 f"No frames processed within {timeout}s. Count: {state['frame_count']}"
             )
 
-        await asyncio.sleep(3)
+        time.sleep(3)
 
         state = temporal_memory_module.get_state()
         assert state["frame_count"] >= 3
