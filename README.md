@@ -299,14 +299,6 @@ uv sync --all-extras --no-extra dds
 uv run pytest dimos
 ```
 
-> **Headless / Server Ubuntu (EC2, Docker, WSL2, CI)**
->
-> If you're running on a headless machine without a display server, you'll need OpenGL libraries that aren't installed by default:
-> ```sh
-> sudo apt-get install -y libgl1 libegl1
-> ```
-> Without these, Open3D and MuJoCo will fail with `OSError: libGL.so.1: cannot open shared object file`.
-> Nix users (`nix develop`) don't need this — the flake already provides `libGL`, `libGLU`, and `mesa`.
 
 ## Multi Language Support
 
