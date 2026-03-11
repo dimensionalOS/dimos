@@ -127,18 +127,8 @@ class TemporalMemory(Module):
         self._vlm_raw = vlm
         self._config: TemporalMemoryConfig = config or TemporalMemoryConfig()
 
-        # Override new_memory from GlobalConfig (CLI --new-memory flag).
-        # GlobalConfig is updated in the main process but workers fork before
-        # that, so we also check the env var which the CLI sets pre-fork.
-        try:
-            from dimos.core.global_config import global_config
-
-            if global_config.new_memory:
-                self._config.new_memory = True
-        except Exception:
-            pass
-        if os.environ.get("DIMOS_NEW_MEMORY", "").lower() in ("1", "true"):
-            self._config.new_memory = True
+        # new_memory is set via TemporalMemoryConfig by the blueprint factory
+        # (which runs in the main process where GlobalConfig is available).
 
         # Components
         self._accumulator = FrameWindowAccumulator(
