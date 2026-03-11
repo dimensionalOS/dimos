@@ -202,7 +202,7 @@ dimos run unitree-go2
 The `dimos` CLI manages the full lifecycle — run blueprints, inspect state, interact with agents, and call skills via MCP.
 
 ```bash
-dimos run unitree-go2-agentic --daemon   # Start in background
+dimos run unitree-go2-agentic-mcp --daemon   # Start in background
 dimos status                              # Check what's running
 dimos log -f                              # Follow logs
 dimos agent-send "explore the room"       # Send agent a command
