@@ -114,7 +114,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
     </td>
     <td align="center" width="20%">
       🟧 <a href="dimos/robot/drone">MAVLink</a><br>
-      🟧 <a href="dimos/robot/drone">DJI SDK</a><br>
+      🟧 <a href="dimos/robot/drone">DJI Mavic</a><br>
     </td>
     <td align="center" width="20%">
       🟥 <a href="https://github.com/dimensionalOS/openFT-sensor">Force Torque Sensor</a><br>
