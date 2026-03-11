@@ -15,7 +15,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, runtime_checkable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
 
 from dimos.core.resource import Resource
 
@@ -30,6 +31,22 @@ if TYPE_CHECKING:
     from dimos.models.embedding.base import Embedding
 
 T = TypeVar("T")
+
+
+# ── Backend configuration ───────────────────────────────────────
+
+
+@dataclass
+class BackendConfig:
+    """Configuration for backend capabilities.
+
+    Session-level defaults are merged with per-stream overrides and
+    forwarded here by ``Session.stream()``.
+    """
+
+    live_channel: LiveChannel[Any] | None = None
+    blob_store: BlobStore | None = None
+    vector_store: VectorStore | None = None
 
 
 @runtime_checkable

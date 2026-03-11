@@ -18,8 +18,10 @@ from dataclasses import dataclass
 import sqlite3
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from dimos.memory2.backend import BackendConfig
 from dimos.memory2.livechannel.subject import SubjectChannel
 from dimos.memory2.store import Session, Store, StoreConfig
+from dimos.protocol.service.spec import Configurable
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -31,13 +33,16 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
-class SqliteBackend(Generic[T]):
+class SqliteBackend(Configurable[BackendConfig], Generic[T]):
     """SQLite-backed observation storage for a single stream (table)."""
 
-    def __init__(self, conn: sqlite3.Connection, name: str) -> None:
+    default_config: type[BackendConfig] = BackendConfig
+
+    def __init__(self, conn: sqlite3.Connection, name: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._conn = conn
         self._name = name
-        self._channel: SubjectChannel[T] = SubjectChannel()
+        self._channel: LiveChannel[T] = self.config.live_channel or SubjectChannel()
 
     @property
     def name(self) -> str:
@@ -64,8 +69,10 @@ class SqliteSession(Session):
         super().__init__(**kwargs)
         self._conn = conn
 
-    def _create_backend(self, name: str, payload_type: type[Any] | None = None) -> Backend[Any]:
-        return SqliteBackend(self._conn, name)
+    def _create_backend(
+        self, name: str, payload_type: type[Any] | None = None, **config: Any
+    ) -> Backend[Any]:
+        return SqliteBackend(self._conn, name, **config)
 
     def list_streams(self) -> list[str]:
         # TODO: also query DB for persisted streams not yet opened

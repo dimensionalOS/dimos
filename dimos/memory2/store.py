@@ -112,14 +112,22 @@ class Session(Configurable[SessionConfig], CompositeResource):
         self._streams: dict[str, Stream[Any]] = {}
 
     @abstractmethod
-    def _create_backend(self, name: str, payload_type: type[Any] | None = None) -> Backend[Any]:
+    def _create_backend(
+        self, name: str, payload_type: type[Any] | None = None, **config: Any
+    ) -> Backend[Any]:
         """Create a backend for the named stream. Called once per stream name."""
         ...
 
-    def stream(self, name: str, payload_type: type[T] | None = None) -> Stream[T]:
-        """Get or create a named stream. Returns the same Stream on repeated calls."""
+    def stream(self, name: str, payload_type: type[T] | None = None, **overrides: Any) -> Stream[T]:
+        """Get or create a named stream. Returns the same Stream on repeated calls.
+
+        Per-stream ``overrides`` (e.g. ``live_channel=``) are merged on top of
+        the session-level defaults from :class:`SessionConfig`.
+        """
         if name not in self._streams:
-            backend = self._create_backend(name, payload_type)
+            resolved = {k: v for k, v in vars(self.config).items() if v is not None}
+            resolved.update({k: v for k, v in overrides.items() if v is not None})
+            backend = self._create_backend(name, payload_type, **resolved)
             self._streams[name] = Stream(source=backend)
         return cast("Stream[T]", self._streams[name])
 

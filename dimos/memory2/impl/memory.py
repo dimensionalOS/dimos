@@ -17,8 +17,10 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from dimos.memory2.backend import BackendConfig
 from dimos.memory2.livechannel.subject import SubjectChannel
 from dimos.memory2.store import Session, Store
+from dimos.protocol.service.spec import Configurable
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -33,15 +35,18 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
-class ListBackend(Generic[T]):
+class ListBackend(Configurable[BackendConfig], Generic[T]):
     """In-memory backend for experimentation. Thread-safe."""
 
-    def __init__(self, name: str = "<memory>") -> None:
+    default_config: type[BackendConfig] = BackendConfig
+
+    def __init__(self, name: str = "<memory>", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._name = name
         self._observations: list[Observation[T]] = []
         self._next_id = 0
         self._lock = threading.Lock()
-        self._channel: SubjectChannel[T] = SubjectChannel()
+        self._channel: LiveChannel[T] = self.config.live_channel or SubjectChannel()
 
     @property
     def name(self) -> str:
@@ -115,8 +120,10 @@ class ListBackend(Generic[T]):
 class MemorySession(Session):
     """In-memory session. Each stream is backed by a ListBackend."""
 
-    def _create_backend(self, name: str, payload_type: type[Any] | None = None) -> Backend[Any]:
-        return ListBackend(name)
+    def _create_backend(
+        self, name: str, payload_type: type[Any] | None = None, **config: Any
+    ) -> Backend[Any]:
+        return ListBackend(name, **config)
 
     def list_streams(self) -> list[str]:
         return list(self._streams.keys())
