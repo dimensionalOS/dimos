@@ -53,26 +53,6 @@ pip install dimos[base,unitree,manipulation] # + Arm control
 | `base` | Kitchen sink (agents + web + perception + viz + sim) | All of the above | **Yes** |
 | `dev` | Linting, testing, type stubs | ruff, mypy, pytest, pre-commit | No |
 
-### Core Dependencies (bare `pip install dimos`)
-
-The core tier is **not** lightweight — it includes `open3d`, `opencv`, `numba`, and `Pinocchio (pin)`. This means:
-
-- ✅ x86_64 Linux and macOS — works
-- ✅ Headless servers — works (opencv-python pulls in headless-compatible builds)
-- 🟧 Jetson / aarch64 — works with `open3d-unofficial-arm` (auto-selected)
-- ❌ Raspberry Pi — **not supported** for core install (open3d, numba unavailable on armv7)
-- ✅ Raspberry Pi — can run `dimos[docker]` extra as a sidecar module (minimal transport-only deps)
-
-### Docker Extra (minimal transport)
-
-For constrained environments (Raspberry Pi, Docker sidecars, edge nodes), use the `docker` extra:
-
-```bash
-pip install dimos[docker]
-```
-
-This installs only LCM transport, numpy, opencv-headless, rerun-sdk, and pydantic — enough to write modules that communicate with a DimOS host over the network.
-
 ## Headless / Server Environments
 
 If running on a headless Ubuntu server (no display), install OpenGL libraries for visualization dependencies:
