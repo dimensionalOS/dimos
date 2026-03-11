@@ -20,14 +20,13 @@ from dimos.agents.agent import agent
 from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.agents.skills.osm import OsmSkill
 from dimos.agents.web_human_input import web_input
-from dimos.core.blueprints import autoconnect
-from dimos.core.global_config import global_config
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.core.blueprints import Blueprint, autoconnect
 from dimos.protocol.service.system_configurator import ClockSyncConfigurator
 from dimos.robot.drone.camera_module import DroneCameraModule
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
-from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
+from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 DRONE_SYSTEM_PROMPT = """\
 You are controlling a DJI drone with MAVLink interface.
@@ -41,81 +40,55 @@ Here are some GPS locations to remember
 6th and mission intersection: 37.781007204789354, -122.40868447123661"""
 
 
-def _static_drone_body(rr):  # type: ignore
-    """Static visualization of drone body."""
-    return [
-        rr.Boxes3D(
-            half_sizes=[0.25, 0.25, 0.1],
-            colors=[(255, 100, 0)],
-            fill_mode="wireframe",
-        ),
-        rr.Transform3D(parent_frame="tf#/base_link"),
-    ]
+def _make_drone_agentic(
+    connection_string: str = "udp:0.0.0.0:14550",
+    video_port: int = 5600,
+    outdoor: bool = False,
+    camera_intrinsics: list[float] | None = None,
+    system_prompt: str = DRONE_SYSTEM_PROMPT,
+    model: str = "gpt-4o",
+) -> Blueprint:
+    """Build the agentic drone blueprint.
 
+    Preserves the exact module composition and remappings from the original
+    ``Drone.drone_agentic()`` factory, including FoxgloveBridge.
+    """
+    if camera_intrinsics is None:
+        camera_intrinsics = [1000.0, 1000.0, 960.0, 540.0]
 
-rerun_config = {
-    "pubsubs": [LCM()],
-    "static": {
-        "world/tf/base_link": _static_drone_body,
-    },
-}
-
-# Build blueprint with conditional visualization
-_transports_base = autoconnect()
-
-if global_config.viewer == "foxglove":
-    from dimos.robot.foxglove_bridge import foxglove_bridge
-
-    with_vis = autoconnect(
-        _transports_base,
-        foxglove_bridge(),
+    return (
+        autoconnect(
+            DroneConnectionModule.blueprint(
+                connection_string=connection_string,
+                video_port=video_port,
+                outdoor=outdoor,
+            ),
+            DroneCameraModule.blueprint(camera_intrinsics=camera_intrinsics),
+            DroneTrackingModule.blueprint(outdoor=outdoor),
+            WebsocketVisModule.blueprint(),
+            FoxgloveBridge.blueprint(),
+            GoogleMapsSkillContainer.blueprint(),
+            OsmSkill.blueprint(),
+            agent(system_prompt=system_prompt, model=model),
+            web_input(),
+        )
+        .remappings(
+            [
+                (DroneTrackingModule, "video_input", "video"),
+                (DroneTrackingModule, "cmd_vel", "movecmd_twist"),
+            ]
+        )
+        .global_config(n_workers=4, robot_model="drone")
+        .configurators(ClockSyncConfigurator())
     )
-elif global_config.viewer.startswith("rerun"):
-    from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
-
-    with_vis = autoconnect(
-        _transports_base,
-        rerun_bridge(viewer_mode=_resolve_viewer_mode(), **rerun_config),
-    )
-else:
-    with_vis = _transports_base
 
 
-# Determine connection string and outdoor mode based on config
-connection_string = "udp:0.0.0.0:14550"
-video_port = 5600
-outdoor = False
-
-if global_config.replay:
-    connection_string = "replay"
-
-drone_agentic = (
-    autoconnect(
-        with_vis,
-        DroneConnectionModule.blueprint(
-            connection_string=connection_string,
-            video_port=video_port,
-            outdoor=outdoor,
-        ),
-        DroneCameraModule.blueprint(camera_intrinsics=[1000.0, 1000.0, 960.0, 540.0]),
-        DroneTrackingModule.blueprint(outdoor=outdoor),
-        websocket_vis(),
-        GoogleMapsSkillContainer.blueprint(),
-        OsmSkill.blueprint(),
-        agent(system_prompt=DRONE_SYSTEM_PROMPT, model="gpt-4o"),
-        web_input(),
-    )
-    .remappings(
-        [
-            (DroneTrackingModule, "video_input", "video"),
-            (DroneTrackingModule, "cmd_vel", "movecmd_twist"),
-        ]
-    )
-    .global_config(n_workers=4, robot_model="drone")
-    .configurators(ClockSyncConfigurator())
-)
+# Module-level Blueprint instance used by the CLI registry.
+# Uses default parameters, matching the original drone_agentic() defaults.
+drone_agentic = _make_drone_agentic()
 
 
 __all__ = [
+    "DRONE_SYSTEM_PROMPT",
     "drone_agentic",
 ]
