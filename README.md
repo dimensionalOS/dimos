@@ -2,7 +2,7 @@
 
 <img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/15283d94-ad95-42c9-abd5-6565a222a837" />
 
-<h2>The Agentive Operating System for Generalist Robotics</h2>
+<h2>The Agentive Operating System for Physical Space</h2>
 
 [![Discord](https://img.shields.io/discord/1341146487186391173?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/dimos)
 [![Stars](https://img.shields.io/github/stars/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/stargazers)
@@ -17,7 +17,7 @@
 
 [Hardware](#hardware) •
 [Installation](#installation) •
-[CLI & MCP](#cli--mcp) •
+[Agent CLI & MCP](#agent-cli-and-mcp) •
 [Blueprints](#blueprints) •
 [Development](#development)
 
@@ -178,7 +178,7 @@ export ROBOT_IP=<YOUR_ROBOT_IP>
 dimos run unitree-go2
 ```
 
-# CLI & MCP
+# Agent CLI and MCP
 
 The `dimos` CLI manages the full lifecycle — run blueprints, inspect state, interact with agents, and call skills via MCP.
 
@@ -192,24 +192,11 @@ dimos mcp call move --arg x=0.5           # Call a skill directly
 dimos stop                                # Shut down
 ```
 
-Every [GlobalConfig](docs/usage/configuration.md) field is a CLI flag. Flags override env vars, `.env`, and blueprint defaults:
-
-```bash
-dimos --simulation --viewer rerun run unitree-go2          # simulation + Rerun
-dimos --replay --replay-dir drone/video run drone-basic    # replay a dataset
-dimos --robot-ip 192.168.123.161 run unitree-go2-agentic   # real robot
-```
-
-Standalone debug tools (no `dimos` prefix needed):
-
-```bash
-humancli     # Interactive agent chat
-lcmspy       # Monitor LCM messages
-agentspy     # Monitor agent tool calls
-dtop         # Live resource TUI
-```
-
 > Full CLI reference: [docs/usage/cli.md](docs/usage/cli.md)
+
+## Coding Agents
+
+To run your favorite coding agent (OpenClaw, Claude Code, Cursor, etc.) with Dimensional, simply point it at [AGENTS.md](AGENTS.md). It will get up to speed on the codebase and start using our agent-native CLI and MCP interface to build Dimensional applications.
 
 # Usage
 
