@@ -334,15 +334,21 @@ class TemporalMemory(Module):
         unsub_image = self.color_image.subscribe(frame_subject.on_next)
         self._disposables.add(Disposable(unsub_image))
 
-        # Odometry tracking for entity world positioning
+        # Odometry tracking for entity world positioning (optional —
+        # module works without it, entities just won't have world positions)
         def _on_odom(msg: PoseStamped) -> None:
             self._robot_x = msg.position.x
             self._robot_y = msg.position.y
             self._robot_z = msg.position.z
             self._odom_count += 1
 
-        unsub_odom = self.odom.subscribe(_on_odom)
-        self._disposables.add(Disposable(unsub_odom))
+        if self.odom.transport is not None:
+            unsub_odom = self.odom.subscribe(_on_odom)
+            self._disposables.add(Disposable(unsub_odom))
+        else:
+            logger.warning(
+                "[temporal-memory] odom stream not connected — entity positions will be (0,0,0)"
+            )
 
         # Periodic window analysis
         self._disposables.add(

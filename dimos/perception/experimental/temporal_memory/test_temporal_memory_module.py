@@ -572,7 +572,7 @@ class VideoReplayModule(Module):
 
         def emit_frames(observer, scheduler):  # type: ignore[no-untyped-def]
             for i in range(self.num_frames):
-                img = _make_image(value=50 + i * 40)  # Varying brightness
+                img = _make_image(value=min(50 + i * 30, 255))  # Varying brightness
                 img.ts = time.time()
                 observer.on_next(img)
                 time.sleep(0.5)
