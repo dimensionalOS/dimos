@@ -29,8 +29,13 @@ from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, PoseStamped
 from dimos.msgs.nav_msgs import Odometry
 from dimos.protocol.service.system_configurator import ClockSyncConfigurator
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
-from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import with_vis
+from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import (
+    with_vis,
+    rerun_config,
+    _transports_base,
+)
 from dimos.visualization.rerun.bridge import rerun_bridge
+from dimos.core.global_config import global_config
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.robot.unitree.go2.connection import GO2Connection, go2_connection
@@ -48,7 +53,7 @@ logger = setup_logger()
 
 VOXEL_SIZE = 0.05
 ANGLE_OF_MID_360_ON_ROBOT = 24  # degree
-HEIGHT_OF_MID_360_ON_ROBOT = 0.5  # meter
+INITIAL_HEIGHT_OF_MID_360_ON_ROBOT = 0.2  # meter
 
 
 class ReplayMid360Module(Module):
@@ -129,8 +134,7 @@ class TransformToRobot(Module):
 
     @rpc
     def start(self):
-        unsub = self.lidar_untrans.subscribe(self._on_lidar)
-        self._disposables.add(Disposable(unsub))
+        self.lidar_untrans.subscribe(self._on_lidar)
 
     def _on_lidar(self, pcd: PointCloud2):
         """Apply transform and filter by height before publishing."""
@@ -155,16 +159,16 @@ class OdometryToOdom(Module):
 
     @rpc
     def start(self):
-        unsub = self.odometry.subscribe(self._on_odom)
-        self._disposables.add(Disposable(unsub))
-
+        self.odometry.subscribe(self._on_odom)
     def _on_odom(self, odometry: Odometry):
         """Convert Odometry to PoseStamped."""
+
+        visual_pose = Quaternion.from_euler(Vector3(0, 0, odometry.pose.orientation.to_euler().z))
         self.odom.publish(
             PoseStamped(
                 ts=odometry.ts,
                 position=odometry.pose.position,
-                orientation=odometry.pose.orientation,
+                orientation=visual_pose,
             )
         )
 
@@ -224,8 +228,7 @@ class OdometryTFPublisher(Module):
 
     @rpc
     def start(self) -> None:
-        unsub = self.odom.subscribe(self._on_odom)
-        self._disposables.add(Disposable(unsub))
+        self.odom.subscribe(self._on_odom)
 
     def _on_odom(self, odom: PoseStamped) -> None:
         """Convert FastLIO2 odometry pose to TF tree and publish."""
@@ -254,40 +257,11 @@ class OdometryTFPublisher(Module):
         pass
 
 
-unitree_go2_fastlio = (
-    autoconnect(
-        unitree_go2_basic,
-        FastLio2.blueprint(
-            voxel_size=VOXEL_SIZE, map_voxel_size=VOXEL_SIZE, map_freq=-1, lidar_ip="192.168.1.157"
-        ),
-        TransformToRobot.blueprint(
-            angle_of_mid_360_on_robot=ANGLE_OF_MID_360_ON_ROBOT,
-            height_of_mid_360_on_robot=HEIGHT_OF_MID_360_ON_ROBOT,
-            lidar_max_height=2.0,
-        ),
-        OdometryToOdom.blueprint(),
-        VoxelGridMapper.blueprint(voxel_size=VOXEL_SIZE),
-        cost_mapper(),
-        replanning_a_star_planner(),
-        wavefront_frontier_explorer(),
-    )
-    .remappings(
-        [
-            (GO2Connection, "lidar", "lidar_null"),
-            (GO2Connection, "odom", "odom_null"),
-            (TransformToRobot, "lidar_untrans", "lidar"),
-            (VoxelGridMapper, "lidar", "lidar_trans"),
-        ]
-    )
-    .global_config(n_workers=6, robot_model="unitree_go2")
-)
-
-
 fastlio_livox_replay = autoconnect(
     ReplayMid360Module.blueprint(),
     TransformToRobot.blueprint(
         angle_of_mid_360_on_robot=ANGLE_OF_MID_360_ON_ROBOT,
-        height_of_mid_360_on_robot=HEIGHT_OF_MID_360_ON_ROBOT,
+        height_of_mid_360_on_robot=INITIAL_HEIGHT_OF_MID_360_ON_ROBOT,
         lidar_max_height=2.0,
     ),
     OdometryToOdom.blueprint(),
@@ -301,9 +275,28 @@ fastlio_livox_replay = autoconnect(
     ]
 )
 
+if global_config.viewer.startswith("rerun"):
+    from dimos.visualization.rerun.bridge import _resolve_viewer_mode
+
+    rerun_config["visual_override"] = {
+            **rerun_config["visual_override"],
+            "world/lidar_null": None,
+            "world/odom_null": None,
+            "world/lidar": None,
+    }
+    _fastlio_rerun_config = rerun_config
+    _with_vis_fastlio = autoconnect(
+        _transports_base,
+        rerun_bridge(viewer_mode=_resolve_viewer_mode(), **_fastlio_rerun_config),
+    )
+else:
+    _with_vis_fastlio = with_vis
+
+
+# need to create my own blueprint so I can add to rerun config and make the go2 stop publising it's tfs.
 _unitree_go2_basic_no_tf = (
     autoconnect(
-        with_vis,
+        _with_vis_fastlio,
         go2_connection(publish_tf=False),
         websocket_vis(),
     )
@@ -311,7 +304,7 @@ _unitree_go2_basic_no_tf = (
     .configurators(ClockSyncConfigurator())
 )
 
-unitree_go2_fastlio_no_go2tf = (
+unitree_go2_backpack = (
     autoconnect(
         _unitree_go2_basic_no_tf,
         FastLio2.blueprint(
@@ -319,7 +312,7 @@ unitree_go2_fastlio_no_go2tf = (
         ),
         TransformToRobot.blueprint(
             angle_of_mid_360_on_robot=ANGLE_OF_MID_360_ON_ROBOT,
-            height_of_mid_360_on_robot=HEIGHT_OF_MID_360_ON_ROBOT,
+            height_of_mid_360_on_robot=INITIAL_HEIGHT_OF_MID_360_ON_ROBOT,
             lidar_max_height=2.0,
         ),
         OdometryToOdom.blueprint(),
@@ -328,10 +321,12 @@ unitree_go2_fastlio_no_go2tf = (
         cost_mapper(),
         replanning_a_star_planner(),
         wavefront_frontier_explorer(),
+
     )
     .remappings(
         [
             (GO2Connection, "lidar", "lidar_null"),
+            (GO2Connection, "odom", "odom_null"),
             (TransformToRobot, "lidar_untrans", "lidar"),
             (VoxelGridMapper, "lidar", "lidar_trans"),
         ]
@@ -342,5 +337,4 @@ unitree_go2_fastlio_no_go2tf = (
 __all__ = ["unitree_go2_fastlio", "unitree_go2_fastlio_no_go2tf"]
 
 if __name__ == "__main__":
-    # unitree_go2_fastlio.build().loop()
     fastlio_livox_replay.build().loop()

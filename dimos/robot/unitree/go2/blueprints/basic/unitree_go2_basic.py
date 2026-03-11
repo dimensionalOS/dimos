@@ -85,6 +85,9 @@ rerun_config = {
         "world/camera_info": _convert_camera_info,
         "world/global_map": _convert_global_map,
         "world/navigation_costmap": _convert_navigation_costmap,
+        "world/lidar_null": None,
+        "world/odom_null": None,
+        "world/lidar": None,
     },
     # slapping a go2 shaped box on top of tf/base_link
     "static": {
