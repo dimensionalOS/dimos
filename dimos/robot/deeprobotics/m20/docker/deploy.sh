@@ -245,12 +245,36 @@ ensure_nat() {
         gw_label="AOS (${NAT_IFACE})"
     fi
     echo "Ensuring NAT rules on ${gw_label} for web UI + Rerun..."
+    local rules_changed=0
+
+    # DNAT rules: redirect incoming traffic on gateway to NOS
     for port in 7779 9876; do
-        gateway_sudo iptables -t nat -C PREROUTING -i ${NAT_IFACE} -p tcp --dport $port \
-            -j DNAT --to-destination ${NOS_HOST}:$port 2>/dev/null || \
-        gateway_sudo iptables -t nat -A PREROUTING -i ${NAT_IFACE} -p tcp --dport $port \
-            -j DNAT --to-destination ${NOS_HOST}:$port
+        if ! gateway_sudo iptables -t nat -C PREROUTING -i ${NAT_IFACE} -p tcp --dport $port \
+            -j DNAT --to-destination ${NOS_HOST}:$port 2>/dev/null; then
+            gateway_sudo iptables -t nat -A PREROUTING -i ${NAT_IFACE} -p tcp --dport $port \
+                -j DNAT --to-destination ${NOS_HOST}:$port
+            rules_changed=1
+        fi
     done
+
+    # FORWARD rules: allow DNAT'd traffic through (default FORWARD policy is DROP on GOS)
+    # Determine which interface NOS is on (eth0 = internal LAN on GOS)
+    local nos_iface="eth0"
+    if ! gateway_sudo iptables -C FORWARD -i ${NAT_IFACE} -o ${nos_iface} -p tcp \
+        -d ${NOS_HOST} -j ACCEPT 2>/dev/null; then
+        gateway_sudo iptables -A FORWARD -i ${NAT_IFACE} -o ${nos_iface} -p tcp \
+            -d ${NOS_HOST} -j ACCEPT
+        gateway_sudo iptables -A FORWARD -i ${nos_iface} -o ${NAT_IFACE} \
+            -m state --state RELATED,ESTABLISHED -j ACCEPT
+        rules_changed=1
+    fi
+
+    # Persist rules across reboots via /etc/iptables.rules (loaded by rc.local)
+    if [ $rules_changed -eq 1 ]; then
+        gateway_sudo "iptables-save > /etc/iptables.rules"
+        echo "  NAT rules saved to /etc/iptables.rules (persistent)"
+    fi
+
     echo "  NAT rules OK (${gw_label}: 7779 → NOS, 9876 → NOS)"
 }
 
