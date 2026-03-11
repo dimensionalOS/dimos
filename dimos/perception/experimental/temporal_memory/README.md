@@ -19,6 +19,7 @@ WindowAnalyzer           ← VLM calls: caption + entities + relations
     ├──▶ TemporalState   ← rolling summary, entity roster
     ├──▶ EntityGraphDB   ← persistent SQLite graph (memory/temporal/)
     └──▶ JSONL log       ← per-run raw VLM output (logs/<run>/temporal_memory/)
+    └──▶ JSONL dump      ← persistent raw dump (memory/temporal_memory/)
 ```
 
 Five components, each independently testable:
@@ -82,7 +83,7 @@ config = TemporalMemoryConfig(
     temperature=0.2,            # VLM temperature
 
     # Storage
-    db_dir=None,                # Persistent DB dir (default: ~/.local/state/dimos/temporal_memory/)
+    db_dir=None,                # Persistent DB dir (default: <repo>/memory/temporal_memory/)
     new_memory=False,           # Clear persistent DB on start
 
     # Visualization
@@ -109,7 +110,8 @@ Two outputs, no overlap:
 | Output | Location | Lifetime | Contents |
 |---|---|---|---|
 | JSONL log | `logs/<run>/temporal_memory/temporal_memory.jsonl` | Per-run | Raw VLM text + parsed JSON (greppable) |
-| SQLite DB | `~/.local/state/dimos/temporal_memory/entity_graph.db` | Persistent | Entities, relations, distances |
+| JSONL dump | `memory/temporal_memory/temporal_memory.jsonl` | Persistent | Accumulated raw VLM output across all runs |
+| SQLite DB | `memory/temporal_memory/entity_graph.db` | Persistent | Entities, relations, distances |
 
 - **JSONL** contains every VLM response verbatim (`raw_response` field) plus
   parsed structured data. Agents can grep natural language directly.
