@@ -2,51 +2,6 @@ name: Bug Report
 description: Report a bug in DimOS
 title: "[Bug]: "
 body:
-  - type: dropdown
-    id: robot-model
-    attributes:
-      label: Robot Model
-      description: Which robot are you using?
-      options:
-        - Unitree G1
-        - Unitree Go2 Pro
-        - Unitree Go2 Air
-        - Unitree B1
-        - Drone
-        - Piper
-        - xArm
-        - Simulation only
-        - Other (specify below)
-    validations:
-      required: true
-
-  - type: input
-    id: firmware-version
-    attributes:
-      label: Firmware Version
-      description: Exact firmware version of your robot (e.g. 1.0.2.35)
-      placeholder: "1.0.2.35"
-    validations:
-      required: true
-
-  - type: input
-    id: commit-hash
-    attributes:
-      label: Commit Hash
-      description: "Run: git rev-parse --short HEAD"
-      placeholder: "abc1234"
-    validations:
-      required: true
-
-  - type: input
-    id: os
-    attributes:
-      label: Operating system
-      description: OS and version where this occurs.
-      placeholder: macOS 15.4 / Ubuntu 24.04 / Windows 11
-    validations:
-      required: true
-
   - type: textarea
     id: description
     attributes:
@@ -73,6 +28,52 @@ body:
       label: Logs / Error Output
       description: Paste any relevant logs or error messages
       render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: commit-hash
+    attributes:
+      label: Commit Hash
+      description: "Run: git rev-parse --short HEAD"
+      placeholder: "abc1234"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: OS and version where this occurs.
+      placeholder: macOS 15.4 / Ubuntu 24.04 / Windows 11
+    validations:
+      required: true
+
+  - type: dropdown
+    id: robot-model
+    attributes:
+      label: Robot Model
+      description: Which robot are you using, if any?
+      options:
+        - N/A
+        - Unitree G1
+        - Unitree Go2 Pro
+        - Unitree Go2 Air
+        - Unitree B1
+        - Drone
+        - Piper
+        - xArm
+        - Simulation only
+        - Other (specify below)
+    validations:
+      required: false
+
+  - type: input
+    id: firmware-version
+    attributes:
+      label: Firmware Version
+      description: Exact firmware version of your robot, if applicable (e.g. 1.0.2.35)
+      placeholder: "1.0.2.35"
     validations:
       required: false
 
