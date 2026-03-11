@@ -191,6 +191,7 @@ dimos run unitree-go2
 | `dimos --simulation run unitree-g1` | G1 humanoid in MuJoCo simulation |
 | `dimos --replay run drone-basic` | Drone video + telemetry replay |
 | `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay) |
+| `dimos run keyboard-teleop-xarm7` | Keyboard teleop with mock xArm7 arm |
 
 > Full blueprint docs: [docs/usage/blueprints.md](docs/usage/blueprints.md)
 
