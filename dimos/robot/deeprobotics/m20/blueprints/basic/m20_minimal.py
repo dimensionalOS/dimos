@@ -86,7 +86,7 @@ m20_minimal = autoconnect(
 ).global_config(
     n_workers=4,
     robot_model="deeprobotics_m20",
-    robot_width=0.3,
+    robot_width=0.45,
     robot_rotation_diameter=0.6,
 )
 

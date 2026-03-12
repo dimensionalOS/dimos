@@ -94,7 +94,7 @@ bp = autoconnect(
 ).global_config(
     robot_ip=AOS_ETH0,
     robot_model="deeprobotics_m20",
-    robot_width=0.3,
+    robot_width=0.45,
     robot_rotation_diameter=0.6,
     n_workers=2,
 )

@@ -49,8 +49,7 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.mapping.occupancy.gradient import gradient
-from dimos.mapping.occupancy.inflation import simple_inflate
+from dimos.mapping.occupancy.path_map import make_navigation_map
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
@@ -384,7 +383,9 @@ class WebsocketVisModule(Module):
 
     def _process_costmap(self, costmap: OccupancyGrid) -> dict[str, Any]:
         """Convert OccupancyGrid to visualization format."""
-        costmap = gradient(simple_inflate(costmap, 0.1), max_distance=1.0)
+        costmap = make_navigation_map(
+            costmap, self._global_config.robot_width, self._global_config.planner_strategy
+        )
         grid_data = self.costmap_encoder.encode_costmap(costmap.grid)
 
         return {
