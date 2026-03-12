@@ -26,6 +26,7 @@ from dimos.protocol.service.lcmservice import (
 from dimos.protocol.service.system_configurator import (
     BufferConfiguratorLinux,
     BufferConfiguratorMacOS,
+    LibPythonConfiguratorMacOS,
     MaxFileConfiguratorMacOS,
     MulticastConfiguratorLinux,
     MulticastConfiguratorMacOS,
@@ -56,10 +57,11 @@ class TestConfigureSystemForLcm:
                 autoconf()
                 mock_configure.assert_called_once()
                 checks = mock_configure.call_args[0][0]
-                assert len(checks) == 3
+                assert len(checks) == 4
                 assert isinstance(checks[0], MulticastConfiguratorMacOS)
                 assert isinstance(checks[1], BufferConfiguratorMacOS)
                 assert isinstance(checks[2], MaxFileConfiguratorMacOS)
+                assert isinstance(checks[3], LibPythonConfiguratorMacOS)
                 assert checks[0].loopback_interface == "lo0"
 
     def test_passes_check_only_flag(self) -> None:
@@ -91,7 +93,6 @@ class TestLCMConfig:
         config = LCMConfig()
         assert config.ttl == 0
         assert config.url == _DEFAULT_LCM_URL
-        assert config.autoconf is True
         assert config.lcm is None
 
     def test_custom_url(self) -> None:
@@ -102,10 +103,6 @@ class TestLCMConfig:
     def test_post_init_sets_default_url_when_none(self) -> None:
         config = LCMConfig(url=None)
         assert config.url == _DEFAULT_LCM_URL
-
-    def test_autoconf_can_be_disabled(self) -> None:
-        config = LCMConfig(autoconf=False)
-        assert config.autoconf is False
 
 
 # ----------------------------- Topic tests -----------------------------
@@ -161,47 +158,18 @@ class TestLCMService:
             mock_lcm_instance = MagicMock()
             mock_lcm_class.return_value = mock_lcm_instance
 
-            with patch("dimos.protocol.service.lcmservice.autoconf"):
-                service = LCMService(autoconf=False)
-                service.start()
+            service = LCMService()
+            service.start()
 
-                # Verify thread is running
-                assert service._thread is not None
-                assert service._thread.is_alive()
+            # Verify thread is running
+            assert service._thread is not None
+            assert service._thread.is_alive()
 
-                service.stop()
+            service.stop()
 
-                # Give the thread a moment to stop
-                time.sleep(0.1)
-                assert not service._thread.is_alive()
-
-    def test_start_calls_configure_system(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.lcm.LCM") as mock_lcm_class:
-            mock_lcm_instance = MagicMock()
-            mock_lcm_class.return_value = mock_lcm_instance
-
-            with patch("dimos.protocol.service.lcmservice.autoconf") as mock_configure:
-                service = LCMService(autoconf=True)
-                service.start()
-
-                # With autoconf=True, check_only should be False
-                mock_configure.assert_called_once_with(check_only=False)
-
-                service.stop()
-
-    def test_start_with_autoconf_disabled(self) -> None:
-        with patch("dimos.protocol.service.lcmservice.lcm.LCM") as mock_lcm_class:
-            mock_lcm_instance = MagicMock()
-            mock_lcm_class.return_value = mock_lcm_instance
-
-            with patch("dimos.protocol.service.lcmservice.autoconf") as mock_configure:
-                service = LCMService(autoconf=False)
-                service.start()
-
-                # With autoconf=False, check_only should be True
-                mock_configure.assert_called_once_with(check_only=True)
-
-                service.stop()
+            # Give the thread a moment to stop
+            time.sleep(0.1)
+            assert not service._thread.is_alive()
 
     def test_getstate_excludes_unpicklable_attrs(self) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm.LCM") as mock_lcm_class:
@@ -243,46 +211,43 @@ class TestLCMService:
             mock_lcm_instance = MagicMock()
             mock_lcm_class.return_value = mock_lcm_instance
 
-            with patch("dimos.protocol.service.lcmservice.autoconf"):
-                service = LCMService()
-                state = service.__getstate__()
+            service = LCMService()
+            state = service.__getstate__()
 
-                # Simulate unpickling
-                new_service = object.__new__(LCMService)
-                new_service.__setstate__(state)
+            # Simulate unpickling
+            new_service = object.__new__(LCMService)
+            new_service.__setstate__(state)
 
-                # Start should reinitialize LCM
-                new_service.start()
+            # Start should reinitialize LCM
+            new_service.start()
 
-                # LCM should be created again
-                assert mock_lcm_class.call_count == 2
+            # LCM should be created again
+            assert mock_lcm_class.call_count == 2
 
-                new_service.stop()
+            new_service.stop()
 
     def test_stop_cleans_up_lcm_instance(self) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm.LCM") as mock_lcm_class:
             mock_lcm_instance = MagicMock()
             mock_lcm_class.return_value = mock_lcm_instance
 
-            with patch("dimos.protocol.service.lcmservice.autoconf"):
-                service = LCMService()
-                service.start()
-                service.stop()
+            service = LCMService()
+            service.start()
+            service.stop()
 
-                # LCM instance should be cleaned up when we created it
-                assert service.l is None
+            # LCM instance should be cleaned up when we created it
+            assert service.l is None
 
     def test_stop_preserves_external_lcm_instance(self) -> None:
         mock_lcm_instance = MagicMock()
 
-        with patch("dimos.protocol.service.lcmservice.autoconf"):
-            # Pass lcm as kwarg
-            service = LCMService(lcm=mock_lcm_instance)
-            service.start()
-            service.stop()
+        # Pass lcm as kwarg
+        service = LCMService(lcm=mock_lcm_instance)
+        service.start()
+        service.stop()
 
-            # External LCM instance should not be cleaned up
-            assert service.l == mock_lcm_instance
+        # External LCM instance should not be cleaned up
+        assert service.l == mock_lcm_instance
 
     def test_get_call_thread_pool_creates_pool(self) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm.LCM") as mock_lcm_class:
@@ -308,15 +273,14 @@ class TestLCMService:
             mock_lcm_instance = MagicMock()
             mock_lcm_class.return_value = mock_lcm_instance
 
-            with patch("dimos.protocol.service.lcmservice.autoconf"):
-                service = LCMService()
-                service.start()
+            service = LCMService()
+            service.start()
 
-                # Create thread pool
-                pool = service._get_call_thread_pool()
-                assert pool is not None
+            # Create thread pool
+            pool = service._get_call_thread_pool()
+            assert pool is not None
 
-                service.stop()
+            service.stop()
 
-                # Pool should be cleaned up
-                assert service._call_thread_pool is None
+            # Pool should be cleaned up
+            assert service._call_thread_pool is None

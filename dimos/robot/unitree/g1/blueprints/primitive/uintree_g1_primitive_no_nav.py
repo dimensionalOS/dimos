@@ -67,8 +67,22 @@ def _static_base_link(rr: Any) -> list[Any]:
     ]
 
 
+def _g1_rerun_blueprint() -> Any:
+    """Split layout: camera feed + 3D world view side by side."""
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial2DView(origin="world/color_image", name="Camera"),
+            rrb.Spatial3DView(origin="world", name="3D"),
+            column_shares=[1, 2],
+        ),
+    )
+
+
 rerun_config = {
-    "pubsubs": [LCM(autoconf=True)],
+    "blueprint": _g1_rerun_blueprint,
+    "pubsubs": [LCM()],
     "visual_override": {
         "world/camera_info": _convert_camera_info,
         "world/global_map": _convert_global_map,
@@ -79,21 +93,16 @@ rerun_config = {
     },
 }
 
-match global_config.viewer_backend:
-    case "foxglove":
-        from dimos.robot.foxglove_bridge import foxglove_bridge
+if global_config.viewer == "foxglove":
+    from dimos.robot.foxglove_bridge import foxglove_bridge
 
-        _with_vis = autoconnect(foxglove_bridge())
-    case "rerun":
-        from dimos.visualization.rerun.bridge import rerun_bridge
+    _with_vis = autoconnect(foxglove_bridge())
+elif global_config.viewer.startswith("rerun"):
+    from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
 
-        _with_vis = autoconnect(rerun_bridge(**rerun_config))
-    case "rerun-web":
-        from dimos.visualization.rerun.bridge import rerun_bridge
-
-        _with_vis = autoconnect(rerun_bridge(viewer_mode="web", **rerun_config))
-    case _:
-        _with_vis = autoconnect()
+    _with_vis = autoconnect(rerun_bridge(viewer_mode=_resolve_viewer_mode(), **rerun_config))
+else:
+    _with_vis = autoconnect()
 
 
 def _create_webcam() -> Webcam:

@@ -27,7 +27,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.models.qwen.bbox import BBox
-from dimos.models.vl.qwen import QwenVlModel
+from dimos.models.vl.create import create
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.navigation.visual.query import get_object_bbox_from_image
@@ -71,7 +71,7 @@ class PersonFollowSkillContainer(Module):
         self._use_3d_navigation: bool = use_3d_navigation
         self._latest_image: Image | None = None
         self._latest_pointcloud: PointCloud2 | None = None
-        self._vl_model: VlModel = QwenVlModel()
+        self._vl_model: VlModel = create("qwen")
         self._tracker: EdgeTAMProcessor | None = None
         self._thread: Thread | None = None
         self._should_stop: Event = Event()
@@ -197,7 +197,7 @@ class PersonFollowSkillContainer(Module):
 
         logger.info(f"EdgeTAM initialized with {len(initial_detections)} detections")
 
-        self._thread = Thread(target=self._follow_loop, args=(tracker, query))
+        self._thread = Thread(target=self._follow_loop, args=(tracker, query), daemon=True)
         self._thread.start()
 
         return (

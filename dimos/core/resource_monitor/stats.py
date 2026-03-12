@@ -90,7 +90,7 @@ class IoStats(TypedDict):
 def _collect_io(proc: psutil.Process) -> IoStats:
     """Collect IO counters in bytes. Call inside oneshot()."""
     try:
-        io = proc.io_counters()
+        io = proc.io_counters()  # type: ignore[attr-defined]  # not available on macOS
         return IoStats(io_read_bytes=io.read_bytes, io_write_bytes=io.write_bytes)
     except (psutil.AccessDenied, AttributeError):
         return IoStats(io_read_bytes=0, io_write_bytes=0)

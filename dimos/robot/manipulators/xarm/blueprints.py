@@ -27,7 +27,7 @@ from dimos.control.components import HardwareComponent, HardwareType, make_joint
 from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.manipulation.manipulation_blueprints import (
+from dimos.manipulation.blueprints import (
     _make_xarm6_config,
     _make_xarm7_config,
 )

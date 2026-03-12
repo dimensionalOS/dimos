@@ -110,7 +110,7 @@ except ImportError:
 
 @contextmanager
 def lcm_context() -> Generator[LCM, None, None]:
-    lcm_pubsub = LCM(autoconf=True)
+    lcm_pubsub = LCM()
     lcm_pubsub.start()
     yield lcm_pubsub
     lcm_pubsub.stop()

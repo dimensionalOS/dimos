@@ -23,10 +23,29 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.10.post1"
+version = "0.0.11"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
-readme = "README.md"
+readme = {file = "README.md", content-type = "text/markdown"}
+license = {text = "Apache-2.0"}
+keywords = ["robotics", "ros", "agents", "dimos", "dimensional", "openclaw", "roboclaw", "humanoid", "unitree"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+]
 
 dependencies = [
     # Transport Protocols
@@ -63,6 +82,7 @@ dependencies = [
     # TODO: rerun shouldn't be required but rn its in core (there is NO WAY to use dimos without rerun rn)
     # remove this once rerun is optional in core
     "rerun-sdk>=0.20.0",
+    "dimos-viewer>=0.30.0a2",
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
@@ -78,6 +98,12 @@ dimos = "dimos.robot.cli.dimos:main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
 doclinks = "dimos.utils.docs.doclinks:main"
 dtop = "dimos.utils.cli.dtop:main"
+
+[project.urls]
+Homepage = "https://dimensionalos.com"
+Repository = "https://github.com/dimensionalOS/dimos"
+Issues = "https://github.com/dimensionalOS/dimos/issues"
+Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 [project.optional-dependencies]
 misc = [
@@ -124,6 +150,7 @@ misc = [
 
 visualization = [
     "rerun-sdk>=0.20.0",
+    "dimos-viewer>=0.30.0a4",
 ]
 
 agents = [
@@ -181,6 +208,7 @@ manipulation = [
 
     # Hardware SDKs
     "piper-sdk",
+    "pyrealsense2",
     "xarm-python-sdk>=1.17.0",
 
     # Visualization (Optional)
@@ -249,6 +277,7 @@ dev = [
     "types-tensorflow>=2.18.0.20251008,<3",
     "types-tqdm>=4.67.0.20250809,<5",
     "types-psycopg2>=2.9.21.20251012",
+    "types-psutil>=7.2.2.20260130,<8",
 
     # Tools
     "py-spy",
@@ -295,6 +324,7 @@ docker = [
     "pydantic",
     "pydantic-settings>=2.11.0,<3",
     "typer>=0.19.2,<1",
+    "requests>=2.28",
     "opencv-python-headless",
     "lcm",
     "sortedcontainers",

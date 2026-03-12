@@ -28,6 +28,7 @@ class Topic:
         self.name = name
         # Store (timestamp, data_size) tuples for statistics
         self.message_history = deque()  # type: ignore[var-annotated]
+        self._lock = threading.Lock()
         self.history_window = history_window
         # Total traffic accumulator (doesn't get cleaned up)
         self.total_traffic_bytes = 0
@@ -35,9 +36,10 @@ class Topic:
     def msg(self, data: bytes) -> None:
         # print(f"> msg {self.__str__()} {len(data)} bytes")
         datalen = len(data)
-        self.message_history.append((time.time(), datalen))
-        self.total_traffic_bytes += datalen
-        self._cleanup_old_messages()
+        with self._lock:
+            self.message_history.append((time.time(), datalen))
+            self.total_traffic_bytes += datalen
+            self._cleanup_old_messages()
 
     def _cleanup_old_messages(self, max_age: float | None = None) -> None:
         """Remove messages older than max_age seconds"""
@@ -51,7 +53,8 @@ class Topic:
         """Get messages within the specified time window"""
         current_time = time.time()
         cutoff_time = current_time - time_window
-        return [(ts, size) for ts, size in self.message_history if ts >= cutoff_time]
+        with self._lock:
+            return [(ts, size) for ts, size in self.message_history if ts >= cutoff_time]
 
     # avg msg freq in the last n seconds
     def freq(self, time_window: float) -> float:
@@ -84,7 +87,8 @@ class Topic:
 
     def total_traffic(self) -> int:
         """Return total traffic passed in bytes since the beginning"""
-        return self.total_traffic_bytes
+        with self._lock:
+            return self.total_traffic_bytes
 
     def total_traffic_hr(self) -> str:
         """Return human-readable total traffic with appropriate units"""
@@ -109,6 +113,7 @@ class LCMSpy(LCMService, Topic):
         super().__init__(**kwargs)
         Topic.__init__(self, name="total", history_window=self.config.topic_history_window)  # type: ignore[attr-defined]
         self.topic = {}  # type: ignore[assignment]
+        self._topic_lock = threading.Lock()
 
     def start(self) -> None:
         super().start()
@@ -121,12 +126,13 @@ class LCMSpy(LCMService, Topic):
     def msg(self, topic, data) -> None:  # type: ignore[no-untyped-def, override]
         Topic.msg(self, data)
 
-        if topic not in self.topic:  # type: ignore[operator]
-            print(self.config)
-            self.topic[topic] = self.topic_class(  # type: ignore[assignment, call-arg]
-                topic,
-                history_window=self.config.topic_history_window,  # type: ignore[attr-defined]
-            )
+        with self._topic_lock:
+            if topic not in self.topic:  # type: ignore[operator]
+                print(self.config)
+                self.topic[topic] = self.topic_class(  # type: ignore[assignment, call-arg]
+                    topic,
+                    history_window=self.config.topic_history_window,  # type: ignore[attr-defined]
+                )
         self.topic[topic].msg(data)  # type: ignore[attr-defined, type-arg]
 
 
@@ -168,8 +174,9 @@ class GraphLCMSpy(LCMSpy, GraphTopic):
     def graph_log(self) -> None:
         while not self.graph_log_stop_event.is_set():
             self.update_graphs(self.config.graph_log_window)  # type: ignore[attr-defined]  # Update global history
-            # Copy to list to avoid RuntimeError: dictionary changed size during iteration
-            for topic in list(self.topic.values()):  # type: ignore[call-arg]
+            with self._topic_lock:
+                topics = list(self.topic.values())  # type: ignore[call-arg]
+            for topic in topics:
                 topic.update_graphs(self.config.graph_log_window)  # type: ignore[attr-defined]
             time.sleep(self.config.graph_log_window)  # type: ignore[attr-defined]
 

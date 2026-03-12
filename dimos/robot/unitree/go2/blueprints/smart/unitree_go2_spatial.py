@@ -14,12 +14,14 @@
 # limitations under the License.
 
 from dimos.core.blueprints import autoconnect
+from dimos.perception.perceive_loop_skill import PerceiveLoopSkill
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
 unitree_go2_spatial = autoconnect(
     unitree_go2,
     spatial_memory(),
+    PerceiveLoopSkill.blueprint(),
 ).global_config(n_workers=8)
 
 __all__ = ["unitree_go2_spatial"]

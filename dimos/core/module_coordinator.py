@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from dimos.core.module import Module, ModuleT
     from dimos.core.resource_monitor.monitor import StatsMonitor
     from dimos.core.rpc_client import ModuleProxy
+    from dimos.core.worker import Worker
 
 logger = setup_logger()
 
@@ -48,6 +49,45 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         self._memory_limit = cfg.memory_limit
         self._global_config = cfg
         self._deployed_modules = {}
+
+    @property
+    def workers(self) -> list[Worker]:
+        """Active worker processes."""
+        if self._client is None:
+            return []
+        return self._client.workers
+
+    @property
+    def n_workers(self) -> int:
+        """Number of active workers."""
+        return len(self.workers)
+
+    def health_check(self) -> bool:
+        """Verify all workers are alive after build.
+
+        Since ``blueprint.build()`` is synchronous, every module should be
+        started by the time this runs.  We just confirm no worker has died.
+        """
+        if self.n_workers == 0:
+            logger.error("health_check: no workers found")
+            return False
+
+        for w in self.workers:
+            if w.pid is None:
+                logger.error("health_check: worker died", worker_id=w.worker_id)
+                return False
+
+        return True
+
+    @property
+    def n_modules(self) -> int:
+        """Number of deployed modules."""
+        return len(self._deployed_modules)
+
+    def suppress_console(self) -> None:
+        """Silence console output in all worker processes."""
+        if self._client is not None:
+            self._client.suppress_console()
 
     def start(self) -> None:
         n = self._n if self._n is not None else 2

@@ -29,7 +29,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, RichLog
 
-from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM
+from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
 from dimos.utils.cli import theme
 
 # Type alias for all message types we might receive
@@ -63,14 +63,14 @@ class AgentMessageMonitor:
 
     def start(self) -> None:
         """Start monitoring messages."""
-        self.transport.subscribe(self.topic, self._handle_message)
+        self.transport.subscribe(Topic(self.topic), self._handle_message)
 
     def stop(self) -> None:
         """Stop monitoring."""
         # PickleLCM doesn't have explicit stop method
         pass
 
-    def _handle_message(self, msg: Any, topic: str) -> None:
+    def _handle_message(self, msg: Any, topic: Topic) -> None:
         """Handle incoming messages."""
         # Check if it's one of the message types we care about
         if isinstance(msg, SystemMessage | ToolMessage | AIMessage | HumanMessage):

@@ -1,9 +1,8 @@
-
 <div align="center">
 
-<img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/15283d94-ad95-42c9-abd5-6565a222a837" />
+<img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/64f13b39-da06-4f58-add0-cfc44f04db4e" />
 
-<h2>The Agentive Operating System for Generalist Robotics</h2>
+<h2>The Agentive Operating System for Physical Space</h2>
 
 [![Discord](https://img.shields.io/discord/1341146487186391173?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/dimos)
 [![Stars](https://img.shields.io/github/stars/dimensionalOS/dimos?style=flat-square)](https://github.com/dimensionalOS/dimos/stargazers)
@@ -18,11 +17,11 @@
 
 [Hardware](#hardware) •
 [Installation](#installation) •
-[Development](#development) •
-[Multi Language](#multi-language-support) •
-[ROS](#ros-interop)
+[Agent CLI & MCP](#agent-cli-and-mcp) •
+[Blueprints](#blueprints) •
+[Development](#development)
 
-⚠️ **Alpha Pre-Release: Expect Breaking Changes** ⚠️
+⚠️ **Pre-Release Beta** ⚠️
 
 </big></big>
 
@@ -38,19 +37,19 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 <table>
   <tr>
     <td align="center" width="50%">
-      <a href="docs/capabilities/navigation/readme.md"><img src="assets/readme/navigation.gif" alt="Navigation" width="100%"></a>
+      <a href="docs/capabilities/navigation/native/index.md"><img src="assets/readme/navigation.gif" alt="Navigation" width="100%"></a>
     </td>
     <td align="center" width="50%">
-      <a href="docs/capabilities/perception/readme.md"><img src="assets/readme/perception.png" alt="Perception" width="100%"></a>
+      <img src="assets/readme/perception.png" alt="Perception" width="100%">
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
-      <h3><a href="docs/capabilities/navigation/readme.md">Navigation and Mapping</a></h3>
+      <h3><a href="docs/capabilities/navigation/native/index.md">Navigation and Mapping</a></h3>
       SLAM, dynamic obstacle avoidance, route planning, and autonomous exploration — via both DimOS native and ROS<br><a href="https://x.com/stash_pomichter/status/2010471593806545367">Watch video</a>
     </td>
     <td align="center" width="50%">
-      <h3><a href="docs/capabilities/perception/readme.md">Perception</a></h3>
+      <h3>Perception</h3>
       Detectors, 3d projections, VLMs, Audio processing
     </td>
   </tr>
@@ -59,7 +58,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
       <a href="docs/capabilities/agents/readme.md"><img src="assets/readme/agentic_control.gif" alt="Agents" width="100%"></a>
     </td>
     <td align="center" width="50%">
-      <img src="assets/readme/spatial_memory.gif" alt="Spatial Memory" width="100%"></a>
+      <img src="assets/readme/spatial_memory.gif" alt="Spatial Memory" width="100%">
     </td>
   </tr>
   <tr>
@@ -110,12 +109,12 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
       🟨 <a href="docs/platforms/humanoid/g1/index.md">Unitree G1</a><br>
     </td>
     <td align="center" width="20%">
-      🟥 <a href="docs/todo.md">Xarm</a><br>
-      🟥 <a href="docs/todo.md">AgileX Piper</a><br>
+      🟨 <a href="docs/capabilities/manipulation/readme.md">Xarm</a><br>
+      🟨 <a href="docs/capabilities/manipulation/readme.md">AgileX Piper</a><br>
     </td>
     <td align="center" width="20%">
-      🟥 <a href="dimos/robot/drone">Mavlink</a><br>
-      🟥 <a href="dimos/robot/drone">DJI SDK</a><br>
+      🟧 <a href="dimos/robot/drone/README.md">MAVLink</a><br>
+      🟧 <a href="dimos/robot/drone/README.md">DJI Mavic</a><br>
     </td>
     <td align="center" width="20%">
       🟥 <a href="https://github.com/dimensionalOS/openFT-sensor">Force Torque Sensor</a><br>
@@ -128,42 +127,28 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
 
 </div>
 
-
-# System Requirements
-
-## Tested and Supported Hardware
-
-DimOS has been tested and validated on the following hardware configurations:
-
-### GPU
-- **NVIDIA RTX 4070 or better** (for perception, VLMs, and AI features)
-- CUDA support required
-- Minimum 8GB VRAM recommended
-
-### CPU
-- **Intel Core i7 (recent generation) or better**
-- AMD Ryzen 7 or better
-- Multi-core recommended for distributed execution
-
-### Memory
-- **16GB RAM minimum**
-- 32GB+ recommended for larger models and multi-robot deployments
-
-### Storage
-- **50GB+ free disk space**
-- SSD strongly recommended for model loading and data logging
-
-> **Note:** DimOS may run on older hardware (e.g., NVIDIA 3000-series GPUs), but performance and stability are not guaranteed. If you encounter issues, please upgrade to the recommended specifications above.
+> [!IMPORTANT]
+> 🤖 Direct your favorite Agent (OpenClaw, Claude Code, etc.) to [AGENTS.md](AGENTS.md) and our [CLI and MCP](#agent-cli-and-mcp) interfaces to start building powerful Dimensional applications.
 
 # Installation
 
-## System Install
+## Interactive Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/main/scripts/install.sh | bash
+```
+
+> See [`scripts/install.sh --help`](scripts/install.sh) for non-interactive and advanced options.
+
+## Manual System Install
 
 To set up your system dependencies, follow one of these guides:
 
 - 🟩 [Ubuntu 22.04 / 24.04](docs/installation/ubuntu.md)
 - 🟩 [NixOS / General Linux](docs/installation/nix.md)
 - 🟧 [macOS](docs/installation/osx.md)
+
+> Full system requirements, tested configs, and dependency tiers: [docs/requirements.md](docs/requirements.md)
 
 ## Python Install
 
@@ -172,29 +157,62 @@ To set up your system dependencies, follow one of these guides:
 ```bash
 uv venv --python "3.12"
 source .venv/bin/activate
-uv pip install dimos[base,unitree]
+uv pip install 'dimos[base,unitree]'
 
-# Replay a recorded Go2 session (no hardware needed)
-# NOTE: First run will show a black rerun window while ~2.4 GB downloads from LFS
+# Replay a recorded quadruped session (no hardware needed)
+# NOTE: First run will show a black rerun window while ~75 MB downloads from LFS
 dimos --replay run unitree-go2
 ```
 
 ```bash
 # Install with simulation support
-uv pip install dimos[base,unitree,sim]
+uv pip install 'dimos[base,unitree,sim]'
 
-# Run Go2 in MuJoCo simulation
+# Run quadruped in MuJoCo simulation
 dimos --simulation run unitree-go2
 
-# Run G1 humanoid in simulation
+# Run humanoid in simulation
 dimos --simulation run unitree-g1-sim
 ```
 
 ```bash
-# Control a real robot (Unitree Go2 over WebRTC)
+# Control a real robot (Unitree quadruped over WebRTC)
 export ROBOT_IP=<YOUR_ROBOT_IP>
 dimos run unitree-go2
 ```
+
+# Featured Runfiles
+
+| Run command | What it does |
+|-------------|-------------|
+| `dimos --replay run unitree-go2` | Quadruped navigation replay — SLAM, costmap, A* planning |
+| `dimos --replay --replay-dir unitree_go2_office_walk2 run unitree-go2-temporal-memory` | Quadruped temporal memory replay |
+| `dimos --simulation run unitree-go2-agentic-mcp` | Quadruped agentic + MCP server in simulation |
+| `dimos --simulation run unitree-g1` | Humanoid in MuJoCo simulation |
+| `dimos --replay run drone-basic` | Drone video + telemetry replay |
+| `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay) |
+| `dimos run demo-camera` | Webcam demo — no hardware needed |
+| `dimos run keyboard-teleop-xarm7` | Keyboard teleop with mock xArm7 (requires `dimos[manipulation]` extra) |
+| `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agentic with local LLM (requires [Ollama](https://ollama.com) + `ollama serve`) |
+
+> Full blueprint docs: [docs/usage/blueprints.md](docs/usage/blueprints.md)
+
+# Agent CLI and MCP
+
+The `dimos` CLI manages the full lifecycle — run blueprints, inspect state, interact with agents, and call skills via MCP.
+
+```bash
+dimos run unitree-go2-agentic-mcp --daemon   # Start in background
+dimos status                              # Check what's running
+dimos log -f                              # Follow logs
+dimos agent-send "explore the room"       # Send agent a command
+dimos mcp list-tools                      # List available MCP skills
+dimos mcp call relative_move --arg forward=0.5  # Call a skill directly
+dimos stop                                # Shut down
+```
+
+> Full CLI reference: [docs/usage/cli.md](docs/usage/cli.md)
+
 
 # Usage
 
@@ -273,7 +291,7 @@ if __name__ == "__main__":
 - [Modules](docs/usage/modules.md)
 - [LCM](docs/usage/lcm.md)
 - [Blueprints](docs/usage/blueprints.md)
-- [Transports](docs/usage/transports/index.md)
+- [Transports](docs/usage/transports/index.md) — LCM, SHM, DDS, ROS 2
 - [Data Streams](docs/usage/data_streams/README.md)
 - [Configuration](docs/usage/configuration.md)
 - [Visualization](docs/usage/visualization.md)
@@ -297,6 +315,7 @@ uv sync --all-extras --no-extra dds
 uv run pytest dimos
 ```
 
+
 ## Multi Language Support
 
 Python is our glue and prototyping language, but we support many languages via LCM interop.
@@ -305,7 +324,3 @@ Check our language interop examples:
 - [C++](examples/language-interop/cpp/)
 - [Lua](examples/language-interop/lua/)
 - [TypeScript](examples/language-interop/ts/)
-
-## ROS interop
-
-For researchers, we can talk to ROS directly via [ROS Transports](docs/usage/transports/index.md), or host dockerized ROS deployments as first-class DimOS modules, allowing you easy installation and portability

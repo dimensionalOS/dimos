@@ -229,6 +229,12 @@ class MujocoConnection:
     def liedown(self) -> bool:
         return True
 
+    def balance_stand(self) -> bool:
+        return True
+
+    def set_obstacle_avoidance(self, enabled: bool = True) -> None:
+        pass
+
     def get_video_frame(self) -> NDArray[Any] | None:
         if self.shm_data is None:
             return None

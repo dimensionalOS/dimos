@@ -11,6 +11,7 @@
   "scripts": {
     "build": "foxglove-extension build",
     "build:standalone": "vite build",
+    "build:inline": "vite build && node scripts/inline-html.js",
     "dev": "vite",
     "preview": "vite preview",
     "foxglove:prepublish": "foxglove-extension build --mode production",

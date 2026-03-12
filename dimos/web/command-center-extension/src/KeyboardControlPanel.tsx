@@ -11,6 +11,29 @@ const linearSpeed = 0.5;
 const angularSpeed = 0.8;
 const publishRate = 10.0; // Hz
 
+const controlKeys = new Set([
+  "w",
+  "a",
+  "s",
+  "d",
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  " ",
+  "Shift",
+  "Control",
+]);
+
+function isEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName;
+  return tagName === "INPUT" || tagName === "TEXTAREA" || target.isContentEditable;
+}
+
 function calculateVelocities(keys: Set<string>) {
   let linearX = 0.0;
   let linearY = 0.0;
@@ -69,17 +92,22 @@ export default function KeyboardControlPanel({
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const handleKeyDown = React.useCallback((event: KeyboardEvent) => {
-    // Prevent default for arrow keys and space to avoid scrolling
-    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(event.key)) {
-      event.preventDefault();
+    const normalizedKey = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+    if (!controlKeys.has(normalizedKey) || isEditableTarget(event.target)) {
+      return;
     }
 
-    const normalizedKey = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+    event.preventDefault();
+    event.stopPropagation();
     keysPressed.current.add(normalizedKey);
   }, []);
 
   const handleKeyUp = React.useCallback((event: KeyboardEvent) => {
     const normalizedKey = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+    if (!controlKeys.has(normalizedKey) || isEditableTarget(event.target)) {
+      return;
+    }
+
     keysPressed.current.delete(normalizedKey);
   }, []);
 

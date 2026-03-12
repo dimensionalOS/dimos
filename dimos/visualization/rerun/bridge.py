@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache
+import time
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -35,9 +36,17 @@ import typer
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.utils.logging_config import setup_logger
+
+# Message types with large payloads that need rate-limiting.
+# Image (~1 MB/frame at 30 fps) and PointCloud2 (~600-800 KB/frame)
+# cause viewer OOM if logged at full rate.  Light messages
+# (Path, PointStamped, Twist, TF, EntityMarkers …) pass through
+# unthrottled so navigation overlays and user input are never dropped.
+_HEAVY_MSG_TYPES: tuple[type, ...] = (Image, PointCloud2)
 
 RERUN_GRPC_PORT = 9876
 RERUN_WEB_PORT = 9090
@@ -123,7 +132,7 @@ class RerunConvertible(Protocol):
     def to_rerun(self) -> RerunData: ...
 
 
-ViewerMode = Literal["native", "web", "none"]
+ViewerMode = Literal["native", "web", "connect", "none"]
 
 
 def _default_blueprint() -> Blueprint:
@@ -142,22 +151,38 @@ def _default_blueprint() -> Blueprint:
     )
 
 
+# Maps global_config.viewer -> bridge viewer_mode.
+# Evaluated at blueprint construction time (main process), not in start() (worker process).
+_BACKEND_TO_MODE: dict[str, ViewerMode] = {
+    "rerun": "native",
+    "rerun-web": "web",
+    "rerun-connect": "connect",
+    "none": "none",
+}
+
+
+def _resolve_viewer_mode() -> ViewerMode:
+    from dimos.core.global_config import global_config
+
+    return _BACKEND_TO_MODE.get(global_config.viewer, "native")
+
+
 @dataclass
 class Config(ModuleConfig):
     """Configuration for RerunBridgeModule."""
 
-    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(
-        default_factory=lambda: [LCM(autoconf=True)]
-    )
+    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
 
     visual_override: dict[Glob | str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
     # Static items logged once after start. Maps entity_path -> callable(rr) returning Archetype
     static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
+    min_interval_sec: float = 0.1  # Rate-limit per entity path (default: 10 Hz max)
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
-    viewer_mode: ViewerMode = "native"
+    viewer_mode: ViewerMode = field(default_factory=_resolve_viewer_mode)
+    connect_url: str = "rerun+http://127.0.0.1:9877/proxy"
     memory_limit: str = "25%"
 
     # Blueprint factory: callable(rrb) -> Blueprint for viewer layout configuration
@@ -174,7 +199,7 @@ class RerunBridgeModule(Module):
     Example:
         from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 
-        lcm = LCM(autoconf=True)
+        lcm = LCM()
         bridge = RerunBridgeModule(pubsubs=[lcm])
         bridge.start()
         # All messages with to_rerun() are now logged to Rerun
@@ -237,6 +262,17 @@ class RerunBridgeModule(Module):
         # convert a potentially complex topic object into an str rerun entity path
         entity_path: str = self._get_entity_path(topic)
 
+        # Rate-limit heavy data types to prevent viewer memory exhaustion.
+        # High-bandwidth streams (e.g. 30fps camera, lidar) would otherwise
+        # flood the viewer faster than it can evict, causing OOM.  Light
+        # messages (Path, PointStamped, TF, etc.) pass through unthrottled.
+        if self.config.min_interval_sec > 0 and isinstance(msg, _HEAVY_MSG_TYPES):
+            now = time.monotonic()
+            last = self._last_log.get(entity_path, 0.0)
+            if now - last < self.config.min_interval_sec:
+                return
+            self._last_log[entity_path] = now
+
         # apply visual overrides (including final_convert which handles .to_rerun())
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
 
@@ -257,14 +293,34 @@ class RerunBridgeModule(Module):
 
         super().start()
 
+        self._last_log: dict[str, float] = {}
+        logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
+
         # Initialize and spawn Rerun viewer
         rr.init("dimos")
 
         if self.config.viewer_mode == "native":
+            try:
+                import rerun_bindings
+
+                rerun_bindings.spawn(
+                    port=RERUN_GRPC_PORT,
+                    executable_name="dimos-viewer",
+                    memory_limit=self.config.memory_limit,
+                )
+            except ImportError:
+                pass  # dimos-viewer not installed
+            except Exception:
+                logger.warning(
+                    "dimos-viewer found but failed to spawn, falling back to stock rerun",
+                    exc_info=True,
+                )
             rr.spawn(connect=True, memory_limit=self.config.memory_limit)
         elif self.config.viewer_mode == "web":
             server_uri = rr.serve_grpc()
             rr.serve_web_viewer(connect_to=server_uri, open_browser=False)
+        elif self.config.viewer_mode == "connect":
+            rr.connect_grpc(self.config.connect_url)
         # "none" - just init, no viewer (connect externally)
 
         if self.config.blueprint:
@@ -308,12 +364,16 @@ def run_bridge(
     """Start a RerunBridgeModule with default LCM config and block until interrupted."""
     import signal
 
+    from dimos.protocol.service.lcmservice import autoconf
+
+    autoconf(check_only=True)
+
     bridge = RerunBridgeModule(
         viewer_mode=viewer_mode,
         memory_limit=memory_limit,
         # any pubsub that supports subscribe_all and topic that supports str(topic)
         # is acceptable here
-        pubsubs=[LCM(autoconf=True)],
+        pubsubs=[LCM()],
     )
 
     bridge.start()
