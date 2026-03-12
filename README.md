@@ -159,7 +159,7 @@ uv venv --python "3.12"
 source .venv/bin/activate
 uv pip install 'dimos[base,unitree]'
 
-# Replay a recorded Go2 session (no hardware needed)
+# Replay a recorded quadruped session (no hardware needed)
 # NOTE: First run will show a black rerun window while ~75 MB downloads from LFS
 dimos --replay run unitree-go2
 ```
@@ -168,15 +168,15 @@ dimos --replay run unitree-go2
 # Install with simulation support
 uv pip install 'dimos[base,unitree,sim]'
 
-# Run Go2 in MuJoCo simulation
+# Run quadruped in MuJoCo simulation
 dimos --simulation run unitree-go2
 
-# Run G1 humanoid in simulation
+# Run humanoid in simulation
 dimos --simulation run unitree-g1-sim
 ```
 
 ```bash
-# Control a real robot (Unitree Go2 over WebRTC)
+# Control a real robot (Unitree quadruped over WebRTC)
 export ROBOT_IP=<YOUR_ROBOT_IP>
 dimos run unitree-go2
 ```
@@ -185,15 +185,15 @@ dimos run unitree-go2
 
 | Run command | What it does |
 |-------------|-------------|
-| `dimos --replay run unitree-go2` | Go2 navigation replay — SLAM, costmap, A* planning |
-| `dimos --replay --replay-dir unitree_go2_office_walk2 run unitree-go2-temporal-memory` | Go2 temporal memory replay |
-| `dimos --simulation run unitree-go2-agentic-mcp` | Go2 agentic + MCP server in simulation |
-| `dimos --simulation run unitree-g1` | G1 humanoid in MuJoCo simulation |
+| `dimos --replay run unitree-go2` | Quadruped navigation replay — SLAM, costmap, A* planning |
+| `dimos --replay --replay-dir unitree_go2_office_walk2 run unitree-go2-temporal-memory` | Quadruped temporal memory replay |
+| `dimos --simulation run unitree-go2-agentic-mcp` | Quadruped agentic + MCP server in simulation |
+| `dimos --simulation run unitree-g1` | Humanoid in MuJoCo simulation |
 | `dimos --replay run drone-basic` | Drone video + telemetry replay |
 | `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay) |
 | `dimos run demo-camera` | Webcam demo — no hardware needed |
 | `dimos run keyboard-teleop-xarm7` | Keyboard teleop with mock xArm7 (requires `dimos[manipulation]` extra) |
-| `dimos --simulation run unitree-go2-agentic-ollama` | Go2 agentic with local LLM (requires [Ollama](https://ollama.com) + `ollama serve`) |
+| `dimos --simulation run unitree-go2-agentic-ollama` | Quadruped agentic with local LLM (requires [Ollama](https://ollama.com) + `ollama serve`) |
 
 > Full blueprint docs: [docs/usage/blueprints.md](docs/usage/blueprints.md)
 
