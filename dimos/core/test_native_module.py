@@ -18,8 +18,11 @@ Every test launches the real native_echo.py subprocess via blueprint.build().
 The echo script writes received CLI args to a temp file for assertions.
 """
 
+from collections.abc import Generator
+from dataclasses import dataclass
 import json
 from pathlib import Path
+import threading
 import time
 
 import pytest
@@ -90,26 +93,32 @@ class StubProducer(Module):
         pass
 
 
-def test_process_crash_triggers_stop() -> None:
-    """When the native process dies unexpectedly, the watchdog calls stop()."""
+@pytest.fixture
+def crash_module() -> Generator[StubNativeModule, None, None]:
+    """Create a StubNativeModule that dies after 0.2s, ensuring cleanup."""
     mod = StubNativeModule(die_after=0.2)
-    mod.pointcloud.transport = LCMTransport("/pc", PointCloud2)
-    mod.start()
+    yield mod
+    # Join watchdog, LCM, and event-loop threads from the test thread.
+    # The watchdog's self.stop() can't join itself, so without this the
+    # threads leak. stop() is idempotent.
+    mod.stop()
 
-    assert mod._process is not None
-    pid = mod._process.pid
+
+def test_process_crash_triggers_stop(crash_module: StubNativeModule) -> None:
+    """When the native process dies unexpectedly, the watchdog calls stop()."""
+    crash_module.pointcloud.transport = LCMTransport("/pc", PointCloud2)
+    crash_module.start()
+
+    assert crash_module._process is not None
+    pid = crash_module._process.pid
 
     # Wait for the process to die and the watchdog to call stop()
     for _ in range(30):
         time.sleep(0.1)
-        if mod._process is None:
+        if crash_module._process is None:
             break
 
-    assert mod._process is None, f"Watchdog did not clean up after process {pid} died"
-    # Explicitly stop to join watchdog, LCM, and event-loop threads from the
-    # test thread. The watchdog's self.stop() can't join itself, so these
-    # threads would otherwise leak. stop() is idempotent.
-    mod.stop()
+    assert crash_module._process is None, f"Watchdog did not clean up after process {pid} died"
 
     # Wait for background threads (run_forever, _lcm_loop, _watch_process) to finish
     # after the watchdog-triggered stop(). Without this, monitor_threads catches them.
