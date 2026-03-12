@@ -25,17 +25,8 @@ from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
-class TwistBaseAdapter(Protocol):
-    """Protocol for velocity-commanded platform IO.
-
-    Implement this per vendor SDK. All methods use SI units:
-    - Linear velocity: m/s
-    - Angular velocity: rad/s
-    - Position: meters
-    - Angle: radians
-    """
-
-    # --- Connection ---
+class HardwareAdapter(Protocol):
+    """Base protocol shared by all hardware adapters."""
 
     def connect(self) -> bool:
         """Connect to hardware. Returns True on success."""
@@ -48,6 +39,18 @@ class TwistBaseAdapter(Protocol):
     def is_connected(self) -> bool:
         """Check if connected."""
         ...
+
+
+@runtime_checkable
+class TwistBaseAdapter(HardwareAdapter, Protocol):
+    """Protocol for velocity-commanded platform IO.
+
+    Implement this per vendor SDK. All methods use SI units:
+    - Linear velocity: m/s
+    - Angular velocity: rad/s
+    - Position: meters
+    - Angle: radians
+    """
 
     # --- Info ---
 
@@ -91,5 +94,6 @@ class TwistBaseAdapter(Protocol):
 
 
 __all__ = [
+    "HardwareAdapter",
     "TwistBaseAdapter",
 ]
