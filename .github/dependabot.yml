@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+
+  - package-ecosystem: "uv"
+    directory: "/"
+    allow:
+      - dependency-type: "all"
+    schedule:
+      interval: "daily"
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: "docker"
+    directories: "/docker/*/"
+    labels:
+      - dependencies
+    schedule:
+      interval: "monthly"
