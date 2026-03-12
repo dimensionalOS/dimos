@@ -1,6 +1,6 @@
 <div align="center">
 
-<img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/15283d94-ad95-42c9-abd5-6565a222a837" />
+<img width="1000" alt="banner_bordered_trimmed" src="https://github.com/user-attachments/assets/64f13b39-da06-4f58-add0-cfc44f04db4e" />
 
 <h2>The Agentive Operating System for Physical Space</h2>
 
