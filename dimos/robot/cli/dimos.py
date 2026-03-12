@@ -137,10 +137,16 @@ def _resolve_name(name: str | None) -> InstanceInfo:
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
-    daemon: bool = typer.Option(False, "--daemon", "-d", help="Run as daemon (always daemonizes; without -d stays attached)"),
-    detach: bool = typer.Option(False, "--detach", help="Exit CLI after successful build (implies --daemon)"),
+    daemon: bool = typer.Option(
+        False, "--daemon", "-d", help="Run as daemon (always daemonizes; without -d stays attached)"
+    ),
+    detach: bool = typer.Option(
+        False, "--detach", help="Exit CLI after successful build (implies --daemon)"
+    ),
     name: str = typer.Option("", "--name", help="Global instance name (default: blueprint name)"),
-    force_replace: bool = typer.Option(False, "--force-replace", help="Auto-stop existing instance with same name"),
+    force_replace: bool = typer.Option(
+        False, "--force-replace", help="Auto-stop existing instance with same name"
+    ),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
 ) -> None:
     """Start a robot blueprint."""
@@ -221,9 +227,7 @@ def run(
         set_run_log_dir(run_dir)
 
         config_snapshot = run_dir / "config.json"
-        config_snapshot.write_text(
-            json.dumps(global_config.model_dump(mode="json"), indent=2)
-        )
+        config_snapshot.write_text(json.dumps(global_config.model_dump(mode="json"), indent=2))
 
         blueprint = autoconnect(*map(get_by_name, robot_types))
 

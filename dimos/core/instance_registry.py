@@ -139,9 +139,7 @@ def get_sole_running() -> InstanceInfo | None:
     if len(running) == 1:
         return running[0]
     names = ", ".join(r.name for r in running)
-    raise SystemExit(
-        f"Multiple instances running ({names}). Specify a name explicitly."
-    )
+    raise SystemExit(f"Multiple instances running ({names}). Specify a name explicitly.")
 
 
 def stop(name: str, force: bool = False) -> tuple[str, bool]:

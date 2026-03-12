@@ -22,7 +22,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
-import sys
 import threading
 import time
 from typing import TYPE_CHECKING, Any
@@ -187,6 +186,8 @@ class StatusSubApp(SubApp):
         self._launching_name: str | None = None
         self._launching_run_dir: Path | None = None
         self._stopping: bool = False
+        self._stopped_blueprint: str | None = None  # blueprint name after stop (for restart)
+        self._stopped_run_dir: Path | None = None    # run_dir after stop (for log access)
         self._log_thread: threading.Thread | None = None
         self._stop_log = False
         self._failed_stop_pid: int | None = None
@@ -334,6 +335,8 @@ class StatusSubApp(SubApp):
         self._launching_run_dir = run_dir
         self._selected_name = instance_name
         self._stopping = False
+        self._stopped_blueprint = None
+        self._stopped_run_dir = None
 
         # Show controls for the launching state
         self.query_one("#idle-container").styles.display = "none"
@@ -401,12 +404,20 @@ class StatusSubApp(SubApp):
         if changed:
             self._rebuild_picker()
 
+            # Find info about disappeared instances from old_entries
+            def _find_old(name: str) -> Any:
+                for e in old_entries:
+                    if getattr(e, "name", None) == name:
+                        return e
+                return None
+
             # If nothing is running anymore
             if not self._running_entries and self._launching_name is None:
                 self._debug("-> all instances gone")
-                self._selected_name = None
-                self._stop_log = True
-                self._show_stopped("All processes ended")
+                old_entry = _find_old(self._selected_name) if self._selected_name else None
+                blueprint = getattr(old_entry, "blueprint", self._selected_name)
+                run_dir = Path(old_entry.run_dir) if old_entry and getattr(old_entry, "run_dir", None) else None
+                self._show_stopped("All processes ended", blueprint=blueprint, run_dir=run_dir)
                 return
 
             # If selected instance disappeared
@@ -415,14 +426,15 @@ class StatusSubApp(SubApp):
                 if self._launching_name == self._selected_name:
                     return
                 self._debug(f"selected instance {self._selected_name} gone")
-                self._stop_log = True
+                old_entry = _find_old(self._selected_name)
                 if self._running_entries:
                     # Switch to another running instance
                     self._selected_name = self._running_entries[0].name
                     self._show_running()
                 else:
-                    self._selected_name = None
-                    self._show_stopped("Process ended")
+                    blueprint = getattr(old_entry, "blueprint", self._selected_name)
+                    run_dir = Path(old_entry.run_dir) if old_entry and getattr(old_entry, "run_dir", None) else None
+                    self._show_stopped("Process ended", blueprint=blueprint, run_dir=run_dir)
                 return
 
             # New instance appeared (maybe launched externally)
@@ -459,17 +471,22 @@ class StatusSubApp(SubApp):
         except Exception as e:
             self._debug(f"_show_running_for_entry CRASHED: {e}")
 
-    def _show_stopped(self, message: str = "Stopped") -> None:
-        """Show controls for a stopped state with logs still visible."""
+    def _show_stopped(self, message: str = "Stopped", blueprint: str | None = None, run_dir: Path | None = None) -> None:
+        """Show controls for a stopped state with logs still visible and restart available."""
         self._launching_name = None
         self._launching_run_dir = None
         self._stopping = False
+        if blueprint:
+            self._stopped_blueprint = blueprint
+        if run_dir:
+            self._stopped_run_dir = run_dir
         self.query_one("#idle-container").styles.display = "none"
         self.query_one("#runner-log").styles.display = "block"
         self.query_one("#run-controls").styles.display = "block"
         self.query_one("#btn-stop").styles.display = "none"
         self.query_one("#btn-sudo-kill").styles.display = "none"
-        self.query_one("#btn-restart").styles.display = "none"
+        # Show restart if we know what blueprint was running
+        self.query_one("#btn-restart").styles.display = "block" if self._stopped_blueprint else "none"
         self.query_one("#btn-open-log").styles.display = "block"
         self._failed_stop_pid = None
         status = self.query_one("#runner-status", Static)
@@ -491,6 +508,7 @@ class StatusSubApp(SubApp):
         # Check if there are past runs
         try:
             from dimos.core.instance_registry import _instances_dir
+
             base = _instances_dir()
             if base.exists():
                 for child in sorted(base.iterdir(), reverse=True):
@@ -652,9 +670,7 @@ class StatusSubApp(SubApp):
                         line = f.readline()
                         if line:
                             rendered = Text.from_ansi(line.rstrip("\n"))
-                            self.app.call_from_thread(
-                                self._write_log_line, log_widget, rendered
-                            )
+                            self.app.call_from_thread(self._write_log_line, log_widget, rendered)
                         else:
                             time.sleep(0.2)
             except Exception as e:
@@ -662,7 +678,10 @@ class StatusSubApp(SubApp):
                     self._write_log_line, log_widget, f"[red]Error: {e}[/red]"
                 )
                 self.app.call_from_thread(
-                    self.app.notify, f"Log follow error: {e}", severity="error", timeout=8,
+                    self.app.notify,
+                    f"Log follow error: {e}",
+                    severity="error",
+                    timeout=8,
                 )
 
         self._log_thread = threading.Thread(target=_follow, daemon=True)
@@ -732,11 +751,14 @@ class StatusSubApp(SubApp):
         entry = self._selected_entry
         log_path = _stdout_log_path(entry) if entry else None
 
-        # Fallback to launching run_dir during build phase
-        if log_path is None and self._launching_run_dir is not None:
-            candidate = self._launching_run_dir / "stdout.log"
-            if candidate.exists():
-                log_path = candidate
+        # Fallback to launching or stopped run_dir
+        if log_path is None:
+            for rd in (self._launching_run_dir, self._stopped_run_dir):
+                if rd is not None:
+                    candidate = rd / "stdout.log"
+                    if candidate.exists():
+                        log_path = candidate
+                        break
 
         if log_path and log_path.exists():
             self._open_source_file(str(log_path), lineno)
@@ -860,13 +882,26 @@ class StatusSubApp(SubApp):
     def _stop_running(self) -> None:
         if self._stopping:
             return
+
+        entry = self._selected_entry
+        stop_name = getattr(entry, "name", None) or self._launching_name
+
+        from dimos.utils.cli.dio.confirm_screen import ConfirmScreen
+
+        def _on_confirm(result: bool) -> None:
+            if result:
+                self._do_stop_confirmed(stop_name, entry)
+
+        self.app.push_screen(
+            ConfirmScreen(f"Stop {stop_name or 'blueprint'}?", warning=True),
+            _on_confirm,
+        )
+
+    def _do_stop_confirmed(self, stop_name: str | None, entry: Any) -> None:
         self._stopping = True
         self._stop_log = True
         log_widget = self.query_one("#runner-log", RichLog)
         status = self.query_one("#runner-status", Static)
-
-        entry = self._selected_entry
-        stop_name = getattr(entry, "name", None) or self._launching_name
         status.update(f"Stopping {stop_name or 'blueprint'}...")
 
         for bid in ("btn-stop", "btn-restart"):
@@ -893,7 +928,10 @@ class StatusSubApp(SubApp):
                         f"[red]Permission denied — cannot stop PID {pid}[/red]",
                     )
                     self.app.call_from_thread(
-                        self.app.notify, f"Permission denied stopping PID {pid}", severity="error", timeout=8,
+                        self.app.notify,
+                        f"Permission denied stopping PID {pid}",
+                        severity="error",
+                        timeout=8,
                     )
                 except Exception as e:
                     if (
@@ -903,7 +941,10 @@ class StatusSubApp(SubApp):
                         permission_error = True
                     self.app.call_from_thread(log_widget.write, f"[red]Stop error: {e}[/red]")
                     self.app.call_from_thread(
-                        self.app.notify, f"Stop error: {e}", severity="error", timeout=8,
+                        self.app.notify,
+                        f"Stop error: {e}",
+                        severity="error",
+                        timeout=8,
                     )
 
             def _after_stop() -> None:
@@ -928,8 +969,9 @@ class StatusSubApp(SubApp):
                         self._selected_name = self._running_entries[0].name
                         self._show_running()
                     else:
-                        self._selected_name = None
-                        self._show_stopped(f"Stopped {stop_name}")
+                        blueprint = getattr(entry, "blueprint", stop_name)
+                        run_dir = Path(entry.run_dir) if entry and getattr(entry, "run_dir", None) else None
+                        self._show_stopped(f"Stopped {stop_name}", blueprint=blueprint, run_dir=run_dir)
 
             self.app.call_from_thread(_after_stop)
 
@@ -938,6 +980,9 @@ class StatusSubApp(SubApp):
     def _restart_running(self) -> None:
         entry = self._selected_entry
         name = getattr(entry, "name", None) or getattr(entry, "blueprint", None)
+        # Fall back to stopped blueprint if no running entry
+        if not name:
+            name = self._stopped_blueprint
         if not name:
             return
         self._stop_log = True
@@ -962,7 +1007,7 @@ class StatusSubApp(SubApp):
         except Exception:
             pass
 
-        blueprint = getattr(entry, "blueprint", name)
+        blueprint = getattr(entry, "blueprint", name) if entry else name
 
         def _do_restart() -> None:
             # Stop old
@@ -993,7 +1038,7 @@ class StatusSubApp(SubApp):
                     self.on_launch_started(result.instance_name, result.run_dir)
 
                 self.app.call_from_thread(_after)
-            except Exception as e:
+            except Exception:
 
                 def _err() -> None:
                     for bid in ("btn-stop", "btn-restart"):
@@ -1098,7 +1143,10 @@ class StatusSubApp(SubApp):
                         "[red]sudo kill failed — could not obtain sudo credentials[/red]",
                     )
                     self.app.call_from_thread(
-                        self.app.notify, "sudo kill failed — no credentials", severity="error", timeout=8,
+                        self.app.notify,
+                        "sudo kill failed — no credentials",
+                        severity="error",
+                        timeout=8,
                     )
 
                     def _reenable() -> None:
@@ -1108,7 +1156,10 @@ class StatusSubApp(SubApp):
             except Exception as e:
                 self.app.call_from_thread(log_widget.write, f"[red]sudo kill error: {e}[/red]")
                 self.app.call_from_thread(
-                    self.app.notify, f"sudo kill error: {e}", severity="error", timeout=8,
+                    self.app.notify,
+                    f"sudo kill error: {e}",
+                    severity="error",
+                    timeout=8,
                 )
 
                 def _reenable2() -> None:
@@ -1123,11 +1174,14 @@ class StatusSubApp(SubApp):
         entry = self._selected_entry
         log_path = _stdout_log_path(entry) if entry else None
 
-        # Fallback to launching run_dir during build phase
-        if log_path is None and self._launching_run_dir is not None:
-            candidate = self._launching_run_dir / "stdout.log"
-            if candidate.exists():
-                log_path = candidate
+        # Fallback to launching or stopped run_dir
+        if log_path is None:
+            for rd in (self._launching_run_dir, self._stopped_run_dir):
+                if rd is not None:
+                    candidate = rd / "stdout.log"
+                    if candidate.exists():
+                        log_path = candidate
+                        break
 
         if log_path and log_path.exists():
             self._open_source_file(str(log_path), 0)

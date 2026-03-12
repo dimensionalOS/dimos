@@ -23,7 +23,10 @@ from __future__ import annotations
 import os
 import re
 import threading
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _ANSI_RE = re.compile(rb"\x1b\[[0-9;]*m")
 

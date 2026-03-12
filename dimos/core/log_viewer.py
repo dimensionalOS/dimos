@@ -22,7 +22,7 @@ from pathlib import Path
 import time
 from typing import TYPE_CHECKING
 
-from dimos.core.instance_registry import get, get_sole_running, latest_run_dir, list_running
+from dimos.core.instance_registry import get, latest_run_dir, list_running
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -42,6 +42,7 @@ def resolve_log_path(name: str = "", run_datetime: str = "") -> Path | None:
     """
     if name and run_datetime:
         from dimos.core.instance_registry import _instances_dir
+
         run_dir = _instances_dir() / name / "runs" / run_datetime
         return _log_path_if_exists(str(run_dir))
 
@@ -63,6 +64,7 @@ def resolve_log_path(name: str = "", run_datetime: str = "") -> Path | None:
 
     # Try to find the most recent run across all instances
     from dimos.core.instance_registry import _instances_dir
+
     base = _instances_dir()
     if not base.exists():
         return None

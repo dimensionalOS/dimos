@@ -216,7 +216,7 @@ class TestHealthCheck:
 # Daemon tests
 # ---------------------------------------------------------------------------
 
-from dimos.core.daemon import install_signal_handlers, launch_blueprint, LaunchResult
+from dimos.core.daemon import LaunchResult, install_signal_handlers
 
 
 class TestLaunchResult:

@@ -41,16 +41,16 @@ also reads stdout.log. No pipe between caller and daemon.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import os
+from pathlib import Path
 import select
 import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dimos.utils.logging_config import setup_logger
@@ -106,13 +106,13 @@ def launch_blueprint(
     -------
     LaunchResult with instance_name and run_dir.
     """
+    from dimos.core.global_config import global_config
     from dimos.core.instance_registry import (
         get,
         is_pid_alive,
         make_run_dir,
         stop as registry_stop,
     )
-    from dimos.core.global_config import global_config
 
     config_overrides = config_overrides or {}
     disable = disable or []
@@ -210,9 +210,7 @@ def _daemon_main(run_dir: Path) -> None:
     # Redirect stdout/stderr to stdout.log immediately (crash safety).
     # OutputTee will take over these fds later with its pipe.
     run_dir.mkdir(parents=True, exist_ok=True)
-    log_fd = os.open(
-        str(run_dir / "stdout.log"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644
-    )
+    log_fd = os.open(str(run_dir / "stdout.log"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
     os.dup2(log_fd, 1)  # stdout
     os.dup2(log_fd, 2)  # stderr
     os.close(devnull_fd)
@@ -246,9 +244,7 @@ def _daemon_main(run_dir: Path) -> None:
         blueprint = autoconnect(*map(get_by_name, robot_types))
 
         if disable:
-            disabled_classes = tuple(
-                get_module_by_name(d).blueprints[0].module for d in disable
-            )
+            disabled_classes = tuple(get_module_by_name(d).blueprints[0].module for d in disable)
             blueprint = blueprint.disabled_modules(*disabled_classes)
 
         coordinator = blueprint.build(cli_config_overrides=config_overrides)
@@ -280,9 +276,7 @@ def _daemon_main(run_dir: Path) -> None:
             blueprint=blueprint_name,
             started_at=datetime.now(timezone.utc).isoformat(),
             run_dir=str(run_dir),
-            grpc_port=global_config.grpc_port
-            if hasattr(global_config, "grpc_port")
-            else 9877,
+            grpc_port=global_config.grpc_port if hasattr(global_config, "grpc_port") else 9877,
             original_argv=sys.argv,
             config_overrides=config_overrides,
         )

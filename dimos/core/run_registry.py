@@ -29,8 +29,6 @@ import signal
 import time
 
 from dimos.core.instance_registry import (
-    InstanceInfo,
-    dimos_home,
     is_pid_alive,
     list_running,
     stop as _stop_by_name,
@@ -38,16 +36,16 @@ from dimos.core.instance_registry import (
 
 # Re-export
 __all__ = [
-    "RunEntry",
-    "is_pid_alive",
-    "get_most_recent",
-    "list_runs",
-    "stop_entry",
-    "cleanup_stale",
-    "check_port_conflicts",
-    "generate_run_id",
     "LOG_BASE_DIR",
     "REGISTRY_DIR",
+    "RunEntry",
+    "check_port_conflicts",
+    "cleanup_stale",
+    "generate_run_id",
+    "get_most_recent",
+    "is_pid_alive",
+    "list_runs",
+    "stop_entry",
 ]
 
 
@@ -121,16 +119,18 @@ def list_runs(alive_only: bool = True) -> list[RunEntry]:
     new_entries = list_running()
     results: list[RunEntry] = []
     for info in new_entries:
-        results.append(RunEntry(
-            run_id=info.name,
-            pid=info.pid,
-            blueprint=info.blueprint,
-            started_at=info.started_at,
-            log_dir=info.run_dir,
-            grpc_port=info.grpc_port,
-            original_argv=info.original_argv,
-            config_overrides=info.config_overrides,
-        ))
+        results.append(
+            RunEntry(
+                run_id=info.name,
+                pid=info.pid,
+                blueprint=info.blueprint,
+                started_at=info.started_at,
+                log_dir=info.run_dir,
+                grpc_port=info.grpc_port,
+                original_argv=info.original_argv,
+                config_overrides=info.config_overrides,
+            )
+        )
 
     # Also check legacy registry dir
     REGISTRY_DIR.mkdir(parents=True, exist_ok=True)

@@ -16,16 +16,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import threading
 from typing import TYPE_CHECKING, Any
 
 from textual.widgets import Input, Label, ListItem, ListView, Static
 
-from dimos.utils.cli import theme
 from dimos.utils.cli.dio.sub_app import SubApp
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from textual.app import ComposeResult
 
 
@@ -43,6 +43,7 @@ def _debug_log(msg: str) -> None:
     """Append to the DIO debug log file."""
     try:
         from dimos.core.instance_registry import dimos_home
+
         log_path = dimos_home() / "dio-debug.log"
         with open(log_path, "a") as f:
             f.write(f"LAUNCHER: {msg}\n")
@@ -107,6 +108,7 @@ class LauncherSubApp(SubApp):
         self._blueprints: list[str] = []
         self._filtered: list[str] = []
         self._launching = False
+        self._launching_name: str | None = None  # name of blueprint currently launching
 
     def compose(self) -> ComposeResult:
         yield Static("Blueprint Launcher", classes="subapp-header")
@@ -215,6 +217,8 @@ class LauncherSubApp(SubApp):
         from dimos.utils.cli.dio.confirm_screen import ConfirmScreen
 
         running = _list_running_names()
+        if self._launching_name and self._launching_name not in running:
+            running.append(self._launching_name)
         _debug_log(f"_confirm_and_launch: name={name} running={running}")
         if running:
             names = ", ".join(running)
@@ -256,6 +260,7 @@ class LauncherSubApp(SubApp):
             return
 
         self._launching = True
+        self._launching_name = name
         self._sync_status()  # lock the UI immediately
         status = self.query_one("#launch-status", Static)
         status.update(f"Launching {name}...")
@@ -285,10 +290,13 @@ class LauncherSubApp(SubApp):
                     config_overrides=config_overrides,
                     force_replace=False,
                 )
-                _debug_log(f"_do_launch: success! instance={result.instance_name} run_dir={result.run_dir}")
+                _debug_log(
+                    f"_do_launch: success! instance={result.instance_name} run_dir={result.run_dir}"
+                )
 
                 def _after() -> None:
                     self._launching = False
+                    self._launching_name = None
                     # Tell StatusSubApp immediately
                     self._notify_runner(result.instance_name, result.run_dir)
                     self._sync_status()
@@ -296,10 +304,12 @@ class LauncherSubApp(SubApp):
                 self.app.call_from_thread(_after)
             except Exception as e:
                 import traceback
+
                 _debug_log(f"_do_launch: EXCEPTION: {e}\n{traceback.format_exc()}")
 
                 def _err() -> None:
                     self._launching = False
+                    self._launching_name = None
                     self.query_one("#launch-status", Static).update(f"Launch error: {e}")
                     self.app.notify(f"Launch failed: {e}", severity="error", timeout=10)
                     self._sync_status()
