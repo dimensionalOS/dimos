@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 class DirectCmdVelExplorer:
     def __init__(
         self,
-        linear_speed: float = 1.0,
+        linear_speed: float = 0.8,
         rotation_speed: float = 1.5,
         publish_rate: float = 10.0,
     ) -> None:

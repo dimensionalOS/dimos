@@ -14,10 +14,13 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
+import os
 from threading import RLock
 from typing import TYPE_CHECKING, Any
 
+import cv2
 from langchain_core.messages import HumanMessage
 
 from dimos.agents.agent import AgentSpec
@@ -143,6 +146,9 @@ class PerceiveLoopSkill(Module):
         if not detections:
             return
 
+        if os.environ.get("DEBUG"):
+            _write_debug_image(image, detections)
+
         with self._lock:
             if not self._active_lookout:
                 return
@@ -185,3 +191,24 @@ class PerceiveLoopSkill(Module):
             if self._model_started:
                 self._vl_model.stop()
                 self._model_started = False
+
+
+def _write_debug_image(image: Image, detections: list[Any]) -> None:
+    try:
+        debug_img = image.to_opencv().copy()
+        for det in detections.detections:
+            x1, y1, x2, y2 = (int(v) for v in det.bbox)
+            cv2.rectangle(debug_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(
+                debug_img,
+                det.name,
+                (x1, y1 - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 0),
+                2,
+            )
+        ts = datetime.now(tz=timezone.utc).isoformat().replace(":", "-")
+        cv2.imwrite(f"debug-{ts}.ignore.jpg", debug_img)
+    except Exception:
+        pass  # Ignore debug drawing errors

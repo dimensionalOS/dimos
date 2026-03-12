@@ -54,7 +54,7 @@ def test_patrol_and_follow(
         "--mujoco-start-pos",
         "-10.75 -6.78",
         "--nerf-speed",
-        "0.3",
+        "0.5",
         "run",
         "--disable",
         "spatial-memory",
@@ -75,15 +75,12 @@ def test_patrol_and_follow(
 
     start_person_track(
         [
-            (-3.35, -0.51),
-            (-2.60, 1.28),
-            (4.80, 0.21),
-            (4.14, -6.0),
-            (0.59, -3.79),
+            (-10.75, -6.78),
+            (0, -7.07),
         ]
     )
     human_input(
-        "patrol around until you find a person (any person) and when you do, start following him"
+        "patrol around until you find a man wearing beige pants and when you do, start following him"
     )
 
     time.sleep(120)

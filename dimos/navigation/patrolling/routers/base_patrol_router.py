@@ -68,5 +68,11 @@ class BasePatrolRouter(ABC):
         with self._lock:
             return self._visitation.get_saturation()
 
+    def reset(self) -> None:
+        with self._lock:
+            self._occupancy_grid = None
+            self._occupancy_grid_updated_at = 0.0
+            self._visitation.reset()
+
     @abstractmethod
     def next_goal(self) -> PoseStamped | None: ...

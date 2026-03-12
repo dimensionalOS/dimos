@@ -76,6 +76,8 @@ class PatrollingModule(Module):
     @skill
     def start_patrol(self) -> str:
         """Start patrolling the known area. The robot will continuously pick patrol goals from the router and navigate to them until `stop_patrol` is called."""
+        self._router.reset()
+
         with self._patrol_lock:
             if self._patrol_thread is not None and self._patrol_thread.is_alive():
                 return "Patrol is already running. Use `stop_patrol` to stop."

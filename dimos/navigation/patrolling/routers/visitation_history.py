@@ -87,6 +87,11 @@ class VisitationHistory:
         visited_free = int(np.count_nonzero(visited & free_mask))
         return visited_free / total
 
+    def reset(self) -> None:
+        self._points.clear()
+        self._visited = None
+        self._grid = None
+
     def _rebuild(self) -> None:
         grid = self._grid
         if grid is None:
