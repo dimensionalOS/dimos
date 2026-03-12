@@ -166,9 +166,7 @@ def monitor_threads(request):
         # (e.g. "Thread-166 (run_forever)"), so this only matches unnamed threads
         # from libraries like torch/HuggingFace that have no cleanup API.
         new_threads = [
-            t
-            for t in new_threads
-            if not (t.daemon and re.fullmatch(r"Thread-\d+", t.name))
+            t for t in new_threads if not (t.daemon and re.fullmatch(r"Thread-\d+", t.name))
         ]
 
         # Filter out threads we've already seen (from previous tests)
