@@ -41,8 +41,7 @@ import struct
 import subprocess
 import threading
 import time
-from typing import TYPE_CHECKING, Any
-import zipfile
+from typing import Any
 
 import numpy as np
 from reactivex.disposable import Disposable
@@ -59,6 +58,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.ros1 import (
     deserialize_compressed_image,
@@ -66,15 +66,11 @@ from dimos.utils.ros1 import (
     serialize_pose_stamped,
 )
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
 logger = setup_logger()
 PI = math.pi
 
-# Google Drive folder containing environment zips
-_GDRIVE_FOLDER_ID = "1UD5v6cSfcwIMWmsq9WSk7blJut4kgb-1"
-_DEFAULT_SCENE = "japanese_room_1"
+# LFS data asset name for the Unity sim binary
+_LFS_ASSET = "unity_sim_x86"
 _SUPPORTED_SYSTEMS = {"Linux"}
 _SUPPORTED_ARCHS = {"x86_64", "AMD64"}
 
@@ -123,89 +119,6 @@ def _write_tcp_command(sock: socket.socket, command: str, params: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
-# Auto-download
-# ---------------------------------------------------------------------------
-
-
-def _download_unity_scene(scene: str, dest_dir: Path) -> Path:
-    """Download a Unity environment zip from Google Drive and extract it.
-
-    Returns the path to the Model.x86_64 binary.
-    """
-    try:
-        import gdown  # type: ignore[import-untyped]
-    except ImportError:
-        raise RuntimeError(
-            "Unity sim binary not found and 'gdown' is not installed for auto-download. "
-            "Install it with: pip install gdown\n"
-            "Or manually download from: "
-            f"https://drive.google.com/drive/folders/{_GDRIVE_FOLDER_ID}"
-        )
-
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    zip_path = dest_dir / f"{scene}.zip"
-
-    if not zip_path.exists():
-        print(flush=True)
-        print("=" * 70, flush=True)
-        print("", flush=True)
-        print("  UNITY SIMULATOR DOWNLOAD", flush=True)
-        print("", flush=True)
-        print(f"  The Unity simulator scene '{scene}' was not found locally.", flush=True)
-        print("  Downloading it now from Google Drive. This is a ONE-TIME", flush=True)
-        print("  download — future runs will use the cached binary.", flush=True)
-        print("", flush=True)
-        print("  Source:  VLA Challenge (Google Drive)", flush=True)
-        print(f"  Scene:   {scene}", flush=True)
-        print("  Size:    ~130-580 MB (depends on scene)", flush=True)
-        print(f"  Cache:   {dest_dir}", flush=True)
-        print("", flush=True)
-        print("  gdown will print progress below. This may take a few", flush=True)
-        print("  minutes depending on your connection speed.", flush=True)
-        print("", flush=True)
-        print("=" * 70, flush=True)
-        print(flush=True)
-        gdown.download_folder(
-            id=_GDRIVE_FOLDER_ID,
-            output=str(dest_dir),
-            quiet=False,
-        )
-        print(flush=True)
-        print("=" * 70, flush=True)
-        print("  Download complete. Locating scene zip...", flush=True)
-        print("=" * 70, flush=True)
-        print(flush=True)
-        # gdown downloads all scenes into a subfolder; find our zip
-        for candidate in dest_dir.rglob(f"{scene}.zip"):
-            zip_path = candidate
-            break
-
-    if not zip_path.exists():
-        raise FileNotFoundError(
-            f"Failed to download scene '{scene}'. "
-            f"Check https://drive.google.com/drive/folders/{_GDRIVE_FOLDER_ID}"
-        )
-
-    # Extract
-    extract_dir = dest_dir / scene
-    if not extract_dir.exists():
-        print(f"  Extracting {zip_path.name}...", flush=True)
-        with zipfile.ZipFile(zip_path, "r") as zf:
-            zf.extractall(dest_dir)
-        print("  Extraction complete.", flush=True)
-
-    binary = extract_dir / "environment" / "Model.x86_64"
-    if not binary.exists():
-        raise FileNotFoundError(
-            f"Extracted scene but Model.x86_64 not found at {binary}. "
-            f"Expected structure: {scene}/environment/Model.x86_64"
-        )
-
-    binary.chmod(binary.stat().st_mode | 0o111)
-    return binary
-
-
-# ---------------------------------------------------------------------------
 # Platform validation
 # ---------------------------------------------------------------------------
 
@@ -230,47 +143,6 @@ def _validate_platform() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Host-side binary resolution (runs BEFORE worker deploy)
-# ---------------------------------------------------------------------------
-
-
-def resolve_unity_binary(
-    scene: str = _DEFAULT_SCENE,
-    cache_dir: str = ".unity_envs",
-    auto_download: bool = True,
-) -> Callable[[], str | None]:
-    """Return a blueprint requirement check that resolves the Unity binary.
-
-    This runs on the HOST process during blueprint.build(), before modules
-    are deployed to worker subprocesses. If the binary is not cached and
-    auto_download is True, it downloads the scene from Google Drive.
-
-    Usage in a blueprint::
-
-        unity_sim = autoconnect(
-            UnityBridgeModule.blueprint(),
-            ...
-        ).requirements(resolve_unity_binary())
-    """
-
-    def _check() -> str | None:
-        cache = Path(cache_dir).expanduser()
-        candidate = cache / scene / "environment" / "Model.x86_64"
-        if candidate.exists():
-            return None  # already cached, no error
-
-        if not auto_download:
-            return f"Unity scene '{scene}' not found at {candidate} and auto_download is disabled."
-
-        _validate_platform()
-        logger.info(f"Unity binary not found, downloading scene '{scene}'...")
-        _download_unity_scene(scene, cache)
-        return None  # success
-
-    return _check
-
-
-# ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
@@ -279,24 +151,14 @@ def resolve_unity_binary(
 class UnityBridgeConfig(ModuleConfig):
     """Configuration for the Unity bridge / vehicle simulator.
 
-    Set ``unity_binary=""`` to skip launching Unity and connect to an
-    already-running instance. Set ``auto_download=True`` (default) to
-    automatically download the scene if the binary is missing.
+    Set ``unity_binary=""`` to auto-resolve from LFS data (default).
+    Set to an explicit path to use a custom binary. The LFS asset
+    ``unity_sim_x86`` is pulled automatically via ``get_data()``.
     """
 
-    # Path to the Unity x86_64 binary. Relative paths resolved from cwd.
-    # Leave empty to auto-detect from cache or auto-download.
+    # Path to the Unity x86_64 binary. Leave empty to auto-resolve
+    # from LFS data (unity_sim_x86/environment/Model.x86_64).
     unity_binary: str = ""
-
-    # Scene name for auto-download (e.g. "office_1", "hotel_room_1").
-    # Only used when unity_binary is not found and auto_download is True.
-    unity_scene: str = _DEFAULT_SCENE
-
-    # Directory to download/cache Unity scenes (relative to cwd).
-    unity_cache_dir: str = ".unity_envs"
-
-    # Auto-download the scene from Google Drive if binary is missing.
-    auto_download: bool = True
 
     # Max seconds to wait for Unity to connect after launch.
     unity_connect_timeout: float = 30.0
@@ -473,11 +335,11 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
     # ---- Unity process management -----------------------------------------
 
     def _resolve_binary(self) -> Path | None:
-        """Find the Unity binary from config or cache. Does NOT download.
+        """Find the Unity binary from config or LFS data.
 
-        Downloads happen on the HOST via resolve_unity_binary() (called from
-        the blueprint requirement hook) before the module is deployed to a
-        worker subprocess.
+        When ``unity_binary`` is empty (default), pulls the LFS asset
+        ``unity_sim_x86`` via ``get_data()`` and returns the path to
+        ``environment/Model.x86_64``.
         """
         cfg = self.config
 
@@ -493,11 +355,15 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
             logger.warning(f"Unity binary not found at {p}")
             return None
 
-        # Check cache (download already happened on host)
-        cache = Path(cfg.unity_cache_dir).expanduser()
-        candidate = cache / cfg.unity_scene / "environment" / "Model.x86_64"
-        if candidate.exists():
-            return candidate
+        # Pull from LFS (auto-downloads + extracts on first use)
+        try:
+            data_dir = get_data(_LFS_ASSET)
+            candidate = data_dir / "environment" / "Model.x86_64"
+            if candidate.exists():
+                return candidate
+            logger.warning(f"LFS asset '{_LFS_ASSET}' extracted but Model.x86_64 not found")
+        except Exception as e:
+            logger.warning(f"Failed to resolve Unity binary from LFS: {e}")
 
         return None
 

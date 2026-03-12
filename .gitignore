@@ -73,9 +73,6 @@ CLAUDE.MD
 /.mcp.json
 *.speedscope.json
 
-# Unity simulator cache
-.unity_envs/
-
 # Coverage
 htmlcov/
 .coverage

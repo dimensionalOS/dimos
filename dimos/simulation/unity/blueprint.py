@@ -27,7 +27,7 @@ from typing import Any
 
 from dimos.core.blueprints import autoconnect
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.simulation.unity.module import UnityBridgeModule, resolve_unity_binary
+from dimos.simulation.unity.module import UnityBridgeModule
 from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
 
 
@@ -58,4 +58,4 @@ rerun_config = {
 unity_sim = autoconnect(
     UnityBridgeModule.blueprint(),
     rerun_bridge(viewer_mode=_resolve_viewer_mode(), **rerun_config),
-).requirements(resolve_unity_binary())
+)
