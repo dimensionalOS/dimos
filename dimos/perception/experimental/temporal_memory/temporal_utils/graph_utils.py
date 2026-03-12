@@ -14,93 +14,91 @@
 
 """Graph database utility functions for temporal memory."""
 
+from __future__ import annotations
+
 import re
 from typing import TYPE_CHECKING, Any
 
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.models.vl.base import VlModel
-    from dimos.msgs.sensor_msgs import Image
-
     from ..entity_graph_db import EntityGraphDB
 
 logger = setup_logger()
 
+# ── Time extraction (regex only — no VLM call) ─────────────────────
 
-def extract_time_window(
-    question: str,
-    vlm: "VlModel",
-    latest_frame: "Image | None" = None,
-) -> float | None:
-    """Extract time window from question using VLM with example-based learning.
+_KEYWORD_MAP: list[tuple[re.Pattern[str], float]] = [
+    # Exact phrases
+    (re.compile(r"\bjust now\b", re.I), 60),
+    (re.compile(r"\bfew seconds? ago\b", re.I), 30),
+    (re.compile(r"\bfew minutes? ago\b", re.I), 300),
+    (re.compile(r"\brecently\b|\brecent\b", re.I), 600),
+    (re.compile(r"\blast hour\b|\bpast hour\b", re.I), 3600),
+    (re.compile(r"\btoday\b", re.I), 3600),
+    (re.compile(r"\byesterday\b", re.I), 86400),
+    (re.compile(r"\blast night\b", re.I), 43200),
+    (re.compile(r"\bthis morning\b", re.I), 21600),
+    (re.compile(r"\blast week\b|\bpast week\b", re.I), 7 * 86400),
+    (re.compile(r"\blast month\b|\bpast month\b", re.I), 30 * 86400),
+    (re.compile(r"\blast year\b|\bpast year\b", re.I), 365 * 86400),
+]
 
-    Uses a few example keywords as patterns, then asks VLM to extrapolate
-    similar time references and return seconds.
+_QUANTITY_PAT = re.compile(
+    r"(?:(?:last|past|previous)\s+)?(\d+)\s+"
+    r"(seconds?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\s*(?:ago)?",
+    re.I,
+)
 
-    Args:
-        question: User's question
-        vlm: VLM instance to use for extraction
-        latest_frame: Optional frame (required for VLM call, but image is ignored)
+_UNIT_TO_SECONDS: dict[str, float] = {
+    "second": 1,
+    "seconds": 1,
+    "minute": 60,
+    "minutes": 60,
+    "min": 60,
+    "mins": 60,
+    "hour": 3600,
+    "hours": 3600,
+    "hr": 3600,
+    "hrs": 3600,
+    "day": 86400,
+    "days": 86400,
+    "week": 7 * 86400,
+    "weeks": 7 * 86400,
+    "month": 30 * 86400,
+    "months": 30 * 86400,
+    "year": 365 * 86400,
+    "years": 365 * 86400,
+}
+
+
+def extract_time_window(question: str) -> float | None:
+    """Extract a time-window (in seconds) from a question using regex heuristics.
+
+    No VLM call is made — this replaces the old image-based approach.
 
     Returns:
-        Time window in seconds, or None if no time reference found
+        Seconds lookback, or None if no time reference found.
     """
-    question_lower = question.lower()
+    # Check quantity patterns first (e.g., "3 hours ago", "last 2 days")
+    m = _QUANTITY_PAT.search(question)
+    if m:
+        num = int(m.group(1))
+        unit = m.group(2).lower()
+        factor = _UNIT_TO_SECONDS.get(unit)
+        if factor is not None:
+            return num * factor
 
-    # Quick check for common patterns (fast path)
-    if "last week" in question_lower or "past week" in question_lower:
-        return 7 * 24 * 3600
-    if "today" in question_lower or "last hour" in question_lower:
-        return 3600
-    if "recently" in question_lower or "recent" in question_lower:
-        return 600
-
-    # Use VLM to extract time reference from question
-    # Provide examples and let VLM extrapolate similar patterns
-    # Note: latest_frame is required by VLM interface but image content is ignored
-    if not latest_frame:
-        return None
-
-    extraction_prompt = f"""Extract any time reference from this question and convert it to seconds.
-
-Question: {question}
-
-Examples of time references and their conversions:
-- "last week" or "past week" -> 604800 seconds (7 days)
-- "yesterday" -> 86400 seconds (1 day)
-- "today" or "last hour" -> 3600 seconds (1 hour)
-- "recently" or "recent" -> 600 seconds (10 minutes)
-- "few minutes ago" -> 300 seconds (5 minutes)
-- "just now" -> 60 seconds (1 minute)
-
-Extrapolate similar patterns (e.g., "2 days ago", "this morning", "last month", etc.)
-and convert to seconds. If no time reference is found, return "none".
-
-Return ONLY a number (seconds) or the word "none". Do not include any explanation."""
-
-    try:
-        response = vlm.query(latest_frame, extraction_prompt)
-        response = response.strip().lower()
-
-        if "none" in response or not response:
-            return None
-
-        # Extract number from response
-        numbers = re.findall(r"\d+(?:\.\d+)?", response)
-        if numbers:
-            seconds = float(numbers[0])
-            # Sanity check: reasonable time windows (1 second to 1 year)
-            if 1 <= seconds <= 365 * 24 * 3600:
-                return seconds
-    except Exception as e:
-        logger.debug(f"Time extraction failed: {e}")
+    # Check keyword patterns
+    for pat, seconds in _KEYWORD_MAP:
+        if pat.search(question):
+            return seconds
 
     return None
 
 
 def build_graph_context(
-    graph_db: "EntityGraphDB",
+    graph_db: EntityGraphDB,
     entity_ids: list[str],
     time_window_s: float | None = None,
     max_relations_per_entity: int = 10,
@@ -128,23 +126,20 @@ def build_graph_context(
         graph_context: dict[str, Any] = {
             "relationships": [],
             "spatial_info": [],
-            "semantic_knowledge": [],
             "entity_timestamps": [],
         }
 
         # Convert time_window_s to a (start_ts, end_ts) tuple if provided
-        # Use video-relative timestamps, not wall-clock time
         time_window_tuple = None
         if time_window_s is not None:
             if current_video_time_s is not None:
                 ref_time = current_video_time_s
             else:
-                # Fallback: get the latest timestamp from entities in DB
                 all_entities = graph_db.get_all_entities()
                 ref_time = max((e.get("last_seen_ts", 0) for e in all_entities), default=0)
             time_window_tuple = (max(0, ref_time - time_window_s), ref_time)
 
-        # Get entity timestamp information for visibility duration queries
+        # Entity timestamp info
         for entity_id in entity_ids:
             entity = graph_db.get_entity(entity_id)
             if entity:
@@ -153,7 +148,6 @@ def build_graph_context(
                 duration_s = None
                 if first_seen is not None and last_seen is not None:
                     duration_s = last_seen - first_seen
-
                 graph_context["entity_timestamps"].append(
                     {
                         "entity_id": entity_id,
@@ -163,12 +157,11 @@ def build_graph_context(
                     }
                 )
 
-        # Get recent relationships for each entity
+        # Relationships and spatial info
         for entity_id in entity_ids:
-            # Get relationships (Graph 1: interactions)
             relations = graph_db.get_relations_for_entity(
                 entity_id=entity_id,
-                relation_type=None,  # all types
+                relation_type=None,
                 time_window=time_window_tuple,
             )
             for rel in relations[-max_relations_per_entity:]:
@@ -182,9 +175,10 @@ def build_graph_context(
                     }
                 )
 
-            # Get spatial relationships (Graph 2: distances)
             nearby = graph_db.get_nearby_entities(
-                entity_id=entity_id, max_distance=nearby_distance_meters, latest_only=True
+                entity_id=entity_id,
+                max_distance=nearby_distance_meters,
+                latest_only=True,
             )
             for dist in nearby:
                 graph_context["spatial_info"].append(
@@ -197,23 +191,7 @@ def build_graph_context(
                     }
                 )
 
-            # Get semantic knowledge (Graph 3: conceptual relations)
-            semantic_rels = graph_db.get_semantic_relations(
-                entity_id=entity_id,
-                relation_type=None,
-            )
-            for sem in semantic_rels:
-                graph_context["semantic_knowledge"].append(
-                    {
-                        "entity_a": sem["entity_a_id"],
-                        "relation": sem["relation_type"],
-                        "entity_b": sem["entity_b_id"],
-                        "confidence": sem["confidence"],
-                        "observations": sem["observation_count"],
-                    }
-                )
-
-        # Get graph statistics for context
+        # Graph statistics
         if entity_ids:
             stats = graph_db.get_stats()
             graph_context["total_entities"] = stats.get("entities", 0)

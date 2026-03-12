@@ -51,8 +51,8 @@ class Case(Generic[TopicT, MsgT]):
 
 @contextmanager
 def lcm_typed_context() -> Generator[tuple[LCM, LCM], None, None]:
-    pub = LCM(autoconf=True)
-    sub = LCM(autoconf=False)
+    pub = LCM()
+    sub = LCM()
     pub.start()
     sub.start()
     try:
@@ -64,8 +64,8 @@ def lcm_typed_context() -> Generator[tuple[LCM, LCM], None, None]:
 
 @contextmanager
 def lcm_bytes_context() -> Generator[tuple[LCMPubSubBase, LCMPubSubBase], None, None]:
-    pub = LCMPubSubBase(autoconf=True)
-    sub = LCMPubSubBase(autoconf=False)
+    pub = LCMPubSubBase()
+    sub = LCMPubSubBase()
     pub.start()
     sub.start()
     try:

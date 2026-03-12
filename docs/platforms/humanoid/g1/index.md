@@ -22,7 +22,7 @@ Then install DimOS:
 ```bash
 uv venv --python "3.12"
 source .venv/bin/activate
-uv pip install dimos[base,unitree]
+uv pip install 'dimos[base,unitree]'
 ```
 
 ## MuJoCo Simulation
@@ -30,7 +30,7 @@ uv pip install dimos[base,unitree]
 No hardware? Start with simulation:
 
 ```bash
-uv pip install dimos[base,unitree,sim]
+uv pip install 'dimos[base,unitree,sim]'
 dimos --simulation run unitree-g1-basic-sim
 ```
 

@@ -14,11 +14,17 @@
 
 """Temporal memory package."""
 
-from .temporal_memory import Frame, TemporalMemory, TemporalMemoryConfig, temporal_memory
+from .frame_window_accumulator import Frame, FrameWindowAccumulator
+from .temporal_memory import TemporalMemory, TemporalMemoryConfig, temporal_memory
+from .temporal_state import TemporalState
+from .window_analyzer import WindowAnalyzer
 
 __all__ = [
     "Frame",
+    "FrameWindowAccumulator",
     "TemporalMemory",
     "TemporalMemoryConfig",
+    "TemporalState",
+    "WindowAnalyzer",
     "temporal_memory",
 ]

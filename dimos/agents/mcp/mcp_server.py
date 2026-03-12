@@ -15,24 +15,25 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import time
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.requests import Request  # noqa: TC002
 from starlette.responses import Response
 import uvicorn
 
+from dimos.agents.annotation import skill
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-
-from starlette.requests import Request  # noqa: TC002
-
-from dimos.core.core import rpc
-from dimos.core.module import Module
-from dimos.core.rpc_client import RpcCall, RPCClient
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -51,6 +52,11 @@ app.state.skills = []
 app.state.rpc_calls = {}
 
 
+# ---------------------------------------------------------------------------
+# JSON-RPC helpers
+# ---------------------------------------------------------------------------
+
+
 def _jsonrpc_result(req_id: Any, result: Any) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
@@ -61,6 +67,11 @@ def _jsonrpc_result_text(req_id: Any, text: str) -> dict[str, Any]:
 
 def _jsonrpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
+
+
+# ---------------------------------------------------------------------------
+# JSON-RPC handlers (standard MCP protocol only)
+# ---------------------------------------------------------------------------
 
 
 def _handle_initialize(req_id: Any) -> dict[str, Any]:
@@ -77,11 +88,11 @@ def _handle_initialize(req_id: Any) -> dict[str, Any]:
 def _handle_tools_list(req_id: Any, skills: list[SkillInfo]) -> dict[str, Any]:
     tools = []
 
-    for skill in skills:
-        schema = json.loads(skill.args_schema)
+    for s in skills:
+        schema = json.loads(s.args_schema)
         description = schema.pop("description", None)
         schema.pop("title", None)
-        tool = {"name": skill.func_name, "inputSchema": schema}
+        tool: dict[str, Any] = {"name": s.func_name, "inputSchema": schema}
         if description:
             tool["description"] = description
         tools.append(tool)
@@ -97,20 +108,30 @@ async def _handle_tools_call(
 
     rpc_call = rpc_calls.get(name)
     if rpc_call is None:
+        logger.warning("MCP tool not found", tool=name)
         return _jsonrpc_result_text(req_id, f"Tool not found: {name}")
+
+    logger.info("MCP tool call", tool=name, args=args)
+    t0 = time.monotonic()
 
     try:
         result = await asyncio.get_event_loop().run_in_executor(None, lambda: rpc_call(**args))
     except Exception as e:
-        logger.exception("Error running tool", tool_name=name, exc_info=True)
+        logger.exception("MCP tool error", tool=name, duration=f"{time.monotonic() - t0:.3f}s")
         return _jsonrpc_result_text(req_id, f"Error running tool '{name}': {e}")
 
+    duration = f"{time.monotonic() - t0:.3f}s"
+
     if result is None:
+        logger.info("MCP tool done (async)", tool=name, duration=duration)
         return _jsonrpc_result_text(req_id, "It has started. You will be updated later.")
 
+    response = str(result)[:200]
     if hasattr(result, "agent_encode"):
+        logger.info("MCP tool done", tool=name, duration=duration, response=response)
         return _jsonrpc_result(req_id, {"content": result.agent_encode()})
 
+    logger.info("MCP tool done", tool=name, duration=duration, response=response)
     return _jsonrpc_result_text(req_id, str(result))
 
 
@@ -128,7 +149,7 @@ async def handle_request(
     params = request.get("params", {}) or {}
     req_id = request.get("id")
 
-    # JSON-RPC notifications have no "id" – the server must not reply.
+    # JSON-RPC notifications have no "id" -- the server must not reply.
     if "id" not in request:
         return None
 
@@ -158,6 +179,11 @@ async def mcp_endpoint(request: Request) -> Response:
     return JSONResponse(result)
 
 
+# ---------------------------------------------------------------------------
+# McpServer Module
+# ---------------------------------------------------------------------------
+
+
 class McpServer(Module):
     def __init__(self) -> None:
         super().__init__()
@@ -183,14 +209,68 @@ class McpServer(Module):
     @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:
         assert self.rpc is not None
-        app.state.skills = [skill for module in modules for skill in (module.get_skills() or [])]
+        app.state.skills = [
+            skill_info for module in modules for skill_info in (module.get_skills() or [])
+        ]
         app.state.rpc_calls = {
-            skill.func_name: RpcCall(None, self.rpc, skill.func_name, skill.class_name, [])
-            for skill in app.state.skills
+            skill_info.func_name: RpcCall(
+                None, self.rpc, skill_info.func_name, skill_info.class_name, []
+            )
+            for skill_info in app.state.skills
         }
 
-    def _start_server(self, port: int = 9990) -> None:
-        config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
+    # ------------------------------------------------------------------
+    # Introspection skills (exposed as MCP tools via tools/list)
+    # ------------------------------------------------------------------
+
+    @skill
+    def server_status(self) -> str:
+        """Get MCP server status: main process PID, deployed modules, and skill count."""
+        from dimos.core.run_registry import get_most_recent
+
+        skills: list[SkillInfo] = app.state.skills
+        modules = list(dict.fromkeys(s.class_name for s in skills))
+        entry = get_most_recent()
+        pid = entry.pid if entry else os.getpid()
+        return json.dumps(
+            {
+                "pid": pid,
+                "modules": modules,
+                "skills": [s.func_name for s in skills],
+            }
+        )
+
+    @skill
+    def list_modules(self) -> str:
+        """List deployed modules and their skills."""
+        skills: list[SkillInfo] = app.state.skills
+        modules: dict[str, list[str]] = {}
+        for s in skills:
+            modules.setdefault(s.class_name, []).append(s.func_name)
+        return json.dumps({"modules": modules})
+
+    @skill
+    def agent_send(self, message: str) -> str:
+        """Send a message to the running DimOS agent via LCM."""
+        if not message:
+            raise ValueError("Message cannot be empty")
+
+        from dimos.core.transport import pLCMTransport
+
+        transport: pLCMTransport[str] = pLCMTransport("/human_input")
+        try:
+            transport.start()
+            transport.publish(message)
+            return f"Message sent to agent: {message[:100]}"
+        finally:
+            transport.stop()
+
+    def _start_server(self, port: int | None = None) -> None:
+        from dimos.core.global_config import global_config
+
+        _port = port if port is not None else global_config.mcp_port
+        _host = global_config.mcp_host
+        config = uvicorn.Config(app, host=_host, port=_port, log_level="info")
         server = uvicorn.Server(config)
         self._uvicorn_server = server
         loop = self._loop

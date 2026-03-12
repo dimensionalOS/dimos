@@ -38,7 +38,12 @@ class OsmSkill(Module):
 
     def start(self) -> None:
         super().start()
-        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))  # type: ignore[arg-type]
+        if hasattr(self.gps_location, "subscribe"):
+            self._disposables.add(self.gps_location.subscribe(self._on_gps_location))  # type: ignore[arg-type]
+        else:
+            logger.warning(
+                "OsmSkill: gps_location stream does not support direct subscribe (RemoteIn)"
+            )
 
     def stop(self) -> None:
         super().stop()

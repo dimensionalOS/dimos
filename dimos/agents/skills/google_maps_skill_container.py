@@ -34,7 +34,15 @@ class GoogleMapsSkillContainer(Module):
 
     def __init__(self) -> None:
         super().__init__()
-        self._client = GoogleMaps()
+        try:
+            self._client = GoogleMaps()
+        except ValueError:
+            from dimos.utils.logging_config import setup_logger
+
+            setup_logger().warning(
+                "GOOGLE_MAPS_API_KEY not set — GoogleMapsSkillContainer disabled"
+            )
+            self._client = None  # type: ignore[assignment]
         self._started = True
         self._max_valid_distance = 20000  # meters
 
@@ -72,6 +80,8 @@ class GoogleMapsSkillContainer(Module):
 
         result = None
         try:
+            if self._client is None:
+                return "Google Maps is not configured (missing API key)."
             result = self._client.get_location_context(location, radius=context_radius)
         except Exception:
             return "There is an issue with the Google Maps API."
@@ -102,6 +112,9 @@ class GoogleMapsSkillContainer(Module):
 
         for query in queries:
             try:
+                if self._client is None:
+                    latlon = None
+                    continue
                 latlon = self._client.get_position(query, location)
             except Exception:
                 latlon = None

@@ -29,7 +29,8 @@ from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
-from dimos.robot.drone.drone import Drone
+
+# Drone class removed - use blueprints instead
 from dimos.robot.drone.mavlink_connection import FakeMavlinkConnection, MavlinkConnection
 
 
@@ -216,16 +217,18 @@ class TestReplayMode(unittest.TestCase):
             self.assertEqual(msg2.get_type(), "HEARTBEAT")
 
     def test_fake_video_stream_no_throttling(self) -> None:
-        """Test FakeDJIVideoStream returns replay stream directly."""
+        """Test FakeDJIVideoStream returns replay stream with format fix."""
         with patch("dimos.utils.testing.TimedSensorReplay") as mock_replay:
             mock_stream = MagicMock()
             mock_replay.return_value.stream.return_value = mock_stream
 
             stream = FakeDJIVideoStream(port=5600)
-            result_stream = stream.get_stream()
+            stream.get_stream()
 
-            # Verify stream is returned directly without throttling
-            self.assertEqual(result_stream, mock_stream)
+            # Verify replay store was created and stream was piped (for BGR→RGB fix)
+            mock_replay.assert_called_once_with("drone/video")
+            mock_replay.return_value.stream.assert_called_once()
+            mock_stream.pipe.assert_called_once()
 
     def test_connection_module_replay_mode(self) -> None:
         """Test connection module uses Fake classes in replay mode."""
@@ -406,6 +409,7 @@ class TestReplayMode(unittest.TestCase):
                 module.stop()
 
 
+@unittest.skip("Skipped: TestDroneFullIntegration tests deprecated Drone class")
 class TestDroneFullIntegration(unittest.TestCase):
     """Full integration test of Drone class with replay mode."""
 
@@ -658,6 +662,19 @@ class TestDronePerception(unittest.TestCase):
                 received_frames.append(img)
 
         mock_stream.subscribe = subscribe_side_effect
+
+        # The piped stream should also be subscribable
+        piped_stream = MagicMock()
+        piped_captured: list[Image] = []
+
+        def piped_subscribe(callback):  # type: ignore[no-untyped-def]
+            for frame in video_frames:
+                img = Image(data=frame, format=ImageFormat.RGB)  # After format fix
+                callback(img)
+                piped_captured.append(img)
+
+        piped_stream.subscribe = piped_subscribe
+        mock_stream.pipe.return_value = piped_stream
         mock_replay.return_value.stream.return_value = mock_stream
 
         # Create fake video stream
@@ -665,24 +682,15 @@ class TestDronePerception(unittest.TestCase):
         stream = video_stream.get_stream()
 
         # Subscribe to stream
-        captured_frames = []
+        captured_frames: list[Image] = []
         stream.subscribe(captured_frames.append)
 
-        # Verify frames were captured
-        self.assertEqual(len(received_frames), 2)
-        for i, frame in enumerate(received_frames):
+        # Verify frames were captured with corrected format
+        self.assertEqual(len(piped_captured), 2)
+        for _i, frame in enumerate(piped_captured):
             self.assertIsInstance(frame, Image)
             self.assertEqual(frame.data.shape, (360, 640, 3))
-
-            # Save first frame to file for visual inspection
-            if i == 0:
-                import os
-
-                output_path = "/tmp/drone_test_frame.png"
-                cv2.imwrite(output_path, frame.data)
-                print(f"\n[TEST] Saved test frame to {output_path} for visual inspection")
-                if os.path.exists(output_path):
-                    print(f"[TEST] File size: {os.path.getsize(output_path)} bytes")
+            self.assertEqual(frame.format, ImageFormat.RGB)  # Format should be corrected
 
 
 class TestDroneMovementAndOdometry(unittest.TestCase):

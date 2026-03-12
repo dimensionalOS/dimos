@@ -27,7 +27,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 def test_publish_transforms() -> None:
     from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
-    lcm = LCM(autoconf=True)
+    lcm = LCM()
     lcm.start()
 
     topic = Topic(topic="/tf", lcm_type=LCMTFMessage)

@@ -244,7 +244,7 @@ For local emission it autoconfigures system in a way in which it's more robust a
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.msgs.geometry_msgs import Vector3
 
-lcm = LCM(autoconf=True)
+lcm = LCM()
 lcm.start()
 
 received = []
