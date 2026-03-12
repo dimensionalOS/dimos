@@ -75,6 +75,9 @@ class UnitreeGo2TwistAdapter:
 
         self._network_interface = network_interface  # domain ID for DDS
         self._session: _Session | None = None
+        # Protects _session reference across threads (DDS callback thread,
+        # user/control thread). The session's own lock guards internal state.
+        self._session_lock = threading.Lock()
 
     def _get_session(self) -> _Session:
         """Return active session or raise if not connected"""
@@ -88,6 +91,11 @@ class UnitreeGo2TwistAdapter:
 
     def connect(self) -> bool:
         """Connect to Go2 and initialize locomotion mode."""
+        with self._session_lock:
+            if self._session is not None:
+                logger.warning("Go2 already connected — disconnect first")
+                return False
+
         try:
             from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
             from unitree_sdk2py.go2.sport.sport_client import SportClient
@@ -114,7 +122,8 @@ class UnitreeGo2TwistAdapter:
             state_sub.Init(state_callback, 10)
             session.state_sub = state_sub
 
-            self._session = session
+            with self._session_lock:
+                self._session = session
             logger.info("Connected to Go2")
 
             # Stand up and activate locomotion
@@ -127,12 +136,16 @@ class UnitreeGo2TwistAdapter:
 
         except Exception as e:
             logger.error(f"Failed to connect to Go2: {e}")
-            self._session = None
+            with self._session_lock:
+                self._session = None
             return False
 
     def disconnect(self) -> None:
         """Disconnect and safely shut down the robot."""
-        session = self._session
+        with self._session_lock:
+            session = self._session
+            self._session = None
+
         if session is not None:
             try:
                 session.client.StopMove()
@@ -150,11 +163,10 @@ class UnitreeGo2TwistAdapter:
                 except Exception as e:
                     logger.error(f"Error closing state subscriber: {e}")
 
-        self._session = None
-
     def is_connected(self) -> bool:
         """Check if connected to Go2."""
-        return self._session is not None
+        with self._session_lock:
+            return self._session is not None
 
     # =========================================================================
     # Info
@@ -276,7 +288,8 @@ class UnitreeGo2TwistAdapter:
 
     def read_enabled(self) -> bool:
         """Check if platform is enabled."""
-        return self._session is not None and self._session.enabled
+        with self._session_lock:
+            return self._session is not None and self._session.enabled
 
     # =========================================================================
     # Internal

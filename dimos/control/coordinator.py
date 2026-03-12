@@ -653,9 +653,18 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         """Subscribe to a port if condition is met, tracking the unsub handle."""
         if not condition:
             return
-        unsub = port.subscribe(callback)
-        self._subscriptions.append(unsub)
-        logger.info(f"Subscribed to {name}")
+        try:
+            unsub = port.subscribe(callback)
+            self._subscriptions.append(unsub)
+            logger.info(f"Subscribed to {name}")
+        except Exception:
+            # subscribe() can fail when no transport is wired to the port
+            # (e.g. running without a blueprint). This is non-fatal — the
+            # coordinator still works via task_invoke RPC.
+            logger.warning(
+                f"Could not subscribe to {name}. "
+                "Use task_invoke RPC or set transport via blueprint."
+            )
 
     @rpc
     def start(self) -> None:
