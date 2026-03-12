@@ -29,6 +29,14 @@ class ConfirmScreen(ModalScreen[bool]):
         padding: 1 2;
     }
 
+    ConfirmScreen.--warning > Vertical {
+        border: solid $dio-yellow;
+    }
+
+    ConfirmScreen.--warning > Vertical > Label {
+        color: $dio-yellow;
+    }
+
     ConfirmScreen > Vertical > Label {
         width: 100%;
         content-align: center middle;
@@ -61,6 +69,18 @@ class ConfirmScreen(ModalScreen[bool]):
         color: $dio-bg;
         border: solid $dio-accent;
     }
+
+    ConfirmScreen.--warning Button:focus {
+        background: $dio-yellow;
+        color: $dio-bg;
+        border: solid $dio-yellow;
+    }
+
+    ConfirmScreen.--warning Button:hover {
+        background: $dio-yellow;
+        color: $dio-bg;
+        border: solid $dio-yellow;
+    }
     """
 
     BINDINGS = [
@@ -76,12 +96,15 @@ class ConfirmScreen(ModalScreen[bool]):
         Binding("tab", "switch_btn", "Tab", priority=True),
     ]
 
-    def __init__(self, message: str, default: bool = False) -> None:
+    def __init__(self, message: str, default: bool = False, warning: bool = False) -> None:
         super().__init__()
         self._message = message
         self._default = default
+        self._warning = warning
 
     def compose(self) -> ComposeResult:
+        if self._warning:
+            self.add_class("--warning")
         with Vertical():
             yield Label(self._message)
             with Center():

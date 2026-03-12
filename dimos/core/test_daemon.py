@@ -216,24 +216,16 @@ class TestHealthCheck:
 # Daemon tests
 # ---------------------------------------------------------------------------
 
-from dimos.core.daemon import daemonize, install_signal_handlers
+from dimos.core.daemon import install_signal_handlers, launch_blueprint, LaunchResult
 
 
-class TestDaemonize:
-    """test_daemonize_creates_log_dir."""
+class TestLaunchResult:
+    """Test the LaunchResult dataclass."""
 
-    def test_daemonize_creates_log_dir(self, tmp_path: Path):
-        log_dir = tmp_path / "nested" / "logs"
-        assert not log_dir.exists()
-
-        # We can't actually double-fork in tests (child would continue running
-        # pytest), so we mock os.fork to return >0 both times (parent path).
-        with mock.patch("os.fork", return_value=1), pytest.raises(SystemExit):
-            # Parent calls os._exit(0) which we let raise
-            with mock.patch("os._exit", side_effect=SystemExit(0)):
-                daemonize(log_dir)
-
-        assert log_dir.exists()
+    def test_launch_result_fields(self, tmp_path: Path):
+        result = LaunchResult(instance_name="test", run_dir=tmp_path)
+        assert result.instance_name == "test"
+        assert result.run_dir == tmp_path
 
 
 class TestSignalHandler:

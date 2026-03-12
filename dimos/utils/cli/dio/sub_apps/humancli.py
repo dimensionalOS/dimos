@@ -55,6 +55,7 @@ def _status_style(state: _ConnState) -> tuple[str, str]:
         _ConnState.ERROR: ("error", theme.RED),
     }[state]
 
+
 # Seconds to wait for an agent response before showing "no agent"
 _AGENT_DETECT_TIMEOUT = 8.0
 

@@ -159,9 +159,9 @@ class McpAdapter:
         Falls back to the default URL if no entry is found.
         """
         if entry is None:
-            from dimos.core.run_registry import list_runs
+            from dimos.core.instance_registry import list_running
 
-            runs = list_runs(alive_only=True)
+            runs = list_running()
             entry = runs[0] if runs else None
 
         if entry is not None and hasattr(entry, "mcp_url") and entry.mcp_url:

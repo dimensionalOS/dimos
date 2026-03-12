@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 from rich.text import Text
 from textual.widgets import DataTable
 
-from dimos.utils.cli import theme
 from dimos.utils.cli.dio.sub_app import SubApp
 
 if TYPE_CHECKING:
@@ -78,8 +77,9 @@ class LCMSpySubApp(SubApp):
 
             self._spy = GraphLCMSpy(graph_log_window=0.5)
             self._spy.start()
-        except Exception as e:
+        except Exception:
             import traceback
+
             self._debug(traceback.format_exc())
 
     def on_unmount_subapp(self) -> None:

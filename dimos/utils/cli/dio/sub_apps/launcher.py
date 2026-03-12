@@ -16,10 +16,7 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-import subprocess
-import sys
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -32,47 +29,25 @@ if TYPE_CHECKING:
     from textual.app import ComposeResult
 
 
-def _launch_log_dir() -> Path:
-    """Base directory for launch logs."""
-    xdg = os.environ.get("XDG_STATE_HOME")
-    base = Path(xdg) / "dimos" if xdg else Path.home() / ".local" / "state" / "dimos"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
-
-
-def _launch_log_path() -> Path:
-    """Well-known path for launch stdout/stderr (with ANSI colors)."""
-    return _launch_log_dir() / "launch.log"
-
-
-def _launch_log_plain_path() -> Path:
-    """Well-known path for launch stdout/stderr (plain text, no ANSI)."""
-    return _launch_log_dir() / "launch.plain.log"
-
-
-def _copy_plain_log_to_run_dir(plain_file: Path) -> None:
-    """Copy the plain launch log into the most recent run's log directory."""
-    import shutil
-
+def _list_running_names() -> list[str]:
+    """Return names of currently running blueprints."""
     try:
-        from dimos.core.run_registry import get_most_recent
+        from dimos.core.instance_registry import list_running
 
-        entry = get_most_recent(alive_only=False)
-        if entry and entry.log_dir:
-            dest = Path(entry.log_dir) / "launch.log"
-            shutil.copy2(plain_file, dest)
+        return [info.blueprint for info in list_running()]
+    except Exception:
+        return []
+
+
+def _debug_log(msg: str) -> None:
+    """Append to the DIO debug log file."""
+    try:
+        from dimos.core.instance_registry import dimos_home
+        log_path = dimos_home() / "dio-debug.log"
+        with open(log_path, "a") as f:
+            f.write(f"LAUNCHER: {msg}\n")
     except Exception:
         pass
-
-
-def _is_blueprint_running() -> bool:
-    """Return True if a blueprint is currently running."""
-    try:
-        from dimos.core.run_registry import get_most_recent
-
-        return get_most_recent(alive_only=True) is not None
-    except Exception:
-        return False
 
 
 class LauncherSubApp(SubApp):
@@ -180,35 +155,28 @@ class LauncherSubApp(SubApp):
 
     @property
     def _is_locked(self) -> bool:
-        """True if launching is blocked (already running or mid-launch)."""
-        return self._launching or _is_blueprint_running()
+        """True only while a launch is in progress."""
+        return self._launching
 
     def _sync_status(self) -> None:
         status = self.query_one("#launch-status", Static)
-        locked = self._is_locked
         filter_input = self.query_one("#launch-filter", Input)
         lv = self.query_one("#launch-list", ListView)
 
-        if locked:
+        if self._launching:
             self.add_class("--locked")
             filter_input.disabled = True
             lv.disabled = True
-        else:
-            self.remove_class("--locked")
-            filter_input.disabled = False
-            lv.disabled = False
-
-        if self._launching:
             return  # don't overwrite "Launching..." message
-        if _is_blueprint_running():
-            try:
-                from dimos.core.run_registry import get_most_recent
 
-                entry = get_most_recent(alive_only=True)
-                name = entry.blueprint if entry else "unknown"
-                status.update(f"Already running: {name} — stop it first")
-            except Exception:
-                status.update("A blueprint is already running")
+        self.remove_class("--locked")
+        filter_input.disabled = False
+        lv.disabled = False
+
+        running = _list_running_names()
+        if running:
+            names = ", ".join(running)
+            status.update(f"Running: {names} | Enter: launch another")
         else:
             status.update("Up/Down: navigate | Enter: launch | Type to filter")
 
@@ -222,21 +190,49 @@ class LauncherSubApp(SubApp):
             self._rebuild_list()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        _debug_log(f"on_input_submitted: id={event.input.id} locked={self._is_locked}")
         if event.input.id == "launch-filter":
             if self._is_locked:
                 return
             lv = self.query_one("#launch-list", ListView)
             idx = lv.index
+            _debug_log(f"on_input_submitted: idx={idx} filtered_len={len(self._filtered)}")
             if idx is not None and 0 <= idx < len(self._filtered):
-                self._launch(self._filtered[idx])
+                _debug_log(f"on_input_submitted: confirming {self._filtered[idx]}")
+                self._confirm_and_launch(self._filtered[idx])
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
+        _debug_log(f"on_list_view_selected: locked={self._is_locked}")
         if self._is_locked:
             return
         lv = self.query_one("#launch-list", ListView)
         idx = lv.index
         if idx is not None and 0 <= idx < len(self._filtered):
-            self._launch(self._filtered[idx])
+            _debug_log(f"on_list_view_selected: confirming {self._filtered[idx]}")
+            self._confirm_and_launch(self._filtered[idx])
+
+    def _confirm_and_launch(self, name: str) -> None:
+        from dimos.utils.cli.dio.confirm_screen import ConfirmScreen
+
+        running = _list_running_names()
+        _debug_log(f"_confirm_and_launch: name={name} running={running}")
+        if running:
+            names = ", ".join(running)
+            message = (
+                f"The {names} blueprint{'s are' if len(running) > 1 else ' is'} "
+                f"already running, are you sure you want to start {name}?"
+            )
+            warning = True
+        else:
+            message = f"Launch {name}?"
+            warning = False
+
+        def _on_confirm(result: bool) -> None:
+            _debug_log(f"_on_confirm: result={result}")
+            if result:
+                self._launch(name)
+
+        self.app.push_screen(ConfirmScreen(message, warning=warning), _on_confirm)
 
     def on_key(self, event: Any) -> None:
         key = getattr(event, "key", "")
@@ -254,6 +250,7 @@ class LauncherSubApp(SubApp):
             event.stop()
 
     def _launch(self, name: str) -> None:
+        _debug_log(f"_launch called: name={name} locked={self._is_locked}")
         if self._is_locked:
             self._sync_status()
             return
@@ -263,77 +260,59 @@ class LauncherSubApp(SubApp):
         status = self.query_one("#launch-status", Static)
         status.update(f"Launching {name}...")
 
-        # Gather config overrides
-        config_args: list[str] = []
+        # Gather config overrides as a Python dict (no CLI arg conversion)
+        config_overrides: dict[str, object] = {}
         try:
             from dimos.utils.cli.dio.sub_apps.config import ConfigSubApp
 
             for inst in self.app._instances:  # type: ignore[attr-defined]
                 if isinstance(inst, ConfigSubApp):
-                    for k, v in inst.get_overrides().items():
-                        cli_key = k.replace("_", "-")
-                        if isinstance(v, bool):
-                            config_args.append(f"--{cli_key}" if v else f"--no-{cli_key}")
-                        else:
-                            config_args.extend([f"--{cli_key}", str(v)])
+                    config_overrides = inst.get_overrides()
                     break
         except Exception:
             pass
 
-        cmd = [sys.executable, "-m", "dimos.robot.cli.dimos", *config_args, "run", "--daemon", name]
+        _debug_log(f"_launch: config_overrides={config_overrides}")
 
         def _do_launch() -> None:
-            import re
-
-            _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-            log_file = _launch_log_path()
-            plain_file = _launch_log_plain_path()
-            # Preserve ANSI colors in piped output
-            env = os.environ.copy()
-            env["FORCE_COLOR"] = "1"
-            env["PYTHONUNBUFFERED"] = "1"
-            env["TERM"] = env.get("TERM", "xterm-256color")
+            _debug_log("_do_launch: thread started")
             try:
-                with (
-                    open(log_file, "w") as f_color,
-                    open(plain_file, "w") as f_plain,
-                ):
-                    proc = subprocess.Popen(
-                        cmd,
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        env=env,
-                        start_new_session=True,
-                    )
-                    for raw_line in proc.stdout:  # type: ignore[union-attr]
-                        line = raw_line.decode("utf-8", errors="replace")
-                        f_color.write(line)
-                        f_color.flush()
-                        f_plain.write(_ANSI_RE.sub("", line))
-                        f_plain.flush()
-                    proc.wait()
-                rc = proc.returncode
+                from dimos.core.daemon import launch_blueprint
 
-                # Copy plain log into the run's log directory for archival
-                _copy_plain_log_to_run_dir(plain_file)
+                _debug_log(f"_do_launch: calling launch_blueprint(robot_types=[{name}])")
+                result = launch_blueprint(
+                    robot_types=[name],
+                    config_overrides=config_overrides,
+                    force_replace=False,
+                )
+                _debug_log(f"_do_launch: success! instance={result.instance_name} run_dir={result.run_dir}")
 
                 def _after() -> None:
                     self._launching = False
-                    if rc != 0:
-                        s = self.query_one("#launch-status", Static)
-                        s.update(f"Launch failed (exit code {rc})")
+                    # Tell StatusSubApp immediately
+                    self._notify_runner(result.instance_name, result.run_dir)
                     self._sync_status()
 
                 self.app.call_from_thread(_after)
-            except Exception:
+            except Exception as e:
+                import traceback
+                _debug_log(f"_do_launch: EXCEPTION: {e}\n{traceback.format_exc()}")
 
                 def _err() -> None:
                     self._launching = False
-                    s = self.query_one("#launch-status", Static)
-                    s.update(f"Launch error: {e}")
+                    self.query_one("#launch-status", Static).update(f"Launch error: {e}")
+                    self.app.notify(f"Launch failed: {e}", severity="error", timeout=10)
                     self._sync_status()
 
                 self.app.call_from_thread(_err)
 
         threading.Thread(target=_do_launch, daemon=True).start()
+
+    def _notify_runner(self, instance_name: str, run_dir: Path) -> None:
+        """Tell the StatusSubApp about the just-launched instance."""
+        from dimos.utils.cli.dio.sub_apps.runner import StatusSubApp
+
+        for inst in self.app._instances:  # type: ignore[attr-defined]
+            if isinstance(inst, StatusSubApp):
+                inst.on_launch_started(instance_name, run_dir)
+                break
