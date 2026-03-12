@@ -58,7 +58,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
       <a href="docs/capabilities/agents/readme.md"><img src="assets/readme/agentic_control.gif" alt="Agents" width="100%"></a>
     </td>
     <td align="center" width="50%">
-      <img src="assets/readme/spatial_memory.gif" alt="Spatial Memory" width="100%"></a>
+      <img src="assets/readme/spatial_memory.gif" alt="Spatial Memory" width="100%">
     </td>
   </tr>
   <tr>
@@ -113,8 +113,8 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
       🟨 <a href="docs/capabilities/manipulation/readme.md">AgileX Piper</a><br>
     </td>
     <td align="center" width="20%">
-      🟧 <a href="dimos/robot/drone">MAVLink</a><br>
-      🟧 <a href="dimos/robot/drone">DJI Mavic</a><br>
+      🟧 <a href="dimos/robot/drone/README.md">MAVLink</a><br>
+      🟧 <a href="dimos/robot/drone/README.md">DJI Mavic</a><br>
     </td>
     <td align="center" width="20%">
       🟥 <a href="https://github.com/dimensionalOS/openFT-sensor">Force Torque Sensor</a><br>
