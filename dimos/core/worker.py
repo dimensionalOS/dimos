@@ -343,7 +343,6 @@ def _worker_loop(conn: Connection, instances: dict[int, Any], worker_id: int) ->
                 module_class = request["module_class"]
                 kwargs = request["kwargs"]
                 module_id = request["module_id"]
-                print("DEPLOY", module_class, kwargs)
                 instance = module_class(**kwargs)
                 instances[module_id] = instance
                 response["result"] = module_id
