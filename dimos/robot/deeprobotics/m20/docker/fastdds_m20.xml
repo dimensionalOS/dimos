@@ -11,9 +11,24 @@
 -->
 <dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
     <profiles>
+        <!-- Transport must be defined before the participant references it -->
+        <transport_descriptors>
+            <transport_descriptor>
+                <transport_id>udp_transport</transport_id>
+                <type>UDPv4</type>
+                <interfaceWhiteList>
+                    <!-- NOS wired interface to AOS/GOS subnet -->
+                    <address>10.21.31.106</address>
+                </interfaceWhiteList>
+                <sendBufferSize>1048576</sendBufferSize>
+                <receiveBufferSize>1048576</receiveBufferSize>
+                <non_blocking_send>true</non_blocking_send>
+            </transport_descriptor>
+        </transport_descriptors>
+
         <participant profile_name="m20_nav_participant" is_default_profile="true">
             <rtps>
-                <!-- Disable built-in transports; use only the custom UDP below -->
+                <!-- Disable built-in transports; use only the custom UDP above -->
                 <useBuiltinTransports>false</useBuiltinTransports>
 
                 <userTransports>
@@ -51,18 +66,4 @@
             </rtps>
         </participant>
     </profiles>
-
-    <transports>
-        <transport_descriptor>
-            <transport_id>udp_transport</transport_id>
-            <type>UDPv4</type>
-            <interfaceWhiteList>
-                <!-- NOS wired interface to AOS/GOS subnet -->
-                <address>10.21.31.106</address>
-            </interfaceWhiteList>
-            <sendBufferSize>1048576</sendBufferSize>
-            <receiveBufferSize>1048576</receiveBufferSize>
-            <non_blocking_send>true</non_blocking_send>
-        </transport_descriptor>
-    </transports>
 </dds>

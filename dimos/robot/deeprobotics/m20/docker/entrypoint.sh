@@ -51,8 +51,8 @@ if ! wait_for_topic "/IMU"; then
     exit 1
 fi
 
-if ! wait_for_topic "/lidar_points"; then
-    err "Required topic /lidar_points unavailable. Exiting."
+if ! wait_for_topic "/LIDAR/POINTS"; then
+    err "Required topic /LIDAR/POINTS unavailable. Exiting."
     exit 1
 fi
 
