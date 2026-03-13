@@ -71,7 +71,7 @@ class HelloDockerModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.prompt.subscribe(self._on_prompt)))
+        self.register_disposable(Disposable(self.prompt.subscribe(self._on_prompt)))
 
     def _cowsay(self, text: str) -> str:
         """Run cowsay inside the container and return the ASCII art."""
@@ -103,7 +103,7 @@ class PromptModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.greeting.subscribe(self._on_greeting)))
+        self.register_disposable(Disposable(self.greeting.subscribe(self._on_greeting)))
 
     @rpc
     def send(self, text: str) -> None:

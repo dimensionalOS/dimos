@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator, Callable
 import concurrent.futures
 import json
 import os
@@ -24,10 +25,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 import uvicorn
 
 from dimos.agents.annotation import skill
+from dimos.agents.mcp import tool_stream
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall, RPCClient
@@ -39,15 +41,19 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+_SSE_KEEPALIVE_INTERVAL = 20.0  # seconds
+
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["POST"],
+    allow_methods=["POST", "GET"],
     allow_headers=["*"],
 )
 app.state.skills = []
 app.state.rpc_calls = {}
+app.state.sse_queues = []
+app.state.event_loop = None
 
 
 def _jsonrpc_result(req_id: Any, result: Any) -> dict[str, Any]:
@@ -67,7 +73,7 @@ def _handle_initialize(req_id: Any) -> dict[str, Any]:
         req_id,
         {
             "protocolVersion": "2025-11-25",
-            "capabilities": {"tools": {}},
+            "capabilities": {"tools": {}, "logging": {}},
             "serverInfo": {"name": "dimensional", "version": "1.0.0"},
         },
     )
@@ -93,28 +99,34 @@ async def _handle_tools_call(
 ) -> dict[str, Any]:
     name = params.get("name", "")
     args: dict[str, Any] = params.get("arguments") or {}
+    meta = params.get("_meta") or {}
+    progress_token = meta.get("progressToken")
 
     rpc_call = rpc_calls.get(name)
     if rpc_call is None:
         logger.warning("MCP tool not found", tool=name)
         return _jsonrpc_result_text(req_id, f"Tool not found: {name}")
 
-    logger.info("MCP tool call", tool=name, args=args)
+    logger.info("MCP tool call", tool=name, args=args, progress_token=progress_token)
     t0 = time.monotonic()
 
+    # _mcp_context is a reserved kwarg consumed by the `@skill` wrapper;
+    # it never reaches the user-visible skill signature.
+    call_kwargs = dict(args)
+    if progress_token is not None:
+        call_kwargs["_mcp_context"] = {"progress_token": progress_token}
+
     try:
-        result = await asyncio.get_event_loop().run_in_executor(None, lambda: rpc_call(**args))
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: rpc_call(**call_kwargs)
+        )
     except Exception as e:
         logger.exception("MCP tool error", tool=name, duration=f"{time.monotonic() - t0:.3f}s")
         return _jsonrpc_result_text(req_id, f"Error running tool '{name}': {e}")
 
     duration = f"{time.monotonic() - t0:.3f}s"
-
-    if result is None:
-        logger.info("MCP tool done (async)", tool=name, duration=duration)
-        return _jsonrpc_result_text(req_id, "It has started. You will be updated later.")
-
     response = str(result)[:200]
+
     if hasattr(result, "agent_encode"):
         logger.info("MCP tool done", tool=name, duration=duration, response=response)
         return _jsonrpc_result(req_id, {"content": result.agent_encode()})
@@ -161,23 +173,99 @@ async def mcp_endpoint(request: Request) -> Response:
             {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}},
             status_code=400,
         )
+
     result = await handle_request(body, request.app.state.skills, request.app.state.rpc_calls)
+
     if result is None:
         return Response(status_code=204)
     return JSONResponse(result)
 
 
+def _sse_frame(data: dict[str, Any]) -> str:
+    """Format a JSON-RPC message as an SSE ``event: message`` frame."""
+    return f"event: message\ndata: {json.dumps(data)}\n\n"
+
+
+def _fan_out_to_sse_queues(msg: dict[str, Any]) -> None:
+    """LCM subscriber callback: forward a tool-stream frame to every active SSE client."""
+    loop = app.state.event_loop
+    if loop is None:
+        return
+    for queue in list(app.state.sse_queues):
+        try:
+            asyncio.run_coroutine_threadsafe(queue.put(msg), loop)
+        except RuntimeError:
+            pass
+
+
+@app.get("/mcp")
+async def mcp_sse_endpoint() -> StreamingResponse:
+    """Persistent server-to-client SSE channel for MCP notifications.
+
+    This is the Streamable-HTTP transport's out-of-band channel for
+    server-initiated messages.  Every tool-stream update is fanned out here,
+    so the subscription is live for the full client session and independent
+    of any particular ``tools/call`` request.
+    """
+    queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+    # Remember the loop so the LCM subscriber (running on an LCM thread)
+    # can schedule queue.put via run_coroutine_threadsafe.
+    app.state.event_loop = asyncio.get_running_loop()
+    app.state.sse_queues.append(queue)
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            # Initial comment flushes the response headers and unblocks
+            # any synchronous client that's waiting on iter_lines().
+            yield ": connected\n\n"
+            while True:
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=_SSE_KEEPALIVE_INTERVAL)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                if msg is None:
+                    return
+                yield _sse_frame(msg)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            try:
+                app.state.sse_queues.remove(queue)
+            except ValueError:
+                pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+    )
+
+
 class McpServer(Module):
     _uvicorn_server: uvicorn.Server | None = None
     _serve_future: concurrent.futures.Future[None] | None = None
+    _tool_stream_cleanup: Callable[[], None] | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
         self._start_server()
+        self._tool_stream_cleanup = tool_stream.subscribe(_fan_out_to_sse_queues)
 
     @rpc
     def stop(self) -> None:
+        if self._tool_stream_cleanup is not None:
+            self._tool_stream_cleanup()
+            self._tool_stream_cleanup = None
+
+        for queue in list(app.state.sse_queues):
+            try:
+                queue.put_nowait(None)
+            except Exception:
+                pass
+        app.state.sse_queues.clear()
+
         if self._uvicorn_server:
             self._uvicorn_server.should_exit = True
             loop = self._loop
@@ -248,7 +336,7 @@ class McpServer(Module):
 
         _port = port if port is not None else global_config.mcp_port
         _host = global_config.listen_host
-        config = uvicorn.Config(app, host=_host, port=_port, log_level="info")
+        config = uvicorn.Config(app, host=_host, port=_port, log_level="warning", access_log=False)
         server = uvicorn.Server(config)
         self._uvicorn_server = server
         loop = self._loop

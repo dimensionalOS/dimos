@@ -14,8 +14,11 @@
 from __future__ import annotations
 
 import json
+from queue import Empty, Queue
 from unittest.mock import MagicMock, patch
 
+from langchain_core.messages import HumanMessage
+from langchain_core.messages.base import BaseMessage
 import pytest
 
 from dimos.agents.mcp.mcp_client import McpClient
@@ -143,3 +146,86 @@ def test_mcp_request_error_propagation(mcp_client: McpClient) -> None:
         raise AssertionError("Expected RuntimeError")
     except RuntimeError as e:
         assert "Unknown: bad/method" in str(e)
+
+
+def test_tool_stream_notification_becomes_human_message(mcp_client: McpClient) -> None:
+    """A `notifications/message` delivered over LCM becomes a HumanMessage."""
+    mcp_client._message_queue = Queue()
+
+    notification = {
+        "jsonrpc": "2.0",
+        "method": "notifications/message",
+        "params": {
+            "level": "info",
+            "logger": "follow_person",
+            "data": "Person follow stopped: lost track.",
+        },
+    }
+    mcp_client._on_tool_stream_message(notification)
+
+    msg: BaseMessage = mcp_client._message_queue.get_nowait()
+    assert isinstance(msg, HumanMessage)
+    assert "[tool:follow_person]" in str(msg.content)
+    assert "Person follow stopped: lost track." in str(msg.content)
+
+
+def test_tool_stream_ignores_unrelated_frames(mcp_client: McpClient) -> None:
+    """Unknown methods and empty bodies are dropped on the floor."""
+
+    mcp_client._message_queue = Queue()
+
+    mcp_client._on_tool_stream_message({"jsonrpc": "2.0", "method": "notifications/other"})
+    mcp_client._on_tool_stream_message(
+        {"jsonrpc": "2.0", "method": "notifications/message", "params": {"data": ""}}
+    )
+    mcp_client._on_tool_stream_message(
+        {"jsonrpc": "2.0", "method": "notifications/progress", "params": {"message": ""}}
+    )
+
+    with pytest.raises(Empty):
+        mcp_client._message_queue.get_nowait()
+
+
+def test_tool_stream_progress_frame_becomes_human_message(mcp_client: McpClient) -> None:
+    """A `notifications/progress` frame is routed as a HumanMessage."""
+
+    mcp_client._message_queue = Queue()
+
+    progress_frame = {
+        "jsonrpc": "2.0",
+        "method": "notifications/progress",
+        "params": {
+            "progressToken": "pt-abc",
+            "progress": 1,
+            "message": "Found a person",
+            "_meta": {"tool_name": "follow_person"},
+        },
+    }
+    mcp_client._on_tool_stream_message(progress_frame)
+
+    msg: BaseMessage = mcp_client._message_queue.get_nowait()
+    assert isinstance(msg, HumanMessage)
+    assert str(msg.content) == "[tool:follow_person] Found a person"
+
+
+def test_mcp_tool_call_sends_progress_token(mcp_client: McpClient) -> None:
+    """Every `tools/call` request carries a `_meta.progressToken`."""
+    captured: dict[str, object] = {}
+
+    def fake_request(method: str, params: dict[str, object] | None = None) -> dict[str, object]:
+        captured["method"] = method
+        captured["params"] = params
+        return {"content": [{"type": "text", "text": "ok"}]}
+
+    mcp_client._mcp_request = fake_request
+    mcp_client._mcp_tool_call("add", {"x": 1, "y": 2})
+
+    assert captured["method"] == "tools/call"
+    params = captured["params"]
+    assert isinstance(params, dict)
+    assert params["name"] == "add"
+    assert params["arguments"] == {"x": 1, "y": 2}
+    meta = params["_meta"]
+    assert isinstance(meta, dict)
+    token = meta["progressToken"]
+    assert isinstance(token, str) and len(token) > 0
