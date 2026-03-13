@@ -529,7 +529,7 @@ M20 uses DeepRobotics' proprietary `drdds` DDS implementation alongside standard
 
 1. **Phase 1 acceptance criteria:** Robot completes a full patrol loop (sequence of waypoints) and returns to start without human intervention.
 2. **DDS domain ID:** Run FASTLIO2 container on domain 0 to match rsdriver. No domain bridging needed.
-3. **NOS memory budget:** Profile first, optimize if OOM occurs. 4GB swap already available. Reduce voxel resolution or limit map size as fallback.
+3. **NOS memory budget:** Profile first, optimize if OOM occurs. 4GB swap already available. Fallback: offload SLAM to AOS (has spare compute after disabling lio_perception).
 4. **Concurrent rsdriver:** Subscribe only to AOS rsdriver (same L2 network as NOS, 10.21.33.x). Configure DDS peer filtering to exclude GOS instance.
 5. **Velocity translation:** Reuse M20Connection's existing Twist→NavCmd translation from `ros_sensors.py`. Same coordinate frames, same limits (~1.0 m/s linear, ~1.2 rad/s angular).
 
