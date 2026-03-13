@@ -21,6 +21,8 @@ all_blueprints = {
     "arm-teleop-piper": "dimos.teleop.quest.blueprints:arm_teleop_piper",
     "arm-teleop-visualizing": "dimos.teleop.quest.blueprints:arm_teleop_visualizing",
     "arm-teleop-xarm7": "dimos.teleop.quest.blueprints:arm_teleop_xarm7",
+    "booster-k1-basic": "dimos.robot.booster.k1.blueprints.basic.booster_k1_basic:booster_k1_basic",
+    "booster-k1-spatial": "dimos.robot.booster.k1.blueprints.smart.booster_k1_spatial:booster_k1_spatial",
     "coordinator-basic": "dimos.control.blueprints:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.control.blueprints:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.control.blueprints:coordinator_cartesian_ik_piper",
