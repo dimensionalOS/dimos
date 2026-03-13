@@ -413,7 +413,7 @@ cmd_status() {
         fi
 
         if command -v ros2 &>/dev/null; then
-            local topics=("/IMU" "/lidar_points" "/cmd_vel")
+            local topics=("/IMU" "/LIDAR/POINTS" "/registered_scan")
             for topic in "${topics[@]}"; do
                 local hz
                 hz=$(timeout 3 ros2 topic hz "$topic" --window 3 2>/dev/null | \

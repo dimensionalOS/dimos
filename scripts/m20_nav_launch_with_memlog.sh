@@ -47,10 +47,11 @@ log_mem
 # Clean up any existing container
 docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
-# Launch the container
+# Launch the container with proper env and memory limit
 log ">>> LAUNCHING CONTAINER <<<"
-log "Command: docker run -d --name $CONTAINER_NAME --network host -e LOCALIZATION_METHOD=fastlio $IMAGE"
-CONTAINER_ID=$(docker run -d --name "$CONTAINER_NAME" --network host -e LOCALIZATION_METHOD=fastlio "$IMAGE")
+DOCKER_CMD="docker run -d --name $CONTAINER_NAME --network host --memory=1.5g --shm-size=512m -e LOCALIZATION_METHOD=fastlio -e ROS_DOMAIN_ID=0 -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp $IMAGE"
+log "Command: $DOCKER_CMD"
+CONTAINER_ID=$($DOCKER_CMD)
 log "Container started: $CONTAINER_ID"
 
 # Monitor memory for 60 seconds after launch

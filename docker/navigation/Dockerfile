@@ -100,6 +100,8 @@ RUN cd ${WORKSPACE}/src && \
     git clone --recursive -b ROS2 https://github.com/hku-mars/FAST_LIO.git fast_lio
 
 # Create RoboSense config for FAST_LIO (M20 dual RSAIRY lidar + IMU topics)
+# Topic names: /LIDAR/POINTS is hardcoded in rslidar binary (not the /lidar_points
+# config value — that's a red herring). /IMU from NOS yesense at 200Hz.
 RUN cat > ${WORKSPACE}/src/fast_lio/config/robosense.yaml <<'FASTLIO_EOF'
 /**:
     ros__parameters:
@@ -113,7 +115,7 @@ RUN cat > ${WORKSPACE}/src/fast_lio/config/robosense.yaml <<'FASTLIO_EOF'
         map_file_path: "./test.pcd"
 
         common:
-            lid_topic:  "/lidar_points"
+            lid_topic:  "/LIDAR/POINTS"
             imu_topic:  "/IMU"
             time_sync_en: false
             time_offset_lidar_to_imu: 0.0
