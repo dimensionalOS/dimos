@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import atexit
-from dataclasses import dataclass, field
+from pydantic import Field
 import subprocess
 import threading
 import time
@@ -52,7 +52,6 @@ def _cleanup_graspgen_containers() -> None:
 
 atexit.register(_cleanup_graspgen_containers)
 
-@dataclass
 class PickPlaceModuleConfig(ModuleConfig):
     """Configuration for BT-based PickPlaceModule."""
 
@@ -93,7 +92,7 @@ class PickPlaceModuleConfig(ModuleConfig):
     max_approach_angle: float = 1.05  # radians (~60 deg)
 
     # Home joint configuration — resolved at runtime via get_init_joints RPC if empty
-    home_joints: list[float] = field(default_factory=list)
+    home_joints: list[float] = Field(default_factory=list)
 
 class PickPlaceModule(Module):
     """BT-orchestrated pick-and-place module.
@@ -128,8 +127,8 @@ class PickPlaceModule(Module):
         "ObjectSceneRegistrationModule.get_full_scene_pointcloud",
     ]
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._last_pick_position: Vector3 | None = None
