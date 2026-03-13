@@ -104,7 +104,6 @@ class TaskConfig:
     gripper_closed_pos: float = 0.0
 
 
-@dataclass
 class ControlCoordinatorConfig(ModuleConfig):
     """Configuration for the ControlCoordinator.
 

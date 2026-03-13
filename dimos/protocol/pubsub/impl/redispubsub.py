@@ -14,25 +14,24 @@
 
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass, field
 import json
 import threading
 import time
 from types import TracebackType
 from typing import Any
 
+from pydantic import Field
 import redis  # type: ignore[import-not-found]
 
 from dimos.protocol.pubsub.spec import PubSub
-from dimos.protocol.service.spec import Service
+from dimos.protocol.service.spec import BaseConfig, Service
 
 
-@dataclass
-class RedisConfig:
+class RedisConfig(BaseConfig):
     host: str = "localhost"
     port: int = 6379
     db: int = 0
-    kwargs: dict[str, Any] = field(default_factory=dict)
+    kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
 class Redis(PubSub[str, Any], Service[RedisConfig]):

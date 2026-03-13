@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import logging
+import sys
 from threading import Thread
 import time
 from typing import TYPE_CHECKING, Any, Protocol
 
+from pydantic import Field
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 import rerun.blueprint as rrb
@@ -24,8 +26,8 @@ import rerun.blueprint as rrb
 from dimos import spec
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module
+from dimos.core.global_config import GlobalConfig
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, pSHMTransport
@@ -46,7 +48,16 @@ from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.testing.replay import TimedSensorReplay, TimedSensorStorage
 
+if sys.version_info < (3, 13):
+    from typing_extensions import TypeVar
+else:
+    from typing import TypeVar
+
 logger = logging.getLogger(__name__)
+
+
+class ConnectionConfig(ModuleConfig):
+    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -170,7 +181,12 @@ class ReplayConnection(UnitreeWebRTCConnection):
         return {"status": "ok", "message": "Fake publish"}
 
 
-class GO2Connection(Module, spec.Camera, spec.Pointcloud):
+_Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
+
+
+class GO2Connection(Module[_Config], spec.Camera, spec.Pointcloud):
+    default_config = ConnectionConfig  # type: ignore[assignment]
+
     cmd_vel: In[Twist]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
@@ -180,7 +196,6 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
-    _global_config: GlobalConfig
     _camera_info_thread: Thread | None = None
     _latest_video_frame: Image | None = None
 
@@ -194,22 +209,12 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
             ),
         ]
 
-    def __init__(  # type: ignore[no-untyped-def]
-        self,
-        ip: str | None = None,
-        cfg: GlobalConfig = global_config,
-        *args,
-        **kwargs,
-    ) -> None:
-        self._global_config = cfg
-
-        ip = ip if ip is not None else self._global_config.robot_ip
-        self.connection = make_connection(ip, self._global_config)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.connection = make_connection(self.config.ip, self.config.g)
 
         if hasattr(self.connection, "camera_info_static"):
             self.camera_info_static = self.connection.camera_info_static
-
-        Module.__init__(self, *args, **kwargs)
 
     @rpc
     def record(self, recording_name: str) -> None:
@@ -246,7 +251,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         self.standup()
         time.sleep(3)
         self.connection.balance_stand()
-        self.connection.set_obstacle_avoidance(self._global_config.obstacle_avoidance)
+        self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
         # self.record("go2_bigoffice")
 
@@ -339,7 +344,7 @@ go2_connection = GO2Connection.blueprint
 def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy":
     from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 
-    connection = dimos.deploy(GO2Connection, ip)  # type: ignore[attr-defined]
+    connection = dimos.deploy(GO2Connection, ip=ip)
 
     connection.pointcloud.transport = pSHMTransport(
         f"{prefix}/lidar", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE

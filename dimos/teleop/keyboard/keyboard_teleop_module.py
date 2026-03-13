@@ -28,7 +28,6 @@ Keyboard controls:
     ESC: Quit
 """
 
-from dataclasses import dataclass
 import os
 import threading
 import time
@@ -64,7 +63,6 @@ def _clamp(value: float, min_val: float, max_val: float) -> float:
     return max(min_val, min(max_val, value))
 
 
-@dataclass
 class KeyboardTeleopConfig(ModuleConfig):
     model_path: str = ""
     ee_joint_id: int = 6
@@ -84,8 +82,8 @@ class KeyboardTeleopModule(Module[KeyboardTeleopConfig]):
     _stop_event: threading.Event
     _thread: threading.Thread | None = None
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._stop_event = threading.Event()
 
     @rpc

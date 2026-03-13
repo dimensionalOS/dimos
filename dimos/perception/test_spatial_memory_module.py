@@ -20,7 +20,7 @@ import pytest
 from reactivex import operators as ops
 
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
@@ -35,21 +35,22 @@ from dimos.utils.testing import TimedSensorReplay
 logger = setup_logger()
 
 
-class VideoReplayModule(Module):
+class VideoReplayConfig(ModuleConfig):
+    video_path: str
+
+
+class VideoReplayModule(Module[VideoReplayConfig]):
     """Module that replays video data from TimedSensorReplay."""
 
+    default_config = VideoReplayConfig
     video_out: Out[Image]
-
-    def __init__(self, video_path: str) -> None:
-        super().__init__()
-        self.video_path = video_path
-        self._subscription = None
+    _subscription = None
 
     @rpc
     def start(self) -> None:
         """Start replaying video data."""
         # Use TimedSensorReplay to replay video frames
-        video_replay = TimedSensorReplay(self.video_path, autocast=Image.from_numpy)
+        video_replay = TimedSensorReplay(self.config.video_path, autocast=Image.from_numpy)
 
         # Subscribe to the replay stream and publish to LCM
         self._subscription = (

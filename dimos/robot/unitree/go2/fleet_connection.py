@@ -16,16 +16,25 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+import sys
 from typing import TYPE_CHECKING, Any
 
+from pydantic import Field, model_validator
+
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.robot.unitree.go2.connection import (
+    ConnectionConfig,
     GO2Connection,
     Go2ConnectionProtocol,
     make_connection,
 )
 from dimos.utils.logging_config import setup_logger
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing import Any as Self
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs import Twist
@@ -33,35 +42,36 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-class Go2FleetConnection(GO2Connection):
+class FleetConnectionConfig(ConnectionConfig):
+    ips: Sequence[str] = Field(
+        default_factory=lambda m: [ip.strip() for ip in m["g"].robot_ips.split(",")]
+    )
+
+    @model_validator(mode="after")
+    def set_ip_after_validation(self) -> Self:
+        if self.ip is None:
+            self.ip = self.ips[0]
+        return self
+
+
+class Go2FleetConnection(GO2Connection[FleetConnectionConfig]):
     """Inherits all single-robot behaviour from GO2Connection for the primary
     (first) robot. Additional robots only receive broadcast commands
     (move, standup, liedown, publish_request).
     """
 
-    def __init__(
-        self,
-        ips: list[str] | None = None,
-        cfg: GlobalConfig = global_config,
-        *args: object,
-        **kwargs: object,
-    ) -> None:
-        if not ips:
-            raw = cfg.robot_ips
-            if not raw:
-                raise ValueError(
-                    "No IPs provided. Pass ips= or set ROBOT_IPS (e.g. ROBOT_IPS=10.0.0.102,10.0.0.209)"
-                )
-            ips = [ip.strip() for ip in raw.split(",") if ip.strip()]
-        self._extra_ips = ips[1:]
+    default_config = FleetConnectionConfig
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._extra_ips = self.config.ips[1:]
         self._extra_connections: list[Go2ConnectionProtocol] = []
-        super().__init__(ips[0], cfg, *args, **kwargs)
 
     @rpc
     def start(self) -> None:
         self._extra_connections.clear()
         for ip in self._extra_ips:
-            conn = make_connection(ip, self._global_config)
+            conn = make_connection(ip, self.config.g)
             conn.start()
             self._extra_connections.append(conn)
 
@@ -69,7 +79,7 @@ class Go2FleetConnection(GO2Connection):
         super().start()
         for conn in self._extra_connections:
             conn.balance_stand()
-            conn.set_obstacle_avoidance(self._global_config.obstacle_avoidance)
+            conn.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
     @rpc
     def stop(self) -> None:

@@ -20,7 +20,7 @@ Then install DimOS:
 ```bash
 uv venv --python "3.12"
 source .venv/bin/activate
-uv pip install dimos[base,unitree]
+uv pip install 'dimos[base,unitree]'
 ```
 
 ## Try It — No Hardware Needed
@@ -85,7 +85,7 @@ From the command center ([localhost:7779](http://localhost:7779)):
 ## MuJoCo Simulation
 
 ```bash
-uv pip install dimos[base,unitree,sim]
+uv pip install 'dimos[base,unitree,sim]'
 dimos --simulation run unitree-go2
 ```
 

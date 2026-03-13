@@ -13,9 +13,10 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import cast
 
+from pydantic import Field
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
@@ -32,9 +33,8 @@ from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.utils.reactive import getter_hot
 
 
-@dataclass
 class Config(ModuleConfig):
-    embedding_model: EmbeddingModel = field(default_factory=CLIPModel)
+    embedding_model: EmbeddingModel = Field(default_factory=CLIPModel)
 
 
 @dataclass
@@ -50,7 +50,6 @@ class SpatialEmbedding(SpatialEntry):
 
 class EmbeddingMemory(Module[Config]):
     default_config = Config
-    config: Config
     color_image: In[Image]
     global_costmap: In[OccupancyGrid]
 

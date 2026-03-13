@@ -19,12 +19,12 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
 from dimos.core.worker_manager import WorkerManager
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.core.module import Module, ModuleT
     from dimos.core.resource_monitor.monitor import StatsMonitor
     from dimos.core.rpc_client import ModuleProxy
     from dimos.core.worker import Worker
@@ -37,7 +37,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
     _global_config: GlobalConfig
     _n: int | None = None
     _memory_limit: str = "auto"
-    _deployed_modules: dict[type[Module], ModuleProxy]
+    _deployed_modules: dict[type[ModuleBase], ModuleProxy]
     _stats_monitor: StatsMonitor | None = None
 
     def __init__(
@@ -115,17 +115,20 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
 
         self._client.close_all()  # type: ignore[union-attr]
 
-    def deploy(self, module_class: type[ModuleT], *args, **kwargs) -> ModuleProxy:  # type: ignore[no-untyped-def]
+    def deploy(
+        self,
+        module_class: type[ModuleBase[Any]],
+        global_config: GlobalConfig = global_config,
+        **kwargs: Any,
+    ) -> ModuleProxy:
         if not self._client:
             raise ValueError("Trying to dimos.deploy before the client has started")
 
-        module: ModuleProxy = self._client.deploy(module_class, *args, **kwargs)  # type: ignore[union-attr, attr-defined, assignment]
-        self._deployed_modules[module_class] = module
-        return module
+        module = self._client.deploy(module_class, global_config, kwargs)
+        self._deployed_modules[module_class] = module  # type: ignore[assignment]
+        return module  # type: ignore[return-value]
 
-    def deploy_parallel(
-        self, module_specs: list[tuple[type[ModuleT], tuple[Any, ...], dict[str, Any]]]
-    ) -> list[ModuleProxy]:
+    def deploy_parallel(self, module_specs: list[ModuleSpec]) -> list[ModuleProxy]:
         if not self._client:
             raise ValueError("Not started")
 
@@ -148,7 +151,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
             if hasattr(module, "on_system_modules"):
                 module.on_system_modules(module_list)
 
-    def get_instance(self, module: type[ModuleT]) -> ModuleProxy:
+    def get_instance(self, module: type[ModuleBase]) -> ModuleProxy:
         return self._deployed_modules.get(module)  # type: ignore[return-value, no-any-return]
 
     def loop(self) -> None:

@@ -15,11 +15,11 @@
 from __future__ import annotations
 
 import atexit
-from dataclasses import dataclass, field
 import threading
 import time
 
 import cv2
+from pydantic import Field
 import pyzed.sl as sl
 import reactivex as rx
 
@@ -50,14 +50,13 @@ def default_base_transform() -> Transform:
     )
 
 
-@dataclass
 class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
     width: int = 1280
     height: int = 720
     fps: int = 15
     camera_name: str = "camera"
     base_frame_id: str = "base_link"
-    base_transform: Transform | None = field(default_factory=default_base_transform)
+    base_transform: Transform | None = Field(default_factory=default_base_transform)
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_pointcloud: bool = False
@@ -76,14 +75,13 @@ class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
     world_frame: str = "world"
 
 
-class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
+class ZEDCamera(DepthCameraHardware, Module[ZEDCameraConfig], perception.DepthCamera):
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
 
-    config: ZEDCameraConfig
     default_config = ZEDCameraConfig
 
     @property

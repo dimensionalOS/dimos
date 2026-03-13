@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from threading import RLock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import HumanMessage
 
@@ -34,8 +34,6 @@ from dimos.utils.reactive import backpressure
 if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
 
-    from dimos.core.global_config import GlobalConfig
-    from dimos.models.vl.base import VlModel
 
 logger = setup_logger()
 
@@ -46,13 +44,9 @@ class PerceiveLoopSkill(Module):
     _agent_spec: AgentSpec
     _period: float = 0.5  # seconds - how often to run the perceive loop
 
-    def __init__(
-        self,
-        cfg: GlobalConfig,
-    ) -> None:
-        super().__init__()
-        self._global_config: GlobalConfig = cfg
-        self._vl_model: VlModel = create(cfg.detection_model)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._vl_model = create(self.config.g.detection_model)
         self._active_lookout: tuple[str, ...] = ()
         self._lookout_subscription: DisposableBase | None = None
         self._model_started: bool = False

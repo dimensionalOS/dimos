@@ -13,22 +13,26 @@
 # limitations under the License.
 
 """
-Blueprints for manipulation module integration with ControlCoordinator.
+Manipulation blueprints.
 
-Usage:
-    # Non-agentic (manual RPC):
-    dimos run coordinator-mock
-    dimos run xarm-perception
+Quick start:
+    # 1. Verify manipulation deps load correctly (standalone, no hardware):
+    dimos run xarm6-planner-only
 
-    # Agentic (LLM agent with skills):
-    dimos run coordinator-mock
-    dimos run xarm-perception-agent
+    # 2. Keyboard teleop with mock arm:
+    dimos run keyboard-teleop-xarm7
+
+    # 3. Interactive RPC client (plan, preview, execute from Python):
+    dimos run xarm7-planner-coordinator
+    python -i -m dimos.manipulation.planning.examples.manipulation_client
 """
 
 import math
 from pathlib import Path
 
 from dimos.agents.agent import Agent
+from dimos.control.components import HardwareComponent, HardwareType, make_joints
+from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense import realsense_camera
@@ -316,12 +320,35 @@ dual_xarm6_planner = manipulation_module(
 )
 
 
-# Single XArm7 planner for coordinator-mock
-# Usage: dimos run coordinator-mock, then dimos run xarm7-planner-coordinator
-xarm7_planner_coordinator = manipulation_module(
-    robots=[_make_xarm7_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
-    planning_timeout=10.0,
-    enable_viz=True,
+# Single XArm7 planner + mock coordinator (standalone, no external coordinator needed)
+# Usage: dimos run xarm7-planner-coordinator
+xarm7_planner_coordinator = autoconnect(
+    manipulation_module(
+        robots=[_make_xarm7_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
+        planning_timeout=10.0,
+        enable_viz=True,
+    ),
+    control_coordinator(
+        tick_rate=100.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[
+            HardwareComponent(
+                hardware_id="arm",
+                hardware_type=HardwareType.MANIPULATOR,
+                joints=make_joints("arm", 7),
+                adapter_type="mock",
+            ),
+        ],
+        tasks=[
+            TaskConfig(
+                name="traj_arm",
+                type="trajectory",
+                joint_names=[f"arm_joint{i + 1}" for i in range(7)],
+                priority=10,
+            ),
+        ],
+    ),
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),

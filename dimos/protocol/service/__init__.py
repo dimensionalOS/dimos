@@ -1,8 +1,9 @@
 from dimos.protocol.service.lcmservice import LCMService
-from dimos.protocol.service.spec import Configurable as Configurable, Service as Service
+from dimos.protocol.service.spec import BaseConfig, Configurable, Service
 
-__all__ = [
+__all__ = (
+    "BaseConfig",
     "Configurable",
     "LCMService",
     "Service",
-]
+)

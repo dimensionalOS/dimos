@@ -33,11 +33,7 @@ class NavigationModule(Module):
     goal_reached: In[Bool]
     cancel_goal: Out[Bool]
     joy: Out[Joy]
-
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        """Initialize NavigationModule."""
-        Module.__init__(self, *args, **kwargs)
-        self.goal_reach = None
+    goal_reach = None
 
     @rpc
     def start(self) -> None:

@@ -21,11 +21,12 @@ import logging
 import socket
 import threading
 import time
+from typing import Any
 
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -48,12 +49,20 @@ class RobotMode:
     RECOVERY = 6
 
 
-class B1ConnectionModule(Module):
+class B1ConnectionConfig(ModuleConfig):
+    ip: str = "192.168.12.1"
+    port: int = 9090
+    test_mode: bool = False
+
+
+class B1ConnectionModule(Module[B1ConnectionConfig]):
     """UDP connection module for B1 robot with standard Twist interface.
 
     Accepts standard ROS Twist messages on /cmd_vel and mode changes on /b1/mode,
     internally converts to B1Command format, and sends UDP packets at 50Hz.
     """
+
+    default_config = B1ConnectionConfig
 
     # LCM ports (inter-module communication)
     cmd_vel: In[TwistStamped]
@@ -67,9 +76,7 @@ class B1ConnectionModule(Module):
     ros_odom_in: In[Odometry]
     ros_tf: In[TFMessage]
 
-    def __init__(  # type: ignore[no-untyped-def]
-        self, ip: str = "192.168.12.1", port: int = 9090, test_mode: bool = False, *args, **kwargs
-    ) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize B1 connection module.
 
         Args:
@@ -77,11 +84,11 @@ class B1ConnectionModule(Module):
             port: UDP port for joystick server
             test_mode: If True, print commands instead of sending UDP
         """
-        Module.__init__(self, *args, **kwargs)
+        super().__init__(**kwargs)
 
-        self.ip = ip
-        self.port = port
-        self.test_mode = test_mode
+        self.ip = self.config.ip
+        self.port = self.config.port
+        self.test_mode = self.config.test_mode
         self.current_mode = RobotMode.IDLE  # Start in IDLE mode
         self._current_cmd = B1Command(mode=RobotMode.IDLE)
         self.cmd_lock = threading.Lock()  # Thread lock for _current_cmd access
@@ -383,9 +390,10 @@ class B1ConnectionModule(Module):
 class MockB1ConnectionModule(B1ConnectionModule):
     """Test connection module that prints commands instead of sending UDP."""
 
-    def __init__(self, ip: str = "127.0.0.1", port: int = 9090, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any) -> None:  # type: ignore[no-untyped-def]
         """Initialize test connection without creating socket."""
-        super().__init__(ip, port, test_mode=True, *args, **kwargs)  # type: ignore[misc]
+        kwargs["test_mode"] = True
+        super().__init__(**kwargs)
 
     def _send_loop(self) -> None:
         """Override to provide better test output with timeout detection."""

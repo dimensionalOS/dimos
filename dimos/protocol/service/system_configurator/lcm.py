@@ -168,6 +168,17 @@ class MulticastConfiguratorMacOS(SystemConfigurator):
         return f"Multicast: - sudo {' '.join(self.add_route_cmd)}"
 
     def fix(self) -> None:
+        # Delete any existing 224.0.0.0/4 route (e.g. on en0) before adding on lo0,
+        # otherwise `route add` fails with "route already in use"
+        sudo_run(
+            "route",
+            "delete",
+            "-net",
+            "224.0.0.0/4",
+            check=False,
+            text=True,
+            capture_output=True,
+        )
         sudo_run(*self.add_route_cmd, check=True, text=True, capture_output=True)
 
 

@@ -11,13 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from collections.abc import Callable
-from dataclasses import dataclass
-from typing import Any
+from collections.abc import Callable, Sequence
+from typing import Annotated, Any
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
+from pydantic.experimental.pipeline import validate_as
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
@@ -38,24 +38,21 @@ from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
 
-@dataclass
 class Config(ModuleConfig):
     max_freq: float = 10
     detector: Callable[[Any], Detector] | None = Yolo2DDetector
     publish_detection_images: bool = True
-    camera_info: CameraInfo = None  # type: ignore[assignment]
-    filter: list[Filter2D] | Filter2D | None = None
+    camera_info: CameraInfo
+    filter: Annotated[
+        Sequence[Filter2D],
+        validate_as(Sequence[Filter2D] | Filter2D).transform(
+            lambda f: f if isinstance(f, Sequence) else (f,)
+        ),
+    ] = ()
 
-    def __post_init__(self) -> None:
-        if self.filter is None:
-            self.filter = []
-        elif not isinstance(self.filter, list):
-            self.filter = [self.filter]
 
-
-class Detection2DModule(Module):
+class Detection2DModule(Module[Config]):
     default_config = Config
-    config: Config
     detector: Detector
 
     color_image: In[Image]

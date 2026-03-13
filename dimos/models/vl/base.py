@@ -1,21 +1,24 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+import sys
+from typing import Any
 import warnings
 
 from dimos.core.resource import Resource
 from dimos.msgs.sensor_msgs import Image
-from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
+from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
+from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.data import get_data
 from dimos.utils.decorators import retry
 from dimos.utils.llm_utils import extract_json
 
-if TYPE_CHECKING:
-    from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
+if sys.version_info < (3, 13):
+    from typing_extensions import TypeVar
+else:
+    from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -159,15 +162,17 @@ def vlm_point_to_detection2d_point(
     )
 
 
-@dataclass
-class VlModelConfig:
+class VlModelConfig(BaseConfig):
     """Configuration for VlModel."""
 
     auto_resize: tuple[int, int] | None = None
     """Optional (width, height) tuple. If set, images are resized to fit."""
 
 
-class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
+_VlConfig = TypeVar("_VlConfig", bound=VlModelConfig)
+
+
+class VlModel(Captioner, Resource, Configurable[_VlConfig]):
     """Vision-language model that can answer questions about images.
 
     Inherits from Captioner, providing a default caption() implementation
@@ -176,8 +181,7 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
     Implements Resource interface for lifecycle management.
     """
 
-    default_config = VlModelConfig
-    config: VlModelConfig
+    default_config: type[_VlConfig] = VlModelConfig  # type: ignore[assignment]
 
     def _prepare_image(self, image: Image) -> tuple[Image, float]:
         """Prepare image for inference, applying any configured transformations.

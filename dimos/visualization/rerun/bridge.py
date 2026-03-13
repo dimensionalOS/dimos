@@ -16,11 +16,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import field
 from functools import lru_cache
 import time
 from typing import (
-    TYPE_CHECKING,
     Any,
     Literal,
     Protocol,
@@ -31,6 +31,8 @@ from typing import (
 )
 
 from reactivex.disposable import Disposable
+from rerun._baseclasses import Archetype
+from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
 import typer
 
@@ -39,6 +41,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
+from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.utils.logging_config import setup_logger
 
 # Message types with large payloads that need rate-limiting.
@@ -96,15 +99,7 @@ RERUN_WEB_PORT = 9090
 
 logger = setup_logger()
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from rerun._baseclasses import Archetype
-    from rerun.blueprint import Blueprint
-
-    from dimos.protocol.pubsub.spec import SubscribeAllCapable
-
-BlueprintFactory: TypeAlias = "Callable[[], Blueprint]"
+BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
 
 # to_rerun() can return a single archetype or a list of (entity_path, archetype) tuples
 RerunMulti: TypeAlias = "list[tuple[str, Archetype]]"
@@ -113,8 +108,6 @@ RerunData: TypeAlias = "Archetype | RerunMulti"
 
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
     """Check if data is a list of (entity_path, archetype) tuples."""
-    from rerun._baseclasses import Archetype
-
     return (
         isinstance(data, list)
         and bool(data)
@@ -167,7 +160,6 @@ def _resolve_viewer_mode() -> ViewerMode:
     return _BACKEND_TO_MODE.get(global_config.viewer, "native")
 
 
-@dataclass
 class Config(ModuleConfig):
     """Configuration for RerunBridgeModule."""
 
@@ -190,7 +182,7 @@ class Config(ModuleConfig):
     blueprint: BlueprintFactory | None = _default_blueprint
 
 
-class RerunBridgeModule(Module):
+class RerunBridgeModule(Module[Config]):
     """Bridge that logs messages from pubsubs to Rerun.
 
     Spawns its own Rerun viewer and subscribes to all topics on each provided
@@ -207,7 +199,6 @@ class RerunBridgeModule(Module):
     """
 
     default_config = Config
-    config: Config
 
     @lru_cache(maxsize=256)
     def _visual_override_for_entity_path(
@@ -218,8 +209,6 @@ class RerunBridgeModule(Module):
         Chains matching overrides from config, ending with final_convert
         which handles .to_rerun() or passes through Archetypes.
         """
-        from rerun._baseclasses import Archetype
-
         # find all matching converters for this entity path
         matches = [
             fn

@@ -18,7 +18,7 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.vision_msgs import Detection2DArray
@@ -27,17 +27,19 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger(level=logging.DEBUG)
 
 
-class BBoxNavigationModule(Module):
+class Config(ModuleConfig):
+    goal_distance: float = 1.0
+
+
+class BBoxNavigationModule(Module[Config]):
     """Minimal module that converts 2D bbox center to navigation goals."""
+
+    default_config = Config
 
     detection2d: In[Detection2DArray]
     camera_info: In[CameraInfo]
     goal_request: Out[PoseStamped]
-
-    def __init__(self, goal_distance: float = 1.0) -> None:
-        super().__init__()
-        self.goal_distance = goal_distance
-        self.camera_intrinsics = None
+    camera_intrinsics = None
 
     @rpc
     def start(self) -> None:
@@ -62,9 +64,9 @@ class BBoxNavigationModule(Module):
             det.detections[0].bbox.center.position.y,
         )
         x, y, z = (
-            (center_x - cx) / fx * self.goal_distance,
-            (center_y - cy) / fy * self.goal_distance,
-            self.goal_distance,
+            (center_x - cx) / fx * self.config.goal_distance,
+            (center_y - cy) / fy * self.config.goal_distance,
+            self.config.goal_distance,
         )
         goal = PoseStamped(
             position=Vector3(z, -x, -y),

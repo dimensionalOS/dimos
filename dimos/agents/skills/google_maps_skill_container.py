@@ -32,8 +32,8 @@ class GoogleMapsSkillContainer(Module):
 
     gps_location: In[LatLon]
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         try:
             self._client = GoogleMaps()
         except ValueError:
