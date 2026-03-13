@@ -62,6 +62,8 @@ all_blueprints = {
     "mid360-fastlio-voxels-native": "dimos.hardware.sensors.lidar.fastlio2.fastlio_blueprints:mid360_fastlio_voxels_native",
     "phone-go2-fleet-teleop": "dimos.teleop.phone.blueprints:phone_go2_fleet_teleop",
     "phone-go2-teleop": "dimos.teleop.phone.blueprints:phone_go2_teleop",
+    "sim-basic": "dimos.robot.sim.blueprints.basic.sim_basic:sim_basic",
+    "sim-nav": "dimos.robot.sim.blueprints.nav.sim_nav:sim_nav",
     "simple-phone-teleop": "dimos.teleop.phone.blueprints:simple_phone_teleop",
     "uintree-g1-primitive-no-nav": "dimos.robot.unitree.g1.blueprints.primitive.uintree_g1_primitive_no_nav:uintree_g1_primitive_no_nav",
     "unitree-g1": "dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1:unitree_g1",
