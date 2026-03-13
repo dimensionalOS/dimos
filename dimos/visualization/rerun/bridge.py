@@ -200,6 +200,10 @@ class RerunBridgeModule(Module[Config]):
 
     default_config = Config
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        print("BRIDEG" * 10, self.config.memory_limit)
+
     @lru_cache(maxsize=256)
     def _visual_override_for_entity_path(
         self, entity_path: str

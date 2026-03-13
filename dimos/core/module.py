@@ -107,6 +107,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
 
     def __init__(self, config_args: dict[str, Any]):
         super().__init__(**config_args)
+        print("MODULE", self, config_args, self.config)
         self._module_closed_lock = threading.Lock()
         self._loop, self._loop_thread = get_loop()
         self._disposables = CompositeDisposable()
@@ -116,6 +117,11 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
             self.rpc.start()  # type: ignore[attr-defined]
         except ValueError:
             ...
+
+    @classproperty
+    def name(self) -> str:
+        """Name for this module to be used for blueprint configs."""
+        return self.__name__.lower()
 
     @property
     def frame_id(self) -> str:

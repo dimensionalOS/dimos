@@ -18,19 +18,31 @@ from datetime import datetime, timezone
 import inspect
 import json
 import os
+from pathlib import Path
 import sys
 import time
+import types
 from typing import Any, get_args, get_origin
 
 import click
 from dotenv import load_dotenv
+from pydantic import BaseModel
+from pydantic_core import PydanticUndefined
 import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
+from dimos.core.blueprints import Blueprint
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.utils.logging_config import setup_logger
+
+try:
+    from gi.repository import GLib
+except ImportError:
+    CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+else:
+    CONFIG_DIR = Path(GLib.get_user_config_dir())
 
 logger = setup_logger()
 
@@ -108,12 +120,72 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 
 
+def arghelp(config: BaseModel, blueprint: Blueprint, indent: str = "    ", module: str = "") -> str:
+    output = ""
+    for k, info in config.model_fields.items():
+        if k == "g":
+            continue
+        t = info.annotation
+        if isinstance(t, types.GenericAlias):
+            # Can't be specified on CLI
+            continue
+
+        if issubclass(t, BaseModel):
+            output += f"{indent}{module}{k}:\n"
+            # Find blueprint atom
+            bp = next(bp for bp in blueprint.blueprints if bp.module.name == k)
+            output += arghelp(t, bp, indent=indent + "  ", module=module + k + ".")
+        else:
+            # Use __name__ to avoid "<class 'int'>" style output on basic types.
+            display_type = t.__name__ if isinstance(t, type) else t
+            required = "[Required] " if info.is_required() and k not in blueprint.kwargs else ""
+            d = blueprint.kwargs.get(k, info.default)
+            default = f" (default: {d})" if d is not PydanticUndefined else ""
+            output += f"{indent}* {required}{module}{k}: {display_type}{default}\n"
+    return output
+
+
+def load_config_args(config: BaseModel, args: Iterable[str], path: Path) -> dict[str, Any]:
+    try:
+        kwargs = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        kwargs = {}
+
+    for k, v in os.environ.items():
+        parts = k.lower().split("__")
+        if parts[0] not in config.model_fields:
+            continue
+        d = kwargs
+        for p in parts[:-1]:
+            d = d.setdefault(p, {})
+        d[parts[-1]] = v
+
+    for arg in args:
+        k, _, v = arg.partition("=")
+        parts = k.split(".")
+        d = kwargs
+        for p in parts[:-1]:
+            d = d.setdefault(p, {})
+        d[parts[-1]] = v
+
+    # We don't need this config, but this atleast validates the user input first.
+    # This will help catch misspellings and similar mistakes.
+    config(**kwargs)
+
+    return kwargs
+
+
 @main.command()
 def run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+    blueprint_args: list[str] = typer.Option((), "--option", "-o"),
+    config_path: Path = typer.Option(
+        CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+    ),
+    show_help: bool = typer.Option(False, "--help"),
 ) -> None:
     """Start a robot blueprint"""
     logger.info("Starting DimOS")
@@ -132,7 +204,7 @@ def run(
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
-    global_config.update(**cli_config_overrides)
+    # global_config.update(**cli_config_overrides)
 
     # Clean stale registry entries
     stale = cleanup_stale()
@@ -163,7 +235,17 @@ def run(
         disabled_classes = tuple(get_module_by_name(name).blueprints[0].module for name in disable)
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
-    coordinator = blueprint.build(cli_config_overrides=cli_config_overrides)
+    if show_help:
+        print("Blueprint arguments:")
+        print(arghelp(blueprint.config(), blueprint))
+        return
+
+    blueprint_config = blueprint.config()
+    kwargs = load_config_args(blueprint_config, blueprint_args, config_path)
+    if cli_config_overrides:
+        kwargs["g"] = cli_config_overrides
+
+    coordinator = blueprint.build(kwargs)
 
     if daemon:
         from dimos.core.daemon import (
@@ -464,6 +546,8 @@ def restart(
     except OSError as exc:
         typer.echo(f"Error: failed to restart — {exc}", err=True)
         raise typer.Exit(1)
+
+    sub_command(blueprint_args)
 
 
 @main.command()

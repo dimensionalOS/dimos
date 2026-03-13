@@ -22,6 +22,8 @@ import sys
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin, get_type_hints
 
+from pydantic import BaseModel, create_model
+
 if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
@@ -129,6 +131,11 @@ class Blueprint:
 
     def disabled_modules(self, *modules: type[ModuleBase]) -> "Blueprint":
         return replace(self, disabled_modules_tuple=self.disabled_modules_tuple + modules)
+
+    def config(self) -> BaseModel:
+        configs = {b.module.name: (b.module.default_config | None, None) for b in self.blueprints}
+        configs["g"] = (GlobalConfig | None, None)
+        return create_model("BlueprintConfig", __config__={"extra": "forbid"}, **configs)
 
     def transports(self, transports: dict[tuple[str, type], Any]) -> "Blueprint":
         return replace(self, transport_map=MappingProxyType({**self.transport_map, **transports}))
@@ -274,13 +281,16 @@ class Blueprint:
         raise ValueError("\n".join(error_lines))
 
     def _deploy_all_modules(
-        self, module_coordinator: ModuleCoordinator, global_config: GlobalConfig
+        self,
+        module_coordinator: ModuleCoordinator,
+        global_config: GlobalConfig,
+        blueprint_args: dict[str, dict[str, Any]],
     ) -> None:
         module_specs: list[ModuleSpec] = []
         for blueprint in self._active_blueprints:
-            module_specs.append((blueprint.module, global_config, blueprint.kwargs))
+            module_specs.append((blueprint.module, global_config, blueprint.kwargs.copy()))
 
-        module_coordinator.deploy_parallel(module_specs)
+        module_coordinator.deploy_parallel(module_specs, blueprint_args)
 
     def _connect_streams(self, module_coordinator: ModuleCoordinator) -> None:
         # dict when given (final/remapped) stream name+type, provides a list of modules + original (non-remapped) stream names
@@ -472,12 +482,12 @@ class Blueprint:
 
     def build(
         self,
-        cli_config_overrides: Mapping[str, Any] | None = None,
+        blueprint_args: Mapping[str, Any] | None = None,
     ) -> ModuleCoordinator:
         logger.info("Building the blueprint")
         global_config.update(**dict(self.global_config_overrides))
-        if cli_config_overrides:
-            global_config.update(**dict(cli_config_overrides))
+        if "g" in blueprint_args:
+            global_config.update(**blueprint_args.pop("g"))
 
         self._run_configurators()
         self._check_requirements()
@@ -488,7 +498,7 @@ class Blueprint:
         module_coordinator.start()
 
         # all module constructors are called here (each of them setup their own)
-        self._deploy_all_modules(module_coordinator, global_config)
+        self._deploy_all_modules(module_coordinator, global_config, blueprint_args or {})
         self._connect_streams(module_coordinator)
         self._connect_rpc_methods(module_coordinator)
         self._connect_module_refs(module_coordinator)
