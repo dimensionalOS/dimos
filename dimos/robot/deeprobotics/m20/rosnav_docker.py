@@ -101,11 +101,11 @@ class M20ROSNavConfig(ModuleConfig):
         self.docker_volumes = [
             # Live dimos source so the module is always up-to-date
             (str(repo_root), "/workspace/dimos", "rw"),
-            # DDS config (fastdds.xml) from host
+            # M20-specific DDS config — unicast to AOS only (excludes GOS)
             (
-                str(repo_root / "docker" / "navigation" / "config"),
-                "/ros2_ws/config",
-                "rw",
+                str(Path(__file__).parent / "docker" / "fastdds_m20.xml"),
+                "/ros2_ws/config/fastdds.xml",
+                "ro",
             ),
             # M20-specific entrypoint
             (

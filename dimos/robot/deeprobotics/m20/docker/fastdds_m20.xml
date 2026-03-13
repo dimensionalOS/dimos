@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!--
+  FastDDS discovery profile for the M20 navigation container (NOS).
+
+  Uses unicast initialPeersList to discover only the AOS rsdriver
+  (10.21.31.103). GOS (10.21.31.104) is intentionally excluded so
+  FASTLIO2 does not pick up duplicate rsdriver topics from GOS.
+
+  Mounted into the container at /ros2_ws/config/fastdds.xml via
+  M20ROSNavConfig.docker_volumes.
+-->
+<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+    <profiles>
+        <participant profile_name="m20_nav_participant" is_default_profile="true">
+            <rtps>
+                <!-- Disable built-in transports; use only the custom UDP below -->
+                <useBuiltinTransports>false</useBuiltinTransports>
+
+                <userTransports>
+                    <transport_id>udp_transport</transport_id>
+                </userTransports>
+
+                <builtin>
+                    <discovery_config>
+                        <discoveryProtocol>SIMPLE</discoveryProtocol>
+                    </discovery_config>
+
+                    <metatrafficUnicastLocatorList>
+                        <locator>
+                            <udpv4>
+                                <address>10.21.31.106</address>
+                            </udpv4>
+                        </locator>
+                    </metatrafficUnicastLocatorList>
+
+                    <initialPeersList>
+                        <!-- AOS: rsdriver publishes /LIDAR/POINTS and /IMU -->
+                        <locator>
+                            <udpv4>
+                                <address>10.21.31.103</address>
+                            </udpv4>
+                        </locator>
+                        <!-- NOS localhost for intra-container discovery -->
+                        <locator>
+                            <udpv4>
+                                <address>10.21.31.106</address>
+                            </udpv4>
+                        </locator>
+                    </initialPeersList>
+                </builtin>
+            </rtps>
+        </participant>
+    </profiles>
+
+    <transports>
+        <transport_descriptor>
+            <transport_id>udp_transport</transport_id>
+            <type>UDPv4</type>
+            <interfaceWhiteList>
+                <!-- NOS wired interface to AOS/GOS subnet -->
+                <address>10.21.31.106</address>
+            </interfaceWhiteList>
+            <sendBufferSize>1048576</sendBufferSize>
+            <receiveBufferSize>1048576</receiveBufferSize>
+            <non_blocking_send>true</non_blocking_send>
+        </transport_descriptor>
+    </transports>
+</dds>
