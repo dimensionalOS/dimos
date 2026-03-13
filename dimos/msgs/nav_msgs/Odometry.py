@@ -233,3 +233,75 @@ class Odometry(Timestamped):
                 ]
             ),
         )
+
+    def lcm_encode(self) -> bytes:
+        """Encode to LCM binary format."""
+        lcm_msg = LCMOdometry()
+
+        # Set header
+        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)  # type: ignore[no-untyped-call]
+        lcm_msg.header.frame_id = self.frame_id
+        lcm_msg.child_frame_id = self.child_frame_id
+
+        # Set pose with covariance
+        lcm_msg.pose.pose = self.pose.pose
+        if isinstance(self.pose.covariance, np.ndarray):  # type: ignore[has-type]
+            lcm_msg.pose.covariance = self.pose.covariance.tolist()  # type: ignore[has-type]
+        else:
+            lcm_msg.pose.covariance = list(self.pose.covariance)  # type: ignore[has-type]
+
+        # Set twist with covariance
+        lcm_msg.twist.twist = self.twist.twist
+        if isinstance(self.twist.covariance, np.ndarray):  # type: ignore[has-type]
+            lcm_msg.twist.covariance = self.twist.covariance.tolist()  # type: ignore[has-type]
+        else:
+            lcm_msg.twist.covariance = list(self.twist.covariance)  # type: ignore[has-type]
+
+        return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
+
+    @classmethod
+    def lcm_decode(cls, data: bytes) -> Odometry:
+        """Decode from LCM binary format."""
+        lcm_msg = LCMOdometry.lcm_decode(data)
+
+        # Extract timestamp
+        ts = lcm_msg.header.stamp.sec + (lcm_msg.header.stamp.nsec / 1_000_000_000)
+
+        # Create pose with covariance
+        pose = Pose(
+            position=[
+                lcm_msg.pose.pose.position.x,
+                lcm_msg.pose.pose.position.y,
+                lcm_msg.pose.pose.position.z,
+            ],
+            orientation=[
+                lcm_msg.pose.pose.orientation.x,
+                lcm_msg.pose.pose.orientation.y,
+                lcm_msg.pose.pose.orientation.z,
+                lcm_msg.pose.pose.orientation.w,
+            ],
+        )
+        pose_with_cov = PoseWithCovariance(pose, lcm_msg.pose.covariance)
+
+        # Create twist with covariance
+        twist = Twist(
+            linear=[
+                lcm_msg.twist.twist.linear.x,
+                lcm_msg.twist.twist.linear.y,
+                lcm_msg.twist.twist.linear.z,
+            ],
+            angular=[
+                lcm_msg.twist.twist.angular.x,
+                lcm_msg.twist.twist.angular.y,
+                lcm_msg.twist.twist.angular.z,
+            ],
+        )
+        twist_with_cov = TwistWithCovariance(twist, lcm_msg.twist.covariance)
+
+        return cls(
+            ts=ts,
+            frame_id=lcm_msg.header.frame_id,
+            child_frame_id=lcm_msg.child_frame_id,
+            pose=pose_with_cov,
+            twist=twist_with_cov,
+        )

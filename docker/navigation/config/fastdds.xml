@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+    <!-- Default participant profile applied to all ROS 2 nodes -->
+    <participant profile_name="participant_profile" is_default_profile="true">
+        <rtps>
+            <name>ros2_navigation_participant</name>
+            <builtin>
+                <discovery_config>
+                    <discoveryProtocol>SIMPLE</discoveryProtocol>
+                    <leaseDuration>
+                        <sec>10</sec>
+                        <nanosec>0</nanosec>
+                    </leaseDuration>
+                    <leaseAnnouncement>
+                        <sec>3</sec>
+                        <nanosec>0</nanosec>
+                    </leaseAnnouncement>
+                </discovery_config>
+            </builtin>
+            <!-- Socket buffer sizes for high-bandwidth data (point clouds) -->
+            <sendSocketBufferSize>10485760</sendSocketBufferSize>
+            <listenSocketBufferSize>10485760</listenSocketBufferSize>
+            <useBuiltinTransports>true</useBuiltinTransports>
+        </rtps>
+    </participant>
+
+    <!-- Transport descriptors -->
+    <transport_descriptors>
+        <transport_descriptor>
+            <transport_id>udp_transport</transport_id>
+            <type>UDPv4</type>
+            <sendBufferSize>10485760</sendBufferSize>
+            <receiveBufferSize>10485760</receiveBufferSize>
+            <maxMessageSize>65500</maxMessageSize>
+        </transport_descriptor>
+        <!-- Shared memory for same-host communication -->
+        <transport_descriptor>
+            <transport_id>shm_transport</transport_id>
+            <type>SHM</type>
+            <segment_size>10485760</segment_size>
+        </transport_descriptor>
+    </transport_descriptors>
+</profiles>

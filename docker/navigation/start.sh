@@ -349,7 +349,7 @@ elif [ "$MODE" = "bagfile" ]; then
         echo "  - RViz2 visualization"
     fi
     echo ""
-    echo -e "${YELLOW}Remember to play bagfile with: ros2 bag play --clock <bagfile>${NC}"
+    echo -e "${YELLOW}Remember to play bagfile with: ros2 bag play <bagfile>${NC} --clock"
     echo ""
     echo "To enter the container from another terminal:"
     echo -e "    ${YELLOW}docker exec -it ${CONTAINER_NAME} bash${NC}"
@@ -372,6 +372,12 @@ if [ "$MODE" = "hardware" ]; then
     mkdir -p bagfiles config logs maps
 elif [ "$MODE" = "bagfile" ]; then
     mkdir -p bagfiles config maps
+fi
+
+# Enable DRI device passthrough on systems that support it (not available on Jetson/Tegra)
+if [ -e "/dev/dri" ]; then
+    export DRI_DEVICE="/dev/dri"
+    echo -e "${GREEN}/dev/dri detected — enabling DRI device passthrough${NC}"
 fi
 
 # Build compose command

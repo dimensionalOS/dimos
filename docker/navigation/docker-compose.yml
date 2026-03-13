@@ -62,10 +62,14 @@ services:
       # Mount config files for easy editing
       - ./config:/ros2_ws/config:rw
 
+      # Mount config files for easy editing
+      - ./config:/ros2_ws/config:rw
+
     # Device access (for joystick controllers)
     devices:
       - /dev/input:/dev/input
-      - /dev/dri:/dev/dri
+      # DRI GPU device: set by start.sh when /dev/dri exists (desktop); falls back to /dev/null on Jetson/Tegra
+      - ${DRI_DEVICE:-/dev/null}:${DRI_DEVICE:-/dev/null}
 
     # Working directory
     working_dir: /workspace/dimos
@@ -170,8 +174,8 @@ services:
     devices:
       # Joystick controller (specific device to avoid permission issues)
       - /dev/input/js0:/dev/input/js0
-      # GPU access
-      - /dev/dri:/dev/dri
+      # DRI GPU device: set by start.sh when /dev/dri exists (desktop); falls back to /dev/null on Jetson/Tegra
+      - ${DRI_DEVICE:-/dev/null}:${DRI_DEVICE:-/dev/null}
       # Motor controller serial ports
       - ${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}:${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}
       # Additional serial ports (can be enabled via environment)
@@ -302,7 +306,8 @@ services:
     # Device access (for joystick controllers)
     devices:
       - /dev/input:/dev/input
-      - /dev/dri:/dev/dri
+      # DRI GPU device: set by start.sh when /dev/dri exists (desktop); falls back to /dev/null on Jetson/Tegra
+      - ${DRI_DEVICE:-/dev/null}:${DRI_DEVICE:-/dev/null}
 
     # Working directory
     working_dir: /ros2_ws
@@ -316,7 +321,7 @@ services:
         echo "Bagfile playback mode (use_sim_time=true)"
         echo ""
         echo "Launch files ready. Play your bagfile with:"
-        echo "  ros2 bag play --clock /ros2_ws/bagfiles/<your_bag>"
+        echo "  ros2 bag play /ros2_ws/bagfiles/<your_bag> --clock"
         echo ""
         # Launch with SLAM method based on LOCALIZATION_METHOD
         if [ "$LOCALIZATION_METHOD" = "fastlio" ]; then

@@ -130,7 +130,7 @@ _camera = (
     else autoconnect()
 )
 
-uintree_g1_primitive_no_nav = (
+unitree_g1_primitive_no_nav = (
     autoconnect(
         _with_vis,
         _camera,
@@ -145,9 +145,7 @@ uintree_g1_primitive_no_nav = (
         {
             # G1 uses Twist for movement commands
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-            # State estimation from ROS
             ("state_estimation", Odometry): LCMTransport("/state_estimation", Odometry),
-            # Odometry output from ROSNavigationModule
             ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
             # Navigation module topics from nav_bot
             ("goal_req", PoseStamped): LCMTransport("/goal_req", PoseStamped),
@@ -166,4 +164,4 @@ uintree_g1_primitive_no_nav = (
     )
 )
 
-__all__ = ["uintree_g1_primitive_no_nav"]
+__all__ = ["unitree_g1_primitive_no_nav"]

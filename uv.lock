@@ -2038,7 +2038,7 @@ requires-dist = [
     { name = "open-clip-torch", marker = "extra == 'misc'", specifier = "==3.2.0" },
     { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=0.18.0" },
     { name = "open3d", marker = "(platform_machine != 'aarch64' and extra == 'docker') or (sys_platform != 'linux' and extra == 'docker')", specifier = ">=0.18.0" },
-    { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
+    { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.19.0.post8" },
     { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'docker'" },
     { name = "openai", marker = "extra == 'agents'" },
     { name = "openai-whisper", marker = "extra == 'agents'" },
@@ -5999,7 +5999,7 @@ wheels = [
 
 [[package]]
 name = "open3d-unofficial-arm"
-version = "0.19.0.post5"
+version = "0.19.0.post8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "configargparse", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
@@ -6011,10 +6011,12 @@ dependencies = [
     { name = "werkzeug", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/02/87/95d3cf9017a0e89a708e611d003abeb66c88d7947fa7238962971cc8b0cb/open3d_unofficial_arm-0.19.0.post5-cp310-cp310-manylinux_2_35_aarch64.whl", hash = "sha256:26bc160f3326a74b232f026d741a576bf0d1fa7b1d5128c5e979d7b4d2d1b983", size = 48230542, upload-time = "2026-02-10T08:37:33.928Z" },
-    { url = "https://files.pythonhosted.org/packages/b7/98/e5f803c0ccc23ff68eee12d4b43aa48514dca604e3805f243f399050bd64/open3d_unofficial_arm-0.19.0.post5-cp311-cp311-manylinux_2_35_aarch64.whl", hash = "sha256:003db3e400cd8053e9428c6082af72e73082a28b3e69e9c49f69f83cf5205bb4", size = 48233477, upload-time = "2026-02-10T08:37:47.281Z" },
-    { url = "https://files.pythonhosted.org/packages/36/36/df78b304227d7249f3cdeaf2444da17d5826a2c7a679e71084b3aa0d1b9a/open3d_unofficial_arm-0.19.0.post5-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:984d7f5757e9cb2f849ce43f43046a30a82c221be0778149642cdfe450bd3664", size = 48221813, upload-time = "2026-02-10T08:37:20.834Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/93/25b667f4dea742d870cce76b404aab46ebd47bd66a3efc162bc86e4c81fc/open3d_unofficial_arm-0.19.0.post5-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:ced1653305fa052015fea3c9d1d7672ce2ebb8f2251dfe0258ee7073e5932da7", size = 48223510, upload-time = "2026-02-10T08:38:00.654Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/e3/9e59fcc0af2ad13135258079460e0d071434784d612e63b2c35793e359be/open3d_unofficial_arm-0.19.0.post8-cp310-cp310-manylinux_2_31_aarch64.whl", hash = "sha256:2941d0995d459cf50340e837ace4951f82f2bb44fc9da7d6ef0e03b0d2fc40ad", size = 47332825, upload-time = "2026-02-13T22:07:00.227Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/af/cf09c438cf393b5e93c9f9bac4ebe2be735ca14c9ce958d91f5d254364a1/open3d_unofficial_arm-0.19.0.post8-cp310-cp310-manylinux_2_35_aarch64.whl", hash = "sha256:8fd29849d36529755e9eea18b73d7150b02b128a0e6c625f7dc210073c349878", size = 48230542, upload-time = "2026-02-13T22:07:25.943Z" },
+    { url = "https://files.pythonhosted.org/packages/02/69/1088b2f8973c0f01c4892060223722b4a7d27e1b7a79d03bc85677326db3/open3d_unofficial_arm-0.19.0.post8-cp311-cp311-manylinux_2_35_aarch64.whl", hash = "sha256:d4140ec535acf8b9ed36519efd77f1717e334daf5e803f1d865f75fb9c2822f2", size = 48233478, upload-time = "2026-02-13T22:06:47.63Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/c6/426bfd25c85787b4e1e09f3137b867e9fad6b1fdef36243fee97270a3481/open3d_unofficial_arm-0.19.0.post8-cp312-cp312-manylinux_2_31_aarch64.whl", hash = "sha256:fe705aec687ec930fe93155306194d27f64b65c09011a73fa72ff17915037133", size = 47305245, upload-time = "2026-02-13T22:07:12.646Z" },
+    { url = "https://files.pythonhosted.org/packages/f3/18/df59c75156fba22d65fbc13cdd931ebe0c48d1292341029e76d703f26c71/open3d_unofficial_arm-0.19.0.post8-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:26d6570df3e360186ae82cba41fd8b320a709aaa1404b9b59b3fd30864e0b793", size = 48221813, upload-time = "2026-02-13T22:07:39.177Z" },
+    { url = "https://files.pythonhosted.org/packages/b9/fd/d912ba68b9fe7aa82ccc7b0a2252ef4022de8c1a4418685e8fdefc60ab1e/open3d_unofficial_arm-0.19.0.post8-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:2bb8cbfdae05e87fc4c62d438a303bb7f455df66216d4774e59fdcfe642fe369", size = 48223510, upload-time = "2026-02-13T22:06:33.961Z" },
 ]
 
 [[package]]

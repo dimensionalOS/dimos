@@ -7,8 +7,10 @@ unity_models/
 # ROS bag files
 bagfiles/
 
-# Config files (may contain local settings)
-config/
+# Config files (may contain local settings) - ignore contents but not the dir itself
+# so that specific required defaults can be re-included below
+config/*
+!config/fastdds.xml
 
 # Docker volumes
 .docker/

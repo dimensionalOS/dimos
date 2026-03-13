@@ -20,6 +20,7 @@ import base64
 from collections.abc import Callable
 import functools
 import json
+import os
 import pickle
 import subprocess
 import sys
@@ -124,8 +125,32 @@ class MujocoConnection:
             # mjpython must be used macOS (because of launch_passive inside mujoco_process.py)
             executable = sys.executable if sys.platform != "darwin" else "mjpython"
 
+            # Set MUJOCO_GL=egl so that mujoco.Renderer uses EGL for offscreen
+            # rendering (camera/lidar sensor data) even when no display is available.
+            # The interactive viewer window (viewer.launch_passive) still uses GLFW
+            # and will gracefully fall back to headless mode if GLFW/display is absent.
+            #
+            # Also preload static-TLS libraries (libgomp, torch's libc10) via
+            # LD_PRELOAD so they are registered in the TLS block before any other
+            # libraries fill it up — avoiding the "cannot allocate memory in static
+            # TLS block" error at import time.
+            preload_candidates = [
+                "/lib/aarch64-linux-gnu/libgomp.so.1",
+                "/usr/lib/aarch64-linux-gnu/libgomp.so.1",
+            ]
+            existing_preloads = [p for p in preload_candidates if os.path.exists(p)]
+            ld_preload_parts = os.environ.get("LD_PRELOAD", "").split(":") if os.environ.get("LD_PRELOAD") else []
+            ld_preload = ":".join(filter(None, ld_preload_parts + existing_preloads))
+
+            subprocess_env = {
+                **os.environ,
+                "MUJOCO_GL": os.environ.get("MUJOCO_GL", "egl"),
+                **({"LD_PRELOAD": ld_preload} if ld_preload else {}),
+            }
+
             self.process = subprocess.Popen(
                 [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
+                env=subprocess_env,
                 stderr=subprocess.PIPE,
             )
 

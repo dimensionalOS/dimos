@@ -106,36 +106,36 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_right_camera"
     )
 
-    shm.signal_ready()
+    camera_size = (VIDEO_WIDTH, VIDEO_HEIGHT)
+    scene_option = mujoco.MjvOption()
 
-    with viewer.launch_passive(model, data, show_left_ui=False, show_right_ui=False) as m_viewer:
-        camera_size = (VIDEO_WIDTH, VIDEO_HEIGHT)
+    # Timing control
+    last_video_time = 0.0
+    last_lidar_time = 0.0
+    video_interval = 1.0 / VIDEO_FPS
+    lidar_interval = 1.0 / LIDAR_FPS
 
-        # Create renderers
-        rgb_renderer = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
-        depth_renderer = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
-        depth_renderer.enable_depth_rendering()
+    def _make_renderers() -> tuple[
+        mujoco.Renderer, mujoco.Renderer, mujoco.Renderer, mujoco.Renderer
+    ]:
+        rgb_r = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
+        depth_r = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
+        depth_r.enable_depth_rendering()
+        depth_l_r = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
+        depth_l_r.enable_depth_rendering()
+        depth_ri_r = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
+        depth_ri_r.enable_depth_rendering()
+        return rgb_r, depth_r, depth_l_r, depth_ri_r
 
-        depth_left_renderer = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
-        depth_left_renderer.enable_depth_rendering()
-
-        depth_right_renderer = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
-        depth_right_renderer.enable_depth_rendering()
-
-        scene_option = mujoco.MjvOption()
-
-        # Timing control
-        last_video_time = 0.0
-        last_lidar_time = 0.0
-        video_interval = 1.0 / VIDEO_FPS
-        lidar_interval = 1.0 / LIDAR_FPS
-
-        m_viewer.cam.lookat = config.mujoco_camera_position_float[0:3]
-        m_viewer.cam.distance = config.mujoco_camera_position_float[3]
-        m_viewer.cam.azimuth = config.mujoco_camera_position_float[4]
-        m_viewer.cam.elevation = config.mujoco_camera_position_float[5]
-
-        while m_viewer.is_running() and not shm.should_stop():
+    def _sim_loop(
+        m_viewer: Any,
+        rgb_renderer: mujoco.Renderer,
+        depth_renderer: mujoco.Renderer,
+        depth_left_renderer: mujoco.Renderer,
+        depth_right_renderer: mujoco.Renderer,
+    ) -> None:
+        nonlocal last_video_time, last_lidar_time
+        while (m_viewer is None or m_viewer.is_running()) and not shm.should_stop():
             step_start = time.time()
 
             # Step simulation
@@ -144,7 +144,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
             person_position_controller.tick(data)
 
-            m_viewer.sync()
+            if m_viewer is not None:
+                m_viewer.sync()
 
             # Always update odometry
             pos = data.qpos[0:3].copy()
@@ -226,6 +227,30 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
                 time.sleep(time_until_next_step)
 
         person_position_controller.stop()
+
+    _has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+    # Signal ready before launching the viewer so the main process doesn't time
+    # out while GLFW initialises (or fails to initialise) the window.
+    shm.signal_ready()
+
+    if _has_display:
+        # Open an interactive viewer window. mujoco.Renderer (EGL) is independent
+        # of the GLFW viewer window so both can coexist.
+        with viewer.launch_passive(
+            model, data, show_left_ui=False, show_right_ui=False
+        ) as m_viewer:
+            m_viewer.cam.lookat = config.mujoco_camera_position_float[0:3]
+            m_viewer.cam.distance = config.mujoco_camera_position_float[3]
+            m_viewer.cam.azimuth = config.mujoco_camera_position_float[4]
+            m_viewer.cam.elevation = config.mujoco_camera_position_float[5]
+            _sim_loop(m_viewer, *_make_renderers())
+    else:
+        # No display available — run headlessly.
+        # Renderers use EGL (configured via MUJOCO_GL=egl in the subprocess env)
+        # so sensor data (camera, lidar) is still produced without a display.
+        logger.warning("No display detected, running MuJoCo in headless mode (MUJOCO_GL=egl)")
+        _sim_loop(None, *_make_renderers())
 
 
 if __name__ == "__main__":

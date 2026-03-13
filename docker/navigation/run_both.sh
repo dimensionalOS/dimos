@@ -132,10 +132,22 @@ else
     UNITY_PID=""
 fi
 sleep 3
-setsid bash -c 'ros2 launch vehicle_simulator system_simulation_with_route_planner.launch.py' &
+setsid bash -c 'ros2 launch vehicle_simulator system_simulation_with_route_planner.launch.py enable_bridge:=false' &
 ROS_PID=$!
-ros2 run rviz2 rviz2 -d src/route_planner/far_planner/rviz/default.rviz &
-RVIZ_PID=$!
+
+# Only launch RViz if a display is available
+DISPLAY_NUM=$(echo "${DISPLAY:-:0}" | sed 's/://')
+if [ -S "/tmp/.X11-unix/X${DISPLAY_NUM}" ]; then
+    ros2 run rviz2 rviz2 -d src/route_planner/far_planner/rviz/default.rviz &
+    RVIZ_PID=$!
+else
+    echo "No display available, skipping RViz"
+    RVIZ_PID=""
+fi
+
+# Start Twist relay (converts /foxglove_teleop Twist -> /cmd_vel TwistStamped)
+# This allows teleop_twist_keyboard and Foxglove teleop panel to both work
+python3 /usr/local/bin/twist_relay.py &
 
 # Wait a bit for ROS to initialize
 echo "Waiting for ROS to initialize..."

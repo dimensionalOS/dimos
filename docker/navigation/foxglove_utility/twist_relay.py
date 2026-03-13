@@ -37,16 +37,22 @@ class TwistRelay(Node):
         output_topic = self.get_parameter("output_topic").value
         self.frame_id = self.get_parameter("frame_id").value
 
-        # QoS for real-time control
-        qos = QoSProfile(
+        # BEST_EFFORT subscriber: drop stale teleop input rather than queue it
+        sub_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=1
+        )
+        # RELIABLE publisher: vehicleSimulator and the nav planner subscribe with RELIABLE (default)
+        pub_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE, history=HistoryPolicy.KEEP_LAST, depth=1
         )
 
         # Subscribe to Twist (from Foxglove Teleop)
-        self.subscription = self.create_subscription(Twist, input_topic, self.twist_callback, qos)
+        self.subscription = self.create_subscription(
+            Twist, input_topic, self.twist_callback, sub_qos
+        )
 
         # Publish TwistStamped
-        self.publisher = self.create_publisher(TwistStamped, output_topic, qos)
+        self.publisher = self.create_publisher(TwistStamped, output_topic, pub_qos)
 
         self.get_logger().info(
             f"Twist relay: {input_topic} (Twist) -> {output_topic} (TwistStamped)"

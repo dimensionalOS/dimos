@@ -13,19 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Basic G1 stack: base sensors plus real robot connection and ROS nav."""
+"""G1 sim stack with perception, memory, and ROS navigation."""
 
 from dimos.core.blueprints import autoconnect
-from dimos.navigation.rosnav import ros_nav
-from dimos.robot.unitree.g1.blueprints.primitive.unitree_g1_primitive_no_nav import (
-    unitree_g1_primitive_no_nav,
+from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic_sim_ros import (
+    unitree_g1_basic_sim_ros,
 )
-from dimos.robot.unitree.g1.connection import g1_connection
-
-unitree_g1_basic = autoconnect(
-    unitree_g1_primitive_no_nav,
-    g1_connection(),
-    ros_nav(),
+from dimos.robot.unitree.g1.blueprints.perceptive._perception_and_memory import (
+    _perception_and_memory,
 )
 
-__all__ = ["unitree_g1_basic"]
+unitree_g1_sim_ros = autoconnect(
+    unitree_g1_basic_sim_ros,
+    _perception_and_memory,
+).global_config(n_dask_workers=8)
+
+__all__ = ["unitree_g1_sim_ros"]

@@ -344,7 +344,6 @@ RUN cat > ${WORKSPACE}/config/fastdds.xml <<'EOF'
             <transport_id>shm_transport</transport_id>
             <type>SHM</type>
             <segment_size>10485760</segment_size>
-            <max_message_size>1048576</max_message_size>
         </transport_descriptor>
     </transport_descriptors>
 </profiles>
@@ -373,8 +372,16 @@ RUN if [ "${TARGETARCH}" = "arm64" ] && ls /opt/open3d-wheel/open3d*.whl 1>/dev/
 # The volume mount at runtime will overlay /workspace/dimos, but the editable
 # install creates a link that will use the volume-mounted files
 COPY pyproject.toml setup.py /workspace/dimos/
-COPY dimos /workspace/dimos/dimos
-RUN /opt/dimos-venv/bin/pip install --no-cache-dir -e "/workspace/dimos[unitree]"
+# Copy the C++ extension source so setup.py can compile it.
+# Note: the compiled .so targets Python 3.10 (container); the volume-mounted host
+# source may have a .so for a different Python version so both must exist.
+COPY dimos/navigation/replanning_a_star/min_cost_astar_cpp.cpp /workspace/dimos/dimos/navigation/replanning_a_star/min_cost_astar_cpp.cpp
+# Create a placeholder package so the editable install can resolve dependencies at build time.
+# The real dimos source is provided at runtime via volume mount (../..:/workspace/dimos).
+RUN mkdir -p /workspace/dimos/dimos && touch /workspace/dimos/dimos/__init__.py
+RUN /opt/dimos-venv/bin/pip install "dimos[unitree]"
+# Store pyproject.toml hash so the entrypoint can detect dependency changes at runtime
+RUN sha256sum /workspace/dimos/pyproject.toml > /opt/dimos-venv/pyproject.toml.sha256
 
 # Set up shell environment
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \
@@ -388,6 +395,9 @@ COPY docker/navigation/run_both.sh /usr/local/bin/run_both.sh
 COPY docker/navigation/ros_launch_wrapper.py /usr/local/bin/ros_launch_wrapper.py
 COPY docker/navigation/foxglove_utility/twist_relay.py /usr/local/bin/twist_relay.py
 COPY docker/navigation/foxglove_utility/goal_autonomy_relay.py /usr/local/bin/goal_autonomy_relay.py
+# dimos_module_entrypoint.sh is NOT copied here — it is mounted at runtime via
+# docker-compose (for compose usage) and via ROSNavConfig.docker_volumes (for DockerModule usage).
+# This means entrypoint changes never require a rebuild.
 RUN chmod +x /usr/local/bin/run_both.sh /usr/local/bin/ros_launch_wrapper.py /usr/local/bin/twist_relay.py /usr/local/bin/goal_autonomy_relay.py
 
 # Set up udev rules for motor controller
@@ -491,6 +501,17 @@ EOF\n\
     # Display Robot IP configuration if set\n\
     if [ -n "${ROBOT_IP}" ]; then\n\
         echo "Robot IP configured on local network: ${ROBOT_IP}"\n\
+    fi\n\
+fi\n\
+\n\
+# Reinstall dimos if pyproject.toml changed since the image was built.\n\
+# This handles the common dev workflow where deps are added locally and the\n\
+# container is restarted without a full rebuild.\n\
+if [ -f /workspace/dimos/pyproject.toml ] && [ -f /opt/dimos-venv/pyproject.toml.sha256 ]; then\n\
+    if ! sha256sum -c /opt/dimos-venv/pyproject.toml.sha256 > /dev/null 2>&1; then\n\
+        echo "[dimos] pyproject.toml changed since image build; reinstalling dimos[unitree]..."\n\
+        /opt/dimos-venv/bin/pip install -e "/workspace/dimos[unitree]"\n\
+        sha256sum /workspace/dimos/pyproject.toml > /opt/dimos-venv/pyproject.toml.sha256\n\
     fi\n\
 fi\n\
 \n\
