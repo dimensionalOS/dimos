@@ -92,6 +92,63 @@ RUN cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam 
     make -j$(nproc) && make install && ldconfig && \
     rm -rf ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam/build
 
+# Clone FAST_LIO (ROS2 branch) for RoboSense PointCloud2 SLAM support
+# The ROS1-only RuanJY/robosense_fast_lio fork is not ROS2-compatible.
+# The upstream ROS2 branch supports standard PointCloud2 input (lidar_type=2),
+# which is what RoboSense RSAIRY lidars publish in ROS2.
+RUN cd ${WORKSPACE}/src && \
+    git clone --recursive -b ROS2 https://github.com/hku-mars/FAST_LIO.git fast_lio
+
+# Create RoboSense config for FAST_LIO (M20 dual RSAIRY lidar + IMU topics)
+RUN cat > ${WORKSPACE}/src/fast_lio/config/robosense.yaml <<'FASTLIO_EOF'
+/**:
+    ros__parameters:
+        feature_extract_enable: false
+        point_filter_num: 4
+        max_iteration: 3
+        filter_size_surf: 0.5
+        filter_size_map: 0.5
+        cube_side_length: 1000.0
+        runtime_pos_log_enable: false
+        map_file_path: "./test.pcd"
+
+        common:
+            lid_topic:  "/lidar_points"
+            imu_topic:  "/IMU"
+            time_sync_en: false
+            time_offset_lidar_to_imu: 0.0
+
+        preprocess:
+            lidar_type: 2
+            scan_line: 32
+            scan_rate: 10
+            timestamp_unit: 2
+            blind: 0.5
+
+        mapping:
+            acc_cov: 0.1
+            gyr_cov: 0.1
+            b_acc_cov: 0.0001
+            b_gyr_cov: 0.0001
+            fov_degree:    360.0
+            det_range:     100.0
+            extrinsic_est_en:  false
+            extrinsic_T: [ 0., 0., 0.47]
+            extrinsic_R: [ 1., 0., 0.,
+                        0., 1., 0.,
+                        0., 0., 1.]
+
+        publish:
+            path_en:  false
+            scan_publish_en:  true
+            dense_publish_en: true
+            scan_bodyframe_pub_en: true
+
+        pcd_save:
+            pcd_save_en: false
+            interval: -1
+FASTLIO_EOF
+
 # Build ROS workspace (no --symlink-install for multi-stage build compatibility)
 # Skip rviz plugin packages - builder stage uses ros:perception which lacks rviz2 headers
 # Limit parallel workers and compiler jobs to avoid OOM during arm64 builds
@@ -128,6 +185,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-${ROS_DISTRO}-foxglove-bridge \
     ros-${ROS_DISTRO}-rviz2 \
     ros-${ROS_DISTRO}-rqt* \
+    # Joystick driver (for teleop and autonomy relay)
+    ros-${ROS_DISTRO}-joy \
     # DDS middleware (FastDDS is default, just ensure it's installed)
     ros-${ROS_DISTRO}-rmw-fastrtps-cpp \
     # Runtime libraries
@@ -174,6 +233,10 @@ COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/route_pla
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/exploration_planner/tare_planner/rviz ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/exploration_planner/tare_planner/rviz
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/config
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config
+
+# Copy FAST_LIO config and launch files for runtime
+COPY --from=builder ${WORKSPACE}/src/fast_lio/config ${WORKSPACE}/src/fast_lio/config
+COPY --from=builder ${WORKSPACE}/src/fast_lio/launch ${WORKSPACE}/src/fast_lio/launch
 
 # Copy simulation shell scripts (real robot mode uses volume mount)
 COPY --from=builder ${WORKSPACE}/src/ros-navigation-autonomy-stack/system_simulation*.sh ${WORKSPACE}/src/ros-navigation-autonomy-stack/
