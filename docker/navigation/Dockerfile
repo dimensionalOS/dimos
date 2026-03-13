@@ -3,7 +3,7 @@
 # =============================================================================
 #
 # Key optimizations:
-# 1. Multi-stage build with ros:desktop-full base image
+# 1. Multi-stage build with ros:perception base image (multi-arch: amd64+arm64)
 # 2. Multi-stage build to discard build artifacts
 # 3. No Python ML dependencies (~14 GB saved)
 # 4. COPY dimos source for editable pip install (volume-mounted at runtime overlays it)
@@ -12,6 +12,7 @@
 # 7. DDS configuration for optimized ROS 2 communication
 #
 # Supported ROS distributions: jazzy, humble
+# Supported architectures: amd64, arm64
 # Build with: docker build --build-arg ROS_DISTRO=humble ...
 #
 # =============================================================================
@@ -22,7 +23,7 @@ ARG ROS_DISTRO=humble
 # -----------------------------------------------------------------------------
 # STAGE 1: Build Stage - compile all C++ dependencies
 # -----------------------------------------------------------------------------
-FROM osrf/ros:${ROS_DISTRO}-desktop-full AS builder
+FROM ros:${ROS_DISTRO}-perception AS builder
 
 ARG ROS_DISTRO
 ENV DEBIAN_FRONTEND=noninteractive
@@ -92,15 +93,20 @@ RUN cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam 
     rm -rf ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam/build
 
 # Build ROS workspace (no --symlink-install for multi-stage build compatibility)
+# Skip rviz plugin packages - builder stage uses ros:perception which lacks rviz2 headers
+# Limit parallel workers and compiler jobs to avoid OOM during arm64 builds
 RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     cd ${WORKSPACE} && \
-    colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release"
+    MAKEFLAGS='-j2' colcon build --parallel-workers 2 \
+    --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    --packages-skip teleop_rviz_plugin_plus goalpoint_rviz_plugin teleop_rviz_plugin waypoint_rviz_plugin \
+    tare_planner"
 
 # -----------------------------------------------------------------------------
 # STAGE 2: Runtime Stage - minimal image for running
 # -----------------------------------------------------------------------------
 ARG ROS_DISTRO
-FROM osrf/ros:${ROS_DISTRO}-desktop-full AS runtime
+FROM ros:${ROS_DISTRO}-perception AS runtime
 
 ARG ROS_DISTRO
 ENV DEBIAN_FRONTEND=noninteractive
@@ -114,6 +120,8 @@ ENV FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml
 
 # Install runtime dependencies only (no build tools)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Git (needed by entrypoint for safe.directory)
+    git \
     # ROS packages
     ros-${ROS_DISTRO}-pcl-ros \
     ros-${ROS_DISTRO}-cv-bridge \
