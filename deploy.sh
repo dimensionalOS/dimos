@@ -99,6 +99,28 @@ ensure_lio_disabled() {
     return 0
 }
 
+ensure_handler_stopped() {
+    # Stop the built-in handler (navigation/DWA planner) on the NOS so our
+    # nav stack can publish /NAV_CMD without conflicts.  Also disable the
+    # built-in planner service.  Both are idempotent.
+    info "Stopping built-in handler and planner on NOS..."
+
+    if pgrep -x handler >/dev/null 2>&1; then
+        warn "Stopping handler..."
+        sudo systemctl stop handler.service 2>/dev/null || true
+        sudo systemctl disable handler.service 2>/dev/null || true
+    else
+        info "handler already stopped."
+    fi
+
+    if pgrep -x planner >/dev/null 2>&1; then
+        sudo systemctl stop planner.service 2>/dev/null || true
+        sudo systemctl disable planner.service 2>/dev/null || true
+    fi
+
+    info "Built-in handler/planner stopped."
+}
+
 get_dimos_pid() {
     local pid=""
 
@@ -274,6 +296,11 @@ cmd_start() {
         return 1
     }
 
+    # Stop the built-in handler (nav planner) on NOS to avoid /NAV_CMD conflicts.
+    # Our M20VelocityController publishes /NAV_CMD; the built-in handler would
+    # compete for control of the robot.
+    ensure_handler_stopped
+
     # Locate the launch script
     local launch_script="$SCRIPT_DIR/dimos/robot/deeprobotics/m20/docker/launch_nos.py"
     if [[ ! -f "$launch_script" ]]; then
@@ -405,6 +432,25 @@ cmd_status() {
         fi
     fi
 
+    echo -e "\n${CYAN}NOS Memory${NC}"
+    local mem_total mem_used mem_pct
+    mem_total=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null) || mem_total=""
+    mem_used=$(awk '/^MemTotal:/ {t=$2} /^MemAvailable:/ {a=$2} END {print t-a}' /proc/meminfo 2>/dev/null) || mem_used=""
+    if [[ -n "$mem_total" && -n "$mem_used" && "$mem_total" -gt 0 ]]; then
+        mem_pct=$(( mem_used * 100 / mem_total ))
+        local mem_total_mb=$(( mem_total / 1024 ))
+        local mem_used_mb=$(( mem_used / 1024 ))
+        if (( mem_pct >= 80 )); then
+            echo -e "  Usage:   ${RED}${mem_used_mb}MB / ${mem_total_mb}MB (${mem_pct}%)${NC} ⚠ HIGH"
+        elif (( mem_pct >= 60 )); then
+            echo -e "  Usage:   ${YELLOW}${mem_used_mb}MB / ${mem_total_mb}MB (${mem_pct}%)${NC}"
+        else
+            echo -e "  Usage:   ${GREEN}${mem_used_mb}MB / ${mem_total_mb}MB (${mem_pct}%)${NC}"
+        fi
+    else
+        echo -e "  Usage:   ${YELLOW}(could not read /proc/meminfo)${NC}"
+    fi
+
     echo -e "\n${CYAN}ROS Topics${NC}"
     if command -v ros2 &>/dev/null || [[ -f "$DIMOS_VENV/bin/activate" ]]; then
         if ! command -v ros2 &>/dev/null && [[ -f "$DIMOS_VENV/bin/activate" ]]; then
@@ -413,7 +459,7 @@ cmd_status() {
         fi
 
         if command -v ros2 &>/dev/null; then
-            local topics=("/IMU" "/LIDAR/POINTS" "/registered_scan")
+            local topics=("/IMU" "/LIDAR/POINTS" "/registered_scan" "/NAV_CMD")
             for topic in "${topics[@]}"; do
                 local hz
                 hz=$(timeout 3 ros2 topic hz "$topic" --window 3 2>/dev/null | \
