@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 import threading
 from typing import TYPE_CHECKING, Any
@@ -129,7 +130,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         return module  # type: ignore[return-value]
 
     def deploy_parallel(
-        self, module_specs: list[ModuleSpec], blueprint_args: dict[str, dict[str, Any]]
+        self, module_specs: list[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
     ) -> list[ModuleProxy]:
         if not self._client:
             raise ValueError("Not started")

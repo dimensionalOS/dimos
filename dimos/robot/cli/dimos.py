@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime, timezone
 import inspect
 import json
@@ -32,13 +33,14 @@ import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
-from dimos.core.blueprints import Blueprint
+from dimos.core.blueprints import Blueprint, _BlueprintAtom
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.utils.logging_config import setup_logger
 
 try:
-    from gi.repository import GLib
+    # Not a dependency, just the best way to get config path if available.
+    from gi.repository import GLib  # type: ignore[import-untyped]
 except ImportError:
     CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
 else:
@@ -120,7 +122,13 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 
 
-def arghelp(config: BaseModel, blueprint: Blueprint, indent: str = "    ", module: str = "") -> str:
+def arghelp(
+    config: type[BaseModel],
+    blueprint: Blueprint,
+    indent: str = "    ",
+    module: str = "",
+    _atom: _BlueprintAtom | None = None,
+) -> str:
     output = ""
     for k, info in config.model_fields.items():
         if k == "g":
@@ -130,22 +138,23 @@ def arghelp(config: BaseModel, blueprint: Blueprint, indent: str = "    ", modul
             # Can't be specified on CLI
             continue
 
-        if issubclass(t, BaseModel):
+        if t is not None and issubclass(t, BaseModel):
             output += f"{indent}{module}{k}:\n"
             # Find blueprint atom
             bp = next(bp for bp in blueprint.blueprints if bp.module.name == k)
-            output += arghelp(t, bp, indent=indent + "  ", module=module + k + ".")
+            output += arghelp(t, blueprint, indent=indent + "  ", module=module + k + ".", _atom=bp)
         else:
+            assert _atom is not None
             # Use __name__ to avoid "<class 'int'>" style output on basic types.
             display_type = t.__name__ if isinstance(t, type) else t
-            required = "[Required] " if info.is_required() and k not in blueprint.kwargs else ""
-            d = blueprint.kwargs.get(k, info.default)
+            required = "[Required] " if info.is_required() and k not in _atom.kwargs else ""
+            d = _atom.kwargs.get(k, info.default)
             default = f" (default: {d})" if d is not PydanticUndefined else ""
             output += f"{indent}* {required}{module}{k}: {display_type}{default}\n"
     return output
 
 
-def load_config_args(config: BaseModel, args: Iterable[str], path: Path) -> dict[str, Any]:
+def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -> dict[str, Any]:
     try:
         kwargs = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
@@ -172,7 +181,7 @@ def load_config_args(config: BaseModel, args: Iterable[str], path: Path) -> dict
     # This will help catch misspellings and similar mistakes.
     config(**kwargs)
 
-    return kwargs
+    return kwargs  # type: ignore[no-any-return]
 
 
 @main.command()
@@ -545,8 +554,6 @@ def restart(
     except OSError as exc:
         typer.echo(f"Error: failed to restart — {exc}", err=True)
         raise typer.Exit(1)
-
-    sub_command(blueprint_args)
 
 
 @main.command()

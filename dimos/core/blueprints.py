@@ -14,7 +14,7 @@
 
 from abc import ABC
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field, replace
 from functools import cached_property, reduce
 import operator
@@ -132,10 +132,10 @@ class Blueprint:
     def disabled_modules(self, *modules: type[ModuleBase]) -> "Blueprint":
         return replace(self, disabled_modules_tuple=self.disabled_modules_tuple + modules)
 
-    def config(self) -> BaseModel:
+    def config(self) -> type[BaseModel]:
         configs = {b.module.name: (b.module.default_config | None, None) for b in self.blueprints}
         configs["g"] = (GlobalConfig | None, None)
-        return create_model("BlueprintConfig", __config__={"extra": "forbid"}, **configs)
+        return create_model("BlueprintConfig", __config__={"extra": "forbid"}, **configs)  # type: ignore[call-overload,no-any-return]
 
     def transports(self, transports: dict[tuple[str, type], Any]) -> "Blueprint":
         return replace(self, transport_map=MappingProxyType({**self.transport_map, **transports}))
@@ -284,7 +284,7 @@ class Blueprint:
         self,
         module_coordinator: ModuleCoordinator,
         global_config: GlobalConfig,
-        blueprint_args: dict[str, dict[str, Any]],
+        blueprint_args: Mapping[str, Mapping[str, Any]],
     ) -> None:
         module_specs: list[ModuleSpec] = []
         for blueprint in self._active_blueprints:
@@ -482,10 +482,11 @@ class Blueprint:
 
     def build(
         self,
-        blueprint_args: Mapping[str, Any] | None = None,
+        blueprint_args: MutableMapping[str, Any] | None = None,
     ) -> ModuleCoordinator:
         logger.info("Building the blueprint")
         global_config.update(**dict(self.global_config_overrides))
+        blueprint_args = blueprint_args or {}
         if "g" in blueprint_args:
             global_config.update(**blueprint_args.pop("g"))
 
@@ -498,7 +499,7 @@ class Blueprint:
         module_coordinator.start()
 
         # all module constructors are called here (each of them setup their own)
-        self._deploy_all_modules(module_coordinator, global_config, blueprint_args or {})
+        self._deploy_all_modules(module_coordinator, global_config, blueprint_args)
         self._connect_streams(module_coordinator)
         self._connect_rpc_methods(module_coordinator)
         self._connect_module_refs(module_coordinator)
