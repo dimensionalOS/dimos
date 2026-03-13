@@ -214,7 +214,6 @@ class Worker:
             "module_class": module_class,
             "kwargs": kwargs,
         }
-        print(module_class, kwargs)
         with self._lock:
             self._conn.send(request)
             response = self._conn.recv()
@@ -378,7 +377,6 @@ def _worker_loop(conn: Connection, instances: dict[int, Any], worker_id: int) ->
 
         except Exception as e:
             response["error"] = f"{e.__class__.__name__}: {e}\n{traceback.format_exc()}"
-            raise
 
         try:
             conn.send(response)

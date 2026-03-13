@@ -107,7 +107,6 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
 
     def __init__(self, config_args: dict[str, Any]):
         super().__init__(**config_args)
-        print("MODULE", self, config_args, self.config)
         self._module_closed_lock = threading.Lock()
         self._loop, self._loop_thread = get_loop()
         self._disposables = CompositeDisposable()

@@ -64,7 +64,7 @@ _browser_opened = False
 
 
 class WebsocketConfig(ModuleConfig):
-    port: int
+    port: int = 7779
 
 
 class WebsocketVisModule(Module[WebsocketConfig]):

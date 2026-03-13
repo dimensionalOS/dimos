@@ -204,7 +204,6 @@ def run(
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
-    # global_config.update(**cli_config_overrides)
 
     # Clean stale registry entries
     stale = cleanup_stale()
