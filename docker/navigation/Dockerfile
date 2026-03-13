@@ -93,9 +93,14 @@ RUN cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam 
     rm -rf ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam/build
 
 # Build ROS workspace (no --symlink-install for multi-stage build compatibility)
+# Skip rviz plugin packages - builder stage uses ros:perception which lacks rviz2 headers
+# Limit parallel workers and compiler jobs to avoid OOM during arm64 builds
 RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     cd ${WORKSPACE} && \
-    colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release"
+    MAKEFLAGS='-j2' colcon build --parallel-workers 2 \
+    --cmake-args -DCMAKE_BUILD_TYPE=Release \
+    --packages-skip teleop_rviz_plugin_plus goalpoint_rviz_plugin teleop_rviz_plugin waypoint_rviz_plugin \
+    tare_planner"
 
 # -----------------------------------------------------------------------------
 # STAGE 2: Runtime Stage - minimal image for running
