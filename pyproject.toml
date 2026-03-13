@@ -192,7 +192,13 @@ perception = [
 
 unitree = [
     "dimos[base]",
-    "unitree-webrtc-connect-leshy>=2.0.7"
+    "unitree-webrtc-connect-leshy>=2.0.7",
+]
+
+unitree-dds = [
+    "dimos[unitree]",
+    "unitree-sdk2py-dimos>=1.0.1",
+    "cyclonedds>=0.10.5",
 ]
 
 manipulation = [
@@ -442,6 +448,8 @@ concurrency = ["multiprocessing", "thread"]
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
+
+[tool.uv.sources]
 
 [tool.largefiles]
 max_size_kb = 50
