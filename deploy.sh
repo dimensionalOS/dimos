@@ -111,7 +111,7 @@ cmd_stop() {
     # 2. Stop nav container
     if nav_container_running; then
         info "Stopping nav container '${NAV_CONTAINER}'..."
-        docker stop "$NAV_CONTAINER" --time 15 2>/dev/null || true
+        docker stop --time 15 "$NAV_CONTAINER" 2>/dev/null || true
 
         if nav_container_running; then
             warn "Container still running, forcing removal..."
