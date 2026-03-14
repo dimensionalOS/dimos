@@ -78,9 +78,9 @@ class KeyboardPoseTeleop(Module):
         return True
 
     @rpc
-    def stop(self) -> None:
-        # Optionally cancel any active goal
-        if self.cancel_goal:
+    def start(self) -> None:
+        super().start()
+
             cancel_msg = Bool(data=True)
             self.cancel_goal.publish(cancel_msg)
 
