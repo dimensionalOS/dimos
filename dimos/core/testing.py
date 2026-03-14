@@ -14,6 +14,7 @@
 
 from threading import Event, Thread
 import time
+from typing import Any
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -32,8 +33,8 @@ class MockRobotClient(Module):
 
     mov_msg_count = 0
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._stop_event = Event()
         self._thread = None
 

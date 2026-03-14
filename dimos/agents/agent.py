@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 import json
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
@@ -38,7 +37,6 @@ if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
 
-@dataclass
 class AgentConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-4o"
@@ -64,8 +62,8 @@ class Agent(Module[AgentConfig]):
     _thread: Thread
     _stop_event: Event
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._lock = RLock()
         self._state_graph = None
         self._message_queue = Queue()

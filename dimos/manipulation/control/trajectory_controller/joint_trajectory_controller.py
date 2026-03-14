@@ -29,7 +29,6 @@ Behavior:
 - reset(): Required to recover from FAULT state
 """
 
-from dataclasses import dataclass
 import threading
 import time
 from typing import Any
@@ -44,14 +43,13 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-@dataclass
 class JointTrajectoryControllerConfig(ModuleConfig):
     """Configuration for joint trajectory controller."""
 
     control_frequency: float = 100.0  # Hz - trajectory execution rate
 
 
-class JointTrajectoryController(Module):
+class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
     """
     Joint-space trajectory executor.
 
@@ -72,7 +70,6 @@ class JointTrajectoryController(Module):
     """
 
     default_config = JointTrajectoryControllerConfig
-    config: JointTrajectoryControllerConfig  # Type hint for proper attribute access
 
     # Input topics
     joint_state: In[JointState] = None  # type: ignore[assignment]  # Feedback from arm driver
@@ -82,8 +79,8 @@ class JointTrajectoryController(Module):
     # Output topics
     joint_position_command: Out[JointCommand] = None  # type: ignore[assignment]  # To arm driver
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
         # State machine
         self._state = TrajectoryState.IDLE

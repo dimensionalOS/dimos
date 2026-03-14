@@ -22,10 +22,8 @@ Simple virtual robot demonstrating a dimos Module with In/Out ports.
 Subscribes to Twist commands and publishes PoseStamped.
 """
 
-from dataclasses import dataclass
 import math
 import time
-from typing import Any
 
 import reactivex as rx
 
@@ -48,7 +46,6 @@ def apply_twist(pose: Pose, twist: Twist, dt: float) -> Pose:
     )
 
 
-@dataclass
 class SimpleRobotConfig(ModuleConfig):
     frame_id: str = "world"
     update_rate: float = 30.0
@@ -61,12 +58,9 @@ class SimpleRobot(Module[SimpleRobotConfig]):
     cmd_vel: In[Twist]
     pose: Out[PoseStamped]
     default_config = SimpleRobotConfig
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._pose = Pose()
-        self._vel = Twist()
-        self._vel_time = 0.0
+    _pose = Pose()
+    _vel = Twist()
+    _vel_time = 0.0
 
     @rpc
     def start(self) -> None:

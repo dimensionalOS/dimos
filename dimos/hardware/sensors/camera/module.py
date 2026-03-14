@@ -13,16 +13,15 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
 import time
 from typing import Any
 
+from pydantic import Field
 import reactivex as rx
 
 from dimos.agents.annotation import skill
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import CameraHardware
@@ -43,10 +42,9 @@ def default_transform() -> Transform:
     )
 
 
-@dataclass
 class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
-    transform: Transform | None = field(default_factory=default_transform)
+    transform: Transform | None = Field(default_factory=default_transform)
     hardware: Callable[[], CameraHardware[Any]] | CameraHardware[Any] = Webcam
     frequency: float = 0.0  # Hz, 0 means no limit
 
@@ -55,16 +53,9 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
 
-    hardware: CameraHardware[Any]
-
-    config: CameraModuleConfig
     default_config = CameraModuleConfig
-    _global_config: GlobalConfig
-
-    def __init__(self, *args: Any, cfg: GlobalConfig = global_config, **kwargs: Any) -> None:
-        self._global_config = cfg
-        self._latest_image: Image | None = None
-        super().__init__(*args, **kwargs)
+    hardware: CameraHardware[Any]
+    _latest_image: Image | None = None
 
     @rpc
     def start(self) -> None:

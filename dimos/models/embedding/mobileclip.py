@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
@@ -27,7 +26,6 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
 
 
-@dataclass
 class MobileCLIPModelConfig(EmbeddingModelConfig):
     model_name: str = "MobileCLIP2-S4"
 

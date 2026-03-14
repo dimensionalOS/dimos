@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import re
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 import pytest
@@ -39,8 +40,8 @@ class FakeLocationClient:
 
 
 class MockedWhereAmISkill(GoogleMapsSkillContainer):
-    def __init__(self):
-        Module.__init__(self)  # Skip GoogleMapsSkillContainer's __init__.
+    def __init__(self, **kwargs: Any):
+        Module.__init__(self, **kwargs)  # Skip GoogleMapsSkillContainer's __init__.
         self._client = FakeLocationClient()
         self._latest_location = LatLon(lat=37.782654, lon=-122.413273)
         self._started = True
@@ -62,8 +63,8 @@ class FakePositionClient:
 
 
 class MockedPositionSkill(GoogleMapsSkillContainer):
-    def __init__(self):
-        Module.__init__(self)
+    def __init__(self, **kwargs: Any):
+        Module.__init__(self, **kwargs)
         self._client = FakePositionClient()
         self._latest_location = LatLon(lat=37.782654, lon=-122.413273)
         self._started = True

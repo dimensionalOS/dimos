@@ -13,12 +13,12 @@
 # limitations under the License.
 
 import os
+from typing import Any
 
 from dimos_lcm.std_msgs import Bool, String
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs import PointStamped, PoseStamped, Twist
@@ -41,12 +41,10 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     navigation_costmap: Out[OccupancyGrid]
 
     _planner: GlobalPlanner
-    _global_config: GlobalConfig
 
-    def __init__(self, cfg: GlobalConfig = global_config) -> None:
-        super().__init__()
-        self._global_config = cfg
-        self._planner = GlobalPlanner(self._global_config)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._planner = GlobalPlanner(self.config.g)
 
     @rpc
     def start(self) -> None:

@@ -14,14 +14,14 @@
 
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
+from pydantic import Field
 from reactivex.disposable import Disposable
 
 from dimos import spec
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs import Twist
@@ -32,9 +32,15 @@ if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
 
 logger = setup_logger()
+_Config = TypeVar("_Config", bound=ModuleConfig)
 
 
-class G1ConnectionBase(Module, ABC):
+class G1Config(ModuleConfig):
+    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
+    connection_type: str = Field(default_factory=lambda m: m["g"].unitree_connection_type)
+
+
+class G1ConnectionBase(Module[_Config], ABC):
     """Abstract base for G1 connections (real hardware and simulation).
 
     Modules that depend on G1 connection RPC methods should reference this
@@ -61,36 +67,19 @@ class G1ConnectionBase(Module, ABC):
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]: ...
 
 
-class G1Connection(G1ConnectionBase):
+class G1Connection(G1ConnectionBase[G1Config]):
+    default_config = G1Config
+
     cmd_vel: In[Twist]
-    ip: str | None
-    connection_type: str | None = None
-    _global_config: GlobalConfig
-
-    connection: UnitreeWebRTCConnection | None
-
-    def __init__(
-        self,
-        ip: str | None = None,
-        connection_type: str | None = None,
-        cfg: GlobalConfig = global_config,
-        *args: Any,
-        **kwargs: Any,
-    ) -> None:
-        self._global_config = cfg
-        self.ip = ip if ip is not None else self._global_config.robot_ip
-        self.connection_type = connection_type or self._global_config.unitree_connection_type
-        self.connection = None
-        super().__init__(*args, **kwargs)
+    connection: UnitreeWebRTCConnection | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
 
-        match self.connection_type:
+        match self.config.connection_type:
             case "webrtc":
-                assert self.ip is not None, "IP address must be provided"
-                self.connection = UnitreeWebRTCConnection(self.ip)
+                self.connection = UnitreeWebRTCConnection(self.config.ip)
             case "replay":
                 raise ValueError("Replay connection not implemented for G1 robot")
             case "mujoco":
@@ -98,7 +87,7 @@ class G1Connection(G1ConnectionBase):
                     "This module does not support simulation, use G1SimConnection instead"
                 )
             case _:
-                raise ValueError(f"Unknown connection type: {self.connection_type}")
+                raise ValueError(f"Unknown connection type: {self.config.connection_type}")
 
         assert self.connection is not None
         self.connection.start()
@@ -127,7 +116,7 @@ g1_connection = G1Connection.blueprint
 
 
 def deploy(dimos: ModuleCoordinator, ip: str, local_planner: spec.LocalPlanner) -> "ModuleProxy":
-    connection = dimos.deploy(G1Connection, ip)  # type: ignore[attr-defined]
+    connection = dimos.deploy(G1Connection, ip=ip)
     connection.cmd_vel.connect(local_planner.cmd_vel)
     connection.start()
     return connection

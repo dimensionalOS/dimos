@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import field
 import importlib
 import json
 import signal
@@ -47,7 +47,6 @@ RPC_READY_TIMEOUT = 3.0  #       Timeout for RPC readiness probe during containe
 LOG_TAIL_LINES = 200  #          Number of log lines to include in error messages
 
 
-@dataclass(kw_only=True)
 class DockerModuleConfig(ModuleConfig):
     """
     Configuration for running a DimOS module inside Docker.

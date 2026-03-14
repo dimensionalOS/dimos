@@ -16,11 +16,11 @@ from __future__ import annotations
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
+from dimos.core.module import ModuleSpec
 from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
 
 if TYPE_CHECKING:
     from dimos.core.docker_runner import DockerModule
-    from dimos.core.module import Module
 
 
 class DockerWorkerManager:
@@ -28,7 +28,7 @@ class DockerWorkerManager:
 
     @staticmethod
     def deploy_parallel(
-        specs: list[tuple[type[Module], tuple[Any, ...], dict[str, Any]]],
+        specs: list[ModuleSpec],
     ) -> list[DockerModule]:
         """Deploy multiple DockerModules in parallel.
 
@@ -46,5 +46,7 @@ class DockerWorkerManager:
             raise ExceptionGroup("docker deploy_parallel failed", errors)  # type: ignore[name-defined]
 
         return safe_thread_map(
-            specs, lambda spec: DockerModule(spec[0], *spec[1], **spec[2]), _on_errors
+            specs,
+            lambda spec: DockerModule(spec[0], global_config=spec[1], **spec[2]),  # type: ignore[arg-type]
+            _on_errors,
         )

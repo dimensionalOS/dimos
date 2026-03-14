@@ -55,8 +55,8 @@ class NavigationSkillContainer(Module):
     color_image: In[Image]
     odom: In[PoseStamped]
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._skill_started = False
 
         # Here to prevent unwanted imports in the file.

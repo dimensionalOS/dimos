@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict
 import time
 
+from pydantic import Field
 from reactivex import operators as ops
 
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.pointclouds.occupancy import (
@@ -33,22 +33,16 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-@dataclass
 class Config(ModuleConfig):
     algo: str = "height_cost"
-    config: OccupancyConfig = field(default_factory=HeightCostConfig)
+    config: OccupancyConfig = Field(default_factory=HeightCostConfig)
 
 
-class CostMapper(Module):
+class CostMapper(Module[Config]):
     default_config = Config
-    config: Config
 
     global_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
-
-    def __init__(self, cfg: GlobalConfig = global_config, **kwargs: object) -> None:
-        super().__init__(**kwargs)
-        self._global_config = cfg
 
     @rpc
     def start(self) -> None:

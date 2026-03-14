@@ -21,24 +21,20 @@ docker modules to DockerModule WITHOUT actually running Docker.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from dimos.core.docker_runner import DockerModuleConfig, is_docker_module
+from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import Out
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 # -- Fixtures: fake module classes -------------------------------------------
 
 
-@dataclass
 class FakeDockerConfig(DockerModuleConfig):
     docker_image: str = "fake:latest"
     docker_file: Path | None = None
@@ -95,7 +91,9 @@ class TestModuleCoordinatorDockerRouting:
         # Should NOT go through worker manager
         mock_worker_mgr.deploy.assert_not_called()
         # Should construct a DockerModule (container launch happens inside __init__)
-        mock_docker_module_cls.assert_called_once_with(FakeDockerModule)
+        mock_docker_module_cls.assert_called_once_with(
+            FakeDockerModule, global_config=global_config
+        )
         # start() is NOT called during deploy — it's called in start_all_modules
         mock_dm.start.assert_not_called()
         assert result is mock_dm
@@ -134,7 +132,7 @@ class TestModuleCoordinatorDockerRouting:
 
         result = coordinator.deploy(FakeRegularModule)
 
-        mock_worker_mgr.deploy.assert_called_once_with(FakeRegularModule)
+        mock_worker_mgr.deploy.assert_called_once_with(FakeRegularModule, global_config, {})
         assert result is mock_proxy
 
         coordinator.stop()

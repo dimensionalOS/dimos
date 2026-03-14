@@ -15,6 +15,7 @@
 
 import os
 import threading
+from typing import Any
 
 import pygame
 
@@ -42,8 +43,8 @@ class KeyboardTeleop(Module):
     _clock: pygame.time.Clock | None = None
     _font: pygame.font.Font | None = None
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._stop_event = threading.Event()
 
     @rpc

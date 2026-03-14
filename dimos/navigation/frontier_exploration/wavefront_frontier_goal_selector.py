@@ -23,6 +23,7 @@ from collections import deque
 from dataclasses import dataclass
 from enum import IntFlag
 import threading
+from typing import Any
 
 from dimos_lcm.std_msgs import Bool
 import numpy as np
@@ -30,7 +31,7 @@ from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
@@ -78,7 +79,18 @@ class FrontierCache:
         self.points.clear()
 
 
-class WavefrontFrontierExplorer(Module):
+class WavefrontConfig(ModuleConfig):
+    min_frontier_perimeter: float = 0.5
+    occupancy_threshold: int = 99
+    safe_distance: float = 3.0
+    lookahead_distance: float = 5.0
+    max_explored_distance: float = 10.0
+    info_gain_threshold: float = 0.03
+    num_no_gain_attempts: int = 2
+    goal_timeout: float = 15.0
+
+
+class WavefrontFrontierExplorer(Module[WavefrontConfig]):
     """
     Wavefront frontier exploration algorithm implementation.
 
@@ -93,6 +105,8 @@ class WavefrontFrontierExplorer(Module):
         - goal_request: Exploration goals sent to the navigator
     """
 
+    default_config = WavefrontConfig
+
     # LCM inputs
     global_costmap: In[OccupancyGrid]
     odom: In[PoseStamped]
@@ -103,17 +117,7 @@ class WavefrontFrontierExplorer(Module):
     # LCM outputs
     goal_request: Out[PoseStamped]
 
-    def __init__(
-        self,
-        min_frontier_perimeter: float = 0.5,
-        occupancy_threshold: int = 99,
-        safe_distance: float = 3.0,
-        lookahead_distance: float = 5.0,
-        max_explored_distance: float = 10.0,
-        info_gain_threshold: float = 0.03,
-        num_no_gain_attempts: int = 2,
-        goal_timeout: float = 15.0,
-    ) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """
         Initialize the frontier explorer.
 
@@ -124,20 +128,12 @@ class WavefrontFrontierExplorer(Module):
             info_gain_threshold: Minimum percentage increase in costmap information required to continue exploration (0.05 = 5%)
             num_no_gain_attempts: Maximum number of consecutive attempts with no information gain
         """
-        super().__init__()
-        self.min_frontier_perimeter = min_frontier_perimeter
-        self.occupancy_threshold = occupancy_threshold
-        self.safe_distance = safe_distance
-        self.max_explored_distance = max_explored_distance
-        self.lookahead_distance = lookahead_distance
-        self.info_gain_threshold = info_gain_threshold
-        self.num_no_gain_attempts = num_no_gain_attempts
+        super().__init__(**kwargs)
         self._cache = FrontierCache()
         self.explored_goals = []  # type: ignore[var-annotated]  # list of explored goals
         self.exploration_direction = Vector3(0.0, 0.0, 0.0)  # current exploration direction
         self.last_costmap = None  # store last costmap for information comparison
         self.no_gain_counter = 0  # track consecutive no-gain attempts
-        self.goal_timeout = goal_timeout
 
         # Latest data
         self.latest_costmap: OccupancyGrid | None = None
@@ -214,7 +210,7 @@ class WavefrontFrontierExplorer(Module):
             Number of cells that are free space or obstacles (not unknown)
         """
         free_count = np.sum(costmap.grid == CostValues.FREE)
-        obstacle_count = np.sum(costmap.grid >= self.occupancy_threshold)
+        obstacle_count = np.sum(costmap.grid >= self.config.occupancy_threshold)
         return int(free_count + obstacle_count)
 
     def _get_neighbors(self, point: GridPoint, costmap: OccupancyGrid) -> list[GridPoint]:
@@ -252,7 +248,7 @@ class WavefrontFrontierExplorer(Module):
             neighbor_cost = costmap.grid[neighbor.y, neighbor.x]
 
             # If adjacent to occupied space, not a frontier
-            if neighbor_cost > self.occupancy_threshold:
+            if neighbor_cost > self.config.occupancy_threshold:
                 return False
 
             # Check if adjacent to free space
@@ -376,7 +372,7 @@ class WavefrontFrontierExplorer(Module):
 
                 # Check if we found a large enough frontier
                 # Convert minimum perimeter to minimum number of cells based on resolution
-                min_cells = int(self.min_frontier_perimeter / costmap.resolution)
+                min_cells = int(self.config.min_frontier_perimeter / costmap.resolution)
                 if len(new_frontier) >= min_cells:
                     world_points = []
                     for point in new_frontier:
@@ -489,7 +485,7 @@ class WavefrontFrontierExplorer(Module):
 
         min_distance = float("inf")
         search_radius = (
-            int(self.safe_distance / costmap.resolution) + 5
+            int(self.config.safe_distance / costmap.resolution) + 5
         )  # Search a bit beyond minimum
 
         # Search in a square around the frontier point
@@ -508,14 +504,14 @@ class WavefrontFrontierExplorer(Module):
                     continue
 
                 # Check if this cell is an obstacle
-                if costmap.grid[check_y, check_x] >= self.occupancy_threshold:
+                if costmap.grid[check_y, check_x] >= self.config.occupancy_threshold:
                     # Calculate distance in meters
                     distance = np.sqrt(dx**2 + dy**2) * costmap.resolution
                     min_distance = min(min_distance, distance)
 
         # If no obstacles found within search radius, return the safe distance
         # This indicates the frontier is safely away from obstacles
-        return min_distance if min_distance != float("inf") else self.safe_distance
+        return min_distance if min_distance != float("inf") else self.config.safe_distance
 
     def _compute_comprehensive_frontier_score(
         self, frontier: Vector3, frontier_size: int, robot_pose: Vector3, costmap: OccupancyGrid
@@ -527,25 +523,25 @@ class WavefrontFrontierExplorer(Module):
 
         # Distance score: prefer moderate distances (not too close, not too far)
         # Normalized to 0-1 range
-        distance_score = 1.0 / (1.0 + abs(robot_distance - self.lookahead_distance))
+        distance_score = 1.0 / (1.0 + abs(robot_distance - self.config.lookahead_distance))
 
         # 2. Information gain (frontier size)
         # Normalize by a reasonable max frontier size
-        max_expected_frontier_size = self.min_frontier_perimeter / costmap.resolution * 10
+        max_expected_frontier_size = self.config.min_frontier_perimeter / costmap.resolution * 10
         info_gain_score = min(frontier_size / max_expected_frontier_size, 1.0)
 
         # 3. Distance to explored goals (bonus for being far from explored areas)
         # Normalize by a reasonable max distance (e.g., 10 meters)
         explored_goals_distance = self._compute_distance_to_explored_goals(frontier)
-        explored_goals_score = min(explored_goals_distance / self.max_explored_distance, 1.0)
+        explored_goals_score = min(explored_goals_distance / self.config.max_explored_distance, 1.0)
 
         # 4. Distance to obstacles (score based on safety)
         # 0 = too close to obstacles, 1 = at or beyond safe distance
         obstacles_distance = self._compute_distance_to_obstacles(frontier, costmap)
-        if obstacles_distance >= self.safe_distance:
+        if obstacles_distance >= self.config.safe_distance:
             obstacles_score = 1.0  # Fully safe
         else:
-            obstacles_score = obstacles_distance / self.safe_distance  # Linear penalty
+            obstacles_score = obstacles_distance / self.config.safe_distance  # Linear penalty
 
         # 5. Direction momentum (already in 0-1 range from dot product)
         momentum_score = self._compute_direction_momentum_score(frontier, robot_pose)
@@ -628,15 +624,15 @@ class WavefrontFrontierExplorer(Module):
             # Check if information increase meets minimum percentage threshold
             if last_info > 0:  # Avoid division by zero
                 info_increase_percent = (current_info - last_info) / last_info
-                if info_increase_percent < self.info_gain_threshold:
+                if info_increase_percent < self.config.info_gain_threshold:
                     logger.info(
-                        f"Information increase ({info_increase_percent:.2f}) below threshold ({self.info_gain_threshold:.2f})"
+                        f"Information increase ({info_increase_percent:.2f}) below threshold ({self.config.info_gain_threshold:.2f})"
                     )
                     logger.info(
                         f"Current information: {current_info}, Last information: {last_info}"
                     )
                     self.no_gain_counter += 1
-                    if self.no_gain_counter >= self.num_no_gain_attempts:
+                    if self.no_gain_counter >= self.config.num_no_gain_attempts:
                         logger.info(
                             f"No information gain for {self.no_gain_counter} consecutive attempts"
                         )
@@ -797,7 +793,7 @@ class WavefrontFrontierExplorer(Module):
 
                 # Wait for goal to be reached or timeout
                 logger.info("Waiting for goal to be reached...")
-                goal_reached = self.goal_reached_event.wait(timeout=self.goal_timeout)
+                goal_reached = self.goal_reached_event.wait(timeout=self.config.goal_timeout)
 
                 if goal_reached:
                     logger.info("Goal reached, finding next frontier")

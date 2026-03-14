@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 from PIL import Image as PILImage, ImageDraw
 
 from dimos.mapping.osm.osm import MapImage, get_osm_map
@@ -24,11 +26,11 @@ logger = setup_logger()
 
 
 class CurrentLocationMap:
-    _vl_model: VlModel
+    _vl_model: VlModel[Any]
     _position: LatLon | None
     _map_image: MapImage | None
 
-    def __init__(self, vl_model: VlModel) -> None:
+    def __init__(self, vl_model: VlModel[Any]) -> None:
         self._vl_model = vl_model
         self._position = None
         self._map_image = None

@@ -41,12 +41,9 @@ class JoystickModule(Module):
 
     twist_out: Out[TwistStamped]  # Timestamped velocity commands
     mode_out: Out[Int32]  # Mode changes
-
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        Module.__init__(self, *args, **kwargs)
-        self.pygame_ready = False
-        self.running = False
-        self.current_mode = 0  # Start in IDLE mode for safety
+    pygame_ready = False
+    running = False
+    current_mode = 0  # Start in IDLE mode for safety
 
     @rpc
     def start(self) -> None:

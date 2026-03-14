@@ -19,13 +19,13 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.core.docker_worker_manager import DockerWorkerManager
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
 from dimos.core.worker_manager import WorkerManager
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
 
 if TYPE_CHECKING:
-    from dimos.core.module import Module, ModuleT
     from dimos.core.resource_monitor.monitor import StatsMonitor
     from dimos.core.rpc_client import ModuleProxy, ModuleProxyProtocol
     from dimos.core.worker import Worker
@@ -38,7 +38,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
     _global_config: GlobalConfig
     _n: int | None = None
     _memory_limit: str = "auto"
-    _deployed_modules: dict[type[Module], ModuleProxyProtocol]
+    _deployed_modules: dict[type[ModuleBase], ModuleProxyProtocol]
     _stats_monitor: StatsMonitor | None = None
 
     def __init__(
@@ -117,7 +117,12 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         if self._client is not None:
             self._client.close_all()
 
-    def deploy(self, module_class: type[ModuleT], *args, **kwargs) -> ModuleProxy:  # type: ignore[no-untyped-def]
+    def deploy(
+        self,
+        module_class: type[ModuleBase[Any]],
+        global_config: GlobalConfig = global_config,
+        **kwargs: Any,
+    ) -> ModuleProxy:
         # Inline to avoid circular import: module_coordinator → docker_runner → module → blueprints → module_coordinator
         from dimos.core.docker_runner import DockerModule, is_docker_module
 
@@ -126,15 +131,13 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
 
         deployed_module: ModuleProxyProtocol
         if is_docker_module(module_class):
-            deployed_module = DockerModule(module_class, *args, **kwargs)
+            deployed_module = DockerModule(module_class, global_config=global_config, **kwargs)  # type: ignore[arg-type]
         else:
-            deployed_module = self._client.deploy(module_class, *args, **kwargs)
-        self._deployed_modules[module_class] = deployed_module
+            deployed_module = self._client.deploy(module_class, global_config, kwargs)
+        self._deployed_modules[module_class] = deployed_module  # type: ignore[assignment]
         return deployed_module  # type: ignore[return-value]
 
-    def deploy_parallel(
-        self, module_specs: list[tuple[type[ModuleT], tuple[Any, ...], dict[str, Any]]]
-    ) -> list[ModuleProxy]:
+    def deploy_parallel(self, module_specs: list[ModuleSpec]) -> list[ModuleProxy]:
         # Inline to avoid circular import: module_coordinator → docker_runner → module → blueprints → module_coordinator
         from dimos.core.docker_runner import is_docker_module
 
@@ -144,8 +147,8 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         # Split by type, tracking original indices for reassembly
         docker_indices: list[int] = []
         worker_indices: list[int] = []
-        docker_specs: list[tuple[type[Module], tuple[Any, ...], dict[str, Any]]] = []
-        worker_specs: list[tuple[type[ModuleT], tuple[Any, ...], dict[str, Any]]] = []
+        docker_specs: list[ModuleSpec] = []
+        worker_specs: list[ModuleSpec] = []
         for i, spec in enumerate(module_specs):
             if is_docker_module(spec[0]):
                 docker_indices.append(i)
@@ -205,7 +208,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
             if hasattr(module, "on_system_modules"):
                 module.on_system_modules(modules)
 
-    def get_instance(self, module: type[ModuleT]) -> ModuleProxy:
+    def get_instance(self, module: type[ModuleBase]) -> ModuleProxy:
         return self._deployed_modules.get(module)  # type: ignore[return-value, no-any-return]
 
     def loop(self) -> None:

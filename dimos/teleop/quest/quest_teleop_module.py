@@ -26,7 +26,7 @@ from enum import IntEnum
 from pathlib import Path
 import threading
 import time
-from typing import Any
+from typing import Any, TypeVar
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
@@ -68,7 +68,6 @@ class QuestTeleopStatus:
     buttons: Buttons
 
 
-@dataclass
 class QuestTeleopConfig(ModuleConfig):
     """Configuration for Quest Teleoperation Module."""
 
@@ -76,7 +75,10 @@ class QuestTeleopConfig(ModuleConfig):
     server_port: int = 8443
 
 
-class QuestTeleopModule(Module[QuestTeleopConfig]):
+_Config = TypeVar("_Config", bound=QuestTeleopConfig)
+
+
+class QuestTeleopModule(Module[_Config]):
     """Quest Teleoperation Module for Meta Quest controllers.
 
     Receives controller data from the Quest web app via an embedded WebSocket
@@ -89,7 +91,7 @@ class QuestTeleopModule(Module[QuestTeleopConfig]):
         - buttons: Buttons (button states for both controllers)
     """
 
-    default_config = QuestTeleopConfig
+    default_config = QuestTeleopConfig  # type: ignore[assignment]
 
     # Outputs: delta poses for each controller
     left_controller_output: Out[PoseStamped]
@@ -100,8 +102,8 @@ class QuestTeleopModule(Module[QuestTeleopConfig]):
     # Initialization
     # -------------------------------------------------------------------------
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
         # Engage state (per-hand)
         self._is_engaged: dict[Hand, bool] = {Hand.LEFT: False, Hand.RIGHT: False}

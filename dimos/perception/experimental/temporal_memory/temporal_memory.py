@@ -22,13 +22,12 @@ Streams frames through ``FrameWindowAccumulator``, delegates VLM calls to
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from reactivex import Subject, interval
 from reactivex.disposable import Disposable
@@ -37,6 +36,7 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.models.vl.base import VlModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
@@ -50,9 +50,6 @@ from .frame_window_accumulator import Frame, FrameWindowAccumulator
 from .temporal_state import TemporalState
 from .window_analyzer import WindowAnalyzer
 
-if TYPE_CHECKING:
-    from dimos.models.vl.base import VlModel
-
 try:
     from .clip_filter import CLIPFrameFilter
 except ImportError:
@@ -63,13 +60,14 @@ logger = setup_logger()
 MAX_RECENT_WINDOWS = 50
 
 
-@dataclass
 class TemporalMemoryConfig(ModuleConfig):
     """Configuration for the temporal memory module.
 
     All VLM frequency knobs are exposed at the top level so users can
     tune cost / latency / accuracy without touching code.
     """
+
+    vlm: VlModel[Any] | None = None
 
     # Frame processing
     fps: float = 1.0
@@ -106,38 +104,35 @@ class TemporalMemoryConfig(ModuleConfig):
     nearby_distance_meters: float = 5.0
 
 
-class TemporalMemory(Module):
+class TemporalMemory(Module[TemporalMemoryConfig]):
     """Thin orchestrator that wires frames → window accumulator → VLM → state + DB.
 
     Uses RxPY reactive streams for the frame pipeline and ``interval`` for
     periodic window analysis.
     """
 
+    default_config = TemporalMemoryConfig
+
     color_image: In[Image]
     odom: In[PoseStamped]
     entity_markers: Out[EntityMarkers]
 
-    def __init__(
-        self,
-        vlm: VlModel | None = None,
-        config: TemporalMemoryConfig | None = None,
-    ) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
-        self._vlm_raw = vlm
-        self._config: TemporalMemoryConfig = config or TemporalMemoryConfig()
+        self._vlm_raw = self.config.vlm
 
         # new_memory is set via TemporalMemoryConfig by the blueprint factory
         # (which runs in the main process where GlobalConfig is available).
 
         # Components
         self._accumulator = FrameWindowAccumulator(
-            max_buffer_frames=self._config.max_buffer_frames,
-            window_s=self._config.window_s,
-            stride_s=self._config.stride_s,
-            fps=self._config.fps,
+            max_buffer_frames=self.config.max_buffer_frames,
+            window_s=self.config.window_s,
+            stride_s=self.config.stride_s,
+            fps=self.config.fps,
         )
-        self._state = TemporalState(next_summary_at_s=self._config.summary_interval_s)
+        self._state = TemporalState(next_summary_at_s=self.config.summary_interval_s)
         self._recent_windows: deque[dict[str, Any]] = deque(maxlen=MAX_RECENT_WINDOWS)
 
         self._stopped = False
@@ -150,10 +145,10 @@ class TemporalMemory(Module):
 
         # CLIP filter
         self._clip_filter: CLIPFrameFilter | None = None
-        self._use_clip_filtering = self._config.use_clip_filtering
+        self._use_clip_filtering = self.config.use_clip_filtering
         if self._use_clip_filtering and CLIP_AVAILABLE:
             try:
-                self._clip_filter = CLIPFrameFilter(model_name=self._config.clip_model)
+                self._clip_filter = CLIPFrameFilter(model_name=self.config.clip_model)
                 logger.info("clip filtering enabled")
             except Exception as e:
                 logger.warning(f"clip init failed: {e}")
@@ -163,8 +158,8 @@ class TemporalMemory(Module):
             self._use_clip_filtering = False
 
         # Persistent DB — stored in XDG state dir (same root as per-run logs)
-        if self._config.db_dir:
-            db_dir = Path(self._config.db_dir)
+        if self.config.db_dir:
+            db_dir = Path(self.config.db_dir)
         else:
             # Default: ~/.local/state/dimos/temporal_memory/
             # XDG state dir — predictable, works for pip install and git clone.
@@ -173,7 +168,7 @@ class TemporalMemory(Module):
             db_dir = state_root / "dimos" / "temporal_memory"
         db_dir.mkdir(parents=True, exist_ok=True)
         db_path = db_dir / "entity_graph.db"
-        if self._config.new_memory and db_path.exists():
+        if self.config.new_memory and db_path.exists():
             db_path.unlink()
             logger.info("Deleted existing DB (new_memory=True)")
         self._graph_db = EntityGraphDB(db_path=db_path)
@@ -181,7 +176,7 @@ class TemporalMemory(Module):
 
         # Persistent JSONL — accumulates across runs (raw VLM output + parsed)
         self._persistent_jsonl_path: Path = db_dir / "temporal_memory.jsonl"
-        if self._config.new_memory and self._persistent_jsonl_path.exists():
+        if self.config.new_memory and self._persistent_jsonl_path.exists():
             self._persistent_jsonl_path.unlink()
             logger.info("Deleted existing persistent JSONL (new_memory=True)")
         logger.info(f"persistent JSONL: {self._persistent_jsonl_path}")
@@ -204,8 +199,8 @@ class TemporalMemory(Module):
             logger.warning("no run log dir found — JSONL logging disabled")
 
         logger.info(
-            f"TemporalMemory init: fps={self._config.fps}, "
-            f"window={self._config.window_s}s, stride={self._config.stride_s}s"
+            f"TemporalMemory init: fps={self.config.fps}, "
+            f"window={self.config.window_s}s, stride={self.config.stride_s}s"
         )
 
     # ------------------------------------------------------------------
@@ -213,7 +208,7 @@ class TemporalMemory(Module):
     # ------------------------------------------------------------------
 
     @property
-    def vlm(self) -> VlModel:
+    def vlm(self) -> VlModel[Any]:
         if self._vlm_raw is None:
             from dimos.models.vl.openai import OpenAIVlModel
 
@@ -230,8 +225,8 @@ class TemporalMemory(Module):
         if not hasattr(self, "__analyzer"):
             self.__analyzer = WindowAnalyzer(
                 self.vlm,
-                max_tokens=self._config.max_tokens,
-                temperature=self._config.temperature,
+                max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature,
             )
         return self.__analyzer
 
@@ -261,7 +256,7 @@ class TemporalMemory(Module):
 
     def _publish_entity_markers(self) -> None:
         """Publish entity positions as 3D markers for Rerun overlay on the map."""
-        if not self._config.visualize:
+        if not self.config.visualize:
             return
         try:
             all_entities = self._graph_db.get_all_entities()
@@ -319,7 +314,7 @@ class TemporalMemory(Module):
                 )
 
         self._disposables.add(
-            frame_subject.pipe(sharpness_barrier(self._config.fps)).subscribe(_on_frame)
+            frame_subject.pipe(sharpness_barrier(self.config.fps)).subscribe(_on_frame)
         )
         unsub_image = self.color_image.subscribe(frame_subject.on_next)
         self._disposables.add(Disposable(unsub_image))
@@ -342,7 +337,7 @@ class TemporalMemory(Module):
 
         # Periodic window analysis
         self._disposables.add(
-            interval(self._config.stride_s).subscribe(lambda _: self._analyze_window())
+            interval(self.config.stride_s).subscribe(lambda _: self._analyze_window())
         )
         logger.info("TemporalMemory started")
 
@@ -366,7 +361,7 @@ class TemporalMemory(Module):
 
         self._accumulator.clear()
         self._recent_windows.clear()
-        self._state.clear(self._config.summary_interval_s)
+        self._state.clear(self.config.summary_interval_s)
 
         super().stop()
 
@@ -401,13 +396,13 @@ class TemporalMemory(Module):
         w_start, w_end = window_frames[0].timestamp_s, window_frames[-1].timestamp_s
 
         # Skip stale scenes (frames too close together / camera not moving)
-        if tu.is_scene_stale(window_frames, self._config.stale_scene_threshold):
+        if tu.is_scene_stale(window_frames, self.config.stale_scene_threshold):
             logger.info(f"[temporal-memory] skipping stale window [{w_start:.1f}-{w_end:.1f}s]")
             return
 
         # Select diverse keyframes
         window_frames = adaptive_keyframes(
-            window_frames, max_frames=self._config.max_frames_per_window
+            window_frames, max_frames=self.config.max_frames_per_window
         )
         logger.info(f"analyzing [{w_start:.1f}-{w_end:.1f}s] with {len(window_frames)} frames")
 
@@ -458,7 +453,7 @@ class TemporalMemory(Module):
         )
 
         # VLM Call #2: distance estimation (background thread)
-        if self._graph_db and self._config.enable_distance_estimation and window_frames:
+        if self._graph_db and self.config.enable_distance_estimation and window_frames:
             mid_frame = window_frames[len(window_frames) // 2]
             if mid_frame.image:
                 thread = threading.Thread(
@@ -468,7 +463,7 @@ class TemporalMemory(Module):
                         mid_frame.image,
                         self.vlm,
                         w_end,
-                        self._config.max_distance_pairs,
+                        self.config.max_distance_pairs,
                     ),
                     daemon=True,
                 )
@@ -478,7 +473,7 @@ class TemporalMemory(Module):
 
         # Update state
         needs_summary = self._state.update_from_window(
-            parsed, w_end, self._config.summary_interval_s
+            parsed, w_end, self.config.summary_interval_s
         )
         self._recent_windows.append(parsed)
 
@@ -512,7 +507,7 @@ class TemporalMemory(Module):
 
         sr = self._analyzer.update_summary(latest.image, snap.rolling_summary, snap.chunk_buffer)
         if sr is not None:
-            self._state.apply_summary(sr.summary_text, w_end, self._config.summary_interval_s)
+            self._state.apply_summary(sr.summary_text, w_end, self.config.summary_interval_s)
             self._log_jsonl(
                 {
                     "ts": time.time(),
@@ -592,8 +587,8 @@ class TemporalMemory(Module):
                     graph_db=self._graph_db,
                     entity_ids=all_entity_ids,
                     time_window_s=time_window_s,
-                    max_relations_per_entity=self._config.max_relations_per_entity,
-                    nearby_distance_meters=self._config.nearby_distance_meters,
+                    max_relations_per_entity=self.config.max_relations_per_entity,
+                    nearby_distance_meters=self.config.nearby_distance_meters,
                     current_video_time_s=current_video_time_s,
                 )
                 context["graph_knowledge"] = graph_context
@@ -623,7 +618,7 @@ class TemporalMemory(Module):
     @rpc
     def clear_history(self) -> bool:
         try:
-            self._state.clear(self._config.summary_interval_s)
+            self._state.clear(self.config.summary_interval_s)
             self._recent_windows.clear()
             logger.info("cleared history")
             return True
