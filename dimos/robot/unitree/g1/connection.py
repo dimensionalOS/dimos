@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from abc import ABC, abstractmethod
+import threading
+from threading import Thread
+import time
 from typing import TYPE_CHECKING, Any
 
 from reactivex.disposable import Disposable
@@ -23,8 +25,10 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.module_coordinator import ModuleCoordinator
-from dimos.core.stream import In
-from dimos.msgs.geometry_msgs import Twist
+from dimos.core.stream import In, Out
+from dimos.hardware.sensors.camera import zed
+from dimos.msgs.sensor_msgs import CameraInfo, Image
+from dimos.msgs.geometry_msgs import Quaternion, Transform, Twist, Vector3
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.utils.logging_config import setup_logger
 
@@ -32,6 +36,10 @@ if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
 
 logger = setup_logger()
+
+
+def _camera_info_static() -> CameraInfo:
+    return zed.CameraInfo.SingleWebcam
 
 
 class G1ConnectionBase(Module, ABC):
@@ -63,9 +71,13 @@ class G1ConnectionBase(Module, ABC):
 
 class G1Connection(G1ConnectionBase):
     cmd_vel: In[Twist]
+    color_image: Out[Image]
+    camera_info: Out[CameraInfo]
     ip: str | None
     connection_type: str | None = None
     _global_config: GlobalConfig
+    camera_info_static: CameraInfo = _camera_info_static()
+    _camera_info_thread: Thread | None = None
 
     connection: UnitreeWebRTCConnection | None
 
@@ -81,11 +93,13 @@ class G1Connection(G1ConnectionBase):
         self.ip = ip if ip is not None else self._global_config.robot_ip
         self.connection_type = connection_type or self._global_config.unitree_connection_type
         self.connection = None
+        self._stop_event = threading.Event()
         super().__init__(*args, **kwargs)
 
     @rpc
     def start(self) -> None:
         super().start()
+        self._stop_event.clear()
 
         match self.connection_type:
             case "webrtc":
@@ -103,18 +117,50 @@ class G1Connection(G1ConnectionBase):
         assert self.connection is not None
         self.connection.start()
 
+        self._disposables.add(self.connection.video_stream().subscribe(self.color_image.publish))
         self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
+
+        self._camera_info_thread = Thread(
+            target=self._publish_camera_info_loop,
+            daemon=True,
+        )
+        self._camera_info_thread.start()
 
     @rpc
     def stop(self) -> None:
-        assert self.connection is not None
-        self.connection.stop()
+        self._stop_event.set()
+        if self.connection is not None:
+            self.connection.stop()
+        if self._camera_info_thread and self._camera_info_thread.is_alive():
+            self._camera_info_thread.join(timeout=1.0)
         super().stop()
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> None:
         assert self.connection is not None
         self.connection.move(twist, duration)
+
+    def _publish_camera_info_loop(self) -> None:
+        while not self._stop_event.is_set():
+            ts = time.time()
+            self.camera_info.publish(self.camera_info_static.with_ts(ts))
+            self.tf.publish(
+                Transform(
+                    translation=Vector3(0.05, 0.0, 0.6),
+                    rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
+                    frame_id="sensor",
+                    child_frame_id="camera_link",
+                    ts=ts,
+                ),
+                Transform(
+                    translation=Vector3(0.0, 0.0, 0.0),
+                    rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
+                    frame_id="camera_link",
+                    child_frame_id="camera_optical",
+                    ts=ts,
+                ),
+            )
+            self._stop_event.wait(1.0)
 
     @rpc
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
