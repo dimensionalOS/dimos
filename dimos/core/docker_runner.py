@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.core.module import ModuleConfig
 from dimos.core.rpc_client import ModuleProxyProtocol, RpcCall
-from dimos.protocol.rpc import LCMRPC
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.bridge import RERUN_GRPC_PORT, RERUN_WEB_PORT
 

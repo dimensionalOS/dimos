@@ -17,7 +17,7 @@ import time
 import lcm
 import pytest
 
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 @pytest.mark.tool

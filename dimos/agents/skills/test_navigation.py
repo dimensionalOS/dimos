@@ -18,8 +18,8 @@ import pytest
 from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image
 
 
 class FakeCamera(Module):

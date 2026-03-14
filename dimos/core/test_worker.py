@@ -21,7 +21,7 @@ from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.worker_manager import WorkerManager
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 if TYPE_CHECKING:
     from dimos.core.resource_monitor.stats import WorkerStats

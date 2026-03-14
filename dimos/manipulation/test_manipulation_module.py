@@ -30,9 +30,12 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
 )
-from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Vector3
-from dimos.msgs.sensor_msgs import JointState
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.data import get_data
 
 

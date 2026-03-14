@@ -40,10 +40,6 @@ from dimos.utils.cli import theme
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-# ---------------------------------------------------------------------------
-# Color helpers
-# ---------------------------------------------------------------------------
-
 
 def _heat(ratio: float) -> str:
     """Map 0..1 ratio to a cyan → yellow → red gradient."""
@@ -96,11 +92,6 @@ def _rel_style(value: float, lo: float, hi: float) -> str:
     return _heat(min((value - lo) / (hi - lo), 1.0))
 
 
-# ---------------------------------------------------------------------------
-# Metric formatters (plain strings — color applied separately via _rel_style)
-# ---------------------------------------------------------------------------
-
-
 def _fmt_pct(v: float) -> str:
     return f"{v:3.0f}%"
 
@@ -127,11 +118,6 @@ def _fmt_secs(v: float) -> str:
 def _fmt_io(v: float) -> str:
     return f"{v / 1048576:.0f} MB"
 
-
-# ---------------------------------------------------------------------------
-# Metric definitions — add a tuple here to add a new field
-# (label, dict_key, format_fn)
-# ---------------------------------------------------------------------------
 
 _LINE1: list[tuple[str, str, Callable[[float], str]]] = [
     ("CPU", "cpu_percent", _fmt_pct),
@@ -160,11 +146,6 @@ def _compute_ranges(data_dicts: list[dict[str, Any]]) -> dict[str, tuple[float, 
         vals = [d.get(key, 0) for d in data_dicts]
         ranges[key] = (min(vals), max(vals))
     return ranges
-
-
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
 
 
 class ResourceSpyApp(App[None]):
@@ -366,10 +347,6 @@ class ResourceSpyApp(App[None]):
 
         return [line1, line2]
 
-
-# ---------------------------------------------------------------------------
-# Preview
-# ---------------------------------------------------------------------------
 
 _PREVIEW_DATA: dict[str, Any] = {
     "coordinator": {

@@ -26,9 +26,9 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.std_msgs import Header
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.std_msgs.Header import Header
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

@@ -15,7 +15,7 @@
 
 import pytest
 
-from dimos.hardware.sensors.camera import zed
+from dimos.hardware.sensors.camera.zed import compat as zed
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 
 

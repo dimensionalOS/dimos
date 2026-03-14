@@ -36,8 +36,8 @@ from dimos.core.transport import LCMTransport
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
 )
-from dimos.msgs.sensor_msgs import JointState
-from dimos.msgs.trajectory_msgs import JointTrajectory
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
 class TrajectorySetter:

@@ -19,7 +19,7 @@ import pytest
 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 
 

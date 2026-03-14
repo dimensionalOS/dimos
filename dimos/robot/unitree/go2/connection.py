@@ -23,7 +23,6 @@ from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 import rerun.blueprint as rrb
 
-from dimos import spec
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
@@ -31,18 +30,18 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, pSHMTransport
+from dimos.spec.perception import Camera, Pointcloud
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
-from dimos.msgs.geometry_msgs import (
-    PoseStamped,
-    Quaternion,
-    Transform,
-    Twist,
-    Vector3,
-)
-from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
-from dimos.msgs.sensor_msgs.Image import ImageFormat
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
@@ -184,7 +183,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
 _Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
 
 
-class GO2Connection(Module[_Config], spec.Camera, spec.Pointcloud):
+class GO2Connection(Module[_Config], Camera, Pointcloud):
     default_config = ConnectionConfig  # type: ignore[assignment]
 
     cmd_vel: In[Twist]

@@ -18,7 +18,7 @@ from reactivex import operators as ops
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_barrier
 from dimos.utils.data import get_data
-from dimos.utils.testing import TimedSensorReplay
+from dimos.utils.testing.replay import TimedSensorReplay
 
 
 @pytest.fixture

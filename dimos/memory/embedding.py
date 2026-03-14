@@ -26,9 +26,8 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.models.embedding.clip import CLIPModel
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.utils.reactive import getter_hot
 

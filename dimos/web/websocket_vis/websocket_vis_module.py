@@ -48,11 +48,15 @@ _COMMAND_CENTER_DIR = (
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.mapping.models import LatLon
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
-from dimos.mapping.types import LatLon
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
-from dimos.msgs.nav_msgs import OccupancyGrid, Path
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.logging_config import setup_logger
 
 from .optimized_costmap import OptimizedCostmapEncoder

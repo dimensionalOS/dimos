@@ -30,7 +30,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig, SkillInfo
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.stream import In, Out
-from dimos.protocol.rpc import RPCSpec
+from dimos.protocol.rpc.spec import RPCSpec
 from dimos.spec.utils import Spec
 
 if TYPE_CHECKING:

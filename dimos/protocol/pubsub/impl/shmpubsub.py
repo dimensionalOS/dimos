@@ -13,9 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ---------------------------------------------------------------------------
-# SharedMemory Pub/Sub over unified IPC channels (CPU/CUDA)
-# ---------------------------------------------------------------------------
 
 from __future__ import annotations
 
@@ -101,7 +98,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             # Lock for thread-safe publish buffer access
             self.publish_lock = threading.Lock()
 
-    # ----- init / lifecycle -------------------------------------------------
+    # init / lifecycle
 
     def __init__(
         self,
@@ -146,7 +143,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             self._topics.clear()
         logger.debug("SharedMemory PubSub stopped.")
 
-    # ----- PubSub API (bytes on the wire) ----------------------------------
+    # PubSub API (bytes on the wire)
 
     def publish(self, topic: str, message: bytes) -> None:
         if not isinstance(message, bytes | bytearray | memoryview):
@@ -212,7 +209,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
         return _unsub
 
-    # ----- Capacity mgmt ----------------------------------------------------
+    # Capacity mgmt
 
     def reconfigure(self, topic: str, *, capacity: int) -> dict:  # type: ignore[type-arg]
         """Change payload capacity (bytes) for a topic; returns new descriptor."""
@@ -229,7 +226,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             st.publish_buffer = np.zeros(new_shape, dtype=np.uint8)
         return desc  # type: ignore[no-any-return]
 
-    # ----- Internals --------------------------------------------------------
+    # Internals
 
     def _ensure_topic(self, topic: str) -> _TopicState:
         with self._lock:

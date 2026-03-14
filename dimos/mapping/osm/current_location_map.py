@@ -16,9 +16,9 @@ from typing import Any
 
 from PIL import Image as PILImage, ImageDraw
 
+from dimos.mapping.models import LatLon
 from dimos.mapping.osm.osm import MapImage, get_osm_map
 from dimos.mapping.osm.query import query_for_one_position, query_for_one_position_and_context
-from dimos.mapping.types import LatLon
 from dimos.models.vl.base import VlModel
 from dimos.utils.logging_config import setup_logger
 

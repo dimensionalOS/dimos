@@ -35,8 +35,6 @@ class TwistBaseAdapter(Protocol):
     - Angle: radians
     """
 
-    # --- Connection ---
-
     def connect(self) -> bool:
         """Connect to hardware. Returns True on success."""
         ...
@@ -49,13 +47,9 @@ class TwistBaseAdapter(Protocol):
         """Check if connected."""
         ...
 
-    # --- Info ---
-
     def get_dof(self) -> int:
         """Get number of velocity DOFs (e.g., 3 for holonomic, 2 for differential)."""
         ...
-
-    # --- State Reading ---
 
     def read_velocities(self) -> list[float]:
         """Read current velocities in virtual joint order (m/s or rad/s)."""
@@ -69,8 +63,6 @@ class TwistBaseAdapter(Protocol):
         """
         ...
 
-    # --- Control ---
-
     def write_velocities(self, velocities: list[float]) -> bool:
         """Command velocities in virtual joint order. Returns success."""
         ...
@@ -78,8 +70,6 @@ class TwistBaseAdapter(Protocol):
     def write_stop(self) -> bool:
         """Stop all motion immediately (zero velocities)."""
         ...
-
-    # --- Enable/Disable ---
 
     def write_enable(self, enable: bool) -> bool:
         """Enable or disable the platform. Returns success."""

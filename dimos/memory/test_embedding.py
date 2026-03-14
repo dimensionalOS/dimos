@@ -15,9 +15,9 @@
 import pytest
 
 from dimos.memory.embedding import EmbeddingMemory, SpatialEntry
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.data import get_data
-from dimos.utils.testing import TimedSensorReplay
+from dimos.utils.testing.replay import TimedSensorReplay
 
 dir_name = "unitree_go2_bigoffice"
 

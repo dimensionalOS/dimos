@@ -17,7 +17,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.stream import RemoteStream
 from dimos.core.worker import MethodCallProxy
-from dimos.protocol.rpc import LCMRPC, RPCSpec
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.protocol.rpc.spec import RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

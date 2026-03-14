@@ -27,9 +27,11 @@ from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import manipulation_module
-from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
-from dimos.msgs.sensor_msgs import JointState
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.keyboard.keyboard_teleop_module import keyboard_teleop_module
 from dimos.utils.data import LfsPath, get_data
 

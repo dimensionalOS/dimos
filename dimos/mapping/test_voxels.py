@@ -20,7 +20,7 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.mapping.voxels import VoxelGridMapper
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.replay import TimedSensorReplay

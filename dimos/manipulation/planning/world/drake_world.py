@@ -25,14 +25,10 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.manipulation.planning.spec import (
-    JointPath,
-    Obstacle,
-    ObstacleType,
-    RobotModelConfig,
-    WorldRobotID,
-    WorldSpec,
-)
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import JointPath, Obstacle, WorldRobotID
+from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.utils.logging_config import setup_logger
 
@@ -41,8 +37,9 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs import PoseStamped, Transform
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 try:
     from pydrake.geometry import (  # type: ignore[import-not-found]
@@ -123,8 +120,6 @@ class _ThreadSafeMeshcat:
         if current_thread() is self._thread:
             return fn(*args, **kwargs)
         return self._executor.submit(fn, *args, **kwargs).result()
-
-    # --- Meshcat proxies ---
 
     def SetObject(self, *args: Any, **kwargs: Any) -> Any:
         return self._call(self._inner.SetObject, *args, **kwargs)
@@ -327,7 +322,7 @@ class DrakeWorld(WorldSpec):
             np.full(n_joints, np.pi),
         )
 
-    # ============= Obstacle Management =============
+    # Obstacle Management
 
     def add_obstacle(self, obstacle: Obstacle) -> str:
         """Add an obstacle to the world."""
@@ -536,7 +531,7 @@ class DrakeWorld(WorldSpec):
             for obs_id in obstacle_ids:
                 self.remove_obstacle(obs_id)
 
-    # ============= Preview Robot Setup =============
+    # Preview Robot Setup
 
     def _set_preview_colors(self) -> None:
         """Set all preview robot visual geometries to yellow/semi-transparent."""
@@ -565,7 +560,7 @@ class DrakeWorld(WorldSpec):
                 for geom_id in self._plant.GetCollisionGeometriesForBody(body):
                     self._scene_graph.RemoveRole(source_id, geom_id, Role.kProximity)
 
-    # ============= Lifecycle =============
+    # Lifecycle
 
     def finalize(self) -> None:
         """Finalize world - locks robot topology, enables collision checking."""
@@ -683,7 +678,7 @@ class DrakeWorld(WorldSpec):
                 )
             )
 
-    # ============= Context Management =============
+    # Context Management
 
     def get_live_context(self) -> Context:
         """Get the live context (mirrors current robot state).
@@ -736,7 +731,7 @@ class DrakeWorld(WorldSpec):
             # Calling ForcedPublish from the LCM callback thread blocks message processing.
             # Visualization can be updated via publish_to_meshcat() from non-callback contexts.
 
-    # ============= State Operations (context-based) =============
+    # State Operations (context-based)
 
     def set_joint_state(
         self, ctx: Context, robot_id: WorldRobotID, joint_state: JointState
@@ -782,7 +777,7 @@ class DrakeWorld(WorldSpec):
         positions = [float(full_positions[idx]) for idx in robot_data.joint_indices]
         return JointState(name=robot_data.config.joint_names, position=positions)
 
-    # ============= Collision Checking (context-based) =============
+    # Collision Checking (context-based)
 
     def is_collision_free(self, ctx: Context, robot_id: WorldRobotID) -> bool:
         """Check if current configuration in context is collision-free."""
@@ -812,7 +807,7 @@ class DrakeWorld(WorldSpec):
 
         return float(min(pair.distance for pair in signed_distance_pairs))
 
-    # ============= Collision Checking (context-free, for planning) =============
+    # Collision Checking (context-free, for planning)
 
     def check_config_collision_free(self, robot_id: WorldRobotID, joint_state: JointState) -> bool:
         """Check if a joint state is collision-free (manages context internally).
@@ -859,7 +854,7 @@ class DrakeWorld(WorldSpec):
 
         return True
 
-    # ============= Forward Kinematics (context-based) =============
+    # Forward Kinematics (context-based)
 
     def get_ee_pose(self, ctx: Context, robot_id: WorldRobotID) -> PoseStamped:
         """Get end-effector pose."""
@@ -944,7 +939,7 @@ class DrakeWorld(WorldSpec):
 
         return J_reordered
 
-    # ============= Visualization =============
+    # Visualization
 
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""
@@ -1029,7 +1024,7 @@ class DrakeWorld(WorldSpec):
         if self._meshcat is not None:
             self._meshcat.close()
 
-    # ============= Direct Access (use with caution) =============
+    # Direct Access (use with caution)
 
     @property
     def plant(self) -> MultibodyPlant:

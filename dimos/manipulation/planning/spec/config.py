@@ -22,7 +22,7 @@ from pathlib import Path
 from pydantic import Field
 
 from dimos.core.module import ModuleConfig
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 class RobotModelConfig(ModuleConfig):

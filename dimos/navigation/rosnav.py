@@ -27,26 +27,29 @@ from pydantic import Field
 from reactivex import operators as ops
 from reactivex.subject import Subject
 
-from dimos import spec
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, ROSTransport
-from dimos.msgs.geometry_msgs import (
-    PoseStamped,
-    Quaternion,
-    Transform,
-    Twist,
-    TwistStamped,
-    Vector3,
-)
-from dimos.msgs.nav_msgs import Path
-from dimos.msgs.sensor_msgs import Joy, PointCloud2
-from dimos.msgs.std_msgs import Bool, Int8
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.Int8 import Int8
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.base import NavigationInterface, NavigationState
+from dimos.spec.control import LocalPlanner
+from dimos.spec.mapping import GlobalPointcloud
+from dimos.spec.nav import Nav
+from dimos.spec.perception import Pointcloud
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 
@@ -64,10 +67,10 @@ class Config(ModuleConfig):
 class ROSNav(
     Module[Config],
     NavigationInterface,
-    spec.Nav,
-    spec.GlobalPointcloud,
-    spec.Pointcloud,
-    spec.LocalPlanner,
+    Nav,
+    GlobalPointcloud,
+    Pointcloud,
+    LocalPlanner,
 ):
     default_config = Config
 

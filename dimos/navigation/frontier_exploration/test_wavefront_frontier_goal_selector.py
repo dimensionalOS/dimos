@@ -17,8 +17,8 @@ import time
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs import Vector3
-from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
@@ -56,7 +56,7 @@ def quick_costmap():
     # One obstacle
     grid[9:10, 9:10] = CostValues.OCCUPIED
 
-    from dimos.msgs.geometry_msgs import Pose
+    from dimos.msgs.geometry_msgs.Pose import Pose
 
     origin = Pose()
     origin.position.x = -1.0
@@ -97,7 +97,7 @@ def create_test_costmap(width: int = 40, height: int = 40, resolution: float = 0
     grid[13:14, 18:22] = CostValues.OCCUPIED  # Top corridor obstacle
 
     # Create origin at bottom-left, adjusted for map size
-    from dimos.msgs.geometry_msgs import Pose
+    from dimos.msgs.geometry_msgs.Pose import Pose
 
     origin = Pose()
     # Center the map around (0, 0) in world coordinates

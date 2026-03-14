@@ -25,7 +25,9 @@ import sys
 import time
 
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 class TargetSetter:

@@ -21,7 +21,7 @@ Usage:
 """
 
 from dimos.core.blueprints import autoconnect
-from dimos.protocol.service.system_configurator import ClockSyncConfigurator
+from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import with_vis
 from dimos.robot.unitree.go2.fleet_connection import go2_fleet_connection
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis

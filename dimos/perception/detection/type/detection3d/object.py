@@ -24,10 +24,15 @@ from dimos_lcm.geometry_msgs import Pose
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.vision_msgs import Detection3D as ROSDetection3D, Detection3DArray
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.vision_msgs.Detection3D import Detection3D as ROSDetection3D
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.perception.detection.type.detection3d.base import Detection3D
 

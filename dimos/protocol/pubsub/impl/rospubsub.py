@@ -37,7 +37,7 @@ except ImportError:
 
 import uuid
 
-from dimos.msgs import DimosMsg
+from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.rospubsub_conversion import (
     derive_ros_type,
     dimos_to_ros,

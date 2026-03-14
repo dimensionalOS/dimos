@@ -33,7 +33,7 @@ from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.spec.utils import Spec
 
 # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)

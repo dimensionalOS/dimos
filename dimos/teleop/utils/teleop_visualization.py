@@ -24,7 +24,7 @@ import rerun as rr
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import PoseStamped
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
 

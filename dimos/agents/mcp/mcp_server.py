@@ -50,11 +50,6 @@ app.state.skills = []
 app.state.rpc_calls = {}
 
 
-# ---------------------------------------------------------------------------
-# JSON-RPC helpers
-# ---------------------------------------------------------------------------
-
-
 def _jsonrpc_result(req_id: Any, result: Any) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
@@ -65,11 +60,6 @@ def _jsonrpc_result_text(req_id: Any, text: str) -> dict[str, Any]:
 
 def _jsonrpc_error(req_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
-
-
-# ---------------------------------------------------------------------------
-# JSON-RPC handlers (standard MCP protocol only)
-# ---------------------------------------------------------------------------
 
 
 def _handle_initialize(req_id: Any) -> dict[str, Any]:
@@ -177,11 +167,6 @@ async def mcp_endpoint(request: Request) -> Response:
     return JSONResponse(result)
 
 
-# ---------------------------------------------------------------------------
-# McpServer Module
-# ---------------------------------------------------------------------------
-
-
 class McpServer(Module):
     _uvicorn_server: uvicorn.Server | None = None
     _serve_future: concurrent.futures.Future[None] | None = None
@@ -214,10 +199,6 @@ class McpServer(Module):
             )
             for skill_info in app.state.skills
         }
-
-    # ------------------------------------------------------------------
-    # Introspection skills (exposed as MCP tools via tools/list)
-    # ------------------------------------------------------------------
 
     @skill
     def server_status(self) -> str:

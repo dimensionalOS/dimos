@@ -157,8 +157,6 @@ class ManipulationInterface:
             return task
         return None
 
-    # === Perception stream methods ===
-
     def _setup_perception_subscription(self) -> None:
         """
         Set up subscription to perception stream if available.
@@ -238,8 +236,6 @@ class ManipulationInterface:
         if self.stream_subscription:
             self.stream_subscription.dispose()
             self.stream_subscription = None
-
-    # === Utility methods ===
 
     def clear(self) -> None:
         """

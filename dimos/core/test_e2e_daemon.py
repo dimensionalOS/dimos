@@ -35,10 +35,6 @@ from dimos.core.run_registry import (
 from dimos.core.stream import Out
 from dimos.robot.cli.dimos import main
 
-# ---------------------------------------------------------------------------
-# Lightweight test modules
-# ---------------------------------------------------------------------------
-
 
 class PingModule(Module):
     data: Out[str]
@@ -52,11 +48,6 @@ class PongModule(Module):
 
     def start(self):
         super().start()
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
@@ -112,11 +103,6 @@ def registry_entry():
     entry.save()
     yield entry
     entry.remove()
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow
@@ -214,11 +200,6 @@ class TestDaemonE2E:
         remaining = list_runs(alive_only=False)
         assert len(remaining) == 1
         assert remaining[0].run_id == registry_entry.run_id
-
-
-# ---------------------------------------------------------------------------
-# E2E: CLI status + stop against real running blueprint
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture()

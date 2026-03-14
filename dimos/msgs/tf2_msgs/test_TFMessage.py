@@ -14,8 +14,10 @@
 
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
-from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
-from dimos.msgs.tf2_msgs import TFMessage
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 
 
 def test_tfmessage_initialization() -> None:

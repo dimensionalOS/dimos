@@ -22,10 +22,11 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.hardware.sensors.camera import zed
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.hardware.sensors.camera.zed import compat as zed
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.module3D import Detection3DModule, detection3d_module
 from dimos.perception.detection.moduleDB import ObjectDBModule, detection_db_module

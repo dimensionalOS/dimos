@@ -26,7 +26,7 @@ from typing import Any
 import numpy as np
 from reactivex import Observable, Subject
 
-from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -214,7 +214,7 @@ class FakeDJIVideoStream(DJIDroneVideoStream):
         """
         from reactivex import operators as ops
 
-        from dimos.utils.testing import TimedSensorReplay
+        from dimos.utils.testing.replay import TimedSensorReplay
 
         def _fix_format(img: Image) -> Image:
             if img.format == ImageFormat.BGR:

@@ -15,7 +15,7 @@
 import pytest
 
 from dimos.perception.detection.moduleDB import Object3D
-from dimos.perception.detection.type.detection3d import ImageDetections3DPC
+from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
 
 
 def test_first_object(first_object) -> None:

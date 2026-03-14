@@ -232,8 +232,6 @@ class LegacyPickleStore(TimeSeriesStore[T]):
                 return (ts, data)
         return None
 
-    # === Backward-compatible API (TimedSensorReplay/SensorReplay) ===
-
     @property
     def files(self) -> list[Path]:
         """Return list of pickle files (backward compatibility with SensorReplay)."""

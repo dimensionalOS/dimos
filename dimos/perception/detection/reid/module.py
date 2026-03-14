@@ -24,8 +24,8 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.foxglove_msgs.Color import Color
-from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
 from dimos.perception.detection.reid.type import IDSystem
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
@@ -48,7 +48,7 @@ class ReidModule(Module):
         super().__init__(**kwargs)
         if idsystem is None:
             try:
-                from dimos.models.embedding import TorchReIDModel
+                from dimos.models.embedding.treid import TorchReIDModel
 
                 idsystem = EmbeddingIDSystem(model=TorchReIDModel, padding=0)  # type: ignore[arg-type]
             except Exception as e:

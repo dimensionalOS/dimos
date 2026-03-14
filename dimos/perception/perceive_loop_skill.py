@@ -26,8 +26,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.models.vl.create import create
-from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.sensor_msgs.Image import sharpness_window
+from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 
