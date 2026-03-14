@@ -96,7 +96,6 @@ class HelloDockerModule(Module["HelloDockerConfig"]):
         return self.config.greeting_prefix
 
 
-
 class PromptModule(Module):
     """Publishes prompts and listens to greetings."""
 
@@ -115,8 +114,6 @@ class PromptModule(Module):
 
     def _on_greeting(self, text: str) -> None:
         print(f"[PromptModule] Received: {text}")
-
-
 
 
 if __name__ == "__main__":
