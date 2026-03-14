@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import MappingProxyType
 from typing import Protocol
 
 import pytest
@@ -37,9 +38,11 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.spec.utils import Spec
 
 # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
-_BUILD_WITHOUT_RERUN = {
-    "cli_config_overrides": {"viewer": "none"},
-}
+_BUILD_WITHOUT_RERUN = MappingProxyType(
+    {
+        "g": {"viewer": "none"},
+    }
+)
 
 
 class Scratch:
@@ -183,7 +186,7 @@ def test_global_config() -> None:
 def test_build_happy_path() -> None:
     blueprint_set = autoconnect(module_a(), module_b(), module_c())
 
-    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
+    coordinator = blueprint_set.build(_BUILD_WITHOUT_RERUN.copy())
 
     try:
         assert isinstance(coordinator, ModuleCoordinator)
@@ -312,7 +315,7 @@ def test_remapping() -> None:
     assert ("color_image", Data1) not in blueprint_set._all_name_types
 
     # Build and verify streams work
-    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
+    coordinator = blueprint_set.build(_BUILD_WITHOUT_RERUN.copy())
 
     try:
         source_instance = coordinator.get_instance(SourceModule)
@@ -362,7 +365,7 @@ def test_future_annotations_autoconnect() -> None:
 
     blueprint_set = autoconnect(FutureModuleOut.blueprint(), FutureModuleIn.blueprint())
 
-    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
+    coordinator = blueprint_set.build(_BUILD_WITHOUT_RERUN.copy())
 
     try:
         out_instance = coordinator.get_instance(FutureModuleOut)
@@ -454,7 +457,7 @@ def test_module_ref_direct() -> None:
     coordinator = autoconnect(
         Calculator1.blueprint(),
         Mod1.blueprint(),
-    ).build(**_BUILD_WITHOUT_RERUN)
+    ).build(_BUILD_WITHOUT_RERUN.copy())
 
     try:
         mod1 = coordinator.get_instance(Mod1)
@@ -470,7 +473,7 @@ def test_module_ref_spec() -> None:
     coordinator = autoconnect(
         Calculator1.blueprint(),
         Mod2.blueprint(),
-    ).build(**_BUILD_WITHOUT_RERUN)
+    ).build(_BUILD_WITHOUT_RERUN.copy())
 
     try:
         mod2 = coordinator.get_instance(Mod2)
@@ -485,7 +488,7 @@ def test_module_ref_spec() -> None:
 def test_disabled_modules_are_skipped_during_build() -> None:
     blueprint_set = autoconnect(module_a(), module_b(), module_c()).disabled_modules(ModuleC)
 
-    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
+    coordinator = blueprint_set.build(_BUILD_WITHOUT_RERUN.copy())
 
     try:
         assert coordinator.get_instance(ModuleA) is not None
@@ -523,7 +526,7 @@ def test_module_ref_remap_ambiguous() -> None:
                 (Mod2, "calc", Calculator1),
             ]
         )
-        .build(**_BUILD_WITHOUT_RERUN)
+        .build(_BUILD_WITHOUT_RERUN.copy())
     )
 
     try:
