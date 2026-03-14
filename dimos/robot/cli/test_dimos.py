@@ -14,8 +14,7 @@
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
-
-# from dimos.robot.cli.dimos import arghelp
+from dimos.robot.cli.dimos import arghelp
 from dimos.robot.unitree.go2.connection import GO2Connection
 from dimos.visualization.rerun.bridge import RerunBridgeModule, _default_blueprint
 
@@ -23,10 +22,12 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule, _default_bluepri
 def test_blueprint_arghelp():
     blueprint = autoconnect(RerunBridgeModule.blueprint(), GO2Connection.blueprint())
     output = arghelp(blueprint.config(), blueprint)
+    # List output produces better diff in pytest error output.
     assert output.split("\n") == [
         "    rerunbridgemodule:",
         "      * rerunbridgemodule.frame_id_prefix: str | None (default: None)",
         "      * rerunbridgemodule.frame_id: str | None (default: None)",
+        "      * rerunbridgemodule.min_interval_sec: float (default: 0.1)",
         "      * rerunbridgemodule.entity_prefix: str (default: world)",
         "      * rerunbridgemodule.topic_to_entity: collections.abc.Callable[[typing.Any], str] | None (default: None)",
         "      * rerunbridgemodule.viewer_mode: typing.Literal['native', 'web', 'connect', 'none']",
@@ -47,10 +48,12 @@ def test_blueprint_arghelp_extra_args():
     bridge = RerunBridgeModule.blueprint(frame_id_prefix="foo", viewer_mode="web")
     blueprint = autoconnect(bridge, GO2Connection.blueprint(ip="1.1.1.1"))
     output = arghelp(blueprint.config(), blueprint)
+    # List output produces better diff in pytest error output.
     assert output.split("\n") == [
         "    rerunbridgemodule:",
         "      * rerunbridgemodule.frame_id_prefix: str | None (default: foo)",
         "      * rerunbridgemodule.frame_id: str | None (default: None)",
+        "      * rerunbridgemodule.min_interval_sec: float (default: 0.1)",
         "      * rerunbridgemodule.entity_prefix: str (default: world)",
         "      * rerunbridgemodule.topic_to_entity: collections.abc.Callable[[typing.Any], str] | None (default: None)",
         "      * rerunbridgemodule.viewer_mode: typing.Literal['native', 'web', 'connect', 'none'] (default: web)",

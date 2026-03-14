@@ -155,9 +155,9 @@ def test_autoconnect() -> None:
 def test_config() -> None:
     blueprint = autoconnect(module_a(), module_b())
     config = blueprint.config()
-    assert config.model_fields.keys() == {"modulea", "moduleb"}
-    assert config.model_fields["modulea"].annotation == ModuleA.default_config
-    assert config.model_fields["moduleb"].annotation == ModuleB.default_config
+    assert config.model_fields.keys() == {"modulea", "moduleb", "g"}
+    assert config.model_fields["modulea"].annotation == ModuleA.default_config | None
+    assert config.model_fields["moduleb"].annotation == ModuleB.default_config | None
 
 
 def test_transports() -> None:

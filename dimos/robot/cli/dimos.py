@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from contextlib import suppress
 from datetime import datetime, timezone
 import inspect
 import json
@@ -23,7 +24,7 @@ from pathlib import Path
 import sys
 import time
 import types
-from typing import Any, get_args, get_origin
+from typing import Any, Union, get_args, get_origin
 
 import click
 from dotenv import load_dotenv
@@ -40,7 +41,7 @@ from dimos.utils.logging_config import setup_logger
 
 try:
     # Not a dependency, just the best way to get config path if available.
-    from gi.repository import GLib  # type: ignore[import-untyped]
+    from gi.repository import GLib  # type: ignore[import-untyped,import-not-found]
 except ImportError:
     CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
 else:
@@ -137,6 +138,11 @@ def arghelp(
         if isinstance(t, types.GenericAlias):
             # Can't be specified on CLI
             continue
+
+        # TODO(PY314): if isinstance(t, Union):
+        if get_origin(t) in {Union, types.UnionType}:
+            with suppress(StopIteration):
+                t = next(u for u in get_args(t) if issubclass(u, BaseModel))
 
         if t is not None and issubclass(t, BaseModel):
             output += f"{indent}{module}{k}:\n"
