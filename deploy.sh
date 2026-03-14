@@ -32,7 +32,7 @@ NC='\033[0m'
 # --- Constants ---
 DIMOS_VENV="/opt/dimos/venv"
 DIMOS_SRC="${SCRIPT_DIR}"
-NAV_IMAGE="dimos_autonomy_stack:humble"
+NAV_IMAGE="ghcr.io/aphexcx/m20-nav:latest"
 DRDDS_BUILDER_NAME="dimos-drdds-builder"
 DIMOS_PID_FILE="${HOME}/.dimos-nos.pid"
 NAV_CONTAINER="dimos-nav"

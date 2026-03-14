@@ -40,7 +40,13 @@ m20_rosnav = (
         ros_nav(),
         websocket_vis(),
     )
-    .global_config(n_dask_workers=2, robot_model="deeprobotics_m20")
+    .global_config(
+        n_dask_workers=2,
+        robot_model="deeprobotics_m20",
+        robot_ip="10.21.31.103",
+        robot_width=0.45,
+        robot_rotation_diameter=0.6,
+    )
     .transports(
         {
             # ROSNav cmd_vel -> M20Connection cmd_vel

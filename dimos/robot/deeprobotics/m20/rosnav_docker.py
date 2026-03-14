@@ -41,7 +41,7 @@ class M20ROSNavConfig(ModuleConfig):
     """
 
     # --- Docker image ---
-    docker_image: str = "dimos_m20_nav:humble"
+    docker_image: str = "ghcr.io/aphexcx/m20-nav:latest"
     docker_file: Path | None = field(
         default_factory=lambda: Path(__file__).parent / "docker" / "Dockerfile"
     )
@@ -50,6 +50,7 @@ class M20ROSNavConfig(ModuleConfig):
     )
 
     # --- Docker runtime ---
+    docker_container_name: str = "dimos-nav"
     docker_network_mode: str = "host"
     docker_shm_size: str = "512m"
     docker_gpus: str | None = None  # M20 NOS (RK3588) has no NVIDIA GPU
