@@ -1,123 +1,41 @@
 #!/usr/bin/env python3
-"""Launch dimos M20 on NOS -- direct ROS2 mode (no bridge).
+# Copyright 2025-2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-Runs inside the Humble Docker container on NOS. Uses M20ROSSensors
-for direct rclpy access to /ODOM, /ALIGNED_POINTS, /IMU, /NAV_CMD.
+"""Host-side launcher for M20 ROSNav on the NOS.
 
-Access from Mac:
-  Web UI:  http://10.21.41.1:7779/command-center  (via AOS WiFi NAT)
-  Rerun:   rerun --connect rerun+http://10.21.41.1:9876/proxy
+Builds and runs the m20_rosnav blueprint (M20Connection + VoxelGridMapper +
+CostMapper + ROSNav). Handles SIGINT/SIGTERM for graceful shutdown.
 """
 
-import math
 import signal
 import sys
-import time
 
-from dimos.core.global_config import global_config
-
-# Disable default rerun bridge from m20_minimal — we configure our own below
-# with memory_limit and visual_override for the NOS environment.
-global_config.update(viewer="none")
-
-from dimos.core.blueprints import autoconnect
-from dimos.mapping.costmapper import cost_mapper
-from dimos.mapping.pointclouds.occupancy import HeightCostConfig
-from dimos.mapping.voxels import voxel_mapper
-from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
-from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.robot.deeprobotics.m20.blueprints.basic.m20_minimal import m20_minimal
-from dimos.robot.deeprobotics.m20.connection import m20_connection
-from dimos.visualization.rerun.bridge import rerun_bridge
-
-# Direct ROS2 mode: no bridge_host, robot_ip is AOS eth0 (shared L2 with NOS)
-AOS_ETH0 = "10.21.33.103"
-
-# NOS-tuned config notes:
-# - voxel_size=0.1: Fine enough for indoor navigation (doors are ~0.8m wide).
-#   Lesh: "0.2 is nuts, it will think doors are not passable."
-# - publish_interval=0.5: Publish voxel grid at 2Hz (not every lidar frame ~10Hz).
-#   Keeps compute manageable on RK3588 CPU. Lesh: "do 1hz or 0.5hz even."
-# - algo="height_cost": Gradient-based terrain slope analysis. Produces continuous
-#   costs (0-100) based on terrain steepness — much better for tight spaces than
-#   binary free/occupied. Needs ignore_noise tuned to voxel resolution.
-# - ignore_noise=0.1: Match to voxel_size — 1-voxel height jumps are quantization
-#   noise, not real obstacles. Default 0.05 was too sensitive at 0.2 voxels.
-# - can_climb=0.2: 20cm height change per cell = cost 100 (lethal). M20 can step
-#   over ~15cm, so 20cm is a reasonable lethal threshold.
-# - smoothing=1.5: More gap-filling between sparse ground observations.
-# - memory_limit="512MB": Caps Rerun recording memory. Won't retain full history
-#   but draws current state. Prevents Rerun from eating all worker memory.
-#   Lesh: "limit it to something small and it won't remember the history for you
-#   but it will draw the current state."
-# - global_map visual_override: Render voxels as 3D boxes (not flat sprites).
-#   Lesh: 'has this "world/global_map": lambda grid: grid.to_rerun(voxel_size=0.1,
-#   mode="boxes") line in rerun bridge.'
-def _render_global_map(grid):
-    return grid.to_rerun(voxel_size=0.05, mode="boxes")
+from dimos.robot.deeprobotics.m20.blueprints.rosnav.m20_rosnav import m20_rosnav
 
 
-def _render_costmap(grid):
-    return grid.to_rerun(colormap="Accent", z_offset=0.015, opacity=0.2, background="#484981")
+def main() -> None:
+    coordinator = m20_rosnav.build()
 
-
-bp = autoconnect(
-    m20_minimal,
-    voxel_mapper(voxel_size=0.05, publish_interval=1.0, max_height=0.7),
-    cost_mapper(config=HeightCostConfig(
-        max_height=0.7, resolution=0.05, ignore_noise=0.05, can_climb=0.25,
-        smoothing=5.0,
-    )),
-    replanning_a_star_planner(
-        max_linear_speed=1.0,
-        max_angular_speed=1.2,
-        control_frequency=20,
-        k_angular=1.0,
-        rotation_threshold=math.radians(45),
-    ),
-    wavefront_frontier_explorer(),
-    m20_connection(ip=AOS_ETH0, enable_ros=True, lidar_height=0.47),
-    rerun_bridge(
-        viewer_mode="web",
-        memory_limit="512MB",
-        pubsubs=[LCM()],
-        visual_override={
-            "world/global_map": _render_global_map,
-            "world/navigation_costmap": _render_costmap,
-            "world/camera_info": lambda camera_info: camera_info.to_rerun(
-                image_topic="/world/color_image",
-                optical_frame="camera_optical",
-            ),
-        },
-    ),
-).global_config(
-    robot_ip=AOS_ETH0,
-    robot_model="deeprobotics_m20",
-    robot_width=0.45,
-    robot_rotation_diameter=0.6,
-    n_workers=2,
-)
-
-
-def main():
-    print("Starting dimos M20 on NOS (direct ROS2 mode)...")
-    coordinator = bp.build()
-    print("dimos running!")
-    print("  Web UI:  http://0.0.0.0:7779/command-center")
-    print("  Rerun:   rerun+http://0.0.0.0:9876/proxy")
-    print("  Press Ctrl+C to stop")
-
-    def shutdown(signum, frame):
-        print("\nShutting down...")
+    def _shutdown(signum: int, _frame: object) -> None:
         coordinator.stop()
         sys.exit(0)
 
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
 
-    while True:
-        time.sleep(1)
+    coordinator.loop()
 
 
 if __name__ == "__main__":

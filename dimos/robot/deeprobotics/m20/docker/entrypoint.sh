@@ -1,103 +1,141 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# M20 ROSNav container entrypoint
+# Runs inside the nav container launched by DockerModule.
+# Waits for required ROS topics (/IMU, /LIDAR/POINTS) before starting
+# the navigation stack based on LOCALIZATION_METHOD.
+#
+# LOCALIZATION_METHOD values:
+#   fastlio  — Launch FAST_LIO with RoboSense config (Phase 1)
+#   <other>  — Launch system_real_robot.launch.py (arise_slam)
 
-# Source ROS2 Humble
-source /opt/ros/humble/setup.bash
+set -euo pipefail
 
-# Activate dimos venv
-source /opt/dimos-venv/bin/activate
+TOPIC_TIMEOUT="${TOPIC_TIMEOUT:-60}"
+POLL_INTERVAL="${POLL_INTERVAL:-2}"
+LOCALIZATION_METHOD="${LOCALIZATION_METHOD:-fastlio}"
+FASTLIO_CONFIG="${FASTLIO_CONFIG:-/ros2_ws/src/fast_lio/config/robosense.yaml}"
 
-# DDS configuration
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
-export FASTRTPS_DEFAULT_PROFILES_FILE=/opt/dimos/docker/fastdds.xml
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
 
-# drdds libs rebuilt from .msg files during docker build (ABI-compatible)
-export LD_LIBRARY_PATH=/opt/drdds/lib:/opt/ros/humble/lib:${LD_LIBRARY_PATH}
+log()  { echo -e "${GREEN}[entrypoint]${NC} $*"; }
+warn() { echo -e "${YELLOW}[entrypoint]${NC} $*"; }
+err()  { echo -e "${RED}[entrypoint]${NC} $*" >&2; }
 
-# drdds Python 3.10 bindings (built during docker build)
-export PYTHONPATH="/opt/drdds/lib/python3/site-packages:${PYTHONPATH}"
+# --- Source ROS environment ---
+source /opt/ros/${ROS_DISTRO:-humble}/setup.bash
+if [ -d "/ros2_ws/install" ]; then
+    source /ros2_ws/install/setup.bash
+fi
 
-# LCM multicast configuration (required by dimos service layer)
-ip route add 224.0.0.0/4 dev lo 2>/dev/null || true
-sysctl -w net.core.rmem_max=67108864 2>/dev/null || true
-sysctl -w net.core.rmem_default=67108864 2>/dev/null || true
+# --- Wait for a ROS topic to appear ---
+wait_for_topic() {
+    local topic="$1"
+    local elapsed=0
 
-# Prevent ros2 CLI from spawning a daemon on the host (--network host shares
-# the filesystem namespace). The Foxy daemon on NOS thrashes at 78% CPU trying
-# to reconcile Humble DDS discovery traffic.
-export ROS2_DAEMON_TIMEOUT=0
-ros2 daemon stop >/dev/null 2>&1 || true
+    log "Waiting for topic ${topic} (timeout: ${TOPIC_TIMEOUT}s)..."
+    while [ "$elapsed" -lt "$TOPIC_TIMEOUT" ]; do
+        if ros2 topic list 2>/dev/null | grep -qx "$topic"; then
+            log "Topic ${topic} available."
+            return 0
+        fi
+        sleep "$POLL_INTERVAL"
+        elapsed=$((elapsed + POLL_INTERVAL))
+    done
 
-# Wait for ROS2 topics before launching dimos (data flow verification).
-# Checks run in parallel — 30s total timeout instead of 30s per topic.
-echo "Waiting for ROS2 topics (30s timeout)..."
-wait_topic() {
-    local topic=$1
-    timeout 30 bash -c "until ros2 topic echo \"$topic\" --once >/dev/null 2>&1; do sleep 1; done" \
-        && echo "  $topic: OK" || echo "  $topic: TIMEOUT (continuing anyway)"
-}
-wait_topic /ODOM &
-wait_topic /IMU &
-wait
-
-# Verify drdds bindings (non-fatal — falls back to UDP if unavailable)
-python3 -c "from drdds.msg import NavCmd; print('drdds available — /NAV_CMD publisher enabled')" 2>/dev/null \
-    || echo "WARNING: drdds Python bindings not available — using UDP fallback (no obstacle avoidance)"
-
-# Lidar health check: if /ALIGNED_POINTS has no data after ODOM is up,
-# restart rsdriver (GOS) and lio_perception (AOS) to recover.
-# This works around a boot-order issue where the lidar driver on GOS
-# starts before the network is ready, producing empty point clouds.
-AOS_HOST="10.21.31.103"
-GOS_HOST="10.21.31.104"
-# Password for all M20 boards (single quote character)
-export SSHPASS="'"
-
-# Helper: SSH with password auth to another M20 board
-board_ssh() {
-    local host=$1; shift
-    sshpass -e ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no "user@${host}" "$@" 2>/dev/null
+    err "Topic ${topic} not available after ${TOPIC_TIMEOUT}s."
+    return 1
 }
 
-# Helper: run sudo command on another M20 board
-board_sudo() {
-    local host=$1; shift
-    # SSHPASS is a single quote — pipe it to sudo -S on the remote
-    board_ssh "$host" "printf '%s\n' \"'\" | sudo -S $*"
+# --- Cleanup on exit ---
+PIDS=()
+cleanup() {
+    log "Shutting down..."
+    for pid in "${PIDS[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    done
+    sleep 2
+    for pid in "${PIDS[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+    done
 }
+trap cleanup EXIT INT TERM
 
-check_lidar() {
-    echo "Checking lidar data (/ALIGNED_POINTS, 15s timeout)..."
-    if timeout 15 ros2 topic echo /ALIGNED_POINTS --once >/dev/null 2>&1; then
-        echo "  /ALIGNED_POINTS: OK"
-        return 0
-    fi
-    echo "  /ALIGNED_POINTS: no data — restarting lidar pipeline..."
+# --- Wait for required topics ---
+log "M20 ROSNav entrypoint starting (LOCALIZATION_METHOD=${LOCALIZATION_METHOD})..."
 
-    # Restart rsdriver on GOS (lidar hardware driver)
-    board_sudo "$GOS_HOST" systemctl restart rsdriver \
-        && echo "  rsdriver (GOS): restarted" || echo "  rsdriver (GOS): restart failed"
+if ! wait_for_topic "/IMU"; then
+    err "Required topic /IMU unavailable. Exiting."
+    exit 1
+fi
 
-    sleep 3
+if ! wait_for_topic "/LIDAR/POINTS"; then
+    err "Required topic /LIDAR/POINTS unavailable. Exiting."
+    exit 1
+fi
 
-    # Restart lio_perception on AOS (SLAM + point cloud alignment)
-    board_sudo "$AOS_HOST" systemctl restart lio_perception \
-        && echo "  lio_perception (AOS): restarted" || echo "  lio_perception (AOS): restart failed"
+log "All required topics available."
 
-    # Wait for lidar to come back
-    sleep 10
-    if timeout 15 ros2 topic echo /ALIGNED_POINTS --once >/dev/null 2>&1; then
-        echo "  /ALIGNED_POINTS: recovered!"
-        return 0
-    else
-        echo "  /ALIGNED_POINTS: still no data after restart (continuing anyway)"
-        return 1
-    fi
-}
-check_lidar || true
+# --- If explicit command provided, run it instead of auto-launch ---
+if [ $# -gt 0 ]; then
+    log "Executing provided command: $*"
+    exec "$@"
+fi
 
-# Clean up password from environment before exec'ing the main process
-unset SSHPASS
+# --- Launch navigation stack based on LOCALIZATION_METHOD ---
+case "${LOCALIZATION_METHOD}" in
+    fastlio)
+        log "Launching FAST_LIO with config: ${FASTLIO_CONFIG}"
 
-exec "$@"
+        if [ ! -f "${FASTLIO_CONFIG}" ]; then
+            err "FAST_LIO config not found: ${FASTLIO_CONFIG}"
+            exit 1
+        fi
+
+        # Launch FAST_LIO node with topic remap:
+        #   /cloud_registered -> /registered_scan (what ROSNav bridge subscribes to)
+        ros2 run fast_lio fastlio_mapping \
+            --ros-args \
+            --params-file "${FASTLIO_CONFIG}" \
+            -r /cloud_registered:=/registered_scan &
+        PIDS+=($!)
+        log "FAST_LIO started (PID ${PIDS[-1]})"
+
+        # Wait for FAST_LIO to produce output
+        if ! wait_for_topic "/registered_scan"; then
+            err "FAST_LIO failed to produce /registered_scan. Check logs above."
+            exit 1
+        fi
+        log "FAST-LIO is activated — /registered_scan publishing."
+
+        # Launch base_autonomy + FAR planner (system_real_robot.launch.py starts
+        # the full autonomy stack including arise_slam; we kill arise_slam after
+        # since FAST_LIO already provides SLAM).
+        log "Launching autonomy stack (base_autonomy + FAR planner)..."
+        ros2 launch vehicle_simulator system_real_robot.launch.py &
+        PIDS+=($!)
+
+        # Give arise_slam time to start, then stop it to save memory — FAST_LIO
+        # is already handling SLAM. The autonomy stack's other nodes (localPlanner,
+        # terrainAnalysis, pathFollower, etc.) continue running.
+        sleep 10
+        if pkill -f "arise_slam" 2>/dev/null; then
+            log "Stopped arise_slam (FAST_LIO handles SLAM instead)."
+        fi
+        ;;
+
+    *)
+        log "Launching default autonomy stack (arise_slam)..."
+        ros2 launch vehicle_simulator system_real_robot.launch.py &
+        PIDS+=($!)
+        ;;
+esac
+
+log "Navigation stack launched. Waiting for processes..."
+wait "${PIDS[@]}" 2>/dev/null || true

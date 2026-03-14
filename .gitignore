@@ -80,3 +80,4 @@ CLAUDE.MD
 htmlcov/
 .coverage
 .coverage.*
+state.json
