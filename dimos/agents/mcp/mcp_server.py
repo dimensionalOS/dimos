@@ -203,12 +203,12 @@ class McpServer(Module):
     @skill
     def server_status(self) -> str:
         """Get MCP server status: main process PID, deployed modules, and skill count."""
-        from dimos.core.run_registry import get_most_recent
+        from dimos.core.instance_registry import list_running
 
         skills: list[SkillInfo] = app.state.skills
         modules = list(dict.fromkeys(s.class_name for s in skills))
-        entry = get_most_recent()
-        pid = entry.pid if entry else os.getpid()
+        running = list_running()
+        pid = running[0].pid if running else os.getpid()
         return json.dumps(
             {
                 "pid": pid,

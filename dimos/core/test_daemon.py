@@ -205,63 +205,72 @@ class TestHealthCheck:
         assert coord.health_check() is False
 
 
-from dimos.core.daemon import daemonize, install_signal_handlers
+from dimos.core.daemon import LaunchResult, install_signal_handlers
+from dimos.core.instance_registry import InstanceInfo, register
 
 
-class TestDaemonize:
-    """test_daemonize_creates_log_dir."""
+class TestLaunchResult:
+    """Test the LaunchResult dataclass."""
 
-    def test_daemonize_creates_log_dir(self, tmp_path: Path):
-        log_dir = tmp_path / "nested" / "logs"
-        assert not log_dir.exists()
-
-        # We can't actually double-fork in tests (child would continue running
-        # pytest), so we mock os.fork to return >0 both times (parent path).
-        with mock.patch("os.fork", return_value=1), pytest.raises(SystemExit):
-            # Parent calls os._exit(0) which we let raise
-            with mock.patch("os._exit", side_effect=SystemExit(0)):
-                daemonize(log_dir)
-
-        assert log_dir.exists()
+    def test_launch_result_fields(self, tmp_path: Path):
+        result = LaunchResult(instance_name="test", run_dir=tmp_path)
+        assert result.instance_name == "test"
+        assert result.run_dir == tmp_path
 
 
 class TestSignalHandler:
     """test_signal_handler_cleans_registry."""
 
-    def test_signal_handler_cleans_registry(self, tmp_registry: Path):
-        entry = _make_entry()
-        entry.save()
-        assert entry.registry_path.exists()
+    def test_signal_handler_cleans_registry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr("dimos.core.instance_registry._instances_dir", lambda: tmp_path)
+
+        info = InstanceInfo(
+            name="test-instance",
+            pid=os.getpid(),
+            blueprint="test",
+            started_at="2026-03-06T12:00:00Z",
+            run_dir=str(tmp_path / "runs" / "test"),
+        )
+        register(info)
+        assert (tmp_path / "test-instance" / "current.json").exists()
 
         coord = mock.MagicMock()
         with mock.patch("signal.signal") as mock_signal:
-            install_signal_handlers(entry, coord)
-            # Capture the handler closure registered for SIGTERM
+            install_signal_handlers(info, coord)
             handler = mock_signal.call_args_list[0][0][1]
 
         with pytest.raises(SystemExit):
             handler(signal.SIGTERM, None)
 
         # Registry file should be cleaned up
-        assert not entry.registry_path.exists()
-        # Coordinator should have been stopped
+        assert not (tmp_path / "test-instance" / "current.json").exists()
         coord.stop.assert_called_once()
 
-    def test_signal_handler_tolerates_stop_error(self, tmp_registry: Path):
-        entry = _make_entry()
-        entry.save()
+    def test_signal_handler_tolerates_stop_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr("dimos.core.instance_registry._instances_dir", lambda: tmp_path)
+
+        info = InstanceInfo(
+            name="test-instance",
+            pid=os.getpid(),
+            blueprint="test",
+            started_at="2026-03-06T12:00:00Z",
+            run_dir=str(tmp_path / "runs" / "test"),
+        )
+        register(info)
 
         coord = mock.MagicMock()
         coord.stop.side_effect = RuntimeError("boom")
         with mock.patch("signal.signal") as mock_signal:
-            install_signal_handlers(entry, coord)
+            install_signal_handlers(info, coord)
             handler = mock_signal.call_args_list[0][0][1]
 
         with pytest.raises(SystemExit):
             handler(signal.SIGTERM, None)
 
         # Entry still removed even if stop() throws
-        assert not entry.registry_path.exists()
+        assert not (tmp_path / "test-instance" / "current.json").exists()
 
 
 class TestStatusCommand:

@@ -485,6 +485,12 @@ class Blueprint:
         self._verify_no_name_conflicts()
 
         logger.info("Starting the modules")
+        # Auto-compute worker count if not explicitly set
+        if global_config.n_workers is None:
+            import math
+
+            n_modules = len(self._active_blueprints)
+            global_config.n_workers = max(2, math.ceil(n_modules * 0.7))
         module_coordinator = ModuleCoordinator(cfg=global_config)
         module_coordinator.start()
 

@@ -35,7 +35,7 @@ class GlobalConfig(BaseSettings):
     replay_dir: str = "go2_sf_office"
     new_memory: bool = False
     viewer: ViewerBackend = "rerun"
-    n_workers: int = 2
+    n_workers: int | None = None
     memory_limit: str = "auto"
     mujoco_camera_position: str | None = None
     mujoco_room: str | None = None

@@ -80,9 +80,21 @@ class StatsMonitor(Resource):
             self._logger = LCMResourceLogger()
 
     def start(self) -> None:
-        """Start the monitoring daemon thread."""
+        """Start the monitoring daemon thread.
+
+        Safe to call again after ``os.fork()`` — re-creates the LCM
+        transport so the new process gets a fresh multicast socket.
+        """
         # Prime cpu_percent so the first real reading isn't 0.0.
         collect_process_stats(self._coordinator_pid)
+
+        # Re-create the LCM logger so we get a fresh lcm.LCM instance.
+        # After os.fork() the inherited C LCM object and its handle-loop
+        # thread are dead; we must build a new one in this process.
+        from dimos.core.resource_monitor.logger import LCMResourceLogger
+
+        if isinstance(self._logger, LCMResourceLogger):
+            self._logger = LCMResourceLogger()
 
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)

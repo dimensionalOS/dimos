@@ -1,0 +1,83 @@
+/* DIO — DimOS Unified TUI */
+
+Screen {
+    layout: horizontal;
+    background: $dio-bg;
+}
+
+#sidebar {
+    width: auto;
+    height: 1fr;
+    background: $dio-bg;
+    padding: 1 0;
+}
+
+.tab-item {
+    width: auto;
+    height: 3;
+    padding: 1 2;
+    content-align: left middle;
+    background: $dio-bg;
+    color: $dio-text;
+}
+
+.tab-item.--selected-1 {
+    background: $dio-tab1-bg;
+    color: $dio-tab1;
+}
+
+.tab-item.--selected-2 {
+    background: $dio-tab2-bg;
+    color: $dio-tab2;
+}
+
+.tab-item.--selected-3 {
+    background: $dio-tab3-bg;
+    color: $dio-tab3;
+}
+
+#displays {
+    width: 1fr;
+    height: 1fr;
+    layout: horizontal;
+}
+
+.display-pane {
+    width: 1fr;
+    height: 1fr;
+    border: solid $dio-dim;
+    background: $dio-bg;
+}
+
+.display-pane.--focused {
+    border: solid $dio-accent;
+}
+
+#display-2 {
+    display: none;
+}
+
+#display-3 {
+    display: none;
+}
+
+#debug-log {
+    width: 50;
+    height: 1fr;
+    dock: right;
+    border-left: solid $dio-dim;
+    background: $dio-bg;
+    color: $dio-text;
+    padding: 0 1;
+    scrollbar-size: 1 1;
+}
+
+#hint-bar {
+    dock: top;
+    height: 1;
+    width: 100%;
+    background: $dio-hint-bg;
+    color: $dio-dim;
+    padding: 0 1;
+    content-align: left middle;
+}

@@ -22,8 +22,8 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
-from dimos.core import run_registry
-from dimos.core.run_registry import RunEntry
+from dimos.core import instance_registry
+from dimos.core.instance_registry import InstanceInfo, register
 from dimos.robot.cli.dimos import main
 
 if TYPE_CHECKING:
@@ -32,8 +32,8 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def _tmp_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Redirect registry to a temp dir for test isolation."""
-    monkeypatch.setattr(run_registry, "REGISTRY_DIR", tmp_path)
+    """Redirect instance registry to a temp dir for test isolation."""
+    monkeypatch.setattr(instance_registry, "_instances_dir", lambda: tmp_path)
     yield tmp_path
 
 
@@ -59,17 +59,15 @@ def sleeper():
             pass
 
 
-def _entry(run_id: str, pid: int, blueprint: str = "test", **kwargs) -> RunEntry:
-    defaults = dict(
+def _register(name: str, pid: int, blueprint: str = "test", **kwargs: object) -> InstanceInfo:
+    defaults: dict[str, object] = dict(
         started_at=datetime.now(timezone.utc).isoformat(),
-        log_dir="/tmp/dimos-test",
-        cli_args=[blueprint],
-        config_overrides={},
+        run_dir="/tmp/dimos-test",
     )
     defaults.update(kwargs)
-    e = RunEntry(run_id=run_id, pid=pid, blueprint=blueprint, **defaults)
-    e.save()
-    return e
+    info = InstanceInfo(name=name, pid=pid, blueprint=blueprint, **defaults)  # type: ignore[arg-type]
+    register(info)
+    return info
 
 
 class TestStatusCLI:
@@ -82,7 +80,7 @@ class TestStatusCLI:
 
     def test_status_shows_running_instance(self, sleeper):
         proc = sleeper()
-        _entry("status-test-001", proc.pid, blueprint="unitree-go2")
+        _register("status-test-001", proc.pid, blueprint="unitree-go2")
 
         result = CliRunner().invoke(main, ["status"])
         assert result.exit_code == 0
@@ -93,7 +91,7 @@ class TestStatusCLI:
     def test_status_shows_uptime_minutes(self, sleeper):
         proc = sleeper()
         ago = (datetime.now(timezone.utc) - timedelta(minutes=7, seconds=30)).isoformat()
-        _entry("uptime-min", proc.pid, started_at=ago)
+        _register("uptime-min", proc.pid, started_at=ago)
 
         result = CliRunner().invoke(main, ["status"])
         assert "7m" in result.output
@@ -101,27 +99,27 @@ class TestStatusCLI:
     def test_status_shows_uptime_hours(self, sleeper):
         proc = sleeper()
         ago = (datetime.now(timezone.utc) - timedelta(hours=3, minutes=22)).isoformat()
-        _entry("uptime-hrs", proc.pid, started_at=ago)
+        _register("uptime-hrs", proc.pid, started_at=ago)
 
         result = CliRunner().invoke(main, ["status"])
         assert "3h 22m" in result.output
 
-    def test_status_shows_log_dir(self, sleeper):
+    def test_status_shows_run_dir(self, sleeper):
         proc = sleeper()
-        _entry("log-dir-test", proc.pid, log_dir="/tmp/custom-logs")
+        _register("run-dir-test", proc.pid, run_dir="/tmp/custom-logs")
 
         result = CliRunner().invoke(main, ["status"])
         assert "/tmp/custom-logs" in result.output
 
     def test_status_shows_blueprint(self, sleeper):
         proc = sleeper()
-        _entry("bp-test", proc.pid, blueprint="unitree-g1")
+        _register("bp-test", proc.pid, blueprint="unitree-g1")
 
         result = CliRunner().invoke(main, ["status"])
         assert "unitree-g1" in result.output
 
     def test_status_filters_dead_pids(self):
-        _entry("dead-one", pid=2_000_000_000)
+        _register("dead-one", pid=2_000_000_000)
 
         result = CliRunner().invoke(main, ["status"])
         assert "No running" in result.output
@@ -135,25 +133,25 @@ class TestStopCLI:
         assert result.exit_code == 1
 
     @pytest.mark.slow
-    def test_stop_default_most_recent(self, sleeper):
+    def test_stop_default_most_recent(self, sleeper, _tmp_registry):
         proc = sleeper()
-        entry = _entry("stop-default", proc.pid)
+        _register("stop-default", proc.pid)
 
         result = CliRunner().invoke(main, ["stop"])
         assert result.exit_code == 0
-        assert "Stopping" in result.output
+        assert "Stopping" in result.output or "Stopped" in result.output
         assert "stop-default" in result.output
-        # Poll for registry cleanup
+        current_json = _tmp_registry / "stop-default" / "current.json"
         for _ in range(30):
-            if not entry.registry_path.exists():
+            if not current_json.exists():
                 break
             time.sleep(0.1)
-        assert not entry.registry_path.exists()
+        assert not current_json.exists()
 
     @pytest.mark.slow
     def test_stop_force_sends_sigkill(self, sleeper):
         proc = sleeper()
-        _entry("force-kill", proc.pid)
+        _register("force-kill", proc.pid)
 
         result = CliRunner().invoke(main, ["stop", "--force"])
         assert result.exit_code == 0
@@ -168,7 +166,7 @@ class TestStopCLI:
     def test_stop_sigterm_kills_process(self, sleeper):
         """Verify SIGTERM actually terminates the target process."""
         proc = sleeper()
-        _entry("sigterm-verify", proc.pid)
+        _register("sigterm-verify", proc.pid)
 
         result = CliRunner().invoke(main, ["stop"])
         assert "SIGTERM" in result.output

@@ -44,6 +44,21 @@ class WorkerManager:
             self._workers.append(worker)
         logger.info("Worker pool started.", n_workers=self._n_workers)
 
+    def add_worker(self) -> Worker:
+        """Spawn one additional worker process and add it to the pool."""
+        worker = Worker()
+        worker.start_process()
+        self._workers.append(worker)
+        self._n_workers = len(self._workers)
+        return worker
+
+    def ensure_capacity(self, n: int) -> None:
+        """Grow the pool to at least *n* workers if needed."""
+        while len(self._workers) < n:
+            self.add_worker()
+        if len(self._workers) > self._n_workers:
+            logger.info("Worker pool grew.", n_workers=len(self._workers))
+
     def _select_worker(self) -> Worker:
         return min(self._workers, key=lambda w: w.module_count)
 

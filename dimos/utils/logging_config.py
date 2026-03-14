@@ -79,16 +79,15 @@ def get_run_log_dir() -> Path | None:
 
 
 def _get_log_directory() -> Path:
-    # Check if running from a git repository
+    # Use DIMOS_HOME (~/.dimos) for installed packages, project logs/ for dev
     if (DIMOS_PROJECT_ROOT / ".git").exists():
         log_dir = DIMOS_LOG_DIR
     else:
-        # Running from an installed package - use XDG_STATE_HOME
-        xdg_state_home = os.getenv("XDG_STATE_HOME")
-        if xdg_state_home:
-            log_dir = Path(xdg_state_home) / "dimos" / "logs"
+        dimos_home = os.environ.get("DIMOS_HOME")
+        if dimos_home:
+            log_dir = Path(dimos_home) / "logs"
         else:
-            log_dir = Path.home() / ".local" / "state" / "dimos" / "logs"
+            log_dir = Path.home() / ".dimos" / "logs"
 
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -152,7 +151,9 @@ def _configure_structlog() -> Path:
 
 
 _CONSOLE_PATH_WIDTH = 30
-_CONSOLE_USE_COLORS = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+_CONSOLE_USE_COLORS = os.environ.get("FORCE_COLOR", "") == "1" or (
+    hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+)
 
 _CONSOLE_LEVEL_COLORS = {
     "dbg": "\033[1;36m",  # bold cyan

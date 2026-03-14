@@ -21,7 +21,7 @@ import os
 import subprocess
 from typing import Any
 
-import typer
+from dimos.utils.prompt import confirm, sudo_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -114,10 +114,25 @@ def configure_system(checks: list[SystemConfigurator], check_only: bool = False)
     if check_only:
         return
 
-    if not typer.confirm("\nApply these changes now?"):
+    if explanations:
+        # Each explanation may be multi-line; indent all lines consistently
+        all_lines = []
+        for e in explanations:
+            for line in e.strip().splitlines():
+                all_lines.append(f"  {line.strip()}")
+        summary = "\n".join(all_lines)
+    else:
+        summary = "  (system configuration)"
+    if not confirm(
+        f"Apply these changes?\n{summary}", default=True, question_id="system-configure"
+    ):
         if any(check.critical for check in failing):
             raise SystemExit(1)
         return
+
+    # Cache sudo credentials before running fixes (some need sudo)
+    if not _is_root_user():
+        sudo_prompt("sudo is required to apply system configuration changes")
 
     for check in failing:
         try:

@@ -168,19 +168,20 @@ class TestConfigureSystem:
 
     def test_prompts_user_and_fixes_on_yes(self, mocker) -> None:
         mock_check = MockConfigurator(passes=False)
-        mocker.patch("typer.confirm", return_value=True)
+        mocker.patch("dimos.protocol.service.system_configurator.base.confirm", return_value=True)
+        mocker.patch("dimos.protocol.service.system_configurator.base.sudo_prompt")
         configure_system([mock_check])
         assert mock_check.fix_called
 
     def test_does_not_fix_on_no(self, mocker) -> None:
         mock_check = MockConfigurator(passes=False)
-        mocker.patch("typer.confirm", return_value=False)
+        mocker.patch("dimos.protocol.service.system_configurator.base.confirm", return_value=False)
         configure_system([mock_check])
         assert not mock_check.fix_called
 
     def test_exits_on_no_with_critical_check(self, mocker) -> None:
         mock_check = MockConfigurator(passes=False, is_critical=True)
-        mocker.patch("typer.confirm", return_value=False)
+        mocker.patch("dimos.protocol.service.system_configurator.base.confirm", return_value=False)
         with pytest.raises(SystemExit) as exc_info:
             configure_system([mock_check])
         assert exc_info.value.code == 1

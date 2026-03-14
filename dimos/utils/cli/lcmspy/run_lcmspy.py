@@ -21,15 +21,15 @@ from textual.widgets import DataTable
 
 from dimos.utils.cli import theme
 from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy, GraphTopic as SpyTopic
+from dimos.utils.cli.theme import _vars_for
 
 
 def gradient(max_value: float, value: float) -> str:
-    """Gradient from cyan (low) to yellow (high) using DimOS theme colors"""
+    """Gradient from low (cool) to high (warm) using DimOS theme bandwidth colors."""
     ratio = min(value / max_value, 1.0)
-    # Parse hex colors from theme
-    cyan = Color.parse(theme.CYAN)
-    yellow = Color.parse(theme.YELLOW)
-    color = cyan.blend(yellow, ratio)
+    low = Color.parse(_vars_for(theme.active_theme).get("dio-bw-low", theme.CYAN))
+    high = Color.parse(_vars_for(theme.active_theme).get("dio-bw-high", theme.YELLOW))
+    color = low.blend(high, ratio)
 
     return color.hex
 
