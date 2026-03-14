@@ -8,7 +8,7 @@
 #   fastlio  — Launch FAST_LIO with RoboSense config (Phase 1)
 #   <other>  — Launch system_real_robot.launch.py (arise_slam)
 
-set -euo pipefail
+set -eo pipefail
 
 TOPIC_TIMEOUT="${TOPIC_TIMEOUT:-60}"
 POLL_INTERVAL="${POLL_INTERVAL:-2}"
