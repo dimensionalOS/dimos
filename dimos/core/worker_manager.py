@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -61,7 +61,11 @@ class WorkerManager:
         actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
         return RPCClient(actor, module_class)
 
-    def deploy_parallel(self, module_specs: Iterable[ModuleSpec]) -> list[RPCClient]:
+    def deploy_parallel(
+        self,
+        module_specs: Iterable[ModuleSpec],
+        blueprint_args: Mapping[str, Mapping[str, Any]],
+    ) -> list[RPCClient]:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
 
@@ -76,6 +80,7 @@ class WorkerManager:
         for module_class, global_config, kwargs in module_specs:
             worker = self._select_worker()
             worker.reserve_slot()
+            kwargs.update(blueprint_args.get(module_class.name, {}))
             assignments.append((worker, module_class, global_config, kwargs))
 
         def _deploy(

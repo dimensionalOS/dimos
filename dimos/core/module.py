@@ -119,6 +119,11 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         except ValueError:
             ...
 
+    @classproperty
+    def name(self) -> str:
+        """Name for this module to be used for blueprint configs."""
+        return self.__name__.lower()  # type: ignore[attr-defined,no-any-return]
+
     @property
     def frame_id(self) -> str:
         base = self.config.frame_id or self.__class__.__name__
