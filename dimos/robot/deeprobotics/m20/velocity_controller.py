@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,316 +12,284 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Velocity controller for the Deep Robotics M20 quadruped.
+"""Velocity controller for M20 quadruped.
 
-Converts dimos Twist messages to /NAV_CMD DDS messages via the drdds library
-and publishes at 10 Hz (per M20 SDK recommendation). Includes a safety
-watchdog that zeros velocities when no command arrives within the timeout.
+Accepts dimos Twist messages (m/s, rad/s), applies acceleration smoothing,
+and sends velocity commands via one of two transports:
 
-/NAV_CMD message structure (drdds/msg/NavCmd):
-    MetaType header|meta     (Foxy uses 'header', Humble uses 'meta')
-        uint64 frame_id
-        Timestamp timestamp
-            int32 sec
-            uint32 nsec
-    NavCmdValue data
-        float32 x_vel        (forward/backward, m/s, +forward)
-        float32 y_vel        (left/right, m/s, +left)
-        float32 yaw_vel      (yaw rate, rad/s, +ccw)
+- **Navigation Mode** (/NAV_CMD via rclpy): Publishes absolute m/s values
+  to the /NAV_CMD DDS topic. Requires rclpy and drdds on GOS. Enables
+  the robot's built-in obstacle avoidance.
+- **Regular Mode** (UDP): Normalizes to [-1,1] range and sends via UDP
+  protocol. Teleop only — no obstacle avoidance.
 
-Prerequisites:
-    - Robot must be in navigation mode with Agile gait (0x3002)
-    - basic_server service must be running on AOS
-    - Built-in planner (handler) should be stopped to avoid conflicts
-
-The drdds package is installed into the NOS host venv by deploy.sh setup
-(extracted from the nav container). When running off-robot the controller
-operates in log-only mode.
+Transport is selected by providing a `nav_cmd_publish` callback.
+Reference: M20 Software Development Guide sections 1.2.5, 2.3.1
 """
 
-from __future__ import annotations
-
+import logging
 import threading
 import time
 from dataclasses import dataclass
+from typing import Callable
 
 from dimos.msgs.geometry_msgs import Twist
-from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger()
+from ..protocol import M20Protocol
 
-# ---------------------------------------------------------------------------
-# Conditional import of drdds — only available on the M20 NOS host.
-# deploy.sh setup extracts drdds from the Humble nav container into the host
-# Python 3.10 venv.  Foxy uses 'header', Humble uses 'meta'.
-# ---------------------------------------------------------------------------
-DRDDS_AVAILABLE = False
-_DRDDS_HEADER_FIELD: str = "header"  # default to Foxy naming
+logger = logging.getLogger(__name__)
 
-try:
-    from drdds.msg import NavCmd as DDSNavCmd  # type: ignore[import-untyped]
+_ZERO_THRESHOLD = 0.001
 
-    DRDDS_AVAILABLE = True
 
-    # Detect Foxy ('header') vs Humble ('meta') field naming
-    _probe = DDSNavCmd()
-    if hasattr(_probe, "meta"):
-        _DRDDS_HEADER_FIELD = "meta"
-    elif hasattr(_probe, "header"):
-        _DRDDS_HEADER_FIELD = "header"
-    del _probe
-except ImportError:
-    pass
+@dataclass(frozen=True)
+class M20SpeedLimits:
+    """Physical speed limits for the M20 in standard walking gait.
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-MAX_LINEAR_VEL = 1.0  # m/s
-MAX_YAW_RATE = 1.5  # rad/s
-SEND_HZ = 10  # M20 SDK recommends 10 Hz for /NAV_CMD
-WATCHDOG_TIMEOUT_S = 0.3  # Zero velocities if no cmd for 300 ms
+    Used to convert between absolute velocities (m/s, rad/s)
+    and the M20's normalized [-1,1] command range.
+    """
+
+    max_linear_x: float = 1.5  # m/s forward/backward
+    max_linear_y: float = 0.5  # m/s lateral
+    max_angular_yaw: float = 1.0  # rad/s rotation
 
 
 @dataclass
-class NavCmd:
-    """Local representation of a /NAV_CMD velocity command.
+class VelocityState:
+    """Current velocity controller state."""
 
-    Field names match the drdds/msg/NavCmdValue structure from the M20 SDK.
-    """
+    # Target velocities (m/s and rad/s, from Twist)
+    target_linear_x: float = 0.0
+    target_linear_y: float = 0.0
+    target_angular_yaw: float = 0.0
 
-    x_vel: float = 0.0  # forward/backward (m/s, +forward)
-    y_vel: float = 0.0  # left/right      (m/s, +left)
-    yaw_vel: float = 0.0  # yaw rate         (rad/s, +ccw)
+    # Smoothed velocities (m/s and rad/s)
+    actual_linear_x: float = 0.0
+    actual_linear_y: float = 0.0
+    actual_angular_yaw: float = 0.0
 
-    @classmethod
-    def from_twist(cls, twist: Twist) -> NavCmd:
-        """Convert a dimos Twist to a clamped NavCmd."""
-        return cls(
-            x_vel=max(-MAX_LINEAR_VEL, min(MAX_LINEAR_VEL, twist.linear.x)),
-            y_vel=max(-MAX_LINEAR_VEL, min(MAX_LINEAR_VEL, twist.linear.y)),
-            yaw_vel=max(-MAX_YAW_RATE, min(MAX_YAW_RATE, twist.angular.z)),
-        )
+    # Safety state
+    emergency_stopped: bool = False
+    paused: bool = False
 
-    @classmethod
-    def zero(cls) -> NavCmd:
-        return cls()
-
-    @property
-    def is_zero(self) -> bool:
-        return self.x_vel == 0.0 and self.y_vel == 0.0 and self.yaw_vel == 0.0
+    # Timestamps
+    last_command_time: float = 0.0
+    last_update_time: float = 0.0
 
 
 class M20VelocityController:
-    """Publishes velocity commands to /NAV_CMD at 10 Hz.
+    """Converts dimos Twist commands to M20 normalized velocity commands.
 
-    Parameters
-    ----------
-    test_mode : bool
-        If True, log commands instead of publishing over DDS.
+    Runs a 20Hz control loop that:
+    1. Accepts Twist messages (m/s, rad/s) via set_twist()
+    2. Applies acceleration smoothing
+    3. Converts to M20 [-1,1] normalized range using speed_limits
+    4. Sends via UDP protocol
+    5. Ramps to zero on command timeout (safety)
     """
 
-    def __init__(self, *, test_mode: bool = False) -> None:
-        self._test_mode = test_mode
+    def __init__(
+        self,
+        protocol: M20Protocol,
+        speed_limits: M20SpeedLimits | None = None,
+        linear_accel: float = 1.0,  # m/s^2
+        angular_accel: float = 2.0,  # rad/s^2
+        command_timeout: float = 0.5,  # seconds
+        control_rate: int = 20,  # Hz (per M20 docs)
+        nav_cmd_publish: Callable[[float, float, float], None] | None = None,
+    ):
+        if linear_accel <= 0 or angular_accel <= 0:
+            raise ValueError("Acceleration values must be positive")
+        if control_rate <= 0:
+            raise ValueError("control_rate must be positive")
+        if command_timeout <= 0:
+            raise ValueError("command_timeout must be positive")
+
+        self.protocol = protocol
+        self.speed_limits = speed_limits or M20SpeedLimits()
+        self._nav_cmd_publish = nav_cmd_publish
+
+        if self.speed_limits.max_linear_x <= 0 or self.speed_limits.max_linear_y <= 0:
+            raise ValueError("Speed limits must be positive")
+        if self.speed_limits.max_angular_yaw <= 0:
+            raise ValueError("Speed limits must be positive")
+
+        self.state = VelocityState()
         self._lock = threading.Lock()
-        self._current_cmd = NavCmd.zero()
-        self._last_cmd_time = time.monotonic()
+
+        self.linear_accel = linear_accel
+        self.angular_accel = angular_accel
+        self.command_timeout = command_timeout
+        self.control_rate = control_rate
+
         self._running = False
-        self._send_thread: threading.Thread | None = None
-        self._watchdog_thread: threading.Thread | None = None
-        self._packet_count = 0
-        self._timeout_active = False
+        self._thread: threading.Thread | None = None
 
-        # DDS publisher handle — set up on start()
-        self._dds_publisher: object | None = None
+    def set_twist(self, twist: Twist) -> None:
+        """Accept a dimos Twist as the velocity target.
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
+        Twist.linear.x  = forward  (m/s)
+        Twist.linear.y  = lateral  (m/s)
+        Twist.angular.z = yaw      (rad/s)
+        """
+        with self._lock:
+            if self.state.emergency_stopped:
+                return
+
+            lim = self.speed_limits
+            self.state.target_linear_x = max(
+                -lim.max_linear_x, min(lim.max_linear_x, twist.linear.x)
+            )
+            self.state.target_linear_y = max(
+                -lim.max_linear_y, min(lim.max_linear_y, twist.linear.y)
+            )
+            self.state.target_angular_yaw = max(
+                -lim.max_angular_yaw, min(lim.max_angular_yaw, twist.angular.z)
+            )
+            self.state.last_command_time = time.time()
+
+    def emergency_stop(self, engage: bool) -> None:
+        """Engage or release emergency stop."""
+        with self._lock:
+            if engage:
+                self.state.emergency_stopped = True
+                self.state.target_linear_x = 0.0
+                self.state.target_linear_y = 0.0
+                self.state.target_angular_yaw = 0.0
+                self.state.actual_linear_x = 0.0
+                self.state.actual_linear_y = 0.0
+                self.state.actual_angular_yaw = 0.0
+                logger.warning("EMERGENCY STOP ENGAGED")
+            else:
+                self.state.emergency_stopped = False
+                logger.info("Emergency stop released")
+
+        # Send zero velocity immediately on e-stop (outside lock to avoid
+        # holding lock during I/O)
+        if engage:
+            self._send_zero()
 
     def start(self) -> None:
+        """Start the 20Hz control loop thread."""
         if self._running:
             return
-
-        self._init_publisher()
-
         self._running = True
-        self._last_cmd_time = time.monotonic()
-
-        self._send_thread = threading.Thread(
-            target=self._send_loop, daemon=True, name="M20VelSendLoop"
+        self._thread = threading.Thread(
+            target=self._control_loop,
+            daemon=True,
         )
-        self._watchdog_thread = threading.Thread(
-            target=self._watchdog_loop, daemon=True, name="M20VelWatchdog"
-        )
-        self._send_thread.start()
-        self._watchdog_thread.start()
-
-        logger.info(
-            "M20VelocityController started (drdds=%s, header_field=%s, test=%s)",
-            DRDDS_AVAILABLE,
-            _DRDDS_HEADER_FIELD,
-            self._test_mode,
-        )
+        self._thread.start()
+        logger.info("M20 velocity controller started")
 
     def stop(self) -> None:
-        if not self._running:
-            return
-
-        # Send zero velocities before shutting down
-        with self._lock:
-            self._current_cmd = NavCmd.zero()
-        self._publish_once(NavCmd.zero())
-
+        """Stop the control loop thread."""
         self._running = False
+        if self._thread:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+        logger.info("M20 velocity controller stopped")
 
-        if self._send_thread:
-            self._send_thread.join(timeout=0.5)
-        if self._watchdog_thread:
-            self._watchdog_thread.join(timeout=0.5)
+    def _control_loop(self) -> None:
+        dt = 1.0 / self.control_rate
 
-        self._dds_publisher = None
-        logger.info("M20VelocityController stopped")
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def send(self, twist: Twist) -> None:
-        """Accept a new velocity command (called from _on_cmd_vel)."""
-        cmd = NavCmd.from_twist(twist)
-        with self._lock:
-            self._current_cmd = cmd
-            self._last_cmd_time = time.monotonic()
-            self._timeout_active = False
-
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
-
-    def _init_publisher(self) -> None:
-        """Set up the DDS publisher for /NAV_CMD.
-
-        Uses rclpy with the drdds NavCmd message type.  The ROSNav module
-        already initialises rclpy, so we reuse its context.  On the NOS host
-        the drdds package is installed from the Humble nav container by
-        deploy.sh setup.
-        """
-        if self._test_mode:
-            logger.info("[TEST] M20VelocityController in test mode — no DDS publishing")
-            return
-
-        if not DRDDS_AVAILABLE:
-            logger.warning(
-                "drdds not available — /NAV_CMD will be logged only. "
-                "Run 'deploy.sh setup' to install drdds bindings."
-            )
-            return
-
-        try:
-            import rclpy  # type: ignore[import-untyped]
-            from rclpy.node import Node  # type: ignore[import-untyped]
-
-            if not rclpy.ok():  # type: ignore[attr-defined]
-                rclpy.init()
-
-            node = Node("m20_velocity_controller")
-            self._dds_publisher = node.create_publisher(DDSNavCmd, "/NAV_CMD", 10)
-            logger.info(
-                "DDS publisher created via rclpy for /NAV_CMD (header_field=%s)",
-                _DRDDS_HEADER_FIELD,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Failed to create rclpy publisher for /NAV_CMD: %s — "
-                "velocity commands will be logged only.",
-                exc,
-            )
-
-    def _populate_dds_msg(self, cmd: NavCmd) -> object:
-        """Create and populate a DDSNavCmd message from a local NavCmd."""
-        msg = DDSNavCmd()
-
-        # Populate the header/meta with current timestamp
-        hdr = getattr(msg, _DRDDS_HEADER_FIELD)
-        hdr.frame_id = 0
-        now = time.time()
-        hdr.timestamp.sec = int(now)
-        hdr.timestamp.nsec = int((now % 1) * 1e9)
-
-        # Populate velocity fields
-        msg.data.x_vel = cmd.x_vel  # type: ignore[attr-defined]
-        msg.data.y_vel = cmd.y_vel  # type: ignore[attr-defined]
-        msg.data.yaw_vel = cmd.yaw_vel  # type: ignore[attr-defined]
-
-        return msg
-
-    def _publish_once(self, cmd: NavCmd) -> None:
-        """Publish a single NavCmd to /NAV_CMD."""
-        if self._test_mode:
-            if self._packet_count % SEND_HZ == 0:
-                logger.info(
-                    "[TEST] NavCmd x_vel=%.3f y_vel=%.3f yaw_vel=%.3f | count=%d",
-                    cmd.x_vel,
-                    cmd.y_vel,
-                    cmd.yaw_vel,
-                    self._packet_count,
-                )
-            return
-
-        if self._dds_publisher is None:
-            return
-
-        try:
-            msg = self._populate_dds_msg(cmd)
-            self._dds_publisher.publish(msg)  # type: ignore[union-attr]
-        except Exception as exc:
-            if self._packet_count % SEND_HZ == 0:
-                logger.error("Failed to publish /NAV_CMD: %s", exc)
-
-    def _send_loop(self) -> None:
-        """Continuously publish the current command at 10 Hz."""
-        period = 1.0 / SEND_HZ
         while self._running:
+            now = time.time()
             try:
                 with self._lock:
-                    cmd = self._current_cmd
+                    # Ramp to zero if no recent commands
+                    if now - self.state.last_command_time > self.command_timeout:
+                        self.state.target_linear_x = 0.0
+                        self.state.target_linear_y = 0.0
+                        self.state.target_angular_yaw = 0.0
 
-                self._publish_once(cmd)
-                self._packet_count += 1
+                    self._update_velocities(dt)
 
-                if self._packet_count % (SEND_HZ * 5) == 0:
-                    logger.debug(
-                        "M20 vel send: x_vel=%.3f y_vel=%.3f yaw_vel=%.3f count=%d",
-                        cmd.x_vel,
-                        cmd.y_vel,
-                        cmd.yaw_vel,
-                        self._packet_count,
-                    )
+                self._publish_control()
 
-                time.sleep(period)
-            except Exception as exc:
-                if self._running:
-                    logger.error("M20 vel send error: %s", exc)
+                with self._lock:
+                    self.state.last_update_time = now
+            except Exception:
+                logger.exception("Control loop error — sending zero velocity")
+                try:
+                    self._send_zero()
+                except Exception:
+                    pass
 
-    def _watchdog_loop(self) -> None:
-        """Zero velocities if no command arrives within the timeout."""
-        while self._running:
-            try:
-                elapsed = time.monotonic() - self._last_cmd_time
-                if elapsed > WATCHDOG_TIMEOUT_S:
-                    if not self._timeout_active:
-                        logger.warning(
-                            "M20 velocity watchdog: no cmd for %.1fs — zeroing", elapsed
-                        )
-                        with self._lock:
-                            self._current_cmd = NavCmd.zero()
-                        self._timeout_active = True
-                else:
-                    if self._timeout_active:
-                        logger.info("M20 velocity watchdog: commands resumed")
-                        self._timeout_active = False
+            elapsed = time.time() - now
+            time.sleep(max(0.0, dt - elapsed))
 
-                time.sleep(0.05)
-            except Exception as exc:
-                if self._running:
-                    logger.error("M20 vel watchdog error: %s", exc)
+    def _update_velocities(self, dt: float) -> None:
+        """Apply acceleration limits for smooth velocity changes.
+
+        Must be called with self._lock held.
+        """
+        max_lin = self.linear_accel * dt
+        max_ang = self.angular_accel * dt
+
+        def _smooth(target: float, actual: float, limit: float) -> float:
+            delta = max(-limit, min(limit, target - actual))
+            return actual + delta
+
+        self.state.actual_linear_x = _smooth(
+            self.state.target_linear_x, self.state.actual_linear_x, max_lin
+        )
+        self.state.actual_linear_y = _smooth(
+            self.state.target_linear_y, self.state.actual_linear_y, max_lin
+        )
+        self.state.actual_angular_yaw = _smooth(
+            self.state.target_angular_yaw, self.state.actual_angular_yaw, max_ang
+        )
+
+    def _publish_control(self) -> None:
+        """Send velocity via /NAV_CMD (absolute m/s) or UDP (normalized [-1,1])."""
+        with self._lock:
+            if self.state.paused:
+                return
+
+            if self.state.emergency_stopped:
+                self._send_zero()
+                return
+
+            if self._is_idle():
+                return
+
+            vx = self.state.actual_linear_x
+            vy = self.state.actual_linear_y
+            vyaw = self.state.actual_angular_yaw
+
+        if self._nav_cmd_publish is not None:
+            self._nav_cmd_publish(vx, vy, vyaw)
+        else:
+            lim = self.speed_limits
+            self.protocol.send_velocity(
+                x=vx / lim.max_linear_x,
+                y=vy / lim.max_linear_y,
+                yaw=vyaw / lim.max_angular_yaw,
+            )
+
+    def _send_zero(self) -> None:
+        """Send zero velocity on all active transports."""
+        if self._nav_cmd_publish is not None:
+            self._nav_cmd_publish(0.0, 0.0, 0.0)
+        self.protocol.send_velocity(0, 0, 0)
+
+    def _is_idle(self) -> bool:
+        """Must be called with self._lock held."""
+        timed_out = time.time() - self.state.last_command_time > self.command_timeout
+        near_zero = (
+            abs(self.state.actual_linear_x) < _ZERO_THRESHOLD
+            and abs(self.state.actual_linear_y) < _ZERO_THRESHOLD
+            and abs(self.state.actual_angular_yaw) < _ZERO_THRESHOLD
+        )
+        return timed_out and near_zero
+
+    @property
+    def is_moving(self) -> bool:
+        threshold = 0.01
+        with self._lock:
+            return (
+                abs(self.state.actual_linear_x) > threshold
+                or abs(self.state.actual_linear_y) > threshold
+                or abs(self.state.actual_angular_yaw) > threshold
+            )

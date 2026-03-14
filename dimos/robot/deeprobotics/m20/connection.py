@@ -63,6 +63,7 @@ from ..protocol import (
 from .camera import M20RTSPCamera
 from .odometry import M20DeadReckonOdometry
 from .velocity_controller import M20SpeedLimits, M20VelocityController
+from .velocity_controller_dds import M20VelocityController as M20VelocityControllerDDS
 
 try:
     from .ros_sensors import M20ROSSensors
@@ -179,16 +180,22 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
             except RuntimeError as e:
                 logger.warning(f"M20ROSSensors init failed — falling back to UDP: {e}")
 
-        # Velocity controller: use /NAV_CMD if ros_sensors available, else UDP
-        nav_cmd_fn = None
-        if self._ros_sensors is not None and self._ros_sensors.nav_cmd_available:
-            nav_cmd_fn = self._ros_sensors.publish_nav_cmd
+        # Velocity controller: use DDS controller for ROSNav mode (enable_ros=False),
+        # otherwise use the original UDP+optional-DDS controller
+        if not enable_ros:
+            # ROSNav mode: standalone DDS publisher to /NAV_CMD
+            self._velocity_ctrl = M20VelocityControllerDDS()
+        else:
+            # Original mode: UDP + optional /NAV_CMD via ros_sensors
+            nav_cmd_fn = None
+            if self._ros_sensors is not None and self._ros_sensors.nav_cmd_available:
+                nav_cmd_fn = self._ros_sensors.publish_nav_cmd
 
-        self._velocity_ctrl = M20VelocityController(
-            protocol=self._protocol,
-            speed_limits=speed_limits,
-            nav_cmd_publish=nav_cmd_fn,
-        )
+            self._velocity_ctrl = M20VelocityController(
+                protocol=self._protocol,
+                speed_limits=speed_limits,
+                nav_cmd_publish=nav_cmd_fn,
+            )
 
         self._camera: M20RTSPCamera | None = None
         if enable_camera:
