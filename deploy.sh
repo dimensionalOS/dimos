@@ -40,8 +40,8 @@ LAUNCH_SCRIPT="launch_nos.py"
 DIMOS_LOG="/var/log/dimos-nos.log"
 
 # --- AOS connection defaults (override via environment or .env) ---
-AOS_IP="${AOS_IP:-192.168.123.161}"
-AOS_USER="${AOS_USER:-unitree}"
+AOS_IP="${AOS_IP:-10.21.31.103}"
+AOS_USER="${AOS_USER:-user}"
 AOS_SSH_OPTS="${AOS_SSH_OPTS:--o StrictHostKeyChecking=no -o ConnectTimeout=5}"
 
 # --- Helpers ---
@@ -96,6 +96,14 @@ ensure_lio_disabled() {
     fi
 
     info "lio_perception stopped successfully on AOS."
+
+    # Verify rsdriver is still publishing /LIDAR/POINTS
+    info "Verifying rsdriver is still active on AOS..."
+    if aos_ssh "pgrep -f rsdriver" >/dev/null 2>&1; then
+        info "rsdriver is running on AOS — lidar pipeline intact."
+    else
+        warn "rsdriver NOT running on AOS — /LIDAR/POINTS may be unavailable."
+    fi
     return 0
 }
 
@@ -449,6 +457,27 @@ cmd_status() {
         fi
     else
         echo -e "  Usage:   ${YELLOW}(could not read /proc/meminfo)${NC}"
+    fi
+
+    # Check robot gait mode (/NAV_CMD requires navigation mode + Agile gait 0x3002)
+    echo -e "\n${CYAN}Robot Gait${NC}"
+    if command -v ros2 &>/dev/null || [[ -f "$DIMOS_VENV/bin/activate" ]]; then
+        if ! command -v ros2 &>/dev/null && [[ -f "$DIMOS_VENV/bin/activate" ]]; then
+            source "$DIMOS_VENV/bin/activate" 2>/dev/null || true
+        fi
+        if command -v ros2 &>/dev/null; then
+            local gait_msg
+            gait_msg=$(timeout 3 ros2 topic echo /GAIT --once 2>/dev/null) || gait_msg=""
+            if [[ -n "$gait_msg" ]]; then
+                if echo "$gait_msg" | grep -q "0x3002\|12290"; then
+                    echo -e "  Gait: ${GREEN}Agile (0x3002) — NAV_CMD ready${NC}"
+                else
+                    echo -e "  Gait: ${YELLOW}Not Agile — /NAV_CMD may be ignored${NC}"
+                fi
+            else
+                echo -e "  Gait: ${YELLOW}no data${NC}"
+            fi
+        fi
     fi
 
     echo -e "\n${CYAN}ROS Topics${NC}"

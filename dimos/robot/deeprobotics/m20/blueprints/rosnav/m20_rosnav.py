@@ -30,6 +30,7 @@ from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.std_msgs import Bool
 from dimos.navigation.rosnav import ros_nav
 from dimos.robot.deeprobotics.m20.connection import m20_connection
+from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
 m20_rosnav = (
     autoconnect(
@@ -37,8 +38,9 @@ m20_rosnav = (
         voxel_mapper(voxel_size=0.1),
         cost_mapper(),
         ros_nav(),
+        websocket_vis(),
     )
-    .global_config(n_dask_workers=4, robot_model="deeprobotics_m20")
+    .global_config(n_dask_workers=2, robot_model="deeprobotics_m20")
     .transports(
         {
             # ROSNav cmd_vel -> M20Connection cmd_vel
