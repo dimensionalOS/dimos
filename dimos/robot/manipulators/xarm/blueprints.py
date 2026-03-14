@@ -32,8 +32,8 @@ from dimos.manipulation.blueprints import (
     _make_xarm7_config,
 )
 from dimos.manipulation.manipulation_module import manipulation_module
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.keyboard.keyboard_teleop_module import keyboard_teleop_module
 from dimos.utils.data import LfsPath
 

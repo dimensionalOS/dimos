@@ -21,7 +21,7 @@ import math
 from typing import TYPE_CHECKING
 
 from dimos.hardware.manipulators.spec import ControlMode, JointLimits, ManipulatorInfo
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 if TYPE_CHECKING:
     from dimos.simulation.engines.base import SimulationEngine

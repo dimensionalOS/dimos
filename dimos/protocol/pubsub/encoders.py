@@ -20,8 +20,8 @@ from abc import ABC, abstractmethod
 import pickle
 from typing import TYPE_CHECKING, Generic, Protocol, TypeVar, cast
 
-from dimos.msgs import DimosMsg
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.protocol import DimosMsg
+from dimos.msgs.sensor_msgs.Image import Image
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -21,7 +21,7 @@ from transformers import CLIPModel as HFCLIPModel, CLIPProcessor  # type: ignore
 
 from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 
 
 class CLIPModelConfig(HuggingFaceEmbeddingModelConfig):

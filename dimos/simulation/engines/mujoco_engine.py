@@ -30,7 +30,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from dimos.msgs.sensor_msgs import JointState
+    from dimos.msgs.sensor_msgs.JointState import JointState
 
 logger = setup_logger()
 

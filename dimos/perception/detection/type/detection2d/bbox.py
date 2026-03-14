@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
     from ultralytics.engine.results import Results  # type: ignore[import-not-found]
 
-    from dimos.msgs.sensor_msgs import Image
+    from dimos.msgs.sensor_msgs.Image import Image
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
@@ -40,9 +40,9 @@ from dimos_lcm.vision_msgs import (
 from rich.console import Console
 from rich.text import Text
 
-from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.foxglove_msgs.Color import Color
-from dimos.msgs.std_msgs import Header
+from dimos.msgs.foxglove_msgs.ImageAnnotations import ImageAnnotations
+from dimos.msgs.std_msgs.Header import Header
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.types.timestamped import to_ros_stamp, to_timestamp
 from dimos.utils.decorators.decorators import simple_mcache

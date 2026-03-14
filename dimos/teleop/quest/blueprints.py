@@ -22,13 +22,9 @@ from dimos.control.blueprints import (
 )
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.teleop.quest.quest_extensions import arm_teleop_module, visualizing_teleop_module
 from dimos.teleop.quest.quest_types import Buttons
-
-# -----------------------------------------------------------------------------
-# Quest Teleop Blueprints
-# -----------------------------------------------------------------------------
 
 # Arm teleop with press-and-hold engage
 arm_teleop = autoconnect(
@@ -52,10 +48,6 @@ arm_teleop_visualizing = autoconnect(
     }
 )
 
-
-# -----------------------------------------------------------------------------
-# Teleop wired to Coordinator (TeleopIK)
-# -----------------------------------------------------------------------------
 
 # Single XArm7 teleop: right controller -> xarm7
 # Usage: dimos run arm-teleop-xarm7

@@ -63,6 +63,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+
 @dataclass
 class LaunchResult:
     """Returned by launch_blueprint() with info about the launched instance."""
@@ -253,6 +254,7 @@ def _daemon_main(run_dir: Path) -> None:
         if not coordinator.health_check():
             sys.stderr.write("Error: health check failed — a worker process died.\n")
             coordinator.stop()
+            tee.close()
             os._exit(1)
 
         n_workers = coordinator.n_workers

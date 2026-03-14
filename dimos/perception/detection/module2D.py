@@ -22,18 +22,20 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 
-from dimos import spec
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import Transform, Vector3
-from dimos.msgs.sensor_msgs import CameraInfo, Image
-from dimos.msgs.sensor_msgs.Image import sharpness_barrier
-from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection.detectors import Detector  # type: ignore[attr-defined]
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.perception.detection.detectors.base import Detector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
-from dimos.perception.detection.type import Filter2D, ImageDetections2D
+from dimos.perception.detection.type.detection2d.base import Filter2D
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.spec.perception import Camera
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
@@ -158,7 +160,7 @@ class Detection2DModule(Module[Config]):
 
 def deploy(  # type: ignore[no-untyped-def]
     dimos: ModuleCoordinator,
-    camera: spec.Camera,
+    camera: Camera,
     prefix: str = "/detector2d",
     **kwargs,
 ) -> Detection2DModule:

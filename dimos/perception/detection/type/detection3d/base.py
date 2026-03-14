@@ -18,7 +18,7 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from dimos.msgs.geometry_msgs import Transform
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 if TYPE_CHECKING:

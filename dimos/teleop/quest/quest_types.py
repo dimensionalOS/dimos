@@ -18,8 +18,8 @@
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from dimos.msgs.sensor_msgs import Joy
-from dimos.msgs.std_msgs import UInt32
+from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.msgs.std_msgs.UInt32 import UInt32
 
 
 @dataclass

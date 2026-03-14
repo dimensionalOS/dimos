@@ -63,10 +63,6 @@ class McpAdapter:
         self.url = url
         self.timeout = timeout
 
-    # ------------------------------------------------------------------
-    # Low-level JSON-RPC
-    # ------------------------------------------------------------------
-
     def call(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Send a JSON-RPC request and return the parsed response.
 
@@ -86,10 +82,6 @@ class McpAdapter:
         except requests.HTTPError as e:
             raise McpError(f"HTTP {resp.status_code}: {e}") from e
         return resp.json()  # type: ignore[no-any-return]
-
-    # ------------------------------------------------------------------
-    # MCP standard methods
-    # ------------------------------------------------------------------
 
     def initialize(self) -> dict[str, Any]:
         """Send ``initialize`` and return server info."""
@@ -111,10 +103,6 @@ class McpAdapter:
         if not content:
             return ""
         return content[0].get("text", str(content[0]))  # type: ignore[no-any-return]
-
-    # ------------------------------------------------------------------
-    # Readiness probes
-    # ------------------------------------------------------------------
 
     def wait_for_ready(self, timeout: float = 10.0, interval: float = 0.5) -> bool:
         """Poll until the MCP server responds, or return False on timeout."""
@@ -148,10 +136,6 @@ class McpAdapter:
             time.sleep(interval)
         return False
 
-    # ------------------------------------------------------------------
-    # Class methods for discovery
-    # ------------------------------------------------------------------
-
     @classmethod
     def from_run_entry(cls, entry: Any | None = None, timeout: int = DEFAULT_TIMEOUT) -> McpAdapter:
         """Create an adapter from a RunEntry, or discover the latest one.
@@ -172,10 +156,6 @@ class McpAdapter:
 
         url = f"http://localhost:{global_config.mcp_port}/mcp"
         return cls(url=url, timeout=timeout)
-
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _unwrap(response: dict[str, Any]) -> dict[str, Any]:

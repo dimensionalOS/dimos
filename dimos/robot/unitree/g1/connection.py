@@ -19,13 +19,13 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from pydantic import Field
 from reactivex.disposable import Disposable
 
-from dimos import spec
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In
-from dimos.msgs.geometry_msgs import Twist
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.spec.control import LocalPlanner
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -115,7 +115,7 @@ class G1Connection(G1ConnectionBase[G1Config]):
 g1_connection = G1Connection.blueprint
 
 
-def deploy(dimos: ModuleCoordinator, ip: str, local_planner: spec.LocalPlanner) -> "ModuleProxy":
+def deploy(dimos: ModuleCoordinator, ip: str, local_planner: LocalPlanner) -> "ModuleProxy":
     connection = dimos.deploy(G1Connection, ip=ip)
     connection.cmd_vel.connect(local_planner.cmd_vel)
     connection.start()

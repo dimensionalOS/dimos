@@ -92,8 +92,6 @@ class TimeSeriesStore(Generic[T], ABC):
         """Find the first (ts, data) strictly after the given timestamp."""
         ...
 
-    # --- Collection API (built on abstract methods) ---
-
     def __len__(self) -> int:
         return self._count()
 

@@ -25,8 +25,10 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
-from dimos.simulation.engines import EngineType, get_engine
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.RobotState import RobotState
+from dimos.simulation.engines.registry import EngineType, get_engine
 from dimos.simulation.manipulators.sim_manip_interface import SimManipInterface
 
 

@@ -118,7 +118,7 @@ All visualization layers shown together
 
 ## Blueprint Composition
 
-The navigation stack is composed in the [`unitree_go2`](/dimos/robot/unitree/go2/blueprints/__init__.py) blueprint:
+The navigation stack is composed in the [`unitree_go2`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py) blueprint:
 
 ```python fold output=assets/go2_blueprint.svg
 from dimos.core.blueprints import autoconnect

@@ -15,7 +15,10 @@
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.perception.experimental.temporal_memory import TemporalMemoryConfig, temporal_memory
+from dimos.perception.experimental.temporal_memory.temporal_memory import (
+    TemporalMemoryConfig,
+    temporal_memory,
+)
 from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import unitree_go2_agentic
 
 # This module is imported lazily by `get_by_name()` in the CLI run command,

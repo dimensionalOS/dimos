@@ -31,14 +31,14 @@ from dimos_lcm.vision_msgs import (
     Pose2D,
 )
 
-from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.foxglove_msgs.Color import Color
-from dimos.msgs.std_msgs import Header
+from dimos.msgs.foxglove_msgs.ImageAnnotations import ImageAnnotations
+from dimos.msgs.std_msgs.Header import Header
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.types.timestamped import to_ros_stamp
 
 if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs import Image
+    from dimos.msgs.sensor_msgs.Image import Image
 
 
 @dataclass

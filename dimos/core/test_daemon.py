@@ -24,9 +24,6 @@ from unittest import mock
 
 import pytest
 
-# ---------------------------------------------------------------------------
-# Registry tests
-# ---------------------------------------------------------------------------
 from dimos.core import run_registry
 from dimos.core.run_registry import (
     RunEntry,
@@ -158,10 +155,6 @@ class TestPortConflicts:
         assert conflict is None
 
 
-# ---------------------------------------------------------------------------
-# Health check tests
-# ---------------------------------------------------------------------------
-
 from dimos.core.module_coordinator import ModuleCoordinator
 
 
@@ -284,11 +277,6 @@ class TestSignalHandler:
         assert not (tmp_path / "test-instance" / "current.json").exists()
 
 
-# ---------------------------------------------------------------------------
-# dimos status tests
-# ---------------------------------------------------------------------------
-
-
 class TestStatusCommand:
     """Tests for `dimos status` CLI command."""
 
@@ -334,11 +322,6 @@ class TestStatusCommand:
 
         entries = list_runs(alive_only=True)
         assert len(entries) == 0
-
-
-# ---------------------------------------------------------------------------
-# dimos stop tests
-# ---------------------------------------------------------------------------
 
 
 class TestStopCommand:

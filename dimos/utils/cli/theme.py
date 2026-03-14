@@ -550,7 +550,7 @@ def _apply_vars(v: dict[str, str]) -> None:
     _self.BACKGROUND = v["dio-bg"]
     _self.BG = v["dio-bg"]
     _self.FOREGROUND = v["dio-fg"]
-    _self.ACCENT = v["dio-text"]
+    _self.ACCENT = v["dio-accent"]
     _self.DIM = v["dio-dim"]
     _self.CYAN = v["dio-accent"]
     _self.BORDER = v["dio-accent"]

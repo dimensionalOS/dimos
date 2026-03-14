@@ -66,10 +66,6 @@ class MockAdapter:
         self._error_code: int = 0
         self._error_message: str = ""
 
-    # =========================================================================
-    # Connection
-    # =========================================================================
-
     def connect(self) -> bool:
         """Simulate connection."""
         self._connected = True
@@ -82,10 +78,6 @@ class MockAdapter:
     def is_connected(self) -> bool:
         """Check mock connection status."""
         return self._connected
-
-    # =========================================================================
-    # Info
-    # =========================================================================
 
     def get_info(self) -> ManipulatorInfo:
         """Return mock info."""
@@ -109,10 +101,6 @@ class MockAdapter:
             velocity_max=[1.0] * self._dof,
         )
 
-    # =========================================================================
-    # Control Mode
-    # =========================================================================
-
     def set_control_mode(self, mode: ControlMode) -> bool:
         """Set mock control mode."""
         self._control_mode = mode
@@ -121,10 +109,6 @@ class MockAdapter:
     def get_control_mode(self) -> ControlMode:
         """Get mock control mode."""
         return self._control_mode
-
-    # =========================================================================
-    # State Reading
-    # =========================================================================
 
     def read_joint_positions(self) -> list[float]:
         """Return mock joint positions."""
@@ -151,10 +135,6 @@ class MockAdapter:
         """Return mock error."""
         return self._error_code, self._error_message
 
-    # =========================================================================
-    # Motion Control
-    # =========================================================================
-
     def write_joint_positions(
         self,
         positions: list[float],
@@ -178,10 +158,6 @@ class MockAdapter:
         self._velocities = [0.0] * self._dof
         return True
 
-    # =========================================================================
-    # Servo Control
-    # =========================================================================
-
     def write_enable(self, enable: bool) -> bool:
         """Enable/disable mock servos."""
         self._enabled = enable
@@ -197,10 +173,6 @@ class MockAdapter:
         self._error_message = ""
         return True
 
-    # =========================================================================
-    # Cartesian Control (Optional)
-    # =========================================================================
-
     def read_cartesian_position(self) -> dict[str, float] | None:
         """Return mock cartesian position."""
         return self._cartesian_position.copy()
@@ -214,10 +186,6 @@ class MockAdapter:
         self._cartesian_position.update(pose)
         return True
 
-    # =========================================================================
-    # Gripper (Optional)
-    # =========================================================================
-
     def read_gripper_position(self) -> float | None:
         """Return mock gripper position."""
         return self._gripper_position
@@ -227,17 +195,9 @@ class MockAdapter:
         self._gripper_position = position
         return True
 
-    # =========================================================================
-    # Force/Torque (Optional)
-    # =========================================================================
-
     def read_force_torque(self) -> list[float] | None:
         """Return mock F/T sensor data (not supported in mock)."""
         return None
-
-    # =========================================================================
-    # Test Helpers (not part of Protocol)
-    # =========================================================================
 
     def set_error(self, code: int, message: str) -> None:
         """Inject an error for testing error handling."""

@@ -15,7 +15,7 @@
 import numpy as np
 import pytest
 
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
 from dimos.utils.data import get_data
 

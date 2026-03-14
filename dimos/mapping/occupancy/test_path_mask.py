@@ -19,9 +19,9 @@ import pytest
 from dimos.mapping.occupancy.path_mask import make_path_mask
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
-from dimos.msgs.geometry_msgs import Pose
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.data import get_data
 

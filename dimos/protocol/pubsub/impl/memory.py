@@ -16,7 +16,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
-from dimos.protocol import encode
+from dimos.protocol.encode import encoder as encode
 from dimos.protocol.pubsub.encoders import PubSubEncoderMixin
 from dimos.protocol.pubsub.spec import PubSub
 

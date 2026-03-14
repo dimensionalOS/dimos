@@ -25,7 +25,7 @@ from dimos.protocol.service.system_configurator.base import (
     sudo_run,
 )
 
-# ------------------------------ specific checks: multicast ------------------------------
+# specific checks: multicast
 
 
 class MulticastConfiguratorLinux(SystemConfigurator):
@@ -182,7 +182,7 @@ class MulticastConfiguratorMacOS(SystemConfigurator):
         sudo_run(*self.add_route_cmd, check=True, text=True, capture_output=True)
 
 
-# ------------------------------ specific checks: buffers ------------------------------
+# specific checks: buffers
 
 IDEAL_RMEM_SIZE = 67_108_864  # 64MB
 
@@ -254,7 +254,7 @@ class BufferConfiguratorMacOS(SystemConfigurator):
             _write_sysctl_int(key, target)
 
 
-# ------------------------------ specific checks: ulimit ------------------------------
+# specific checks: ulimit
 
 
 class MaxFileConfiguratorMacOS(SystemConfigurator):

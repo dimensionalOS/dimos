@@ -191,10 +191,6 @@ class JointVelocityTask(BaseControlTask):
                 f"JointVelocityTask {self._name} preempted by {by_task} on joints {joints}"
             )
 
-    # =========================================================================
-    # Task-specific methods
-    # =========================================================================
-
     def set_velocities(self, velocities: list[float], t_now: float) -> bool:
         """Set target joint velocities.
 

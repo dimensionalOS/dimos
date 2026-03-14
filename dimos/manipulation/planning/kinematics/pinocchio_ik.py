@@ -44,14 +44,10 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from dimos.msgs.geometry_msgs import Pose, PoseStamped
+    from dimos.msgs.geometry_msgs.Pose import Pose
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
-
-
-# =============================================================================
-# Configuration
-# =============================================================================
 
 
 @dataclass
@@ -71,11 +67,6 @@ class PinocchioIKConfig:
     damp: float = 1e-2
     dt: float = 1.0
     max_velocity: float = 10.0
-
-
-# =============================================================================
-# PinocchioIK Solver
-# =============================================================================
 
 
 class PinocchioIK:
@@ -162,10 +153,6 @@ class PinocchioIK:
         """End-effector joint ID."""
         return self._ee_joint_id
 
-    # =========================================================================
-    # Core IK
-    # =========================================================================
-
     def solve(
         self,
         target_pose: pinocchio.SE3,
@@ -208,10 +195,6 @@ class PinocchioIK:
 
         return q, False, final_err
 
-    # =========================================================================
-    # Forward Kinematics
-    # =========================================================================
-
     def forward_kinematics(self, joint_positions: NDArray[np.floating[Any]]) -> pinocchio.SE3:
         """Compute end-effector pose from joint positions.
 
@@ -225,11 +208,6 @@ class PinocchioIK:
         return self._data.oMi[self._ee_joint_id].copy()
 
 
-# =============================================================================
-# Pose Conversion Helpers
-# =============================================================================
-
-
 def pose_to_se3(pose: Pose | PoseStamped) -> pinocchio.SE3:
     """Convert Pose or PoseStamped to pinocchio SE3"""
 
@@ -237,11 +215,6 @@ def pose_to_se3(pose: Pose | PoseStamped) -> pinocchio.SE3:
     quat = pose.orientation
     rotation = pinocchio.Quaternion(quat.w, quat.x, quat.y, quat.z).toRotationMatrix()
     return pinocchio.SE3(rotation, position)
-
-
-# =============================================================================
-# Safety Utilities
-# =============================================================================
 
 
 def check_joint_delta(

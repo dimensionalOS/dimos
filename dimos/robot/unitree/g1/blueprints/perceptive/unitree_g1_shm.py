@@ -18,7 +18,7 @@
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import pSHMTransport
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.foxglove_bridge import foxglove_bridge
 from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1 import unitree_g1
 

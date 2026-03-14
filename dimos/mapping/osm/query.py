@@ -15,8 +15,8 @@
 import re
 from typing import Any
 
+from dimos.mapping.models import LatLon
 from dimos.mapping.osm.osm import MapImage
-from dimos.mapping.types import LatLon
 from dimos.models.vl.base import VlModel
 from dimos.utils.generic import extract_json_from_llm_response
 from dimos.utils.logging_config import setup_logger

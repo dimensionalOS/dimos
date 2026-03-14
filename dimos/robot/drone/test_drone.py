@@ -25,8 +25,10 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
-from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.drone.connection_module import DroneConnectionModule
 from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
 
@@ -192,7 +194,7 @@ class TestReplayMode(unittest.TestCase):
 
     def test_fake_mavlink_connection(self) -> None:
         """Test FakeMavlinkConnection replays messages correctly."""
-        with patch("dimos.utils.testing.TimedSensorReplay") as mock_replay:
+        with patch("dimos.utils.testing.replay.TimedSensorReplay") as mock_replay:
             # Mock the replay stream
             MagicMock()
             mock_messages = [
@@ -218,7 +220,7 @@ class TestReplayMode(unittest.TestCase):
 
     def test_fake_video_stream_no_throttling(self) -> None:
         """Test FakeDJIVideoStream returns replay stream with format fix."""
-        with patch("dimos.utils.testing.TimedSensorReplay") as mock_replay:
+        with patch("dimos.utils.testing.replay.TimedSensorReplay") as mock_replay:
             mock_stream = MagicMock()
             mock_replay.return_value.stream.return_value = mock_stream
 
@@ -280,7 +282,7 @@ class TestReplayMode(unittest.TestCase):
 
         os.environ["DRONE_CONNECTION"] = "replay"
 
-        with patch("dimos.utils.testing.TimedSensorReplay") as mock_replay:
+        with patch("dimos.utils.testing.replay.TimedSensorReplay") as mock_replay:
             # Set up MAVLink replay stream
             mavlink_messages = [
                 {"mavpackettype": "HEARTBEAT", "type": 2, "base_mode": 193},
@@ -433,7 +435,7 @@ class TestDroneFullIntegration(unittest.TestCase):
         self.foxglove_patch.stop()
 
     @patch("dimos.robot.drone.drone.ModuleCoordinator")
-    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.testing.replay.TimedSensorReplay")
     def test_full_system_with_replay(self, mock_replay, mock_coordinator_class) -> None:
         """Test full drone system initialization and operation with replay mode."""
         # Set up mock replay data
@@ -567,7 +569,7 @@ class TestDroneFullIntegration(unittest.TestCase):
 class TestDroneControlCommands(unittest.TestCase):
     """Test drone control commands with FakeMavlinkConnection."""
 
-    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.testing.replay.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
     def test_arm_disarm_commands(self, mock_get_data, mock_replay) -> None:
         """Test arm and disarm commands work with fake connection."""
@@ -586,7 +588,7 @@ class TestDroneControlCommands(unittest.TestCase):
         result = conn.disarm()
         self.assertIsInstance(result, bool)  # Should return bool without crashing
 
-    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.testing.replay.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
     def test_takeoff_land_commands(self, mock_get_data, mock_replay) -> None:
         """Test takeoff and land commands with fake connection."""
@@ -605,7 +607,7 @@ class TestDroneControlCommands(unittest.TestCase):
         result = conn.land()
         self.assertIsNotNone(result)
 
-    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.testing.replay.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
     def test_set_mode_command(self, mock_get_data, mock_replay) -> None:
         """Test flight mode setting with fake connection."""
@@ -626,7 +628,7 @@ class TestDroneControlCommands(unittest.TestCase):
 class TestDronePerception(unittest.TestCase):
     """Test drone perception capabilities."""
 
-    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.testing.replay.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
     def test_video_stream_replay(self, mock_get_data, mock_replay) -> None:
         """Test video stream works with replay data."""
@@ -696,7 +698,7 @@ class TestDronePerception(unittest.TestCase):
 class TestDroneMovementAndOdometry(unittest.TestCase):
     """Test drone movement commands and odometry."""
 
-    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.testing.replay.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
     def test_movement_command_conversion(self, mock_get_data, mock_replay) -> None:
         """Test movement commands are properly converted from ROS to NED."""
@@ -716,7 +718,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
         # Movement should be converted to NED internally
         # The fake connection doesn't actually send commands, but it should not crash
 
-    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.testing.replay.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
     def test_odometry_from_replay(self, mock_get_data, mock_replay) -> None:
         """Test odometry is properly generated from replay messages."""
@@ -763,7 +765,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
         self.assertIsNotNone(odom.orientation)
         self.assertEqual(odom.frame_id, "world")
 
-    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.testing.replay.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
     def test_position_integration_indoor(self, mock_get_data, mock_replay) -> None:
         """Test position integration for indoor flight without GPS."""
@@ -808,7 +810,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
 class TestDroneStatusAndTelemetry(unittest.TestCase):
     """Test drone status and telemetry reporting."""
 
-    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.testing.replay.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
     def test_status_extraction(self, mock_get_data, mock_replay) -> None:
         """Test status is properly extracted from MAVLink messages."""
@@ -853,7 +855,7 @@ class TestDroneStatusAndTelemetry(unittest.TestCase):
         self.assertIn("altitude", status)
         self.assertIn("heading", status)
 
-    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.testing.replay.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
     def test_telemetry_json_publishing(self, mock_get_data, mock_replay) -> None:
         """Test full telemetry is published as JSON."""
@@ -907,7 +909,7 @@ class TestDroneStatusAndTelemetry(unittest.TestCase):
 class TestFlyToErrorHandling(unittest.TestCase):
     """Test fly_to() error handling paths."""
 
-    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.testing.replay.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
     def test_concurrency_lock(self, mock_get_data, mock_replay) -> None:
         """flying_to_target=True rejects concurrent fly_to() calls."""
@@ -921,7 +923,7 @@ class TestFlyToErrorHandling(unittest.TestCase):
         result = conn.fly_to(37.0, -122.0, 10.0)
         self.assertIn("Already flying to target", result)
 
-    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.testing.replay.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
     def test_error_when_not_connected(self, mock_get_data, mock_replay) -> None:
         """connected=False returns error immediately."""

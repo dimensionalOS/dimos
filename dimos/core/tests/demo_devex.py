@@ -98,9 +98,6 @@ def main() -> None:
     print("  Simulating: OpenClaw agent using DimOS")
     print("=" * 60)
 
-    # ---------------------------------------------------------------
-    # Step 1: dimos run stress-test --daemon
-    # ---------------------------------------------------------------
     section("Step 1: dimos run stress-test --daemon")
     result = run_dimos("run", "stress-test", "--daemon", timeout=60)
     print(f"  stdout: {result.stdout.strip()[:200]}")
@@ -131,9 +128,6 @@ def main() -> None:
         print("  Cannot continue without MCP. Exiting.")
         sys.exit(1)
 
-    # ---------------------------------------------------------------
-    # Step 2: dimos status
-    # ---------------------------------------------------------------
     section("Step 2: dimos status")
     result = run_dimos("status")
     print(f"  output: {result.stdout.strip()[:300]}")
@@ -145,9 +139,6 @@ def main() -> None:
         p(f"Status unclear (exit={result.returncode})", ok=False)
         failures += 1
 
-    # ---------------------------------------------------------------
-    # Step 3: dimos mcp list-tools
-    # ---------------------------------------------------------------
     section("Step 3: dimos mcp list-tools")
     result = run_dimos("mcp", "list-tools")
     if result.returncode == 0:
@@ -167,9 +158,6 @@ def main() -> None:
         p(f"list-tools failed (exit={result.returncode}): {result.stdout[:100]}", ok=False)
         failures += 1
 
-    # ---------------------------------------------------------------
-    # Step 4: dimos mcp call echo --arg message=hello
-    # ---------------------------------------------------------------
     section("Step 4: dimos mcp call echo --arg message=hello")
     result = run_dimos("mcp", "call", "echo", "--arg", "message=hello-from-devex-test")
     if result.returncode == 0 and "hello-from-devex-test" in result.stdout:
@@ -178,9 +166,6 @@ def main() -> None:
         p(f"echo call failed (exit={result.returncode}): {result.stdout[:100]}", ok=False)
         failures += 1
 
-    # ---------------------------------------------------------------
-    # Step 5: dimos mcp status
-    # ---------------------------------------------------------------
     section("Step 5: dimos mcp status")
     result = run_dimos("mcp", "status")
     if result.returncode == 0:
@@ -196,9 +181,6 @@ def main() -> None:
         p(f"mcp status failed (exit={result.returncode})", ok=False)
         failures += 1
 
-    # ---------------------------------------------------------------
-    # Step 6: dimos mcp modules
-    # ---------------------------------------------------------------
     section("Step 6: dimos mcp modules")
     result = run_dimos("mcp", "modules")
     if result.returncode == 0:
@@ -213,9 +195,6 @@ def main() -> None:
         p(f"mcp modules failed (exit={result.returncode})", ok=False)
         failures += 1
 
-    # ---------------------------------------------------------------
-    # Step 7: dimos agent-send "hello"
-    # ---------------------------------------------------------------
     section("Step 7: dimos agent-send 'what tools do you have?'")
     result = run_dimos("agent-send", "what tools do you have?")
     if result.returncode == 0:
@@ -224,9 +203,6 @@ def main() -> None:
         p(f"agent-send failed (exit={result.returncode}): {result.stdout[:100]}", ok=False)
         failures += 1
 
-    # ---------------------------------------------------------------
-    # Step 8: Check logs
-    # ---------------------------------------------------------------
     section("Step 8: Check per-run logs")
     log_base = os.path.expanduser("~/.local/state/dimos/logs")
     if os.path.isdir(log_base):
@@ -257,9 +233,6 @@ def main() -> None:
         p(f"Log base dir not found: {log_base}", ok=False)
         failures += 1
 
-    # ---------------------------------------------------------------
-    # Step 9: dimos stop
-    # ---------------------------------------------------------------
     section("Step 9: dimos stop")
     result = run_dimos("stop")
     print(f"  output: {result.stdout.strip()[:200]}")
@@ -272,9 +245,6 @@ def main() -> None:
     # Wait for shutdown
     time.sleep(2)
 
-    # ---------------------------------------------------------------
-    # Step 10: dimos status (verify stopped)
-    # ---------------------------------------------------------------
     section("Step 10: dimos status (verify stopped)")
     result = run_dimos("status")
     print(f"  output: {result.stdout.strip()[:200]}")
@@ -288,9 +258,6 @@ def main() -> None:
         p(f"Unexpected status after stop (exit={result.returncode})", ok=False)
         failures += 1
 
-    # ---------------------------------------------------------------
-    # Summary
-    # ---------------------------------------------------------------
     print("\n" + "=" * 60)
     if failures == 0:
         print("  \u2705 FULL DEVELOPER EXPERIENCE TEST PASSED")

@@ -20,7 +20,7 @@ from transformers import AutoModelForCausalLM, AutoProcessor  # type: ignore[imp
 
 from dimos.models.base import HuggingFaceModel
 from dimos.models.vl.base import Captioner
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 
 
 class Florence2Model(HuggingFaceModel, Captioner):
