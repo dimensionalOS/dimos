@@ -144,7 +144,7 @@ def arghelp(
             with suppress(StopIteration):
                 t = next(u for u in get_args(t) if issubclass(u, BaseModel))
 
-        if t is not None and issubclass(t, BaseModel):
+        if inspect.isclass(t) and issubclass(t, BaseModel):
             output += f"{indent}{module}{k}:\n"
             # Find blueprint atom
             bp = next(bp for bp in blueprint.blueprints if bp.module.name == k)
