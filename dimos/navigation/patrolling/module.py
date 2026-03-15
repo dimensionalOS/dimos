@@ -24,7 +24,7 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs import OccupancyGrid
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.patrolling.routers.patrol_router import PatrolRouter
 from dimos.navigation.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
@@ -45,9 +45,9 @@ class PatrollingModule(Module):
 
     _clearance_multiplier = 0.5
 
-    def __init__(self, cfg: GlobalConfig = global_config) -> None:
+    def __init__(self, g: GlobalConfig = global_config) -> None:
         super().__init__()
-        self._global_config = cfg
+        self._global_config = g
         clearance_radius_m = self._global_config.robot_width * self._clearance_multiplier
         self._router = create_patrol_router("coverage", clearance_radius_m)
 

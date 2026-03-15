@@ -36,6 +36,9 @@ from dimos.utils.reactive import backpressure
 if TYPE_CHECKING:
     from reactivex.abc import DisposableBase
 
+    from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+    from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+
 
 logger = setup_logger()
 
@@ -193,7 +196,7 @@ class PerceiveLoopSkill(Module):
                 self._model_started = False
 
 
-def _write_debug_image(image: Image, detections: list[Any]) -> None:
+def _write_debug_image(image: Image, detections: ImageDetections2D[Detection2DBBox]) -> None:
     try:
         debug_img = image.to_opencv().copy()
         for det in detections.detections:
