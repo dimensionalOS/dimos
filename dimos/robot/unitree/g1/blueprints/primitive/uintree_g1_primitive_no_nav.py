@@ -15,6 +15,7 @@
 
 """Minimal G1 stack without navigation, used as a base for larger blueprints."""
 
+import os
 from typing import Any
 
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -33,6 +34,8 @@ from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Bool
 from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.robot.unitree.g1.connection import G1Connection, g1_connection
+from dimos.robot.unitree.g1.sim import g1_sim_connection
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
 
@@ -105,6 +108,10 @@ else:
     _with_vis = autoconnect()
 
 
+def _camera_source() -> str:
+    return os.environ.get("DIMOS_G1_CAMERA_SOURCE", "unitree").strip().lower()
+
+
 def _create_webcam() -> Webcam:
     return Webcam(
         camera_index=0,
@@ -114,11 +121,16 @@ def _create_webcam() -> Webcam:
     )
 
 
-_camera = (
-    autoconnect(
+G1_CAMERA_SOURCE = _camera_source()
+G1_CAMERA_INFO = G1Connection.camera_info_static if G1_CAMERA_SOURCE != "webcam" else zed.CameraInfo.SingleWebcam
+
+if global_config.simulation:
+    _camera = autoconnect(g1_sim_connection())
+elif G1_CAMERA_SOURCE == "webcam":
+    _camera = autoconnect(
         camera_module(
             transform=Transform(
-                translation=Vector3(0.05, 0.0, 0.6),  # height of camera on G1 robot
+                translation=Vector3(0.05, 0.0, 0.6),
                 rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
                 frame_id="sensor",
                 child_frame_id="camera_link",
@@ -126,9 +138,8 @@ _camera = (
             hardware=_create_webcam,
         ),
     )
-    if not global_config.simulation
-    else autoconnect()
-)
+else:
+    _camera = autoconnect(g1_connection())
 
 uintree_g1_primitive_no_nav = (
     autoconnect(
@@ -166,4 +177,4 @@ uintree_g1_primitive_no_nav = (
     )
 )
 
-__all__ = ["uintree_g1_primitive_no_nav"]
+__all__ = ["G1_CAMERA_INFO", "G1_CAMERA_SOURCE", "uintree_g1_primitive_no_nav"]
