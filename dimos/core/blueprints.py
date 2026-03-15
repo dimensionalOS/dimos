@@ -15,9 +15,8 @@
 from abc import ABC
 from collections import defaultdict
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cached_property, reduce
-import inspect
 import operator
 import sys
 from types import MappingProxyType
@@ -27,13 +26,18 @@ if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module, is_module_type
+from dimos.core.module import Module, ModuleBase, ModuleSpec, is_module_type
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
 from dimos.spec.utils import Spec, is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing import Any as Self
 
 logger = setup_logger()
 
@@ -48,21 +52,18 @@ class StreamRef:
 @dataclass(frozen=True)
 class ModuleRef:
     name: str
-    spec: type[Spec] | type[Module]
+    spec: type[Spec] | type[ModuleBase]
 
 
 @dataclass(frozen=True)
 class _BlueprintAtom:
-    module: type[Module]
+    kwargs: dict[str, Any]
+    module: type[ModuleBase[Any]]
     streams: tuple[StreamRef, ...]
     module_refs: tuple[ModuleRef, ...]
-    args: tuple[Any, ...]
-    kwargs: dict[str, Any]
 
     @classmethod
-    def create(
-        cls, module: type[Module], args: tuple[Any, ...], kwargs: dict[str, Any]
-    ) -> "_BlueprintAtom":
+    def create(cls, module: type[ModuleBase[Any]], kwargs: dict[str, Any]) -> Self:
         streams: list[StreamRef] = []
         module_refs: list[ModuleRef] = []
 
@@ -103,7 +104,6 @@ class _BlueprintAtom:
             module=module,
             streams=tuple(streams),
             module_refs=tuple(module_refs),
-            args=args,
             kwargs=kwargs,
         )
 
@@ -111,82 +111,63 @@ class _BlueprintAtom:
 @dataclass(frozen=True)
 class Blueprint:
     blueprints: tuple[_BlueprintAtom, ...]
+    disabled_modules_tuple: tuple[type[ModuleBase], ...] = field(default_factory=tuple)
     transport_map: Mapping[tuple[str, type], PubSubTransport[Any]] = field(
         default_factory=lambda: MappingProxyType({})
     )
     global_config_overrides: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
-    remapping_map: Mapping[tuple[type[Module], str], str | type[Module] | type[Spec]] = field(
-        default_factory=lambda: MappingProxyType({})
+    remapping_map: Mapping[tuple[type[ModuleBase], str], str | type[ModuleBase] | type[Spec]] = (
+        field(default_factory=lambda: MappingProxyType({}))
     )
     requirement_checks: tuple[Callable[[], str | None], ...] = field(default_factory=tuple)
     configurator_checks: "tuple[SystemConfigurator, ...]" = field(default_factory=tuple)
 
     @classmethod
-    def create(cls, module: type[Module], *args: Any, **kwargs: Any) -> "Blueprint":
-        blueprint = _BlueprintAtom.create(module, args, kwargs)
+    def create(cls, module: type[ModuleBase], **kwargs: Any) -> "Blueprint":
+        blueprint = _BlueprintAtom.create(module, kwargs)
         return cls(blueprints=(blueprint,))
 
+    def disabled_modules(self, *modules: type[ModuleBase]) -> "Blueprint":
+        return replace(self, disabled_modules_tuple=self.disabled_modules_tuple + modules)
+
     def transports(self, transports: dict[tuple[str, type], Any]) -> "Blueprint":
-        return Blueprint(
-            blueprints=self.blueprints,
-            transport_map=MappingProxyType({**self.transport_map, **transports}),
-            global_config_overrides=self.global_config_overrides,
-            remapping_map=self.remapping_map,
-            requirement_checks=self.requirement_checks,
-            configurator_checks=self.configurator_checks,
-        )
+        return replace(self, transport_map=MappingProxyType({**self.transport_map, **transports}))
 
     def global_config(self, **kwargs: Any) -> "Blueprint":
-        return Blueprint(
-            blueprints=self.blueprints,
-            transport_map=self.transport_map,
+        return replace(
+            self,
             global_config_overrides=MappingProxyType({**self.global_config_overrides, **kwargs}),
-            remapping_map=self.remapping_map,
-            requirement_checks=self.requirement_checks,
-            configurator_checks=self.configurator_checks,
         )
 
     def remappings(
-        self, remappings: list[tuple[type[Module], str, str | type[Module] | type[Spec]]]
+        self,
+        remappings: list[
+            tuple[type[ModuleBase[Any]], str, str | type[ModuleBase[Any]] | type[Spec]]
+        ],
     ) -> "Blueprint":
         remappings_dict = dict(self.remapping_map)
         for module, old, new in remappings:
             remappings_dict[(module, old)] = new
-
-        return Blueprint(
-            blueprints=self.blueprints,
-            transport_map=self.transport_map,
-            global_config_overrides=self.global_config_overrides,
-            remapping_map=MappingProxyType(remappings_dict),
-            requirement_checks=self.requirement_checks,
-            configurator_checks=self.configurator_checks,
-        )
+        return replace(self, remapping_map=MappingProxyType(remappings_dict))
 
     def requirements(self, *checks: Callable[[], str | None]) -> "Blueprint":
-        return Blueprint(
-            blueprints=self.blueprints,
-            transport_map=self.transport_map,
-            global_config_overrides=self.global_config_overrides,
-            remapping_map=self.remapping_map,
-            requirement_checks=self.requirement_checks + tuple(checks),
-            configurator_checks=self.configurator_checks,
-        )
+        return replace(self, requirement_checks=self.requirement_checks + tuple(checks))
 
     def configurators(self, *checks: "SystemConfigurator") -> "Blueprint":
-        return Blueprint(
-            blueprints=self.blueprints,
-            transport_map=self.transport_map,
-            global_config_overrides=self.global_config_overrides,
-            remapping_map=self.remapping_map,
-            requirement_checks=self.requirement_checks,
-            configurator_checks=self.configurator_checks + tuple(checks),
-        )
+        return replace(self, configurator_checks=self.configurator_checks + tuple(checks))
+
+    @cached_property
+    def _active_blueprints(self) -> tuple[_BlueprintAtom, ...]:
+        if not self.disabled_modules_tuple:
+            return self.blueprints
+        disabled = set(self.disabled_modules_tuple)
+        return tuple(bp for bp in self.blueprints if bp.module not in disabled)
 
     def _check_ambiguity(
         self,
         requested_method_name: str,
-        interface_methods: Mapping[str, list[tuple[type[Module], Callable[..., Any]]]],
-        requesting_module: type[Module],
+        interface_methods: Mapping[str, list[tuple[type[ModuleBase], Callable[..., Any]]]],
+        requesting_module: type[ModuleBase],
     ) -> None:
         if (
             requested_method_name in interface_methods
@@ -216,7 +197,7 @@ class Blueprint:
     def _all_name_types(self) -> set[tuple[str, type]]:
         # Apply remappings to get the actual names that will be used
         result = set()
-        for blueprint in self.blueprints:
+        for blueprint in self._active_blueprints:
             for conn in blueprint.streams:
                 # Check if this stream should be remapped
                 remapped_name = self.remapping_map.get((blueprint.module, conn.name), conn.name)
@@ -228,7 +209,8 @@ class Blueprint:
         return sum(1 for n, _ in self._all_name_types if n == name) == 1
 
     def _run_configurators(self) -> None:
-        from dimos.protocol.service.system_configurator import configure_system, lcm_configurators
+        from dimos.protocol.service.system_configurator.base import configure_system
+        from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
 
         configurators = [*lcm_configurators(), *self.configurator_checks]
 
@@ -261,7 +243,7 @@ class Blueprint:
         name_to_types = defaultdict(set)
         name_to_modules = defaultdict(list)
 
-        for blueprint in self.blueprints:
+        for blueprint in self._active_blueprints:
             for conn in blueprint.streams:
                 stream_name = self.remapping_map.get((blueprint.module, conn.name), conn.name)
                 name_to_types[stream_name].add(conn.type)
@@ -295,13 +277,9 @@ class Blueprint:
     def _deploy_all_modules(
         self, module_coordinator: ModuleCoordinator, global_config: GlobalConfig
     ) -> None:
-        module_specs: list[tuple[type[Module], tuple[Any, ...], dict[str, Any]]] = []
-        for blueprint in self.blueprints:
-            kwargs = {**blueprint.kwargs}
-            sig = inspect.signature(blueprint.module.__init__)
-            if "cfg" in sig.parameters:
-                kwargs["cfg"] = global_config
-            module_specs.append((blueprint.module, blueprint.args, kwargs))
+        module_specs: list[ModuleSpec] = []
+        for blueprint in self._active_blueprints:
+            module_specs.append((blueprint.module, global_config, blueprint.kwargs))
 
         module_coordinator.deploy_parallel(module_specs)
 
@@ -309,7 +287,7 @@ class Blueprint:
         # dict when given (final/remapped) stream name+type, provides a list of modules + original (non-remapped) stream names
         streams = defaultdict(list)
 
-        for blueprint in self.blueprints:
+        for blueprint in self._active_blueprints:
             for conn in blueprint.streams:
                 # Check if this stream should be remapped
                 remapped_name = self.remapping_map.get((blueprint.module, conn.name), conn.name)
@@ -342,7 +320,7 @@ class Blueprint:
         }
 
         # after this loop we should have an exact module for every module_ref on every blueprint
-        for blueprint in self.blueprints:
+        for blueprint in self._active_blueprints:
             for each_module_ref in blueprint.module_refs:
                 # we've got to find a another module that implements this spec
                 spec = mod_and_mod_ref_to_proxy.get(
@@ -357,7 +335,7 @@ class Blueprint:
                 # find all available candidates
                 possible_module_candidates = [
                     each_other_blueprint.module
-                    for each_other_blueprint in self.blueprints
+                    for each_other_blueprint in self._active_blueprints
                     if (
                         each_other_blueprint != blueprint
                         and spec_structural_compliance(each_other_blueprint.module, spec)
@@ -421,14 +399,14 @@ class Blueprint:
         rpc_methods_dot = {}
 
         # Track interface methods to detect ambiguity.
-        interface_methods: defaultdict[str, list[tuple[type[Module], Callable[..., Any]]]] = (
+        interface_methods: defaultdict[str, list[tuple[type[ModuleBase], Callable[..., Any]]]] = (
             defaultdict(list)
         )  # interface_name_method -> [(module_class, method)]
-        interface_methods_dot: defaultdict[str, list[tuple[type[Module], Callable[..., Any]]]] = (
-            defaultdict(list)
-        )  # interface_name.method -> [(module_class, method)]
+        interface_methods_dot: defaultdict[
+            str, list[tuple[type[ModuleBase], Callable[..., Any]]]
+        ] = defaultdict(list)  # interface_name.method -> [(module_class, method)]
 
-        for blueprint in self.blueprints:
+        for blueprint in self._active_blueprints:
             for method_name in blueprint.module.rpcs.keys():  # type: ignore[attr-defined]
                 module_proxy = module_coordinator.get_instance(blueprint.module)  # type: ignore[assignment]
                 method_for_rpc_client = getattr(module_proxy, method_name)
@@ -465,7 +443,7 @@ class Blueprint:
                 rpc_methods[interface_key] = implementations[0][1]
 
         # Fulfil method requests (so modules can call each other).
-        for blueprint in self.blueprints:
+        for blueprint in self._active_blueprints:
             instance = module_coordinator.get_instance(blueprint.module)  # type: ignore[assignment]
 
             for method_name in blueprint.module.rpcs.keys():  # type: ignore[attr-defined]
@@ -537,6 +515,9 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
 
     return Blueprint(
         blueprints=all_blueprints,
+        disabled_modules_tuple=tuple(
+            module for bp in blueprints for module in bp.disabled_modules_tuple
+        ),
         transport_map=MappingProxyType(all_transports),
         global_config_overrides=MappingProxyType(all_config_overrides),
         remapping_map=MappingProxyType(all_remappings),

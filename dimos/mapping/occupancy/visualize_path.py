@@ -16,8 +16,8 @@ import cv2
 import numpy as np
 
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
-from dimos.msgs.nav_msgs import Path
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 

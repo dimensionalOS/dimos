@@ -54,11 +54,6 @@ def _open_shm_with_retry(name: str) -> SharedMemory:
     raise FileNotFoundError(f"SHM not found after {tries} retries: {name}") from last
 
 
-# ---------------------------
-# 1) Abstract interface
-# ---------------------------
-
-
 class FrameChannel(ABC):
     """Single-slot 'freshest frame' IPC channel with a tiny control block.
     - Double-buffered to avoid torn reads.
@@ -123,11 +118,6 @@ def _safe_unlink(name: str) -> None:
         pass
     except Exception:
         pass
-
-
-# ---------------------------
-# 2) CPU shared-memory backend
-# ---------------------------
 
 
 class CpuShmChannel(FrameChannel):
@@ -300,11 +290,6 @@ class CpuShmChannel(FrameChannel):
             pass
 
 
-# ---------------------------
-# 3) Factories
-# ---------------------------
-
-
 class CPU_IPC_Factory:
     """Creates/attaches CPU shared-memory channels."""
 
@@ -316,11 +301,6 @@ class CPU_IPC_Factory:
     def attach(desc: dict) -> CpuShmChannel:  # type: ignore[type-arg]
         assert desc.get("kind") == "cpu", "Descriptor kind mismatch"
         return CpuShmChannel.attach(desc)  # type: ignore[arg-type, no-any-return]
-
-
-# ---------------------------
-# 4) Runtime selector
-# ---------------------------
 
 
 def make_frame_channel(  # type: ignore[no-untyped-def]

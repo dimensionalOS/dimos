@@ -14,15 +14,16 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any
+from collections.abc import Iterable
+from contextlib import suppress
+from typing import Any
 
+from dimos.core.global_config import GlobalConfig
+from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.rpc_client import RPCClient
 from dimos.core.worker import Worker
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.core.module import ModuleT
+from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
 
 logger = setup_logger()
 
@@ -47,7 +48,9 @@ class WorkerManager:
     def _select_worker(self) -> Worker:
         return min(self._workers, key=lambda w: w.module_count)
 
-    def deploy(self, module_class: type[ModuleT], *args: Any, **kwargs: Any) -> RPCClient:
+    def deploy(
+        self, module_class: type[ModuleBase], global_config: GlobalConfig, kwargs: dict[str, Any]
+    ) -> RPCClient:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
 
@@ -56,14 +59,16 @@ class WorkerManager:
             self.start()
 
         worker = self._select_worker()
-        actor = worker.deploy_module(module_class, args=args, kwargs=kwargs)
+        actor = worker.deploy_module(module_class, global_config, kwargs=kwargs)
         return RPCClient(actor, module_class)
 
-    def deploy_parallel(
-        self, module_specs: list[tuple[type[ModuleT], tuple[Any, ...], dict[Any, Any]]]
-    ) -> list[RPCClient]:
+    def deploy_parallel(self, module_specs: Iterable[ModuleSpec]) -> list[RPCClient]:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
+
+        module_specs = list(module_specs)
+        if len(module_specs) == 0:
+            return []
 
         # Auto-start for backward compatibility
         if not self._started:
@@ -72,23 +77,31 @@ class WorkerManager:
         # Pre-assign workers sequentially (so least-loaded accounting is
         # correct), then deploy concurrently via threads. The per-worker lock
         # serializes deploys that land on the same worker process.
-        assignments: list[tuple[Worker, type[ModuleT], tuple[Any, ...], dict[Any, Any]]] = []
-        for module_class, args, kwargs in module_specs:
+        assignments: list[tuple[Worker, type[ModuleBase], GlobalConfig, dict[str, Any]]] = []
+        for module_class, global_config, kwargs in module_specs:
             worker = self._select_worker()
             worker.reserve_slot()
-            assignments.append((worker, module_class, args, kwargs))
+            assignments.append((worker, module_class, global_config, kwargs))
 
-        def _deploy(
-            item: tuple[Worker, type[ModuleT], tuple[Any, ...], dict[Any, Any]],
-        ) -> RPCClient:
-            worker, module_class, args, kwargs = item
-            actor = worker.deploy_module(module_class, args=args, kwargs=kwargs)
-            return RPCClient(actor, module_class)
+        def _on_errors(
+            _outcomes: list[Any], successes: list[RPCClient], errors: list[Exception]
+        ) -> None:
+            for rpc_client in successes:
+                with suppress(Exception):
+                    rpc_client.stop_rpc_client()
+            raise ExceptionGroup("worker deploy_parallel failed", errors)
 
-        with ThreadPoolExecutor(max_workers=len(assignments)) as pool:
-            results = list(pool.map(_deploy, assignments))
+        return safe_thread_map(
+            assignments,
+            # item = [worker, module_class, global_config, kwargs]
+            lambda item: RPCClient(item[0].deploy_module(item[1], item[2], item[3]), item[1]),
+            _on_errors,
+        )
 
-        return results
+    def suppress_console(self) -> None:
+        """Tell all workers to redirect stdout/stderr to /dev/null."""
+        for worker in self._workers:
+            worker.suppress_console()
 
     @property
     def workers(self) -> list[Worker]:

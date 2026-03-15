@@ -20,11 +20,13 @@ Available subclasses:
     - VisualizingTeleopModule: Adds Rerun visualization (inherits press-and-hold engage)
 """
 
-from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import Field
+
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.teleop.quest.quest_teleop_module import Hand, QuestTeleopConfig, QuestTeleopModule
 from dimos.teleop.quest.quest_types import Buttons, QuestControllerState
 from dimos.teleop.utils.teleop_visualization import (
@@ -33,7 +35,6 @@ from dimos.teleop.utils.teleop_visualization import (
 )
 
 
-@dataclass
 class TwistTeleopConfig(QuestTeleopConfig):
     """Configuration for TwistTeleopModule."""
 
@@ -42,7 +43,7 @@ class TwistTeleopConfig(QuestTeleopConfig):
 
 
 # Example implementation to show how to extend QuestTeleopModule for different teleop behaviors and outputs.
-class TwistTeleopModule(QuestTeleopModule):
+class TwistTeleopModule(QuestTeleopModule[TwistTeleopConfig]):
     """Quest teleop that outputs TwistStamped instead of PoseStamped.
 
     Config:
@@ -56,7 +57,6 @@ class TwistTeleopModule(QuestTeleopModule):
     """
 
     default_config = TwistTeleopConfig
-    config: TwistTeleopConfig
 
     left_twist: Out[TwistStamped]
     right_twist: Out[TwistStamped]
@@ -75,7 +75,6 @@ class TwistTeleopModule(QuestTeleopModule):
             self.right_twist.publish(twist)
 
 
-@dataclass
 class ArmTeleopConfig(QuestTeleopConfig):
     """Configuration for ArmTeleopModule.
 
@@ -85,10 +84,10 @@ class ArmTeleopConfig(QuestTeleopConfig):
             hand's commands to the correct TeleopIKTask.
     """
 
-    task_names: dict[str, str] = field(default_factory=dict)
+    task_names: dict[str, str] = Field(default_factory=dict)
 
 
-class ArmTeleopModule(QuestTeleopModule):
+class ArmTeleopModule(QuestTeleopModule[ArmTeleopConfig]):
     """Quest teleop with per-hand press-and-hold engage and task name routing.
 
     Each controller's primary button (X for left, A for right)
@@ -105,10 +104,9 @@ class ArmTeleopModule(QuestTeleopModule):
     """
 
     default_config = ArmTeleopConfig
-    config: ArmTeleopConfig
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
         self._task_names: dict[Hand, str] = {
             Hand[k.upper()]: v for k, v in self.config.task_names.items()

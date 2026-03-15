@@ -18,7 +18,8 @@ import time
 
 from dimos_lcm.sensor_msgs.Imu import Imu as LCMImu
 
-from dimos.msgs.geometry_msgs import Quaternion, Vector3
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.types.timestamped import Timestamped
 
 

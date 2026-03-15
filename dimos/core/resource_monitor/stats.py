@@ -19,7 +19,7 @@ from typing import TypedDict
 
 import psutil
 
-from dimos.utils.decorators import ttl_cache
+from dimos.utils.decorators.decorators import ttl_cache
 
 # Cache Process objects so cpu_percent(interval=None) has a previous sample.
 _proc_cache: dict[int, psutil.Process] = {}
@@ -90,7 +90,7 @@ class IoStats(TypedDict):
 def _collect_io(proc: psutil.Process) -> IoStats:
     """Collect IO counters in bytes. Call inside oneshot()."""
     try:
-        io = proc.io_counters()
+        io = proc.io_counters()  # type: ignore[attr-defined]  # not available on macOS
         return IoStats(io_read_bytes=io.read_bytes, io_write_bytes=io.write_bytes)
     except (psutil.AccessDenied, AttributeError):
         return IoStats(io_read_bytes=0, io_write_bytes=0)

@@ -25,9 +25,11 @@ import numpy as np
 import torch
 import yaml  # type: ignore[import-untyped]
 
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
-from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.std_msgs import Header
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.std_msgs.Header import Header
 from dimos.types.manipulation import ObjectData
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger

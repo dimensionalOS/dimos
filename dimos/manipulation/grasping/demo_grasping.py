@@ -16,8 +16,8 @@ from pathlib import Path
 
 from dimos.agents.agent import agent
 from dimos.core.blueprints import autoconnect
-from dimos.hardware.sensors.camera.realsense import realsense_camera
-from dimos.manipulation.grasping import graspgen
+from dimos.hardware.sensors.camera.realsense.camera import realsense_camera
+from dimos.manipulation.grasping.graspgen_module import graspgen
 from dimos.manipulation.grasping.grasping import grasping_module
 from dimos.perception.detection.detectors.yoloe import YoloePromptMode
 from dimos.perception.object_scene_registration import object_scene_registration_module
@@ -45,4 +45,4 @@ demo_grasping = autoconnect(
     ),
     foxglove_bridge(),
     agent(),
-).global_config(viewer_backend="foxglove")
+).global_config(viewer="foxglove")

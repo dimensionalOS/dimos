@@ -16,7 +16,7 @@ import re
 
 from reactivex import operators as ops
 
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data

@@ -43,13 +43,16 @@ class RPCClient(Protocol):
 
     def call_nowait(self, name: str, arguments: Args) -> None: ...
 
-    # we expect to crash if we don't get a return value after 10 seconds
-    # but callers can override this timeout for extra long functions
+    # Default RPC timeout. Callers (RpcCall, DockerModule) resolve via
+    # rpc_timeouts dict; raw call_sync uses this as fallback.
+    default_rpc_timeout: float = 120.0
+    rpc_timeouts: dict[str, float] = {"start": 1200.0}
+
     def call_sync(
-        self, name: str, arguments: Args, rpc_timeout: float | None = 120.0
+        self, name: str, arguments: Args, rpc_timeout: float | None = None
     ) -> tuple[Any, Callable[[], None]]:
-        if name == "start":
-            rpc_timeout = 1200.0  # starting modules can take longer
+        if rpc_timeout is None:
+            rpc_timeout = self.rpc_timeouts.get(name, self.default_rpc_timeout)
         event = threading.Event()
 
         def receive_value(val) -> None:  # type: ignore[no-untyped-def]

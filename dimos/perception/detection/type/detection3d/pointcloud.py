@@ -33,8 +33,10 @@ from lcm_msgs.geometry_msgs import (  # type: ignore[import-not-found]
 import numpy as np
 
 from dimos.msgs.foxglove_msgs.Color import Color
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.detection.type.detection3d.base import Detection3D
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     PointCloudFilter,

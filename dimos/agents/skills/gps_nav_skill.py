@@ -19,7 +19,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out
-from dimos.mapping.types import LatLon
+from dimos.mapping.models import LatLon
 from dimos.mapping.utils.distance import distance_in_meters
 from dimos.utils.logging_config import setup_logger
 
@@ -33,9 +33,6 @@ class GpsNavSkillContainer(Module):
 
     gps_location: In[LatLon]
     gps_goal: Out[LatLon]
-
-    def __init__(self) -> None:
-        super().__init__()
 
     @rpc
     def start(self) -> None:

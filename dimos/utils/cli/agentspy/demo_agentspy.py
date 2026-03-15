@@ -24,7 +24,7 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from dimos.protocol.pubsub import lcm  # type: ignore[attr-defined]
+import dimos.protocol.pubsub.impl.lcmpubsub as lcm
 from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM
 
 

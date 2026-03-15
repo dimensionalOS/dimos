@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import difflib
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 import pytest
@@ -23,8 +24,8 @@ from dimos.robot.unitree.unitree_skill_container import _UNITREE_COMMANDS, Unitr
 class MockedUnitreeSkill(UnitreeSkillContainer):
     rpc_calls: list[str] = []
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs: Any):
+        super().__init__(**kwargs)
         # Provide a fake RPC so the real execute_sport_command runs end-to-end.
         self._bound_rpc_calls["GO2Connection.publish_request"] = lambda *args, **kwargs: None
 

@@ -2,23 +2,19 @@
 
 Dimos provides a `Configurable` base class. See [`service/spec.py`](/dimos/protocol/service/spec.py#L22).
 
-This allows using dataclasses to specify configuration structure and default values per module.
+This allows using pydantic models to specify configuration structure and default values per module.
 
 ```python
 from dimos.protocol.service import Configurable
+from dimos.protocol.service.spec import BaseConfig
 from rich import print
-from dataclasses import dataclass
 
-@dataclass
-class Config():
+class Config(BaseConfig):
     x: int = 3
     hello: str = "world"
 
-class MyClass(Configurable):
+class MyClass(Configurable[Config]):
     default_config = Config
-    config: Config
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
 
 myclass1 = MyClass()
 print(myclass1.config)
@@ -48,22 +44,19 @@ Error: Config.__init__() got an unexpected keyword argument 'something'
 [Modules](/docs/usage/modules.md) inherit from `Configurable`, so all of the above applies. Module configs should inherit from `ModuleConfig` ([`core/module.py`](/dimos/core/module.py#L40)), which includes shared configuration for all modules like transport protocols, frame IDs, etc.
 
 ```python
-from dataclasses import dataclass
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from rich import print
 
-@dataclass
 class Config(ModuleConfig):
     frame_id: str = "world"
     publish_interval: float = 0
     voxel_size: float = 0.05
     device: str = "CUDA:0"
 
-class MyModule(Module):
+class MyModule(Module[Config]):
     default_config = Config
-    config: Config
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)

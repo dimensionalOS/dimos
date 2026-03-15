@@ -23,7 +23,7 @@ name = "dimos"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.10.post1"
+version = "0.0.11"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -62,7 +62,6 @@ dependencies = [
     "annotation-protocol>=1.4.0",
     "lazy_loader",
     "plum-dispatch==2.5.7",
-
     # Logging
     "structlog>=25.5.0,<26",
     "colorlog==6.9.0",
@@ -86,6 +85,8 @@ dependencies = [
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
+    "sqlite-vec>=0.1.6",
+    "lz4>=4.4.5",
 ]
 
 
@@ -150,7 +151,7 @@ misc = [
 
 visualization = [
     "rerun-sdk>=0.20.0",
-    "dimos-viewer>=0.30.0a2",
+    "dimos-viewer>=0.30.0a4",
 ]
 
 agents = [
@@ -202,6 +203,7 @@ manipulation = [
 
     # Hardware SDKs
     "piper-sdk",
+    "pyrealsense2; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
 
     # Visualization (Optional)
@@ -270,6 +272,8 @@ dev = [
     "types-tensorflow>=2.18.0.20251008,<3",
     "types-tqdm>=4.67.0.20250809,<5",
     "types-psycopg2>=2.9.21.20251012",
+    "scipy-stubs>=1.15.0",
+    "types-psutil>=7.2.2.20260130,<8",
 
     # Tools
     "py-spy",
@@ -316,15 +320,18 @@ docker = [
     "pydantic",
     "pydantic-settings>=2.11.0,<3",
     "typer>=0.19.2,<1",
+    "requests>=2.28",
     "opencv-python-headless",
     "lcm",
     "sortedcontainers",
     "PyTurboJPEG",
     "rerun-sdk",
-    "langchain-core",
     "typing_extensions",
     "open3d-unofficial-arm; platform_system == 'Linux' and platform_machine == 'aarch64'",
     "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
+    # these below should be removed later, right now they are needed even for running `dimos --help` (seperate non-docker issue)
+    "langchain-core",
+    "matplotlib",
 ]
 
 base = [
@@ -353,8 +360,12 @@ exclude = [
 
 [tool.ruff.lint]
 extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH"]
-# TODO: All of these should be fixed, but it's easier commit autofixes first
-ignore = ["A001", "A002", "B008", "B017", "B019", "B024", "B026", "B904", "C901", "E402", "E501", "E721", "E722", "E741", "F811", "F821", "F821", "F821", "N801", "N802", "N803", "N806", "N817", "N999", "RUF003", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "UP007"]
+ignore = [
+    # TODO: All of these should be fixed, but it's easier commit autofixes first
+    "A001", "A002", "B008", "B017", "B019", "B024", "B026", "B904", "C901", "E402", "E501", "E721", "E722", "E741", "F811", "F821", "F821", "F821", "N801", "N802", "N803", "N806", "N817", "N999", "RUF003", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "UP007",
+    # This breaks runtime type checking (both for us, and users introspecting our APIs)
+    "TC001", "TC002", "TC003"
+]
 
 [tool.ruff.lint.per-file-ignores]
 "dimos/models/Detic/*" = ["ALL"]
@@ -372,6 +383,7 @@ python_version = "3.12"
 incremental = true
 strict = true
 warn_unused_ignores = false
+explicit_package_bases = true
 exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
@@ -401,6 +413,7 @@ module = [
     "rclpy.*",
     "sam2.*",
     "sensor_msgs.*",
+    "sqlite_vec",
     "std_msgs.*",
     "tf2_msgs.*",
     "torchreid",
@@ -424,7 +437,7 @@ env = [
   "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
   "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
 ]
-addopts = "-v -r a -p no:warnings --color=yes -m 'not (tool or slow or mujoco)'"
+addopts = "-v -r a -p no:warnings -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or slow or mujoco)'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 

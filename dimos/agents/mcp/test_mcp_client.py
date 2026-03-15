@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 import pytest
 
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 
 
@@ -40,10 +41,8 @@ def test_can_call_tool(agent_setup):
 
 
 class UserRegistration(Module):
-    def __init__(self):
-        super().__init__()
-        self._first_call = True
-        self._use_upper = False
+    _first_call = True
+    _use_upper = False
 
     @skill
     def register_user(self, name: str) -> str:
@@ -79,8 +78,8 @@ def test_can_call_again_on_error(agent_setup):
 
 
 class MultipleTools(Module):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs: Any):
+        super().__init__(**kwargs)
         self._people = {"Ben": "office", "Bob": "garage"}
 
     @skill

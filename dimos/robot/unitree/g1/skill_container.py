@@ -22,7 +22,8 @@ import difflib
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs import Twist, Vector3
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -63,8 +64,8 @@ _MODE_COMMANDS: dict[str, tuple[int, str]] = {
 
 class UnitreeG1SkillContainer(Module):
     rpc_calls: list[str] = [
-        "G1Connection.move",
-        "G1Connection.publish_request",
+        "G1ConnectionBase.move",
+        "G1ConnectionBase.publish_request",
     ]
 
     @rpc
@@ -90,7 +91,7 @@ class UnitreeG1SkillContainer(Module):
             duration: How long to move (seconds)
         """
 
-        move_rpc = self.get_rpc_calls("G1Connection.move")
+        move_rpc = self.get_rpc_calls("G1ConnectionBase.move")
         twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
         move_rpc(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
@@ -110,7 +111,7 @@ class UnitreeG1SkillContainer(Module):
         topic: str,
         command_name: str,
     ) -> str:
-        publish_request_rpc = self.get_rpc_calls("G1Connection.publish_request")
+        publish_request_rpc = self.get_rpc_calls("G1ConnectionBase.publish_request")
 
         if command_name not in command_dict:
             suggestions = difflib.get_close_matches(

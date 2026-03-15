@@ -16,7 +16,9 @@
 
 from pathlib import Path
 
-from doclinks import (
+import pytest
+
+from dimos.utils.docs.doclinks import (
     build_doc_index,
     build_file_index,
     extract_other_backticks,
@@ -27,7 +29,6 @@ from doclinks import (
     score_path_similarity,
     split_by_ignore_regions,
 )
-import pytest
 
 # Use the actual repo root
 REPO_ROOT = Path(__file__).parent.parent.parent.parent

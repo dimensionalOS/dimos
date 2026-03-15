@@ -19,8 +19,11 @@ import time
 
 import pytest
 
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.protocol.tf import TF, MultiTBuffer, TBuffer
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.tf.tf import TF, MultiTBuffer, TBuffer
 
 
 # from https://foxglove.dev/blog/understanding-ros-transforms

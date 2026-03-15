@@ -21,7 +21,7 @@ from dimos.agents_deprecated.agent_message import AgentMessage
 from dimos.agents_deprecated.agent_types import AgentResponse
 from dimos.agents_deprecated.memory.base import AbstractAgentSemanticMemory
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
@@ -34,32 +34,34 @@ except ImportError:
 logger = setup_logger()
 
 
-class BaseAgentModule(BaseAgent, Module):  # type: ignore[misc]
+class BaseAgentConfig(ModuleConfig):
+    model: str = "openai::gpt-4o-mini"
+    system_prompt: str | None = None
+    skills: SkillLibrary | list[AbstractSkill] | AbstractSkill | None = None
+    memory: AbstractAgentSemanticMemory | None = None
+    temperature: float = 0.0
+    max_tokens: int = 4096
+    max_input_tokens: int = 128000
+    max_history: int = 20
+    rag_n: int = 4
+    rag_threshold: float = 0.45
+    process_all_inputs: bool = False
+
+
+class BaseAgentModule(BaseAgent, Module[BaseAgentConfig]):  # type: ignore[misc]
     """Agent module that inherits from BaseAgent and adds DimOS module interface.
 
     This provides a thin wrapper around BaseAgent functionality, exposing it
     through the DimOS module system with RPC methods and stream I/O.
     """
 
+    default_config = BaseAgentConfig
+
     # Module I/O - AgentMessage based communication
     message_in: In[AgentMessage]  # Primary input for AgentMessage
     response_out: Out[AgentResponse]  # Output AgentResponse objects
 
-    def __init__(  # type: ignore[no-untyped-def]
-        self,
-        model: str = "openai::gpt-4o-mini",
-        system_prompt: str | None = None,
-        skills: SkillLibrary | list[AbstractSkill] | AbstractSkill | None = None,
-        memory: AbstractAgentSemanticMemory | None = None,
-        temperature: float = 0.0,
-        max_tokens: int = 4096,
-        max_input_tokens: int = 128000,
-        max_history: int = 20,
-        rag_n: int = 4,
-        rag_threshold: float = 0.45,
-        process_all_inputs: bool = False,
-        **kwargs,
-    ) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize the agent module.
 
         Args:
@@ -82,17 +84,17 @@ class BaseAgentModule(BaseAgent, Module):  # type: ignore[misc]
         # Initialize BaseAgent with all functionality
         BaseAgent.__init__(
             self,
-            model=model,
-            system_prompt=system_prompt,
-            skills=skills,
-            memory=memory,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            max_input_tokens=max_input_tokens,
-            max_history=max_history,
-            rag_n=rag_n,
-            rag_threshold=rag_threshold,
-            process_all_inputs=process_all_inputs,
+            model=self.config.model,
+            system_prompt=self.config.system_prompt,
+            skills=self.config.skills,
+            memory=self.config.memory,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+            max_input_tokens=self.config.max_input_tokens,
+            max_history=self.config.max_history,
+            rag_n=self.config.rag_n,
+            rag_threshold=self.config.rag_threshold,
+            process_all_inputs=self.config.process_all_inputs,
             # Don't pass streams - we'll connect them in start()
             input_query_stream=None,
             input_data_stream=None,

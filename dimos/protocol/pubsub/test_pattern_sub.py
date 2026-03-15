@@ -24,7 +24,9 @@ from typing import Any, Generic, TypeVar
 
 import pytest
 
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.pubsub.spec import AllPubSub, PubSub
@@ -51,8 +53,8 @@ class Case(Generic[TopicT, MsgT]):
 
 @contextmanager
 def lcm_typed_context() -> Generator[tuple[LCM, LCM], None, None]:
-    pub = LCM(autoconf=True)
-    sub = LCM(autoconf=False)
+    pub = LCM()
+    sub = LCM()
     pub.start()
     sub.start()
     try:
@@ -64,8 +66,8 @@ def lcm_typed_context() -> Generator[tuple[LCM, LCM], None, None]:
 
 @contextmanager
 def lcm_bytes_context() -> Generator[tuple[LCMPubSubBase, LCMPubSubBase], None, None]:
-    pub = LCMPubSubBase(autoconf=True)
-    sub = LCMPubSubBase(autoconf=False)
+    pub = LCMPubSubBase()
+    sub = LCMPubSubBase()
     pub.start()
     sub.start()
     try:

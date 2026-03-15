@@ -23,8 +23,8 @@ from reactivex.disposable import CompositeDisposable
 from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
-from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path

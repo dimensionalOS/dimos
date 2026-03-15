@@ -15,13 +15,15 @@
 
 import os
 import threading
+from typing import Any
 
 import pygame
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import Twist, Vector3
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # Force X11 driver to avoid OpenGL threading issues
 os.environ["SDL_VIDEODRIVER"] = "x11"
@@ -42,8 +44,8 @@ class KeyboardTeleop(Module):
     _clock: pygame.time.Clock | None = None
     _font: pygame.font.Font | None = None
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._stop_event = threading.Event()
 
     @rpc

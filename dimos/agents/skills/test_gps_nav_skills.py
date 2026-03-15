@@ -18,7 +18,7 @@ import pytest
 from dimos.agents.skills.gps_nav_skill import GpsNavSkillContainer
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.mapping.types import LatLon
+from dimos.mapping.models import LatLon
 
 
 class FakeGPS(Module):
@@ -28,11 +28,9 @@ class FakeGPS(Module):
 
 
 class MockedGpsNavSkill(GpsNavSkillContainer):
-    def __init__(self):
-        Module.__init__(self)
-        self._latest_location = LatLon(lat=37.782654, lon=-122.413273)
-        self._started = True
-        self._max_valid_distance = 50000
+    _latest_location = LatLon(lat=37.782654, lon=-122.413273)
+    _started = True
+    _max_valid_distance = 50000
 
 
 @pytest.mark.slow

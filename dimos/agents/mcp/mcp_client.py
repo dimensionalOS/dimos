@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
 import time
@@ -39,7 +38,6 @@ from dimos.utils.sequential_ids import SequentialIds
 logger = setup_logger()
 
 
-@dataclass
 class McpClientConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-4o"
@@ -62,8 +60,8 @@ class McpClient(Module[McpClientConfig]):
     _http_client: httpx.Client
     _seq_ids: SequentialIds
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._lock = RLock()
         self._state_graph = None
         self._message_queue = Queue()

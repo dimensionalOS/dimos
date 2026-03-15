@@ -29,7 +29,7 @@ import re
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    from dimos.msgs import DimosMsg
+    from dimos.msgs.protocol import DimosMsg
     from dimos.protocol.pubsub.impl.rospubsub import ROSMessage
 
 

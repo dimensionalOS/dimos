@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from functools import cached_property
 import os
 from typing import Any
@@ -7,21 +6,19 @@ import numpy as np
 from openai import OpenAI
 
 from dimos.models.vl.base import VlModel, VlModelConfig
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 
-@dataclass
 class OpenAIVlModelConfig(VlModelConfig):
     model_name: str = "gpt-4o-mini"
     api_key: str | None = None
 
 
-class OpenAIVlModel(VlModel):
+class OpenAIVlModel(VlModel[OpenAIVlModelConfig]):
     default_config = OpenAIVlModelConfig
-    config: OpenAIVlModelConfig
 
     @cached_property
     def _client(self) -> OpenAI:

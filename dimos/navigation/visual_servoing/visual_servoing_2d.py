@@ -14,8 +14,9 @@
 
 import numpy as np
 
-from dimos.msgs.geometry_msgs import Twist, Vector3
-from dimos.msgs.sensor_msgs import CameraInfo
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 
 
 class VisualServoing2D:

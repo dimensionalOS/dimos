@@ -27,13 +27,13 @@ from dimos.control.components import HardwareComponent, HardwareType, make_joint
 from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.manipulation.manipulation_blueprints import (
+from dimos.manipulation.blueprints import (
     _make_xarm6_config,
     _make_xarm7_config,
 )
 from dimos.manipulation.manipulation_module import manipulation_module
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.keyboard.keyboard_teleop_module import keyboard_teleop_module
 from dimos.utils.data import LfsPath
 

@@ -28,9 +28,9 @@ from omegaconf import OmegaConf  # type: ignore[import-not-found]
 from PIL import Image as PILImage
 import torch
 
-from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.detectors.types import Detector
-from dimos.perception.detection.type import ImageDetections2D
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.detectors.base import Detector
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger

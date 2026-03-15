@@ -20,7 +20,9 @@ Available subclasses:
 """
 
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.teleop.phone.phone_teleop_module import PhoneTeleopModule
 
 

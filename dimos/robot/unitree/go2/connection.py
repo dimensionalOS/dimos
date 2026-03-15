@@ -13,40 +13,50 @@
 # limitations under the License.
 
 import logging
+import sys
 from threading import Thread
 import time
 from typing import TYPE_CHECKING, Any, Protocol
 
+from pydantic import Field
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 import rerun.blueprint as rrb
 
-from dimos import spec
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module
+from dimos.core.global_config import GlobalConfig
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, pSHMTransport
+from dimos.spec.perception import Camera, Pointcloud
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import ModuleProxy
-from dimos.msgs.geometry_msgs import (
-    PoseStamped,
-    Quaternion,
-    Transform,
-    Twist,
-    Vector3,
-)
-from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
-from dimos.msgs.sensor_msgs.Image import ImageFormat
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.testing.replay import TimedSensorReplay, TimedSensorStorage
 
+if sys.version_info < (3, 13):
+    from typing_extensions import TypeVar
+else:
+    from typing import TypeVar
+
 logger = logging.getLogger(__name__)
+
+
+class ConnectionConfig(ModuleConfig):
+    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -60,6 +70,8 @@ class Go2ConnectionProtocol(Protocol):
     def move(self, twist: Twist, duration: float = 0.0) -> bool: ...
     def standup(self) -> bool: ...
     def liedown(self) -> bool: ...
+    def balance_stand(self) -> bool: ...
+    def set_obstacle_avoidance(self, enabled: bool = True) -> None: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
 
 
@@ -81,17 +93,32 @@ def _camera_info_static() -> CameraInfo:
     )
 
 
-class ReplayConnection(UnitreeWebRTCConnection):
-    dir_name = "unitree_go2_bigoffice"
+def make_connection(ip: str | None, cfg: GlobalConfig) -> Go2ConnectionProtocol:
+    connection_type = cfg.unitree_connection_type
 
+    if ip in ("fake", "mock", "replay") or connection_type == "replay":
+        dataset = cfg.replay_dir
+        return ReplayConnection(dataset=dataset)
+    elif ip == "mujoco" or connection_type == "mujoco":
+        from dimos.robot.unitree.mujoco_connection import MujocoConnection
+
+        return MujocoConnection(cfg)
+    else:
+        assert ip is not None, "IP address must be provided"
+        return UnitreeWebRTCConnection(ip)
+
+
+class ReplayConnection(UnitreeWebRTCConnection):
     # we don't want UnitreeWebRTCConnection to init
     def __init__(  # type: ignore[no-untyped-def]
         self,
+        dataset: str = "go2_sf_office",
         **kwargs,
     ) -> None:
+        self.dir_name = dataset
         get_data(self.dir_name)
         self.replay_config = {
-            "loop": kwargs.get("loop"),
+            "loop": kwargs.get("loop", True),
             "seek": kwargs.get("seek"),
             "duration": kwargs.get("duration"),
         }
@@ -107,6 +134,12 @@ class ReplayConnection(UnitreeWebRTCConnection):
 
     def liedown(self) -> bool:
         return True
+
+    def balance_stand(self) -> bool:
+        return True
+
+    def set_obstacle_avoidance(self, enabled: bool = True) -> None:
+        pass
 
     @simple_mcache
     def lidar_stream(self):  # type: ignore[no-untyped-def]
@@ -147,7 +180,12 @@ class ReplayConnection(UnitreeWebRTCConnection):
         return {"status": "ok", "message": "Fake publish"}
 
 
-class GO2Connection(Module, spec.Camera, spec.Pointcloud):
+_Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
+
+
+class GO2Connection(Module[_Config], Camera, Pointcloud):
+    default_config = ConnectionConfig  # type: ignore[assignment]
+
     cmd_vel: In[Twist]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
@@ -157,7 +195,6 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
-    _global_config: GlobalConfig
     _camera_info_thread: Thread | None = None
     _latest_video_frame: Image | None = None
 
@@ -171,30 +208,12 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
             ),
         ]
 
-    def __init__(  # type: ignore[no-untyped-def]
-        self,
-        ip: str | None = None,
-        cfg: GlobalConfig = global_config,
-        *args,
-        **kwargs,
-    ) -> None:
-        self._global_config = cfg
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.connection = make_connection(self.config.ip, self.config.g)
 
-        ip = ip if ip is not None else self._global_config.robot_ip
-
-        connection_type = self._global_config.unitree_connection_type
-
-        if ip in ["fake", "mock", "replay"] or connection_type == "replay":
-            self.connection = ReplayConnection()
-        elif ip == "mujoco" or connection_type == "mujoco":
-            from dimos.robot.unitree.mujoco_connection import MujocoConnection
-
-            self.connection = MujocoConnection(self._global_config)
-        else:
-            assert ip is not None, "IP address must be provided"
-            self.connection = UnitreeWebRTCConnection(ip)
-
-        Module.__init__(self, *args, **kwargs)
+        if hasattr(self.connection, "camera_info_static"):
+            self.camera_info_static = self.connection.camera_info_static
 
     @rpc
     def record(self, recording_name: str) -> None:
@@ -229,6 +248,10 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         self._camera_info_thread.start()
 
         self.standup()
+        time.sleep(3)
+        self.connection.balance_stand()
+        self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
+
         # self.record("go2_bigoffice")
 
     @rpc
@@ -275,7 +298,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
     def publish_camera_info(self) -> None:
         while True:
-            self.camera_info.publish(_camera_info_static())
+            self.camera_info.publish(self.camera_info_static)
             time.sleep(1.0)
 
     @rpc
@@ -320,7 +343,7 @@ go2_connection = GO2Connection.blueprint
 def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy":
     from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 
-    connection = dimos.deploy(GO2Connection, ip)  # type: ignore[attr-defined]
+    connection = dimos.deploy(GO2Connection, ip=ip)
 
     connection.pointcloud.transport = pSHMTransport(
         f"{prefix}/lidar", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
@@ -337,4 +360,4 @@ def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy"
     return connection
 
 
-__all__ = ["GO2Connection", "deploy", "go2_connection"]
+__all__ = ["GO2Connection", "deploy", "go2_connection", "make_connection"]

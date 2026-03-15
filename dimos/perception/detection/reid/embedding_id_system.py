@@ -19,7 +19,7 @@ import numpy as np
 
 from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.perception.detection.reid.type import IDSystem
-from dimos.perception.detection.type import Detection2DBBox
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
 
 class EmbeddingIDSystem(IDSystem):

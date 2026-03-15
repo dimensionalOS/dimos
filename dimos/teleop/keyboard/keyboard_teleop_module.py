@@ -28,7 +28,6 @@ Keyboard controls:
     ESC: Quit
 """
 
-from dataclasses import dataclass
 import os
 import threading
 import time
@@ -45,7 +44,7 @@ from dimos.control.examples.cartesian_ik_jogger import JogState
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 # Force X11 driver to avoid OpenGL threading issues
 os.environ["SDL_VIDEODRIVER"] = "x11"
@@ -64,7 +63,6 @@ def _clamp(value: float, min_val: float, max_val: float) -> float:
     return max(min_val, min(max_val, value))
 
 
-@dataclass
 class KeyboardTeleopConfig(ModuleConfig):
     model_path: str = ""
     ee_joint_id: int = 6
@@ -84,8 +82,8 @@ class KeyboardTeleopModule(Module[KeyboardTeleopConfig]):
     _stop_event: threading.Event
     _thread: threading.Thread | None = None
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._stop_event = threading.Event()
 
     @rpc

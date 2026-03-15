@@ -14,8 +14,11 @@
 
 import heapq
 
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, VectorLike
-from dimos.msgs.nav_msgs import CostValues, OccupancyGrid, Path
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import VectorLike
+from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.logging_config import setup_logger
 
 # Try to import C++ extension for faster pathfinding

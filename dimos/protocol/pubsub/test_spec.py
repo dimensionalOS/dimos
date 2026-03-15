@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.impl.memory import Memory
 
@@ -110,7 +110,7 @@ except ImportError:
 
 @contextmanager
 def lcm_context() -> Generator[LCM, None, None]:
-    lcm_pubsub = LCM(autoconf=True)
+    lcm_pubsub = LCM()
     lcm_pubsub.start()
     yield lcm_pubsub
     lcm_pubsub.stop()

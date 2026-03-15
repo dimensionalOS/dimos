@@ -39,8 +39,9 @@ from dimos.control.components import (
 )
 from dimos.control.coordinator import TaskConfig, control_coordinator
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import PoseStamped, Twist
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.quest.quest_types import Buttons
 from dimos.utils.data import LfsPath
 
@@ -48,10 +49,6 @@ _PIPER_MODEL_PATH = LfsPath("piper_description/mujoco_model/piper_no_gripper_des
 _XARM6_MODEL_PATH = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
 _XARM7_MODEL_PATH = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
 
-
-# =============================================================================
-# Single Arm Blueprints
-# =============================================================================
 
 # Mock 7-DOF arm (for testing)
 coordinator_mock = control_coordinator(
@@ -167,10 +164,6 @@ coordinator_piper = control_coordinator(
     }
 )
 
-
-# =============================================================================
-# Dual Arm Blueprints
-# =============================================================================
 
 # Dual mock arms (7-DOF left, 6-DOF right)
 coordinator_dual_mock = control_coordinator(
@@ -298,10 +291,6 @@ coordinator_piper_xarm = control_coordinator(
 )
 
 
-# =============================================================================
-# Streaming Control Blueprints
-# =============================================================================
-
 # XArm6 teleop - streaming position control
 coordinator_teleop_xarm6 = control_coordinator(
     tick_rate=100.0,
@@ -399,11 +388,6 @@ coordinator_combined_xarm6 = control_coordinator(
 )
 
 
-# =============================================================================
-# Cartesian IK Blueprints (internal Pinocchio IK solver)
-# =============================================================================
-
-
 # Mock 6-DOF arm with CartesianIK
 coordinator_cartesian_ik_mock = control_coordinator(
     tick_rate=100.0,
@@ -470,10 +454,6 @@ coordinator_cartesian_ik_piper = control_coordinator(
     }
 )
 
-
-# =============================================================================
-# Teleop IK Blueprints (VR teleoperation with internal Pinocchio IK)
-# =============================================================================
 
 # Single XArm7 with TeleopIK
 coordinator_teleop_xarm7 = control_coordinator(
@@ -605,10 +585,6 @@ coordinator_teleop_dual = control_coordinator(
 )
 
 
-# =============================================================================
-# Twist Base Blueprints (velocity-commanded platforms)
-# =============================================================================
-
 # Mock holonomic twist base (3-DOF: vx, vy, wz)
 _base_joints = make_twist_base_joints("base")
 coordinator_mock_twist_base = control_coordinator(
@@ -635,10 +611,6 @@ coordinator_mock_twist_base = control_coordinator(
     }
 )
 
-
-# =============================================================================
-# Mobile Manipulation Blueprints (arm + twist base)
-# =============================================================================
 
 # Mock arm (7-DOF) + mock holonomic base (3-DOF)
 _mm_base_joints = make_twist_base_joints("base")
@@ -679,10 +651,6 @@ coordinator_mobile_manip_mock = control_coordinator(
 )
 
 
-# =============================================================================
-# Raw Blueprints (for programmatic setup)
-# =============================================================================
-
 coordinator_basic = control_coordinator(
     tick_rate=100.0,
     publish_joint_state=True,
@@ -693,10 +661,6 @@ coordinator_basic = control_coordinator(
     }
 )
 
-
-# =============================================================================
-# Exports
-# =============================================================================
 
 __all__ = [
     # Raw

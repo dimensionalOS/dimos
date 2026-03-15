@@ -17,9 +17,9 @@
 FakeZEDModule - Replays recorded ZED data for testing without hardware.
 """
 
-from dataclasses import dataclass
 import functools
 import logging
+from typing import Any
 
 from dimos_lcm.sensor_msgs import CameraInfo
 import numpy as np
@@ -27,18 +27,18 @@ import numpy as np
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.msgs.std_msgs import Header
-from dimos.protocol.tf import TF
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.std_msgs.Header import Header
+from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.testing import TimedSensorReplay
+from dimos.utils.testing.replay import TimedSensorReplay
 
 logger = setup_logger(level=logging.INFO)
 
 
-@dataclass
 class FakeZEDModuleConfig(ModuleConfig):
+    recording_path: str
     frame_id: str = "zed_camera"
 
 
@@ -54,9 +54,8 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
     pose: Out[PoseStamped]
 
     default_config = FakeZEDModuleConfig
-    config: FakeZEDModuleConfig
 
-    def __init__(self, recording_path: str, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """
         Initialize FakeZEDModule with recording path.
 
@@ -65,7 +64,7 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
         """
         super().__init__(**kwargs)
 
-        self.recording_path = recording_path
+        self.recording_path = self.config.recording_path
         self._running = False
 
         # Initialize TF publisher
@@ -279,7 +278,9 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
             # Publish TF transform from world to camera
             import time
 
-            from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
+            from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+            from dimos.msgs.geometry_msgs.Transform import Transform
+            from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
             transform = Transform(
                 translation=Vector3(*msg.position),

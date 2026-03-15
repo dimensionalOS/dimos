@@ -18,7 +18,9 @@ from typing import Any
 
 import pytest
 
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import (
     LCM,
     LCMPubSubBase,
@@ -29,7 +31,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import (
 
 @pytest.fixture
 def lcm_pub_sub_base() -> Generator[LCMPubSubBase, None, None]:
-    lcm = LCMPubSubBase(autoconf=True)
+    lcm = LCMPubSubBase()
     lcm.start()
     yield lcm
     lcm.stop()
@@ -37,7 +39,7 @@ def lcm_pub_sub_base() -> Generator[LCMPubSubBase, None, None]:
 
 @pytest.fixture
 def pickle_lcm() -> Generator[PickleLCM, None, None]:
-    lcm = PickleLCM(autoconf=True)
+    lcm = PickleLCM()
     lcm.start()
     yield lcm
     lcm.stop()
@@ -45,7 +47,7 @@ def pickle_lcm() -> Generator[PickleLCM, None, None]:
 
 @pytest.fixture
 def lcm() -> Generator[LCM, None, None]:
-    lcm = LCM(autoconf=True)
+    lcm = LCM()
     lcm.start()
     yield lcm
     lcm.stop()

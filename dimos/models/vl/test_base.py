@@ -6,8 +6,8 @@ import pytest
 from dimos.core.transport import LCMTransport
 from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.qwen import QwenVlModel
-from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.perception.detection.type import ImageDetections2D
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.data import get_data
 
 # Captured actual response from Qwen API for cafe.jpg with query "humans"

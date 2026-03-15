@@ -21,9 +21,9 @@ from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.protocol.service.system_configurator import ClockSyncConfigurator
+from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
 from dimos.robot.unitree.go2.connection import go2_connection
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
@@ -72,10 +72,24 @@ def _static_base_link(rr: Any) -> list[Any]:
     ]
 
 
+def _go2_rerun_blueprint() -> Any:
+    """Split layout: camera feed + 3D world view side by side."""
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial2DView(origin="world/color_image", name="Camera"),
+            rrb.Spatial3DView(origin="world", name="3D"),
+            column_shares=[1, 2],
+        ),
+    )
+
+
 rerun_config = {
+    "blueprint": _go2_rerun_blueprint,
     # any pubsub that supports subscribe_all and topic that supports str(topic)
     # is acceptable here
-    "pubsubs": [LCM(autoconf=True)],
+    "pubsubs": [LCM()],
     # Custom converters for specific rerun entity paths
     # Normally all these would be specified in their respectative modules
     # Until this is implemented we have central overrides here
@@ -93,30 +107,21 @@ rerun_config = {
 }
 
 
-match global_config.viewer_backend:
-    case "foxglove":
-        from dimos.robot.foxglove_bridge import foxglove_bridge
+if global_config.viewer == "foxglove":
+    from dimos.robot.foxglove_bridge import foxglove_bridge
 
-        with_vis = autoconnect(
-            _transports_base,
-            foxglove_bridge(shm_channels=["/color_image#sensor_msgs.Image"]),
-        )
-    case "rerun":
-        from dimos.visualization.rerun.bridge import rerun_bridge
+    with_vis = autoconnect(
+        _transports_base,
+        foxglove_bridge(shm_channels=["/color_image#sensor_msgs.Image"]),
+    )
+elif global_config.viewer.startswith("rerun"):
+    from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
 
-        with_vis = autoconnect(_transports_base, rerun_bridge(**rerun_config))
-    case "rerun-connect":
-        from dimos.visualization.rerun.bridge import rerun_bridge
-
-        with_vis = autoconnect(
-            _transports_base, rerun_bridge(viewer_mode="connect", **rerun_config)
-        )
-    case "rerun-web":
-        from dimos.visualization.rerun.bridge import rerun_bridge
-
-        with_vis = autoconnect(_transports_base, rerun_bridge(viewer_mode="web", **rerun_config))
-    case _:
-        with_vis = _transports_base
+    with_vis = autoconnect(
+        _transports_base, rerun_bridge(viewer_mode=_resolve_viewer_mode(), **rerun_config)
+    )
+else:
+    with_vis = _transports_base
 
 unitree_go2_basic = (
     autoconnect(

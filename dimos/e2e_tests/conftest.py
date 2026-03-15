@@ -12,16 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
+import threading
+import time
 
 import pytest
 
 from dimos.core.transport import pLCMTransport
+from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
 
 
 def _pose(x: float, y: float, theta: float) -> PoseStamped:
@@ -84,3 +89,30 @@ def human_input():
     yield send_human_input
 
     transport.lcm.stop()
+
+
+@pytest.fixture
+def start_person_track() -> Generator[StartPersonTrack, None, None]:
+    publisher: PersonTrackPublisher | None = None
+    stop_event = threading.Event()
+    thread: threading.Thread | None = None
+
+    def start(track: list[tuple[float, float]]) -> None:
+        nonlocal publisher, thread
+        publisher = PersonTrackPublisher(track)
+
+        def run_person_track() -> None:
+            while not stop_event.is_set():
+                publisher.tick()
+                time.sleep(1 / 60)
+
+        thread = threading.Thread(target=run_person_track, daemon=True)
+        thread.start()
+
+    yield start
+
+    stop_event.set()
+    if thread is not None:
+        thread.join(timeout=1.0)
+    if publisher is not None:
+        publisher.stop()

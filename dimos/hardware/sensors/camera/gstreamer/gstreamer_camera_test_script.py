@@ -21,8 +21,8 @@ import time
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.gstreamer.gstreamer_camera import GstreamerCameraModule
-from dimos.msgs.sensor_msgs import Image
-from dimos.protocol import pubsub
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.pubsub.impl import lcmpubsub as _lcm
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ def main() -> None:
         logging.getLogger().setLevel(logging.DEBUG)
 
     # Initialize LCM
-    pubsub.lcm.autoconf()  # type: ignore[attr-defined]
+    _lcm.autoconf()  # type: ignore[attr-defined]
 
     # Start dimos
     dimos = ModuleCoordinator()

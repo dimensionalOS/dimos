@@ -16,17 +16,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from collections.abc import Iterable, Sequence
+from pathlib import Path
 
-if TYPE_CHECKING:
-    from pathlib import Path
+from pydantic import Field
 
-    from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.core.module import ModuleConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
-@dataclass
-class RobotModelConfig:
+class RobotModelConfig(ModuleConfig):
     """Configuration for adding a robot to the world.
 
     Attributes:
@@ -60,24 +59,24 @@ class RobotModelConfig:
     joint_names: list[str]
     end_effector_link: str
     base_link: str = "base_link"
-    package_paths: dict[str, Path] = field(default_factory=dict)
+    package_paths: dict[str, Path] = Field(default_factory=dict)
     joint_limits_lower: list[float] | None = None
     joint_limits_upper: list[float] | None = None
     velocity_limits: list[float] | None = None
     auto_convert_meshes: bool = False
-    xacro_args: dict[str, str] = field(default_factory=dict)
-    collision_exclusion_pairs: list[tuple[str, str]] = field(default_factory=list)
+    xacro_args: dict[str, str] = Field(default_factory=dict)
+    collision_exclusion_pairs: Iterable[tuple[str, str]] = ()
     # Motion constraints for trajectory generation
     max_velocity: float = 1.0
     max_acceleration: float = 2.0
     # Coordinator integration
-    joint_name_mapping: dict[str, str] = field(default_factory=dict)
+    joint_name_mapping: dict[str, str] = Field(default_factory=dict)
     coordinator_task_name: str | None = None
     gripper_hardware_id: str | None = None
     # TF publishing for extra links (e.g., camera mount)
-    tf_extra_links: list[str] = field(default_factory=list)
+    tf_extra_links: Sequence[str] = ()
     # Home/observe joint configuration for go_home skill
-    home_joints: list[float] | None = None
+    home_joints: Iterable[float] | None = None
     # Pre-grasp offset distance in meters (along approach direction)
     pre_grasp_offset: float = 0.10
 

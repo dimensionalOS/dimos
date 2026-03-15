@@ -15,8 +15,8 @@
 
 from dimos.agents.agent import agent
 from dimos.core.blueprints import autoconnect
-from dimos.hardware.sensors.camera.realsense import realsense_camera
-from dimos.hardware.sensors.camera.zed import zed_camera
+from dimos.hardware.sensors.camera.realsense.camera import realsense_camera
+from dimos.hardware.sensors.camera.zed.compat import zed_camera
 from dimos.perception.detection.detectors.yoloe import YoloePromptMode
 from dimos.perception.object_scene_registration import object_scene_registration_module
 from dimos.robot.foxglove_bridge import foxglove_bridge
@@ -35,4 +35,4 @@ demo_object_scene_registration = autoconnect(
     object_scene_registration_module(target_frame="world", prompt_mode=YoloePromptMode.LRPC),
     foxglove_bridge(),
     agent(),
-).global_config(viewer_backend="foxglove")
+).global_config(viewer="foxglove")

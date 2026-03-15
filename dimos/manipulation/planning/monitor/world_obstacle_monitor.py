@@ -29,20 +29,17 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.manipulation.planning.spec import (
-    CollisionObjectMessage,
-    Obstacle,
-    ObstacleType,
-)
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import CollisionObjectMessage, Obstacle
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     import threading
 
-    from dimos.manipulation.planning.spec import WorldSpec
-    from dimos.msgs.vision_msgs import Detection3D
+    from dimos.manipulation.planning.spec.protocols import WorldSpec
+    from dimos.msgs.vision_msgs.Detection3D import Detection3D
     from dimos.perception.detection.type.detection3d.object import Object
 
 logger = setup_logger()
@@ -406,7 +403,7 @@ class WorldObstacleMonitor:
         if callback in self._obstacle_callbacks:
             self._obstacle_callbacks.remove(callback)
 
-    # ============= Object-Based Perception (from ObjectDB) =============
+    # Object-Based Perception (from ObjectDB)
 
     def on_objects(self, objects: list[object]) -> None:
         """Cache objects from ObjectDB (preserves stable object_id).

@@ -14,20 +14,21 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 import threading
 from typing import TYPE_CHECKING, Any
 
-from dimos.core.docker_runner import DockerModule, is_docker_module
+from dimos.core.docker_worker_manager import DockerWorkerManager
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
 from dimos.core.worker_manager import WorkerManager
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
 
 if TYPE_CHECKING:
-    from dimos.core.module import Module, ModuleT
     from dimos.core.resource_monitor.monitor import StatsMonitor
-    from dimos.core.rpc_client import ModuleProxy
+    from dimos.core.rpc_client import ModuleProxy, ModuleProxyProtocol
+    from dimos.core.worker import Worker
 
 logger = setup_logger()
 
@@ -37,7 +38,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
     _global_config: GlobalConfig
     _n: int | None = None
     _memory_limit: str = "auto"
-    _deployed_modules: dict[type[Module], ModuleProxy]
+    _deployed_modules: dict[type[ModuleBase], ModuleProxyProtocol]
     _stats_monitor: StatsMonitor | None = None
 
     def __init__(
@@ -49,6 +50,45 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         self._memory_limit = cfg.memory_limit
         self._global_config = cfg
         self._deployed_modules = {}
+
+    @property
+    def workers(self) -> list[Worker]:
+        """Active worker processes."""
+        if self._client is None:
+            return []
+        return self._client.workers
+
+    @property
+    def n_workers(self) -> int:
+        """Number of active workers."""
+        return len(self.workers)
+
+    def health_check(self) -> bool:
+        """Verify all workers are alive after build.
+
+        Since ``blueprint.build()`` is synchronous, every module should be
+        started by the time this runs.  We just confirm no worker has died.
+        """
+        if self.n_workers == 0:
+            logger.error("health_check: no workers found")
+            return False
+
+        for w in self.workers:
+            if w.pid is None:
+                logger.error("health_check: worker died", worker_id=w.worker_id)
+                return False
+
+        return True
+
+    @property
+    def n_modules(self) -> int:
+        """Number of deployed modules."""
+        return len(self._deployed_modules)
+
+    def suppress_console(self) -> None:
+        """Silence console output in all worker processes."""
+        if self._client is not None:
+            self._client.suppress_console()
 
     def start(self) -> None:
         n = self._n if self._n is not None else 2
@@ -74,69 +114,101 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
                 logger.error("Error stopping module", module=module_class.__name__, exc_info=True)
             logger.info("Module stopped.", module=module_class.__name__)
 
-        self._client.close_all()  # type: ignore[union-attr]
+        if self._client is not None:
+            self._client.close_all()
 
-    def deploy(self, module_class: type[ModuleT], *args, **kwargs) -> ModuleProxy:  # type: ignore[no-untyped-def]
+    def deploy(
+        self,
+        module_class: type[ModuleBase[Any]],
+        global_config: GlobalConfig = global_config,
+        **kwargs: Any,
+    ) -> ModuleProxy:
+        # Inline to avoid circular import: module_coordinator → docker_runner → module → blueprints → module_coordinator
+        from dimos.core.docker_runner import DockerModule, is_docker_module
+
         if not self._client:
             raise ValueError("Trying to dimos.deploy before the client has started")
-        module = (
-            DockerModule(module_class, *args, **kwargs)  # type: ignore[assignment]
-            if is_docker_module(module_class)
-            else self._client.deploy(module_class, *args, **kwargs)  # type: ignore[union-attr, attr-defined, assignment]
-        )
-        self._deployed_modules[module_class] = module  # type: ignore[assignment]
-        return module  # type: ignore[return-value]
 
-    def deploy_parallel(
-        self, module_specs: list[tuple[type[ModuleT], tuple[Any, ...], dict[str, Any]]]
-    ) -> list[ModuleProxy]:
+        deployed_module: ModuleProxyProtocol
+        if is_docker_module(module_class):
+            deployed_module = DockerModule(module_class, global_config=global_config, **kwargs)  # type: ignore[arg-type]
+        else:
+            deployed_module = self._client.deploy(module_class, global_config, kwargs)
+        self._deployed_modules[module_class] = deployed_module  # type: ignore[assignment]
+        return deployed_module  # type: ignore[return-value]
+
+    def deploy_parallel(self, module_specs: list[ModuleSpec]) -> list[ModuleProxy]:
+        # Inline to avoid circular import: module_coordinator → docker_runner → module → blueprints → module_coordinator
+        from dimos.core.docker_runner import is_docker_module
+
         if not self._client:
             raise ValueError("Not started")
 
-        docker_specs = [
-            (module_class, args, kwargs) for module_class, args, kwargs in module_specs if is_docker_module(module_class)
-        ]
-        worker_specs = [
-            (module_class, args, kwargs) for module_class, args, kwargs in module_specs if not is_docker_module(module_class)
-        ]
+        # Split by type, tracking original indices for reassembly
+        docker_indices: list[int] = []
+        worker_indices: list[int] = []
+        docker_specs: list[ModuleSpec] = []
+        worker_specs: list[ModuleSpec] = []
+        for i, spec in enumerate(module_specs):
+            if is_docker_module(spec[0]):
+                docker_indices.append(i)
+                docker_specs.append(spec)
+            else:
+                worker_indices.append(i)
+                worker_specs.append(spec)
 
-        worker_results = self._client.deploy_parallel(worker_specs) if worker_specs else []
+        # Deploy worker and docker modules in parallel.
+        results: list[Any] = [None] * len(module_specs)
 
-        docker_results: list[Any] = []
-        if docker_specs:
-            with ThreadPoolExecutor(max_workers=len(docker_specs)) as executor:
-                docker_results = list(
-                    executor.map(
-                        lambda spec: DockerModule(spec[0], *spec[1], **spec[2]), docker_specs
-                    )
-                )
+        def _deploy_workers() -> None:
+            if not worker_specs:
+                return
+            assert self._client is not None
+            for index, module in zip(
+                worker_indices, self._client.deploy_parallel(worker_specs), strict=False
+            ):
+                results[index] = module
 
-        # Reassemble in original order
-        worker_iter = iter(worker_results)
-        docker_iter = iter(docker_results)
-        results: list[Any] = [
-            next(docker_iter) if is_docker_module(module_class) else next(worker_iter)
-            for module_class, _, _ in module_specs
-        ]
+        def _deploy_docker() -> None:
+            if not docker_specs:
+                return
+            for index, module in zip(
+                docker_indices, DockerWorkerManager.deploy_parallel(docker_specs), strict=False
+            ):
+                results[index] = module
 
-        for (module_class, _, _), module in zip(module_specs, results, strict=True):
-            self._deployed_modules[module_class] = module  # type: ignore[assignment]
-        return results  # type: ignore[return-value]
+        def _register() -> None:
+            for (module_class, _, _), module in zip(module_specs, results, strict=False):
+                if module is not None:
+                    self._deployed_modules[module_class] = module
+
+        def _on_errors(
+            _outcomes: list[Any], _successes: list[Any], errors: list[Exception]
+        ) -> None:
+            _register()
+            raise ExceptionGroup("deploy_parallel failed", errors)
+
+        safe_thread_map([_deploy_workers, _deploy_docker], lambda fn: fn(), _on_errors)
+        _register()
+        return results
 
     def start_all_modules(self) -> None:
         modules = list(self._deployed_modules.values())
-        if isinstance(self._client, WorkerManager):
-            with ThreadPoolExecutor(max_workers=max(len(modules), 1)) as executor:
-                list(executor.map(lambda m: m.start(), modules))
-        else:
-            for module in modules:
-                module.start()
+        if not modules:
+            raise ValueError("No modules deployed. Call deploy() before start_all_modules().")
+
+        def _on_start_errors(
+            _outcomes: list[Any], _successes: list[Any], errors: list[Exception]
+        ) -> None:
+            raise ExceptionGroup("start_all_modules failed", errors)
+
+        safe_thread_map(modules, lambda m: m.start(), _on_start_errors)
 
         for module in modules:
             if hasattr(module, "on_system_modules"):
                 module.on_system_modules(modules)
 
-    def get_instance(self, module: type[ModuleT]) -> ModuleProxy:
+    def get_instance(self, module: type[ModuleBase]) -> ModuleProxy:
         return self._deployed_modules.get(module)  # type: ignore[return-value, no-any-return]
 
     def loop(self) -> None:

@@ -16,7 +16,6 @@ import warnings
 
 warnings.filterwarnings("ignore", message="Cython evaluation.*unavailable", category=UserWarning)
 
-from dataclasses import dataclass
 from functools import cached_property
 
 import torch
@@ -25,14 +24,13 @@ from torchreid import utils as torchreid_utils
 
 from dimos.models.base import LocalModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 
 
 # osnet models downloaded from https://kaiyangzhou.github.io/deep-person-reid/MODEL_ZOO.html
 # into dimos/data/models_torchreid/
 # feel free to add more
-@dataclass
 class TorchReIDModelConfig(EmbeddingModelConfig):
     model_name: str = "osnet_x1_0"
 

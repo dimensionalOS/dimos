@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
 
 from dimos.models.qwen.bbox import BBox
 from dimos.models.vl.base import VlModel
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.generic import extract_json_from_llm_response
 
 
 def get_object_bbox_from_image(
-    vl_model: VlModel, image: Image, object_description: str
+    vl_model: VlModel[Any], image: Image, object_description: str
 ) -> BBox | None:
     prompt = (
         f"Look at this image and find the '{object_description}'. "

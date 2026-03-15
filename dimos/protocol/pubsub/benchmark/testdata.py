@@ -61,7 +61,7 @@ testcases: list[Case[Any, Any]] = []
 
 @contextmanager
 def lcm_pubsub_channel() -> Generator[LCM, None, None]:
-    lcm_pubsub = LCM(autoconf=True)
+    lcm_pubsub = LCM()
     lcm_pubsub.start()
     yield lcm_pubsub
     lcm_pubsub.stop()
@@ -83,7 +83,7 @@ testcases.append(
 @contextmanager
 def udp_bytes_pubsub_channel() -> Generator[LCMPubSubBase, None, None]:
     """LCM with raw bytes - no encoding overhead."""
-    lcm_pubsub = LCMPubSubBase(autoconf=True)
+    lcm_pubsub = LCMPubSubBase()
     lcm_pubsub.start()
     yield lcm_pubsub
     lcm_pubsub.stop()

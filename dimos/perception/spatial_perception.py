@@ -19,7 +19,7 @@ Spatial Memory module for creating a semantic map of the environment.
 from datetime import datetime
 import os
 import time
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 import uuid
 
 import cv2
@@ -27,21 +27,21 @@ import numpy as np
 from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
 
-from dimos import spec
 from dimos.agents_deprecated.memory.image_embedding import ImageEmbeddingProvider
 from dimos.agents_deprecated.memory.spatial_vector_db import SpatialVectorDB
 from dimos.agents_deprecated.memory.visual_memory import VisualMemory
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.spec.perception import Camera
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import Vector3
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 _OUTPUT_DIR = DIMOS_PROJECT_ROOT / "assets" / "output"
 _MEMORY_DIR = _OUTPUT_DIR / "memory"
@@ -53,7 +53,23 @@ _VISUAL_MEMORY_PATH = _SPATIAL_MEMORY_DIR / "visual_memory.pkl"
 logger = setup_logger()
 
 
-class SpatialMemory(Module):
+class SpatialConfig(ModuleConfig):
+    collection_name: str = "spatial_memory"
+    embedding_model: str = "clip"
+    embedding_dimensions: int = 512
+    min_distance_threshold: float = 0.01  # Min distance in meters to store a new frame
+    min_time_threshold: float = 1.0  # Min time in seconds to record a new frame
+    db_path: str | None = str(_DB_PATH)  # Path for ChromaDB persistence
+    visual_memory_path: str | None = str(
+        _VISUAL_MEMORY_PATH
+    )  # Path for saving/loading visual memory
+    new_memory: bool = True  # Whether to create a new memory from scratch
+    output_dir: str | None = str(_SPATIAL_MEMORY_DIR)  # Directory for storing visual memory data
+    chroma_client: Any = None  # Optional ChromaDB client for persistence
+    visual_memory: VisualMemory | None = None  # Optional VisualMemory instance for storing images
+
+
+class SpatialMemory(Module[SpatialConfig]):
     """
     A Dimos module for building and querying Robot spatial memory.
 
@@ -63,29 +79,12 @@ class SpatialMemory(Module):
     robot locations that can be queried by name.
     """
 
+    default_config = SpatialConfig
+
     # LCM inputs
     color_image: In[Image]
 
-    def __init__(
-        self,
-        collection_name: str = "spatial_memory",
-        embedding_model: str = "clip",
-        embedding_dimensions: int = 512,
-        min_distance_threshold: float = 0.01,  # Min distance in meters to store a new frame
-        min_time_threshold: float = 1.0,  # Min time in seconds to record a new frame
-        db_path: str | None = str(_DB_PATH),  # Path for ChromaDB persistence
-        visual_memory_path: str | None = str(
-            _VISUAL_MEMORY_PATH
-        ),  # Path for saving/loading visual memory
-        new_memory: bool = True,  # Whether to create a new memory from scratch
-        output_dir: str | None = str(
-            _SPATIAL_MEMORY_DIR
-        ),  # Directory for storing visual memory data
-        chroma_client: Any = None,  # Optional ChromaDB client for persistence
-        visual_memory: Optional[
-            "VisualMemory"
-        ] = None,  # Optional VisualMemory instance for storing images
-    ) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """
         Initialize the spatial perception system.
 
@@ -99,39 +98,36 @@ class SpatialMemory(Module):
             visual_memory: Optional VisualMemory instance for storing images
             output_dir: Directory for storing visual memory data if visual_memory is not provided
         """
-        self.collection_name = collection_name
-        self.embedding_model = embedding_model
-        self.embedding_dimensions = embedding_dimensions
-        self.min_distance_threshold = min_distance_threshold
-        self.min_time_threshold = min_time_threshold
+        super().__init__(**kwargs)
 
-        # Set up paths for persistence
-        # Call parent Module init
-        super().__init__()
-
-        self.db_path = db_path
-        self.visual_memory_path = visual_memory_path
+        self.collection_name = self.config.collection_name
+        self.embedding_model = self.config.embedding_model
+        self.embedding_dimensions = self.config.embedding_dimensions
+        self.min_distance_threshold = self.config.min_distance_threshold
+        self.min_time_threshold = self.config.min_time_threshold
+        self.db_path = self.config.db_path
+        self.visual_memory_path = self.config.visual_memory_path
 
         # Setup ChromaDB client if not provided
-        self._chroma_client = chroma_client
-        if chroma_client is None and db_path is not None:
+        self._chroma_client = self.config.chroma_client
+        if self._chroma_client is None and self.db_path is not None:
             # Create db directory if needed
-            os.makedirs(db_path, exist_ok=True)
+            os.makedirs(self.db_path, exist_ok=True)
 
             # Clean up existing DB if creating new memory
-            if new_memory and os.path.exists(db_path):
+            if self.config.new_memory and os.path.exists(self.db_path):
                 try:
                     logger.info("Creating new ChromaDB database (new_memory=True)")
                     # Try to delete any existing database files
                     import shutil
 
-                    for item in os.listdir(db_path):
-                        item_path = os.path.join(db_path, item)
+                    for item in os.listdir(self.db_path):
+                        item_path = os.path.join(self.db_path, item)
                         if os.path.isfile(item_path):
                             os.unlink(item_path)
                         elif os.path.isdir(item_path):
                             shutil.rmtree(item_path)
-                    logger.info(f"Removed existing ChromaDB files from {db_path}")
+                    logger.info(f"Removed existing ChromaDB files from {self.db_path}")
                 except Exception as e:
                     logger.error(f"Error clearing ChromaDB directory: {e}")
 
@@ -139,33 +135,33 @@ class SpatialMemory(Module):
             from chromadb.config import Settings
 
             self._chroma_client = chromadb.PersistentClient(
-                path=db_path, settings=Settings(anonymized_telemetry=False)
+                path=self.db_path, settings=Settings(anonymized_telemetry=False)
             )
 
         # Initialize or load visual memory
-        self._visual_memory = visual_memory
-        if visual_memory is None:
-            if new_memory or not os.path.exists(visual_memory_path or ""):
+        self._visual_memory = self.config.visual_memory
+        if self._visual_memory is None:
+            if self.config.new_memory or not os.path.exists(self.visual_memory_path or ""):
                 logger.info("Creating new visual memory")
-                self._visual_memory = VisualMemory(output_dir=output_dir)
+                self._visual_memory = VisualMemory(output_dir=self.config.output_dir)
             else:
                 try:
-                    logger.info(f"Loading existing visual memory from {visual_memory_path}...")
+                    logger.info(f"Loading existing visual memory from {self.visual_memory_path}...")
                     self._visual_memory = VisualMemory.load(
-                        visual_memory_path,  # type: ignore[arg-type]
-                        output_dir=output_dir,
+                        self.visual_memory_path,  # type: ignore[arg-type]
+                        output_dir=self.config.output_dir,
                     )
                     logger.info(f"Loaded {self._visual_memory.count()} images from previous runs")
                 except Exception as e:
                     logger.error(f"Error loading visual memory: {e}")
-                    self._visual_memory = VisualMemory(output_dir=output_dir)
+                    self._visual_memory = VisualMemory(output_dir=self.config.output_dir)
 
         self.embedding_provider: ImageEmbeddingProvider = ImageEmbeddingProvider(
-            model_name=embedding_model, dimensions=embedding_dimensions
+            model_name=self.embedding_model, dimensions=self.embedding_dimensions
         )
 
         self.vector_db: SpatialVectorDB = SpatialVectorDB(
-            collection_name=collection_name,
+            collection_name=self.collection_name,
             chroma_client=self._chroma_client,
             visual_memory=self._visual_memory,
             embedding_provider=self.embedding_provider,
@@ -184,7 +180,7 @@ class SpatialMemory(Module):
         self._latest_video_frame: np.ndarray | None = None  # type: ignore[type-arg]
         self._process_interval = 1
 
-        logger.info(f"SpatialMemory initialized with model {embedding_model}")
+        logger.info(f"SpatialMemory initialized with model {self.embedding_model}")
 
     @rpc
     def start(self) -> None:
@@ -581,7 +577,7 @@ class SpatialMemory(Module):
 
 def deploy(  # type: ignore[no-untyped-def]
     dimos: ModuleCoordinator,
-    camera: spec.Camera,
+    camera: Camera,
 ):
     spatial_memory = dimos.deploy(SpatialMemory, db_path="/tmp/spatial_memory_db")  # type: ignore[attr-defined]
     spatial_memory.color_image.connect(camera.color_image)

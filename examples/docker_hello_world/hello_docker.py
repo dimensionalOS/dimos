@@ -36,14 +36,13 @@ from pathlib import Path
 import subprocess
 import time
 
+from reactivex.disposable import Disposable
+
+from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.docker_runner import DockerModuleConfig
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-
-# ---------------------------------------------------------------------------
-# Docker module (runs inside container)
-# ---------------------------------------------------------------------------
 
 
 @dataclass(kw_only=True)
@@ -55,6 +54,9 @@ class HelloDockerConfig(DockerModuleConfig):
     docker_rm: bool = True
     docker_restart_policy: str = "no"
     docker_env: dict[str, str] = field(default_factory=lambda: {"CI": "1"})
+
+    # Custom (non-docker) config field — passed to the container via JSON
+    greeting_prefix: str = "Hello"
 
 
 class HelloDockerModule(Module["HelloDockerConfig"]):
@@ -68,16 +70,11 @@ class HelloDockerModule(Module["HelloDockerConfig"]):
     @rpc
     def start(self) -> None:
         super().start()
-        self.prompt.subscribe(self._on_prompt)
+        self._disposables.add(Disposable(self.prompt.subscribe(self._on_prompt)))
 
     def _cowsay(self, text: str) -> str:
         """Run cowsay inside the container and return the ASCII art."""
-        result = subprocess.run(
-            ["/usr/games/cowsay", text],
-            capture_output=True,
-            text=True,
-        )
-        return result.stdout
+        return subprocess.check_output(["/usr/games/cowsay", text], text=True)
 
     def _on_prompt(self, text: str) -> None:
         art = self._cowsay(text)
@@ -87,12 +84,13 @@ class HelloDockerModule(Module["HelloDockerConfig"]):
     @rpc
     def greet(self, name: str) -> str:
         """RPC method that can be called directly."""
-        return self._cowsay(f"Hello, {name}!")
+        prefix = self.config.greeting_prefix
+        return self._cowsay(f"{prefix}, {name}!")
 
-
-# ---------------------------------------------------------------------------
-# Host-side module (sends prompts and prints greetings)
-# ---------------------------------------------------------------------------
+    @rpc
+    def get_greeting_prefix(self) -> str:
+        """Return the config value to verify it was passed to the container."""
+        return self.config.greeting_prefix
 
 
 class PromptModule(Module):
@@ -104,7 +102,7 @@ class PromptModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.greeting.subscribe(self._on_greeting)
+        self._disposables.add(Disposable(self.greeting.subscribe(self._on_greeting)))
 
     @rpc
     def send(self, text: str) -> None:
@@ -115,23 +113,22 @@ class PromptModule(Module):
         print(f"[PromptModule] Received: {text}")
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 if __name__ == "__main__":
-    from dimos.core.blueprints import autoconnect
-
     coordinator = autoconnect(
         PromptModule.blueprint(),
-        HelloDockerModule.blueprint(),
+        HelloDockerModule.blueprint(greeting_prefix="Howdy"),
     ).build()
 
     # Get module proxies
     prompt_mod = coordinator.get_instance(PromptModule)
     docker_mod = coordinator.get_instance(HelloDockerModule)
 
-    # Test RPC
+    # Test that custom config was passed to the container
+    prefix = docker_mod.get_greeting_prefix()
+    assert prefix == "Howdy", f"Expected 'Howdy', got {prefix!r}"
+    print(f"Config passed to container: greeting_prefix={prefix!r}")
+
+    # Test RPC (should use the custom prefix)
     print(docker_mod.greet("World"))
 
     # Test stream

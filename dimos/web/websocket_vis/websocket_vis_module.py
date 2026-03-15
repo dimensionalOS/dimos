@@ -46,14 +46,17 @@ _COMMAND_CENTER_DIR = (
 )
 
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.mapping.models import LatLon
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
-from dimos.mapping.types import LatLon
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
-from dimos.msgs.nav_msgs import OccupancyGrid, Path
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.logging_config import setup_logger
 
 from .optimized_costmap import OptimizedCostmapEncoder
@@ -64,7 +67,11 @@ _browser_open_lock = threading.Lock()
 _browser_opened = False
 
 
-class WebsocketVisModule(Module):
+class WebsocketConfig(ModuleConfig):
+    port: int = 7779
+
+
+class WebsocketVisModule(Module[WebsocketConfig]):
     """
     WebSocket-based visualization module for real-time navigation data.
 
@@ -83,6 +90,8 @@ class WebsocketVisModule(Module):
         - click_goal: Goal position from user clicks
     """
 
+    default_config = WebsocketConfig
+
     # LCM inputs
     odom: In[PoseStamped]
     gps_location: In[LatLon]
@@ -97,22 +106,14 @@ class WebsocketVisModule(Module):
     cmd_vel: Out[Twist]
     movecmd_stamped: Out[TwistStamped]
 
-    def __init__(
-        self,
-        port: int = 7779,
-        cfg: GlobalConfig = global_config,
-        **kwargs: Any,
-    ) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize the WebSocket visualization module.
 
         Args:
             port: Port to run the web server on
-            cfg: Optional global config for viewer backend settings
+            cfg: Optional global config for viewer settings
         """
         super().__init__(**kwargs)
-        self._global_config = cfg
-
-        self.port = port
         self._uvicorn_server_thread: threading.Thread | None = None
         self.sio: socketio.AsyncServer | None = None
         self.app = None
@@ -127,7 +128,7 @@ class WebsocketVisModule(Module):
         # Track GPS goal points for visualization
         self.gps_goal_points: list[dict[str, float]] = []
         logger.info(
-            f"WebSocket visualization module initialized on port {port}, GPS goal tracking enabled"
+            f"WebSocket visualization module initialized on port {self.config.port}, GPS goal tracking enabled"
         )
 
     def _start_broadcast_loop(self) -> None:
@@ -157,8 +158,8 @@ class WebsocketVisModule(Module):
 
         # Auto-open browser only for rerun-web (dashboard with Rerun iframe + command center)
         # For rerun and foxglove, users access the command center manually if needed
-        if self._global_config.viewer_backend == "rerun-web":
-            url = f"http://localhost:{self.port}/"
+        if self.config.g.viewer == "rerun-web":
+            url = f"http://localhost:{self.config.port}/"
             logger.info(f"Dimensional Command Center: {url}")
 
             global _browser_opened
@@ -234,7 +235,7 @@ class WebsocketVisModule(Module):
         async def serve_index(request):  # type: ignore[no-untyped-def]
             """Serve appropriate HTML based on viewer mode."""
             # If running native Rerun, redirect to standalone command center
-            if self._global_config.viewer_backend != "rerun-web":
+            if self.config.g.viewer != "rerun-web":
                 return RedirectResponse(url="/command-center")
 
             # Otherwise serve full dashboard with Rerun iframe
@@ -355,7 +356,7 @@ class WebsocketVisModule(Module):
         config = uvicorn.Config(
             self.app,  # type: ignore[arg-type]
             host="0.0.0.0",
-            port=self.port,
+            port=self.config.port,
             log_level="error",  # Reduce verbosity
         )
         self._uvicorn_server = uvicorn.Server(config)

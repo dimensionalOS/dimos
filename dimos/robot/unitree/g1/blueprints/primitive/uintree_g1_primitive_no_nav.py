@@ -22,16 +22,24 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
-from dimos.hardware.sensors.camera import zed
 from dimos.hardware.sensors.camera.module import camera_module  # type: ignore[attr-defined]
 from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.hardware.sensors.camera.zed import compat as zed
 from dimos.mapping.costmapper import cost_mapper
 from dimos.mapping.voxels import voxel_mapper
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
-from dimos.msgs.nav_msgs import Odometry, Path
-from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.std_msgs import Bool
-from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Bool import Bool
+from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
+    wavefront_frontier_explorer,
+)
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
@@ -67,8 +75,22 @@ def _static_base_link(rr: Any) -> list[Any]:
     ]
 
 
+def _g1_rerun_blueprint() -> Any:
+    """Split layout: camera feed + 3D world view side by side."""
+    import rerun.blueprint as rrb
+
+    return rrb.Blueprint(
+        rrb.Horizontal(
+            rrb.Spatial2DView(origin="world/color_image", name="Camera"),
+            rrb.Spatial3DView(origin="world", name="3D"),
+            column_shares=[1, 2],
+        ),
+    )
+
+
 rerun_config = {
-    "pubsubs": [LCM(autoconf=True)],
+    "blueprint": _g1_rerun_blueprint,
+    "pubsubs": [LCM()],
     "visual_override": {
         "world/camera_info": _convert_camera_info,
         "world/global_map": _convert_global_map,
@@ -79,21 +101,16 @@ rerun_config = {
     },
 }
 
-match global_config.viewer_backend:
-    case "foxglove":
-        from dimos.robot.foxglove_bridge import foxglove_bridge
+if global_config.viewer == "foxglove":
+    from dimos.robot.foxglove_bridge import foxglove_bridge
 
-        _with_vis = autoconnect(foxglove_bridge())
-    case "rerun":
-        from dimos.visualization.rerun.bridge import rerun_bridge
+    _with_vis = autoconnect(foxglove_bridge())
+elif global_config.viewer.startswith("rerun"):
+    from dimos.visualization.rerun.bridge import _resolve_viewer_mode, rerun_bridge
 
-        _with_vis = autoconnect(rerun_bridge(**rerun_config))
-    case "rerun-web":
-        from dimos.visualization.rerun.bridge import rerun_bridge
-
-        _with_vis = autoconnect(rerun_bridge(viewer_mode="web", **rerun_config))
-    case _:
-        _with_vis = autoconnect()
+    _with_vis = autoconnect(rerun_bridge(viewer_mode=_resolve_viewer_mode(), **rerun_config))
+else:
+    _with_vis = autoconnect()
 
 
 def _create_webcam() -> Webcam:
