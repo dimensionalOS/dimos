@@ -17,7 +17,6 @@ from typing import Literal, TypeAlias
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from dimos.mapping.occupancy.path_map import NavigationStrategy
 from dimos.models.vl.create import VlModelName
 
 ViewerBackend: TypeAlias = Literal["rerun", "rerun-web", "rerun-connect", "foxglove", "none"]
@@ -47,7 +46,7 @@ class GlobalConfig(BaseSettings):
     robot_model: str | None = None
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
-    planner_strategy: NavigationStrategy = "simple"
+    nerf_speed: float = 1.0
     planner_robot_speed: float | None = None
     mcp_port: int = 9990
     mcp_host: str = "0.0.0.0"

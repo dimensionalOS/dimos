@@ -14,7 +14,7 @@
 
 from typing import Literal, TypeAlias
 
-from dimos.mapping.occupancy.gradient import voronoi_gradient
+from dimos.mapping.occupancy.gradient import GradientStrategy, gradient, voronoi_gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.occupancy.operations import overlay_occupied, smooth_occupied
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
@@ -23,7 +23,10 @@ NavigationStrategy: TypeAlias = Literal["simple", "mixed"]
 
 
 def make_navigation_map(
-    occupancy_grid: OccupancyGrid, robot_width: float, strategy: NavigationStrategy
+    occupancy_grid: OccupancyGrid,
+    robot_width: float,
+    strategy: NavigationStrategy,
+    gradient_strategy: GradientStrategy,
 ) -> OccupancyGrid:
     half_width = robot_width / 2
     gradient_distance = 1.5
@@ -37,4 +40,9 @@ def make_navigation_map(
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
 
-    return voronoi_gradient(costmap, max_distance=gradient_distance)
+    if gradient_strategy == "gradient":
+        return gradient(costmap, max_distance=gradient_distance)
+    elif gradient_strategy == "voronoi":
+        return voronoi_gradient(costmap, max_distance=gradient_distance)
+    else:
+        raise ValueError(f"Unknown gradient strategy: {gradient_strategy}")

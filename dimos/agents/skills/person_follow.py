@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 from threading import Event, RLock, Thread
 import time
 from typing import Any
@@ -19,6 +20,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 import numpy as np
 from reactivex.disposable import Disposable
+from turbojpeg import TurboJPEG
 
 from dimos.agents.agent import AgentSpec
 from dimos.agents.annotation import skill
@@ -31,8 +33,9 @@ from dimos.models.vl.base import VlModel
 from dimos.models.vl.create import create
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.navigation.patrolling.patrolling_module_spec import PatrollingModuleSpec
 from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.navigation.visual_servoing.detection_navigation import DetectionNavigation
 from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
@@ -65,6 +68,7 @@ class PersonFollowSkillContainer(Module[Config]):
     _agent_spec: AgentSpec
     _frequency: float = 20.0  # Hz - control loop frequency
     _max_lost_frames: int = 15  # number of frames to wait before declaring person lost
+    _patrolling_module_spec: PatrollingModuleSpec
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -106,7 +110,12 @@ class PersonFollowSkillContainer(Module[Config]):
         super().stop()
 
     @skill
-    def follow_person(self, query: str) -> str:
+    def follow_person(
+        self,
+        query: str,
+        initial_bbox: list[float] | None = None,
+        initial_image: str | None = None,
+    ) -> str:
         """Follow a person matching the given description using visual servoing.
 
         The robot will continuously track and follow the person, while keeping
@@ -114,6 +123,12 @@ class PersonFollowSkillContainer(Module[Config]):
 
         Args:
             query: Description of the person to follow (e.g., "man with blue shirt")
+            initial_bbox: Optional pre-computed bounding box [x1, y1, x2, y2].
+                If provided, skips the initial VL model detection step. This is
+                used by the continuation system to pass detection data directly
+                from look_out_for, avoiding a redundant detection.
+            initial_image: Optional base64-encoded JPEG of the frame on which
+                initial_bbox was detected.
 
         Returns:
             Status message indicating the result of the following action.
@@ -133,16 +148,27 @@ class PersonFollowSkillContainer(Module[Config]):
         if latest_image is None:
             return "No image available to detect person."
 
-        initial_bbox = get_object_bbox_from_image(
-            self._vl_model,
-            latest_image,
-            query,
-        )
+        detection_image: Image | None = None
+        if initial_bbox is not None:
+            bbox: BBox = (
+                initial_bbox[0],
+                initial_bbox[1],
+                initial_bbox[2],
+                initial_bbox[3],
+            )
+            if initial_image is not None:
+                detection_image = _decode_base64_image(initial_image)
+        else:
+            detected = get_object_bbox_from_image(
+                self._vl_model,
+                latest_image,
+                query,
+            )
+            if detected is None:
+                return f"Could not find '{query}' in the current view."
+            bbox = detected
 
-        if initial_bbox is None:
-            return f"Could not find '{query}' in the current view."
-
-        return self._follow_person(query, initial_bbox)
+        return self._follow_person(query, bbox, detection_image)
 
     @skill
     def stop_following(self) -> str:
@@ -169,7 +195,9 @@ class PersonFollowSkillContainer(Module[Config]):
         with self._lock:
             self._latest_pointcloud = pointcloud
 
-    def _follow_person(self, query: str, initial_bbox: BBox) -> str:
+    def _follow_person(
+        self, query: str, initial_bbox: BBox, detection_image: Image | None = None
+    ) -> str:
         x1, y1, x2, y2 = initial_bbox
         box = np.array([x1, y1, x2, y2], dtype=np.float32)
 
@@ -184,8 +212,11 @@ class PersonFollowSkillContainer(Module[Config]):
             if latest_image is None:
                 return "No image available to start tracking."
 
+        # Use the detection frame for tracker init when available, so the bbox
+        # matches the image it was computed on.
+        init_image = detection_image if detection_image is not None else latest_image
         initial_detections = tracker.init_track(
-            image=latest_image,
+            image=init_image,
             box=box,
             obj_id=1,
         )
@@ -199,10 +230,20 @@ class PersonFollowSkillContainer(Module[Config]):
         self._thread = Thread(target=self._follow_loop, args=(tracker, query), daemon=True)
         self._thread.start()
 
-        return (
+        message = (
             "Found the person. Starting to follow. You can stop following by calling "
             "the 'stop_following' tool."
         )
+
+        if self._patrolling_module_spec.is_patrolling():
+            message += (
+                " Note: since the robot was patrolling, this has been stopped automatically "
+                "(the equivalent of calling the `stop_patrol` tool call) so you don't have "
+                "to do it. "
+            )
+            self._patrolling_module_spec.stop_patrol()
+
+        return message
 
     def _follow_loop(self, tracker: "EdgeTAMProcessor", query: str) -> None:
         lost_count = 0
@@ -265,6 +306,11 @@ class PersonFollowSkillContainer(Module[Config]):
         message = f"Person follow stopped for '{query}'. Reason: {reason}."
         self._agent_spec.add_message(HumanMessage(message))
         logger.info("Person follow stopped", query=query, reason=reason)
+
+
+def _decode_base64_image(b64: str) -> Image:
+    bgr_array = TurboJPEG().decode(base64.b64decode(b64))
+    return Image(data=bgr_array, format=ImageFormat.BGR)
 
 
 person_follow_skill = PersonFollowSkillContainer.blueprint
