@@ -18,8 +18,8 @@ from scipy.ndimage import binary_erosion
 
 from dimos.mapping.occupancy.gradient import gradient, voronoi_gradient
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.patrolling.routers.base_patrol_router import BasePatrolRouter
 from dimos.navigation.patrolling.utilities import point_to_pose_stamped
 from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
