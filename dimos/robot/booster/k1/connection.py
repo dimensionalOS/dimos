@@ -160,12 +160,7 @@ class K1Connection(Module, spec.Camera):
             except KeyboardInterrupt:
                 break
             except TimeoutError:
-                logger.warning(f"Video timeout ({uri}), retrying in 3s...", uri)
-                await asyncio.sleep(3)
-            except Exception as e:
-                if not self._running:
-                    break
-                logger.warning(f"Video error: {type(e).__name__}: {e}, retrying in 3s...", e)
+                logger.warning("Video timeout (%s), retrying in 3s...", uri)
                 await asyncio.sleep(3)
 
     def _on_frame(self, jpeg_bytes: bytes) -> None:
