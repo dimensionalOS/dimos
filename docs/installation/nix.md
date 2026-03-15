@@ -30,7 +30,7 @@ source .venv/bin/activate
 
 # install everything (depending on your use case you might not need all extras,
 # check your respective platform guides)
-pip install "dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu,dev]"
+pip install 'dimos[misc,sim,visualization,agents,web,perception,unitree,manipulation,cpu,dev]'
 ```
 
 # Developing on DimOS
