@@ -22,7 +22,7 @@ from dimos.protocol.rpc.pubsubrpc import LCMRPC
 
 @pytest.fixture
 def lcmrpc() -> Generator[LCMRPC, None, None]:
-    ret = LCMRPC()
+    ret = LCMRPC(rpc_timeouts={})
     ret.start()
     yield ret
     ret.stop()

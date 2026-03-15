@@ -46,8 +46,8 @@ def lcm_rpc_context():
     from dimos.protocol.service.lcmservice import autoconf
 
     autoconf()
-    server = LCMRPC()
-    client = LCMRPC()
+    server = LCMRPC(rpc_timeouts={})
+    client = LCMRPC(rpc_timeouts={})
     server.start()
     client.start()
 
@@ -65,8 +65,8 @@ testdata.append((lcm_rpc_context, "lcm"))
 def shm_rpc_context():
     """Context manager for Shared Memory RPC implementation."""
     # Create two separate instances that communicate through shared memory segments
-    server = ShmRPC(prefer="cpu")
-    client = ShmRPC(prefer="cpu")
+    server = ShmRPC(rpc_timeouts={}, prefer="cpu")
+    client = ShmRPC(rpc_timeouts={}, prefer="cpu")
     server.start()
     client.start()
 

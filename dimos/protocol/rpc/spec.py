@@ -30,6 +30,10 @@ class RPCInspectable(Protocol):
     def rpcs(self) -> dict[str, Callable]: ...  # type: ignore[type-arg]
 
 
+DEFAULT_RPC_TIMEOUT: float = 120.0
+DEFAULT_RPC_TIMEOUTS: dict[str, float] = {"start": 1200.0}
+
+
 class RPCClient(Protocol):
     # if we don't provide callback, we don't get a return unsub f
     @overload
@@ -43,16 +47,18 @@ class RPCClient(Protocol):
 
     def call_nowait(self, name: str, arguments: Args) -> None: ...
 
-    # Default RPC timeout. Callers (RpcCall, DockerModule) resolve via
-    # rpc_timeouts dict; raw call_sync uses this as fallback.
-    default_rpc_timeout: float = 120.0
-    rpc_timeouts: dict[str, float] = {"start": 1200.0}
+    # call_sync resolves per-method overrides from rpc_timeouts,
+    # falling back to default_rpc_timeout.
+    default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
+    rpc_timeouts: dict[str, float]
 
     def call_sync(
         self, name: str, arguments: Args, rpc_timeout: float | None = None
     ) -> tuple[Any, Callable[[], None]]:
         if rpc_timeout is None:
-            rpc_timeout = self.rpc_timeouts.get(name, self.default_rpc_timeout)
+            # Try full topic name first, then bare method name (after last "/").
+            method = name.rsplit("/", 1)[-1]
+            rpc_timeout = self.rpc_timeouts.get(name, self.rpc_timeouts.get(method, self.default_rpc_timeout))
         event = threading.Event()
 
         def receive_value(val) -> None:  # type: ignore[no-untyped-def]

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from dimos.core.stream import RemoteStream
 from dimos.core.worker import MethodCallProxy
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
-from dimos.protocol.rpc.spec import RPCSpec
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -39,14 +39,12 @@ class RpcCall:
         remote_name: str,
         unsub_fns: list,  # type: ignore[type-arg]
         stop_client: Callable[[], None] | None = None,
-        timeout: float = 0,
     ) -> None:
         self._rpc = rpc
         self._name = name
         self._remote_name = remote_name
         self._unsub_fns = unsub_fns
         self._stop_rpc_client = stop_client
-        self._timeout = timeout
 
         if original_method:
             self.__doc__ = original_method.__doc__
@@ -72,21 +70,19 @@ class RpcCall:
         result, unsub_fn = self._rpc.call_sync(
             f"{self._remote_name}/{self._name}",
             (args, kwargs),  # type: ignore[arg-type]
-            rpc_timeout=self._timeout,
         )
         self._unsub_fns.append(unsub_fn)
         return result
 
     def __getstate__(self):  # type: ignore[no-untyped-def]
-        return (self._name, self._remote_name, self._timeout)
+        return (self._name, self._remote_name)
 
     def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        # Support both old 2-tuple and new 3-tuple state for pickle compat.
-        if len(state) == 2:
-            self._name, self._remote_name = state
-            self._timeout = 0
+        # Support both old 2-tuple and new 3-tuple (legacy) state for pickle compat.
+        if len(state) == 3:
+            self._name, self._remote_name, _ = state
         else:
-            self._name, self._remote_name, self._timeout = state
+            self._name, self._remote_name = state
         self._unsub_fns = []
         self._rpc = None
         self._stop_rpc_client = None
@@ -94,6 +90,8 @@ class RpcCall:
 
 class ModuleProxyProtocol(Protocol):
     """Protocol for host-side handles to remote modules (worker or Docker)."""
+
+    rpc_timeouts: dict[str, float] = DEFAULT_RPC_TIMEOUTS
 
     def start(self) -> None: ...
     def stop(self) -> None: ...
@@ -104,20 +102,16 @@ class ModuleProxyProtocol(Protocol):
 
 
 class RPCClient:
-    # Default timeout for all RPC calls (seconds). Override per-method via
-    # the module's rpc_timeouts dict.
-    default_rpc_timeout: float = 120.0
-
     def __init__(self, actor_instance, actor_class) -> None:  # type: ignore[no-untyped-def]
-        self.rpc = LCMRPC()
+        default_config = getattr(actor_class, "default_config", None)
+        self.rpc_timeouts: dict[str, float] = getattr(default_config, "rpc_timeouts", DEFAULT_RPC_TIMEOUTS)
+        self.rpc = LCMRPC(rpc_timeouts=self.rpc_timeouts)
         self.actor_class = actor_class
         self.remote_name = actor_class.__name__
         self.actor_instance = actor_instance
         self.rpcs = actor_class.rpcs.keys()
         self.rpc.start()
         self._unsub_fns = []  # type: ignore[var-annotated]
-        # Merge module-level rpc_timeouts over the defaults from RPCSpec.
-        self._rpc_timeouts: dict[str, float] = {**self.rpc.rpc_timeouts, **getattr(actor_class, "rpc_timeouts", {})}
 
     def stop_rpc_client(self) -> None:
         for unsub in self._unsub_fns:
@@ -156,7 +150,6 @@ class RPCClient:
 
         if name in self.rpcs:
             original_method = getattr(self.actor_class, name, None)
-            timeout = self._rpc_timeouts.get(name, self.default_rpc_timeout)
             return RpcCall(
                 original_method,
                 self.rpc,
@@ -164,7 +157,6 @@ class RPCClient:
                 self.remote_name,
                 self._unsub_fns,
                 self.stop_rpc_client,
-                timeout=timeout,
             )
 
         # return super().__getattr__(name)

@@ -32,7 +32,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
 from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
-from dimos.protocol.rpc.spec import Args, RPCSpec
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUTS, Args, RPCSpec
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
 
@@ -62,8 +62,9 @@ class RPCRes(TypedDict, total=False):
 
 
 class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(self, *args: Any, rpc_timeouts: dict[str, float], **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        self.rpc_timeouts = {**DEFAULT_RPC_TIMEOUTS, **rpc_timeouts}
         # Thread pool for RPC handler execution (prevents deadlock in nested calls)
         self._call_thread_pool: ThreadPoolExecutor | None = None
         self._call_thread_pool_lock = threading.RLock()
@@ -290,12 +291,12 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
 
 class LCMRPC(PubSubRPCMixin[Topic, Any], PickleLCM):
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, rpc_timeouts: dict[str, float], **kwargs: Any) -> None:
         # Need to ensure PickleLCM gets initialized properly
         # This is due to the diamond inheritance pattern with multiple base classes
         PickleLCM.__init__(self, **kwargs)
-        # Initialize PubSubRPCMixin's thread pool
-        PubSubRPCMixin.__init__(self, **kwargs)
+        # Initialize PubSubRPCMixin's thread pool (merges rpc_timeouts with defaults)
+        PubSubRPCMixin.__init__(self, rpc_timeouts=rpc_timeouts, **kwargs)
 
     def topicgen(self, name: str, req_or_res: bool) -> Topic:
         suffix = "res" if req_or_res else "req"
@@ -306,12 +307,12 @@ class LCMRPC(PubSubRPCMixin[Topic, Any], PickleLCM):
 
 
 class ShmRPC(PubSubRPCMixin[str, Any], PickleSharedMemory):
-    def __init__(self, prefer: str = "cpu", **kwargs: Any) -> None:
+    def __init__(self, rpc_timeouts: dict[str, float], prefer: str = "cpu", **kwargs: Any) -> None:
         # Need to ensure SharedMemory gets initialized properly
         # This is due to the diamond inheritance pattern with multiple base classes
         PickleSharedMemory.__init__(self, prefer=prefer, **kwargs)
-        # Initialize PubSubRPCMixin's thread pool
-        PubSubRPCMixin.__init__(self, **kwargs)
+        # Initialize PubSubRPCMixin's thread pool (merges rpc_timeouts with defaults)
+        PubSubRPCMixin.__init__(self, rpc_timeouts=rpc_timeouts, **kwargs)
 
     def topicgen(self, name: str, req_or_res: bool) -> str:
         suffix = "res" if req_or_res else "req"

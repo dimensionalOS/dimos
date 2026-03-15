@@ -40,7 +40,7 @@ from dimos.core.resource import Resource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteOut, Transport
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
-from dimos.protocol.rpc.spec import RPCSpec
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.protocol.tf.tf import LCMTF, TFSpec
 from dimos.utils import colors
@@ -79,6 +79,7 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 
 class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = LCMRPC
+    rpc_timeouts: dict[str, float] = DEFAULT_RPC_TIMEOUTS
     tf_transport: type[TFSpec] = LCMTF  # type: ignore[type-arg]
     frame_id_prefix: str | None = None
     frame_id: str | None = None
@@ -108,19 +109,13 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
 
     rpc_calls: list[str] = []
 
-    # Per-method RPC timeout overrides (seconds). Keys are method names.
-    # Used by RPCClient when calling methods on this module from the host.
-    # Example: rpc_timeouts = {"on_system_modules": 600.0}
-    # Methods not listed here use RPCClient.default_rpc_timeout (120s).
-    rpc_timeouts: dict[str, float] = {}
-
     def __init__(self, config_args: dict[str, Any]):
         super().__init__(**config_args)
         self._module_closed_lock = threading.Lock()
         self._loop, self._loop_thread = get_loop()
         self._disposables = CompositeDisposable()
         try:
-            self.rpc = self.config.rpc_transport()
+            self.rpc = self.config.rpc_transport(rpc_timeouts=self.config.rpc_timeouts)
             self.rpc.serve_module_rpc(self)
             self.rpc.start()  # type: ignore[attr-defined]
         except ValueError:

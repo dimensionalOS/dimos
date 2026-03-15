@@ -25,7 +25,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.module import ModuleConfig
-from dimos.core.rpc_client import ModuleProxyProtocol, RpcCall, RPCClient
+from dimos.core.rpc_client import ModuleProxyProtocol, RpcCall
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.bridge import RERUN_GRPC_PORT, RERUN_WEB_PORT
@@ -205,12 +205,11 @@ class DockerModule(ModuleProxyProtocol):
             or f"dimos_{module_class.__name__.lower()}_{image_ref.replace(':', '_')}"
         )
 
-        self.rpc = LCMRPC()
+        self.rpc = LCMRPC(rpc_timeouts=self.config.rpc_timeouts)
         self.rpcs = set(module_class.rpcs.keys())  # type: ignore[attr-defined]
         self.rpc_calls: list[str] = getattr(module_class, "rpc_calls", [])
         self._unsub_fns: list[Callable[[], None]] = []
         self._bound_rpc_calls: dict[str, RpcCall] = {}
-        self._rpc_timeouts: dict[str, float] = {**self.rpc.rpc_timeouts, **getattr(module_class, "rpc_timeouts", {})}
 
         # Build or pull image, launch container, wait for RPC server
         try:
@@ -267,9 +266,6 @@ class DockerModule(ModuleProxyProtocol):
     def get_rpc_method_names(self) -> list[str]:
         return self.rpc_calls
 
-    def _resolve_timeout(self, method: str) -> float:
-        return self._rpc_timeouts.get(method, RPCClient.default_rpc_timeout)
-
     def set_rpc_method(self, method: str, callable: RpcCall) -> None:
         callable.set_rpc(self.rpc)
         self._bound_rpc_calls[method] = callable
@@ -278,7 +274,6 @@ class DockerModule(ModuleProxyProtocol):
         self.rpc.call_sync(
             f"{self.remote_name}/set_rpc_method",
             ([method, callable], {}),
-            rpc_timeout=self._resolve_timeout("set_rpc_method"),
         )
 
     def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall, ...]:
@@ -291,9 +286,7 @@ class DockerModule(ModuleProxyProtocol):
     def start(self) -> None:
         """Invoke the remote module's start() RPC."""
         try:
-            self.rpc.call_sync(
-                f"{self.remote_name}/start", ([], {}), rpc_timeout=self._resolve_timeout("start")
-            )
+            self.rpc.call_sync(f"{self.remote_name}/start", ([], {}))
         except Exception:
             with suppress(Exception):
                 self.stop()
@@ -345,7 +338,6 @@ class DockerModule(ModuleProxyProtocol):
         result, _ = self.rpc.call_sync(
             f"{self.remote_name}/set_transport",
             ([stream_name, transport], {}),
-            rpc_timeout=self._resolve_timeout("set_transport"),
         )
         return bool(result)
 
@@ -360,7 +352,6 @@ class DockerModule(ModuleProxyProtocol):
                 self.remote_name,
                 self._unsub_fns,
                 None,
-                timeout=self._resolve_timeout(name),
             )
         raise AttributeError(f"{name} not found on {type(self).__name__}")
 
