@@ -93,6 +93,7 @@ class WorkerManager:
 
         return safe_thread_map(
             assignments,
+            # item = [worker, module_class, global_config, kwargs]
             lambda item: RPCClient(item[0].deploy_module(item[1], item[2], item[3]), item[1]),
             _on_errors,
         )
