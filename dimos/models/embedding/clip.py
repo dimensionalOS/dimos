@@ -75,9 +75,9 @@ class CLIPModel(EmbeddingModel, HuggingFaceModel):
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
         """
         with torch.inference_mode():
-            inputs = self._processor(text=list(texts), return_tensors="pt", padding=True).to(
-                self.config.device
-            )
+            inputs = self._processor(
+                text=list(texts), return_tensors="pt", padding=True, truncation=True
+            ).to(self.config.device)
             text_features = self._model.get_text_features(**inputs)
 
             if self.config.normalize:

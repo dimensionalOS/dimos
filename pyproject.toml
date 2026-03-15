@@ -62,7 +62,6 @@ dependencies = [
     "annotation-protocol>=1.4.0",
     "lazy_loader",
     "plum-dispatch==2.5.7",
-
     # Logging
     "structlog>=25.5.0,<26",
     "colorlog==6.9.0",
@@ -86,6 +85,8 @@ dependencies = [
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
+    "sqlite-vec>=0.1.6",
+    "lz4>=4.4.5",
 ]
 
 
@@ -202,7 +203,7 @@ manipulation = [
 
     # Hardware SDKs
     "piper-sdk",
-    "pyrealsense2",
+    "pyrealsense2; sys_platform != 'darwin'",
     "xarm-python-sdk>=1.17.0",
 
     # Visualization (Optional)
@@ -271,6 +272,7 @@ dev = [
     "types-tensorflow>=2.18.0.20251008,<3",
     "types-tqdm>=4.67.0.20250809,<5",
     "types-psycopg2>=2.9.21.20251012",
+    "scipy-stubs>=1.15.0",
     "types-psutil>=7.2.2.20260130,<8",
 
     # Tools
@@ -411,6 +413,7 @@ module = [
     "rclpy.*",
     "sam2.*",
     "sensor_msgs.*",
+    "sqlite_vec",
     "std_msgs.*",
     "tf2_msgs.*",
     "torchreid",
