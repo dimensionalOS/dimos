@@ -39,12 +39,14 @@ class RpcCall:
         remote_name: str,
         unsub_fns: list,  # type: ignore[type-arg]
         stop_client: Callable[[], None] | None = None,
+        timeout: float = 0,
     ) -> None:
         self._rpc = rpc
         self._name = name
         self._remote_name = remote_name
         self._unsub_fns = unsub_fns
         self._stop_rpc_client = stop_client
+        self._timeout = timeout
 
         if original_method:
             self.__doc__ = original_method.__doc__
@@ -67,15 +69,24 @@ class RpcCall:
                 self._stop_rpc_client()
             return None
 
-        result, unsub_fn = self._rpc.call_sync(f"{self._remote_name}/{self._name}", (args, kwargs))  # type: ignore[arg-type]
+        result, unsub_fn = self._rpc.call_sync(
+            f"{self._remote_name}/{self._name}",
+            (args, kwargs),  # type: ignore[arg-type]
+            rpc_timeout=self._timeout,
+        )
         self._unsub_fns.append(unsub_fn)
         return result
 
     def __getstate__(self):  # type: ignore[no-untyped-def]
-        return (self._name, self._remote_name)
+        return (self._name, self._remote_name, self._timeout)
 
     def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        self._name, self._remote_name = state
+        # Support both old 2-tuple and new 3-tuple state for pickle compat.
+        if len(state) == 2:
+            self._name, self._remote_name = state
+            self._timeout = 0
+        else:
+            self._name, self._remote_name, self._timeout = state
         self._unsub_fns = []
         self._rpc = None
         self._stop_rpc_client = None
@@ -93,6 +104,10 @@ class ModuleProxyProtocol(Protocol):
 
 
 class RPCClient:
+    # Default timeout for all RPC calls (seconds). Override per-method via
+    # the module's rpc_timeouts dict.
+    default_rpc_timeout: float = 120.0
+
     def __init__(self, actor_instance, actor_class) -> None:  # type: ignore[no-untyped-def]
         self.rpc = LCMRPC()
         self.actor_class = actor_class
@@ -101,6 +116,8 @@ class RPCClient:
         self.rpcs = actor_class.rpcs.keys()
         self.rpc.start()
         self._unsub_fns = []  # type: ignore[var-annotated]
+        # Merge module-level rpc_timeouts over the defaults from RPCSpec.
+        self._rpc_timeouts: dict[str, float] = {**self.rpc.rpc_timeouts, **getattr(actor_class, "rpc_timeouts", {})}
 
     def stop_rpc_client(self) -> None:
         for unsub in self._unsub_fns:
@@ -139,6 +156,7 @@ class RPCClient:
 
         if name in self.rpcs:
             original_method = getattr(self.actor_class, name, None)
+            timeout = self._rpc_timeouts.get(name, self.default_rpc_timeout)
             return RpcCall(
                 original_method,
                 self.rpc,
@@ -146,6 +164,7 @@ class RPCClient:
                 self.remote_name,
                 self._unsub_fns,
                 self.stop_rpc_client,
+                timeout=timeout,
             )
 
         # return super().__getattr__(name)
