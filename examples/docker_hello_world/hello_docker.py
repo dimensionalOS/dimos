@@ -36,6 +36,9 @@ from pathlib import Path
 import subprocess
 import time
 
+from reactivex.disposable import Disposable
+
+from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.docker_runner import DockerModuleConfig
 from dimos.core.module import Module
@@ -67,17 +70,11 @@ class HelloDockerModule(Module["HelloDockerConfig"]):
     @rpc
     def start(self) -> None:
         super().start()
-        self.prompt.subscribe(self._on_prompt)
+        self._disposables.add(Disposable(self.prompt.subscribe(self._on_prompt)))
 
     def _cowsay(self, text: str) -> str:
         """Run cowsay inside the container and return the ASCII art."""
-        result = subprocess.run(
-            ["/usr/games/cowsay", text],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return result.stdout
+        return subprocess.check_output(["/usr/games/cowsay", text], text=True)
 
     def _on_prompt(self, text: str) -> None:
         art = self._cowsay(text)
@@ -105,7 +102,7 @@ class PromptModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.greeting.subscribe(self._on_greeting)
+        self._disposables.add(Disposable(self.greeting.subscribe(self._on_greeting)))
 
     @rpc
     def send(self, text: str) -> None:
@@ -117,8 +114,6 @@ class PromptModule(Module):
 
 
 if __name__ == "__main__":
-    from dimos.core.blueprints import autoconnect
-
     coordinator = autoconnect(
         PromptModule.blueprint(),
         HelloDockerModule.blueprint(greeting_prefix="Howdy"),
