@@ -57,8 +57,13 @@ class RPCClient(Protocol):
     ) -> tuple[Any, Callable[[], None]]:
         if rpc_timeout is None:
             # Try full topic name first, then bare method name (after last "/").
-            method = name.rsplit("/", 1)[-1]
-            rpc_timeout = self.rpc_timeouts.get(name, self.rpc_timeouts.get(method, self.default_rpc_timeout))
+            rpc_timeout = self.rpc_timeouts.get(name)
+            if rpc_timeout is None:
+                method = name.rsplit("/", 1)[-1]
+                if method is not name:
+                    rpc_timeout = self.rpc_timeouts.get(method, self.default_rpc_timeout)
+                else:
+                    rpc_timeout = self.default_rpc_timeout
         event = threading.Event()
 
         def receive_value(val) -> None:  # type: ignore[no-untyped-def]
