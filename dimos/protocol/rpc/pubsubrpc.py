@@ -32,7 +32,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
 from dimos.protocol.pubsub.impl.shmpubsub import PickleSharedMemory
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
-from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUTS, Args, RPCSpec
+from dimos.protocol.rpc.spec import Args, RPCSpec
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
 
@@ -63,8 +63,7 @@ class RPCRes(TypedDict, total=False):
 
 class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     def __init__(self, *args: Any, rpc_timeouts: dict[str, float], **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self.rpc_timeouts = {**DEFAULT_RPC_TIMEOUTS, **rpc_timeouts}
+        super().__init__(*args, rpc_timeouts=rpc_timeouts, **kwargs)
         # Thread pool for RPC handler execution (prevents deadlock in nested calls)
         self._call_thread_pool: ThreadPoolExecutor | None = None
         self._call_thread_pool_lock = threading.RLock()

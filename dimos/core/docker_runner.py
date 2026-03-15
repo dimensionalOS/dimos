@@ -43,7 +43,6 @@ DOCKER_PULL_TIMEOUT_DEFAULT = None  # No timeout for `docker pull` (images can b
 DOCKER_CMD_TIMEOUT = 20  #       Timeout for quick Docker commands (inspect, rm, logs)
 DOCKER_STATUS_TIMEOUT = 10  #    Timeout for container status checks
 DOCKER_STOP_TIMEOUT = 30  #      Timeout for `docker stop` command (graceful shutdown)
-RPC_READY_TIMEOUT = 3.0  #       Timeout for RPC readiness probe during container startup
 LOG_TAIL_LINES = 200  #          Number of log lines to include in error messages
 
 
@@ -529,7 +528,6 @@ class DockerModule(ModuleProxyProtocol):
                 self.rpc.call_sync(
                     f"{self.remote_name}/get_rpc_method_names",
                     ([], {}),
-                    rpc_timeout=RPC_READY_TIMEOUT,
                 )
                 elapsed = time.time() - start_time
                 logger.info(f"{self.remote_name} ready ({elapsed:.1f}s)")

@@ -91,8 +91,6 @@ class RpcCall:
 class ModuleProxyProtocol(Protocol):
     """Protocol for host-side handles to remote modules (worker or Docker)."""
 
-    rpc_timeouts: dict[str, float] = DEFAULT_RPC_TIMEOUTS
-
     def start(self) -> None: ...
     def stop(self) -> None: ...
     def set_transport(self, stream_name: str, transport: Any) -> bool: ...
@@ -104,7 +102,10 @@ class ModuleProxyProtocol(Protocol):
 class RPCClient:
     def __init__(self, actor_instance, actor_class) -> None:  # type: ignore[no-untyped-def]
         default_config = getattr(actor_class, "default_config", None)
-        self.rpc_timeouts: dict[str, float] = getattr(default_config, "rpc_timeouts", DEFAULT_RPC_TIMEOUTS)
+        self.rpc_timeouts: dict[str, float] = {
+            **DEFAULT_RPC_TIMEOUTS,
+            **getattr(default_config, "rpc_timeouts", {}),
+        }
         self.rpc = LCMRPC(rpc_timeouts=self.rpc_timeouts)
         self.actor_class = actor_class
         self.remote_name = actor_class.__name__

@@ -29,12 +29,19 @@ class RPCInspectable(Protocol):
     @property
     def rpcs(self) -> dict[str, Callable]: ...  # type: ignore[type-arg]
 
-
 DEFAULT_RPC_TIMEOUT: float = 120.0
 DEFAULT_RPC_TIMEOUTS: dict[str, float] = {"start": 1200.0}
 
-
 class RPCClient(Protocol):
+    # call_sync resolves per-method overrides from rpc_timeouts,
+    # falling back to default_rpc_timeout.
+    rpc_timeouts: dict[str, float]
+    default_rpc_timeout: float
+    
+    def __init__(self, *args: Any, rpc_timeouts: dict[str, float], **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.rpc_timeouts = dict(rpc_timeouts)
+
     # if we don't provide callback, we don't get a return unsub f
     @overload
     def call(self, name: str, arguments: Args, cb: None) -> None: ...
@@ -116,4 +123,5 @@ class RPCServer(Protocol):
 
 
 class RPCSpec(RPCServer, RPCClient):
-    def __init__(self, *args: Any, rpc_timeouts: dict[str, float], **kwargs: Any) -> None: ...
+    def __init__(self, *args: Any, rpc_timeouts: dict[str, float], **kwargs: Any) -> None:
+        super().__init__(*args, rpc_timeouts=rpc_timeouts, **kwargs)
