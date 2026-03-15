@@ -204,7 +204,10 @@ class DockerModule(ModuleProxyProtocol):
             or f"dimos_{module_class.__name__.lower()}_{image_ref.replace(':', '_')}"
         )
 
-        self.rpc = LCMRPC(rpc_timeouts=self.config.rpc_timeouts)
+        self.rpc = LCMRPC(
+            rpc_timeouts=self.config.rpc_timeouts,
+            default_rpc_timeout=self.config.default_rpc_timeout,
+        )
         self.rpcs = set(module_class.rpcs.keys())  # type: ignore[attr-defined]
         self.rpc_calls: list[str] = getattr(module_class, "rpc_calls", [])
         self._unsub_fns: list[Callable[[], None]] = []

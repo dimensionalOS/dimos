@@ -15,6 +15,7 @@
 import asyncio
 from collections.abc import Callable
 import threading
+from types import MappingProxyType
 from typing import Any, Protocol, overload
 
 
@@ -29,18 +30,25 @@ class RPCInspectable(Protocol):
     @property
     def rpcs(self) -> dict[str, Callable]: ...  # type: ignore[type-arg]
 
+
+# module.py and other places imports these constants and choose what to give RPCClient
+# the RPCClient below does not use these constants directly (by design)
 DEFAULT_RPC_TIMEOUT: float = 120.0
-DEFAULT_RPC_TIMEOUTS: dict[str, float] = {"start": 1200.0}
+DEFAULT_RPC_TIMEOUTS: MappingProxyType[str, float] = MappingProxyType({"start": 1200.0})
+
 
 class RPCClient(Protocol):
     # call_sync resolves per-method overrides from rpc_timeouts,
     # falling back to default_rpc_timeout.
     rpc_timeouts: dict[str, float]
     default_rpc_timeout: float
-    
-    def __init__(self, *args: Any, rpc_timeouts: dict[str, float], **kwargs: Any) -> None:
+
+    def __init__(
+        self, *args: Any, rpc_timeouts: dict[str, float], default_rpc_timeout: float, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.rpc_timeouts = dict(rpc_timeouts)
+        self.default_rpc_timeout = default_rpc_timeout
 
     # if we don't provide callback, we don't get a return unsub f
     @overload
@@ -53,11 +61,6 @@ class RPCClient(Protocol):
     def call(self, name: str, arguments: Args, cb: Callable | None) -> Callable[[], Any] | None: ...  # type: ignore[type-arg]
 
     def call_nowait(self, name: str, arguments: Args) -> None: ...
-
-    # call_sync resolves per-method overrides from rpc_timeouts,
-    # falling back to default_rpc_timeout.
-    default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
-    rpc_timeouts: dict[str, float]
 
     def call_sync(
         self, name: str, arguments: Args, rpc_timeout: float | None = None
@@ -123,5 +126,9 @@ class RPCServer(Protocol):
 
 
 class RPCSpec(RPCServer, RPCClient):
-    def __init__(self, *args: Any, rpc_timeouts: dict[str, float], **kwargs: Any) -> None:
-        super().__init__(*args, rpc_timeouts=rpc_timeouts, **kwargs)
+    def __init__(
+        self, *args: Any, rpc_timeouts: dict[str, float], default_rpc_timeout: float, **kwargs: Any
+    ) -> None:
+        super().__init__(
+            *args, rpc_timeouts=rpc_timeouts, default_rpc_timeout=default_rpc_timeout, **kwargs
+        )

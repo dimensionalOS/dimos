@@ -40,7 +40,7 @@ from dimos.core.resource import Resource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteOut, Transport
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
-from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUTS, RPCSpec
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.protocol.tf.tf import LCMTF, TFSpec
 from dimos.utils import colors
@@ -79,7 +79,8 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 
 class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = LCMRPC
-    rpc_timeouts: dict[str, float] = DEFAULT_RPC_TIMEOUTS
+    default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
+    rpc_timeouts: dict[str, float] = dict(DEFAULT_RPC_TIMEOUTS)
     tf_transport: type[TFSpec] = LCMTF  # type: ignore[type-arg]
     frame_id_prefix: str | None = None
     frame_id: str | None = None
@@ -115,7 +116,10 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         self._loop, self._loop_thread = get_loop()
         self._disposables = CompositeDisposable()
         try:
-            self.rpc = self.config.rpc_transport(rpc_timeouts=self.config.rpc_timeouts)
+            self.rpc = self.config.rpc_transport(
+                rpc_timeouts=self.config.rpc_timeouts,
+                default_rpc_timeout=self.config.default_rpc_timeout,
+            )
             self.rpc.serve_module_rpc(self)
             self.rpc.start()  # type: ignore[attr-defined]
         except ValueError:
