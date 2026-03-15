@@ -115,4 +115,5 @@ class RPCServer(Protocol):
             self.serve_rpc(override_f, topic)
 
 
-class RPCSpec(RPCServer, RPCClient): ...
+class RPCSpec(RPCServer, RPCClient):
+    def __init__(self, *args: Any, rpc_timeouts: dict[str, float], **kwargs: Any) -> None: ...
