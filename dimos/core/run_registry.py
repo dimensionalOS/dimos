@@ -21,6 +21,7 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import time
 
 from dimos.utils.logging_config import setup_logger
@@ -141,9 +142,6 @@ def get_most_recent(alive_only: bool = True) -> RunEntry | None:
     """Return the most recently created run entry, or None."""
     runs = list_runs(alive_only=alive_only)
     return runs[-1] if runs else None
-
-
-import signal
 
 
 def stop_entry(entry: RunEntry, force: bool = False) -> tuple[str, bool]:

@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from typing import Any
 
 from dimos.core.global_config import GlobalConfig
@@ -23,6 +23,7 @@ from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.rpc_client import RPCClient
 from dimos.core.worker import Worker
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
 
 logger = setup_logger()
 
@@ -65,6 +66,10 @@ class WorkerManager:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
 
+        module_specs = list(module_specs)
+        if len(module_specs) == 0:
+            return []
+
         # Auto-start for backward compatibility
         if not self._started:
             self.start()
@@ -78,17 +83,20 @@ class WorkerManager:
             worker.reserve_slot()
             assignments.append((worker, module_class, global_config, kwargs))
 
-        def _deploy(
-            item: tuple[Worker, type[ModuleBase], GlobalConfig, dict[str, Any]],
-        ) -> RPCClient:
-            worker, module_class, global_config, kwargs = item
-            actor = worker.deploy_module(module_class, global_config=global_config, kwargs=kwargs)
-            return RPCClient(actor, module_class)
+        def _on_errors(
+            _outcomes: list[Any], successes: list[RPCClient], errors: list[Exception]
+        ) -> None:
+            for rpc_client in successes:
+                with suppress(Exception):
+                    rpc_client.stop_rpc_client()
+            raise ExceptionGroup("worker deploy_parallel failed", errors)
 
-        with ThreadPoolExecutor(max_workers=len(assignments)) as pool:
-            results = list(pool.map(_deploy, assignments))
-
-        return results
+        return safe_thread_map(
+            assignments,
+            # item = [worker, module_class, global_config, kwargs]
+            lambda item: RPCClient(item[0].deploy_module(item[1], item[2], item[3]), item[1]),
+            _on_errors,
+        )
 
     def suppress_console(self) -> None:
         """Tell all workers to redirect stdout/stderr to /dev/null."""

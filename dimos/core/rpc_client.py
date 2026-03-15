@@ -13,12 +13,12 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.stream import RemoteStream
 from dimos.core.worker import MethodCallProxy
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
-from dimos.protocol.rpc.spec import RPCSpec
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -67,7 +67,10 @@ class RpcCall:
                 self._stop_rpc_client()
             return None
 
-        result, unsub_fn = self._rpc.call_sync(f"{self._remote_name}/{self._name}", (args, kwargs))  # type: ignore[arg-type]
+        result, unsub_fn = self._rpc.call_sync(
+            f"{self._remote_name}/{self._name}",
+            (args, kwargs),  # type: ignore[arg-type]
+        )
         self._unsub_fns.append(unsub_fn)
         return result
 
@@ -75,15 +78,34 @@ class RpcCall:
         return (self._name, self._remote_name)
 
     def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        self._name, self._remote_name = state
+        # Support both old 2-tuple and new 3-tuple (legacy) state for pickle compat.
+        if len(state) == 3:
+            self._name, self._remote_name, _ = state
+        else:
+            self._name, self._remote_name = state
         self._unsub_fns = []
         self._rpc = None
         self._stop_rpc_client = None
 
 
+class ModuleProxyProtocol(Protocol):
+    """Protocol for host-side handles to remote modules (worker or Docker)."""
+
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+    def set_transport(self, stream_name: str, transport: Any) -> bool: ...
+    def get_rpc_method_names(self) -> list[str]: ...
+    def set_rpc_method(self, method: str, callable: RpcCall) -> None: ...
+    def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall, ...]: ...
+
+
 class RPCClient:
     def __init__(self, actor_instance, actor_class) -> None:  # type: ignore[no-untyped-def]
-        self.rpc = LCMRPC()
+        default_config = getattr(actor_class, "default_config", None)
+        self.rpc = LCMRPC(
+            rpc_timeouts=getattr(default_config, "rpc_timeouts", dict(DEFAULT_RPC_TIMEOUTS)),
+            default_rpc_timeout=getattr(default_config, "default_rpc_timeout", DEFAULT_RPC_TIMEOUT),
+        )
         self.actor_class = actor_class
         self.remote_name = actor_class.__name__
         self.actor_instance = actor_instance
