@@ -117,7 +117,10 @@ class RPCClient:
         self.rpc.start()
         self._unsub_fns = []  # type: ignore[var-annotated]
         # Merge module-level rpc_timeouts over the defaults from RPCSpec.
-        self._rpc_timeouts: dict[str, float] = {**self.rpc.rpc_timeouts, **getattr(actor_class, "rpc_timeouts", {})}
+        self._rpc_timeouts: dict[str, float] = {
+            **self.rpc.rpc_timeouts,
+            **getattr(actor_class, "rpc_timeouts", {}),
+        }
 
     def stop_rpc_client(self) -> None:
         for unsub in self._unsub_fns:

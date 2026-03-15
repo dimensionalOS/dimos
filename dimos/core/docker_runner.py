@@ -210,7 +210,10 @@ class DockerModule(ModuleProxyProtocol):
         self.rpc_calls: list[str] = getattr(module_class, "rpc_calls", [])
         self._unsub_fns: list[Callable[[], None]] = []
         self._bound_rpc_calls: dict[str, RpcCall] = {}
-        self._rpc_timeouts: dict[str, float] = {**self.rpc.rpc_timeouts, **getattr(module_class, "rpc_timeouts", {})}
+        self._rpc_timeouts: dict[str, float] = {
+            **self.rpc.rpc_timeouts,
+            **getattr(module_class, "rpc_timeouts", {}),
+        }
 
         # Build or pull image, launch container, wait for RPC server
         try:
