@@ -70,7 +70,7 @@ class RPCClient(Protocol):
             rpc_timeout = self.rpc_timeouts.get(name)
             if rpc_timeout is None:
                 method = name.rsplit("/", 1)[-1]
-                if method is not name:
+                if method != name:
                     rpc_timeout = self.rpc_timeouts.get(method, self.default_rpc_timeout)
                 else:
                     rpc_timeout = self.default_rpc_timeout
