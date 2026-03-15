@@ -449,6 +449,7 @@ max_size_kb = 50
 ignore = [
     "uv.lock",
     "*/package-lock.json",
+    "*/pnpm-lock.yaml",
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
