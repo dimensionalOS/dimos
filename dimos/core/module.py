@@ -104,6 +104,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
     _bound_rpc_calls: dict[str, RpcCall] = {}
     _module_closed: bool = False
     _module_closed_lock: threading.Lock
+    _loop_thread_timeout: float = 2.0
 
     rpc_calls: list[str] = []
 
@@ -151,7 +152,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
             if loop_thread.is_alive():
                 if loop:
                     loop.call_soon_threadsafe(loop.stop)
-                loop_thread.join(timeout=2)
+                loop_thread.join(timeout=self._loop_thread_timeout)
             self._loop = None
             self._loop_thread = None
 
