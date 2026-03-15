@@ -19,7 +19,7 @@ export default class Connection {
 
   constructor(dispatch: React.Dispatch<AppAction>) {
     this.dispatch = dispatch;
-    this.socket = io("ws://localhost:7779");
+    this.socket = io();
 
     this.socket.on("costmap", (data: EncodedCostmap) => {
       const costmap = Costmap.decode(data);
