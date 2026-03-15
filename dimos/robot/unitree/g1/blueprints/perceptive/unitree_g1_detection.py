@@ -22,7 +22,6 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.hardware.sensors.camera import zed
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
@@ -31,6 +30,7 @@ from dimos.perception.detection.module3D import Detection3DModule, detection3d_m
 from dimos.perception.detection.moduleDB import ObjectDBModule, detection_db_module
 from dimos.perception.detection.person_tracker import PersonTracker, person_tracker_module
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic import unitree_g1_basic
+from dimos.robot.unitree.g1.blueprints.primitive.uintree_g1_primitive_no_nav import G1_CAMERA_INFO
 
 
 def _person_only(det: Any) -> bool:
@@ -42,15 +42,15 @@ unitree_g1_detection = (
         unitree_g1_basic,
         # Person detection modules with YOLO
         detection3d_module(
-            camera_info=zed.CameraInfo.SingleWebcam,
+            camera_info=G1_CAMERA_INFO,
             detector=YoloPersonDetector,
         ),
         detection_db_module(
-            camera_info=zed.CameraInfo.SingleWebcam,
+            camera_info=G1_CAMERA_INFO,
             filter=_person_only,  # Filter for person class only
         ),
         person_tracker_module(
-            cameraInfo=zed.CameraInfo.SingleWebcam,
+            cameraInfo=G1_CAMERA_INFO,
         ),
     )
     .global_config(n_workers=8)
