@@ -29,7 +29,7 @@ from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.mapping.pointclouds.util import read_pointcloud
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.patrolling.routers.coverage_patrol_router import CoveragePatrolRouter
 from dimos.navigation.patrolling.utilities import point_to_pose_stamped

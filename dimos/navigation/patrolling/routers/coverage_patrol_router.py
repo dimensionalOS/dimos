@@ -17,7 +17,7 @@ from numpy.typing import NDArray
 from scipy.ndimage import binary_erosion
 
 from dimos.mapping.occupancy.gradient import gradient, voronoi_gradient
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs import Path
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.navigation.patrolling.routers.base_patrol_router import BasePatrolRouter

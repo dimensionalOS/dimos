@@ -19,7 +19,7 @@ import time
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.navigation.patrolling.routers.visitation_history import VisitationHistory
 

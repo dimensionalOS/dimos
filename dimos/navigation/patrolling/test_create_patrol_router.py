@@ -25,7 +25,7 @@ from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.mapping.pointclouds.util import read_pointcloud
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.patrolling.utilities import point_to_pose_stamped
 from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar

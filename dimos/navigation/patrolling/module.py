@@ -23,7 +23,7 @@ from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.patrolling.routers.patrol_router import PatrolRouter

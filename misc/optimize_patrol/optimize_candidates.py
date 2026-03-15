@@ -81,7 +81,6 @@ def main() -> None:
     avg_times_ms = np.array([results[x][0] * 1000 for x in xs])  # Convert to ms.
     distances = np.array([results[x][1] for x in xs])
 
-    # --- Single dual-axis chart ---
     fig, ax1 = plt.subplots(figsize=(9, 5))
     color_time = "#FF5722"
     color_dist = "#2196F3"
