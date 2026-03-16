@@ -15,6 +15,7 @@
 from types import MappingProxyType
 from typing import Protocol
 
+from pydantic import ValidationError
 import pytest
 
 from dimos.core._test_future_annotations_helper import (
