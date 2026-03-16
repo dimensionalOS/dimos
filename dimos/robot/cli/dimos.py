@@ -34,8 +34,8 @@ import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
+from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.blueprints import Blueprint, _BlueprintAtom
-from dimos.core.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.utils.logging_config import setup_logger
