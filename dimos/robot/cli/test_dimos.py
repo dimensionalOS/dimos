@@ -21,7 +21,6 @@ from dimos.robot.cli.dimos import arg_help
 
 def test_blueprint_arg_help():
     class ConfigA(ModuleConfig):
-        frame_id_prefix: str | None = None
         min_interval_sec: float = 0.1
         entity_prefix: str = "world"
         viewer_mode: Literal["native", "web", "connect", "none"] = "native"
@@ -42,10 +41,13 @@ def test_blueprint_arg_help():
     assert output.split("\n") == [
         "    testmodulea:",
         "      * testmodulea.frame_id_prefix: str | None (default: None)",
+        "      * testmodulea.frame_id: str | None (default: None)",
         "      * testmodulea.min_interval_sec: float (default: 0.1)",
         "      * testmodulea.entity_prefix: str (default: world)",
         "      * testmodulea.viewer_mode: typing.Literal['native', 'web', 'connect', 'none'] (default: native)",
         "    testmoduleb:",
+        "      * testmoduleb.frame_id_prefix: str | None (default: foo)",
+        "      * testmoduleb.frame_id: str | None (default: None)",
         "      * testmoduleb.memory_limit: str (default: 25%)",
         "      * testmoduleb.ip: str (default: 127.0.0.1)",
         "",
@@ -78,10 +80,13 @@ def test_blueprint_arg_help_extra_args():
     assert output.split("\n") == [
         "    testmodulea:",
         "      * testmodulea.frame_id_prefix: str | None (default: foo)",
+        "      * testmodulea.frame_id: str | None (default: None)",
         "      * testmodulea.min_interval_sec: float (default: 0.1)",
         "      * testmodulea.entity_prefix: str (default: world)",
         "      * testmodulea.viewer_mode: typing.Literal['native', 'web', 'connect', 'none'] (default: web)",
         "    testmoduleb:",
+        "      * testmoduleb.frame_id_prefix: str | None (default: foo)",
+        "      * testmoduleb.frame_id: str | None (default: None)",
         "      * testmoduleb.memory_limit: str (default: 25%)",
         "      * testmoduleb.ip: str (default: 1.1.1.1)",
         "",
