@@ -243,32 +243,39 @@ def status(
         except Exception:
             return "unknown"
 
+    # Build a single list of data dictionaries
+    rows: list[dict[str, object]] = []
+    for entry in entries:
+        try:
+            stats = collect_process_stats(entry.pid)
+        except Exception:
+            stats = None
+
+        alive = stats.alive if stats is not None else is_pid_alive(entry.pid)
+        pss_mb = (stats.pss / 1024**2) if stats is not None else 0.0
+
+        rows.append(
+            {
+                "pid": entry.pid,
+                "run_id": entry.run_id,
+                "blueprint": entry.blueprint,
+                "uptime": _format_uptime(entry.started_at),
+                "status": "Healthy" if alive else "Dead",
+                "log_dir": entry.log_dir,
+                "memory_mb": round(pss_mb, 1),
+            }
+        )
+
+    # 1. Output JSON if requested
     if json_output:
-        output: list[dict[str, object]] = []
-        for entry in entries:
-            try:
-                stats = collect_process_stats(entry.pid)
-            except Exception:
-                stats = None
-            alive = stats.alive if stats is not None else is_pid_alive(entry.pid)
-            pss_mb = (stats.pss / 1024**2) if stats is not None else 0.0
-            output.append(
-                {
-                    "pid": entry.pid,
-                    "blueprint": entry.blueprint,
-                    "uptime": _format_uptime(entry.started_at),
-                    "status": "Healthy" if alive else "Dead",
-                    "memory_mb": round(pss_mb, 1),
-                }
-            )
-        typer.echo(json.dumps(output, indent=2))
+        typer.echo(json.dumps(rows, indent=2))
         return
 
+    # 2. Output Table if JSON was NOT requested
     from rich.console import Console
     from rich.table import Table
 
     console = Console()
-
     table = Table(title="DimOS Status")
     table.add_column("PID", justify="right")
     table.add_column("BLUEPRINT")
@@ -277,20 +284,14 @@ def status(
     table.add_column("LOG DIR")
     table.add_column("MEMORY", justify="right")
 
-    for entry in entries:
-        try:
-            stats = collect_process_stats(entry.pid)
-        except Exception:
-            stats = None
-        alive = stats.alive if stats is not None else is_pid_alive(entry.pid)
-        pss_mb = (stats.pss / 1024**2) if stats is not None else 0.0
+    for row in rows:
         table.add_row(
-            str(entry.pid),
-            entry.blueprint,
-            _format_uptime(entry.started_at),
-            "Healthy" if alive else "Dead",
-            entry.log_dir,
-            f"{pss_mb:.1f} MB",
+            str(row["pid"]),
+            str(row["blueprint"]),
+            str(row["uptime"]),
+            str(row["status"]),
+            str(row["log_dir"]),
+            f"{row['memory_mb']:.1f} MB",
         )
 
     console.print()
@@ -618,5 +619,6 @@ def rerun_bridge_cmd(
 
 if __name__ == "__main__":
     main()
+
 
 
