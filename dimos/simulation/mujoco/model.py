@@ -27,7 +27,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.simulation.mujoco.input_controller import InputController
-from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
+from dimos.simulation.mujoco.policy import DroneController, G1OnnxController, Go1OnnxController, OnnxController
 from dimos.utils.data import get_data
 
 
@@ -47,6 +47,10 @@ def get_assets() -> dict[str, bytes]:
     mjx_env.update_assets(assets, mjx_env.MENAGERIE_PATH / "unitree_go1" / "assets")
     mjx_env.update_assets(assets, mjx_env.MENAGERIE_PATH / "unitree_g1" / "assets")
 
+    # Skydio X2 drone assets
+    mjx_env.update_assets(assets, data_dir, "*.obj")
+    mjx_env.update_assets(assets, data_dir, "*.png")
+
     # From: https://sketchfab.com/3d-models/jeong-seun-34-42956ca979404a038b8e0d3e496160fd
     person_dir = epath.Path(str(get_data("person")))
     mjx_env.update_assets(assets, person_dir, "*.obj")
@@ -65,6 +69,14 @@ def load_model(
     data = mujoco.MjData(model)
 
     mujoco.mj_resetDataKeyframe(model, data, 0)
+
+    # Drone uses its own PD controller, not ONNX
+    if robot == "skydio_x2":
+        model.opt.timestep = 0.01
+        mujoco.mj_forward(model, data)
+        drone_ctrl = DroneController(model, data)
+        mujoco.set_mjcb_control(drone_ctrl.get_control)
+        return model, data
 
     match robot:
         case "unitree_g1":

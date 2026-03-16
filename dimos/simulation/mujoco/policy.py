@@ -15,6 +15,7 @@
 # limitations under the License.
 
 
+import math
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -149,3 +150,100 @@ class G1OnnxController(OnnxController):
     def _post_control_update(self) -> None:
         phase_tp1 = self._phase + self._phase_dt
         self._phase = np.fmod(phase_tp1 + np.pi, 2 * np.pi) - np.pi
+
+
+class DroneController:
+    """PD attitude controller for the Skydio X2 quadrotor.
+
+    Converts velocity commands into 4 motor thrusts via:
+      1. Vertical velocity PD -> collective thrust
+      2. Horizontal velocity error -> target tilt angles (clamped)
+      3. Attitude PD on body-frame pitch/roll (gravity-vector based, yaw-independent)
+      4. Yaw heading-lock (angle PD) or rate-tracking (rate P)
+      5. Yaw feedforward to cancel parasitic torque from roll commands
+      6. X-config motor mixing -> clipped to [0, 13] per motor
+    """
+
+    def __init__(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+        self.model = model
+        self.data = data
+        self.body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "x2")
+
+        self.hover_thrust = 3.2495625
+
+        self.kp_vxy = 1.2
+        self.kp_vz = 3.0
+        self.kp_att = 8.0
+        self.kd_att = 4.0
+        self.kp_yaw_rate = 1.5
+        self.kp_yaw_angle = 3.0
+        self.kd_yaw = 1.5
+
+        self.cmd_vx = 0.0
+        self.cmd_vy = 0.0
+        self.cmd_vz = 0.0
+        self.cmd_yaw_rate = 0.0
+
+        quat = self.data.xquat[self.body_id]
+        self._target_yaw = math.atan2(
+            2.0 * (quat[0] * quat[3] + quat[1] * quat[2]),
+            1.0 - 2.0 * (quat[2] ** 2 + quat[3] ** 2),
+        )
+        self._yaw_locked = True
+
+    def set_velocity(self, vx: float, vy: float, vz: float, yaw_rate: float) -> None:
+        self.cmd_vx = vx
+        self.cmd_vy = vy
+        self.cmd_vz = vz
+        self.cmd_yaw_rate = yaw_rate
+        if yaw_rate != 0.0:
+            self._yaw_locked = False
+        elif not self._yaw_locked:
+            q = self.data.xquat[self.body_id]
+            self._target_yaw = math.atan2(
+                2.0 * (q[0] * q[3] + q[1] * q[2]),
+                1.0 - 2.0 * (q[2] ** 2 + q[3] ** 2),
+            )
+            self._yaw_locked = True
+
+    def compute_control(self) -> np.ndarray[Any, Any]:
+        quat = self.data.xquat[self.body_id].copy()
+        vel = self.data.cvel[self.body_id]
+        R = np.zeros(9)
+        mujoco.mju_quat2Mat(R, quat)
+        R = R.reshape(3, 3)
+        v_body = R.T @ vel[3:]
+        omega_body = R.T @ vel[:3]
+        w, qx, qy, qz = quat
+
+        gz = R[2, :]
+        pitch = math.atan2(-gz[0], gz[2])
+        roll = math.atan2(gz[1], gz[2])
+
+        base = self.hover_thrust + self.kp_vz * (self.cmd_vz - vel[3 + 2])
+        target_pitch = float(np.clip(self.kp_vxy * (self.cmd_vx - v_body[0]), -0.4, 0.4))
+        target_roll = float(np.clip(self.kp_vxy * (self.cmd_vy - v_body[1]), -0.4, 0.4))
+
+        pitch_cmd = self.kp_att * (target_pitch - pitch) - self.kd_att * omega_body[1]
+        roll_cmd = self.kp_att * (target_roll - roll) - self.kd_att * omega_body[0]
+
+        if self._yaw_locked:
+            cur_yaw = math.atan2(2 * (w * qz + qx * qy), 1 - 2 * (qy**2 + qz**2))
+            angle_err = math.atan2(
+                math.sin(self._target_yaw - cur_yaw),
+                math.cos(self._target_yaw - cur_yaw),
+            )
+            yaw_cmd = self.kp_yaw_angle * angle_err - self.kd_yaw * omega_body[2]
+        else:
+            yaw_cmd = self.kp_yaw_rate * (self.cmd_yaw_rate - omega_body[2])
+
+        yaw_cmd += roll_cmd
+
+        t1 = base + pitch_cmd + roll_cmd - yaw_cmd
+        t2 = base + pitch_cmd - roll_cmd + yaw_cmd
+        t3 = base - pitch_cmd - roll_cmd + yaw_cmd
+        t4 = base - pitch_cmd + roll_cmd - yaw_cmd
+        return np.clip(np.array([t1, t2, t3, t4]), 0.0, 13.0)
+
+    def get_control(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
+        data.ctrl[:] = self.compute_control()
