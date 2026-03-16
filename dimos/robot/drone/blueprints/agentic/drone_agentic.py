@@ -26,7 +26,7 @@ from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillConta
 from dimos.agents.skills.osm import OsmSkill
 from dimos.agents.web_human_input import WebInput
 from dimos.core.blueprints import autoconnect
-from dimos.robot.drone.blueprints.basic.drone_basic import drone_basic
+from dimos.robot.drone.blueprints.basic.drone_basic import drone_basic, drone_basic_gazebo
 from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
 
 DRONE_SYSTEM_PROMPT = """\
@@ -34,6 +34,11 @@ You are controlling a DJI drone with MAVLink interface.
 You have access to drone control skills you are already flying so only run move_twist, set_mode, and fly_to.
 When the user gives commands, use the appropriate skills to control the drone.
 Always confirm actions and report results. Send fly_to commands only at above 200 meters altitude to be safe.
+
+Motion skills: move(x, y, z, duration) and move_forward(distance, speed) use velocity commands.
+For direct position use go_to_position(x, y, z, vx_ff, vy_ff, vz_ff): position in local NED (m; z negative = up) with optional velocity feedforward.
+Yaw control: use rotate_to(heading_deg) to turn to a heading (0–360°, 0=North, 90=East). Remember you have this for "turn left/right", "face North", etc.
+
 Here are some GPS locations to remember
 6th and Natoma intersection: 37.78019978319006, -122.40770815020853,
 454 Natoma (Office): 37.780967465525244, -122.40688342010769
@@ -55,7 +60,22 @@ drone_agentic = autoconnect(
     ]
 )
 
+drone_agentic_gazebo = autoconnect(
+    drone_basic_gazebo,
+    DroneTrackingModule.blueprint(outdoor=False),
+    GoogleMapsSkillContainer.blueprint(),
+    OsmSkill.blueprint(),
+    Agent.blueprint(system_prompt=DRONE_SYSTEM_PROMPT, model="gpt-4o-mini"),
+    WebInput.blueprint(),
+).remappings(
+    [
+        (DroneTrackingModule, "video_input", "video"),
+        (DroneTrackingModule, "cmd_vel", "movecmd_twist"),
+    ]
+)
+
 __all__ = [
     "DRONE_SYSTEM_PROMPT",
     "drone_agentic",
+    "drone_agentic_gazebo",
 ]

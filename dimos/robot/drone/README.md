@@ -19,6 +19,11 @@ dimos run drone-basic --set outdoor=true
 
 # Agentic with LLM control
 dimos run drone-agentic
+
+# Gazebo + ArduPilot SITL
+dimos run drone-basic-gazebo
+dimos run drone-agentic-gazebo
+dimos run drone-basic-gazebo-spatial
 ```
 
 To interact with the agent, run `dimos humancli` in a separate terminal.
@@ -47,6 +52,27 @@ Composes on top of `drone-basic`, adding autonomous capabilities:
 | `OsmSkill` | OpenStreetMap queries |
 | `McpServer` + `McpClient` | LLM agent (default: GPT-4o) via MCP |
 | `WebInput` | Web/CLI interface for human commands |
+
+### `drone-basic-gazebo` / `drone-agentic-gazebo` / `drone-basic-gazebo-spatial`
+Same as the non-Gazebo blueprints but with video from Gazebo (RTP/H264 on UDP 5600). Odometry from MAVLink; when SITL sends `LOCAL_POSITION_NED` it is used for position. Spatial variant adds the semantic map (camera + TF).
+
+## Running with Gazebo + ArduPilot
+
+1. **Install ArduPilot SITL** and a GCS (e.g. MAVProxy). See the [ArduPilot development wiki](https://ardupilot.org/dev/).
+2. **Install Gazebo and the ArduPilot Gazebo plugin** (Iris quad, camera streaming, etc.): [Using SITL with Gazebo](https://ardupilot.org/dev/docs/sitl-with-gazebo.html). Set `GZ_SIM_SYSTEM_PLUGIN_PATH` and `GZ_SIM_RESOURCE_PATH` as described there.
+3. **Start Gazebo** with the Iris world (camera streams to UDP 5600):
+   ```bash
+   gz sim -v4 -r iris_runway.sdf
+   ```
+   Enable camera streaming if needed:
+   ```bash
+   gz topic -t /world/iris_runway/model/iris_with_gimbal/model/gimbal/link/pitch_link/sensor/camera/image/enable_streaming -m gz.msgs.Boolean -p "data: 1"
+   ```
+4. **Start SITL** in another terminal:
+   ```bash
+   sim_vehicle.py -v ArduCopter -f gazebo-iris --model JSON --map --console
+   ```
+5. **Run DimOS** (e.g. `dimos run drone-agentic-gazebo`). MAVLink: default UDP 14550. Video: port 5600.
 
 ## Installation
 

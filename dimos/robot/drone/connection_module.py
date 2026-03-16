@@ -36,6 +36,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
+from dimos.robot.drone.gazebo_video_stream import GazeboVideoStream
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.utils.logging_config import setup_logger
 
@@ -52,6 +53,7 @@ def _add_disposable(composite: CompositeDisposable, item: Disposable | Any) -> N
 class Config(ModuleConfig):
     connection_string: str = "udp:0.0.0.0:14550"
     video_port: int = 5600
+    video_source: str = "dji"
     outdoor: bool = False
 
 
@@ -92,7 +94,7 @@ class DroneConnectionModule(Module[Config]):
         """
         super().__init__(**kwargs)
         self.connection: MavlinkConnection | None = None
-        self.video_stream: DJIDroneVideoStream | None = None
+        self.video_stream: DJIDroneVideoStream | GazeboVideoStream | None = None
         self._latest_video_frame = None
         self._latest_telemetry = None
         self._latest_status = None
@@ -116,7 +118,10 @@ class DroneConnectionModule(Module[Config]):
             )
             self.connection.connect()
 
-            self.video_stream = DJIDroneVideoStream(port=self.config.video_port)
+            if self.config.video_source == "gazebo":
+                self.video_stream = GazeboVideoStream(port=self.config.video_port)
+            else:
+                self.video_stream = DJIDroneVideoStream(port=self.config.video_port)
 
         if not self.connection.connected:
             logger.error("Failed to connect to drone")
@@ -281,6 +286,56 @@ class DroneConnectionModule(Module[Config]):
         """
         if self.connection:
             self.connection.move(Vector3(x, y, z), duration)
+
+    @skill
+    def move_forward(self, distance: float, speed: float = 0.3) -> None:
+        """Move forward by a given distance in meters.
+
+        Args:
+            distance: Distance to move in meters (positive = forward).
+            speed: Forward speed in m/s. Default 0.3.
+        """
+        if self.connection and abs(distance) >= 0.01:
+            duration = abs(distance) / max(0.01, speed)
+            vx = speed if distance >= 0 else -speed
+            self.connection.move(Vector3(vx, 0.0, 0.0), duration)
+
+    @skill
+    def go_to_position(
+        self, x: float, y: float, z: float,
+        vx_ff: float = 0.0, vy_ff: float = 0.0, vz_ff: float = 0.0,
+    ) -> bool:
+        """Send position target in local NED with optional velocity feedforward.
+
+        Args:
+            x: North position in meters (local NED).
+            y: East position in meters (local NED).
+            z: Down position in meters (negative = up).
+            vx_ff: Velocity feedforward North (m/s). Optional.
+            vy_ff: Velocity feedforward East (m/s). Optional.
+            vz_ff: Velocity feedforward Down (m/s). Optional.
+
+        Returns:
+            True if position target sent successfully
+        """
+        if self.connection:
+            return self.connection.set_position_target(x, y, z, vx_ff, vy_ff, vz_ff)
+        return False
+
+    @skill
+    def rotate_to(self, heading_deg: float, timeout: float = 60.0) -> bool:
+        """Rotate drone to a specific heading (yaw control).
+
+        Args:
+            heading_deg: Target heading in degrees (0–360, 0=North, 90=East).
+            timeout: Max time to rotate in seconds.
+
+        Returns:
+            True if rotation completed successfully
+        """
+        if self.connection:
+            return self.connection.rotate_to(heading_deg, timeout)
+        return False
 
     @skill
     def takeoff(self, altitude: float = 3.0) -> bool:

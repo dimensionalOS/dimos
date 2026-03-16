@@ -142,6 +142,9 @@ class MavlinkConnection:
             elif msg_type == "ATTITUDE":
                 self._publish_odom()
 
+            elif msg_type == "LOCAL_POSITION_NED":
+                self._publish_odom()
+
             self.telemetry[msg_type] = msg_dict
 
             self._publish_telemetry()
@@ -178,11 +181,17 @@ class MavlinkConnection:
         current_time = time.time()
         dt = current_time - self._last_update
 
-        # Get position data from GLOBAL_POSITION_INT
+        local_ned = self.telemetry.get("LOCAL_POSITION_NED", {})
         pos_data = self.telemetry.get("GLOBAL_POSITION_INT", {})
 
+        if not self.outdoor and local_ned:
+            # NED → world: x North, -y East→West, -z Down→Up
+            self._position["x"] = local_ned.get("x", self._position["x"])
+            self._position["y"] = -local_ned.get("y", -self._position["y"])
+            self._position["z"] = -local_ned.get("z", -self._position["z"])
+
         # Outdoor mode: Use GPS coordinates
-        if self.outdoor and pos_data:
+        elif self.outdoor and pos_data:
             lat = pos_data.get("lat", 0)  # Already in degrees from update_telemetry
             lon = pos_data.get("lon", 0)  # Already in degrees from update_telemetry
 
@@ -212,13 +221,13 @@ class MavlinkConnection:
             self._position["x"] += vx * dt  # North → X (forward)
             self._position["y"] += -vy * dt  # East → -Y (right in ROS, Y points left/West)
 
-        # Altitude handling (same for both modes)
-        if "ALTITUDE" in self.telemetry:
-            self._position["z"] = self.telemetry["ALTITUDE"].get("altitude_relative", 0)
-        elif pos_data:
-            self._position["z"] = pos_data.get(
-                "relative_alt", 0
-            )  # Already in m from update_telemetry
+        if not (not self.outdoor and local_ned):
+            if "ALTITUDE" in self.telemetry:
+                self._position["z"] = self.telemetry["ALTITUDE"].get("altitude_relative", 0)
+            elif pos_data:
+                self._position["z"] = pos_data.get(
+                    "relative_alt", 0
+                )  # Already in m from update_telemetry
 
         self._last_update = current_time
 
@@ -401,6 +410,49 @@ class MavlinkConnection:
                 0,  # yaw, yaw_rate (ignored)
             )
 
+        return True
+
+    def set_position_target(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        vx_ff: float = 0.0,
+        vy_ff: float = 0.0,
+        vz_ff: float = 0.0,
+    ) -> bool:
+        """Send position target in local NED with optional velocity feedforward.
+
+        Uses SET_POSITION_TARGET_LOCAL_NED with position + velocity (type_mask
+        ignores accel, force, yaw). Frame: MAV_FRAME_LOCAL_NED (x North, y East, z Down).
+        """
+        if not self.connected:
+            return False
+        mask = (
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+        )
+        self.mavlink.mav.set_position_target_local_ned_send(
+            0,
+            self.mavlink.target_system,
+            self.mavlink.target_component,
+            mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+            mask,
+            x,
+            y,
+            z,
+            vx_ff,
+            vy_ff,
+            vz_ff,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
         return True
 
     def stop(self) -> bool:

@@ -63,6 +63,7 @@ class DroneTrackingModule(Module):
         x_pid_params: PIDParams | None = None,
         y_pid_params: PIDParams | None = None,
         z_pid_params: PIDParams | None = None,
+        **kwargs: Any,
     ) -> None:
         """Initialize the drone tracking module.
 
@@ -75,7 +76,7 @@ class DroneTrackingModule(Module):
                           If None, uses preset based on outdoor flag.
             z_pid_params: Optional PID parameters for altitude control.
         """
-        super().__init__()
+        super().__init__(**kwargs)
 
         default_params = OUTDOOR_PID_PARAMS if outdoor else INDOOR_PID_PARAMS
         x_pid_params = x_pid_params if x_pid_params is not None else default_params
