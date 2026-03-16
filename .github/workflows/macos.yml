@@ -83,7 +83,7 @@ jobs:
           CI: "1"
         run: |
           source .venv/bin/activate
-          python -m pytest --durations=10 -m 'not (tool or mujoco)' --timeout=300 -k 'not (test_occupancy or test_voxels or unitree_go2_vlm_stream_test)' dimos/
+          python -m pytest --durations=10 -m 'not (tool or mujoco)' --timeout=300 --ignore=dimos/mapping/pointclouds/test_occupancy.py --ignore=dimos/mapping/test_voxels.py --ignore=dimos/robot/unitree/go2/blueprints/smart/unitree_go2_vlm_stream_test.py dimos/
 
       - name: Check disk usage (post-test)
         if: always()
