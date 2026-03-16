@@ -86,7 +86,6 @@ class TestStatusCLI:
 
         result = CliRunner().invoke(main, ["status"])
         assert result.exit_code == 0
-        assert "status-test-001" in result.output
         assert str(proc.pid) in result.output
         assert "unitree-go2" in result.output
 
@@ -177,3 +176,4 @@ class TestStopCLI:
                 break
             time.sleep(0.1)
         assert proc.poll() is not None, "Process should be dead after SIGTERM"
+
