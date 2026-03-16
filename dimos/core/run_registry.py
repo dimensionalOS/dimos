@@ -23,7 +23,7 @@ from pathlib import Path
 import re
 import time
 
-from dimos.core.constants import STATE_DIR
+from dimos.constants import STATE_DIR
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
