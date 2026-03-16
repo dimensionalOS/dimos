@@ -79,7 +79,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
-          LCM_DEFAULT_URL: "udpm://127.0.0.1:7667?ttl=0"
+          LCM_DEFAULT_URL: "udpm://239.255.76.67:7667?ttl=0"
           CI: "1"
         run: |
           source .venv/bin/activate
