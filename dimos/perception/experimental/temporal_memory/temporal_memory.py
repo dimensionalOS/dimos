@@ -33,6 +33,7 @@ from reactivex import Subject, interval
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
+from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -161,11 +162,7 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
         if self.config.db_dir:
             db_dir = Path(self.config.db_dir)
         else:
-            # Default: ~/.local/state/dimos/temporal_memory/
-            # XDG state dir — predictable, works for pip install and git clone.
-            xdg = os.environ.get("XDG_STATE_HOME")
-            state_root = Path(xdg) if xdg else Path.home() / ".local" / "state"
-            db_dir = state_root / "dimos" / "temporal_memory"
+            db_dir = STATE_DIR / "temporal_memory"
         db_dir.mkdir(parents=True, exist_ok=True)
         db_path = db_dir / "entity_graph.db"
         if self.config.new_memory and db_path.exists():

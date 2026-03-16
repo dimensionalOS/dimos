@@ -35,17 +35,10 @@ import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.core.blueprints import Blueprint, _BlueprintAtom
+from dimos.core.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.utils.logging_config import setup_logger
-
-try:
-    # Not a dependency, just the best way to get config path if available.
-    from gi.repository import GLib  # type: ignore[import-untyped,import-not-found]
-except ImportError:
-    CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-else:
-    CONFIG_DIR = Path(GLib.get_user_config_dir())
 
 logger = setup_logger()
 
@@ -123,7 +116,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 
 
-def arghelp(
+def arg_help(
     config: type[BaseModel],
     blueprint: Blueprint,
     indent: str = "    ",
@@ -148,7 +141,9 @@ def arghelp(
             output += f"{indent}{module}{k}:\n"
             # Find blueprint atom
             bp = next(bp for bp in blueprint.blueprints if bp.module.name == k)
-            output += arghelp(t, blueprint, indent=indent + "  ", module=module + k + ".", _atom=bp)
+            output += arg_help(
+                t, blueprint, indent=indent + "  ", module=module + k + ".", _atom=bp
+            )
         else:
             assert _atom is not None
             # Use __name__ to avoid "<class 'int'>" style output on basic types.
@@ -207,7 +202,6 @@ def run(
 
     from dimos.core.blueprints import autoconnect
     from dimos.core.run_registry import (
-        LOG_BASE_DIR,
         RunEntry,
         check_port_conflicts,
         cleanup_stale,
@@ -237,7 +231,7 @@ def run(
 
     blueprint_name = "-".join(robot_types)
     run_id = generate_run_id(blueprint_name)
-    log_dir = LOG_BASE_DIR / run_id
+    log_dir = LOG_DIR / run_id
 
     # Route structured logs (main.jsonl) to the per-run directory.
     # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
@@ -251,7 +245,7 @@ def run(
 
     if show_help:
         print("Blueprint arguments:")
-        print(arghelp(blueprint.config(), blueprint))
+        print(arg_help(blueprint.config(), blueprint))
         return
 
     blueprint_config = blueprint.config()

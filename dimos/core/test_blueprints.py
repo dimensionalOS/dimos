@@ -162,6 +162,9 @@ def test_config() -> None:
     assert config.model_fields["modulea"].annotation == ModuleA.default_config | None
     assert config.model_fields["moduleb"].annotation == ModuleB.default_config | None
 
+    with pytest.raises(ValidationError, match="invalid_key"):
+        config(module_a={"invalid_key": 5})
+
 
 def test_transports() -> None:
     custom_transport = LCMTransport("/custom_topic", Data1)

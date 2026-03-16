@@ -27,7 +27,7 @@ from typing import Any
 import structlog
 from structlog.processors import CallsiteParameter, CallsiteParameterAdder
 
-from dimos.constants import DIMOS_LOG_DIR, DIMOS_PROJECT_ROOT
+from dimos.constants import DIMOS_PROJECT_ROOT, LOG_DIR
 
 # Suppress noisy loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
@@ -79,16 +79,7 @@ def get_run_log_dir() -> Path | None:
 
 
 def _get_log_directory() -> Path:
-    # Check if running from a git repository
-    if (DIMOS_PROJECT_ROOT / ".git").exists():
-        log_dir = DIMOS_LOG_DIR
-    else:
-        # Running from an installed package - use XDG_STATE_HOME
-        xdg_state_home = os.getenv("XDG_STATE_HOME")
-        if xdg_state_home:
-            log_dir = Path(xdg_state_home) / "dimos" / "logs"
-        else:
-            log_dir = Path.home() / ".local" / "state" / "dimos" / "logs"
+    log_dir = LOG_DIR
 
     try:
         log_dir.mkdir(parents=True, exist_ok=True)

@@ -14,61 +14,79 @@
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
-from dimos.robot.cli.dimos import arghelp
-from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.visualization.rerun.bridge import RerunBridgeModule, _default_blueprint
+from dimos.robot.cli.dimos import arg_help
 
 
-def test_blueprint_arghelp():
-    blueprint = autoconnect(RerunBridgeModule.blueprint(), GO2Connection.blueprint())
-    output = arghelp(blueprint.config(), blueprint)
+def test_blueprint_arg_help():
+    class ConfigA(ModuleConfig):
+        frame_id_prefix: str | None = None
+        min_interval_sec: float = 0.1
+        entity_prefix: str = "world"
+        viewer_mode: Literal["native", "web", "connect", "none"] = "native"
+
+    class TestModuleA(Module[ConfigA]):
+        default_config = ConfigA
+
+    class ConfigB(ModuleConfig):
+        memory_limit: str = "25%"
+        ip: str = "127.0.0.1"
+
+    class TestModuleB(Module[ConfigB]):
+        default_config = ConfigB
+
+    blueprint = autoconnect(TestModuleA.blueprint(), TestModuleB.blueprint())
+    output = arg_help(blueprint.config(), blueprint)
     # List output produces better diff in pytest error output.
     assert output.split("\n") == [
-        "    rerunbridgemodule:",
-        "      * rerunbridgemodule.frame_id_prefix: str | None (default: None)",
-        "      * rerunbridgemodule.frame_id: str | None (default: None)",
-        "      * rerunbridgemodule.min_interval_sec: float (default: 0.1)",
-        "      * rerunbridgemodule.entity_prefix: str (default: world)",
-        "      * rerunbridgemodule.topic_to_entity: collections.abc.Callable[[typing.Any], str] | None (default: None)",
-        "      * rerunbridgemodule.viewer_mode: typing.Literal['native', 'web', 'connect', 'none']",
-        "      * rerunbridgemodule.connect_url: str (default: rerun+http://127.0.0.1:9877/proxy)",
-        "      * rerunbridgemodule.memory_limit: str (default: 25%)",
-        f"      * rerunbridgemodule.blueprint: collections.abc.Callable[rerun.blueprint.api.Blueprint] | None (default: {_default_blueprint})",
-        "    go2connection:",
-        "      * go2connection.frame_id_prefix: str | None (default: None)",
-        "      * go2connection.frame_id: str | None (default: None)",
-        "      * go2connection.ip: str",
+        "    testmodulea:",
+        "      * testmodulea.frame_id_prefix: str | None (default: None)",
+        "      * testmodulea.min_interval_sec: float (default: 0.1)",
+        "      * testmodulea.entity_prefix: str (default: world)",
+        "      * testmodulea.viewer_mode: typing.Literal['native', 'web', 'connect', 'none'] (default: native)",
+        "    testmoduleb:",
+        "      * testmoduleb.memory_limit: str (default: 25%)",
+        "      * testmoduleb.ip: str (default: 127.0.0.1)",
         "",
     ]
 
 
-def test_blueprint_arghelp_extra_args():
+def test_blueprint_arg_help_extra_args():
     """Test defaults passed to .blueprint() override."""
 
-    bridge = RerunBridgeModule.blueprint(frame_id_prefix="foo", viewer_mode="web")
-    blueprint = autoconnect(bridge, GO2Connection.blueprint(ip="1.1.1.1"))
-    output = arghelp(blueprint.config(), blueprint)
+    class ConfigA(ModuleConfig):
+        frame_id_prefix: str | None = None
+        min_interval_sec: float = 0.1
+        entity_prefix: str = "world"
+        viewer_mode: Literal["native", "web", "connect", "none"] = "native"
+
+    class TestModuleA(Module[ConfigA]):
+        default_config = ConfigA
+
+    class ConfigB(ModuleConfig):
+        memory_limit: str = "25%"
+        ip: str = "127.0.0.1"
+
+    class TestModuleB(Module[ConfigB]):
+        default_config = ConfigB
+
+    module_a = TestModuleA.blueprint(frame_id_prefix="foo", viewer_mode="web")
+    blueprint = autoconnect(module_a, TestModuleB.blueprint(ip="1.1.1.1"))
+    output = arg_help(blueprint.config(), blueprint)
     # List output produces better diff in pytest error output.
     assert output.split("\n") == [
-        "    rerunbridgemodule:",
-        "      * rerunbridgemodule.frame_id_prefix: str | None (default: foo)",
-        "      * rerunbridgemodule.frame_id: str | None (default: None)",
-        "      * rerunbridgemodule.min_interval_sec: float (default: 0.1)",
-        "      * rerunbridgemodule.entity_prefix: str (default: world)",
-        "      * rerunbridgemodule.topic_to_entity: collections.abc.Callable[[typing.Any], str] | None (default: None)",
-        "      * rerunbridgemodule.viewer_mode: typing.Literal['native', 'web', 'connect', 'none'] (default: web)",
-        "      * rerunbridgemodule.connect_url: str (default: rerun+http://127.0.0.1:9877/proxy)",
-        "      * rerunbridgemodule.memory_limit: str (default: 25%)",
-        f"      * rerunbridgemodule.blueprint: collections.abc.Callable[rerun.blueprint.api.Blueprint] | None (default: {_default_blueprint})",
-        "    go2connection:",
-        "      * go2connection.frame_id_prefix: str | None (default: None)",
-        "      * go2connection.frame_id: str | None (default: None)",
-        "      * go2connection.ip: str (default: 1.1.1.1)",
+        "    testmodulea:",
+        "      * testmodulea.frame_id_prefix: str | None (default: foo)",
+        "      * testmodulea.min_interval_sec: float (default: 0.1)",
+        "      * testmodulea.entity_prefix: str (default: world)",
+        "      * testmodulea.viewer_mode: typing.Literal['native', 'web', 'connect', 'none'] (default: web)",
+        "    testmoduleb:",
+        "      * testmoduleb.memory_limit: str (default: 25%)",
+        "      * testmoduleb.ip: str (default: 1.1.1.1)",
         "",
     ]
 
 
-def test_blueprint_arghelp_required():
+def test_blueprint_arg_help_required():
     """Test required arguments."""
 
     class Config(ModuleConfig):
@@ -79,7 +97,7 @@ def test_blueprint_arghelp_required():
         default_config = Config
 
     blueprint = TestModule.blueprint()
-    output = arghelp(blueprint.config(), blueprint)
+    output = arg_help(blueprint.config(), blueprint)
     assert output.split("\n") == [
         "    testmodule:",
         "      * testmodule.frame_id_prefix: str | None (default: None)",
