@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Literal
+
 from dimos.core.blueprints import autoconnect
 from dimos.core.module import Module, ModuleConfig
 from dimos.robot.cli.dimos import arg_help
