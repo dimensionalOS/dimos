@@ -330,9 +330,8 @@ Check our language interop examples:
 ## Troubleshooting & FAQ
 
 ### 1. Installation issues
-If you encounter installation problems, please ensure:
-- Your Python/Node version meets the requirements
-- All dependencies are installed correctly
+- Your Python version meets the requirements (Python 3.12 recommended — see [docs/requirements.md](docs/requirements.md))
+- All dependencies are installed correctly (`uv sync --all-extras`)
 - Try reinstalling dependencies
 
 ### 2. Common runtime errors
