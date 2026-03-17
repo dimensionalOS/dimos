@@ -326,3 +326,23 @@ Check our language interop examples:
 - [C++](examples/language-interop/cpp/)
 - [Lua](examples/language-interop/lua/)
 - [TypeScript](examples/language-interop/ts/)
+
+## Troubleshooting & FAQ
+
+### 1. Installation issues
+If you encounter installation problems, please ensure:
+- Your Python/Node version meets the requirements
+- All dependencies are installed correctly
+- Try reinstalling dependencies
+
+### 2. Common runtime errors
+Some common issues reported by the community:
+- Configuration errors → check environment variables
+- API errors → verify API keys and rate limits
+
+### 3. Usage tips
+- Start with minimal configuration
+- Test with small workflows first
+- Check logs for debugging
+
+More issues and solutions are continuously being added based on community feedback.
