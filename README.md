@@ -35,7 +35,7 @@ Dimensional is the modern operating system for generalist robotics. We are setti
 
 With a simple install and no ROS required, build physical applications entirely in python that run on any humanoid, quadruped, or drone.
 
-Dimensional is agent native -- "vibecode" your robots in natural language and build (local & hosted) multi-agent systems that work seamlessly with your hardware. Agents run as native modules — subscribing to any embedded stream, from perception (lidar, camera) and spatial memory down to control loops and motor drivers.
+Dimensional is agent native -- "vibecode" your robots in natural language and build (local & hosted) multi-agent systems that work seamlessly with your hardware. Agents run as native modules — subscribing to any embedded stream, from [perception](docs/capabilities/perception/readme.md)(lidar, camera) and spatial memory down to control loops and motor drivers.
 <table>
   <tr>
     <td align="center" width="50%">
@@ -51,7 +51,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
       SLAM, dynamic obstacle avoidance, route planning, and autonomous exploration — via both DimOS native and ROS<br><a href="https://x.com/stash_pomichter/status/2010471593806545367">Watch video</a>
     </td>
     <td align="center" width="50%">
-      <h3>Perception</h3>
+      <h3><a href="docs/capabilities/perception/readme.md">Perception</a></h3>
       Detectors, 3d projections, VLMs, Audio processing
     </td>
   </tr>
