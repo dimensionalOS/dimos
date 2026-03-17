@@ -17,11 +17,7 @@
 
 <big><big>
 
-[Hardware](#hardware) •
-[Installation](#installation) •
-[Agent CLI & MCP](#agent-cli-and-mcp) •
-[Blueprints](#blueprints) •
-[Development](#development)
+[Hardware](#hardware) • [Installation](#installation) • [Agent CLI & MCP](#agent-cli-and-mcp) • [Blueprints](#blueprints) • [Development](#development) • [Troubleshooting](#troubleshooting--faq)
 
 ⚠️ **Pre-Release Beta** ⚠️
 
