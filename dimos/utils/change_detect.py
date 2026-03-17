@@ -45,9 +45,7 @@ def _get_cache_dir() -> Path:
     return Path.home() / ".cache" / "dimos" / "change_detect"
 
 
-def _resolve_paths(
-    paths: Sequence[str | Path], cwd: str | Path | None = None
-) -> list[Path]:
+def _resolve_paths(paths: Sequence[str | Path], cwd: str | Path | None = None) -> list[Path]:
     """Expand globs/directories into a sorted list of individual file paths."""
     files: set[Path] = set()
     for entry in paths:
