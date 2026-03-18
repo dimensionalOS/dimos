@@ -315,6 +315,17 @@ COPY pyproject.toml setup.py /workspace/dimos/
 COPY dimos /workspace/dimos/dimos
 RUN /opt/dimos-venv/bin/pip install --no-cache-dir -e "/workspace/dimos[unitree]"
 
+# --- Layer: Build drdds_bridge ros2_pub (ROS2 side only) ---
+# The ros2_pub node reads from POSIX shared memory and publishes standard
+# ROS2 topics. It links against ROS2 Humble only (no drdds dependency).
+# The drdds_recv counterpart is built separately on the NOS host.
+COPY dimos/robot/deeprobotics/m20/docker/drdds_bridge ${WORKSPACE}/src/drdds_bridge
+RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
+    source ${WORKSPACE}/install/setup.bash && \
+    cd ${WORKSPACE} && \
+    colcon build --packages-select drdds_bridge \
+    --cmake-args -DBUILD_ROS2_PUB=ON -DBUILD_DRDDS_RECV=OFF -DCMAKE_BUILD_TYPE=Release"
+
 # Set up shell environment
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc && \
     echo "source ${WORKSPACE}/install/setup.bash" >> ~/.bashrc && \
