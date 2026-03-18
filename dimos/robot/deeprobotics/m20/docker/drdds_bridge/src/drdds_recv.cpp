@@ -98,8 +98,9 @@ int main(int argc, char** argv) {
         lidar_shm.commit();
 
         uint64_t c = lidar_count.fetch_add(1) + 1;
-        if (c % 100 == 1) {
+        if (c % 10 == 1) {
             std::cout << "[drdds_recv] lidar #" << c
+                      << " stamp=" << msg->header().stamp().sec() << "." << msg->header().stamp().nanosec()
                       << " pts=" << msg->width() * msg->height()
                       << " bytes=" << data_size << std::endl;
         }
