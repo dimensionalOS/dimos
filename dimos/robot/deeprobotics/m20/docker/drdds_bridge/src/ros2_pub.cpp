@@ -20,8 +20,8 @@ public:
           lidar_reader_(drdds_bridge::SHM_LIDAR_NAME),
           imu_reader_(drdds_bridge::SHM_IMU_NAME)
     {
-        // QoS: sensor data profile (BEST_EFFORT for low latency)
-        auto qos = rclcpp::SensorDataQoS();
+        // QoS: RELIABLE + KEEP_LAST to match FAST_LIO's default subscriber QoS
+        auto qos = rclcpp::QoS(10).reliable();
 
         lidar_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
             "/LIDAR/POINTS", qos);
