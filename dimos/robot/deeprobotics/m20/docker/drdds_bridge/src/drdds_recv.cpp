@@ -28,8 +28,11 @@ int main(int argc, char** argv) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    // Initialize drdds on domain 0
-    DrDDSManager::Init(0);
+    // Initialize drdds on domain 0 using the multi-domain Init
+    // The single-arg Init(0) doesn't create participants that match rsdriver.
+    // The vector Init with module_id + node_name matches how handler/lio_perception work.
+    std::vector<int> domains = {0};
+    DrDDSManager::Init(domains, "drdds_bridge", "drdds_recv", false, false, false);
 
     // Create shared memory writers
     drdds_bridge::ShmWriter lidar_shm(
@@ -133,22 +136,22 @@ int main(int argc, char** argv) {
         }
     };
 
-    // Create drdds subscribers
-    // topic_prefix "dr" matches rsdriver's default registration (DDS topic = "rt/dr/LIDAR/POINTS")
-    // libdrdds.so hardcodes "rt/dr/" as the default prefix — confirmed via `strings libdrdds.so`
-    DrDDSSubscriber<sensor_msgs::msg::PointCloud2PubSubType> lidar_sub(
-        on_lidar, "/LIDAR/POINTS", 0, "dr");
+    // Create drdds channels (pub+sub) — DrDDSChannel works with rsdriver,
+    // DrDDSSubscriber alone does not (different participant registration).
+    // Verified on robot: DrDDSChannel matches rsdriver at 10Hz lidar + 200Hz IMU.
+    DrDDSChannel<sensor_msgs::msg::PointCloud2PubSubType> lidar_ch(
+        on_lidar, "/LIDAR/POINTS", 0);
 
-    DrDDSSubscriber<sensor_msgs::msg::ImuPubSubType> imu_sub(
-        on_imu, "/IMU", 0, "dr");
+    DrDDSChannel<sensor_msgs::msg::ImuPubSubType> imu_ch(
+        on_imu, "/IMU", 0);
 
-    std::cout << "[drdds_recv] Subscriptions created. Waiting for data..." << std::endl;
+    std::cout << "[drdds_recv] Channels created. Waiting for data..." << std::endl;
 
     // Log match status periodically
     while (g_running) {
         std::this_thread::sleep_for(std::chrono::seconds(5));
-        std::cout << "[drdds_recv] status: lidar_matched=" << lidar_sub.GetMatchedCount()
-                  << " imu_matched=" << imu_sub.GetMatchedCount()
+        std::cout << "[drdds_recv] status: lidar_matched=" << lidar_ch.GetMatchedCount()
+                  << " imu_matched=" << imu_ch.GetMatchedCount()
                   << " lidar_msgs=" << lidar_count.load()
                   << " imu_msgs=" << imu_count.load() << std::endl;
     }
