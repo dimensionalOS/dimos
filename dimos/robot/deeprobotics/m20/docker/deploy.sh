@@ -566,6 +566,58 @@ case "${CMD}" in
         remote_ssh "systemctl is-active dimos-mac-bridge" 2>/dev/null || echo "inactive"
         ;;
 
+    bridge-build)
+        echo "=== Building drdds bridge on NOS host ==="
+        # Sync bridge source to NOS
+        rsync -avz --delete \
+            -e "ssh ${SSH_OPTS}" \
+            "${DIMOS_ROOT}/dimos/robot/deeprobotics/m20/docker/drdds_bridge/" \
+            "${NOS_USER}@${NOS_HOST}:/tmp/drdds_bridge/"
+
+        # Build on host (uses host's drdds SDK + FastDDS 2.14)
+        remote_ssh "cd /tmp/drdds_bridge && chmod +x build_host.sh && bash build_host.sh"
+        echo "=== Bridge build complete ==="
+        ;;
+
+    bridge-start)
+        echo "=== Starting drdds bridge ==="
+        # Start drdds_recv on host (background, uses host's drdds libs)
+        remote_ssh "pkill -f drdds_recv 2>/dev/null; sleep 1; \
+            nohup /opt/drdds_bridge/lib/drdds_bridge/drdds_recv \
+            > /var/log/drdds_recv.log 2>&1 &"
+        echo "  drdds_recv started on host"
+
+        # Start ros2_pub in nav container (reads SHM, publishes ROS2 topics)
+        remote_ssh "docker exec -d ${CONTAINER_NAME} bash -c '\
+            source /opt/ros/humble/setup.bash && \
+            source /ros2_ws/install/setup.bash && \
+            export FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/custom_fastdds.xml && \
+            ros2 run drdds_bridge ros2_pub 2>&1 | tee /var/log/ros2_pub.log'" 2>/dev/null || \
+        remote_ssh "docker exec -d dimos-nav bash -c '\
+            source /opt/ros/humble/setup.bash && \
+            source /ros2_ws/install/setup.bash && \
+            ros2 run drdds_bridge ros2_pub 2>&1 | tee /var/log/ros2_pub.log'"
+        echo "  ros2_pub started in container"
+        echo "=== Bridge running ==="
+        ;;
+
+    bridge-stop)
+        echo "Stopping drdds bridge..."
+        remote_ssh "pkill -f drdds_recv 2>/dev/null"
+        remote_ssh "docker exec ${CONTAINER_NAME} pkill -f ros2_pub 2>/dev/null" || \
+            remote_ssh "docker exec dimos-nav pkill -f ros2_pub 2>/dev/null" || true
+        echo "Bridge stopped."
+        ;;
+
+    bridge-logs)
+        echo "=== drdds_recv (host) ==="
+        remote_ssh "tail -20 /var/log/drdds_recv.log 2>/dev/null" || echo "  No logs"
+        echo ""
+        echo "=== ros2_pub (container) ==="
+        remote_ssh "docker exec ${CONTAINER_NAME} cat /var/log/ros2_pub.log 2>/dev/null | tail -20" || \
+            remote_ssh "docker exec dimos-nav cat /var/log/ros2_pub.log 2>/dev/null | tail -20" || echo "  No logs"
+        ;;
+
     *)
         echo "Usage: $0 <command> [--host <hostname>]"
         echo ""
@@ -579,6 +631,10 @@ case "${CMD}" in
         echo "  logs    - Tail container logs"
         echo "  shell   - Open shell in running container"
         echo "  status  - Show container + service status"
+        echo "  bridge-build - Build drdds bridge on NOS host"
+        echo "  bridge-start - Start bridge (drdds_recv + ros2_pub)"
+        echo "  bridge-stop  - Stop bridge processes"
+        echo "  bridge-logs  - Show bridge logs"
         echo ""
         echo "Options:"
         echo "  --host <hostname>  Access robot via Tailscale (e.g., m20-781-mochi)"
