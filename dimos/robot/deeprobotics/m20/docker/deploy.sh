@@ -581,22 +581,48 @@ case "${CMD}" in
 
     bridge-start)
         echo "=== Starting drdds bridge ==="
-        # Start drdds_recv on host (background, uses host's drdds libs)
-        remote_ssh "pkill -f drdds_recv 2>/dev/null; sleep 1; \
-            nohup /opt/drdds_bridge/lib/drdds_bridge/drdds_recv \
-            > /var/log/drdds_recv.log 2>&1 &"
+        # CRITICAL: FastDDS SHM discovery requires drdds_recv to start BEFORE
+        # rsdriver and yesense. Otherwise, endpoints match but data never flows.
+
+        # Step 1: Stop DDS publishers
+        echo "  Stopping rsdriver + yesense for discovery ordering..."
+        remote_sudo systemctl stop rsdriver yesense 2>/dev/null
+        sleep 2
+
+        # Step 2: Clean stale SHM segments
+        remote_sudo "rm -f /dev/shm/fastrtps_* /dev/shm/fast_datasharing_* /dev/shm/sem.fastrtps_* /dev/shm/drdds_bridge_*"
+
+        # Step 3: Start drdds_recv FIRST (must run as root for SHM permissions)
+        remote_sudo "nohup /opt/drdds_bridge/lib/drdds_bridge/drdds_recv \
+            > /tmp/drdds_recv.log 2>&1 &"
+        sleep 3
         echo "  drdds_recv started on host"
 
-        # Start ros2_pub in nav container (reads SHM, publishes ROS2 topics)
+        # Step 4: Restart rsdriver (30s startup delay in its script)
+        remote_sudo systemctl start rsdriver
+        echo "  rsdriver restarting (30s init delay)..."
+        sleep 35
+
+        # Step 5: Restart yesense (IMU)
+        remote_sudo systemctl start yesense
+        sleep 3
+        echo "  yesense restarted"
+
+        # Step 6: Verify data flow
+        echo "  Verifying bridge data flow..."
+        remote_ssh "tail -3 /tmp/drdds_recv.log 2>/dev/null || true"
+
+        # Step 7: Start ros2_pub in nav container (reads SHM, publishes ROS2)
         remote_ssh "docker exec -d ${CONTAINER_NAME} bash -c '\
+            unset FASTRTPS_DEFAULT_PROFILES_FILE && \
             source /opt/ros/humble/setup.bash && \
             source /ros2_ws/install/setup.bash && \
-            export FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/custom_fastdds.xml && \
-            ros2 run drdds_bridge ros2_pub 2>&1 | tee /var/log/ros2_pub.log'" 2>/dev/null || \
+            ros2 run drdds_bridge ros2_pub 2>&1 | tee /tmp/ros2_pub.log'" 2>/dev/null || \
         remote_ssh "docker exec -d dimos-nav bash -c '\
+            unset FASTRTPS_DEFAULT_PROFILES_FILE && \
             source /opt/ros/humble/setup.bash && \
             source /ros2_ws/install/setup.bash && \
-            ros2 run drdds_bridge ros2_pub 2>&1 | tee /var/log/ros2_pub.log'"
+            ros2 run drdds_bridge ros2_pub 2>&1 | tee /tmp/ros2_pub.log'"
         echo "  ros2_pub started in container"
         echo "=== Bridge running ==="
         ;;

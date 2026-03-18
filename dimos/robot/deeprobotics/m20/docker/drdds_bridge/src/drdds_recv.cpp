@@ -28,9 +28,7 @@ int main(int argc, char** argv) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    // Initialize drdds on domain 0 using the multi-domain Init
-    // The single-arg Init(0) doesn't create participants that match rsdriver.
-    // The vector Init with module_id + node_name matches how handler/lio_perception work.
+    // Initialize drdds on domain 0 using the multi-domain Init (same as rsdriver)
     std::vector<int> domains = {0};
     DrDDSManager::Init(domains, "drdds_bridge", "drdds_recv", false, false, false);
 
@@ -138,9 +136,7 @@ int main(int argc, char** argv) {
         }
     };
 
-    // Create drdds channels (pub+sub) — DrDDSChannel works with rsdriver,
-    // DrDDSSubscriber alone does not (different participant registration).
-    // Verified on robot: DrDDSChannel matches rsdriver at 10Hz lidar + 200Hz IMU.
+    // DrDDSChannel (pub+sub) — verified working in previous session
     DrDDSChannel<sensor_msgs::msg::PointCloud2PubSubType> lidar_ch(
         on_lidar, "/LIDAR/POINTS", 0);
 
@@ -149,7 +145,6 @@ int main(int argc, char** argv) {
 
     std::cout << "[drdds_recv] Channels created. Waiting for data..." << std::endl;
 
-    // Log match status periodically
     while (g_running) {
         std::this_thread::sleep_for(std::chrono::seconds(5));
         std::cout << "[drdds_recv] status: lidar_matched=" << lidar_ch.GetMatchedCount()
