@@ -579,6 +579,28 @@ case "${CMD}" in
         echo "=== Bridge build complete ==="
         ;;
 
+    bridge-install)
+        echo "=== Installing drdds bridge systemd service ==="
+        echo "  This makes the bridge survive reboots."
+        echo "  drdds_recv starts BEFORE rsdriver/yesense (SHM discovery ordering)."
+
+        # Copy service file to NOS
+        rsync -avz \
+            -e "ssh ${SSH_OPTS}" \
+            "${DIMOS_ROOT}/dimos/robot/deeprobotics/m20/docker/drdds_bridge/drdds-bridge.service" \
+            "${NOS_USER}@${NOS_HOST}:/tmp/drdds-bridge.service"
+
+        # Install and enable
+        remote_sudo cp /tmp/drdds-bridge.service /etc/systemd/system/drdds-bridge.service
+        remote_sudo systemctl daemon-reload
+        remote_sudo systemctl enable drdds-bridge
+        echo "  Service installed and enabled."
+        echo ""
+        echo "  To activate now: ./deploy.sh bridge-start"
+        echo "  After reboot: drdds-bridge starts automatically before rsdriver/yesense"
+        echo "=== Install complete ==="
+        ;;
+
     bridge-start)
         echo "=== Starting drdds bridge ==="
         # CRITICAL: FastDDS SHM discovery requires drdds_recv to start BEFORE
@@ -624,6 +646,10 @@ case "${CMD}" in
             source /ros2_ws/install/setup.bash && \
             ros2 run drdds_bridge ros2_pub 2>&1 | tee /tmp/ros2_pub.log'"
         echo "  ros2_pub started in container"
+
+        # Step 8: Restart charging services (need fresh Data Sharing segments)
+        echo "  Restarting charging services..."
+        remote_sudo systemctl restart reflective_column charge_manager 2>/dev/null
         echo "=== Bridge running ==="
         ;;
 
@@ -657,10 +683,11 @@ case "${CMD}" in
         echo "  logs    - Tail container logs"
         echo "  shell   - Open shell in running container"
         echo "  status  - Show container + service status"
-        echo "  bridge-build - Build drdds bridge on NOS host"
-        echo "  bridge-start - Start bridge (drdds_recv + ros2_pub)"
-        echo "  bridge-stop  - Stop bridge processes"
-        echo "  bridge-logs  - Show bridge logs"
+        echo "  bridge-build   - Build drdds bridge on NOS host"
+        echo "  bridge-install - Install systemd service (persists across reboots)"
+        echo "  bridge-start   - Start bridge (drdds_recv + ros2_pub)"
+        echo "  bridge-stop    - Stop bridge processes"
+        echo "  bridge-logs    - Show bridge logs"
         echo ""
         echo "Options:"
         echo "  --host <hostname>  Access robot via Tailscale (e.g., m20-781-mochi)"

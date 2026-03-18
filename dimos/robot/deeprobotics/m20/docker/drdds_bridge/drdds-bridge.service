@@ -1,0 +1,19 @@
+[Unit]
+Description=drdds-to-ROS2 Bridge (lidar + IMU receiver)
+# Must start BEFORE rsdriver and yesense for FastDDS SHM discovery to work.
+# See ROSNAV_MIGRATION_LOG.md Finding #5 for details.
+Before=rsdriver.service yesense.service
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/bin/bash -c 'rm -f /dev/shm/fastrtps_* /dev/shm/fast_datasharing_* /dev/shm/sem.fastrtps_* /dev/shm/drdds_bridge_*'
+ExecStart=/opt/drdds_bridge/lib/drdds_bridge/drdds_recv
+# After rsdriver/yesense start (they depend on us being up first),
+# restart services that need fresh Data Sharing segments
+ExecStartPost=/bin/bash -c 'sleep 40 && systemctl restart reflective_column charge_manager'
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -304,13 +304,28 @@ Running `pkill -f drdds_recv` over SSH kills the SSH session itself because the 
 
 ---
 
+## Finding #14: Bridge Startup Breaks charge_manager and reflective_column (2026-03-18)
+
+The bridge startup sequence (Finding #5) cleans all `/dev/shm/fast_datasharing_*` segments. This breaks `charge_manager` and `reflective_column` because they hold references to rsdriver's old Data Sharing segments.
+
+**Symptom**: charge_manager logs `Failed to open segment fast_datasharing_... No such file or directory`. Return-to-charger button does nothing.
+
+**Fix**: After the bridge startup sequence completes, restart both charging services:
+```bash
+sudo systemctl restart reflective_column charge_manager
+```
+
+**Note**: The service name is `reflective_column` (not `reflective_column_node`). Its binary lives at `/opt/robot/share/charge_manager/bin/reflective_column_node`.
+
+---
+
 ## Remaining Work
 
 ### Immediate Next Steps
 
-1. **FAST_LIO odometry verification**: Check that `/Odometry` produces reasonable pose estimates (not drifting wildly). The "No point, skip this scan!" warning on first scan may indicate field format issues — some scans might be empty.
+1. **Install systemd service for reboot persistence**: Run `./deploy.sh bridge-install` to install `drdds-bridge.service` on NOS. This ensures drdds_recv starts before rsdriver/yesense on boot, and restarts charge_manager/reflective_column after rsdriver is up.
 
-2. **Deploy sequence automation**: The `deploy.sh bridge-start` command now handles startup ordering, but needs testing from Mac.
+2. **FAST_LIO odometry verification**: Check that `/Odometry` produces reasonable pose estimates (not drifting wildly). The "No point, skip this scan!" warning on first scan may indicate field format issues — some scans might be empty.
 
 3. **Rebuild nav container image**: ros2_pub was rebuilt inside the running container. Need to update the Dockerfile and push a new image so the fix persists across container restarts.
 
