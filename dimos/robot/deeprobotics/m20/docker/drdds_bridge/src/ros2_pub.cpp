@@ -76,6 +76,8 @@ private:
                 uint32_t nlen;
                 std::memcpy(&nlen, fp, 4); fp += 4;
                 field.name.assign(reinterpret_cast<const char*>(fp), nlen); fp += nlen;
+                // RSAIRY uses "timestamp" but FAST_LIO expects "time"
+                if (field.name == "timestamp") field.name = "time";
                 std::memcpy(&field.offset, fp, 4); fp += 4;
                 field.datatype = *fp; fp += 1;
                 std::memcpy(&field.count, fp, 4); fp += 4;
