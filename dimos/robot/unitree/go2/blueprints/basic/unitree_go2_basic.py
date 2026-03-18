@@ -90,6 +90,8 @@ def _go2_rerun_blueprint() -> Any:
             ),
             column_shares=[1, 2],
         ),
+        rrb.TimePanel(state="hidden"),
+        rrb.SelectionPanel(state="hidden"),
     )
 
 
