@@ -53,7 +53,9 @@ int main(int argc, char** argv) {
         uint8_t* data = lidar_shm.slot_data(slot);
 
         uint32_t data_size = msg->data().size();
-        if (data_size + sizeof(drdds_bridge::SlotHeader) > drdds_bridge::LIDAR_SLOT_SIZE) {
+        // Reserve space for fields after the data: 4 + fields * (4+32+4+1+4) max ~2KB
+        uint32_t max_fields_size = 4 + msg->fields().size() * 45;
+        if (data_size + max_fields_size + sizeof(drdds_bridge::SlotHeader) > drdds_bridge::LIDAR_SLOT_SIZE) {
             std::cerr << "[drdds_recv] WARN: lidar msg too large: " << data_size << std::endl;
             return;
         }

@@ -94,6 +94,9 @@ public:
         if (mem_ && mem_ != MAP_FAILED) munmap(mem_, total_size_);
     }
 
+    ShmWriter(const ShmWriter&) = delete;
+    ShmWriter& operator=(const ShmWriter&) = delete;
+
     // Returns pointer to current write slot's SlotHeader. Caller fills in header + data.
     // Call commit() after writing to advance the write index.
     SlotHeader* acquire() {
@@ -123,16 +126,21 @@ public:
     ShmReader(const std::string& name) : name_(name) {}
 
     bool try_open() {
-        int fd = shm_open(name_.c_str(), O_RDWR, 0666);
+        int fd = shm_open(name_.c_str(), O_RDONLY, 0666);
         if (fd < 0) return false;
 
-        // Read header first to get sizes
-        ShmHeader tmp;
-        if (read(fd, &tmp, sizeof(tmp)) != sizeof(tmp)) { close(fd); return false; }
-        if (tmp.ready != SHM_READY_MAGIC) { close(fd); return false; }
+        // Map just the header first to read sizes safely (avoids read() on atomics)
+        void* hdr_map = mmap(nullptr, sizeof(ShmHeader), PROT_READ, MAP_SHARED, fd, 0);
+        if (hdr_map == MAP_FAILED) { close(fd); return false; }
+        auto* peek = reinterpret_cast<const ShmHeader*>(hdr_map);
+        if (peek->ready != SHM_READY_MAGIC) { munmap(hdr_map, sizeof(ShmHeader)); close(fd); return false; }
+        uint32_t num_slots = peek->num_slots;
+        uint32_t slot_size = peek->slot_size;
+        munmap(hdr_map, sizeof(ShmHeader));
 
-        size_t total = shm_total_size(tmp.num_slots, tmp.slot_size);
-        mem_ = (uint8_t*)mmap(nullptr, total, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        // Now map the full region read-only
+        size_t total = shm_total_size(num_slots, slot_size);
+        mem_ = (uint8_t*)mmap(nullptr, total, PROT_READ, MAP_SHARED, fd, 0);
         close(fd);
         if (mem_ == MAP_FAILED) { mem_ = nullptr; return false; }
 
@@ -167,6 +175,9 @@ public:
     ~ShmReader() {
         if (mem_ && mem_ != MAP_FAILED) munmap(mem_, total_size_);
     }
+
+    ShmReader(const ShmReader&) = delete;
+    ShmReader& operator=(const ShmReader&) = delete;
 
 private:
     uint8_t* mem_ = nullptr;
