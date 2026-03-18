@@ -134,12 +134,13 @@ int main(int argc, char** argv) {
     };
 
     // Create drdds subscribers
-    // topic_prefix "" to match rsdriver's registration
+    // topic_prefix "dr" matches rsdriver's default registration (DDS topic = "rt/dr/LIDAR/POINTS")
+    // libdrdds.so hardcodes "rt/dr/" as the default prefix — confirmed via `strings libdrdds.so`
     DrDDSSubscriber<sensor_msgs::msg::PointCloud2PubSubType> lidar_sub(
-        on_lidar, "/LIDAR/POINTS", 0, "");
+        on_lidar, "/LIDAR/POINTS", 0, "dr");
 
     DrDDSSubscriber<sensor_msgs::msg::ImuPubSubType> imu_sub(
-        on_imu, "/IMU", 0, "");
+        on_imu, "/IMU", 0, "dr");
 
     std::cout << "[drdds_recv] Subscriptions created. Waiting for data..." << std::endl;
 
