@@ -41,8 +41,6 @@ teleop_quest_rerun = autoconnect(
 
 
 # Single XArm7 teleop: right controller -> xarm7
-# Usage: dimos run arm-teleop-xarm7
-
 teleop_quest_xarm7 = autoconnect(
     arm_teleop_module(task_names={"right": "teleop_xarm"}),
     coordinator_teleop_xarm7,
@@ -57,7 +55,6 @@ teleop_quest_xarm7 = autoconnect(
 
 
 # Single Piper teleop: left controller -> piper arm
-# Usage: dimos run arm-teleop-piper
 teleop_quest_piper = autoconnect(
     arm_teleop_module(task_names={"left": "teleop_piper"}),
     coordinator_teleop_piper,
