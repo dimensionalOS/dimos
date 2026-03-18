@@ -54,10 +54,10 @@ static constexpr uint32_t SHM_READY_MAGIC = 0xDEADBEEF;
 static constexpr const char* SHM_LIDAR_NAME = "/drdds_bridge_lidar";
 static constexpr const char* SHM_IMU_NAME = "/drdds_bridge_imu";
 
-// Slot size: 512KB per lidar message (80KB typical, 512KB max headroom)
-// 8 slots = 4MB total for lidar ring buffer (extra headroom for CPU preemption on NOS)
-static constexpr uint32_t LIDAR_SLOT_SIZE = 512 * 1024;
-static constexpr uint32_t LIDAR_NUM_SLOTS = 8;
+// Slot size: 4MB per lidar message (M20 dual RSAIRY lidars merged = ~3MB per scan)
+// 4 slots = 16MB total for lidar ring buffer
+static constexpr uint32_t LIDAR_SLOT_SIZE = 4 * 1024 * 1024;
+static constexpr uint32_t LIDAR_NUM_SLOTS = 4;
 
 // IMU: 256 bytes per message, 64 slots (covers 320ms at 200Hz)
 static constexpr uint32_t IMU_SLOT_SIZE = 256;
