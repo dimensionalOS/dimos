@@ -15,7 +15,6 @@
 
 """DimOS module wrapper for drone connection."""
 
-from collections.abc import Generator
 import json
 import threading
 import time
@@ -101,6 +100,7 @@ class DroneConnectionModule(Module[Config]):
         self._latest_status_lock = threading.RLock()
         self._running = False
         self._telemetry_thread: threading.Thread | None = None
+        self._last_twist_log_time: float = 0.0
 
     @rpc
     def start(self) -> None:
@@ -442,49 +442,44 @@ class DroneConnectionModule(Module[Config]):
 
     @skill
     def follow_object(
-        self, object_description: str, duration: float = 120.0
-    ) -> Generator[str, None, None]:
+        self, object_description: str, duration: float = 0.0
+    ) -> str:
         """Follow an object with visual servoing.
 
         Example:
 
-            follow_object(object_description="red car", duration=120)
+            follow_object(object_description="red car", duration=0)  # 0 = track until stop_follow
 
         Args:
             object_description (str): A short and clear description of the object.
-            duration (float, optional): How long to track for. Defaults to 120.0.
+            duration (float, optional): Max tracking time in seconds; 0 = until stop_follow. Defaults to 0.
         """
         msg = {"object_description": object_description, "duration": duration}
         self.follow_object_cmd.publish(String(json.dumps(msg)))
 
-        yield "Started trying to track. First, trying to find the object."
-
+        # Poll for initial tracking result (found / not found / timeout)
         start_time = time.time()
+        timeout = 30.0 if duration <= 0 else min(duration, 30.0)
 
-        started_tracking = False
-
-        while time.time() - start_time < duration:
-            time.sleep(0.01)
+        while time.time() - start_time < timeout:
+            time.sleep(0.1)
             with self._latest_status_lock:
                 if not self._latest_status:
                     continue
                 match self._latest_status.get("status"):
                     case "not_found" | "failed":
-                        yield f"The '{object_description}' object has not been found. Stopped tracking."
-                        break
+                        return f"The '{object_description}' object has not been found. Stopped tracking."
                     case "tracking":
-                        # Only return tracking once.
-                        if not started_tracking:
-                            started_tracking = True
-                            yield f"The '{object_description}' object is now being followed."
+                        return (
+                            f"Now following '{object_description}'."
+                            + (" Run stop_follow to stop." if duration <= 0 else f" For up to {duration}s.")
+                        )
                     case "lost":
-                        yield f"The '{object_description}' object has been lost. Stopped tracking."
-                        break
+                        return f"The '{object_description}' object was lost. Stopped tracking."
                     case "stopped":
-                        yield f"Tracking '{object_description}' has stopped."
-                        break
-        else:
-            yield f"Stopped tracking '{object_description}'"
+                        return f"Tracking '{object_description}' has stopped."
+
+        return f"Started tracking command for '{object_description}'. No status update yet."
 
     def _on_move_twist(self, msg: Twist) -> None:
         """Handle Twist movement commands from tracking/navigation.
@@ -493,8 +488,14 @@ class DroneConnectionModule(Module[Config]):
             msg: Twist message with linear and angular velocities
         """
         if self.connection:
-            # Use move_twist to properly handle Twist messages
-            self.connection.move_twist(msg, duration=0, lock_altitude=True)
+            now = time.time()
+            if now - self._last_twist_log_time >= 0.5:
+                self._last_twist_log_time = now
+                logger.info(
+                    "follow→ardupilot: linear x=%.3f y=%.3f z=%.3f yaw_rate=%.3f (m/s, rad/s)",
+                    msg.linear.x, msg.linear.y, msg.linear.z, msg.angular.z,
+                )
+            self.connection.move_twist(msg, duration=0, lock_altitude=False)
 
     def _on_gps_goal(self, cmd: LatLon) -> None:
         if self._latest_telemetry is None or self.connection is None:

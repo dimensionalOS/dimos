@@ -85,8 +85,12 @@ class DroneTrackingModule(Module):
         self._outdoor = outdoor
         self._max_velocity = None if outdoor else INDOOR_MAX_VELOCITY
 
+        # Gazebo and typical sim use front camera; keep forward_camera=True
         self.servoing_controller = DroneVisualServoingController(
-            x_pid_params=x_pid_params, y_pid_params=y_pid_params, z_pid_params=z_pid_params
+            x_pid_params=x_pid_params,
+            y_pid_params=y_pid_params,
+            z_pid_params=z_pid_params,
+            forward_camera=True,
         )
 
         # Tracking state
@@ -136,13 +140,16 @@ class DroneTrackingModule(Module):
         self._stop_tracking()
         super().stop()
 
+    # Forward velocity (vx) is sent only for this many seconds after tracking start; then vx=0, tracking continues.
+    FORWARD_VELOCITY_DURATION = 10.0
+
     @rpc
-    def track_object(self, object_name: str | None = None, duration: float = 120.0) -> str:
+    def track_object(self, object_name: str | None = None, duration: float = 0.0) -> str:
         """Track and follow an object using visual servoing.
 
         Args:
             object_name: Name of object to track, or None for most prominent
-            duration: Maximum tracking duration in seconds
+            duration: Maximum tracking duration in seconds; 0 = run until stopped (e.g. stop_follow)
 
         Returns:
             String status message
@@ -207,17 +214,17 @@ class DroneTrackingModule(Module):
 
         Args:
             tracker: OpenCV tracker instance
-            duration: Maximum duration in seconds
+            duration: Maximum duration in seconds; <=0 means run until _tracking_active is False
         """
         start_time = time.time()
         frame_count = 0
         lost_track_count = 0
         max_lost_frames = 100
 
-        logger.info("Starting visual servoing loop")
+        logger.info("Starting visual servoing loop (forward vx for %.0fs, then vx=0)", self.FORWARD_VELOCITY_DURATION)
 
         try:
-            while self._tracking_active and (time.time() - start_time < duration):
+            while self._tracking_active and (duration <= 0 or (time.time() - start_time < duration)):
                 # Get latest frame
                 frame = self._get_latest_frame()
                 if frame is None:
@@ -253,27 +260,36 @@ class DroneTrackingModule(Module):
                 center_x = frame_width / 2
                 center_y = frame_height / 2
 
-                # Compute velocity commands
-                vx, vy, vz = self.servoing_controller.compute_velocity_control(
+                # Compute commands: vx (const), vz (vertical error), yaw_rate (lateral error); vy=0
+                vx, vy, vz, yaw_rate = self.servoing_controller.compute_velocity_control(
                     target_x=current_x,
                     target_y=current_y,
                     center_x=center_x,
                     center_y=center_y,
                     dt=0.033,  # ~30Hz
-                    lock_altitude=True,
+                    lock_altitude=False,
                 )
+                # Forward only for first N seconds; then vx=0 (tracking and vz/yaw_rate continue)
+                if time.time() - start_time >= self.FORWARD_VELOCITY_DURATION:
+                    vx = 0.0
 
-                # Clamp velocity for indoor safety
+                # Clamp linear velocity for indoor safety
                 if self._max_velocity is not None:
                     vx = max(-self._max_velocity, min(self._max_velocity, vx))
                     vy = max(-self._max_velocity, min(self._max_velocity, vy))
+                    vz = max(-self._max_velocity, min(self._max_velocity, vz))
 
-                # Publish velocity command via LCM
+                # Publish: vx, vz, yaw_rate (vy=0)
                 if self.cmd_vel.transport:
                     twist = Twist()
-                    twist.linear = Vector3(vx, vy, 0)
-                    twist.angular = Vector3(0, 0, 0)  # No rotation for now
+                    twist.linear = Vector3(vx, vy, vz)
+                    twist.angular = Vector3(0, 0, yaw_rate)
                     self.cmd_vel.publish(twist)
+                    if frame_count % 30 == 0:
+                        logger.info(
+                            "follow_object cmd: vx=%.3f vz=%.3f yaw_rate=%.3f (m/s, rad/s)",
+                            vx, vz, yaw_rate,
+                        )
 
                 # Publish visualization if transport is set
                 if self.tracking_overlay.transport:

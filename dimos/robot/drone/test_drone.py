@@ -954,56 +954,53 @@ class TestVisualServoingEdgeCases(unittest.TestCase):
             y_pid_params=(1.0, 0.0, 0.0, (-max_vel, max_vel), None, 0),
         )
 
-        # Large error should be clamped
-        vx, vy, _vz = controller.compute_velocity_control(
+        # vx constant; vy always 0; yaw_rate and vz clamped
+        vx, vy, vz, yaw_rate = controller.compute_velocity_control(
             target_x=1000, target_y=1000, center_x=0, center_y=0, dt=0.1
         )
-        self.assertLessEqual(abs(vx), max_vel)
-        self.assertLessEqual(abs(vy), max_vel)
+        self.assertAlmostEqual(vx, controller.forward_speed)
+        self.assertAlmostEqual(vy, 0.0)
+        self.assertLessEqual(abs(yaw_rate), controller.MAX_YAW_RATE)
 
-    def test_deadband_prevents_integral_windup(self) -> None:
-        """Deadband prevents integral accumulation for small errors."""
+    def test_lateral_error_to_yaw_rate(self) -> None:
+        """Lateral image error produces proportional yaw_rate; no strafe (vy=0)."""
         from dimos.robot.drone.drone_visual_servoing_controller import (
             DroneVisualServoingController,
         )
 
-        deadband = 10  # pixels
         controller = DroneVisualServoingController(
-            x_pid_params=(0.0, 1.0, 0.0, (-2.0, 2.0), None, deadband),  # integral only
-            y_pid_params=(0.0, 1.0, 0.0, (-2.0, 2.0), None, deadband),
+            x_pid_params=(0.0, 0.0, 0.0, (-2.0, 2.0), None, 0),
+            y_pid_params=(0.0, 0.0, 0.0, (-2.0, 2.0), None, 0),
         )
 
-        # With error inside deadband, integral should stay at zero
-        for _ in range(10):
-            controller.compute_velocity_control(
-                target_x=5, target_y=5, center_x=0, center_y=0, dt=0.1
-            )
-
-        # Integral should be zero since error < deadband
-        self.assertEqual(controller.x_pid.integral, 0.0)
-        self.assertEqual(controller.y_pid.integral, 0.0)
+        # No lateral error -> yaw_rate ~0, vy=0
+        _, vy, _, yaw_rate = controller.compute_velocity_control(
+            target_x=320, target_y=240, center_x=320, center_y=240, dt=0.1
+        )
+        self.assertAlmostEqual(vy, 0.0)
+        self.assertAlmostEqual(yaw_rate, 0.0, places=5)
+        # Object right of center -> positive yaw_rate
+        _, vy2, _, yaw_rate2 = controller.compute_velocity_control(
+            target_x=400, target_y=240, center_x=320, center_y=240, dt=0.1
+        )
+        self.assertAlmostEqual(vy2, 0.0)
+        self.assertGreater(yaw_rate2, 0)
 
     def test_reset_clears_integral(self) -> None:
-        """reset() clears accumulated integral to prevent windup."""
+        """reset() clears PID state (PIDs reserved for future use)."""
         from dimos.robot.drone.drone_visual_servoing_controller import (
             DroneVisualServoingController,
         )
 
         controller = DroneVisualServoingController(
-            x_pid_params=(0.0, 1.0, 0.0, (-10.0, 10.0), None, 0),  # Only integral
+            x_pid_params=(0.0, 1.0, 0.0, (-10.0, 10.0), None, 0),
             y_pid_params=(0.0, 1.0, 0.0, (-10.0, 10.0), None, 0),
         )
+        # Wind up y_pid integral manually (control output no longer uses it)
+        for _ in range(5):
+            controller.y_pid.update(100.0, 0.1)  # type: ignore[no-untyped-call]
+        self.assertNotEqual(controller.y_pid.integral, 0.0)
 
-        # Accumulate integral by calling multiple times with error
-        for _ in range(10):
-            controller.compute_velocity_control(
-                target_x=100, target_y=100, center_x=0, center_y=0, dt=0.1
-            )
-
-        # Integral should be non-zero
-        self.assertNotEqual(controller.x_pid.integral, 0.0)
-
-        # Reset should clear it
         controller.reset()
         self.assertEqual(controller.x_pid.integral, 0.0)
         self.assertEqual(controller.y_pid.integral, 0.0)
@@ -1027,7 +1024,7 @@ class TestVisualServoingVelocity(unittest.TestCase):
         frame_center = (320, 180)
         bbox_center = (400, 180)
 
-        vx, vy, _vz = controller.compute_velocity_control(
+        vx, vy, vz, yaw_rate = controller.compute_velocity_control(
             target_x=bbox_center[0],
             target_y=bbox_center[1],
             center_x=frame_center[0],
@@ -1035,7 +1032,8 @@ class TestVisualServoingVelocity(unittest.TestCase):
             dt=0.1,
         )
 
-        # Object to the right -> drone should strafe right (positive vy)
-        self.assertGreater(vy, 0)
-        # No vertical offset -> vx should be ~0
-        self.assertAlmostEqual(vx, 0, places=1)
+        # Object to the right -> positive yaw_rate (turn right); no strafe
+        self.assertGreater(yaw_rate, 0)
+        self.assertAlmostEqual(vy, 0.0)
+        self.assertAlmostEqual(vx, controller.forward_speed)
+        self.assertAlmostEqual(vz, 0, places=4)
