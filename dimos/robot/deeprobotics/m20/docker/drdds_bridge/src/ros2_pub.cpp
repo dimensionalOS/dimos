@@ -8,8 +8,6 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
-#include <sensor_msgs/msg/imu.hpp>
-
 #include <chrono>
 #include <thread>
 
@@ -32,15 +30,13 @@ public:
     BridgePublisher()
         : Node("drdds_bridge"),
           lidar_reader_(drdds_bridge::SHM_LIDAR_NAME),
-          imu_reader_(drdds_bridge::SHM_IMU_NAME),
           rsairy_fields_(make_rsairy_fields())
     {
         auto qos = rclcpp::QoS(10).reliable();
 
         lidar_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
             "/bridge/LIDAR_POINTS", qos);
-        imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>(
-            "/bridge/IMU", qos);
+        // IMU NOT bridged — yesense /IMU is directly readable by ROS2 (verified 2026-03-18)
 
         // Poll SHM at 2kHz (500us)
         timer_ = this->create_wall_timer(
@@ -55,10 +51,6 @@ private:
         if (!lidar_reader_.is_open()) {
             if (!lidar_reader_.try_open()) return;
             RCLCPP_INFO(this->get_logger(), "Lidar SHM connected");
-        }
-        if (!imu_reader_.is_open()) {
-            if (!imu_reader_.try_open()) return;
-            RCLCPP_INFO(this->get_logger(), "IMU SHM connected");
         }
 
         // Drain all pending lidar messages
@@ -94,40 +86,13 @@ private:
             }
         }
 
-        // Drain all pending IMU messages
-        while (auto* slot = imu_reader_.poll()) {
-            if (slot->msg_type != 1) continue;
-
-            auto msg = sensor_msgs::msg::Imu();
-            msg.header.stamp.sec = slot->stamp_sec;
-            msg.header.stamp.nanosec = slot->stamp_nsec;
-            msg.header.frame_id = "imu_link";
-
-            const double* dp = reinterpret_cast<const double*>(imu_reader_.slot_data(slot));
-            msg.orientation.x = dp[0];
-            msg.orientation.y = dp[1];
-            msg.orientation.z = dp[2];
-            msg.orientation.w = dp[3];
-            msg.angular_velocity.x = dp[4];
-            msg.angular_velocity.y = dp[5];
-            msg.angular_velocity.z = dp[6];
-            msg.linear_acceleration.x = dp[7];
-            msg.linear_acceleration.y = dp[8];
-            msg.linear_acceleration.z = dp[9];
-
-            imu_pub_->publish(msg);
-            imu_count_++;
-        }
     }
 
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_pub_;
-    rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
     rclcpp::TimerBase::SharedPtr timer_;
     drdds_bridge::ShmReader lidar_reader_;
-    drdds_bridge::ShmReader imu_reader_;
     const std::vector<sensor_msgs::msg::PointField> rsairy_fields_;
     uint64_t lidar_count_ = 0;
-    uint64_t imu_count_ = 0;
 };
 
 int main(int argc, char** argv) {

@@ -598,32 +598,21 @@ case "${CMD}" in
         remote_sudo cp /tmp/drdds-bridge.service /etc/systemd/system/drdds-bridge.service
         remote_sudo systemctl daemon-reload
         remote_sudo systemctl enable drdds-bridge
-
-        # Step 3: Add BindsTo= override so restarting rsdriver auto-restarts bridge
-        remote_sudo "mkdir -p /etc/systemd/system/rsdriver.service.d"
-        remote_ssh "cat > /tmp/bridge-dependency.conf << 'CONF'
-[Unit]
-BindsTo=drdds-bridge.service
-After=drdds-bridge.service
-CONF"
-        remote_sudo cp /tmp/bridge-dependency.conf /etc/systemd/system/rsdriver.service.d/bridge-dependency.conf
-        remote_sudo systemctl daemon-reload
-        echo "  Service installed. rsdriver now depends on drdds-bridge."
+        echo "  Service installed. drdds-bridge starts before rsdriver on boot."
         echo ""
         echo "  Activate now:   ./deploy.sh bridge-start"
         echo "  After reboot:   drdds-bridge starts automatically before rsdriver"
-        echo "  Manual restart: 'systemctl restart rsdriver' auto-restarts bridge first"
         echo "=== Deploy complete ==="
         ;;
 
     bridge-start)
         echo "=== Starting drdds bridge ==="
-        # CRITICAL: FastDDS SHM discovery requires drdds_recv to start BEFORE
-        # rsdriver and yesense. Otherwise, endpoints match but data never flows.
+        # CRITICAL: FastDDS SHM discovery requires drdds_recv to start BEFORE rsdriver.
+        # IMU (yesense) does NOT need ordering — it's directly ROS2-readable.
 
-        # Step 1: Stop DDS publishers
-        echo "  Stopping rsdriver + yesense for discovery ordering..."
-        remote_sudo systemctl stop rsdriver yesense 2>/dev/null
+        # Step 1: Stop rsdriver
+        echo "  Stopping rsdriver for discovery ordering..."
+        remote_sudo systemctl stop rsdriver 2>/dev/null
         sleep 2
 
         # Step 2: Clean stale SHM segments
@@ -640,16 +629,11 @@ CONF"
         echo "  rsdriver restarting (30s init delay)..."
         sleep 35
 
-        # Step 5: Restart yesense (IMU)
-        remote_sudo systemctl start yesense
-        sleep 3
-        echo "  yesense restarted"
-
-        # Step 6: Verify data flow
+        # Step 5: Verify data flow
         echo "  Verifying bridge data flow..."
         remote_ssh "tail -3 /tmp/drdds_recv.log 2>/dev/null || true"
 
-        # Step 7: Start ros2_pub in nav container (reads SHM, publishes ROS2)
+        # Step 6: Start ros2_pub in nav container (reads SHM, publishes ROS2)
         remote_ssh "docker exec -d ${CONTAINER_NAME} bash -c '\
             unset FASTRTPS_DEFAULT_PROFILES_FILE && \
             source /opt/ros/humble/setup.bash && \
@@ -662,7 +646,7 @@ CONF"
             ros2 run drdds_bridge ros2_pub 2>&1 | tee /tmp/ros2_pub.log'"
         echo "  ros2_pub started in container"
 
-        # Step 8: Restart charging services (need fresh Data Sharing segments)
+        # Step 7: Restart charging services (need fresh Data Sharing segments)
         echo "  Restarting charging services..."
         remote_sudo systemctl restart reflective_column charge_manager 2>/dev/null
         echo "=== Bridge running ==="

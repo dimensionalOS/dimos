@@ -237,7 +237,7 @@ mapping:
 
 **Key**: `lidar_type: 5` (default/generic) works. Types 1 (VELO16) and 2 (OUST64) have incompatible field expectations for RSAIRY.
 
-**IMU topic**: Initially tried `/bridge/IMU` (through the bridge), but `/IMU` from yesense is directly readable by the container's ROS2 Humble IF yesense is restarted after drdds_recv. This avoids an extra bridge hop.
+**IMU topic**: `/IMU` from yesense is directly readable by ROS2 Humble — no bridge needed. Verified 2026-03-18: stopped drdds_recv entirely, `/IMU` still readable at 200Hz inside container. Yesense's drdds publisher is ROS2-compatible (unlike rsdriver's). IMU removed from bridge code.
 
 ---
 

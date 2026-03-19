@@ -2,7 +2,7 @@
 Description=drdds-to-ROS2 Bridge (lidar + IMU receiver)
 # Must start BEFORE rsdriver and yesense for FastDDS SHM discovery to work.
 # See ROSNAV_MIGRATION_LOG.md Finding #5 for details.
-Before=rsdriver.service yesense.service
+Before=rsdriver.service
 After=network.target
 
 [Service]
