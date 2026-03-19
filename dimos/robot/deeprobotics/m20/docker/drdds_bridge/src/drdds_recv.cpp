@@ -13,6 +13,7 @@
 #include <chrono>
 #include <thread>
 #include <atomic>
+#include <semaphore.h>
 
 static std::atomic<bool> g_running{true};
 static void signal_handler(int) { g_running = false; }
@@ -32,6 +33,14 @@ int main(int argc, char** argv) {
         drdds_bridge::SHM_LIDAR_NAME,
         drdds_bridge::LIDAR_NUM_SLOTS,
         drdds_bridge::LIDAR_SLOT_SIZE);
+
+    // Semaphore for notifying ros2_pub of new data (replaces 1ms sleep polling)
+    sem_unlink(drdds_bridge::SHM_NOTIFY_NAME); // clear stale count from previous run
+    sem_t* notify_sem = sem_open(drdds_bridge::SHM_NOTIFY_NAME, O_CREAT, 0666, 0);
+    if (notify_sem == SEM_FAILED) {
+        std::cerr << "[drdds_recv] WARN: sem_open failed, ros2_pub will fall back to polling" << std::endl;
+        notify_sem = nullptr;
+    }
 
     std::cout << "[drdds_recv] SHM initialized. Subscribing to /LIDAR/POINTS..." << std::endl;
 
@@ -61,6 +70,7 @@ int main(int argc, char** argv) {
 
         std::memcpy(data, msg->data().data(), data_size);
         lidar_shm.commit();
+        if (notify_sem) sem_post(notify_sem);
 
         uint64_t c = lidar_count.fetch_add(1) + 1;
         if (c % 10 == 1) {

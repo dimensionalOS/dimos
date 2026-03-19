@@ -12,6 +12,7 @@
 
 #include <thread>
 #include <atomic>
+#include <semaphore.h>
 
 // RSAIRY PointCloud2 fields — hardcoded, never change.
 static std::vector<sensor_msgs::msg::PointField> make_rsairy_fields() {
@@ -35,6 +36,13 @@ public:
         lidar_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
             "/bridge/LIDAR_POINTS", qos);
 
+        // Open notification semaphore (created by drdds_recv)
+        notify_sem_ = sem_open(drdds_bridge::SHM_NOTIFY_NAME, O_CREAT, 0666, 0);
+        if (notify_sem_ == SEM_FAILED) {
+            RCLCPP_WARN(this->get_logger(), "sem_open failed, falling back to 1ms polling");
+            notify_sem_ = nullptr;
+        }
+
         RCLCPP_INFO(this->get_logger(), "Bridge publisher started. Waiting for SHM...");
         poll_thread_ = std::thread([this]() { poll_loop(); });
     }
@@ -57,7 +65,15 @@ private:
 
             auto* slot = lidar_reader_.poll();
             if (!slot) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                if (notify_sem_) {
+                    struct timespec ts;
+                    clock_gettime(CLOCK_REALTIME, &ts);
+                    ts.tv_sec += 1; // 1s timeout fallback
+                    sem_timedwait(notify_sem_, &ts);
+                    while (sem_trywait(notify_sem_) == 0) {} // drain accumulated
+                } else {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
                 continue;
             }
             if (slot->msg_type != 0) continue;
@@ -93,6 +109,7 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_pub_;
     drdds_bridge::ShmReader lidar_reader_;
     const std::vector<sensor_msgs::msg::PointField> rsairy_fields_;
+    sem_t* notify_sem_ = nullptr;
     std::atomic<bool> running_{true};
     std::thread poll_thread_;
     uint64_t lidar_count_ = 0;

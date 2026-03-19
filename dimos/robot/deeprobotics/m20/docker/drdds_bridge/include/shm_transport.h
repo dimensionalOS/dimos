@@ -53,6 +53,7 @@ struct SlotHeader {
 static constexpr uint32_t SHM_READY_MAGIC = 0xDEADBEEF;
 static constexpr const char* SHM_LIDAR_NAME = "/drdds_bridge_lidar";
 static constexpr const char* SHM_IMU_NAME = "/drdds_bridge_imu";
+static constexpr const char* SHM_NOTIFY_NAME = "/drdds_bridge_notify";
 
 // Slot size: 4MB per lidar message (M20 dual RSAIRY lidars merged = ~3MB per scan)
 // 16 slots × 4MB = 64MB total for lidar ring buffer.
