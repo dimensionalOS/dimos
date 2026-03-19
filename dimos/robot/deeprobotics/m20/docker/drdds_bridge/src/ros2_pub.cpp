@@ -13,15 +13,17 @@
 
 // RSAIRY PointCloud2 fields are fixed — hardcode them to avoid
 // serializing field descriptors across SHM (eliminates corruption bugs).
-// Verified layout: x(f32,0) y(f32,4) z(f32,8) intensity(f32,12) ring(u16,16) time(f64,18)
+// RSAIRY raw layout: x(f32,0) y(f32,4) z(f32,8) intensity(f32,12) ring(u16,16) timestamp(f64,18)
+// We expose only x,y,z,intensity,ring — the 'timestamp' field contains ABSOLUTE seconds
+// (~1.77 billion) which FAST_LIO misinterprets as relative offset, causing "lidar loop back".
+// With lidar_type 5, FAST_LIO doesn't need per-point timestamps.
 static std::vector<sensor_msgs::msg::PointField> make_rsairy_fields() {
-    std::vector<sensor_msgs::msg::PointField> fields(6);
+    std::vector<sensor_msgs::msg::PointField> fields(5);
     fields[0].name = "x";         fields[0].offset = 0;  fields[0].datatype = 7; fields[0].count = 1;
     fields[1].name = "y";         fields[1].offset = 4;  fields[1].datatype = 7; fields[1].count = 1;
     fields[2].name = "z";         fields[2].offset = 8;  fields[2].datatype = 7; fields[2].count = 1;
     fields[3].name = "intensity"; fields[3].offset = 12; fields[3].datatype = 7; fields[3].count = 1;
     fields[4].name = "ring";      fields[4].offset = 16; fields[4].datatype = 4; fields[4].count = 1;
-    fields[5].name = "time";      fields[5].offset = 18; fields[5].datatype = 8; fields[5].count = 1;
     return fields;
 }
 
