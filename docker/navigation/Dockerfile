@@ -115,13 +115,13 @@ RUN cat > ${WORKSPACE}/src/fast_lio/config/robosense.yaml <<'FASTLIO_EOF'
         map_file_path: "./test.pcd"
 
         common:
-            lid_topic:  "/LIDAR/POINTS"
+            lid_topic:  "/bridge/LIDAR_POINTS"
             imu_topic:  "/IMU"
             time_sync_en: false
             time_offset_lidar_to_imu: 0.0
 
         preprocess:
-            lidar_type: 2
+            lidar_type: 5
             scan_line: 32
             scan_rate: 10
             timestamp_unit: 2
@@ -275,24 +275,21 @@ RUN cat > ${WORKSPACE}/config/fastdds.xml <<'EOF'
             <sendSocketBufferSize>10485760</sendSocketBufferSize>
             <listenSocketBufferSize>10485760</listenSocketBufferSize>
             <useBuiltinTransports>true</useBuiltinTransports>
+            <userTransports>
+                <transport_id>shm_large</transport_id>
+            </userTransports>
         </rtps>
     </participant>
 
-    <!-- Transport descriptors -->
+    <!-- SHM transport with large segment for 3MB lidar PointCloud2 messages.
+         Default 512KB is too small — causes UDP fallback + fragment loss.
+         maxMessageSize uses camelCase (FastDDS 2.6 syntax). -->
     <transport_descriptors>
         <transport_descriptor>
-            <transport_id>udp_transport</transport_id>
-            <type>UDPv4</type>
-            <sendBufferSize>10485760</sendBufferSize>
-            <receiveBufferSize>10485760</receiveBufferSize>
-            <maxMessageSize>65500</maxMessageSize>
-        </transport_descriptor>
-        <!-- Shared memory for same-host communication -->
-        <transport_descriptor>
-            <transport_id>shm_transport</transport_id>
+            <transport_id>shm_large</transport_id>
             <type>SHM</type>
-            <segment_size>10485760</segment_size>
-            <max_message_size>1048576</max_message_size>
+            <segment_size>33554432</segment_size>
+            <maxMessageSize>4194304</maxMessageSize>
         </transport_descriptor>
     </transport_descriptors>
 </profiles>
@@ -320,6 +317,10 @@ RUN /opt/dimos-venv/bin/pip install --no-cache-dir -e "/workspace/dimos[unitree]
 # ROS2 topics. It links against ROS2 Humble only (no drdds dependency).
 # The drdds_recv counterpart is built separately on the NOS host.
 COPY dimos/robot/deeprobotics/m20/docker/drdds_bridge ${WORKSPACE}/src/drdds_bridge
+
+# Copy bridge-specific FastDDS profile (16MB SHM for 3MB lidar messages)
+# ros2_pub uses this instead of the container's default fastdds.xml
+COPY dimos/robot/deeprobotics/m20/docker/drdds_bridge/config/ros2_pub_fastdds.xml ${WORKSPACE}/src/drdds_bridge/config/ros2_pub_fastdds.xml
 RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     source ${WORKSPACE}/install/setup.bash && \
     cd ${WORKSPACE} && \
