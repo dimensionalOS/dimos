@@ -158,21 +158,10 @@ def test_getter_streaming_blocking() -> None:
         f"Expected to get the first array [0,1,2], got {getter()}"
     )
 
-    # Poll until value advances (generous 3s timeout)
-    deadline = time.time() + 3.0
-    while time.time() < deadline:
-        if getter()[0] >= 1:
-            break
-        time.sleep(0.1)
-    assert getter()[0] >= 1, f"Expected array with first value >= 1, got {getter()}"
-
-    first_val = getter()[0]
-    deadline = time.time() + 3.0
-    while time.time() < deadline:
-        if getter()[0] > first_val:
-            break
-        time.sleep(0.1)
-    assert getter()[0] > first_val, f"Expected value to advance past {first_val}, got {getter()}"
+    time.sleep(1.5)
+    assert getter()[0] >= 2, f"Expected array with first value >= 2, got {getter()}"
+    time.sleep(1.5)
+    assert getter()[0] >= 4, f"Expected array with first value >= 4, got {getter()}"
 
     getter.dispose()
     time.sleep(0.3)  # Wait for background interval timer threads to finish
@@ -200,24 +189,14 @@ def test_getter_streaming_nonblocking() -> None:
     min_time(getter, 0.1, "Expected for first value call to block if cache is empty")
     assert getter() == 0
 
-    # Poll until value advances (generous 3s timeout)
-    deadline = time.time() + 3.0
-    while time.time() < deadline:
-        if getter() >= 1:
-            break
-        time.sleep(0.1)
-    assert getter() >= 1, f"Expected value >= 1, got {getter()}"
+    time.sleep(1.5)
+    assert getter() >= 2, f"Expected value >= 2, got {getter()}"
 
     # sub is active
     assert not source.is_disposed()
 
-    first_val = getter()
-    deadline = time.time() + 3.0
-    while time.time() < deadline:
-        if getter() > first_val:
-            break
-        time.sleep(0.1)
-    assert getter() > first_val, f"Expected value to advance past {first_val}, got {getter()}"
+    time.sleep(1.5)
+    assert getter() >= 4, f"Expected value >= 4, got {getter()}"
 
     getter.dispose()
     time.sleep(0.3)  # Wait for background interval timer threads to finish
