@@ -45,10 +45,12 @@ struct SlotHeader {
     uint32_t row_step;        // bytes per row
     uint8_t  is_dense;        // PointCloud2 is_dense
     uint8_t  is_bigendian;    // PointCloud2 is_bigendian
-    uint8_t  padding[2];
+    uint8_t  _pad1[2];
     uint32_t fields_size;     // size of serialized PointFieldArray following data
-    // followed by: [data_size bytes of point data] [fields_size bytes of field descriptors]
+    uint8_t  _pad2[24];       // pad to 64 bytes (ARM64 cache line alignment)
+    // followed by: [data_size bytes of point data]
 };
+static_assert(sizeof(SlotHeader) == 64, "SlotHeader must be cache-line aligned");
 
 static constexpr uint32_t SHM_READY_MAGIC = 0xDEADBEEF;
 static constexpr const char* SHM_LIDAR_NAME = "/drdds_bridge_lidar";

@@ -93,15 +93,25 @@ private:
             msg->is_bigendian = slot->is_bigendian;
             msg->fields = rsairy_fields_;
 
+            auto t0 = std::chrono::steady_clock::now();
+
             const uint8_t* data = lidar_reader_.slot_data(slot);
             msg->data.resize(data_size);
             std::memcpy(msg->data.data(), data, data_size);
 
+            auto t1 = std::chrono::steady_clock::now();
+
             lidar_pub_->publish(std::move(msg));
+
+            auto t2 = std::chrono::steady_clock::now();
+            auto copy_us = std::chrono::duration_cast<std::chrono::microseconds>(t1-t0).count();
+            auto pub_us = std::chrono::duration_cast<std::chrono::microseconds>(t2-t1).count();
+
             lidar_count_++;
-            if (lidar_count_ % 100 == 1) {
-                RCLCPP_INFO(this->get_logger(), "lidar #%lu data=%uB pts=%u",
-                            lidar_count_, data_size, slot->width * slot->height);
+            if (pub_us > 50000 || lidar_count_ % 100 == 1) {
+                RCLCPP_INFO(this->get_logger(), "lidar #%lu copy=%ldus pub=%ldus data=%uB pts=%u",
+                            lidar_count_, copy_us, pub_us, data_size,
+                            slot->width * slot->height);
             }
         }
     }
@@ -117,7 +127,13 @@ private:
 
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<BridgePublisher>());
+    auto node = std::make_shared<BridgePublisher>();
+    // Don't spin executor — poll thread does all work.
+    // spin() would waste a CPU core on an idle executor loop.
+    while (rclcpp::ok()) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    node.reset();
     rclcpp::shutdown();
     return 0;
 }
