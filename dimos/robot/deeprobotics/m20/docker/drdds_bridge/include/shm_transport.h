@@ -55,9 +55,11 @@ static constexpr const char* SHM_LIDAR_NAME = "/drdds_bridge_lidar";
 static constexpr const char* SHM_IMU_NAME = "/drdds_bridge_imu";
 
 // Slot size: 4MB per lidar message (M20 dual RSAIRY lidars merged = ~3MB per scan)
-// 4 slots = 16MB total for lidar ring buffer
+// 16 slots × 4MB = 64MB total for lidar ring buffer.
+// Needs headroom because ROS2 publish() can stall 50-400ms on ARM64.
+// At 10Hz lidar, 16 slots = 1.6s buffer before frame drops.
 static constexpr uint32_t LIDAR_SLOT_SIZE = 4 * 1024 * 1024;
-static constexpr uint32_t LIDAR_NUM_SLOTS = 4;
+static constexpr uint32_t LIDAR_NUM_SLOTS = 16;
 
 // IMU: 256 bytes per message, 64 slots (covers 320ms at 200Hz)
 static constexpr uint32_t IMU_SLOT_SIZE = 256;

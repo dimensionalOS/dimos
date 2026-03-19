@@ -34,15 +34,19 @@ public:
           lidar_reader_(drdds_bridge::SHM_LIDAR_NAME),
           rsairy_fields_(make_rsairy_fields())
     {
-        auto qos = rclcpp::QoS(10).reliable();
+        // SensorDataQoS: BEST_EFFORT + KEEP_LAST(5) — avoids RELIABLE ACK blocking
+        // that causes 50-400ms stalls on ARM64 with 3MB lidar messages.
+        // FAST_LIO uses SensorDataQoS by default for lidar subscription.
+        auto qos = rclcpp::SensorDataQoS();
 
         lidar_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
             "/bridge/LIDAR_POINTS", qos);
         // IMU NOT bridged — yesense /IMU is directly readable by ROS2 (verified 2026-03-18)
 
-        // Poll SHM at 200Hz (5ms) — lidar is 10Hz, so ~20 polls per frame
+        // Poll SHM at 1kHz (1ms) — 100 polls per lidar frame at 10Hz.
+        // 5ms was too slow — ROS2 publish latency caused SHM reader to fall behind.
         timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(5),
+            std::chrono::milliseconds(1),
             std::bind(&BridgePublisher::poll_shm, this));
 
         RCLCPP_INFO(this->get_logger(), "Bridge publisher started. Waiting for SHM...");
