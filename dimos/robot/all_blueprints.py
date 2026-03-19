@@ -27,8 +27,6 @@ all_blueprints = {
     "coordinator-mock-twist-base": "dimos.control.blueprints.mobile:coordinator_mock_twist_base",
     "coordinator-piper": "dimos.control.blueprints.basic:coordinator_piper",
     "coordinator-piper-xarm": "dimos.control.blueprints.dual:coordinator_piper_xarm",
-    "coordinator-sim-teleop-xarm7": "dimos.control.blueprints.sim:coordinator_sim_teleop_xarm7",
-    "coordinator-sim-xarm7": "dimos.control.blueprints.sim:coordinator_sim_xarm7",
     "coordinator-teleop-dual": "dimos.control.blueprints.teleop:coordinator_teleop_dual",
     "coordinator-teleop-piper": "dimos.control.blueprints.teleop:coordinator_teleop_piper",
     "coordinator-teleop-xarm6": "dimos.control.blueprints.teleop:coordinator_teleop_xarm6",
@@ -63,7 +61,6 @@ all_blueprints = {
     "teleop-quest-dual": "dimos.teleop.quest.blueprints:teleop_quest_dual",
     "teleop-quest-piper": "dimos.teleop.quest.blueprints:teleop_quest_piper",
     "teleop-quest-rerun": "dimos.teleop.quest.blueprints:teleop_quest_rerun",
-    "teleop-quest-sim-xarm7": "dimos.teleop.quest.blueprints:teleop_quest_sim_xarm7",
     "teleop-quest-xarm7": "dimos.teleop.quest.blueprints:teleop_quest_xarm7",
     "uintree-g1-primitive-no-nav": "dimos.robot.unitree.g1.blueprints.primitive.uintree_g1_primitive_no_nav:uintree_g1_primitive_no_nav",
     "unitree-g1": "dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1:unitree_g1",
@@ -93,7 +90,6 @@ all_blueprints = {
     "xarm6-planner-only": "dimos.manipulation.blueprints:xarm6_planner_only",
     "xarm7-planner-coordinator": "dimos.manipulation.blueprints:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.manipulation.blueprints:xarm7_planner_coordinator_agent",
-    "xarm7-trajectory-sim": "dimos.simulation.sim_blueprints:xarm7_trajectory_sim",
 }
 
 
@@ -139,7 +135,6 @@ all_modules = {
     "rerun-bridge": "dimos.visualization.rerun.bridge",
     "ros-nav": "dimos.navigation.rosnav",
     "simple-phone-teleop-module": "dimos.teleop.phone.phone_extensions",
-    "simulation": "dimos.simulation.manipulators.sim_module",
     "spatial-memory": "dimos.perception.spatial_perception",
     "speak-skill": "dimos.agents.skills.speak_skill",
     "temporal-memory": "dimos.perception.experimental.temporal_memory.temporal_memory",

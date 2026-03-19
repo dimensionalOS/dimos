@@ -46,7 +46,9 @@ def mock_arm(hw_id: str = "arm", n_joints: int = 7) -> HardwareComponent:
 
 
 def xarm7(hw_id: str = "arm", *, gripper: bool = False) -> HardwareComponent:
-    """XArm7 real hardware (7-DOF)."""
+    """XArm7 (7-DOF). Uses MuJoCo sim when --simulation flag is set."""
+    if global_config.simulation:
+        return sim_xarm7(hw_id, headless=False)
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,

@@ -15,7 +15,6 @@
 
 """Teleop blueprints for testing and deployment."""
 
-from dimos.control.blueprints.sim import coordinator_sim_teleop_xarm7
 from dimos.control.blueprints.teleop import (
     coordinator_teleop_dual,
     coordinator_teleop_piper,
@@ -86,24 +85,10 @@ teleop_quest_dual = autoconnect(
 )
 
 
-# Simulated XArm7 teleop: right controller -> MuJoCo sim
-teleop_quest_sim_xarm7 = autoconnect(
-    arm_teleop_module(task_names={"right": "teleop_xarm"}),
-    coordinator_sim_teleop_xarm7,
-).transports(
-    {
-        ("right_controller_output", PoseStamped): LCMTransport(
-            "/coordinator/cartesian_command", PoseStamped
-        ),
-        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
-    }
-)
-
 
 __all__ = [
     "teleop_quest_dual",
     "teleop_quest_piper",
     "teleop_quest_rerun",
-    "teleop_quest_sim_xarm7",
     "teleop_quest_xarm7",
 ]
