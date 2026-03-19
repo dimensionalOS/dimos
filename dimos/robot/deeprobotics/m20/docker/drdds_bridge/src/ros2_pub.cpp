@@ -1,22 +1,20 @@
-// ros2_pub.cpp - Reads lidar/IMU data from shared memory and publishes
-// as standard ROS2 Humble topics for FAST_LIO consumption.
+// ros2_pub.cpp - Reads lidar data from shared memory and publishes
+// as standard ROS2 Humble PointCloud2 for FAST_LIO consumption.
 //
-// Links against: rclcpp, sensor_msgs (ROS2 Humble, FastDDS 2.6)
-// Does NOT link against drdds (avoids FastDDS version conflict).
+// Uses a dedicated polling thread (not rclcpp timer) because publish()
+// blocks 30-80ms on ARM64 for 3MB messages, which stalls the executor.
 
 #include "shm_transport.h"
 
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
-#include <chrono>
-#include <thread>
 
-// RSAIRY PointCloud2 fields are fixed — hardcode them to avoid
-// serializing field descriptors across SHM (eliminates corruption bugs).
-// RSAIRY raw layout: x(f32,0) y(f32,4) z(f32,8) intensity(f32,12) ring(u16,16) timestamp(f64,18)
-// We expose only x,y,z,intensity,ring — the 'timestamp' field contains ABSOLUTE seconds
-// (~1.77 billion) which FAST_LIO misinterprets as relative offset, causing "lidar loop back".
-// With lidar_type 5, FAST_LIO doesn't need per-point timestamps.
+#include <thread>
+#include <atomic>
+
+// RSAIRY PointCloud2 fields — hardcoded, never change.
+// Raw layout: x(f32,0) y(f32,4) z(f32,8) intensity(f32,12) ring(u16,16) timestamp(f64,18)
+// We exclude 'timestamp' (absolute seconds that FAST_LIO misinterprets).
 static std::vector<sensor_msgs::msg::PointField> make_rsairy_fields() {
     std::vector<sensor_msgs::msg::PointField> fields(5);
     fields[0].name = "x";         fields[0].offset = 0;  fields[0].datatype = 7; fields[0].count = 1;
@@ -34,70 +32,76 @@ public:
           lidar_reader_(drdds_bridge::SHM_LIDAR_NAME),
           rsairy_fields_(make_rsairy_fields())
     {
-        // SensorDataQoS: BEST_EFFORT + KEEP_LAST(5) — avoids RELIABLE ACK blocking
-        // that causes 50-400ms stalls on ARM64 with 3MB lidar messages.
-        // FAST_LIO uses SensorDataQoS by default for lidar subscription.
         auto qos = rclcpp::SensorDataQoS();
-
         lidar_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
             "/bridge/LIDAR_POINTS", qos);
-        // IMU NOT bridged — yesense /IMU is directly readable by ROS2 (verified 2026-03-18)
-
-        // Poll SHM at 1kHz (1ms) — 100 polls per lidar frame at 10Hz.
-        // 5ms was too slow — ROS2 publish latency caused SHM reader to fall behind.
-        timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(1),
-            std::bind(&BridgePublisher::poll_shm, this));
 
         RCLCPP_INFO(this->get_logger(), "Bridge publisher started. Waiting for SHM...");
+
+        // Dedicated polling thread — bypasses rclcpp executor scheduling.
+        // publish() is thread-safe in rclcpp.
+        poll_thread_ = std::thread([this]() { poll_loop(); });
+    }
+
+    ~BridgePublisher() {
+        running_ = false;
+        if (poll_thread_.joinable()) poll_thread_.join();
     }
 
 private:
-    void poll_shm() {
-        if (!lidar_reader_.is_open()) {
-            if (!lidar_reader_.try_open()) return;
-            RCLCPP_INFO(this->get_logger(), "Lidar SHM connected");
-        }
+    void poll_loop() {
+        while (running_) {
+            if (!lidar_reader_.is_open()) {
+                if (!lidar_reader_.try_open()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    continue;
+                }
+                RCLCPP_INFO(this->get_logger(), "Lidar SHM connected");
+            }
 
-        // Drain all pending lidar messages
-        while (auto* slot = lidar_reader_.poll()) {
+            auto* slot = lidar_reader_.poll();
+            if (!slot) {
+                // Sleep 1ms between polls — yield() starves publish on ARM64
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
             if (slot->msg_type != 0) continue;
 
             uint32_t data_size = slot->data_size;
-            if (data_size + sizeof(drdds_bridge::SlotHeader) > drdds_bridge::LIDAR_SLOT_SIZE) {
-                RCLCPP_WARN(this->get_logger(), "slot overflow: data=%u", data_size);
-                continue;
-            }
+            if (data_size + sizeof(drdds_bridge::SlotHeader) > drdds_bridge::LIDAR_SLOT_SIZE) continue;
 
-            auto msg = sensor_msgs::msg::PointCloud2();
-            msg.header.stamp.sec = slot->stamp_sec;
-            msg.header.stamp.nanosec = slot->stamp_nsec;
-            msg.header.frame_id = "lidar_link";
-            msg.height = slot->height;
-            msg.width = slot->width;
-            msg.point_step = slot->point_step;
-            msg.row_step = slot->row_step;
-            msg.is_dense = slot->is_dense;
-            msg.is_bigendian = slot->is_bigendian;
-            msg.fields = rsairy_fields_;
+            // Build message with unique_ptr — publish(std::move()) avoids internal copy
+            auto msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
+            msg->header.stamp.sec = slot->stamp_sec;
+            msg->header.stamp.nanosec = slot->stamp_nsec;
+            msg->header.frame_id = "lidar_link";
+            msg->height = slot->height;
+            msg->width = slot->width;
+            msg->point_step = slot->point_step;
+            msg->row_step = slot->row_step;
+            msg->is_dense = slot->is_dense;
+            msg->is_bigendian = slot->is_bigendian;
+            msg->fields = rsairy_fields_;
 
+            // Copy full point data from SHM (all 26 bytes/point preserved)
             const uint8_t* data = lidar_reader_.slot_data(slot);
-            msg.data.assign(data, data + data_size);
+            msg->data.resize(data_size);
+            std::memcpy(msg->data.data(), data, data_size);
 
-            lidar_pub_->publish(msg);
+            lidar_pub_->publish(std::move(msg));
             lidar_count_++;
             if (lidar_count_ % 100 == 1) {
                 RCLCPP_INFO(this->get_logger(), "lidar #%lu data=%uB pts=%u",
-                            lidar_count_, data_size, msg.width * msg.height);
+                            lidar_count_, data_size, slot->width * slot->height);
             }
         }
-
     }
 
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_pub_;
-    rclcpp::TimerBase::SharedPtr timer_;
     drdds_bridge::ShmReader lidar_reader_;
     const std::vector<sensor_msgs::msg::PointField> rsairy_fields_;
+    std::atomic<bool> running_{true};
+    std::thread poll_thread_;
     uint64_t lidar_count_ = 0;
 };
 
