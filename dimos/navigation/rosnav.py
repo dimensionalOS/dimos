@@ -396,7 +396,10 @@ def deploy(dimos: ModuleCoordinator):  # type: ignore[no-untyped-def]
     nav.ros_goal_reached.transport = ROSTransport("/goal_reached", Bool)
     nav.ros_cmd_vel.transport = ROSTransport("/cmd_vel", TwistStamped)
     nav.ros_way_point.transport = ROSTransport("/way_point", PoseStamped)
-    nav.ros_registered_scan.transport = ROSTransport("/registered_scan", PointCloud2)
+    # FAST_LIO publishes registered scans on /cloud_registered (global frame)
+    # and body-frame scans on /cloud_registered_body.
+    # The CMU autonomy stack used /registered_scan — FAST_LIO uses different names.
+    nav.ros_registered_scan.transport = ROSTransport("/cloud_registered", PointCloud2)
     nav.ros_global_map.transport = ROSTransport("/terrain_map_ext", PointCloud2)
     nav.ros_path.transport = ROSTransport("/path", Path)
     nav.ros_tf.transport = ROSTransport("/tf", TFMessage)
