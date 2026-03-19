@@ -93,15 +93,8 @@ def build_file_index(root: Path, tracked_files: list[Path] | None = None) -> dic
     if tracked_files is None:
         tracked_files = get_git_tracked_files(root)
 
-    # Directories/symlinks to exclude from the index
-    _exclude_dirs = {".venv", "node_modules", "__pycache__", ".git"}
-
     for rel_path in tracked_files:
         parts = rel_path.parts
-
-        # Skip paths rooted in excluded directories
-        if parts and parts[0] in _exclude_dirs:
-            continue
 
         # Add all suffix combinations
         for i in range(len(parts)):
