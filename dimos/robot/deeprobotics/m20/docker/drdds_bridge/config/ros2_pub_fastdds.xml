@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- FastDDS profile for ros2_pub: SHM-only transport, async publish.
+     Eliminates UDP fragmentation of 3MB PointCloud2 messages that causes
+     30-80ms publish() stalls on ARM64. -->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+
+    <participant profile_name="participant_profile" is_default_profile="true">
+        <rtps>
+            <!-- Disable UDP — use SHM only (both processes are on same host) -->
+            <useBuiltinTransports>false</useBuiltinTransports>
+            <userTransports>
+                <transport_id>shm_transport</transport_id>
+            </userTransports>
+        </rtps>
+    </participant>
+
+    <transport_descriptors>
+        <transport_descriptor>
+            <transport_id>shm_transport</transport_id>
+            <type>SHM</type>
+            <segment_size>16777216</segment_size>
+            <max_message_size>4194304</max_message_size>
+        </transport_descriptor>
+    </transport_descriptors>
+
+    <data_writer profile_name="default_datawriter" is_default_profile="true">
+        <qos>
+            <reliability>
+                <kind>BEST_EFFORT</kind>
+            </reliability>
+            <durability>
+                <kind>VOLATILE</kind>
+            </durability>
+            <publishMode>
+                <kind>ASYNCHRONOUS</kind>
+            </publishMode>
+        </qos>
+        <historyMemoryPolicy>PREALLOCATED_WITH_REALLOC</historyMemoryPolicy>
+        <topic>
+            <historyQos>
+                <kind>KEEP_LAST</kind>
+                <depth>1</depth>
+            </historyQos>
+        </topic>
+    </data_writer>
+
+</profiles>

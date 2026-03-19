@@ -1,8 +1,9 @@
 // ros2_pub.cpp - Reads lidar data from shared memory and publishes
 // as standard ROS2 Humble PointCloud2 for FAST_LIO consumption.
 //
-// Uses a dedicated polling thread (not rclcpp timer) because publish()
-// blocks 30-80ms on ARM64 for 3MB messages, which stalls the executor.
+// Uses a dedicated polling thread (bypasses rclcpp executor scheduling).
+// With SHM-only FastDDS transport (ros2_pub_fastdds.xml), publish() takes
+// ~5-10ms instead of 30-80ms, so single-thread is sufficient for 10Hz.
 
 #include "shm_transport.h"
 
@@ -13,8 +14,6 @@
 #include <atomic>
 
 // RSAIRY PointCloud2 fields — hardcoded, never change.
-// Raw layout: x(f32,0) y(f32,4) z(f32,8) intensity(f32,12) ring(u16,16) timestamp(f64,18)
-// We exclude 'timestamp' (absolute seconds that FAST_LIO misinterprets).
 static std::vector<sensor_msgs::msg::PointField> make_rsairy_fields() {
     std::vector<sensor_msgs::msg::PointField> fields(5);
     fields[0].name = "x";         fields[0].offset = 0;  fields[0].datatype = 7; fields[0].count = 1;
@@ -37,9 +36,6 @@ public:
             "/bridge/LIDAR_POINTS", qos);
 
         RCLCPP_INFO(this->get_logger(), "Bridge publisher started. Waiting for SHM...");
-
-        // Dedicated polling thread — bypasses rclcpp executor scheduling.
-        // publish() is thread-safe in rclcpp.
         poll_thread_ = std::thread([this]() { poll_loop(); });
     }
 
@@ -61,7 +57,6 @@ private:
 
             auto* slot = lidar_reader_.poll();
             if (!slot) {
-                // Sleep 1ms between polls — yield() starves publish on ARM64
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue;
             }
@@ -70,7 +65,6 @@ private:
             uint32_t data_size = slot->data_size;
             if (data_size + sizeof(drdds_bridge::SlotHeader) > drdds_bridge::LIDAR_SLOT_SIZE) continue;
 
-            // Build message with unique_ptr — publish(std::move()) avoids internal copy
             auto msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
             msg->header.stamp.sec = slot->stamp_sec;
             msg->header.stamp.nanosec = slot->stamp_nsec;
@@ -83,7 +77,6 @@ private:
             msg->is_bigendian = slot->is_bigendian;
             msg->fields = rsairy_fields_;
 
-            // Copy full point data from SHM (all 26 bytes/point preserved)
             const uint8_t* data = lidar_reader_.slot_data(slot);
             msg->data.resize(data_size);
             std::memcpy(msg->data.data(), data, data_size);
