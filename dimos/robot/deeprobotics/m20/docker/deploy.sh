@@ -579,26 +579,41 @@ case "${CMD}" in
         echo "=== Bridge build complete ==="
         ;;
 
-    bridge-install)
-        echo "=== Installing drdds bridge systemd service ==="
-        echo "  This makes the bridge survive reboots."
-        echo "  drdds_recv starts BEFORE rsdriver/yesense (SHM discovery ordering)."
+    bridge-deploy)
+        echo "=== Deploying drdds bridge (build + install) ==="
 
-        # Copy service file to NOS
+        # Step 1: Sync and build
+        rsync -avz --delete \
+            -e "ssh ${SSH_OPTS}" \
+            "${DIMOS_ROOT}/dimos/robot/deeprobotics/m20/docker/drdds_bridge/" \
+            "${NOS_USER}@${NOS_HOST}:/tmp/drdds_bridge/"
+        remote_ssh "cd /tmp/drdds_bridge && chmod +x build_host.sh && bash build_host.sh"
+        echo "  Build complete."
+
+        # Step 2: Install systemd service
         rsync -avz \
             -e "ssh ${SSH_OPTS}" \
             "${DIMOS_ROOT}/dimos/robot/deeprobotics/m20/docker/drdds_bridge/drdds-bridge.service" \
             "${NOS_USER}@${NOS_HOST}:/tmp/drdds-bridge.service"
-
-        # Install and enable
         remote_sudo cp /tmp/drdds-bridge.service /etc/systemd/system/drdds-bridge.service
         remote_sudo systemctl daemon-reload
         remote_sudo systemctl enable drdds-bridge
-        echo "  Service installed and enabled."
+
+        # Step 3: Add BindsTo= override so restarting rsdriver auto-restarts bridge
+        remote_sudo "mkdir -p /etc/systemd/system/rsdriver.service.d"
+        remote_ssh "cat > /tmp/bridge-dependency.conf << 'CONF'
+[Unit]
+BindsTo=drdds-bridge.service
+After=drdds-bridge.service
+CONF"
+        remote_sudo cp /tmp/bridge-dependency.conf /etc/systemd/system/rsdriver.service.d/bridge-dependency.conf
+        remote_sudo systemctl daemon-reload
+        echo "  Service installed. rsdriver now depends on drdds-bridge."
         echo ""
-        echo "  To activate now: ./deploy.sh bridge-start"
-        echo "  After reboot: drdds-bridge starts automatically before rsdriver/yesense"
-        echo "=== Install complete ==="
+        echo "  Activate now:   ./deploy.sh bridge-start"
+        echo "  After reboot:   drdds-bridge starts automatically before rsdriver"
+        echo "  Manual restart: 'systemctl restart rsdriver' auto-restarts bridge first"
+        echo "=== Deploy complete ==="
         ;;
 
     bridge-start)
@@ -683,8 +698,8 @@ case "${CMD}" in
         echo "  logs    - Tail container logs"
         echo "  shell   - Open shell in running container"
         echo "  status  - Show container + service status"
-        echo "  bridge-build   - Build drdds bridge on NOS host"
-        echo "  bridge-install - Install systemd service (persists across reboots)"
+        echo "  bridge-deploy  - Build + install bridge (one-time setup, persists across reboots)"
+        echo "  bridge-build   - Build drdds bridge on NOS host (build only, no install)"
         echo "  bridge-start   - Start bridge (drdds_recv + ros2_pub)"
         echo "  bridge-stop    - Stop bridge processes"
         echo "  bridge-logs    - Show bridge logs"

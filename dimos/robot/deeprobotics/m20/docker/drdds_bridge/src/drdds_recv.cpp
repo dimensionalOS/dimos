@@ -20,7 +20,6 @@
 static std::atomic<bool> g_running{true};
 static void signal_handler(int) { g_running = false; }
 
-// Counters for logging
 static std::atomic<uint64_t> lidar_count{0};
 static std::atomic<uint64_t> imu_count{0};
 
@@ -45,15 +44,14 @@ int main(int argc, char** argv) {
 
     std::cout << "[drdds_recv] SHM initialized. Subscribing to /LIDAR/POINTS and /IMU..." << std::endl;
 
-    // Lidar callback
+    // Lidar callback — only passes raw point data + header metadata.
+    // PointField descriptors are hardcoded in ros2_pub (RSAIRY fields never change).
     auto on_lidar = [&](const sensor_msgs::msg::PointCloud2* msg) {
         auto* slot = lidar_shm.acquire();
         uint8_t* data = lidar_shm.slot_data(slot);
 
         uint32_t data_size = msg->data().size();
-        // Reserve space for fields after the data: 4 + fields * (4+32+4+1+4) max ~2KB
-        uint32_t max_fields_size = 4 + msg->fields().size() * 45;
-        if (data_size + max_fields_size + sizeof(drdds_bridge::SlotHeader) > drdds_bridge::LIDAR_SLOT_SIZE) {
+        if (data_size + sizeof(drdds_bridge::SlotHeader) > drdds_bridge::LIDAR_SLOT_SIZE) {
             std::cerr << "[drdds_recv] WARN: lidar msg too large: " << data_size << std::endl;
             return;
         }
@@ -68,33 +66,9 @@ int main(int argc, char** argv) {
         slot->row_step = msg->row_step();
         slot->is_dense = msg->is_dense() ? 1 : 0;
         slot->is_bigendian = msg->is_bigendian() ? 1 : 0;
-        slot->fields_size = 0; // fields serialized separately below
+        slot->fields_size = 0; // fields hardcoded in ros2_pub
 
-        // Copy point cloud data
         std::memcpy(data, msg->data().data(), data_size);
-
-        // Serialize PointField descriptors after the data
-        // Format: [count:u32] [name_len:u32 name:bytes offset:u32 datatype:u8 count:u32] ...
-        uint8_t* fields_ptr = data + data_size;
-        uint32_t fields_count = msg->fields().size();
-        std::memcpy(fields_ptr, &fields_count, 4);
-        fields_ptr += 4;
-        uint32_t fields_bytes = 4;
-
-        for (const auto& f : msg->fields()) {
-            uint32_t nlen = f.name().size();
-            std::memcpy(fields_ptr, &nlen, 4); fields_ptr += 4;
-            std::memcpy(fields_ptr, f.name().data(), nlen); fields_ptr += nlen;
-            uint32_t offset = f.offset();
-            std::memcpy(fields_ptr, &offset, 4); fields_ptr += 4;
-            uint8_t dtype = f.datatype();
-            std::memcpy(fields_ptr, &dtype, 1); fields_ptr += 1;
-            uint32_t cnt = f.count();
-            std::memcpy(fields_ptr, &cnt, 4); fields_ptr += 4;
-            fields_bytes += 4 + nlen + 4 + 1 + 4;
-        }
-        slot->fields_size = fields_bytes;
-
         lidar_shm.commit();
 
         uint64_t c = lidar_count.fetch_add(1) + 1;
@@ -115,7 +89,6 @@ int main(int argc, char** argv) {
         slot->stamp_sec = msg->header().stamp().sec();
         slot->stamp_nsec = msg->header().stamp().nanosec();
 
-        // Pack IMU data: orientation(4d), angular_vel(3d), linear_accel(3d) = 10 doubles = 80 bytes
         double* dp = reinterpret_cast<double*>(data);
         dp[0] = msg->orientation().x();
         dp[1] = msg->orientation().y();
@@ -137,7 +110,7 @@ int main(int argc, char** argv) {
         }
     };
 
-    // DrDDSChannel (pub+sub) — verified working in previous session
+    // DrDDSChannel (pub+sub) — required for rsdriver matching
     DrDDSChannel<sensor_msgs::msg::PointCloud2PubSubType> lidar_ch(
         on_lidar, "/LIDAR/POINTS", 0);
 
@@ -146,12 +119,31 @@ int main(int argc, char** argv) {
 
     std::cout << "[drdds_recv] Channels created. Waiting for data..." << std::endl;
 
+    // Health watchdog: warn if no data for 30s
+    uint64_t last_lidar = 0;
+    int no_data_cycles = 0;
+
     while (g_running) {
         std::this_thread::sleep_for(std::chrono::seconds(5));
+        uint64_t cur = lidar_count.load();
         std::cout << "[drdds_recv] status: lidar_matched=" << lidar_ch.GetMatchedCount()
                   << " imu_matched=" << imu_ch.GetMatchedCount()
-                  << " lidar_msgs=" << lidar_count.load()
+                  << " lidar_msgs=" << cur
                   << " imu_msgs=" << imu_count.load() << std::endl;
+
+        if (cur == last_lidar) {
+            no_data_cycles++;
+            if (no_data_cycles >= 6) { // 30s with no data
+                std::cerr << "[drdds_recv] WARNING: no lidar data for 30s. "
+                          << "Restart sequence: systemctl stop rsdriver && "
+                          << "systemctl restart drdds-bridge && "
+                          << "systemctl start rsdriver" << std::endl;
+                no_data_cycles = 0; // don't spam
+            }
+        } else {
+            no_data_cycles = 0;
+        }
+        last_lidar = cur;
     }
 
     std::cout << "[drdds_recv] Shutting down." << std::endl;
