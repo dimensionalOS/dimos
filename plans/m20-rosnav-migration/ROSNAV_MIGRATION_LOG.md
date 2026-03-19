@@ -258,18 +258,37 @@ With a clean restart sequence (ros2_pub first, wait 5s, then FAST_LIO), timestam
 
 ---
 
-## Finding #12: ros2_pub Must Unset FASTRTPS_DEFAULT_PROFILES_FILE (2026-03-18)
+## Finding #12: FastDDS SHM Segment Too Small — Root Cause of Frame Drops (2026-03-19)
 
-The nav container has `FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml` set. This XML has parsing errors that prevent ROS2 DDS from working properly. ros2_pub must be started with the env var unset:
+**This was the root cause of the ~20% frame drop issue.**
 
-```bash
-docker exec -d dimos-nav bash -c 'unset FASTRTPS_DEFAULT_PROFILES_FILE && \
-    source /opt/ros/humble/setup.bash && \
-    source /ros2_ws/install/setup.bash && \
-    ros2 run drdds_bridge ros2_pub'
+FastDDS 2.6 default SHM `segment_size` is **512KB**. Our lidar messages are **~3MB**. Messages can't fit in SHM, so FastDDS falls back to **UDP transport**, fragmenting each 3MB message into ~48 UDP datagrams. With BEST_EFFORT QoS, losing **any single fragment kills the entire message**. At 10Hz × 30MB/s, socket buffer overflow causes ~20% fragment loss.
+
+**Fix**: Set `FASTRTPS_DEFAULT_PROFILES_FILE` to XML profiles with large SHM segments on BOTH sides:
+
+Publisher (`ros2_pub_fastdds.xml`):
+```xml
+<transport_descriptor>
+    <transport_id>shm_large</transport_id>
+    <type>SHM</type>
+    <segment_size>16777216</segment_size>       <!-- 16MB -->
+    <maxMessageSize>4194304</maxMessageSize>    <!-- 4MB -->
+</transport_descriptor>
 ```
 
-Similarly, any `ros2 topic` CLI commands inside the container need the same env unset.
+Subscriber (container `fastdds.xml` for FAST_LIO):
+```xml
+<transport_descriptor>
+    <transport_id>shm_large</transport_id>
+    <type>SHM</type>
+    <segment_size>33554432</segment_size>       <!-- 32MB -->
+    <maxMessageSize>4194304</maxMessageSize>    <!-- 4MB -->
+</transport_descriptor>
+```
+
+**XML syntax gotcha**: FastDDS 2.6 uses `<maxMessageSize>` (camelCase). FastDDS 2.14 uses `<max_message_size>` (snake_case). Using the wrong case causes silent parse errors.
+
+**Result**: 10Hz bridge rate, 10Hz FAST_LIO odometry. Zero frame drops.
 
 ---
 
@@ -281,26 +300,40 @@ Running `pkill -f drdds_recv` over SSH kills the SSH session itself because the 
 
 ---
 
-## Verified Working Pipeline (2026-03-18)
+## Verified Working Pipeline (2026-03-19, final)
 
 | Component | Process | Host | Rate | Status |
 |-----------|---------|------|------|--------|
 | Lidar multicast | RSAIRY×2 | hardware | 10Hz | Working |
 | rsdriver | rslidar | NOS (root) | 10Hz pub | Working |
-| yesense | yesense_driver | NOS (root) | 200Hz pub | Working |
-| drdds_recv | drdds_recv | NOS (root) | 10Hz lidar + 200Hz IMU | Working |
-| ros2_pub | ros2_pub | container | ~9Hz lidar + IMU | Working |
-| FAST_LIO | fastlio_mapping | container | ~10Hz odometry | Working |
+| yesense | yesense_driver | NOS (root) | 200Hz pub | Working (ROS2-readable directly) |
+| drdds_recv | drdds_recv | NOS (root) | 10Hz lidar | Working (lidar only, IMU removed) |
+| ros2_pub | ros2_pub | container | **10Hz** lidar | Working (**zero frame drops**) |
+| /IMU | yesense → FAST_LIO | direct | 200Hz | Working (no bridge needed) |
+| FAST_LIO | fastlio_mapping | container | **10Hz** odometry | Working |
 
 **Data rates measured**:
-- drdds_recv: 115K pts/frame, 3.0 MB/frame at 10Hz (dual RSAIRY merged)
-- ros2_pub: /bridge/LIDAR_POINTS at 9Hz, /bridge/IMU at 200Hz
-- FAST_LIO: /Odometry at 10Hz
+- drdds_recv: 115K pts/frame, 3.0 MB/frame at 10Hz
+- ros2_pub: /bridge/LIDAR_POINTS at **9.99Hz** (zero loss)
+- FAST_LIO: /Odometry at **9.99Hz**
 
 **Resource usage**:
 - drdds_recv: minimal CPU (callback-driven)
-- ros2_pub: low CPU (SHM poll at 2kHz + ROS2 publish)
-- FAST_LIO: 79% CPU on ARM64 (acceptable for SLAM)
+- ros2_pub: 12.5% CPU (semaphore-driven, no polling)
+- FAST_LIO: 25-79% CPU on ARM64
+
+**Performance optimization journey**:
+
+| Change | Bridge Rate | Key Insight |
+|--------|------------|-------------|
+| Initial (RELIABLE QoS, 4 slots) | 6 Hz | ACK blocking |
+| + BEST_EFFORT QoS | 8 Hz | Eliminated ACK waits |
+| + 16 SHM ring buffer slots | 8 Hz | More headroom |
+| + Dedicated poll thread | 8 Hz | Bypassed executor scheduling |
+| + Semaphore notification | 8 Hz | Eliminated 1kHz CPU polling |
+| + Timing instrumentation | 8 Hz | Revealed publish() is only 570us! |
+| + spin() → sleep() | 8 Hz | Freed a wasted CPU core |
+| **+ 16MB FastDDS SHM segment** | **10 Hz** | **Eliminated UDP fragmentation** |
 
 ---
 
@@ -319,15 +352,53 @@ sudo systemctl restart reflective_column charge_manager
 
 ---
 
+## Finding #15: publish() is Fast — UDP Fragmentation Was the Real Bottleneck (2026-03-19)
+
+Timing instrumentation revealed `publish()` takes only **~570us** in steady state (first frame: 10ms from cold caches). The ~80ms we assumed was the FastDDS CDR serialization overhead was actually **UDP fragmentation + socket buffer contention** — not serialization.
+
+```
+[drdds_bridge] lidar #101 copy=938us pub=818us data=3104842B pts=119417
+[drdds_bridge] lidar #301 copy=557us pub=556us data=1994330B pts=76705
+[drdds_bridge] lidar #501 copy=2669us pub=554us data=1992198B pts=76623
+```
+
+**Lesson**: Always instrument before optimizing. We spent time on thread architectures, poll rates, and queue designs when the actual fix was a 2-line XML config change.
+
+---
+
+## Finding #16: Yesense IMU Is Directly ROS2-Readable (2026-03-19)
+
+Verified by stopping drdds_recv entirely — `/IMU` from yesense continues at 200Hz inside the container. Yesense's drdds publisher uses a transport configuration that IS compatible with ROS2's rmw_fastrtps (unlike rsdriver which is SHM-only and invisible).
+
+This allowed removing all IMU code from the bridge (drdds_recv and ros2_pub), simplifying both significantly. FAST_LIO subscribes to `/IMU` directly from yesense.
+
+---
+
+## Finding #17: FastDDS 2.6 vs 2.14 XML Syntax Differences (2026-03-19)
+
+FastDDS XML element naming changed between versions:
+
+| Element | FastDDS 2.6 (Humble) | FastDDS 2.14 (drdds host) |
+|---------|---------------------|--------------------------|
+| Max message size | `<maxMessageSize>` | `<max_message_size>` |
+| SHM transport type | `SHM` | `SHM` |
+| Segment size | `<segment_size>` | `<segment_size>` |
+
+Using the wrong case causes silent parse errors — the element is ignored and default values are used. This caused our first SHM XML attempt to fail without obvious error.
+
+---
+
 ## Remaining Work
 
 ### Immediate Next Steps
 
-1. **Install systemd service for reboot persistence**: Run `./deploy.sh bridge-install` to install `drdds-bridge.service` on NOS. This ensures drdds_recv starts before rsdriver/yesense on boot, and restarts charge_manager/reflective_column after rsdriver is up.
+1. ~~**Install systemd service for reboot persistence**~~: DONE. `drdds-bridge.service` installed on NOS.
 
-2. **FAST_LIO odometry verification**: Check that `/Odometry` produces reasonable pose estimates (not drifting wildly). The "No point, skip this scan!" warning on first scan may indicate field format issues — some scans might be empty.
+2. **FAST_LIO odometry verification**: Check that `/Odometry` produces reasonable pose estimates (not drifting wildly).
 
-3. **Rebuild nav container image**: ros2_pub was rebuilt inside the running container. Need to update the Dockerfile and push a new image so the fix persists across container restarts.
+3. **Rebuild nav container image**: ros2_pub + fastdds.xml were modified inside the running container. Need to update the Dockerfile and push a new image so fixes persist across container restarts.
+
+4. **Persist container fastdds.xml fix**: The container's `/ros2_ws/config/fastdds.xml` was fixed in-place (maxMessageSize 1MB→4MB, segment_size 10MB→32MB). This needs to be baked into the Dockerfile.
 
 ### FAST_LIO → dimos Integration
 
@@ -355,4 +426,7 @@ sudo systemctl restart reflective_column charge_manager
 | robosense.yaml | (in container) `/ros2_ws/src/fast_lio/config/robosense.yaml` | FAST_LIO config |
 | drqos.xml | (on NOS) `/opt/drdds/dr_qos/drqos.xml` | drdds QoS profiles |
 | fastdds.xml | (on NOS) `/opt/robot/fastdds.xml` | System FastDDS transport config |
+| ros2_pub_fastdds.xml | `dimos/robot/deeprobotics/m20/docker/drdds_bridge/config/ros2_pub_fastdds.xml` | Publisher SHM profile (16MB segment) |
+| fastdds.xml | (in container) `/ros2_ws/config/fastdds.xml` | Subscriber SHM profile (32MB segment, 4MB maxMessageSize) |
+| drdds-bridge.service | `dimos/robot/deeprobotics/m20/docker/drdds_bridge/drdds-bridge.service` | Systemd service (starts before rsdriver) |
 | plan.md | `plans/m20-rosnav-migration/05-drdds-bridge/plan.md` | Original bridge implementation plan |
