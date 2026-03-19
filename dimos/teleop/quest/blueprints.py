@@ -85,7 +85,6 @@ teleop_quest_dual = autoconnect(
 )
 
 
-
 __all__ = [
     "teleop_quest_dual",
     "teleop_quest_piper",

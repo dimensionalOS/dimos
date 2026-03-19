@@ -48,7 +48,7 @@ def mock_arm(hw_id: str = "arm", n_joints: int = 7) -> HardwareComponent:
 def xarm7(hw_id: str = "arm", *, gripper: bool = False) -> HardwareComponent:
     """XArm7 (7-DOF). Uses MuJoCo sim when --simulation flag is set."""
     if global_config.simulation:
-        return sim_xarm7(hw_id, headless=False)
+        return sim_xarm7(hw_id, headless=False, gripper=gripper)
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
@@ -85,7 +85,9 @@ def piper(hw_id: str = "arm") -> HardwareComponent:
     )
 
 
-def sim_xarm7(hw_id: str = "arm", *, headless: bool = True) -> HardwareComponent:
+def sim_xarm7(
+    hw_id: str = "arm", *, headless: bool = True, gripper: bool = False
+) -> HardwareComponent:
     """Simulated XArm7 via MuJoCo (7-DOF)."""
     return HardwareComponent(
         hardware_id=hw_id,
@@ -94,6 +96,7 @@ def sim_xarm7(hw_id: str = "arm", *, headless: bool = True) -> HardwareComponent
         adapter_type="sim_mujoco",
         address=str(LfsPath("xarm7/scene.xml")),
         adapter_kwargs={"headless": headless},
+        gripper_joints=make_gripper_joints(hw_id) if gripper else [],
     )
 
 
