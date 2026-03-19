@@ -38,9 +38,9 @@ public:
             "/bridge/LIDAR_POINTS", qos);
         // IMU NOT bridged — yesense /IMU is directly readable by ROS2 (verified 2026-03-18)
 
-        // Poll SHM at 2kHz (500us)
+        // Poll SHM at 200Hz (5ms) — lidar is 10Hz, so ~20 polls per frame
         timer_ = this->create_wall_timer(
-            std::chrono::microseconds(500),
+            std::chrono::milliseconds(5),
             std::bind(&BridgePublisher::poll_shm, this));
 
         RCLCPP_INFO(this->get_logger(), "Bridge publisher started. Waiting for SHM...");
