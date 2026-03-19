@@ -43,6 +43,7 @@ from dimos.msgs.geometry_msgs import (
     Vector3,
 )
 from dimos.msgs.nav_msgs import Path
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs import Joy, PointCloud2
 from dimos.msgs.std_msgs import Bool, Int8
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -81,6 +82,9 @@ class ROSNav(
     path_active: Out[Path]
     cmd_vel: Out[Twist]
 
+    # Odometry output (extracted from FAST_LIO /Odometry → PoseStamped for downstream)
+    odom: Out[PoseStamped]
+
     # ROS In ports (receiving from ROS topics via ROSTransport)
     ros_goal_reached: In[Bool]
     ros_cmd_vel: In[TwistStamped]
@@ -89,6 +93,7 @@ class ROSNav(
     ros_global_map: In[PointCloud2]
     ros_path: In[Path]
     ros_tf: In[TFMessage]
+    ros_odometry: In[Odometry]
 
     # ROS Out ports (publishing to ROS topics via ROSTransport)
     ros_goal_pose: Out[PoseStamped]
@@ -154,6 +159,7 @@ class ROSNav(
         self.ros_global_map.subscribe(self._on_ros_global_map)
         self.ros_path.subscribe(self._on_ros_path)
         self.ros_tf.subscribe(self._on_ros_tf)
+        self.ros_odometry.subscribe(self._on_ros_odometry)
 
         self.goal_req.subscribe(self._on_goal_pose)
         logger.info("NavigationModule started with ROS transport and RxPY streams")
@@ -173,6 +179,17 @@ class ROSNav(
 
     def _on_ros_registered_scan(self, msg: PointCloud2) -> None:
         self._local_pointcloud_subject.on_next(msg)
+
+    def _on_ros_odometry(self, msg: Odometry) -> None:
+        """Extract PoseStamped from FAST_LIO Odometry for downstream consumers."""
+        ori = msg.pose.orientation
+        pose = PoseStamped(
+            x=msg.pose.x, y=msg.pose.y, z=msg.pose.z,
+            qx=ori.x, qy=ori.y, qz=ori.z, qw=ori.w,
+            frame_id=msg.frame_id,
+            ts=msg.ts,
+        )
+        self.odom.publish(pose)
 
     def _on_ros_global_map(self, msg: PointCloud2) -> None:
         self._global_map_subject.on_next(msg)
@@ -403,6 +420,7 @@ def deploy(dimos: ModuleCoordinator):  # type: ignore[no-untyped-def]
     nav.ros_global_map.transport = ROSTransport("/terrain_map_ext", PointCloud2)
     nav.ros_path.transport = ROSTransport("/path", Path)
     nav.ros_tf.transport = ROSTransport("/tf", TFMessage)
+    nav.ros_odometry.transport = ROSTransport("/Odometry", Odometry)
 
     # ROS Out transports (publishing to ROS navigation stack)
     nav.ros_goal_pose.transport = ROSTransport("/goal_pose", PoseStamped)
