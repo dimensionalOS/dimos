@@ -254,7 +254,15 @@ RUN mkdir -p ${DIMOS_PATH} \
 RUN cat > ${WORKSPACE}/config/fastdds.xml <<'EOF'
 <?xml version="1.0" encoding="UTF-8" ?>
 <profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
-    <!-- Default participant profile applied to all ROS 2 nodes -->
+    <transport_descriptors>
+        <transport_descriptor>
+            <transport_id>shm_large</transport_id>
+            <type>SHM</type>
+            <segment_size>33554432</segment_size>
+            <maxMessageSize>4194304</maxMessageSize>
+        </transport_descriptor>
+    </transport_descriptors>
+
     <participant profile_name="participant_profile" is_default_profile="true">
         <rtps>
             <name>ros2_navigation_participant</name>
@@ -271,7 +279,6 @@ RUN cat > ${WORKSPACE}/config/fastdds.xml <<'EOF'
                     </leaseAnnouncement>
                 </discovery_config>
             </builtin>
-            <!-- Socket buffer sizes for high-bandwidth data (point clouds) -->
             <sendSocketBufferSize>10485760</sendSocketBufferSize>
             <listenSocketBufferSize>10485760</listenSocketBufferSize>
             <useBuiltinTransports>true</useBuiltinTransports>
@@ -280,18 +287,6 @@ RUN cat > ${WORKSPACE}/config/fastdds.xml <<'EOF'
             </userTransports>
         </rtps>
     </participant>
-
-    <!-- SHM transport with large segment for 3MB lidar PointCloud2 messages.
-         Default 512KB is too small — causes UDP fallback + fragment loss.
-         maxMessageSize uses camelCase (FastDDS 2.6 syntax). -->
-    <transport_descriptors>
-        <transport_descriptor>
-            <transport_id>shm_large</transport_id>
-            <type>SHM</type>
-            <segment_size>33554432</segment_size>
-            <maxMessageSize>4194304</maxMessageSize>
-        </transport_descriptor>
-    </transport_descriptors>
 </profiles>
 EOF
 
