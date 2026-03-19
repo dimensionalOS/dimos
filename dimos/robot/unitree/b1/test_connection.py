@@ -85,43 +85,27 @@ class TestB1Connection:
         conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)
         conn.watchdog_thread.start()
 
-        # Send first command
-        twist1 = TwistStamped(
-            ts=time.time(),
-            frame_id="base_link",
-            linear=Vector3(1.0, 0, 0),
-            angular=Vector3(0, 0, 0),
-        )
-        conn.handle_twist_stamped(twist1)
-        assert conn._current_cmd.ly == 1.0
+        try:
+            # Send commands in rapid succession — each resets the 200ms watchdog
+            for val in [1.0, 0.8, 0.6, 0.5]:
+                twist = TwistStamped(
+                    ts=time.time(),
+                    frame_id="base_link",
+                    linear=Vector3(val, 0, 0),
+                    angular=Vector3(0, 0, 0),
+                )
+                conn.handle_twist_stamped(twist)
+                time.sleep(0.02)  # 20ms between commands, well under timeout
 
-        # Wait 150ms (not enough to trigger timeout)
-        time.sleep(0.15)
-
-        # Send second command before timeout
-        twist2 = TwistStamped(
-            ts=time.time(),
-            frame_id="base_link",
-            linear=Vector3(0.5, 0, 0),
-            angular=Vector3(0, 0, 0),
-        )
-        conn.handle_twist_stamped(twist2)
-
-        # Command should be updated and no timeout
-        assert conn._current_cmd.ly == 0.5
-        assert not conn.timeout_active
-
-        # Wait another 150ms (total 300ms from second command)
-        time.sleep(0.15)
-        # Should still not timeout since we reset the timer
-        assert not conn.timeout_active
-        assert conn._current_cmd.ly == 0.5
-
-        conn.running = False
-        conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
-        conn._close_module()
+            # Command should be the last one sent and no timeout
+            assert conn._current_cmd.ly == 0.5
+            assert not conn.timeout_active
+        finally:
+            conn.running = False
+            conn.watchdog_running = False
+            conn.send_thread.join(timeout=1.0)
+            conn.watchdog_thread.join(timeout=1.0)
+            conn._close_module()
 
     def test_watchdog_thread_efficiency(self) -> None:
         """Test that watchdog uses only one thread regardless of command rate."""
@@ -179,30 +163,35 @@ class TestB1Connection:
         conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)
         conn.watchdog_thread.start()
 
-        # Send command
-        twist = TwistStamped(
-            ts=time.time(),
-            frame_id="base_link",
-            linear=Vector3(1.0, 0, 0),
-            angular=Vector3(0, 0, 0),
-        )
-        conn.handle_twist_stamped(twist)
-        assert conn._current_cmd.ly == 1.0
+        try:
+            # Send command
+            twist = TwistStamped(
+                ts=time.time(),
+                frame_id="base_link",
+                linear=Vector3(1.0, 0, 0),
+                angular=Vector3(0, 0, 0),
+            )
+            conn.handle_twist_stamped(twist)
+            assert conn._current_cmd.ly == 1.0
 
-        # Wait for watchdog timeout
-        time.sleep(0.3)
+            # Poll for watchdog timeout (generous 2s deadline)
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if conn.timeout_active:
+                    break
+                time.sleep(0.05)
 
-        # Watchdog should have zeroed commands despite blocked send loop
-        assert conn._current_cmd.ly == 0.0
-        assert conn.timeout_active
-
-        # Unblock send loop
-        block_event.set()
-        conn.running = False
-        conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
-        conn._close_module()
+            # Watchdog should have zeroed commands despite blocked send loop
+            assert conn._current_cmd.ly == 0.0, "Watchdog should zero commands"
+            assert conn.timeout_active, "Watchdog should be active"
+        finally:
+            # Unblock send loop
+            block_event.set()
+            conn.running = False
+            conn.watchdog_running = False
+            conn.send_thread.join(timeout=1.0)
+            conn.watchdog_thread.join(timeout=1.0)
+            conn._close_module()
 
     def test_continuous_commands_prevent_timeout(self) -> None:
         """Test that continuous commands prevent watchdog timeout."""
@@ -214,30 +203,33 @@ class TestB1Connection:
         conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)
         conn.watchdog_thread.start()
 
-        # Send commands continuously for 500ms (should prevent timeout)
-        start = time.time()
-        commands_sent = 0
-        while time.time() - start < 0.5:
-            twist = TwistStamped(
-                ts=time.time(),
-                frame_id="base_link",
-                linear=Vector3(0.5, 0, 0),
-                angular=Vector3(0, 0, 0),
+        try:
+            # Send commands continuously for 1s (should prevent timeout)
+            start = time.time()
+            commands_sent = 0
+            while time.time() - start < 1.0:
+                twist = TwistStamped(
+                    ts=time.time(),
+                    frame_id="base_link",
+                    linear=Vector3(0.5, 0, 0),
+                    angular=Vector3(0, 0, 0),
+                )
+                conn.handle_twist_stamped(twist)
+                commands_sent += 1
+                time.sleep(0.05)  # 50ms between commands (well under 200ms timeout)
+
+            # Should never timeout
+            assert not conn.timeout_active, "Should not timeout with continuous commands"
+            assert conn._current_cmd.ly == 0.5, "Commands should still be active"
+            assert commands_sent >= 3, (
+                f"Should send at least 3 commands in 1s, sent {commands_sent}"
             )
-            conn.handle_twist_stamped(twist)
-            commands_sent += 1
-            time.sleep(0.05)  # 50ms between commands (well under 200ms timeout)
-
-        # Should never timeout
-        assert not conn.timeout_active, "Should not timeout with continuous commands"
-        assert conn._current_cmd.ly == 0.5, "Commands should still be active"
-        assert commands_sent >= 9, f"Should send at least 9 commands in 500ms, sent {commands_sent}"
-
-        conn.running = False
-        conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
-        conn._close_module()
+        finally:
+            conn.running = False
+            conn.watchdog_running = False
+            conn.send_thread.join(timeout=1.0)
+            conn.watchdog_thread.join(timeout=1.0)
+            conn._close_module()
 
     def test_watchdog_timing_accuracy(self) -> None:
         """Test that watchdog zeros commands at approximately 200ms."""

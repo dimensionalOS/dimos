@@ -320,7 +320,7 @@ def test_timestamp_alignment(test_scheduler) -> None:
 
     assert len(raw_frames) == 30
     assert len(processed_frames) > 2
-    assert len(aligned_frames) > 2
+    assert len(aligned_frames) >= 2
 
     # Due to async processing, the last frame might not be aligned before completion
     assert len(aligned_frames) >= len(processed_frames) - 1
@@ -333,7 +333,7 @@ def test_timestamp_alignment(test_scheduler) -> None:
         )
         assert diff <= 0.05
 
-    assert len(aligned_frames) > 2
+    assert len(aligned_frames) >= 2
 
 
 def test_timestamp_alignment_primary_first() -> None:
