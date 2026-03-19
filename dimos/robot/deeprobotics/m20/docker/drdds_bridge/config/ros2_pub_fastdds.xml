@@ -1,27 +1,26 @@
 <?xml version="1.0" encoding="UTF-8" ?>
-<!-- FastDDS profile for ros2_pub: SHM-only transport, async publish.
-     Eliminates UDP fragmentation of 3MB PointCloud2 messages that causes
-     30-80ms publish() stalls on ARM64. -->
+<!-- FastDDS 2.6 profile for ros2_pub: large SHM segment for 3MB lidar messages.
+     Default SHM is 512KB — too small, causes UDP fallback + fragment loss.
+     With 16MB segment, 3MB messages fit in SHM unfragmented = zero loss. -->
 <profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
-
-    <participant profile_name="participant_profile" is_default_profile="true">
-        <rtps>
-            <!-- Disable UDP — use SHM only (both processes are on same host) -->
-            <useBuiltinTransports>false</useBuiltinTransports>
-            <userTransports>
-                <transport_id>shm_transport</transport_id>
-            </userTransports>
-        </rtps>
-    </participant>
 
     <transport_descriptors>
         <transport_descriptor>
-            <transport_id>shm_transport</transport_id>
+            <transport_id>shm_large</transport_id>
             <type>SHM</type>
             <segment_size>16777216</segment_size>
-            <max_message_size>4194304</max_message_size>
+            <maxMessageSize>4194304</maxMessageSize>
         </transport_descriptor>
     </transport_descriptors>
+
+    <participant profile_name="participant_profile" is_default_profile="true">
+        <rtps>
+            <useBuiltinTransports>true</useBuiltinTransports>
+            <userTransports>
+                <transport_id>shm_large</transport_id>
+            </userTransports>
+        </rtps>
+    </participant>
 
     <data_writer profile_name="default_datawriter" is_default_profile="true">
         <qos>

@@ -633,14 +633,15 @@ case "${CMD}" in
         echo "  Verifying bridge data flow..."
         remote_ssh "tail -3 /tmp/drdds_recv.log 2>/dev/null || true"
 
-        # Step 6: Start ros2_pub in nav container (reads SHM, publishes ROS2)
+        # Step 6: Start ros2_pub with bridge-specific FastDDS profile (16MB SHM segment).
+        # Default SHM is 512KB — too small for 3MB lidar, causing UDP fallback + fragment loss.
         remote_ssh "docker exec -d ${CONTAINER_NAME} bash -c '\
-            unset FASTRTPS_DEFAULT_PROFILES_FILE && \
+            export FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/src/drdds_bridge/config/ros2_pub_fastdds.xml && \
             source /opt/ros/humble/setup.bash && \
             source /ros2_ws/install/setup.bash && \
             ros2 run drdds_bridge ros2_pub 2>&1 | tee /tmp/ros2_pub.log'" 2>/dev/null || \
         remote_ssh "docker exec -d dimos-nav bash -c '\
-            unset FASTRTPS_DEFAULT_PROFILES_FILE && \
+            export FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/src/drdds_bridge/config/ros2_pub_fastdds.xml && \
             source /opt/ros/humble/setup.bash && \
             source /ros2_ws/install/setup.bash && \
             ros2 run drdds_bridge ros2_pub 2>&1 | tee /tmp/ros2_pub.log'"
