@@ -83,6 +83,18 @@ def piper(hw_id: str = "arm") -> HardwareComponent:
     )
 
 
+def sim_xarm7(hw_id: str = "arm", *, headless: bool = True) -> HardwareComponent:
+    """Simulated XArm7 via MuJoCo (7-DOF)."""
+    return HardwareComponent(
+        hardware_id=hw_id,
+        hardware_type=HardwareType.MANIPULATOR,
+        joints=make_joints(hw_id, 7),
+        adapter_type="sim_mujoco",
+        address=str(LfsPath("xarm7/scene.xml")),
+        adapter_kwargs={"headless": headless},
+    )
+
+
 def mock_twist_base(hw_id: str = "base") -> HardwareComponent:
     """Mock holonomic twist base (3-DOF: vx, vy, wz)."""
     return HardwareComponent(

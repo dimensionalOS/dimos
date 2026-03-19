@@ -237,6 +237,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             component.adapter_type,
             dof=len(component.joints),
             address=component.address,
+            **component.adapter_kwargs,
         )
 
     def _create_twist_base_adapter(self, component: HardwareComponent) -> TwistBaseAdapter:

@@ -64,14 +64,14 @@ class SimManipInterface:
             self.logger.error(f"Sim connection failed: {exc}")
             return False
 
-    def disconnect(self) -> bool:
+    def disconnect(self) -> None:
         """Disconnect from simulation."""
         try:
-            return self._engine.disconnect()
+            self._engine.disconnect()
         except Exception as exc:
-            self._connected = False
             self.logger.error(f"Sim disconnection failed: {exc}")
-            return False
+        finally:
+            self._connected = False
 
     def is_connected(self) -> bool:
         return bool(self._connected and self._engine.connected)
@@ -135,7 +135,7 @@ class SimManipInterface:
     def read_error(self) -> tuple[int, str]:
         return self._error_code, self._error_message
 
-    def write_joint_positions(self, positions: list[float]) -> bool:
+    def write_joint_positions(self, positions: list[float], velocity: float = 1.0) -> bool:
         if not self._servos_enabled:
             return False
         self._control_mode = ControlMode.POSITION
