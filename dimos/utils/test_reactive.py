@@ -169,7 +169,9 @@ def test_getter_streaming_blocking() -> None:
 
 
 def test_getter_streaming_blocking_timeout() -> None:
-    source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
+    source = dispose_spy(
+        rx.interval(1.0).pipe(ops.take(50))
+    )  # 10x margin vs timeout=0.1 — avoids macOS scheduler jitter
     with pytest.raises(Exception):
         getter = getter_streaming(source, timeout=0.1)
         getter.dispose()
@@ -179,7 +181,9 @@ def test_getter_streaming_blocking_timeout() -> None:
 
 @pytest.mark.slow
 def test_getter_streaming_nonblocking() -> None:
-    source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
+    source = dispose_spy(
+        rx.interval(1.0).pipe(ops.take(50))
+    )  # 10x margin vs timeout=0.1 — avoids macOS scheduler jitter
 
     getter = max_time(
         lambda: getter_streaming(source, nonblocking=True),
@@ -204,7 +208,9 @@ def test_getter_streaming_nonblocking() -> None:
 
 
 def test_getter_streaming_nonblocking_timeout() -> None:
-    source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
+    source = dispose_spy(
+        rx.interval(1.0).pipe(ops.take(50))
+    )  # 10x margin vs timeout=0.1 — avoids macOS scheduler jitter
     getter = getter_streaming(source, timeout=0.1, nonblocking=True)
     with pytest.raises(Exception):
         getter()
@@ -240,7 +246,9 @@ def test_getter_ondemand() -> None:
 
 
 def test_getter_ondemand_timeout() -> None:
-    source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
+    source = dispose_spy(
+        rx.interval(1.0).pipe(ops.take(50))
+    )  # 10x margin vs timeout=0.1 — avoids macOS scheduler jitter
     getter = getter_ondemand(source, timeout=0.1)
     with pytest.raises(Exception):
         getter()
