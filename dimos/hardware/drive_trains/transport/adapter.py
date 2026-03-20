@@ -82,10 +82,6 @@ class TransportTwistAdapter:
         self._connected = False
         self._enabled = False
 
-    # =========================================================================
-    # Connection
-    # =========================================================================
-
     def connect(self) -> bool:
         """Set up pub/sub transports for cmd_vel and odom."""
         try:
@@ -140,18 +136,10 @@ class TransportTwistAdapter:
     def is_connected(self) -> bool:
         return self._connected
 
-    # =========================================================================
-    # Info
-    # =========================================================================
-
-    def get_dof(self) -> int:
+def get_dof(self) -> int:
         return self._dof
 
-    # =========================================================================
-    # State Reading
-    # =========================================================================
-
-    def read_velocities(self) -> list[float]:
+def read_velocities(self) -> list[float]:
         with self._lock:
             return self._last_velocities.copy()
 
@@ -161,11 +149,7 @@ class TransportTwistAdapter:
                 return None
             return self._latest_odom.copy()
 
-    # =========================================================================
-    # Control
-    # =========================================================================
-
-    def write_velocities(self, velocities: list[float]) -> bool:
+def write_velocities(self, velocities: list[float]) -> bool:
         if len(velocities) != self._dof:
             return False
 
@@ -207,11 +191,7 @@ class TransportTwistAdapter:
             logger.error(f"TransportTwistAdapter stop error: {e}")
             return False
 
-    # =========================================================================
-    # Enable/Disable
-    # =========================================================================
-
-    def write_enable(self, enable: bool) -> bool:
+def write_enable(self, enable: bool) -> bool:
         self._enabled = enable
         if not enable:
             self.write_stop()
@@ -220,11 +200,7 @@ class TransportTwistAdapter:
     def read_enabled(self) -> bool:
         return self._enabled
 
-    # =========================================================================
-    # Internal
-    # =========================================================================
-
-    def _on_odom(self, msg: PoseStamped) -> None:
+def _on_odom(self, msg: PoseStamped) -> None:
         try:
             x = float(msg.position.x)
             y = float(msg.position.y)
