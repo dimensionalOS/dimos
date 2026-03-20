@@ -43,7 +43,7 @@ dimos restart          # stop + re-run with same original args
 | `unitree-g1-agentic-sim` | G1 | sim | GPT-4o (G1 prompt) | — | Full agentic sim, no real robot needed |
 | `xarm-perception-agent` | xArm | real | GPT-4o | — | Manipulation + perception + agent |
 | `xarm7-trajectory-sim` | xArm7 | sim | — | — | Trajectory planning sim |
-| `arm-teleop-xarm7` | xArm7 | real | — | — | Quest VR teleop |
+| `teleop-quest-xarm7` | xArm7 | real | — | — | Quest VR teleop |
 | `dual-xarm6-planner` | xArm6×2 | real | — | — | Dual-arm motion planner |
 
 Run `dimos list` for the full list.

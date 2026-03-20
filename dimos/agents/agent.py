@@ -32,6 +32,9 @@ from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.stream import In, Out
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.spec.utils import Spec
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -52,6 +55,7 @@ class Agent(Module[AgentConfig]):
     _lock: RLock
     _state_graph: CompiledStateGraph[Any, Any, Any, Any] | None
     _message_queue: Queue[BaseMessage]
+    _skill_registry: dict[str, SkillInfo]
     _history: list[BaseMessage]
     _thread: Thread
     _stop_event: Event
@@ -62,6 +66,7 @@ class Agent(Module[AgentConfig]):
         self._state_graph = None
         self._message_queue = Queue()
         self._history = []
+        self._skill_registry = {}
         self._thread = Thread(
             target=self._thread_loop,
             name=f"{self.__class__.__name__}-thread",
@@ -100,13 +105,16 @@ class Agent(Module[AgentConfig]):
 
             model = MockModel(json_path=self.config.model_fixture)
 
+        skills = [skill for module in modules for skill in (module.get_skills() or [])]
+        self._skill_registry = {skill.func_name: skill for skill in skills}
+
         with self._lock:
             # Here to prevent unwanted imports in the file.
             from langchain.agents import create_agent
 
             self._state_graph = create_agent(
                 model=model,
-                tools=_get_tools_from_modules(self, modules, self.rpc),
+                tools=[_skill_to_tool(self, skill, self.rpc) for skill in skills],
                 system_prompt=self.config.system_prompt,
             )
             self._thread.start()
@@ -114,6 +122,64 @@ class Agent(Module[AgentConfig]):
     @rpc
     def add_message(self, message: BaseMessage) -> None:
         self._message_queue.put(message)
+
+    @rpc
+    def dispatch_continuation(
+        self, continuation: dict[str, Any], continuation_context: dict[str, Any]
+    ) -> None:
+        """Execute a tool continuation with detection data, bypassing the LLM.
+
+        Called by trigger tools (e.g. look_out_for) to immediately invoke a
+        follow-up tool when a detection fires, without waiting for the LLM to
+        reason about the next action.
+
+        Args:
+            continuation: ``{"tool": "<name>", "args": {…}}`` — the tool to
+                call and its arguments.  Argument values that are strings
+                starting with ``$`` are treated as template variables and
+                resolved against *continuation_context* (e.g. ``"$bbox"``).
+            continuation_context: runtime detection data, e.g.
+                ``{"bbox": [x1, y1, x2, y2], "label": "person"}``.
+        """
+        tool_name = continuation.get("tool")
+        if not tool_name:
+            self._message_queue.put(
+                HumanMessage(f"Continuation failed: missing 'tool' key in {continuation}")
+            )
+            return
+
+        skill_info = self._skill_registry.get(tool_name)
+        if skill_info is None:
+            self._message_queue.put(
+                HumanMessage(f"Continuation failed: tool '{tool_name}' not found")
+            )
+            return
+
+        tool_args: dict[str, Any] = dict(continuation.get("args", {}))
+
+        # Substitute $-prefixed template variables from continuation_context
+        for key, value in tool_args.items():
+            if isinstance(value, str) and value.startswith("$"):
+                context_key = value[1:]
+                if context_key in continuation_context:
+                    tool_args[key] = continuation_context[context_key]
+
+        rpc_call = RpcCall(None, self.rpc, skill_info.func_name, skill_info.class_name, [])
+        try:
+            result = rpc_call(**tool_args)
+        except Exception as e:
+            self._message_queue.put(
+                HumanMessage(f"Continuation '{tool_name}' failed with error: {e}")
+            )
+            return
+
+        label = continuation_context.get("label", "unknown")
+        self._message_queue.put(
+            HumanMessage(
+                f"Automatically executed '{tool_name}' as a continuation of lookout "
+                f"detection (detected: {label}). Result: {result or 'started'}"
+            )
+        )
 
     def _thread_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -148,13 +214,9 @@ class Agent(Module[AgentConfig]):
 
 class AgentSpec(Spec, Protocol):
     def add_message(self, message: BaseMessage) -> None: ...
-
-
-def _get_tools_from_modules(
-    agent: Agent, modules: list[RPCClient], rpc: RPCSpec
-) -> list[StructuredTool]:
-    skills = [skill for module in modules for skill in (module.get_skills() or [])]
-    return [_skill_to_tool(agent, skill, rpc) for skill in skills]
+    def dispatch_continuation(
+        self, continuation: dict[str, Any], continuation_context: dict[str, Any]
+    ) -> None: ...
 
 
 def _skill_to_tool(agent: Agent, skill: SkillInfo, rpc: RPCSpec) -> StructuredTool:
@@ -197,8 +259,3 @@ def _append_image_to_history(agent: Agent, skill: SkillInfo, uuid_: str, result:
             ]
         )
     )
-
-
-agent = Agent.blueprint
-
-__all__ = ["Agent", "AgentSpec", "agent"]

@@ -28,7 +28,7 @@ def test_make_navigation_map(occupancy, strategy) -> None:
     expected = cv2.imread(get_data(f"make_navigation_map_{strategy}.png"), cv2.IMREAD_COLOR)
     robot_width = 0.4
 
-    og = make_navigation_map(occupancy, robot_width, strategy=strategy)
+    og = make_navigation_map(occupancy, robot_width, strategy=strategy, gradient_strategy="voronoi")
 
     result = visualize_occupancy_grid(og, "rainbow")
     np.testing.assert_array_equal(result.data, expected)

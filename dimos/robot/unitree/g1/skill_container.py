@@ -158,7 +158,3 @@ Here are all the command names and what they do.
 
 {_mode_commands}
 """
-
-g1_skills = UnitreeG1SkillContainer.blueprint
-
-__all__ = ["UnitreeG1SkillContainer", "g1_skills"]

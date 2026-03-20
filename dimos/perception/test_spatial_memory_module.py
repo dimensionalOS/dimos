@@ -15,6 +15,7 @@
 import asyncio
 import os
 import time
+from typing import Any
 
 import pytest
 from reactivex import operators as ops
@@ -76,7 +77,7 @@ class VideoReplayModule(Module[VideoReplayConfig]):
 class OdometryReplayModule(Module):
     """Module that replays odometry data and publishes to the tf system."""
 
-    def __init__(self, odom_path: str) -> None:
+    def __init__(self, odom_path: str, **kwargs: Any) -> None:
         super().__init__()
         self.odom_path = odom_path
         self._subscription = None
@@ -134,11 +135,11 @@ async def test_spatial_memory_module_with_replay(dimos, tmp_path):
 
     # Deploy modules
     # Video replay module
-    video_module = dimos.deploy(VideoReplayModule, video_path)
+    video_module = dimos.deploy(VideoReplayModule, video_path=video_path)
     video_module.video_out.transport = LCMTransport("/test_video", Image)
 
     # Odometry replay module (publishes to tf system directly)
-    odom_module = dimos.deploy(OdometryReplayModule, odom_path)
+    odom_module = dimos.deploy(OdometryReplayModule, odom_path=odom_path)
 
     # Spatial memory module
     spatial_memory = dimos.deploy(

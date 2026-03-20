@@ -38,7 +38,6 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-os.environ['TQDM_DISABLE'] = '1'
 
 logger = setup_logger()
 
@@ -87,6 +86,10 @@ class EdgeTAMProcessor(Detector):
             cfg.model._target_ = "sam2.sam2_video_predictor.SAM2VideoPredictor"
 
         self._predictor = instantiate(cfg.model, _recursive_=True)
+
+        # Suppress the per-frame "propagate in video" tqdm bar from sam2
+        import sam2.sam2_video_predictor as _svp
+        _svp.tqdm = lambda iterable, *a, **kw: iterable
 
         ckpt_path = str(get_data("models_edgetam") / "edgetam.pt")
 

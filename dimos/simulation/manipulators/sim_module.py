@@ -232,12 +232,3 @@ class SimulationModule(Module[SimulationModuleConfig]):
             if len(names) >= dof:
                 return list(names[:dof])
         return [f"{self._joint_prefix}{i + 1}" for i in range(dof)]
-
-
-simulation = SimulationModule.blueprint
-
-__all__ = [
-    "SimulationModule",
-    "SimulationModuleConfig",
-    "simulation",
-]

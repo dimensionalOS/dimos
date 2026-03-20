@@ -148,9 +148,3 @@ class G1SimConnection(G1ConnectionBase[G1SimConfig]):
         logger.info(f"Publishing request to topic: {topic} with data: {data}")
         assert self.connection is not None
         return self.connection.publish_request(topic, data)
-
-
-g1_sim_connection = G1SimConnection.blueprint
-
-
-__all__ = ["G1SimConnection", "g1_sim_connection"]

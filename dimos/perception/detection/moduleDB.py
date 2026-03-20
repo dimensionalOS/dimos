@@ -311,8 +311,3 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     def __len__(self) -> int:
         return len(self.objects.values())
-
-
-detection_db_module = ObjectDBModule.blueprint
-
-__all__ = ["ObjectDBModule", "detection_db_module"]

@@ -112,9 +112,6 @@ class Map(Module[MapConfig]):
         self.global_costmap.publish(occupancygrid)
 
 
-mapper = Map.blueprint
-
-
 def deploy(dimos: ModuleCoordinator, connection: Go2ConnectionProtocol):  # type: ignore[no-untyped-def]
     mapper = dimos.deploy(Map, global_publish_interval=1.0)  # type: ignore[attr-defined]
     mapper.global_map.transport = LCMTransport("/global_map", PointCloud2)
@@ -122,6 +119,3 @@ def deploy(dimos: ModuleCoordinator, connection: Go2ConnectionProtocol):  # type
     mapper.lidar.connect(connection.pointcloud)  # type: ignore[attr-defined]
     mapper.start()
     return mapper
-
-
-__all__ = ["Map", "mapper"]

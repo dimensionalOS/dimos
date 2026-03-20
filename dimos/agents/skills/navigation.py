@@ -321,8 +321,3 @@ class NavigationSkillContainer(Module):
             orientation=Quaternion.from_euler(make_vector3(0, 0, theta)),
             frame_id="map",
         )
-
-
-navigation_skill = NavigationSkillContainer.blueprint
-
-__all__ = ["NavigationSkillContainer", "navigation_skill"]

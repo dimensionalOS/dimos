@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections.abc import Generator
-import time
 from typing import Any
 
 import pytest
@@ -27,6 +26,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import (
     PickleLCM,
     Topic,
 )
+from dimos.utils.testing.collector import CallbackCollector
 
 
 @pytest.fixture
@@ -74,25 +74,19 @@ class MockLCMMessage:
 
 def test_LCMPubSubBase_pubsub(lcm_pub_sub_base: LCMPubSubBase) -> None:
     lcm = lcm_pub_sub_base
-
-    received_messages: list[tuple[Any, Any]] = []
+    collector = CallbackCollector(1)
 
     topic = Topic(topic="/test_topic", lcm_type=MockLCMMessage)
     test_message = MockLCMMessage("test_data")
 
-    def callback(msg: Any, topic: Any) -> None:
-        received_messages.append((msg, topic))
-
-    lcm.subscribe(topic, callback)
+    lcm.subscribe(topic, collector)
     lcm.publish(topic, test_message.lcm_encode())
-    time.sleep(0.1)
+    collector.wait()
 
-    assert len(received_messages) == 1
+    assert len(collector.results) == 1
 
-    received_data = received_messages[0][0]
-    received_topic = received_messages[0][1]
-
-    print(f"Received data: {received_data}, Topic: {received_topic}")
+    received_data = collector.results[0][0]
+    received_topic = collector.results[0][1]
 
     assert isinstance(received_data, bytes)
     assert received_data.decode() == "test_data"
@@ -102,24 +96,19 @@ def test_LCMPubSubBase_pubsub(lcm_pub_sub_base: LCMPubSubBase) -> None:
 
 
 def test_lcm_autodecoder_pubsub(lcm: LCM) -> None:
-    received_messages: list[tuple[Any, Any]] = []
+    collector = CallbackCollector(1)
 
     topic = Topic(topic="/test_topic", lcm_type=MockLCMMessage)
     test_message = MockLCMMessage("test_data")
 
-    def callback(msg: Any, topic: Any) -> None:
-        received_messages.append((msg, topic))
-
-    lcm.subscribe(topic, callback)
+    lcm.subscribe(topic, collector)
     lcm.publish(topic, test_message)
-    time.sleep(0.1)
+    collector.wait()
 
-    assert len(received_messages) == 1
+    assert len(collector.results) == 1
 
-    received_data = received_messages[0][0]
-    received_topic = received_messages[0][1]
-
-    print(f"Received data: {received_data}, Topic: {received_topic}")
+    received_data = collector.results[0][0]
+    received_topic = collector.results[0][1]
 
     assert isinstance(received_data, MockLCMMessage)
     assert received_data == test_message
@@ -138,61 +127,45 @@ test_msgs = [
 # passes some geometry types through LCM
 @pytest.mark.parametrize("test_message", test_msgs)
 def test_lcm_geometry_msgs_pubsub(test_message: Any, lcm: LCM) -> None:
-    received_messages: list[tuple[Any, Any]] = []
+    collector = CallbackCollector(1)
 
     topic = Topic(topic="/test_topic", lcm_type=test_message.__class__)
 
-    def callback(msg: Any, topic: Any) -> None:
-        received_messages.append((msg, topic))
-
-    lcm.subscribe(topic, callback)
+    lcm.subscribe(topic, collector)
     lcm.publish(topic, test_message)
+    collector.wait()
 
-    time.sleep(0.1)
+    assert len(collector.results) == 1
 
-    assert len(received_messages) == 1
-
-    received_data = received_messages[0][0]
-    received_topic = received_messages[0][1]
-
-    print(f"Received data: {received_data}, Topic: {received_topic}")
+    received_data = collector.results[0][0]
+    received_topic = collector.results[0][1]
 
     assert isinstance(received_data, test_message.__class__)
     assert received_data == test_message
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
-
-    print(test_message, topic)
 
 
 # passes some geometry types through pickle LCM
 @pytest.mark.parametrize("test_message", test_msgs)
 def test_lcm_geometry_msgs_autopickle_pubsub(test_message: Any, pickle_lcm: PickleLCM) -> None:
     lcm = pickle_lcm
-    received_messages: list[tuple[Any, Any]] = []
+    collector = CallbackCollector(1)
 
     topic = Topic(topic="/test_topic")
 
-    def callback(msg: Any, topic: Any) -> None:
-        received_messages.append((msg, topic))
-
-    lcm.subscribe(topic, callback)
+    lcm.subscribe(topic, collector)
     lcm.publish(topic, test_message)
+    collector.wait()
 
-    time.sleep(0.1)
+    assert len(collector.results) == 1
 
-    assert len(received_messages) == 1
-
-    received_data = received_messages[0][0]
-    received_topic = received_messages[0][1]
-
-    print(f"Received data: {received_data}, Topic: {received_topic}")
+    received_data = collector.results[0][0]
+    received_topic = collector.results[0][1]
 
     assert isinstance(received_data, test_message.__class__)
     assert received_data == test_message
 
     assert isinstance(received_topic, Topic)
     assert received_topic == topic
-
-    print(test_message, topic)

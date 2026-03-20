@@ -334,8 +334,3 @@ Here are all the command names and what they do.
 
 {_commands}
 """
-
-
-unitree_skills = UnitreeSkillContainer.blueprint
-
-__all__ = ["UnitreeSkillContainer", "unitree_skills"]

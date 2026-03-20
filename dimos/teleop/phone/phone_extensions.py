@@ -43,11 +43,3 @@ class SimplePhoneTeleop(PhoneTeleopModule):
                 angular=Vector3(x=0.0, y=0.0, z=output_msg.linear.z),
             )
         )
-
-
-simple_phone_teleop_module = SimplePhoneTeleop.blueprint
-
-__all__ = [
-    "SimplePhoneTeleop",
-    "simple_phone_teleop_module",
-]

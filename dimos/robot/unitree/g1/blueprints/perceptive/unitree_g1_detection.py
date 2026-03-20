@@ -28,9 +28,9 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
-from dimos.perception.detection.module3D import Detection3DModule, detection3d_module
-from dimos.perception.detection.moduleDB import ObjectDBModule, detection_db_module
-from dimos.perception.detection.person_tracker import PersonTracker, person_tracker_module
+from dimos.perception.detection.module3D import Detection3DModule
+from dimos.perception.detection.moduleDB import ObjectDBModule
+from dimos.perception.detection.person_tracker import PersonTracker
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic import unitree_g1_basic
 
 
@@ -42,15 +42,15 @@ unitree_g1_detection = (
     autoconnect(
         unitree_g1_basic,
         # Person detection modules with YOLO
-        detection3d_module(
+        Detection3DModule.blueprint(
             camera_info=zed.CameraInfo.SingleWebcam,
             detector=YoloPersonDetector,
         ),
-        detection_db_module(
+        ObjectDBModule.blueprint(
             camera_info=zed.CameraInfo.SingleWebcam,
             filter=_person_only,  # Filter for person class only
         ),
-        person_tracker_module(
+        PersonTracker.blueprint(
             cameraInfo=zed.CameraInfo.SingleWebcam,
         ),
     )

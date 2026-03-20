@@ -34,10 +34,10 @@ class PositionTracker:
     _index: int
     _size: int
 
-    def __init__(self, time_window: float) -> None:
+    def __init__(self, time_window: float, threshold: float) -> None:
         self._lock = RLock()
         self._time_window = time_window
-        self._threshold = 0.4
+        self._threshold = threshold
         self._max_points = int(_max_points_per_second * self._time_window)
         self.reset_data()
 

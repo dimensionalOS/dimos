@@ -12,8 +12,8 @@ Phone Browser  ──WebSocket──→  Embedded HTTPS Server  ──→  Phone
 ## Running
 
 ```bash
-dimos run phone-go2-teleop     # Go2
-dimos run simple-phone-teleop  # Generic ground robot
+dimos run teleop-phone-go2     # Go2
+dimos run teleop-phone         # Generic ground robot
 ```
 
 Open `https://<host-ip>:8444/teleop` on phone. Accept cert, allow sensors, connect, hold to drive.
