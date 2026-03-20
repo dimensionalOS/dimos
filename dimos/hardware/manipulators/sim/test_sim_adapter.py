@@ -133,6 +133,7 @@ def test_register():
 
     registry = MagicMock()
     register(registry)
-    registry.register.assert_called_once_with("sim_mujoco", pytest.importorskip(
-        "dimos.hardware.manipulators.sim.adapter"
-    ).SimMujocoAdapter)
+    registry.register.assert_called_once_with(
+        "sim_mujoco",
+        pytest.importorskip("dimos.hardware.manipulators.sim.adapter").SimMujocoAdapter,
+    )
