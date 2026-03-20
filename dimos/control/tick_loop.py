@@ -38,7 +38,7 @@ from dimos.control.task import (
     JointStateSnapshot,
     ResourceClaim,
 )
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -172,26 +172,19 @@ class TickLoop:
         self._last_tick_time = t_now
         self._tick_count += 1
 
-        # === PHASE 1: READ ALL HARDWARE ===
         joint_states = self._read_all_hardware()
         state = CoordinatorState(joints=joint_states, t_now=t_now, dt=dt)
 
-        # === PHASE 2: COMPUTE ALL ACTIVE TASKS ===
         commands = self._compute_all_tasks(state)
 
-        # === PHASE 3: ARBITRATE (with mode validation) ===
         joint_commands, preemptions = self._arbitrate(commands)
 
-        # === PHASE 4: NOTIFY PREEMPTIONS (once per task) ===
         self._notify_preemptions(preemptions)
 
-        # === PHASE 5: ROUTE TO HARDWARE ===
         hw_commands = self._route_to_hardware(joint_commands)
 
-        # === PHASE 6: WRITE TO HARDWARE ===
         self._write_all_hardware(hw_commands)
 
-        # === PHASE 7: PUBLISH AGGREGATED STATE ===
         if self._publish_callback:
             self._publish_joint_state(joint_states)
 

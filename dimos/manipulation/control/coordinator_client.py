@@ -54,7 +54,7 @@ from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator
 )
 
 if TYPE_CHECKING:
-    from dimos.msgs.trajectory_msgs import JointTrajectory
+    from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
 class CoordinatorClient:
@@ -98,10 +98,6 @@ class CoordinatorClient:
         """Stop the RPC client."""
         self._rpc.stop_rpc_client()
 
-    # =========================================================================
-    # Query methods (RPC calls)
-    # =========================================================================
-
     def list_hardware(self) -> list[str]:
         """List all hardware IDs."""
         return self._rpc.list_hardware() or []
@@ -129,10 +125,6 @@ class CoordinatorClient:
             return {"state": int(result), "task": task_name}
         return {}
 
-    # =========================================================================
-    # Trajectory execution (via task_invoke)
-    # =========================================================================
-
     def execute_trajectory(self, task_name: str, trajectory: JointTrajectory) -> bool:
         """Execute a trajectory on a task via task_invoke."""
         result = self._rpc.task_invoke(task_name, "execute", {"trajectory": trajectory})
@@ -142,10 +134,6 @@ class CoordinatorClient:
         """Cancel an active trajectory via task_invoke."""
         result = self._rpc.task_invoke(task_name, "cancel", {})
         return bool(result)
-
-    # =========================================================================
-    # Task selection and setup
-    # =========================================================================
 
     def select_task(self, task_name: str) -> bool:
         """
@@ -246,11 +234,6 @@ class CoordinatorClient:
         if task and task in self._generators:
             gen = self._generators[task]
             gen.set_limits(gen.max_velocity, acceleration)
-
-
-# =============================================================================
-# Interactive CLI
-# =============================================================================
 
 
 def parse_joint_input(line: str, num_joints: int) -> list[float] | None:

@@ -22,7 +22,7 @@ import pytest
 from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.msgs.geometry_msgs import Pose
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.stream.video_provider import VideoProvider
 

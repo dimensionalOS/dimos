@@ -54,6 +54,7 @@ yolo11n.pt
 # symlink one of .envrc.* if you'd like to use
 .envrc
 .claude
+**/CLAUDE.md
 .direnv/
 
 /logs
@@ -64,11 +65,7 @@ yolo11n.pt
 
 *mobileclip*
 /results
-
-# Gas Town (added by gt)
-.runtime/
-.beads/
-.logs/
+**/cpp/result
 
 CLAUDE.MD
 /assets/teleop_certs/
@@ -80,4 +77,4 @@ CLAUDE.MD
 htmlcov/
 .coverage
 .coverage.*
-state.json
+MUJOCO_LOG.TXT

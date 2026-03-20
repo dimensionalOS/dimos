@@ -17,7 +17,7 @@ import threading
 
 import pytest
 
-from dimos.protocol.rpc import RPCSpec
+from dimos.protocol.rpc.spec import RPCSpec
 from dimos.simulation.manipulators.sim_module import SimulationModule
 
 

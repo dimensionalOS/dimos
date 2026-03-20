@@ -16,7 +16,9 @@
 
 import pytest
 
-from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.RobotState import RobotState
 
 
 def _positions_within_tolerance(

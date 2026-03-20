@@ -18,7 +18,7 @@ import pytest
 from dimos.agents.skills.gps_nav_skill import GpsNavSkillContainer
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.mapping.types import LatLon
+from dimos.mapping.models import LatLon
 
 
 class FakeGPS(Module):

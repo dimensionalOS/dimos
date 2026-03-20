@@ -21,8 +21,8 @@ import pytest
 from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.mapping.google_maps.types import Coordinates, LocationContext, Position
-from dimos.mapping.types import LatLon
+from dimos.mapping.google_maps.models import Coordinates, LocationContext, Position
+from dimos.mapping.models import LatLon
 
 
 class FakeGPS(Module):

@@ -17,7 +17,7 @@ from reactivex import interval
 
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.mapping.types import LatLon
+from dimos.mapping.models import LatLon
 
 
 class DemoRobot(Module):

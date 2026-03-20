@@ -98,6 +98,15 @@ export ROS_DISTRO
 export LOCALIZATION_METHOD
 export IMAGE_TAG="${ROS_DISTRO}"
 
+# Detect host architecture and export for docker-compose build args
+HOST_ARCH=$(uname -m)
+case "$HOST_ARCH" in
+    x86_64)  TARGETARCH="amd64" ;;
+    aarch64|arm64) TARGETARCH="arm64" ;;
+    *)       TARGETARCH="$HOST_ARCH" ;;
+esac
+export TARGETARCH
+
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
@@ -380,7 +389,7 @@ if [ -e "/dev/dri" ]; then
     echo -e "${GREEN}/dev/dri detected — enabling DRI device passthrough${NC}"
 fi
 
-# Build compose command
+# Build compose command (for hardware and bagfile modes)
 COMPOSE_CMD="docker compose -f docker-compose.yml"
 if [ "$DEV_MODE" = "true" ]; then
     COMPOSE_CMD="$COMPOSE_CMD -f docker-compose.dev.yml"

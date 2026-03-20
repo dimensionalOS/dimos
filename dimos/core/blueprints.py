@@ -209,7 +209,8 @@ class Blueprint:
         return sum(1 for n, _ in self._all_name_types if n == name) == 1
 
     def _run_configurators(self) -> None:
-        from dimos.protocol.service.system_configurator import configure_system, lcm_configurators
+        from dimos.protocol.service.system_configurator.base import configure_system
+        from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
 
         configurators = [*lcm_configurators(), *self.configurator_checks]
 

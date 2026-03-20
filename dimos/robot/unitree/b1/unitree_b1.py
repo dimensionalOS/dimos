@@ -26,9 +26,10 @@ import os
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.resource import Resource
 from dimos.core.transport import LCMTransport, ROSTransport
-from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.std_msgs import Int32
+from dimos.msgs.std_msgs.Int32 import Int32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.robot.robot import Robot
 from dimos.robot.unitree.b1.connection import (

@@ -30,7 +30,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig, SkillInfo
 from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.stream import In, Out
-from dimos.protocol.rpc import RPCSpec
+from dimos.protocol.rpc.spec import RPCSpec
 from dimos.spec.utils import Spec
 
 if TYPE_CHECKING:
@@ -45,6 +45,12 @@ class AgentConfig(ModuleConfig):
 
 class Agent(Module[AgentConfig]):
     default_config = AgentConfig
+
+    # on_system_modules imports langchain, creates the agent graph, and calls
+    # get_skills() on every module via LCM RPC. This easily exceeds the default
+    # 120s, especially on first run when model weights may need to be loaded.
+    rpc_timeouts = {"on_system_modules": 180.0}
+
     agent: Out[BaseMessage]
     human_input: In[str]
     agent_idle: Out[bool]
@@ -158,7 +164,9 @@ def _get_tools_from_modules(
 
 
 def _skill_to_tool(agent: Agent, skill: SkillInfo, rpc: RPCSpec) -> StructuredTool:
-    rpc_call = RpcCall(None, rpc, skill.func_name, skill.class_name, [])
+    rpc_call = RpcCall(
+        None, rpc, skill.func_name, skill.class_name, [], timeout=RPCClient.default_rpc_timeout
+    )
 
     def wrapped_func(*args: Any, **kwargs: Any) -> str | list[dict[str, Any]]:
         result = None

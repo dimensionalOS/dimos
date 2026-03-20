@@ -34,12 +34,9 @@ from dimos.control.components import JointName
 from dimos.hardware.manipulators.spec import ControlMode
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import Pose, PoseStamped
+    from dimos.msgs.geometry_msgs.Pose import Pose
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.teleop.quest.quest_types import Buttons
-
-# =============================================================================
-# Data Types
-# =============================================================================
 
 
 @dataclass(frozen=True)
@@ -166,11 +163,6 @@ class JointCommandOutput:
                 return self.efforts
             case _:
                 return None
-
-
-# =============================================================================
-# ControlTask Protocol
-# =============================================================================
 
 
 @runtime_checkable

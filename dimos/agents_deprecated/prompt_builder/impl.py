@@ -148,7 +148,6 @@ class PromptBuilder:
         # print("system_prompt: ", system_prompt)
         # print("rag_context: ", rag_context)
 
-        # region Token Counts
         if not override_token_limit:
             rag_token_cnt = self.tokenizer.token_count(rag_context)
             system_prompt_token_cnt = self.tokenizer.token_count(system_prompt)
@@ -163,7 +162,6 @@ class PromptBuilder:
             system_prompt_token_cnt = 0
             user_query_token_cnt = 0
             image_token_cnt = 0
-        # endregion Token Counts
 
         # Create a component dictionary for dynamic allocation
         components = {

@@ -30,8 +30,11 @@ from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from dimos.core.stream import In, Out
-    from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
-    from dimos.msgs.trajectory_msgs import JointTrajectory as JointTrajectoryMsg, TrajectoryState
+    from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+    from dimos.msgs.sensor_msgs.JointState import JointState
+    from dimos.msgs.sensor_msgs.RobotState import RobotState
+    from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory as JointTrajectoryMsg
+    from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
 # Input topics
 joint_state: In[JointState] | None = None  # Feedback from arm driver

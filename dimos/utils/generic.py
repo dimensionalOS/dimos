@@ -13,12 +13,34 @@
 # limitations under the License.
 
 from collections.abc import Callable
+import functools
 import hashlib
 import json
 import os
+from pathlib import Path
+import platform
 import string
+import sys
 from typing import Any, Generic, TypeVar, overload
 import uuid
+
+
+@functools.lru_cache(maxsize=1)
+def is_jetson() -> bool:
+    """Check if running on an NVIDIA Jetson device."""
+    if sys.platform != "linux":
+        return False
+    # Check kernel release for Tegra (most lightweight)
+    if "tegra" in platform.release().lower():
+        return True
+    # Check device tree (works in containers with proper mounts)
+    try:
+        return "nvidia,tegra" in Path("/proc/device-tree/compatible").read_text()
+    except (FileNotFoundError, PermissionError):
+        pass
+    # Check for L4T release file
+    return Path("/etc/nv_tegra_release").exists()
+
 
 _T = TypeVar("_T")
 

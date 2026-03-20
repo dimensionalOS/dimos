@@ -29,8 +29,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
-from dimos.msgs.geometry_msgs import Twist, Vector3
-from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.robot.drone.drone_visual_servoing_controller import (
     DroneVisualServoingController,
     PIDParams,

@@ -38,16 +38,16 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.models.vl.base import VlModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.sensor_msgs.Image import sharpness_barrier
+from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.msgs.visualization_msgs.EntityMarkers import EntityMarkers, Marker
 from dimos.utils.logging_config import get_run_log_dir, setup_logger
 
-from . import temporal_utils as tu
 from .clip_filter import CLIP_AVAILABLE, adaptive_keyframes
 from .entity_graph_db import EntityGraphDB
 from .frame_window_accumulator import Frame, FrameWindowAccumulator
 from .temporal_state import TemporalState
+from .temporal_utils.graph_utils import build_graph_context, extract_time_window
+from .temporal_utils.helpers import is_scene_stale
 from .window_analyzer import WindowAnalyzer
 
 try:
@@ -203,10 +203,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
             f"window={self.config.window_s}s, stride={self.config.stride_s}s"
         )
 
-    # ------------------------------------------------------------------
-    # VLM access (lazy)
-    # ------------------------------------------------------------------
-
     @property
     def vlm(self) -> VlModel[Any]:
         if self._vlm_raw is None:
@@ -230,10 +226,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
             )
         return self.__analyzer
 
-    # ------------------------------------------------------------------
-    # JSONL logging
-    # ------------------------------------------------------------------
-
     def _log_jsonl(self, record: dict[str, Any]) -> None:
         line = json.dumps(record, ensure_ascii=False) + "\n"
         # Write to per-run JSONL
@@ -249,10 +241,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
                 f.write(line)
         except Exception as e:
             logger.warning(f"persistent jsonl log failed: {e}")
-
-    # ------------------------------------------------------------------
-    # Rerun visualization
-    # ------------------------------------------------------------------
 
     def _publish_entity_markers(self) -> None:
         """Publish entity positions as 3D markers for Rerun overlay on the map."""
@@ -287,10 +275,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
                 logger.info(f"[temporal-memory] published {len(markers)} entity markers to Rerun")
         except Exception as e:
             logger.debug(f"entity marker publish error: {e}")
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
 
     @rpc
     def start(self) -> None:
@@ -374,10 +358,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
 
         logger.info("TemporalMemory stopped")
 
-    # ------------------------------------------------------------------
-    # Core loop
-    # ------------------------------------------------------------------
-
     def _analyze_window(self) -> None:
         if self._stopped:
             return
@@ -396,7 +376,7 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
         w_start, w_end = window_frames[0].timestamp_s, window_frames[-1].timestamp_s
 
         # Skip stale scenes (frames too close together / camera not moving)
-        if tu.is_scene_stale(window_frames, self.config.stale_scene_threshold):
+        if is_scene_stale(window_frames, self.config.stale_scene_threshold):
             logger.info(f"[temporal-memory] skipping stale window [{w_start:.1f}-{w_end:.1f}s]")
             return
 
@@ -518,10 +498,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
             )
             logger.info(f"[temporal-memory] SUMMARY: {sr.summary_text[:300]}")
 
-    # ------------------------------------------------------------------
-    # Query (agent skill)
-    # ------------------------------------------------------------------
-
     @skill
     def query(self, question: str) -> str:
         """Answer a question about the video stream using temporal memory and graph knowledge.
@@ -577,13 +553,13 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
 
         # Graph context
         if self._graph_db:
-            time_window_s = tu.extract_time_window(question)
+            time_window_s = extract_time_window(question)
             all_entity_ids = [
                 e["id"] for e in snap.entity_roster if isinstance(e, dict) and "id" in e
             ]
             if all_entity_ids:
                 logger.info(f"query: building graph context for {len(all_entity_ids)} entities")
-                graph_context = tu.build_graph_context(
+                graph_context = build_graph_context(
                     graph_db=self._graph_db,
                     entity_ids=all_entity_ids,
                     time_window_s=time_window_s,
@@ -610,10 +586,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
             }
         )
         return qr.answer
-
-    # ------------------------------------------------------------------
-    # RPC accessors (backward compat)
-    # ------------------------------------------------------------------
 
     @rpc
     def clear_history(self) -> bool:

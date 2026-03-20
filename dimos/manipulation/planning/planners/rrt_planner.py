@@ -26,15 +26,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.manipulation.planning.spec import (
-    JointPath,
-    PlanningResult,
-    PlanningStatus,
-    WorldRobotID,
-    WorldSpec,
-)
+from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.models import JointPath, PlanningResult, WorldRobotID
+from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -315,7 +311,7 @@ class RRTConnectPlanner:
         return simplified
 
 
-# ============= Result Helpers =============
+# Result Helpers
 
 
 def _create_success_result(

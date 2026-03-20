@@ -1,0 +1,19 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "stop_navigation",
+          "args": {},
+          "id": "call_stop_001",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I've stopped the robot.",
+      "tool_calls": []
+    }
+  ]
+}

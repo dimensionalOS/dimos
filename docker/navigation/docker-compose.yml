@@ -7,6 +7,7 @@ services:
       network: host
       args:
         ROS_DISTRO: ${ROS_DISTRO:-humble}
+        TARGETARCH: ${TARGETARCH}
     image: dimos_autonomy_stack:${IMAGE_TAG:-humble}
     container_name: dimos_simulation_container
     profiles: ["", "simulation"]  # Active by default (empty profile) AND with --profile simulation
@@ -85,6 +86,7 @@ services:
       network: host
       args:
         ROS_DISTRO: ${ROS_DISTRO:-humble}
+        TARGETARCH: ${TARGETARCH}
     image: dimos_autonomy_stack:${IMAGE_TAG:-humble}
     container_name: dimos_hardware_container
     profiles: ["hardware"]
@@ -255,6 +257,7 @@ services:
       network: host
       args:
         ROS_DISTRO: ${ROS_DISTRO:-humble}
+        TARGETARCH: ${TARGETARCH}
     image: dimos_autonomy_stack:${IMAGE_TAG:-humble}
     container_name: dimos_bagfile_container
     profiles: ["bagfile"]

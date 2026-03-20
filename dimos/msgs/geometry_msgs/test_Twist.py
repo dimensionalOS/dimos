@@ -15,7 +15,9 @@
 from dimos_lcm.geometry_msgs import Twist as LCMTwist
 import numpy as np
 
-from dimos.msgs.geometry_msgs import Quaternion, Twist, Vector3
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 def test_twist_initialization() -> None:

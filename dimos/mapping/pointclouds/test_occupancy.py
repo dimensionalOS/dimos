@@ -26,8 +26,8 @@ from dimos.mapping.pointclouds.occupancy import (
 )
 from dimos.mapping.pointclouds.util import read_pointcloud
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment

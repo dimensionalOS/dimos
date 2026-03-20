@@ -20,11 +20,11 @@ from typing import TYPE_CHECKING, Any
 
 import open3d as o3d  # type: ignore[import-untyped]
 
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import Vector3
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
     from dimos.perception.detection.type.detection3d.object import Object
 
 logger = setup_logger()

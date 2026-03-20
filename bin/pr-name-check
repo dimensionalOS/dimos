@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+
+# based on: https://github.com/dimensionalOS/wiki/wiki
+allowed_types="feat fix chore refactor docs"
+allowed_names="stash ivan paul alexl mustafa miguel christie ruthwik jalaj yashas yash matt jing juan jeff unknown"
+
+if [[ "$branch" != */*/* ]]; then
+  echo "Invalid branch name: '$branch'"
+  echo "Expected format: <your_name>/<type>/<description>"
+  echo "Allowed names: $allowed_names"
+  echo "Allowed types: $allowed_types"
+  exit 1
+fi
+
+branch_name="${branch%%/*}"
+rest="${branch#*/}"
+branch_type="${rest%%/*}"
+branch_description="${branch#*/*/}"
+
+if [[ -z "$branch_description" || "$branch_description" == "$branch" ]]; then
+  echo "Invalid branch name: '$branch'"
+  echo "Expected format: <your_name>/<type>/<description>"
+  exit 1
+fi
+
+name_ok=0
+for n in $allowed_names; do
+  if [[ "$branch_name" == "$n" ]]; then
+    name_ok=1
+    break
+  fi
+done
+
+type_ok=0
+for t in $allowed_types; do
+  if [[ "$branch_type" == "$t" ]]; then
+    type_ok=1
+    break
+  fi
+done
+
+if [[ "$name_ok" -ne 1 || "$type_ok" -ne 1 ]]; then
+  echo
+  echo
+  echo
+  echo
+  echo
+  echo "Invalid branch name: '$branch'"
+  echo
+  echo "    Expected format: <your_name>/<type>/<description>"
+  echo "            Example: jeff/fix/ci-divergence"
+  echo "        Parsed name: $branch_name"
+  echo "      Allowed names: $allowed_names"
+  echo "        Parsed type: $branch_type"
+  echo "      Allowed types: $allowed_types"
+  echo
+  echo "Wait 4 seconds if you want to ignore this error"
+  sleep 1; echo 4
+  sleep 1; echo 3
+  sleep 1; echo 2
+  sleep 1; echo 1
+  exit 1
+else
+  echo "Branch naming check passed: $branch"
+fi

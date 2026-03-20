@@ -1,0 +1,19 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "goto_global",
+          "args": {"x": 2.0, "y": 0.0},
+          "id": "call_nav_001",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I've navigated the robot to map coordinates (2.0, 0.0). The robot has arrived at the target location.",
+      "tool_calls": []
+    }
+  ]
+}

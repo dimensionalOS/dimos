@@ -21,7 +21,7 @@ from numba import njit, prange  # type: ignore[import-untyped]
 import numpy as np
 from scipy import ndimage  # type: ignore[import-untyped]
 
-from dimos.msgs.geometry_msgs import Pose
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 
 if TYPE_CHECKING:
@@ -99,7 +99,7 @@ def _simple_occupancy_kernel(
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from dimos.msgs.sensor_msgs import PointCloud2
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 
 @dataclass(frozen=True)

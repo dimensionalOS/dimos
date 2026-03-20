@@ -21,8 +21,8 @@ import pytest
 from requests import Request
 import requests_mock
 
+from dimos.mapping.models import LatLon
 from dimos.mapping.osm.osm import get_osm_map
-from dimos.mapping.types import LatLon
 from dimos.utils.data import get_data
 
 _fixture_dir = get_data("osm_map_test")

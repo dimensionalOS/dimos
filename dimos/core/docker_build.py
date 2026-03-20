@@ -20,6 +20,7 @@ that installs DimOS and creates the module entrypoint.
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -32,10 +33,11 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# Timeout for quick Docker commands
+_BUILD_HASH_LABEL = "dimos.build.hash"
+
 DOCKER_CMD_TIMEOUT = 20
 
-# Sentinel value to detect already-converted Dockerfiles (UUID ensures uniqueness)
+# the way of detecting already-converted Dockerfiles (UUID ensures uniqueness)
 DIMOS_SENTINEL = "DIMOS-MODULE-CONVERSION-427593ae-c6e8-4cf1-9b2d-ee81a420a5dc"
 
 # Footer appended to Dockerfiles for DimOS module conversion
@@ -53,28 +55,6 @@ ENTRYPOINT ["/dimos/entrypoint.sh"]
 """
 
 
-def _run(cmd: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
-    """Run a command and return the result."""
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
-
-
-def _run_streaming(cmd: list[str]) -> int:
-    """Run command and stream output to terminal. Returns exit code."""
-    result = subprocess.run(cmd, text=True)
-    return result.returncode
-
-
-def _docker_bin(cfg: DockerModuleConfig) -> str:
-    """Get docker binary path."""
-    return cfg.docker_bin or "docker"
-
-
-def _image_exists(docker_bin: str, image_name: str) -> bool:
-    """Check if a Docker image exists locally."""
-    r = _run([docker_bin, "image", "inspect", image_name], timeout=DOCKER_CMD_TIMEOUT)
-    return r.returncode == 0
-
-
 def _convert_dockerfile(dockerfile: Path) -> Path:
     """Append DimOS footer to Dockerfile. Returns path to converted file."""
     content = dockerfile.read_text()
@@ -85,32 +65,82 @@ def _convert_dockerfile(dockerfile: Path) -> Path:
 
     logger.info(f"Converting {dockerfile.name} to DimOS format")
 
-    converted = dockerfile.parent / f".{dockerfile.name}.dimos"
+    converted = dockerfile.parent / f".{dockerfile.name}.ignore"
     converted.write_text(content.rstrip() + "\n" + DIMOS_FOOTER.lstrip("\n"))
     return converted
+
+
+def _compute_build_hash(cfg: DockerModuleConfig) -> str:
+    """Hash Dockerfile contents and build args."""
+    assert cfg.docker_file is not None
+    digest = hashlib.sha256()
+    digest.update(cfg.docker_file.read_bytes())
+    for key, val in sorted(cfg.docker_build_args.items()):
+        digest.update(f"{key}={val}".encode())
+    for arg in cfg.docker_build_extra_args:
+        digest.update(arg.encode())
+    return digest.hexdigest()
+
+
+def _get_image_build_hash(cfg: DockerModuleConfig) -> str | None:
+    """Read the build hash label from an existing Docker image."""
+    r = subprocess.run(
+        [
+            cfg.docker_bin,
+            "image",
+            "inspect",
+            "-f",
+            '{{index .Config.Labels "' + _BUILD_HASH_LABEL + '"}}',
+            cfg.docker_image,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=DOCKER_CMD_TIMEOUT,
+        check=False,
+    )
+    if r.returncode != 0:
+        return None
+    value = r.stdout.strip()
+    # docker prints "<no value>" when the label is missing
+    return value if value and value != "<no value>" else None
 
 
 def build_image(cfg: DockerModuleConfig) -> None:
     """Build Docker image using footer mode conversion."""
     if cfg.docker_file is None:
         raise ValueError("docker_file is required for building Docker images")
+
+    build_hash = _compute_build_hash(cfg)
     dockerfile = _convert_dockerfile(cfg.docker_file)
 
     context = cfg.docker_build_context or cfg.docker_file.parent
-    cmd = [_docker_bin(cfg), "build", "-t", cfg.docker_image, "-f", str(dockerfile)]
+    cmd = [cfg.docker_bin, "build", "-t", cfg.docker_image, "-f", str(dockerfile)]
+    cmd.extend(["--label", f"{_BUILD_HASH_LABEL}={build_hash}"])
     for k, v in cfg.docker_build_args.items():
         cmd.extend(["--build-arg", f"{k}={v}"])
+    cmd.extend(cfg.docker_build_extra_args)
     cmd.append(str(context))
 
     logger.info(f"Building Docker image: {cfg.docker_image}")
-    exit_code = _run_streaming(cmd)
-    if exit_code != 0:
-        raise RuntimeError(f"Docker build failed with exit code {exit_code}")
+    # Stream stdout to terminal so the user sees build progress, but capture
+    # stderr separately so we can include it in the error message on failure.
+    result = subprocess.run(cmd, text=True, stderr=subprocess.PIPE)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Docker build failed with exit code {result.returncode}\nSTDERR:\n{result.stderr}"
+        )
 
 
 def image_exists(cfg: DockerModuleConfig) -> bool:
     """Check if the configured Docker image exists locally."""
-    return _image_exists(_docker_bin(cfg), cfg.docker_image)
+    r = subprocess.run(
+        [cfg.docker_bin, "image", "inspect", cfg.docker_image],
+        capture_output=True,
+        text=True,
+        timeout=DOCKER_CMD_TIMEOUT,
+        check=False,
+    )
+    return r.returncode == 0
 
 
 __all__ = [

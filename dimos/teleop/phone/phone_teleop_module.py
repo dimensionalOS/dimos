@@ -36,7 +36,9 @@ from fastapi.staticfiles import StaticFiles
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.path_utils import get_project_root
@@ -69,10 +71,6 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
     # Output: velocity command to robot
     twist_output: Out[TwistStamped]
 
-    # -------------------------------------------------------------------------
-    # Initialization
-    # -------------------------------------------------------------------------
-
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
@@ -97,10 +95,6 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
         }
 
         self._setup_routes()
-
-    # -------------------------------------------------------------------------
-    # Web Server Routes
-    # -------------------------------------------------------------------------
 
     def _setup_routes(self) -> None:
         """Register teleop routes on the embedded web server."""
@@ -133,10 +127,6 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
             except Exception:
                 logger.exception("WebSocket error")
 
-    # -------------------------------------------------------------------------
-    # Lifecycle
-    # -------------------------------------------------------------------------
-
     @rpc
     def start(self) -> None:
         super().start()
@@ -148,10 +138,6 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
         self._stop_control_loop()
         self._stop_server()
         super().stop()
-
-    # -------------------------------------------------------------------------
-    # Internal engage / disengage (assumes lock is held)
-    # -------------------------------------------------------------------------
 
     def _engage(self) -> bool:
         """Engage: capture current sensors as initial"""
@@ -169,10 +155,6 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
         self._initial_sensors = None
         logger.info("Phone teleop disengaged")
 
-    # -------------------------------------------------------------------------
-    # WebSocket Message Decoders
-    # -------------------------------------------------------------------------
-
     def _on_sensors_bytes(self, data: bytes) -> None:
         """Decode raw LCM bytes into TwistStamped and update sensor state."""
         msg = TwistStamped.lcm_decode(data)
@@ -184,10 +166,6 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
         msg = Bool.lcm_decode(data)
         with self._lock:
             self._teleop_button = bool(msg.data)
-
-    # -------------------------------------------------------------------------
-    # Embedded Web Server
-    # -------------------------------------------------------------------------
 
     def _start_server(self) -> None:
         """Start the embedded FastAPI server with HTTPS in a daemon thread."""
@@ -211,10 +189,6 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
             self._web_server_thread.join(timeout=3)
             self._web_server_thread = None
         logger.info("Phone teleop web server stopped")
-
-    # -------------------------------------------------------------------------
-    # Control Loop
-    # -------------------------------------------------------------------------
 
     def _start_control_loop(self) -> None:
         if self._control_loop_thread is not None and self._control_loop_thread.is_alive():
@@ -253,10 +227,6 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
             sleep_time = period - elapsed
             if sleep_time > 0:
                 self._stop_event.wait(sleep_time)
-
-    # -------------------------------------------------------------------------
-    # Control Loop Internal Methods
-    # -------------------------------------------------------------------------
 
     def _handle_engage(self) -> None:
         """

@@ -16,14 +16,14 @@ import os
 
 import googlemaps  # type: ignore[import-untyped]
 
-from dimos.mapping.google_maps.types import (
+from dimos.mapping.google_maps.models import (
     Coordinates,
     LocationContext,
     NearbyPlace,
     PlacePosition,
     Position,
 )
-from dimos.mapping.types import LatLon
+from dimos.mapping.models import LatLon
 from dimos.mapping.utils.distance import distance_in_meters
 from dimos.utils.logging_config import setup_logger
 

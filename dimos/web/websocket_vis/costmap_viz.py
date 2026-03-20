@@ -19,7 +19,7 @@ This is a minimal implementation to support websocket visualization.
 
 import numpy as np
 
-from dimos.msgs.nav_msgs import OccupancyGrid
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 
 
 class CostmapViz:

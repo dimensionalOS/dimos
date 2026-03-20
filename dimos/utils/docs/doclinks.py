@@ -360,12 +360,13 @@ def process_markdown(
         resolved_path = resolve_candidates(candidates, file_ref)
 
         if resolved_path is None:
+            doc_rel = doc_path.relative_to(root) if doc_path.is_relative_to(root) else doc_path
             if len(candidates) > 1:
                 errors.append(
-                    f"'{file_ref}' matches multiple files: {[str(c) for c in candidates]}"
+                    f"'{file_ref}' in {doc_rel} matches multiple files: {[str(c) for c in candidates]}"
                 )
             else:
-                errors.append(f"No file matching '{file_ref}' found in codebase")
+                errors.append(f"No file matching '{file_ref}' found in codebase (in {doc_rel})")
             return full_match
 
         # Determine line fragment
@@ -438,12 +439,13 @@ def process_markdown(
                 if result != full_match:
                     changes.append(f"  {link_text}: .md -> {new_link}")
                 return result
+            doc_rel = doc_path.relative_to(root) if doc_path.is_relative_to(root) else doc_path
             if len(candidates) > 1:
                 errors.append(
-                    f"'{link_text}' matches multiple docs: {[str(c) for c in candidates]}"
+                    f"'{link_text}' in {doc_rel} matches multiple docs: {[str(c) for c in candidates]}"
                 )
             else:
-                errors.append(f"No doc matching '{link_text}' found")
+                errors.append(f"No doc matching '{link_text}' found (in {doc_rel})")
             return full_match
 
         # Absolute path
@@ -460,12 +462,13 @@ def process_markdown(
                 )
                 changes.append(f"  {link_text}: {raw_link} -> {new_link} (fixed broken link)")
                 return f"[{link_text}]({new_link})"
+            doc_rel = doc_path.relative_to(root) if doc_path.is_relative_to(root) else doc_path
             if len(candidates) > 1:
                 errors.append(
-                    f"Broken link '{raw_link}': ambiguous, matches {[str(c) for c in candidates]}"
+                    f"Broken link '{raw_link}' in {doc_rel}: ambiguous, matches {[str(c) for c in candidates]}"
                 )
             else:
-                errors.append(f"Broken link: '{raw_link}' does not exist")
+                errors.append(f"Broken link '{raw_link}' in {doc_rel}: does not exist")
             return full_match
 
         # Relative path — resolve from doc file's directory
@@ -475,7 +478,8 @@ def process_markdown(
         try:
             rel_to_root = resolved_abs.relative_to(root)
         except ValueError:
-            errors.append(f"Link '{raw_link}' resolves outside repo root")
+            doc_rel = doc_path.relative_to(root) if doc_path.is_relative_to(root) else doc_path
+            errors.append(f"Link '{raw_link}' in {doc_rel} resolves outside repo root")
             return full_match
 
         if resolved_abs.exists():
@@ -496,12 +500,13 @@ def process_markdown(
             )
             changes.append(f"  {link_text}: {raw_link} -> {new_link} (found by search)")
             return f"[{link_text}]({new_link})"
+        doc_rel = doc_path.relative_to(root) if doc_path.is_relative_to(root) else doc_path
         if len(candidates) > 1:
             errors.append(
-                f"Broken link '{raw_link}': ambiguous, matches {[str(c) for c in candidates]}"
+                f"Broken link '{raw_link}' in {doc_rel}: ambiguous, matches {[str(c) for c in candidates]}"
             )
         else:
-            errors.append(f"Broken link '{raw_link}': target not found")
+            errors.append(f"Broken link '{raw_link}' in {doc_rel}: target not found")
         return full_match
 
     # Split by ignore regions and only process non-ignored parts

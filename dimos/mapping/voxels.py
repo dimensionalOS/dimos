@@ -25,8 +25,8 @@ from reactivex.subject import Subject
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.utils.decorators import simple_mcache
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 

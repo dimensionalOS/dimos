@@ -21,8 +21,8 @@ import numpy as np
 from PIL import Image as PILImage
 import requests  # type: ignore[import-untyped]
 
-from dimos.mapping.types import ImageCoord, LatLon
-from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.mapping.models import ImageCoord, LatLon
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 
 @dataclass(frozen=True)

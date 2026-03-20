@@ -11,8 +11,8 @@ from dimos.core.transport import LCMTransport
 from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.moondream_hosted import MoondreamHostedVlModel
 from dimos.models.vl.qwen import QwenVlModel
-from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.type import ImageDetections2D
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.utils.cli.plot import bar
 from dimos.utils.data import get_data
 
@@ -228,7 +228,7 @@ def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
 @pytest.mark.slow
 def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
     """Test query_batch optimization - multiple images, same query."""
-    from dimos.utils.testing import TimedSensorReplay
+    from dimos.utils.testing.replay import TimedSensorReplay
 
     # Load 5 frames at 1-second intervals using TimedSensorReplay
     replay = TimedSensorReplay[Image]("unitree_go2_office_walk2/video")
@@ -285,7 +285,7 @@ def test_vlm_resize(
     sizes: list[tuple[int, int] | None],
 ) -> None:
     """Test VLM auto_resize effect on performance."""
-    from dimos.utils.testing import TimedSensorReplay
+    from dimos.utils.testing.replay import TimedSensorReplay
 
     replay = TimedSensorReplay[Image]("unitree_go2_office_walk2/video")
     image = replay.find_closest_seek(0).to_rgb()

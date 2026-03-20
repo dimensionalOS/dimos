@@ -20,7 +20,7 @@ import re
 import threading
 from typing import Any
 
-from dimos.msgs import DimosMsg
+from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.encoders import (
     JpegEncoderMixin,
     LCMEncoderMixin,
@@ -63,7 +63,7 @@ class Topic:
         Channel format: /topic#module.ClassName
         Falls back to default_lcm_type if type cannot be parsed.
         """
-        from dimos.msgs import resolve_msg_type
+        from dimos.msgs.helpers import resolve_msg_type
 
         if "#" not in channel:
             return Topic(topic=channel, lcm_type=default_lcm_type)

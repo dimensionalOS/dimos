@@ -48,10 +48,15 @@ _COMMAND_CENTER_DIR = (
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.mapping.occupancy.path_map import make_navigation_map
-from dimos.mapping.types import LatLon
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
-from dimos.msgs.nav_msgs import OccupancyGrid, Path
+from dimos.mapping.models import LatLon
+from dimos.mapping.occupancy.gradient import gradient
+from dimos.mapping.occupancy.inflation import simple_inflate
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.logging_config import setup_logger
 
 from .optimized_costmap import OptimizedCostmapEncoder
@@ -160,35 +165,47 @@ class WebsocketVisModule(Module[WebsocketConfig]):
             global _browser_opened
             with _browser_open_lock:
                 if not _browser_opened:
-                    try:
-                        webbrowser.open_new_tab(url)
-                        _browser_opened = True
-                    except Exception as e:
-                        logger.debug(f"Failed to open browser: {e}")
+                    _browser_opened = True
+
+                    def _open_browser() -> None:
+                        try:
+                            webbrowser.open_new_tab(url)
+                        except Exception as e:
+                            logger.debug(f"Failed to open browser: {e}")
+
+                    threading.Thread(target=_open_browser, daemon=True).start()
 
         try:
             unsub = self.odom.subscribe(self._on_robot_pose)
             self._disposables.add(Disposable(unsub))
-        except Exception:
-            ...
+            logger.info("Subscribed to odom")
+        except Exception as e:
+            logger.warning(f"Failed to subscribe to odom: {e}")
 
         try:
             unsub = self.gps_location.subscribe(self._on_gps_location)
             self._disposables.add(Disposable(unsub))
-        except Exception:
-            ...
+            logger.info("Subscribed to gps_location")
+        except Exception as e:
+            logger.warning(f"Failed to subscribe to gps_location: {e}")
 
         try:
             unsub = self.path.subscribe(self._on_path)
             self._disposables.add(Disposable(unsub))
-        except Exception:
-            ...
+            logger.info("Subscribed to path")
+        except Exception as e:
+            logger.warning(f"Failed to subscribe to path: {e}")
 
+        transport = getattr(self.global_costmap, "_transport", "MISSING")
+        logger.info(f"[DEBUG] global_costmap transport before subscribe: {transport}")
         try:
             unsub = self.global_costmap.subscribe(self._on_global_costmap)
             self._disposables.add(Disposable(unsub))
-        except Exception:
-            ...
+            logger.info(f"[DEBUG] Subscribed to global_costmap OK, transport={transport}")
+        except Exception as e:
+            logger.warning(f"Failed to subscribe to global_costmap: {e}", exc_info=True)
+
+        logger.info("WebsocketVisModule.start() complete")
 
     @rpc
     def stop(self) -> None:
@@ -380,9 +397,7 @@ class WebsocketVisModule(Module[WebsocketConfig]):
 
     def _process_costmap(self, costmap: OccupancyGrid) -> dict[str, Any]:
         """Convert OccupancyGrid to visualization format."""
-        costmap = make_navigation_map(
-            costmap, self._global_config.robot_width, self._global_config.planner_strategy
-        )
+        costmap = gradient(simple_inflate(costmap, 0.1), max_distance=1.0)
         grid_data = self.costmap_encoder.encode_costmap(costmap.grid)
 
         return {

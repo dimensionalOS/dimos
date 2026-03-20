@@ -1,29 +1,24 @@
-# =============================================================================
-# OPTIMIZED DOCKERFILE - Multi-stage build for reduced image size
-# =============================================================================
-#
-# Key optimizations:
-# 1. Multi-stage build with ros:perception base image (multi-arch: amd64+arm64)
-# 2. Multi-stage build to discard build artifacts
-# 3. No Python ML dependencies (~14 GB saved)
-# 4. COPY dimos source for editable pip install (volume-mounted at runtime overlays it)
-# 5. Clean up build directories after compile (~800 MB saved)
-# 6. Minimal apt packages with --no-install-recommends
-# 7. DDS configuration for optimized ROS 2 communication
-#
-# Supported ROS distributions: jazzy, humble
-# Supported architectures: amd64, arm64
-# Build with: docker build --build-arg ROS_DISTRO=humble ...
-#
-# =============================================================================
+# Multi-stage build for ROS 2 navigation with SLAM support.
+# Includes both arise_slam and FASTLIO2 - select at runtime via LOCALIZATION_METHOD.
+# Supported configurations:
+#   - ROS distributions: humble, jazzy
+#   - SLAM methods: arise_slam (default), fastlio (set LOCALIZATION_METHOD=fastlio)
+# Build:
+#   ./build.sh --humble    # Build for ROS 2 Humble
+#   ./build.sh --jazzy     # Build for ROS 2 Jazzy
+# Run:
+#   ./start.sh --hardware --route-planner                          # Uses arise_slam
+#   LOCALIZATION_METHOD=fastlio ./start.sh --hardware --route-planner  # Uses FASTLIO2
 
 # Build argument for ROS distribution (default: humble)
 ARG ROS_DISTRO=humble
+ARG TARGETARCH
 
-# -----------------------------------------------------------------------------
-# STAGE 1: Build Stage - compile all C++ dependencies
-# -----------------------------------------------------------------------------
-FROM ros:${ROS_DISTRO}-perception AS builder
+# - amd64: Use osrf/ros desktop-full (includes Gazebo, full GUI)
+FROM osrf/ros:${ROS_DISTRO}-desktop-full AS base-amd64
+FROM ros:${ROS_DISTRO}-ros-base AS base-arm64
+
+FROM base-${TARGETARCH} AS builder
 
 ARG ROS_DISTRO
 ENV DEBIAN_FRONTEND=noninteractive
@@ -161,9 +156,6 @@ RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     --packages-skip teleop_rviz_plugin_plus goalpoint_rviz_plugin teleop_rviz_plugin waypoint_rviz_plugin \
     tare_planner"
 
-# -----------------------------------------------------------------------------
-# STAGE 2: Runtime Stage - minimal image for running
-# -----------------------------------------------------------------------------
 ARG ROS_DISTRO
 FROM ros:${ROS_DISTRO}-perception AS runtime
 

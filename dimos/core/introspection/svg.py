@@ -29,7 +29,6 @@ def to_svg(
     output_path: str,
     *,
     layout: set[LayoutAlgo] | None = None,
-    show_disconnected: bool = False,
 ) -> None:
     """Render a module or blueprint to SVG.
 
@@ -41,7 +40,6 @@ def to_svg(
         target: Either a ModuleInfo (single module) or Blueprint (blueprint graph).
         output_path: Path to write the SVG file.
         layout: Layout algorithms (only used for blueprints).
-        show_disconnected: If True, show streams with no matching counterpart (blueprints only).
     """
     # Avoid circular imports by importing here
     from dimos.core.blueprints import Blueprint
@@ -54,8 +52,6 @@ def to_svg(
     elif isinstance(target, Blueprint):
         from dimos.core.introspection.blueprint import dot as blueprint_dot
 
-        blueprint_dot.render_svg(
-            target, output_path, layout=layout, show_disconnected=show_disconnected
-        )
+        blueprint_dot.render_svg(target, output_path, layout=layout)
     else:
         raise TypeError(f"Expected ModuleInfo or Blueprint, got {type(target).__name__}")

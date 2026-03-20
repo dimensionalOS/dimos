@@ -62,12 +62,13 @@ cd "$SCRIPT_DIR"
 # Use fastlio2 branch which has both arise_slam and FASTLIO2
 TARGET_BRANCH="fastlio2"
 TARGET_REMOTE="origin"
-CLONE_URL="git@github.com:dimensionalOS/ros-navigation-autonomy-stack.git"
+CLONE_URL_SSH="git@github.com:dimensionalOS/ros-navigation-autonomy-stack.git"
+CLONE_URL_HTTPS="https://github.com/dimensionalOS/ros-navigation-autonomy-stack.git"
 
 # Clone or checkout ros-navigation-autonomy-stack
 if [ ! -d "ros-navigation-autonomy-stack" ]; then
     echo -e "${YELLOW}Cloning ros-navigation-autonomy-stack repository (${TARGET_BRANCH} branch)...${NC}"
-    git clone -b ${TARGET_BRANCH} ${CLONE_URL} ros-navigation-autonomy-stack
+    git clone -b ${TARGET_BRANCH} ${CLONE_URL_SSH} ros-navigation-autonomy-stack || git clone -b ${TARGET_BRANCH} ${CLONE_URL_HTTPS} ros-navigation-autonomy-stack
     echo -e "${GREEN}Repository cloned successfully!${NC}"
 else
     # Directory exists, ensure we're on the correct branch
@@ -97,19 +98,6 @@ else
     fi
     cd ..
 fi
-
-# Normalize every tracked file's mtime to the HEAD commit timestamp.
-# git clone and reset --hard assign the current wall-clock time as mtime,
-# so two identical checkouts produce different mtimes and bust Docker's COPY
-# cache even when file content is byte-for-byte identical.  Pinning all mtimes
-# to the commit timestamp makes the cache key deterministic: same commit →
-# same mtimes → cache hit, regardless of when or how the repo was checked out.
-echo -e "${GREEN}Pinning ros-navigation-autonomy-stack file timestamps to HEAD commit...${NC}"
-(
-    cd ros-navigation-autonomy-stack
-    COMMIT_TIME=$(git log -1 --format=%ct)
-    git ls-files -z | xargs -0 touch -d "@${COMMIT_TIME}"
-)
 
 if [ ! -d "unity_models" ]; then
     echo -e "${YELLOW}Using office_building_1 as the Unity environment...${NC}"
@@ -149,26 +137,18 @@ echo -e "${GREEN}Detected architecture: ${HOST_ARCH} → TARGETARCH=${TARGETARCH
 
 # Prefer the Docker Compose V2 plugin; fall back to the legacy standalone binary.
 # Auto-install the plugin if neither is available.
-if docker compose version &>/dev/null; then
-    COMPOSE_CMD="docker compose"
-elif command -v docker-compose &>/dev/null; then
-    COMPOSE_CMD="docker-compose"
-else
+if ! docker compose version &>/dev/null; then
     echo -e "${YELLOW}Docker Compose not found — installing docker-compose-plugin...${NC}"
     sudo apt-get update -qq && sudo apt-get install -y docker-compose-v2 || sudo apt-get install -y docker-compose-plugin
-    if docker compose version &>/dev/null; then
-        COMPOSE_CMD="docker compose"
-    else
+    if ! docker compose version &>/dev/null; then
         echo -e "${RED}Error: Failed to install Docker Compose.${NC}"
         echo "Please install it manually: sudo apt-get install docker-compose-v2"
         echo "or follow https://docs.docker.com/compose/install/"
         exit 1
     fi
 fi
-echo -e "${GREEN}Using compose command: ${COMPOSE_CMD}${NC}"
 
-echo $COMPOSE_CMD -f docker/navigation/docker-compose.yml build --build-arg TARGETARCH="$TARGETARCH"
-$COMPOSE_CMD -f docker/navigation/docker-compose.yml build --build-arg TARGETARCH="$TARGETARCH"
+docker compose -f docker/navigation/docker-compose.yml build --build-arg TARGETARCH="$TARGETARCH"
 
 echo ""
 echo -e "${GREEN}============================================${NC}"

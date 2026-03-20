@@ -34,19 +34,21 @@ from reactivex.disposable import CompositeDisposable
 
 from dimos.core.core import T, rpc
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.introspection.module import extract_module_info, render_module_io
+from dimos.core.introspection.module.info import extract_module_info
+from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import Resource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteOut, Transport
-from dimos.protocol.rpc import LCMRPC, RPCSpec
-from dimos.protocol.service import BaseConfig, Configurable
-from dimos.protocol.tf import LCMTF, TFSpec
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
+from dimos.protocol.service.spec import BaseConfig, Configurable
+from dimos.protocol.tf.tf import LCMTF, TFSpec
 from dimos.utils import colors
 from dimos.utils.generic import classproperty
 
 if TYPE_CHECKING:
     from dimos.core.blueprints import Blueprint
-    from dimos.core.introspection.module import ModuleInfo
+    from dimos.core.introspection.module.info import ModuleInfo
     from dimos.core.rpc_client import RPCClient
 
 if sys.version_info >= (3, 13):
@@ -77,6 +79,8 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 
 class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = LCMRPC
+    default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
+    rpc_timeouts: dict[str, float] = dict(DEFAULT_RPC_TIMEOUTS)
     tf_transport: type[TFSpec] = LCMTF  # type: ignore[type-arg]
     frame_id_prefix: str | None = None
     frame_id: str | None = None
@@ -102,8 +106,15 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
     _bound_rpc_calls: dict[str, RpcCall] = {}
     _module_closed: bool = False
     _module_closed_lock: threading.Lock
+    _loop_thread_timeout: float = 2.0
 
     rpc_calls: list[str] = []
+
+    # Per-method RPC timeout overrides (seconds). Keys are method names.
+    # Used by RPCClient when calling methods on this module from the host.
+    # Example: rpc_timeouts = {"on_system_modules": 600.0}
+    # Methods not listed here use RPCClient.default_rpc_timeout (120s).
+    rpc_timeouts: dict[str, float] = {}
 
     def __init__(self, config_args: dict[str, Any]):
         super().__init__(**config_args)
@@ -111,7 +122,10 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         self._loop, self._loop_thread = get_loop()
         self._disposables = CompositeDisposable()
         try:
-            self.rpc = self.config.rpc_transport()
+            self.rpc = self.config.rpc_transport(
+                rpc_timeouts=self.config.rpc_timeouts,
+                default_rpc_timeout=self.config.default_rpc_timeout,
+            )
             self.rpc.serve_module_rpc(self)
             self.rpc.start()  # type: ignore[attr-defined]
         except ValueError:
@@ -149,7 +163,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
             if loop_thread.is_alive():
                 if loop:
                     loop.call_soon_threadsafe(loop.stop)
-                loop_thread.join(timeout=2)
+                loop_thread.join(timeout=self._loop_thread_timeout)
             self._loop = None
             self._loop_thread = None
 
@@ -452,17 +466,6 @@ class Module(ModuleBase[ModuleConfigT]):
             raise TypeError(f"Output {stream_name} is not a valid stream")
 
         stream._transport = transport
-        return True
-
-    @rpc
-    def configure_stream(self, stream_name: str, topic: str) -> bool:
-        """Configure a stream's transport by topic. Called by DockerModule for stream wiring."""
-        from dimos.core.transport import pLCMTransport
-
-        stream = getattr(self, stream_name, None)
-        if not isinstance(stream, (Out, In)):
-            return False
-        stream._transport = pLCMTransport(topic)
         return True
 
     # called from remote

@@ -1,0 +1,19 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "begin_exploration",
+          "args": {},
+          "id": "call_explore_001",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I've started autonomous exploration. The robot is now moving around to map the environment.",
+      "tool_calls": []
+    }
+  ]
+}
