@@ -17,7 +17,7 @@ from typing import Literal, TypeAlias
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from dimos.models.vl.create import VlModelName
+from dimos.models.vl.types import VlModelName
 
 ViewerBackend: TypeAlias = Literal["rerun", "rerun-web", "rerun-connect", "foxglove", "none"]
 
@@ -29,6 +29,9 @@ def _get_all_numbers(s: str) -> list[float]:
 class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
     robot_ips: str | None = None
+    xarm7_ip: str | None = None
+    xarm6_ip: str | None = None
+    can_port: str = "can0"
     simulation: bool = False
     replay: bool = False
     replay_dir: str = "go2_sf_office"

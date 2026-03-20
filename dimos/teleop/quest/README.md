@@ -12,10 +12,10 @@ Quest Browser  ──WebSocket──→  Embedded HTTPS Server  ──→  Quest
 ## Running
 
 ```bash
-dimos run arm-teleop           # Basic arm teleop
-dimos run arm-teleop-xarm6     # XArm6
-dimos run arm-teleop-piper     # Piper
-dimos run arm-teleop-dual      # Dual arm
+dimos run teleop-quest-rerun    # Quest teleop + Rerun viz
+dimos run teleop-quest-xarm7   # XArm7
+dimos run teleop-quest-piper   # Piper
+dimos run teleop-quest-dual    # Dual arm
 ```
 
 Open `https://<host-ip>:8443/teleop` on Quest browser. Accept cert, tap Connect.
@@ -42,7 +42,7 @@ Open `https://<host-ip>:8443/teleop` on Quest browser. Accept cert, tap Connect.
 ```
 quest/
 ├── quest_teleop_module.py   # Base module
-├── quest_extensions.py      # ArmTeleop, TwistTeleop, VisualizingTeleop
+├── quest_extensions.py      # ArmTeleop, TwistTeleop
 ├── quest_types.py           # QuestControllerState, Buttons
 ├── blueprints.py
 └── web/static/index.html    # WebXR client

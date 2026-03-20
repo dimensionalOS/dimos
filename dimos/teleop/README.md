@@ -35,9 +35,6 @@ Toggle-based engage — press primary button once to engage, press again to dise
 ### TwistTeleopModule
 Outputs TwistStamped (linear + angular velocity) instead of PoseStamped.
 
-### VisualizingTeleopModule
-Adds Rerun visualization for debugging. Extends ArmTeleopModule (toggle engage).
-
 ### PhoneTeleopModule
 Base phone teleop module. Receives orientation + gyro data from phone motion sensors, computes velocity commands from orientation deltas.
 
@@ -68,7 +65,7 @@ Filters to mobile-base axes (linear.x, linear.y, angular.z) and publishes as `Tw
 teleop/
 ├── quest/
 │   ├── quest_teleop_module.py   # Base Quest teleop module
-│   ├── quest_extensions.py      # ArmTeleop, TwistTeleop, VisualizingTeleop
+│   ├── quest_extensions.py      # ArmTeleop, TwistTeleop
 │   ├── quest_types.py           # QuestControllerState, Buttons
 │   └── web/
 │       └── static/index.html    # WebXR client
@@ -80,15 +77,14 @@ teleop/
 │       └── static/index.html    # Mobile sensor web app
 ├── utils/
 │   ├── teleop_transforms.py     # WebXR → robot frame math
-│   └── teleop_visualization.py  # Rerun visualization helpers
 └── blueprints.py                # Module blueprints for easy instantiation
 ```
 
 ## Quick Start
 
 ```bash
-dimos run arm-teleop            # Quest arm teleop
-dimos run phone-go2-teleop      # Phone → Go2
+dimos run teleop-quest-rerun     # Quest teleop + Rerun viz
+dimos run teleop-phone-go2      # Phone → Go2
 ```
 
 Open `https://<host-ip>:<port>/teleop` on device. Accept the self-signed certificate.

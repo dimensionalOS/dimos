@@ -33,7 +33,7 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.blueprints import coordinator_mock_twist_base
+from dimos.control.blueprints.mobile import coordinator_mock_twist_base
 from dimos.robot.unitree.keyboard_teleop import keyboard_teleop
 
 
