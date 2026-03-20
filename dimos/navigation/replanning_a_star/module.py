@@ -119,8 +119,3 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     @rpc
     def reset_safe_goal_clearance(self) -> None:
         self._planner.reset_safe_goal_clearance()
-
-
-replanning_a_star_planner = ReplanningAStarPlanner.blueprint
-
-__all__ = ["ReplanningAStarPlanner", "replanning_a_star_planner"]

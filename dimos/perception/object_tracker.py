@@ -631,8 +631,3 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
             return depth_25th_percentile
 
         return None
-
-
-object_tracking = ObjectTracking.blueprint
-
-__all__ = ["ObjectTracking", "object_tracking"]

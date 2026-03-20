@@ -74,6 +74,3 @@ class CostMapper(Module[Config]):
     def _calculate_costmap(self, msg: PointCloud2) -> OccupancyGrid:
         fn = OCCUPANCY_ALGOS[self.config.algo]
         return fn(msg, **asdict(self.config.config))
-
-
-cost_mapper = CostMapper.blueprint

@@ -722,16 +722,3 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     def get_tick_count(self) -> int:
         """Get the number of ticks since start."""
         return self._tick_loop.tick_count if self._tick_loop else 0
-
-
-# Blueprint export
-control_coordinator = ControlCoordinator.blueprint
-
-
-__all__ = [
-    "ControlCoordinator",
-    "ControlCoordinatorConfig",
-    "HardwareComponent",
-    "TaskConfig",
-    "control_coordinator",
-]

@@ -311,8 +311,3 @@ class PersonFollowSkillContainer(Module[Config]):
 def _decode_base64_image(b64: str) -> Image:
     bgr_array = TurboJPEG().decode(base64.b64decode(b64))
     return Image(data=bgr_array, format=ImageFormat.BGR)
-
-
-person_follow_skill = PersonFollowSkillContainer.blueprint
-
-__all__ = ["PersonFollowSkillContainer", "person_follow_skill"]

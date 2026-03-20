@@ -708,7 +708,3 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
     def _normalize_angle(angle: float) -> float:
         """Normalize angle to [-pi, pi]."""
         return math.atan2(math.sin(angle), math.cos(angle))
-
-
-# Expose blueprint for declarative composition
-cartesian_motion_controller = CartesianMotionController.blueprint

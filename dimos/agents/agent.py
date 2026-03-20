@@ -259,8 +259,3 @@ def _append_image_to_history(agent: Agent, skill: SkillInfo, uuid_: str, result:
             ]
         )
     )
-
-
-agent = Agent.blueprint
-
-__all__ = ["Agent", "AgentSpec", "agent"]

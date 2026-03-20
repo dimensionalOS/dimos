@@ -98,9 +98,3 @@ class GpsNavSkillContainer(Module):
             return None
 
         return LatLon(lat=lat, lon=lon)
-
-
-gps_nav_skill = GpsNavSkillContainer.blueprint
-
-
-__all__ = ["GpsNavSkillContainer", "gps_nav_skill"]

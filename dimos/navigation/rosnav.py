@@ -381,9 +381,6 @@ class ROSNav(
             super().stop()
 
 
-ros_nav = ROSNav.blueprint
-
-
 def deploy(dimos: ModuleCoordinator):  # type: ignore[no-untyped-def]
     nav = dimos.deploy(ROSNav)  # type: ignore[attr-defined]
 
@@ -412,6 +409,3 @@ def deploy(dimos: ModuleCoordinator):  # type: ignore[no-untyped-def]
 
     nav.start()
     return nav
-
-
-__all__ = ["ROSNav", "deploy", "ros_nav"]
