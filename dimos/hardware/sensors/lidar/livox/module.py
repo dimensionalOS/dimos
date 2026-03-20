@@ -26,11 +26,10 @@ Usage::
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import Out  # noqa: TC001
+from dimos.core.stream import Out
 from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_CMD_DATA_PORT,
     SDK_HOST_CMD_DATA_PORT,
@@ -43,12 +42,11 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_POINT_DATA_PORT,
     SDK_PUSH_MSG_PORT,
 )
-from dimos.msgs.sensor_msgs.Imu import Imu  # noqa: TC001
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2  # noqa: TC001
+from dimos.msgs.sensor_msgs.Imu import Imu
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec import perception
 
 
-@dataclass(kw_only=True)
 class Mid360Config(NativeModuleConfig):
     """Config for the C++ Mid-360 native module."""
 
@@ -76,7 +74,7 @@ class Mid360Config(NativeModuleConfig):
     host_log_data_port: int = SDK_HOST_LOG_DATA_PORT
 
 
-class Mid360(NativeModule, perception.Lidar, perception.IMU):
+class Mid360(NativeModule[Mid360Config], perception.Lidar, perception.IMU):
     """Livox Mid-360 LiDAR module backed by a native C++ binary.
 
     Ports:
@@ -90,14 +88,6 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
     lidar: Out[PointCloud2]
     imu: Out[Imu]
 
-
-mid360_module = Mid360.blueprint
-
-__all__ = [
-    "Mid360",
-    "Mid360Config",
-    "mid360_module",
-]
 
 # Verify protocol port compliance (mypy will flag missing ports)
 if TYPE_CHECKING:

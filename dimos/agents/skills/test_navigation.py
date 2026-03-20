@@ -18,8 +18,8 @@ import pytest
 from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image
 
 
 class FakeCamera(Module):
@@ -31,22 +31,16 @@ class FakeOdom(Module):
 
 
 class MockedStopNavSkill(NavigationSkillContainer):
+    _skill_started = True
     rpc_calls: list[str] = []
-
-    def __init__(self):
-        Module.__init__(self)
-        self._skill_started = True
 
     def _cancel_goal_and_stop(self):
         pass
 
 
 class MockedExploreNavSkill(NavigationSkillContainer):
+    _skill_started = True
     rpc_calls: list[str] = []
-
-    def __init__(self):
-        Module.__init__(self)
-        self._skill_started = True
 
     def _start_exploration(self, timeout):
         return "Exploration completed successfuly"
@@ -56,11 +50,8 @@ class MockedExploreNavSkill(NavigationSkillContainer):
 
 
 class MockedSemanticNavSkill(NavigationSkillContainer):
+    _skill_started = True
     rpc_calls: list[str] = []
-
-    def __init__(self):
-        Module.__init__(self)
-        self._skill_started = True
 
     def _navigate_by_tagged_location(self, query):
         return None

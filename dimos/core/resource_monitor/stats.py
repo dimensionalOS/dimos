@@ -19,7 +19,7 @@ from typing import TypedDict
 
 import psutil
 
-from dimos.utils.decorators import ttl_cache
+from dimos.utils.decorators.decorators import ttl_cache
 
 # Cache Process objects so cpu_percent(interval=None) has a previous sample.
 _proc_cache: dict[int, psutil.Process] = {}

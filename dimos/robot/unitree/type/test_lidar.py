@@ -16,9 +16,9 @@
 import itertools
 from typing import cast
 
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import RawLidarMsg, pointcloud2_from_webrtc_lidar
-from dimos.utils.testing import SensorReplay
+from dimos.utils.testing.replay import SensorReplay
 
 
 def test_init() -> None:

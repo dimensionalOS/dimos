@@ -28,7 +28,8 @@ import time
 
 _IS_MACOS = sys.platform == "darwin"
 
-from dimos.msgs.geometry_msgs import TwistStamped, Vector3
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.std_msgs.Int32 import Int32
 
 from .connection import MockB1ConnectionModule

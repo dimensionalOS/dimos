@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import signal
 import subprocess
 import time
@@ -32,15 +33,19 @@ class DimosCliCall:
         if len(args) == 1:
             args = ["run", *args]
 
-        self.process = subprocess.Popen(["dimos", "--simulation", *args])
+        self.process = subprocess.Popen(
+            ["dimos", "--simulation", *args],
+            start_new_session=True,
+        )
 
     def stop(self) -> None:
         if self.process is None:
             return
 
         try:
-            # Send the kill signal (SIGTERM for graceful shutdown)
-            self.process.send_signal(signal.SIGTERM)
+            # Send SIGTERM to the entire process group so child processes
+            # (e.g. the mujoco viewer subprocess) are also terminated.
+            os.killpg(self.process.pid, signal.SIGTERM)
 
             # Record the time when we sent the kill signal
             shutdown_start = time.time()
@@ -57,7 +62,7 @@ class DimosCliCall:
                 )
             except subprocess.TimeoutExpired:
                 # If we reach here, the process didn't terminate in 30 seconds
-                self.process.kill()  # Force kill
+                os.killpg(self.process.pid, signal.SIGKILL)
                 self.process.wait()  # Clean up
                 raise AssertionError(
                     "Process did not shut down within 30 seconds after receiving SIGTERM"
@@ -66,6 +71,9 @@ class DimosCliCall:
         except Exception:
             # Clean up if something goes wrong
             if self.process.poll() is None:  # Process still running
-                self.process.kill()
+                try:
+                    os.killpg(self.process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
                 self.process.wait()
             raise

@@ -25,7 +25,7 @@ import typer
 
 logger = logging.getLogger(__name__)
 
-# ----------------------------- sudo helpers -----------------------------
+# sudo helpers
 
 
 @cache
@@ -66,7 +66,7 @@ def _write_sysctl_int(name: str, value: int) -> None:
     sudo_run("sysctl", "-w", f"{name}={value}", check=True, text=True, capture_output=False)
 
 
-# -------------------------- base class for system config checks/requirements --------------------------
+# base class for system config checks/requirements
 
 
 class SystemConfigurator(ABC):
@@ -91,7 +91,7 @@ class SystemConfigurator(ABC):
         raise NotImplementedError
 
 
-# ----------------------------- generic enforcement of system configs -----------------------------
+# generic enforcement of system configs
 
 
 def configure_system(checks: list[SystemConfigurator], check_only: bool = False) -> None:

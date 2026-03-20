@@ -38,11 +38,8 @@ from dimos.control.tasks.trajectory_task import (
 )
 from dimos.control.tick_loop import TickLoop
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
-
-# =============================================================================
-# Fixtures
-# =============================================================================
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
 @pytest.fixture
@@ -112,11 +109,6 @@ def coordinator_state():
     return CoordinatorState(joints=joints, t_now=time.perf_counter(), dt=0.01)
 
 
-# =============================================================================
-# Test JointCommandOutput
-# =============================================================================
-
-
 class TestJointCommandOutput:
     def test_position_output(self):
         output = JointCommandOutput(
@@ -153,11 +145,6 @@ class TestJointCommandOutput:
         assert output.get_values() is None
 
 
-# =============================================================================
-# Test JointStateSnapshot
-# =============================================================================
-
-
 class TestJointStateSnapshot:
     def test_get_position(self):
         snapshot = JointStateSnapshot(
@@ -169,11 +156,6 @@ class TestJointStateSnapshot:
         assert snapshot.get_position("j1") == 0.5
         assert snapshot.get_position("j2") == 1.0
         assert snapshot.get_position("nonexistent") is None
-
-
-# =============================================================================
-# Test ConnectedHardware
-# =============================================================================
 
 
 class TestConnectedHardware:
@@ -204,11 +186,6 @@ class TestConnectedHardware:
         }
         connected_hardware.write_command(commands, ControlMode.POSITION)
         mock_adapter.write_joint_positions.assert_called()
-
-
-# =============================================================================
-# Test JointTrajectoryTask
-# =============================================================================
 
 
 class TestJointTrajectoryTask:
@@ -314,11 +291,6 @@ class TestJointTrajectoryTask:
         assert trajectory_task.get_progress(t_start + 1.0) == pytest.approx(1.0, abs=0.01)
 
 
-# =============================================================================
-# Test Arbitration Logic
-# =============================================================================
-
-
 class TestArbitration:
     def test_single_task_wins(self):
         outputs = [
@@ -422,11 +394,6 @@ class TestArbitration:
         assert winners["j4"][3] == "task2"
 
 
-# =============================================================================
-# Test TickLoop
-# =============================================================================
-
-
 class TestTickLoop:
     def test_tick_loop_starts_and_stops(self, mock_adapter):
         component = HardwareComponent(
@@ -496,11 +463,6 @@ class TestTickLoop:
         tick_loop.stop()
 
         assert mock_task.compute.call_count > 0
-
-
-# =============================================================================
-# Integration Test
-# =============================================================================
 
 
 class TestIntegration:

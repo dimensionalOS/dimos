@@ -16,8 +16,8 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.nav_msgs import Path
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 
 
 def make_path_mask(

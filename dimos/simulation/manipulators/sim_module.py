@@ -15,7 +15,6 @@
 """Simulator-agnostic manipulator simulation module."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 import threading
 import time
@@ -26,12 +25,13 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
-from dimos.simulation.engines import EngineType, get_engine
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.RobotState import RobotState
+from dimos.simulation.engines.registry import EngineType, get_engine
 from dimos.simulation.manipulators.sim_manip_interface import SimManipInterface
 
 
-@dataclass(kw_only=True)
 class SimulationModuleConfig(ModuleConfig):
     engine: EngineType
     config_path: Path | Callable[[], Path]
@@ -42,7 +42,6 @@ class SimulationModule(Module[SimulationModuleConfig]):
     """Module wrapper for manipulator simulation across engines."""
 
     default_config = SimulationModuleConfig
-    config: SimulationModuleConfig
 
     joint_state: Out[JointState]
     robot_state: Out[RobotState]
@@ -51,8 +50,8 @@ class SimulationModule(Module[SimulationModuleConfig]):
 
     MIN_CONTROL_RATE = 1.0
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._backend: SimManipInterface | None = None
         self._control_rate = 100.0
         self._monitor_rate = 100.0
@@ -233,12 +232,3 @@ class SimulationModule(Module[SimulationModuleConfig]):
             if len(names) >= dof:
                 return list(names[:dof])
         return [f"{self._joint_prefix}{i + 1}" for i in range(dof)]
-
-
-simulation = SimulationModule.blueprint
-
-__all__ = [
-    "SimulationModule",
-    "SimulationModuleConfig",
-    "simulation",
-]

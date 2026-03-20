@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import field
 import importlib
 import json
 import os
@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.core.docker_build import build_image, image_exists
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RpcCall
-from dimos.protocol.rpc import LCMRPC
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.bridge import RERUN_GRPC_PORT, RERUN_WEB_PORT
 
@@ -46,7 +46,6 @@ RPC_READY_TIMEOUT = 3.0  #       Timeout for RPC readiness probe during containe
 LOG_TAIL_LINES = 200  #          Number of log lines to include in error messages
 
 
-@dataclass(kw_only=True)
 class DockerModuleConfig(ModuleConfig):
     """
     Configuration for running a DimOS module inside Docker.

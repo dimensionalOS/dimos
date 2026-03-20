@@ -35,8 +35,12 @@ from reactivex.abc import ObserverBase, SchedulerBase
 from reactivex.disposable import Disposable
 
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.geometry_msgs import Quaternion, Twist, Vector3
-from dimos.msgs.sensor_msgs import CameraInfo, Image, ImageFormat, PointCloud2
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.simulation.mujoco.constants import (
     LAUNCHER_PATH,
@@ -126,6 +130,7 @@ class MujocoConnection:
 
             self.process = subprocess.Popen(
                 [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
+                stderr=subprocess.PIPE,
             )
 
         except Exception as e:
@@ -228,6 +233,12 @@ class MujocoConnection:
 
     def liedown(self) -> bool:
         return True
+
+    def balance_stand(self) -> bool:
+        return True
+
+    def set_obstacle_avoidance(self, enabled: bool = True) -> None:
+        pass
 
     def get_video_frame(self) -> NDArray[Any] | None:
         if self.shm_data is None:

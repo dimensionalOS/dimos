@@ -15,7 +15,7 @@
 import pytest
 
 from dimos.core.transport import LCMTransport
-from dimos.msgs.foxglove_msgs import ImageAnnotations
+from dimos.msgs.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
 from dimos.perception.detection.reid.module import ReidModule
 
@@ -23,7 +23,7 @@ from dimos.perception.detection.reid.module import ReidModule
 @pytest.mark.tool
 def test_reid_ingress(imageDetections2d) -> None:
     try:
-        from dimos.models.embedding import TorchReIDModel
+        from dimos.models.embedding.treid import TorchReIDModel
     except Exception:
         pytest.skip("TorchReIDModel not available")
 

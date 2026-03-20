@@ -16,9 +16,9 @@
 
 import numpy as np
 
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
-from dimos.utils.testing import SensorReplay
+from dimos.utils.testing.replay import SensorReplay
 
 
 def test_lcm_encode_decode() -> None:

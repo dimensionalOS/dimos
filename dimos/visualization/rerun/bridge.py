@@ -16,10 +16,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import field
 from functools import lru_cache
+import time
 from typing import (
-    TYPE_CHECKING,
     Any,
     Literal,
     Protocol,
@@ -30,14 +31,26 @@ from typing import (
 )
 
 from reactivex.disposable import Disposable
+from rerun._baseclasses import Archetype
+from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
 import typer
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
+from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.utils.logging_config import setup_logger
+
+# Message types with large payloads that need rate-limiting.
+# Image (~1 MB/frame at 30 fps) and PointCloud2 (~600-800 KB/frame)
+# cause viewer OOM if logged at full rate.  Light messages
+# (Path, PointStamped, Twist, TF, EntityMarkers …) pass through
+# unthrottled so navigation overlays and user input are never dropped.
+_HEAVY_MSG_TYPES: tuple[type, ...] = (Image, PointCloud2)
 
 RERUN_GRPC_PORT = 9876
 RERUN_WEB_PORT = 9090
@@ -87,15 +100,7 @@ RERUN_WEB_PORT = 9090
 
 logger = setup_logger()
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from rerun._baseclasses import Archetype
-    from rerun.blueprint import Blueprint
-
-    from dimos.protocol.pubsub.spec import SubscribeAllCapable
-
-BlueprintFactory: TypeAlias = "Callable[[], Blueprint]"
+BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
 
 # to_rerun() can return a single archetype or a list of (entity_path, archetype) tuples
 RerunMulti: TypeAlias = "list[tuple[str, Archetype]]"
@@ -104,8 +109,6 @@ RerunData: TypeAlias = "Archetype | RerunMulti"
 
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
     """Check if data is a list of (entity_path, archetype) tuples."""
-    from rerun._baseclasses import Archetype
-
     return (
         isinstance(data, list)
         and bool(data)
@@ -142,7 +145,7 @@ def _default_blueprint() -> Blueprint:
     )
 
 
-# Maps global_config.viewer_backend -> bridge viewer_mode.
+# Maps global_config.viewer -> bridge viewer_mode.
 # Evaluated at blueprint construction time (main process), not in start() (worker process).
 _BACKEND_TO_MODE: dict[str, ViewerMode] = {
     "rerun": "native",
@@ -155,22 +158,20 @@ _BACKEND_TO_MODE: dict[str, ViewerMode] = {
 def _resolve_viewer_mode() -> ViewerMode:
     from dimos.core.global_config import global_config
 
-    return _BACKEND_TO_MODE.get(global_config.viewer_backend, "native")
+    return _BACKEND_TO_MODE.get(global_config.viewer, "native")
 
 
-@dataclass
 class Config(ModuleConfig):
     """Configuration for RerunBridgeModule."""
 
-    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(
-        default_factory=lambda: [LCM(autoconf=True)]
-    )
+    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
 
     visual_override: dict[Glob | str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
     # Static items logged once after start. Maps entity_path -> callable(rr) returning Archetype
     static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
+    min_interval_sec: float = 0.1  # Rate-limit per entity path (default: 10 Hz max)
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
     viewer_mode: ViewerMode = field(default_factory=_resolve_viewer_mode)
@@ -182,7 +183,7 @@ class Config(ModuleConfig):
     blueprint: BlueprintFactory | None = _default_blueprint
 
 
-class RerunBridgeModule(Module):
+class RerunBridgeModule(Module[Config]):
     """Bridge that logs messages from pubsubs to Rerun.
 
     Spawns its own Rerun viewer and subscribes to all topics on each provided
@@ -191,7 +192,7 @@ class RerunBridgeModule(Module):
     Example:
         from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 
-        lcm = LCM(autoconf=True)
+        lcm = LCM()
         bridge = RerunBridgeModule(pubsubs=[lcm])
         bridge.start()
         # All messages with to_rerun() are now logged to Rerun
@@ -199,7 +200,6 @@ class RerunBridgeModule(Module):
     """
 
     default_config = Config
-    config: Config
 
     @lru_cache(maxsize=256)
     def _visual_override_for_entity_path(
@@ -210,8 +210,6 @@ class RerunBridgeModule(Module):
         Chains matching overrides from config, ending with final_convert
         which handles .to_rerun() or passes through Archetypes.
         """
-        from rerun._baseclasses import Archetype
-
         # find all matching converters for this entity path
         matches = [
             fn
@@ -254,6 +252,17 @@ class RerunBridgeModule(Module):
         # convert a potentially complex topic object into an str rerun entity path
         entity_path: str = self._get_entity_path(topic)
 
+        # Rate-limit heavy data types to prevent viewer memory exhaustion.
+        # High-bandwidth streams (e.g. 30fps camera, lidar) would otherwise
+        # flood the viewer faster than it can evict, causing OOM.  Light
+        # messages (Path, PointStamped, TF, etc.) pass through unthrottled.
+        if self.config.min_interval_sec > 0 and isinstance(msg, _HEAVY_MSG_TYPES):
+            now = time.monotonic()
+            last = self._last_log.get(entity_path, 0.0)
+            if now - last < self.config.min_interval_sec:
+                return
+            self._last_log[entity_path] = now
+
         # apply visual overrides (including final_convert which handles .to_rerun())
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
 
@@ -274,6 +283,7 @@ class RerunBridgeModule(Module):
 
         super().start()
 
+        self._last_log: dict[str, float] = {}
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
 
         # Initialize and spawn Rerun viewer
@@ -344,12 +354,16 @@ def run_bridge(
     """Start a RerunBridgeModule with default LCM config and block until interrupted."""
     import signal
 
+    from dimos.protocol.service.lcmservice import autoconf
+
+    autoconf(check_only=True)
+
     bridge = RerunBridgeModule(
         viewer_mode=viewer_mode,
         memory_limit=memory_limit,
         # any pubsub that supports subscribe_all and topic that supports str(topic)
         # is acceptable here
-        pubsubs=[LCM(autoconf=True)],
+        pubsubs=[LCM()],
     )
 
     bridge.start()
@@ -376,7 +390,3 @@ def cli(
 
 if __name__ == "__main__":
     app()
-
-# you don't need to include this in your blueprint if you are not creating a
-# custom rerun configuration for your deployment, you can also run rerun-bridge standalone
-rerun_bridge = RerunBridgeModule.blueprint

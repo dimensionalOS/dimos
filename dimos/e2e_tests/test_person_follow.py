@@ -12,44 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Generator
-import threading
+from collections.abc import Callable
 import time
 
 import pytest
 
+from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
-from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
-
-StartPersonTrack = Callable[[list[tuple[float, float]]], None]
-
-
-@pytest.fixture
-def start_person_track() -> Generator[StartPersonTrack, None, None]:
-    publisher: PersonTrackPublisher | None = None
-    stop_event = threading.Event()
-    thread: threading.Thread | None = None
-
-    def start(track: list[tuple[float, float]]) -> None:
-        nonlocal publisher, thread
-        publisher = PersonTrackPublisher(track)
-
-        def run_person_track() -> None:
-            while not stop_event.is_set():
-                publisher.tick()
-                time.sleep(1 / 60)
-
-        thread = threading.Thread(target=run_person_track, daemon=True)
-        thread.start()
-
-    yield start
-
-    stop_event.set()
-    if thread is not None:
-        thread.join(timeout=1.0)
-    if publisher is not None:
-        publisher.stop()
 
 
 @pytest.mark.skipif_in_ci
@@ -61,7 +31,14 @@ def test_person_follow(
     human_input: Callable[[str], None],
     start_person_track: StartPersonTrack,
 ) -> None:
-    start_blueprint("--mujoco-start-pos", "-6.18 0.96", "run", "unitree-go2-agentic")
+    start_blueprint(
+        "--mujoco-start-pos",
+        "-6.18 0.96",
+        "run",
+        "--disable",
+        "spatial-memory",
+        "unitree-go2-agentic",
+    )
 
     lcm_spy.save_topic("/rpc/Agent/on_system_modules/res")
     lcm_spy.wait_for_saved_topic("/rpc/Agent/on_system_modules/res", timeout=120.0)

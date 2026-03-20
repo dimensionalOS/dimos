@@ -28,8 +28,10 @@ import time
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
-from dimos.msgs.std_msgs import Int32
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.std_msgs.Int32 import Int32
 
 
 class JoystickModule(Module):
@@ -41,12 +43,9 @@ class JoystickModule(Module):
 
     twist_out: Out[TwistStamped]  # Timestamped velocity commands
     mode_out: Out[Int32]  # Mode changes
-
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        Module.__init__(self, *args, **kwargs)
-        self.pygame_ready = False
-        self.running = False
-        self.current_mode = 0  # Start in IDLE mode for safety
+    pygame_ready = False
+    running = False
+    current_mode = 0  # Start in IDLE mode for safety
 
     @rpc
     def start(self) -> None:

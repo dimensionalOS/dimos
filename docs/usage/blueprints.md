@@ -9,13 +9,16 @@ You create a `Blueprint` from a single module (say `ConnectionModule`) with:
 ```python session=blueprint-ex1
 from dimos.core.blueprints import Blueprint
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 
-class ConnectionModule(Module):
-    def __init__(self, arg1, arg2, kwarg='value') -> None:
-        super().__init__()
+class ConnectionConfig(ModuleConfig):
+    arg1: int
+    arg2: str = "value"
 
-blueprint = Blueprint.create(ConnectionModule, 'arg1', 'arg2', kwarg='value')
+class ConnectionModule(Module[ConnectionConfig]):
+    default_config = ConnectionConfig
+
+blueprint = Blueprint.create(ConnectionModule, arg1=5, arg2="foo")
 ```
 
 But the same thing can be accomplished more succinctly as:
@@ -37,9 +40,11 @@ You can link multiple blueprints together with `autoconnect`:
 ```python session=blueprint-ex1
 from dimos.core.blueprints import autoconnect
 
-class Module1(Module):
-    def __init__(self, arg1) -> None:
-        super().__init__()
+class Config(ModuleConfig):
+    arg1: int = 42
+
+class Module1(Module[Config]):
+    default_config = Config
 
 class Module2(Module):
     ...
@@ -206,7 +211,7 @@ blueprint.remappings([
 
 ## Overriding global configuration.
 
-Each module can optionally take global config as a `cfg` option in `__init__`. E.g.:
+Each module includes the global config available as `self.config.g`. E.g.:
 
 ```python session=blueprint-ex3
 from dimos.core.core import rpc
@@ -214,9 +219,8 @@ from dimos.core.module import Module
 from dimos.core.global_config import GlobalConfig
 
 class ModuleA(Module):
-
-    def __init__(self, cfg: GlobalConfig | None = None):
-        self._global_config: GlobalConfig = cfg
+    def some_method(self):
+        print(self.config.g.viewer)
         ...
 ```
 

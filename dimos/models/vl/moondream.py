@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 import warnings
@@ -9,16 +8,17 @@ import torch
 from transformers import AutoModelForCausalLM  # type: ignore[import-untyped]
 
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
-from dimos.models.vl.base import VlModel
-from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
+from dimos.models.vl.base import VlModel, VlModelConfig
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 
 # Moondream works well with 512x512 max
 MOONDREAM_DEFAULT_AUTO_RESIZE = (512, 512)
 
 
-@dataclass
-class MoondreamConfig(HuggingFaceModelConfig):
+class MoondreamConfig(HuggingFaceModelConfig, VlModelConfig):
     """Configuration for MoondreamVlModel."""
 
     model_name: str = "vikhyatk/moondream2"
@@ -26,10 +26,9 @@ class MoondreamConfig(HuggingFaceModelConfig):
     auto_resize: tuple[int, int] | None = MOONDREAM_DEFAULT_AUTO_RESIZE
 
 
-class MoondreamVlModel(HuggingFaceModel, VlModel):
+class MoondreamVlModel(HuggingFaceModel, VlModel[MoondreamConfig]):
     _model_class = AutoModelForCausalLM
     default_config = MoondreamConfig  # type: ignore[assignment]
-    config: MoondreamConfig  # type: ignore[assignment]
 
     @cached_property
     def _model(self) -> AutoModelForCausalLM:

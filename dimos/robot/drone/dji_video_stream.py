@@ -26,7 +26,7 @@ from typing import Any
 import numpy as np
 from reactivex import Observable, Subject
 
-from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -205,12 +205,25 @@ class FakeDJIVideoStream(DJIDroneVideoStream):
 
     @functools.cache
     def get_stream(self) -> Observable[Image]:  # type: ignore[override]
-        """Get the replay stream directly."""
-        from dimos.utils.testing import TimedSensorReplay
+        """Get the replay stream directly.
+
+        Note: The GStreamer pipeline outputs RGB frames (video/x-raw,format=RGB),
+        but the Aug 2025 recording stored them with the default BGR format tag.
+        We correct the label here so Rerun and other consumers interpret the
+        channels correctly.
+        """
+        from reactivex import operators as ops
+
+        from dimos.utils.testing.replay import TimedSensorReplay
+
+        def _fix_format(img: Image) -> Image:
+            if img.format == ImageFormat.BGR:
+                img.format = ImageFormat.RGB
+            return img
 
         logger.info("Creating video replay stream")
         video_store: Any = TimedSensorReplay("drone/video")
-        stream: Observable[Image] = video_store.stream()
+        stream: Observable[Image] = video_store.stream().pipe(ops.map(_fix_format))
         return stream
 
     def stop(self) -> None:

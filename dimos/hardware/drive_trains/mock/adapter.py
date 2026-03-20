@@ -48,10 +48,6 @@ class MockTwistBaseAdapter:
         self._enabled = False
         self._connected = False
 
-    # =========================================================================
-    # Connection
-    # =========================================================================
-
     def connect(self) -> bool:
         """Simulate connection."""
         self._connected = True
@@ -65,17 +61,9 @@ class MockTwistBaseAdapter:
         """Check mock connection status."""
         return self._connected
 
-    # =========================================================================
-    # Info
-    # =========================================================================
-
     def get_dof(self) -> int:
         """Return DOF."""
         return self._dof
-
-    # =========================================================================
-    # State Reading
-    # =========================================================================
 
     def read_velocities(self) -> list[float]:
         """Return mock velocities."""
@@ -86,10 +74,6 @@ class MockTwistBaseAdapter:
         if self._odometry is None:
             return None
         return self._odometry.copy()
-
-    # =========================================================================
-    # Control
-    # =========================================================================
 
     def write_velocities(self, velocities: list[float]) -> bool:
         """Set mock velocities."""
@@ -103,10 +87,6 @@ class MockTwistBaseAdapter:
         self._velocities = [0.0] * self._dof
         return True
 
-    # =========================================================================
-    # Enable/Disable
-    # =========================================================================
-
     def write_enable(self, enable: bool) -> bool:
         """Enable/disable mock platform."""
         self._enabled = enable
@@ -115,10 +95,6 @@ class MockTwistBaseAdapter:
     def read_enabled(self) -> bool:
         """Check mock enable state."""
         return self._enabled
-
-    # =========================================================================
-    # Test Helpers (not part of Protocol)
-    # =========================================================================
 
     def set_odometry(self, odometry: list[float] | None) -> None:
         """Set odometry directly for testing."""

@@ -16,7 +16,6 @@
 
 import base64
 import json
-import os
 import pickle
 import signal
 import sys
@@ -30,7 +29,7 @@ from numpy.typing import NDArray
 import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.simulation.mujoco.constants import (
     DEPTH_CAMERA_FOV,
     LIDAR_FPS,
@@ -230,18 +229,19 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
 
 if __name__ == "__main__":
-
-    def signal_handler(_signum: int, _frame: Any) -> None:
-        # os._exit is the documented way of exiting a child process immediatly.
-        os._exit(0)
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
     global_config = pickle.loads(base64.b64decode(sys.argv[1]))
     shm_names = json.loads(sys.argv[2])
 
     shm = ShmReader(shm_names)
+
+    def signal_handler(_signum: int, _frame: Any) -> None:
+        # Signal the main loop to exit gracefully so the viewer context
+        # manager can close the window and clean up resources.
+        shm.signal_stop()
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
     try:
         _run_simulation(global_config, shm)
     finally:

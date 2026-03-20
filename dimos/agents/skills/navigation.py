@@ -22,9 +22,10 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.models.qwen.bbox import BBox
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
 from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.types.robot_location import RobotLocation
@@ -55,8 +56,8 @@ class NavigationSkillContainer(Module):
     color_image: In[Image]
     odom: In[PoseStamped]
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._skill_started = False
 
         # Here to prevent unwanted imports in the file.
@@ -320,8 +321,3 @@ class NavigationSkillContainer(Module):
             orientation=Quaternion.from_euler(make_vector3(0, 0, theta)),
             frame_id="map",
         )
-
-
-navigation_skill = NavigationSkillContainer.blueprint
-
-__all__ = ["NavigationSkillContainer", "navigation_skill"]

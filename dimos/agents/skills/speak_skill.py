@@ -97,8 +97,3 @@ class SpeakSkill(Module):
             subscription.dispose()
 
             return f"Spoke: {text}"
-
-
-speak_skill = SpeakSkill.blueprint
-
-__all__ = ["SpeakSkill", "speak_skill"]

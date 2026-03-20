@@ -35,10 +35,6 @@ from dimos.core.run_registry import (
 from dimos.core.stream import Out
 from dimos.robot.cli.dimos import main
 
-# ---------------------------------------------------------------------------
-# Lightweight test modules
-# ---------------------------------------------------------------------------
-
 
 class PingModule(Module):
     data: Out[str]
@@ -52,11 +48,6 @@ class PongModule(Module):
 
     def start(self):
         super().start()
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
@@ -79,7 +70,7 @@ def _clean_registry(tmp_path, monkeypatch):
 @pytest.fixture()
 def coordinator():
     """Build a PingPong blueprint (1 worker) and yield the coordinator."""
-    global_config.update(viewer_backend="none", n_workers=1)
+    global_config.update(viewer="none", n_workers=1)
     bp = autoconnect(PingModule.blueprint(), PongModule.blueprint())
     coord = bp.build()
     yield coord
@@ -89,7 +80,7 @@ def coordinator():
 @pytest.fixture()
 def coordinator_2w():
     """Build a PingPong blueprint with 2 workers."""
-    global_config.update(viewer_backend="none", n_workers=2)
+    global_config.update(viewer="none", n_workers=2)
     bp = autoconnect(PingModule.blueprint(), PongModule.blueprint())
     coord = bp.build()
     yield coord
@@ -112,11 +103,6 @@ def registry_entry():
     entry.save()
     yield entry
     entry.remove()
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow
@@ -172,7 +158,7 @@ class TestDaemonE2E:
             started_at="2026-03-06T12:00:00+00:00",
             log_dir="/tmp/dimos-detail-test",
             cli_args=["--replay", "ping-pong"],
-            config_overrides={"n_workers": 1, "viewer_backend": "none"},
+            config_overrides={"n_workers": 1, "viewer": "none"},
         )
         entry.save()
 
@@ -183,7 +169,7 @@ class TestDaemonE2E:
         assert raw["started_at"] == "2026-03-06T12:00:00+00:00"
         assert raw["log_dir"] == "/tmp/dimos-detail-test"
         assert raw["cli_args"] == ["--replay", "ping-pong"]
-        assert raw["config_overrides"] == {"n_workers": 1, "viewer_backend": "none"}
+        assert raw["config_overrides"] == {"n_workers": 1, "viewer": "none"}
 
         runs = list_runs()
         assert len(runs) == 1
@@ -216,15 +202,10 @@ class TestDaemonE2E:
         assert remaining[0].run_id == registry_entry.run_id
 
 
-# ---------------------------------------------------------------------------
-# E2E: CLI status + stop against real running blueprint
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture()
 def live_blueprint():
     """Build PingPong and register. Yields (coord, entry). Cleans up on teardown."""
-    global_config.update(viewer_backend="none", n_workers=1)
+    global_config.update(viewer="none", n_workers=1)
     bp = autoconnect(PingModule.blueprint(), PongModule.blueprint())
     coord = bp.build()
     run_id = f"e2e-cli-{datetime.now(timezone.utc).strftime('%H%M%S%f')}"

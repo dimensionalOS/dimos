@@ -21,7 +21,7 @@ from dimos.mapping.pointclouds.occupancy import OCCUPANCY_ALGOS
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.utils.cli.plot import bar
 from dimos.utils.data import get_data, get_data_dir
-from dimos.utils.testing import TimedSensorReplay
+from dimos.utils.testing.replay import TimedSensorReplay
 
 
 @pytest.mark.tool

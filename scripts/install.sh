@@ -321,7 +321,7 @@ detect_os() {
         if grep -qi microsoft /proc/version 2>/dev/null; then DETECTED_OS="wsl"
         elif [[ -f /etc/NIXOS ]] || has_cmd nixos-version; then DETECTED_OS="nixos"
         elif grep -qEi 'debian|ubuntu' /etc/os-release 2>/dev/null; then DETECTED_OS="ubuntu"
-        else die "unsupported Linux distribution (only Debian/Ubuntu-based distros supported)"; fi
+        else DETECTED_OS="linux"; fi
         DETECTED_OS_VERSION="$(. /etc/os-release 2>/dev/null && echo "${VERSION_ID:-unknown}" || echo "unknown")"
     else
         die "unsupported operating system: $uname_s"
@@ -377,6 +377,10 @@ print_sysinfo() {
         macos)  os_display="macOS ${DETECTED_OS_VERSION} (${DETECTED_ARCH})" ;;
         nixos)  os_display="NixOS ${DETECTED_OS_VERSION} (${DETECTED_ARCH})" ;;
         wsl)    os_display="WSL2 / Ubuntu ${DETECTED_OS_VERSION} (${DETECTED_ARCH})" ;;
+        linux)
+            local distro_name
+            distro_name="$(. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-Linux}" || echo "Linux")"
+            os_display="${distro_name} (${DETECTED_ARCH})" ;;
         *)      os_display="Unknown" ;;
     esac
     case "$DETECTED_GPU" in
@@ -411,8 +415,13 @@ install_nix() {
     printf "\n"
 
     if ! prompt_confirm "Install Nix now? (official nixos.org multi-user installer)" "yes"; then
-        warn "skipping Nix installation — falling back to system packages"
-        SETUP_METHOD="system"
+        if [[ "$DETECTED_OS" == "linux" ]]; then
+            warn "skipping Nix — see https://github.com/dimensionalOS/dimos/?tab=readme-ov-file#installation"
+            SETUP_METHOD="manual"
+        else
+            warn "skipping Nix installation — falling back to system packages"
+            SETUP_METHOD="system"
+        fi
         return
     fi
 
@@ -442,14 +451,29 @@ install_nix() {
 }
 
 prompt_setup_method() {
-    if [[ "$NO_NIX" == "1" ]]; then SETUP_METHOD="system"; return; fi
+    if [[ "$NO_NIX" == "1" ]]; then
+        if [[ "$DETECTED_OS" == "linux" ]]; then SETUP_METHOD="manual"
+        else SETUP_METHOD="system"; fi
+        return
+    fi
     if [[ "$USE_NIX" == "1" ]]; then
         [[ "$HAS_NIX" == "1" ]] && { ok "Nix detected — using for system deps"; SETUP_METHOD="nix"; USE_NIX=1; return; }
         install_nix; SETUP_METHOD="nix"; USE_NIX=1; return
     fi
 
     local choice
-    if [[ "$HAS_NIX" == "1" ]]; then
+    if [[ "$DETECTED_OS" == "linux" ]]; then
+        if [[ "$HAS_NIX" == "1" ]]; then
+            prompt_select "How should we set up system dependencies?" \
+                "Nix — nix develop (recommended for your distro)" \
+                "Manual — skip, install dependencies yourself"
+        else
+            prompt_select "How should we set up system dependencies?" \
+                "Install Nix — nix develop (recommended for your distro)" \
+                "Manual — skip, install dependencies yourself"
+        fi
+        choice="$PROMPT_RESULT"
+    elif [[ "$HAS_NIX" == "1" ]]; then
         prompt_select "How should we set up system dependencies?" \
             "System packages — apt/brew (simpler)" \
             "Nix — nix develop (reproducible)"
@@ -467,6 +491,9 @@ prompt_setup_method() {
         *Nix*|*nix*)
             [[ "$HAS_NIX" != "1" ]] && install_nix
             SETUP_METHOD="nix"; USE_NIX=1; ok "will use Nix for system dependencies" ;;
+        *Manual*)
+            SETUP_METHOD="manual"
+            info "see https://github.com/dimensionalOS/dimos/?tab=readme-ov-file#installation" ;;
         *)
             SETUP_METHOD="system"; ok "will use system package manager" ;;
     esac
@@ -536,6 +563,11 @@ install_system_deps() {
         nixos)
             info "NixOS detected — system deps managed via nix develop"
             warn "you declined Nix setup; run 'nix develop' manually for system deps"
+            ;;
+        linux)
+            info "see https://github.com/dimensionalOS/dimos/?tab=readme-ov-file#installation"
+            warn "install system dependencies manually, then re-run this script"
+            return
             ;;
     esac
     ok "system dependencies ready"
@@ -928,13 +960,13 @@ main() {
         local ver_major; ver_major="$(echo "$DETECTED_OS_VERSION" | cut -d. -f1)"
         [[ "$ver_major" -lt 22 ]] 2>/dev/null && warn "Ubuntu ${DETECTED_OS_VERSION} — 22.04+ recommended"
     fi
-    [[ "$DETECTED_OS" == "macos" ]] && {
+    if [[ "$DETECTED_OS" == "macos" ]]; then
         local mac_major; mac_major="$(echo "$DETECTED_OS_VERSION" | cut -d. -f1)"
         [[ "$mac_major" -lt 12 ]] 2>/dev/null && die "macOS ${DETECTED_OS_VERSION} too old — 12.6+ required"
-    }
+    fi
 
     prompt_setup_method
-    [[ "$SETUP_METHOD" != "nix" ]] && install_system_deps
+    if [[ "$SETUP_METHOD" != "nix" ]]; then install_system_deps; fi
     install_uv
 
     if [[ -z "$DETECTED_PYTHON" ]]; then

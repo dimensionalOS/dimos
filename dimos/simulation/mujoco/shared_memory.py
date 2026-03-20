@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.simulation.mujoco.constants import VIDEO_HEIGHT, VIDEO_WIDTH
 from dimos.utils.logging_config import setup_logger
 
@@ -107,6 +107,10 @@ class ShmReader:
     def should_stop(self) -> bool:
         control_array: NDArray[Any] = np.ndarray((2,), dtype=np.int32, buffer=self.shm.control.buf)
         return bool(control_array[1] == 1)  # stop flag
+
+    def signal_stop(self) -> None:
+        control_array: NDArray[Any] = np.ndarray((2,), dtype=np.int32, buffer=self.shm.control.buf)
+        control_array[1] = 1  # Set stop flag
 
     def write_video(self, pixels: NDArray[Any]) -> None:
         video_array: NDArray[Any] = np.ndarray(

@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
 from pathlib import Path
 import sys
@@ -26,13 +25,13 @@ from dimos.core.core import rpc
 from dimos.core.docker_runner import DockerModuleConfig
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseArray
-from dimos.msgs.std_msgs import Header
+from dimos.msgs.geometry_msgs.PoseArray import PoseArray
+from dimos.msgs.std_msgs.Header import Header
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose
 
 if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs import PointCloud2
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 logger = setup_logger()
 
@@ -42,7 +41,6 @@ OUTLIER_REMOVAL_THRESHOLD = 100
 COLLISION_FILTER_THRESHOLD = 0.02
 
 
-@dataclass
 class GraspGenConfig(DockerModuleConfig):
     """Configuration for GraspGen module."""
 
@@ -68,11 +66,9 @@ class GraspGenModule(Module[GraspGenConfig]):
 
     default_config = GraspGenConfig
     grasps: Out[PoseArray]
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._sampler = self._gripper_info = None
-        self._initialized = False
+    _sampler = None
+    _gripper_info = None
+    _initialized = False
 
     @rpc
     def start(self) -> None:
@@ -212,7 +208,7 @@ class GraspGenModule(Module[GraspGenConfig]):
                 return grasps_np, scores_np
 
             pc_mean = object_pc_filtered.mean(axis=0)
-            T_center = tra.translation_matrix(-pc_mean)
+            T_center = tra.translation_matrix(-pc_mean)  # type: ignore[no-untyped-call]
             grasps_centered = np.array([T_center @ g for g in grasps_np])
             scene_pc_centered = tra.transform_points(scene_pc, T_center)
 
@@ -274,6 +270,3 @@ def graspgen(
     return GraspGenModule.blueprint(
         docker_file=dockerfile, docker_build_context=build_context, **kwargs
     )
-
-
-__all__ = ["GraspGenConfig", "GraspGenModule", "graspgen"]

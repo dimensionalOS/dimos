@@ -19,8 +19,8 @@ from numpy.typing import NDArray
 
 from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.path_mask import make_path_mask
-from dimos.msgs.nav_msgs import Path
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 
 
 class PathClearance:

@@ -81,7 +81,7 @@ Each implementation provides a context manager factory:
 ```python
 @contextmanager
 def lcm_typed_context() -> Generator[LCM, None, None]:
-    lcm = LCM(autoconf=True)
+    lcm = LCM()
     lcm.start()
     yield lcm
     lcm.stop()

@@ -21,6 +21,7 @@ permissions:
 
 jobs:
   run-tests:
+    timeout-minutes: 60
     runs-on: [self-hosted, Linux]
     container:
       image: ghcr.io/dimensionalos/${{ inputs.dev-image }}

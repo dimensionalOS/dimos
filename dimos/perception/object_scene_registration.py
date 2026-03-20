@@ -24,14 +24,16 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.foxglove_msgs import ImageAnnotations
-from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
-from dimos.msgs.sensor_msgs.Image import ImageFormat
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
+from dimos.msgs.foxglove_msgs.ImageAnnotations import ImageAnnotations
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
 from dimos.perception.detection.objectDB import ObjectDB
-from dimos.perception.detection.type import ImageDetections2D
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.object import (
     Object,
     Object as DetObject,
@@ -352,8 +354,3 @@ class ObjectSceneRegistrationModule(Module):
         aggregated_pc = aggregate_pointclouds(objects_for_pc)
         self.pointcloud.publish(aggregated_pc)
         return
-
-
-object_scene_registration_module = ObjectSceneRegistrationModule.blueprint
-
-__all__ = ["ObjectSceneRegistrationModule", "object_scene_registration_module"]

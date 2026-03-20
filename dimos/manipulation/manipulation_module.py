@@ -24,7 +24,7 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Iterable
 from enum import Enum
 import threading
 import time
@@ -34,23 +34,20 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.manipulation.planning import (
-    JointPath,
+from dimos.manipulation.planning.factory import create_kinematics, create_planner
+from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import JointPath, Obstacle, RobotName, WorldRobotID
+from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec
+from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
-    KinematicsSpec,
-    Obstacle,
-    ObstacleType,
-    PlannerSpec,
-    RobotModelConfig,
-    RobotName,
-    WorldRobotID,
-    create_kinematics,
-    create_planner,
 )
-from dimos.manipulation.planning.monitor import WorldMonitor
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
-from dimos.msgs.sensor_msgs import JointState
-from dimos.msgs.trajectory_msgs import JointTrajectory
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -82,18 +79,17 @@ class ManipulationState(Enum):
     FAULT = 4
 
 
-@dataclass
 class ManipulationModuleConfig(ModuleConfig):
     """Configuration for ManipulationModule."""
 
-    robots: list[RobotModelConfig] = field(default_factory=list)
+    robots: Iterable[RobotModelConfig] = ()
     planning_timeout: float = 10.0
     enable_viz: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
 
 
-class ManipulationModule(Module):
+class ManipulationModule(Module[ManipulationModuleConfig]):
     """Base motion planning module with ControlCoordinator execution.
 
     - @rpc: Low-level building blocks (plan, execute, gripper)
@@ -104,14 +100,11 @@ class ManipulationModule(Module):
 
     default_config = ManipulationModuleConfig
 
-    # Type annotation for the config attribute (mypy uses this)
-    config: ManipulationModuleConfig
-
     # Input: Joint state from coordinator (for world sync)
     joint_state: In[JointState]
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
         # State machine
         self._state = ManipulationState.IDLE
@@ -251,7 +244,7 @@ class ManipulationModule(Module):
 
     def _tf_publish_loop(self) -> None:
         """Publish TF transforms at 10Hz for EE and extra links."""
-        from dimos.msgs.geometry_msgs import Transform
+        from dimos.msgs.geometry_msgs.Transform import Transform
 
         period = 0.1  # 10Hz
         while not self._tf_stop_event.is_set():
@@ -281,10 +274,6 @@ class ManipulationModule(Module):
                 logger.debug(f"TF publish error: {e}")
 
             self._tf_stop_event.wait(period)
-
-    # =========================================================================
-    # RPC Methods
-    # =========================================================================
 
     @rpc
     def get_state(self) -> str:
@@ -360,10 +349,6 @@ class ManipulationModule(Module):
             return self._world_monitor.is_state_valid(robot_id, joint_state)
         return False
 
-    # =========================================================================
-    # Plan/Preview/Execute Workflow RPC Methods
-    # =========================================================================
-
     def _begin_planning(
         self, robot_name: RobotName | None = None
     ) -> tuple[RobotName, WorldRobotID] | None:
@@ -418,7 +403,7 @@ class ManipulationModule(Module):
             return self._fail("No joint state")
 
         # Convert Pose to PoseStamped for the IK solver
-        from dimos.msgs.geometry_msgs import PoseStamped
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         target_pose = PoseStamped(
             frame_id="world",
@@ -634,10 +619,6 @@ class ManipulationModule(Module):
         )
         return True
 
-    # =========================================================================
-    # Coordinator Integration RPC Methods
-    # =========================================================================
-
     def _get_coordinator_client(self) -> RPCClient | None:
         """Get or create coordinator RPC client (lazy init)."""
         if not any(
@@ -766,7 +747,7 @@ class ManipulationModule(Module):
             return ""
 
         # Import PoseStamped here to avoid circular imports
-        from dimos.msgs.geometry_msgs import PoseStamped
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         obstacle = Obstacle(
             name=name,
@@ -783,10 +764,6 @@ class ManipulationModule(Module):
         if self._world_monitor is None:
             return False
         return self._world_monitor.remove_obstacle(obstacle_id)
-
-    # =========================================================================
-    # Gripper Methods
-    # =========================================================================
 
     def _get_gripper_hardware_id(self, robot_name: RobotName | None = None) -> str | None:
         """Get gripper hardware ID for a robot."""
@@ -859,10 +836,6 @@ class ManipulationModule(Module):
         if self._set_gripper_position(0.0, robot_name):
             return "Gripper closed"
         return "Error: Failed to close gripper"
-
-    # =========================================================================
-    # Skill Helpers (internal)
-    # =========================================================================
 
     def _wait_for_trajectory_completion(
         self, robot_name: RobotName | None = None, timeout: float = 60.0, poll_interval: float = 0.2
@@ -947,10 +920,6 @@ class ManipulationModule(Module):
             return "Error: Trajectory execution timed out"
 
         return None
-
-    # =========================================================================
-    # Short-Horizon Skills — Single-step actions
-    # =========================================================================
 
     @skill
     def get_robot_state(self, robot_name: str | None = None) -> str:
@@ -1136,10 +1105,6 @@ class ManipulationModule(Module):
 
         return "Reached init position"
 
-    # =========================================================================
-    # Lifecycle
-    # =========================================================================
-
     @rpc
     def stop(self) -> None:
         """Stop the manipulation module."""
@@ -1156,7 +1121,3 @@ class ManipulationModule(Module):
             self._world_monitor.stop_all_monitors()
 
         super().stop()
-
-
-# Expose blueprint for declarative composition
-manipulation_module = ManipulationModule.blueprint

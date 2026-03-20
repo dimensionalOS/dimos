@@ -16,8 +16,8 @@
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.mapping.models import LatLon
 from dimos.mapping.osm.current_location_map import CurrentLocationMap
-from dimos.mapping.types import LatLon
 from dimos.mapping.utils.distance import distance_in_meters
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.utils.logging_config import setup_logger
@@ -38,7 +38,12 @@ class OsmSkill(Module):
 
     def start(self) -> None:
         super().start()
-        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))  # type: ignore[arg-type]
+        if hasattr(self.gps_location, "subscribe"):
+            self._disposables.add(self.gps_location.subscribe(self._on_gps_location))  # type: ignore[arg-type]
+        else:
+            logger.warning(
+                "OsmSkill: gps_location stream does not support direct subscribe (RemoteIn)"
+            )
 
     def stop(self) -> None:
         super().stop()
@@ -73,8 +78,3 @@ class OsmSkill(Module):
         distance = int(distance_in_meters(latlon, self._latest_location))  # type: ignore[arg-type]
 
         return f"{context}. It's at position latitude={latlon.lat}, longitude={latlon.lon}. It is {distance} meters away."
-
-
-osm_skill = OsmSkill.blueprint
-
-__all__ = ["OsmSkill", "osm_skill"]

@@ -116,7 +116,7 @@ class JogState:
         Args:
             task_name: Task name to use as frame_id for routing
         """
-        from dimos.msgs.geometry_msgs import PoseStamped
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
         from dimos.msgs.geometry_msgs.Quaternion import Quaternion
         from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
@@ -168,7 +168,7 @@ def run_jogger_ui(model_path: str | None = None, ee_joint_id: int = 6) -> None:
         ee_joint_id: End-effector joint ID in the model
     """
     from dimos.core.transport import LCMTransport
-    from dimos.msgs.geometry_msgs import PoseStamped
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
     # Use Piper model if not specified
     if model_path is None:

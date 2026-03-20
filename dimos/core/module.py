@@ -17,37 +17,44 @@ from dataclasses import dataclass
 from functools import partial
 import inspect
 import json
+import sys
 import threading
 from typing import (
     TYPE_CHECKING,
     Any,
+    Protocol,
     get_args,
     get_origin,
     get_type_hints,
     overload,
 )
 
-from typing_extensions import TypeVar as TypeVarExtension
-
-if TYPE_CHECKING:
-    from dimos.core.introspection.module import ModuleInfo
-    from dimos.core.rpc_client import RPCClient
-
-from typing import TypeVar
-
 from langchain_core.tools import tool
 from reactivex.disposable import CompositeDisposable
 
 from dimos.core.core import T, rpc
-from dimos.core.introspection.module import extract_module_info, render_module_io
+from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.introspection.module.info import extract_module_info
+from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import Resource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteOut, Transport
-from dimos.protocol.rpc import LCMRPC, RPCSpec
-from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
-from dimos.protocol.tf import LCMTF, TFSpec
+from dimos.protocol.rpc.pubsubrpc import LCMRPC
+from dimos.protocol.rpc.spec import RPCSpec
+from dimos.protocol.service.spec import BaseConfig, Configurable
+from dimos.protocol.tf.tf import LCMTF, TFSpec
 from dimos.utils import colors
 from dimos.utils.generic import classproperty
+
+if TYPE_CHECKING:
+    from dimos.core.blueprints import Blueprint
+    from dimos.core.introspection.module.info import ModuleInfo
+    from dimos.core.rpc_client import RPCClient
+
+if sys.version_info >= (3, 13):
+    from typing import TypeVar
+else:
+    from typing_extensions import TypeVar
 
 
 @dataclass(frozen=True)
@@ -70,20 +77,27 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
         return loop, thr
 
 
-@dataclass
-class ModuleConfig:
+class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = LCMRPC
-    tf_transport: type[TFSpec] = LCMTF
+    tf_transport: type[TFSpec] = LCMTF  # type: ignore[type-arg]
     frame_id_prefix: str | None = None
     frame_id: str | None = None
+    g: GlobalConfig = global_config
 
 
-ModuleConfigT = TypeVarExtension("ModuleConfigT", bound=ModuleConfig, default=ModuleConfig)
+ModuleConfigT = TypeVar("ModuleConfigT", bound=ModuleConfig, default=ModuleConfig)
+
+
+class _BlueprintPartial(Protocol):
+    def __call__(self, **kwargs: Any) -> "Blueprint": ...
 
 
 class ModuleBase(Configurable[ModuleConfigT], Resource):
+    # This won't type check against the TypeVar, but we need it as the default.
+    default_config: type[ModuleConfigT] = ModuleConfig  # type: ignore[assignment]
+
     _rpc: RPCSpec | None = None
-    _tf: TFSpec | None = None
+    _tf: TFSpec[Any] | None = None
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread: threading.Thread | None
     _disposables: CompositeDisposable
@@ -93,10 +107,8 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
 
     rpc_calls: list[str] = []
 
-    default_config: type[ModuleConfigT] = ModuleConfig  # type: ignore[assignment]
-
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(*args, **kwargs)
+    def __init__(self, config_args: dict[str, Any]):
+        super().__init__(**config_args)
         self._module_closed_lock = threading.Lock()
         self._loop, self._loop_thread = get_loop()
         self._disposables = CompositeDisposable()
@@ -338,7 +350,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
     module_info = _module_info_descriptor()
 
     @classproperty
-    def blueprint(self):  # type: ignore[no-untyped-def]
+    def blueprint(self) -> _BlueprintPartial:
         # Here to prevent circular imports.
         from dimos.core.blueprints import Blueprint
 
@@ -409,7 +421,7 @@ class Module(ModuleBase[ModuleConfigT]):
                 if not hasattr(cls, name) or getattr(cls, name) is None:
                     setattr(cls, name, None)
 
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any):
         self.ref = None  # type: ignore[assignment]
 
         try:
@@ -427,7 +439,7 @@ class Module(ModuleBase[ModuleConfigT]):
                 inner, *_ = get_args(ann) or (Any,)
                 stream = In(inner, name, self)  # type: ignore[assignment]
                 setattr(self, name, stream)
-        super().__init__(*args, **kwargs)
+        super().__init__(config_args=kwargs)
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}"
@@ -465,7 +477,7 @@ class Module(ModuleBase[ModuleConfigT]):
         input_stream.connection = remote_stream
 
 
-ModuleT = TypeVar("ModuleT", bound="Module[Any]")
+ModuleSpec = tuple[type[ModuleBase], GlobalConfig, dict[str, Any]]
 
 
 def is_module_type(value: Any) -> bool:

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
 import time
@@ -39,7 +38,6 @@ from dimos.utils.sequential_ids import SequentialIds
 logger = setup_logger()
 
 
-@dataclass
 class McpClientConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-4o"
@@ -56,17 +54,19 @@ class McpClient(Module[McpClientConfig]):
     _lock: RLock
     _state_graph: CompiledStateGraph[Any, Any, Any, Any] | None
     _message_queue: Queue[BaseMessage]
+    _tool_registry: dict[str, dict[str, Any]]
     _history: list[BaseMessage]
     _thread: Thread
     _stop_event: Event
     _http_client: httpx.Client
     _seq_ids: SequentialIds
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._lock = RLock()
         self._state_graph = None
         self._message_queue = Queue()
+        self._tool_registry = {}
         self._history = []
         self._thread = Thread(
             target=self._thread_loop,
@@ -106,7 +106,9 @@ class McpClient(Module[McpClientConfig]):
                 f"Failed to fetch tools from MCP server {self.config.mcp_server_url}"
             )
 
-        tools = [self._mcp_tool_to_langchain(t) for t in result.get("tools", [])]
+        raw_tools = result.get("tools", [])
+        self._tool_registry = {t["name"]: t for t in raw_tools}
+        tools = [self._mcp_tool_to_langchain(t) for t in raw_tools]
 
         if not tools:
             logger.warning("No tools found from MCP server.")
@@ -198,6 +200,65 @@ class McpClient(Module[McpClientConfig]):
     def add_message(self, message: BaseMessage) -> None:
         self._message_queue.put(message)
 
+    @rpc
+    def dispatch_continuation(
+        self, continuation: dict[str, Any], continuation_context: dict[str, Any]
+    ) -> None:
+        """Execute a tool continuation with detection data, bypassing the LLM.
+
+        Called by trigger tools (e.g. look_out_for) to immediately invoke a
+        follow-up tool when a detection fires, without waiting for the LLM to
+        reason about the next action.
+
+        Args:
+            continuation: ``{"tool": "<name>", "args": {…}}`` — the tool to
+                call and its arguments.  Argument values that are strings
+                starting with ``$`` are treated as template variables and
+                resolved against *continuation_context* (e.g. ``"$bbox"``).
+            continuation_context: runtime detection data, e.g.
+                ``{"bbox": [x1, y1, x2, y2], "label": "person"}``.
+        """
+        tool_name = continuation.get("tool")
+        if not tool_name:
+            self._message_queue.put(
+                HumanMessage(f"Continuation failed: missing 'tool' key in {continuation}")
+            )
+            return
+
+        if tool_name not in self._tool_registry:
+            self._message_queue.put(
+                HumanMessage(f"Continuation failed: tool '{tool_name}' not found")
+            )
+            return
+
+        tool_args: dict[str, Any] = dict(continuation.get("args", {}))
+
+        # Substitute $-prefixed template variables from continuation_context
+        for key, value in tool_args.items():
+            if isinstance(value, str) and value.startswith("$"):
+                context_key = value[1:]
+                if context_key in continuation_context:
+                    tool_args[key] = continuation_context[context_key]
+
+        try:
+            result = self._mcp_request("tools/call", {"name": tool_name, "arguments": tool_args})
+            content = result.get("content", [])
+            parts = [c.get("text", "") for c in content if c.get("type") == "text"]
+            text = "\n".join(parts)
+        except Exception as e:
+            self._message_queue.put(
+                HumanMessage(f"Continuation '{tool_name}' failed with error: {e}")
+            )
+            return
+
+        label = continuation_context.get("label", "unknown")
+        self._message_queue.put(
+            HumanMessage(
+                f"Automatically executed '{tool_name}' as a continuation of lookout "
+                f"detection (detected: {label}). Result: {text or 'started'}"
+            )
+        )
+
     def _thread_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
@@ -243,8 +304,3 @@ def _append_image_to_history(
             ]
         )
     )
-
-
-mcp_client = McpClient.blueprint
-
-__all__ = ["McpClient", "McpClientConfig", "mcp_client"]

@@ -17,7 +17,7 @@ Simple path history class for visualization purposes.
 This is a minimal implementation to support websocket visualization.
 """
 
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 class PathHistory:

@@ -132,11 +132,6 @@ def test_pull_dir() -> None:
             assert sha256 == expected_hash
 
 
-# ============================================================================
-# LfsPath Tests
-# ============================================================================
-
-
 def test_lfs_path_lazy_creation() -> None:
     """Test that creating LfsPath doesn't trigger download."""
     lfs_path = LfsPath("test_data_file")

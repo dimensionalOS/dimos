@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 from functools import cached_property
 
 from PIL import Image as PILImage
@@ -22,10 +21,9 @@ from transformers import CLIPModel as HFCLIPModel, CLIPProcessor  # type: ignore
 
 from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 
 
-@dataclass
 class CLIPModelConfig(HuggingFaceEmbeddingModelConfig):
     model_name: str = "openai/clip-vit-base-patch32"
     dtype: torch.dtype = torch.float32
@@ -77,9 +75,9 @@ class CLIPModel(EmbeddingModel, HuggingFaceModel):
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
         """
         with torch.inference_mode():
-            inputs = self._processor(text=list(texts), return_tensors="pt", padding=True).to(
-                self.config.device
-            )
+            inputs = self._processor(
+                text=list(texts), return_tensors="pt", padding=True, truncation=True
+            ).to(self.config.device)
             text_features = self._model.get_text_features(**inputs)
 
             if self.config.normalize:

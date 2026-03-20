@@ -16,8 +16,8 @@ from collections import deque
 
 import numpy as np
 
-from dimos.msgs.geometry_msgs import Vector3, VectorLike
-from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
+from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
+from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 
 
 def find_safe_goal(

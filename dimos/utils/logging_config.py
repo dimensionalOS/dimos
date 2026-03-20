@@ -62,7 +62,13 @@ def set_run_log_dir(log_dir: str | Path) -> None:
         for i, handler in enumerate(logger_obj.handlers):
             if isinstance(handler, logging.FileHandler) and handler.baseFilename != str(new_path):
                 handler.close()
-                new_handler = logging.FileHandler(new_path, mode="a", encoding="utf-8")
+                new_handler = logging.handlers.RotatingFileHandler(
+                    new_path,
+                    mode="a",
+                    maxBytes=10 * 1024 * 1024,  # 10 MiB
+                    backupCount=20,
+                    encoding="utf-8",
+                )
                 new_handler.setLevel(handler.level)
                 new_handler.setFormatter(handler.formatter)
                 logger_obj.handlers[i] = new_handler
@@ -273,12 +279,16 @@ def setup_logger(*, level: int | None = None) -> Any:
     console_handler.setFormatter(console_formatter)
     stdlib_logger.addHandler(console_handler)
 
-    # Plain FileHandler (not RotatingFileHandler) — rotation is unsafe with
-    # forkserver workers writing to the same file. Per-run logs are scoped to
-    # a single run so unbounded growth is not a concern.
-    file_handler = logging.FileHandler(
+    # RotatingFileHandler with a size cap to prevent unbounded log growth.
+    # Multiple forkserver workers may each open their own handler to the same
+    # file — a concurrent rotate can lose a few lines, but that is far
+    # preferable to unbounded growth causing OOM on resource-constrained
+    # devices (cameras + LCM at 30 fps can write ~100 MB/min of JSON logs).
+    file_handler = logging.handlers.RotatingFileHandler(
         log_file_path,
         mode="a",
+        maxBytes=10 * 1024 * 1024,  # 10 MiB
+        backupCount=20,
         encoding="utf-8",
     )
 

@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 import json
 import logging
-from typing import TYPE_CHECKING
+import sys
+from typing import Any
 import warnings
 
 from dimos.core.resource import Resource
-from dimos.msgs.sensor_msgs import Image
-from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.perception.detection.type.detection2d.point import Detection2DPoint
+from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.utils.data import get_data
-from dimos.utils.decorators import retry
+from dimos.utils.decorators.decorators import retry
 from dimos.utils.llm_utils import extract_json
 
-if TYPE_CHECKING:
-    from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
+if sys.version_info < (3, 13):
+    from typing_extensions import TypeVar
+else:
+    from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +75,7 @@ def vlm_detection_to_detection2d(
         Detection2DBBox instance or None if invalid
     """
     # Here to prevent unwanted imports in the file.
-    from dimos.perception.detection.type import Detection2DBBox
+    from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 
     # Validate list/tuple structure
     if not isinstance(vlm_detection, (list, tuple)):
@@ -127,7 +132,7 @@ def vlm_point_to_detection2d_point(
     Returns:
         Detection2DPoint instance or None if invalid
     """
-    from dimos.perception.detection.type import Detection2DPoint
+    from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 
     # Validate list/tuple structure
     if not isinstance(vlm_point, (list, tuple)):
@@ -159,15 +164,17 @@ def vlm_point_to_detection2d_point(
     )
 
 
-@dataclass
-class VlModelConfig:
+class VlModelConfig(BaseConfig):
     """Configuration for VlModel."""
 
     auto_resize: tuple[int, int] | None = None
     """Optional (width, height) tuple. If set, images are resized to fit."""
 
 
-class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
+_VlConfig = TypeVar("_VlConfig", bound=VlModelConfig)
+
+
+class VlModel(Captioner, Resource, Configurable[_VlConfig]):
     """Vision-language model that can answer questions about images.
 
     Inherits from Captioner, providing a default caption() implementation
@@ -176,8 +183,7 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
     Implements Resource interface for lifecycle management.
     """
 
-    default_config = VlModelConfig
-    config: VlModelConfig
+    default_config: type[_VlConfig] = VlModelConfig  # type: ignore[assignment]
 
     def _prepare_image(self, image: Image) -> tuple[Image, float]:
         """Prepare image for inference, applying any configured transformations.
@@ -253,10 +259,10 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
         return extract_json(response)  # type: ignore[return-value]
 
     def query_detections(
-        self, image: Image, query: str, **kwargs: object
+        self, image: Image, query: str, **kwargs: Any
     ) -> ImageDetections2D[Detection2DBBox]:
         # Here to prevent unwanted imports in the file.
-        from dimos.perception.detection.type import ImageDetections2D
+        from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
         full_query = f"""show me bounding boxes in pixels for this query: `{query}`
 
@@ -317,7 +323,7 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
             ImageDetections2D containing Detection2DPoint instances
         """
         # Here to prevent unwanted imports in the file.
-        from dimos.perception.detection.type import ImageDetections2D
+        from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
         full_query = f"""Show me point coordinates in pixels for this query: `{query}`
 

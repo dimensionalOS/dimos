@@ -35,9 +35,11 @@ from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untype
 )
 
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs import Pose, Transform, Twist
-from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.sensor_msgs.Image import ImageFormat
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import RawLidarMsg, pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.robot.unitree.type.odometry import Odometry
@@ -276,6 +278,17 @@ class UnitreeWebRTCConnection(Resource):
 
     def standup(self) -> bool:
         return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]}))
+
+    def balance_stand(self) -> bool:
+        return bool(
+            self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
+        )
+
+    def set_obstacle_avoidance(self, enabled: bool = True) -> None:
+        self.publish_request(
+            RTC_TOPIC["OBSTACLES_AVOID"],
+            {"api_id": 1001, "parameter": {"enable": int(enabled)}},
+        )
 
     def liedown(self) -> bool:
         return bool(

@@ -14,7 +14,7 @@
 
 import pytest
 
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode

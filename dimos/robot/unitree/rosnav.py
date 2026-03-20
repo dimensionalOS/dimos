@@ -19,8 +19,8 @@ import time
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import Joy
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Joy import Joy
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.utils.logging_config import setup_logger
 
@@ -33,11 +33,7 @@ class NavigationModule(Module):
     goal_reached: In[Bool]
     cancel_goal: Out[Bool]
     joy: Out[Joy]
-
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        """Initialize NavigationModule."""
-        Module.__init__(self, *args, **kwargs)
-        self.goal_reach = None
+    goal_reach = None
 
     @rpc
     def start(self) -> None:

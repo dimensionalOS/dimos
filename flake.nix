@@ -160,10 +160,18 @@
                         nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config pkgs.python312 ];
                         # 1. fix pkg-config on darwin
                         env.PKG_CONFIG_PATH = packageConfPackagesString;
-                        # 2. Fix fsync on darwin
-                        patches = [
-                            (pkgs.writeText "lcm-darwin-fsync.patch" "--- ./lcm-logger/lcm_logger.c     2025-11-14 09:46:01.000000000 -0600\n+++ ./lcm-logger/lcm_logger.c  2025-11-14 09:47:05.000000000 -0600\n@@ -428,9 +428,13 @@\n         if (needs_flushed) {\n             fflush(logger->log->f);\n #ifndef WIN32\n+#ifdef __APPLE__\n+            fsync(fileno(logger->log->f));\n+#else\n             // Perform a full fsync operation after flush\n             fdatasync(fileno(logger->log->f));\n #endif\n+#endif\n             logger->last_fflush_time = log_event->timestamp;\n         }\n")
-                        ];
+                        # Remove upstream patches (the darwin-fsync patch causes "out of memory" in patch utility)
+                        patches = [];
+                        # 2. Fix fsync on darwin (use substituteInPlace to avoid patch utility issues)
+                        postPatch = (old.postPatch or "") + ''
+                          substituteInPlace lcm-logger/lcm_logger.c \
+                            --replace-fail 'fdatasync(fileno(logger->log->f));' \
+                            '#ifdef __APPLE__
+                          fsync(fileno(logger->log->f));
+                          #else
+                          fdatasync(fileno(logger->log->f));
+                          #endif'
+                        '';
                     }
             );
           }

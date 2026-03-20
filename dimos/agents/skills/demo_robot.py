@@ -17,7 +17,7 @@ from reactivex import interval
 
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.mapping.types import LatLon
+from dimos.mapping.models import LatLon
 
 
 class DemoRobot(Module):
@@ -32,9 +32,3 @@ class DemoRobot(Module):
 
     def _publish_gps_location(self) -> None:
         self.gps_location.publish(LatLon(lat=37.78092426217621, lon=-122.40682866540769))
-
-
-demo_robot = DemoRobot.blueprint
-
-
-__all__ = ["DemoRobot", "demo_robot"]

@@ -16,21 +16,19 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from functools import cached_property
 from typing import Annotated, Any
 
 import torch
 
 from dimos.core.resource import Resource
-from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
+from dimos.protocol.service.spec import BaseConfig, Configurable
 
 # Device string type - 'cuda', 'cpu', 'cuda:0', 'cuda:1', etc.
 DeviceType = Annotated[str, "Device identifier (e.g., 'cuda', 'cpu', 'cuda:0')"]
 
 
-@dataclass
-class LocalModelConfig:
+class LocalModelConfig(BaseConfig):
     device: DeviceType = "cuda" if torch.cuda.is_available() else "cpu"
     dtype: torch.dtype = torch.float32
     warmup: bool = False
@@ -127,7 +125,6 @@ class LocalModel(Resource, Configurable[LocalModelConfig]):
                 pass
 
 
-@dataclass
 class HuggingFaceModelConfig(LocalModelConfig):
     model_name: str = ""
     trust_remote_code: bool = True

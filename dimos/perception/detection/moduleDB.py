@@ -25,12 +25,16 @@ from reactivex.observable import Observable
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.perception.detection.module3D import Detection3DModule
-from dimos.perception.detection.type.detection3d import Detection3DPC
 from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
+from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.detection.type.utils import TableStr
 
 
@@ -307,8 +311,3 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     def __len__(self) -> int:
         return len(self.objects.values())
-
-
-detection_db_module = ObjectDBModule.blueprint
-
-__all__ = ["ObjectDBModule", "detection_db_module"]

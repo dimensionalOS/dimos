@@ -232,8 +232,6 @@ class LegacyPickleStore(TimeSeriesStore[T]):
                 return (ts, data)
         return None
 
-    # === Backward-compatible API (TimedSensorReplay/SensorReplay) ===
-
     @property
     def files(self) -> list[Path]:
         """Return list of pickle files (backward compatibility with SensorReplay)."""
@@ -355,13 +353,21 @@ class LegacyPickleStore(TimeSeriesStore[T]):
                 observer.on_completed()
                 return disp
 
+            prev_ts = first_ts
+
             def schedule_emission(message: tuple[float, T]) -> None:
-                nonlocal next_message, is_disposed
+                nonlocal next_message, is_disposed, start_local_time, start_replay_time, prev_ts
 
                 if is_disposed:
                     return
 
                 ts, data = message
+
+                # Detect loop restart: timestamp jumped backwards
+                if ts < prev_ts:
+                    start_local_time = time.time()
+                    start_replay_time = ts
+                prev_ts = ts
 
                 try:
                     next_message = next(iterator)

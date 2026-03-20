@@ -14,16 +14,14 @@
 
 
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs import (  # type: ignore[attr-defined]
-    JointCommand,
-    JointState,
-    RobotState,
-)
-from dimos.msgs.trajectory_msgs import JointTrajectory
-from dimos.simulation.manipulators.sim_module import simulation
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.RobotState import RobotState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.simulation.manipulators.sim_module import SimulationModule
 from dimos.utils.data import LfsPath
 
-xarm7_trajectory_sim = simulation(
+xarm7_trajectory_sim = SimulationModule.blueprint(
     engine="mujoco",
     config_path=LfsPath("xarm7/scene.xml"),
     headless=True,
@@ -40,7 +38,6 @@ xarm7_trajectory_sim = simulation(
 
 
 __all__ = [
-    "simulation",
     "xarm7_trajectory_sim",
 ]
 

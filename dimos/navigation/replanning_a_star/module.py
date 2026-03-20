@@ -13,16 +13,19 @@
 # limitations under the License.
 
 import os
+from typing import Any
 
 from dimos_lcm.std_msgs import Bool, String
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import PointStamped, PoseStamped, Twist
-from dimos.msgs.nav_msgs import OccupancyGrid, Path
+from dimos.msgs.geometry_msgs.PointStamped import PointStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.navigation.replanning_a_star.global_planner import GlobalPlanner
 
@@ -41,12 +44,10 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     navigation_costmap: Out[OccupancyGrid]
 
     _planner: GlobalPlanner
-    _global_config: GlobalConfig
 
-    def __init__(self, cfg: GlobalConfig = global_config) -> None:
-        super().__init__()
-        self._global_config = cfg
-        self._planner = GlobalPlanner(self._global_config)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._planner = GlobalPlanner(self.config.g)
 
     @rpc
     def start(self) -> None:
@@ -107,7 +108,14 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         self._planner.cancel_goal()
         return True
 
+    @rpc
+    def set_replanning_enabled(self, enabled: bool) -> None:
+        self._planner.set_replanning_enabled(enabled)
 
-replanning_a_star_planner = ReplanningAStarPlanner.blueprint
+    @rpc
+    def set_safe_goal_clearance(self, clearance: float) -> None:
+        self._planner.set_safe_goal_clearance(clearance)
 
-__all__ = ["ReplanningAStarPlanner", "replanning_a_star_planner"]
+    @rpc
+    def reset_safe_goal_clearance(self) -> None:
+        self._planner.reset_safe_goal_clearance()

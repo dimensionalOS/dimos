@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from dimos.robot.unitree.type.odometry import Odometry
-from dimos.utils.testing import SensorReplay
+from dimos.utils.testing.replay import SensorReplay
 
 _EXPECTED_TOTAL_RAD = -4.05212
 

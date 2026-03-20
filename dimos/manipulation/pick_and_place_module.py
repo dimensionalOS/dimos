@@ -22,7 +22,6 @@ Extends ManipulationModule with perception integration and long-horizon skills:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
 from pathlib import Path
 import time
@@ -32,22 +31,24 @@ from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.docker_runner import DockerModule as DockerRunner
-from dimos.core.stream import In  # noqa: TC001
+from dimos.core.stream import In
 from dimos.manipulation.grasping.graspgen_module import GraspGenModule
 from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationModuleConfig,
 )
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.perception.detection.type.detection3d.object import (
-    Object as DetObject,  # noqa: TC001
+    Object as DetObject,
 )
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import PoseArray
-    from dimos.msgs.sensor_msgs import PointCloud2
+    from dimos.msgs.geometry_msgs.PoseArray import PoseArray
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 logger = setup_logger()
 
@@ -56,7 +57,6 @@ _GRASPGEN_VIZ_CONTAINER_DIR = "/output/graspgen"
 _GRASPGEN_VIZ_CONTAINER_PATH = f"{_GRASPGEN_VIZ_CONTAINER_DIR}/visualization.json"
 
 
-@dataclass
 class PickAndPlaceModuleConfig(ManipulationModuleConfig):
     """Configuration for PickAndPlaceModule (adds GraspGen settings)."""
 
@@ -68,8 +68,8 @@ class PickAndPlaceModuleConfig(ManipulationModuleConfig):
     graspgen_grasp_threshold: float = -1.0
     graspgen_filter_collisions: bool = False
     graspgen_save_visualization_data: bool = False
-    graspgen_visualization_output_path: Path = field(
-        default_factory=lambda: Path.home() / ".dimos" / "graspgen" / "visualization.json"
+    graspgen_visualization_output_path: Path = (
+        Path.home() / ".dimos" / "graspgen" / "visualization.json"
     )
 
 
@@ -90,8 +90,8 @@ class PickAndPlaceModule(ManipulationModule):
     # Input: Objects from perception (for obstacle integration)
     objects: In[list[DetObject]]
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
         # GraspGen Docker runner (lazy initialized on first generate_grasps call)
         self._graspgen: DockerRunner | None = None
@@ -103,10 +103,6 @@ class PickAndPlaceModule(ManipulationModule):
         # The live detection cache is volatile (labels change every frame),
         # so pick/place use this stable snapshot instead.
         self._detection_snapshot: list[DetObject] = []
-
-    # =========================================================================
-    # Lifecycle (perception integration)
-    # =========================================================================
 
     @rpc
     def start(self) -> None:
@@ -131,10 +127,6 @@ class PickAndPlaceModule(ManipulationModule):
                 self._world_monitor.on_objects(objects)
         except Exception as e:
             logger.error(f"Exception in _on_objects: {e}")
-
-    # =========================================================================
-    # Perception RPC Methods
-    # =========================================================================
 
     @rpc
     def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, Any]]:
@@ -183,10 +175,6 @@ class PickAndPlaceModule(ManipulationModule):
         if self._world_monitor is None:
             return []
         return self._world_monitor.list_added_obstacles()
-
-    # =========================================================================
-    # GraspGen
-    # =========================================================================
 
     def _get_graspgen(self) -> DockerRunner:
         """Get or create GraspGen Docker module (lazy init, thread-safe)."""
@@ -251,10 +239,6 @@ class PickAndPlaceModule(ManipulationModule):
         except Exception as e:
             logger.error(f"Grasp generation failed: {e}")
             return None
-
-    # =========================================================================
-    # Pick/Place Helpers
-    # =========================================================================
 
     def _compute_pre_grasp_pose(self, grasp_pose: Pose, offset: float = 0.10) -> Pose:
         """Compute a pre-grasp pose offset along the approach direction (local -Z).
@@ -322,10 +306,6 @@ class PickAndPlaceModule(ManipulationModule):
         grasp_pose = Pose(Vector3(c.x, c.y, c.z), Quaternion.from_euler(Vector3(0.0, math.pi, 0.0)))
         logger.info(f"Heuristic grasp for '{object_name}' at ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
         return [grasp_pose]
-
-    # =========================================================================
-    # Perception Skills
-    # =========================================================================
 
     @skill
     def get_scene_info(self, robot_name: str | None = None) -> str:
@@ -411,10 +391,6 @@ class PickAndPlaceModule(ManipulationModule):
             lines.append(f"\n{len(obstacles)} obstacle(s) added to planning world")
 
         return "\n".join(lines)
-
-    # =========================================================================
-    # Long-Horizon Skills — Pick and Place
-    # =========================================================================
 
     @skill
     def pick(
@@ -604,10 +580,6 @@ class PickAndPlaceModule(ManipulationModule):
         # Place phase
         return self.place(place_x, place_y, place_z, robot_name)
 
-    # =========================================================================
-    # Lifecycle
-    # =========================================================================
-
     @rpc
     def stop(self) -> None:
         """Stop the pick-and-place module (cleanup GraspGen + delegate to base)."""
@@ -620,7 +592,3 @@ class PickAndPlaceModule(ManipulationModule):
                 self._graspgen = None
 
         super().stop()
-
-
-# Expose blueprint for declarative composition
-pick_and_place_module = PickAndPlaceModule.blueprint

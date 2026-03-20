@@ -78,7 +78,7 @@ def agent_setup(request):
             AgentTestRunner.blueprint(messages=messages),
         )
 
-        global_config.update(viewer_backend="none")
+        global_config.update(viewer="none")
 
         nonlocal coordinator
         coordinator = blueprint.build()
