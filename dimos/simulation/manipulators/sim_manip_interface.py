@@ -30,16 +30,28 @@ if TYPE_CHECKING:
 class SimManipInterface:
     """Adapter wrapper around a simulation engine to provide a uniform manipulator API."""
 
-    def __init__(self, engine: SimulationEngine) -> None:
+    def __init__(
+        self,
+        engine: SimulationEngine,
+        *,
+        dof: int | None = None,
+        gripper_idx: int | None = None,
+        gripper_ctrl_range: tuple[float, float] = (0.0, 1.0),
+        gripper_joint_range: tuple[float, float] = (0.0, 1.0),
+    ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._engine = engine
         self._joint_names = list(engine.joint_names)
-        self._dof = len(self._joint_names)
+        self._dof_override = dof
+        self._dof = dof if dof is not None else len(self._joint_names)
         self._connected = False
         self._servos_enabled = False
         self._control_mode = ControlMode.POSITION
         self._error_code = 0
         self._error_message = ""
+        self._gripper_idx = gripper_idx
+        self._gripper_ctrl_range = gripper_ctrl_range
+        self._gripper_joint_range = gripper_joint_range
 
     def connect(self) -> bool:
         """Connect to the simulation engine."""
@@ -52,7 +64,7 @@ class SimManipInterface:
                 self._connected = True
                 self._servos_enabled = True
                 self._joint_names = list(self._engine.joint_names)
-                self._dof = len(self._joint_names)
+                self._dof = self._dof_override if self._dof_override is not None else len(self._joint_names)
                 self.logger.info(
                     "Successfully connected to simulation",
                     extra={"dof": self._dof},
@@ -185,11 +197,28 @@ class SimManipInterface:
         return False
 
     def read_gripper_position(self) -> float | None:
-        return None
+        if self._gripper_idx is None:
+            return None
+        ctrl_value = self._engine.get_position_target(self._gripper_idx)
+        clo, chi = self._gripper_ctrl_range
+        jlo, jhi = self._gripper_joint_range
+        if chi != clo:
+            t = (chi - ctrl_value) / (chi - clo)
+            return jlo + t * (jhi - jlo)
+        return jlo
 
     def write_gripper_position(self, position: float) -> bool:
-        _ = position
-        return False
+        if self._gripper_idx is None:
+            return False
+        jlo, jhi = self._gripper_joint_range
+        clo, chi = self._gripper_ctrl_range
+        if jhi != jlo:
+            t = (position - jlo) / (jhi - jlo)
+            ctrl_value = chi - t * (chi - clo)
+        else:
+            ctrl_value = clo
+        self._engine.set_position_target(self._gripper_idx, ctrl_value)
+        return True
 
     def read_force_torque(self) -> list[float] | None:
         return None

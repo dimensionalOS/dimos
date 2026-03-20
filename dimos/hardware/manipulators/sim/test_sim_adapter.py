@@ -21,19 +21,26 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dimos.simulation.engines.base import SimulationEngine
+from dimos.simulation.engines.mujoco_engine import MujocoEngine
 
 
 def _make_fake_engine(n_joints: int = 8) -> MagicMock:
-    """Create a fake SimulationEngine with n_joints joints."""
-    engine = MagicMock(spec=SimulationEngine)
+    """Create a fake MujocoEngine with n_joints joints."""
+    engine = MagicMock(spec=MujocoEngine)
     engine.joint_names = [f"joint{i}" for i in range(n_joints)]
     engine.connected = True
     engine.read_joint_positions.return_value = [float(i) * 0.1 for i in range(n_joints)]
     engine.read_joint_velocities.return_value = [0.0] * n_joints
     engine.read_joint_efforts.return_value = [0.0] * n_joints
-    engine._lock = threading.Lock()
-    engine._joint_position_targets = [0.0] * n_joints
+    targets = [0.0] * n_joints
+    engine._joint_position_targets = targets
+    engine.set_position_target.side_effect = lambda idx, val: targets.__setitem__(idx, float(val))
+    engine.get_position_target.side_effect = lambda idx: float(targets[idx])
+
+    # Public methods for gripper range lookup
+    engine.get_actuator_ctrl_range.return_value = (0.0, 255.0)
+    engine.get_joint_range.return_value = (0.0, 0.85)
+
     return engine
 
 
@@ -81,9 +88,16 @@ def test_no_gripper_when_dof_matches(adapter_no_gripper):
 
 
 def test_read_gripper_position(adapter_with_gripper):
+    # Default target is 0.0 ctrl → maps to fully closed (0.85 joint range)
     pos = adapter_with_gripper.read_gripper_position()
-    # Engine returns [0.0, 0.1, 0.2, ..., 0.7] — index 7 = 0.7
-    assert pos == pytest.approx(0.7)
+    assert pos == pytest.approx(0.85)
+
+
+def test_read_write_gripper_roundtrip(adapter_with_gripper):
+    """Write a gripper position then read it back — should match."""
+    adapter_with_gripper.write_gripper_position(0.42)
+    pos = adapter_with_gripper.read_gripper_position()
+    assert pos == pytest.approx(0.42)
 
 
 def test_read_gripper_position_no_gripper(adapter_no_gripper):
@@ -91,9 +105,15 @@ def test_read_gripper_position_no_gripper(adapter_no_gripper):
 
 
 def test_write_gripper_position(adapter_with_gripper):
+    # position=0.0 (fully open) → ctrl should be max (255.0) due to inversion
+    result = adapter_with_gripper.write_gripper_position(0.0)
+    assert result is True
+    assert adapter_with_gripper._engine._joint_position_targets[7] == pytest.approx(255.0)
+
+    # position=0.85 (fully closed) → ctrl should be min (0.0) due to inversion
     result = adapter_with_gripper.write_gripper_position(0.85)
     assert result is True
-    assert adapter_with_gripper._engine._joint_position_targets[7] == pytest.approx(0.85)
+    assert adapter_with_gripper._engine._joint_position_targets[7] == pytest.approx(0.0)
 
 
 def test_write_gripper_position_no_gripper(adapter_no_gripper):
@@ -107,13 +127,13 @@ def test_write_gripper_does_not_clobber_arm(adapter_with_gripper):
     for i in range(7):
         engine._joint_position_targets[i] = float(i) + 1.0
 
-    adapter_with_gripper.write_gripper_position(0.9)
+    adapter_with_gripper.write_gripper_position(0.0)
 
     # Arm targets must remain unchanged
     for i in range(7):
         assert engine._joint_position_targets[i] == pytest.approx(float(i) + 1.0)
-    # Gripper updated
-    assert engine._joint_position_targets[7] == pytest.approx(0.9)
+    # Gripper updated (0.0 open → 255.0 ctrl due to inversion)
+    assert engine._joint_position_targets[7] == pytest.approx(255.0)
 
 
 def test_read_joint_positions_excludes_gripper(adapter_with_gripper):
