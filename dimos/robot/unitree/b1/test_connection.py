@@ -22,8 +22,11 @@
 # should be used and tested. Additionally, tests should always use `try-finally`
 # to clean up even if the test fails.
 
+import sys
 import threading
 import time
+
+_IS_MACOS = sys.platform == "darwin"
 
 from dimos.msgs.geometry_msgs import TwistStamped, Vector3
 from dimos.msgs.std_msgs.Int32 import Int32
@@ -264,7 +267,8 @@ class TestB1Connection:
         # Check timing (should be close to 200ms + up to 50ms watchdog interval)
         elapsed = timeout_time - start_time
         print(f"\nWatchdog timeout occurred at exactly {elapsed:.3f} seconds")
-        assert 0.15 <= elapsed <= 0.5, f"Watchdog timed out at {elapsed:.3f}s, expected ~0.2-0.4s"
+        _lo, _hi = (0.15, 0.5) if _IS_MACOS else (0.19, 0.3)
+        assert _lo <= elapsed <= _hi, f"Watchdog timed out at {elapsed:.3f}s, expected {_lo}-{_hi}s"
 
         conn.running = False
         conn.watchdog_running = False

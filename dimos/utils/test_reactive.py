@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+import sys
 import time
 from typing import Any, TypeVar
 
@@ -22,6 +23,8 @@ import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 from reactivex.scheduler import ThreadPoolScheduler
+
+_IS_MACOS = sys.platform == "darwin"
 
 from dimos.utils.reactive import (
     backpressure,
@@ -103,7 +106,7 @@ def test_backpressure_handling() -> None:
         # Slow sub (shouldn't block above)
         subscription2 = safe_source.subscribe(lambda x: (time.sleep(0.25), received_slow.append(x)))
 
-        time.sleep(4.0)
+        time.sleep(4.0 if _IS_MACOS else 2.5)
 
         subscription1.dispose()
         assert not source.is_disposed(), "Observable should not be disposed yet"
@@ -118,7 +121,8 @@ def test_backpressure_handling() -> None:
         print("Slow observer received:", len(received_slow), [arr[0] for arr in received_slow])
 
         # Fast observer should get all or nearly all items
-        assert len(received_fast) > 5, (
+        _min_fast = 5 if _IS_MACOS else 15
+        assert len(received_fast) > _min_fast, (
             f"Expected fast observer to receive most items, got {len(received_fast)}"
         )
 
@@ -127,7 +131,10 @@ def test_backpressure_handling() -> None:
             "Slow observer should receive fewer items than fast observer"
         )
         # Specifically, processing at 0.25s means ~4 items per second, so expect 8-10 items
-        assert 5 <= len(received_slow) <= 20, f"Expected 5-20 items, got {len(received_slow)}"
+        _slow_lo, _slow_hi = (5, 20) if _IS_MACOS else (7, 11)
+        assert _slow_lo <= len(received_slow) <= _slow_hi, (
+            f"Expected {_slow_lo}-{_slow_hi} items, got {len(received_slow)}"
+        )
 
         # The slow observer should skip items (not process them in sequence)
         # We test this by checking that the difference between consecutive arrays is sometimes > 1
@@ -158,9 +165,9 @@ def test_getter_streaming_blocking() -> None:
         f"Expected to get the first array [0,1,2], got {getter()}"
     )
 
-    time.sleep(1.5)
+    time.sleep(1.5 if _IS_MACOS else 0.5)
     assert getter()[0] >= 2, f"Expected array with first value >= 2, got {getter()}"
-    time.sleep(1.5)
+    time.sleep(1.5 if _IS_MACOS else 0.5)
     assert getter()[0] >= 4, f"Expected array with first value >= 4, got {getter()}"
 
     getter.dispose()
@@ -181,7 +188,8 @@ def test_getter_streaming_blocking_timeout() -> None:
 
 @pytest.mark.slow
 def test_getter_streaming_nonblocking() -> None:
-    source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
+    _interval = 0.1 if _IS_MACOS else 0.2
+    source = dispose_spy(rx.interval(_interval).pipe(ops.take(50)))
 
     getter = max_time(
         lambda: getter_streaming(source, nonblocking=True),
@@ -191,13 +199,13 @@ def test_getter_streaming_nonblocking() -> None:
     min_time(getter, 0.1, "Expected for first value call to block if cache is empty")
     assert getter() == 0
 
-    time.sleep(0.7)  # 0.7s / 0.2s = ~3.5 ticks; macOS needs extra margin
+    time.sleep(0.5)
     assert getter() >= 2, f"Expected value >= 2, got {getter()}"
 
     # sub is active
     assert not source.is_disposed()
 
-    time.sleep(0.7)
+    time.sleep(0.5)
     assert getter() >= 4, f"Expected value >= 4, got {getter()}"
 
     getter.dispose()
