@@ -13,23 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unitree Go2 keyboard teleop via ControlCoordinator over WebRTC.
-
-WASD keys → Twist → coordinator twist_command → TransportTwistAdapter
-          → LCM /go2/cmd_vel → GO2Connection → connection.move()
-
-Controls:
-    W/S: Forward/backward (linear.x)
-    Q/E: Strafe left/right (linear.y)
-    A/D: Turn left/right (angular.z)
-    Shift: 2x boost
-    Ctrl: 0.5x slow
-    Space: Emergency stop
-    ESC: Quit
+"""Unitree Go2 keyboard teleop via ControlCoordinator.
 
 Usage:
-    dimos --simulation run unitree-go2-webrtc-keyboard-teleop   # MuJoCo sim
-    dimos run unitree-go2-webrtc-keyboard-teleop                # real hardware (WebRTC)
+    dimos run unitree-go2-webrtc-keyboard-teleop
+    dimos --simulation run unitree-go2-webrtc-keyboard-teleop
 """
 
 from __future__ import annotations
