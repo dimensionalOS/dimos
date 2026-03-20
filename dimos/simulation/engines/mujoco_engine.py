@@ -320,9 +320,15 @@ class MujocoEngine(SimulationEngine):
             first_adr = mapping.tendon_qpos_adrs[0]
             for jid in range(self._model.njnt):
                 if self._model.jnt_qposadr[jid] == first_adr:
-                    return (float(self._model.jnt_range[jid, 0]), float(self._model.jnt_range[jid, 1]))
+                    return (
+                        float(self._model.jnt_range[jid, 0]),
+                        float(self._model.jnt_range[jid, 1]),
+                    )
         if mapping.joint_id is not None:
-            return (float(self._model.jnt_range[mapping.joint_id, 0]), float(self._model.jnt_range[mapping.joint_id, 1]))
+            return (
+                float(self._model.jnt_range[mapping.joint_id, 0]),
+                float(self._model.jnt_range[mapping.joint_id, 1]),
+            )
         return None
 
 
