@@ -26,11 +26,11 @@ from dimos.core.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_coordinator import (
     unitree_go2_coordinator,
 )
-from dimos.robot.unitree.keyboard_teleop import keyboard_teleop
+from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
 unitree_go2_webrtc_keyboard_teleop = autoconnect(
     unitree_go2_coordinator,
-    keyboard_teleop(),
+    KeyboardTeleop.blueprint(),
 )
 
 __all__ = ["unitree_go2_webrtc_keyboard_teleop"]
