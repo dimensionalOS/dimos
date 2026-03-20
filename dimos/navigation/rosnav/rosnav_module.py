@@ -368,8 +368,9 @@ class ROSNav(Module, NavigationInterface):
         self.goal_waypoint_sub = self._node.create_subscription(
             ROSPointStamped, "/way_point", self._on_ros_goal_waypoint, 10
         )
+        # FAST_LIO publishes registered scans on /cloud_registered (not /registered_scan)
         self.registered_scan_sub = self._node.create_subscription(
-            ROSPointCloud2, "/registered_scan", self._on_ros_registered_scan, 10
+            ROSPointCloud2, "/cloud_registered", self._on_ros_registered_scan, 10
         )
 
         self.global_pointcloud_sub = self._node.create_subscription(
@@ -386,8 +387,9 @@ class ROSNav(Module, NavigationInterface):
 
         self.path_sub = self._node.create_subscription(ROSPath, "/path", self._on_ros_path, 10)
         self.tf_sub = self._node.create_subscription(ROSTFMessage, "/tf", self._on_ros_tf, 10)
+        # FAST_LIO publishes odometry on /Odometry (not /state_estimation)
         self.odom_sub = self._node.create_subscription(
-            ROSOdometry, "/state_estimation", self._on_ros_odom, 10
+            ROSOdometry, "/Odometry", self._on_ros_odom, 10
         )
 
         logger.info("NavigationModule initialized with ROS2 node")
