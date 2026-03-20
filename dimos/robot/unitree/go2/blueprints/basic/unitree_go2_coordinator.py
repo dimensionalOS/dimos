@@ -33,39 +33,44 @@ from dimos.robot.unitree.go2.connection import GO2Connection, go2_connection
 
 _go2_joints = make_twist_base_joints("go2")
 
-unitree_go2_coordinator = autoconnect(
-    go2_connection(),
-    control_coordinator(
-        hardware=[
-            HardwareComponent(
-                hardware_id="go2",
-                hardware_type=HardwareType.BASE,
-                joints=_go2_joints,
-                adapter_type="transport_lcm",
-            ),
-        ],
-        tasks=[
-            TaskConfig(
-                name="vel_go2",
-                type="velocity",
-                joint_names=_go2_joints,
-                priority=10,
-            ),
-        ],
-    ),
-).remappings(
-    [
-        (GO2Connection, "cmd_vel", "go2_cmd_vel"),
-        (GO2Connection, "odom", "go2_odom"),
-    ]
-).transports(
-    {
-        ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-        ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
-        ("go2_cmd_vel", Twist): LCMTransport("/go2/cmd_vel", Twist),
-        ("go2_odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
-        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-    }
-).global_config(obstacle_avoidance=False)
+unitree_go2_coordinator = (
+    autoconnect(
+        go2_connection(),
+        control_coordinator(
+            hardware=[
+                HardwareComponent(
+                    hardware_id="go2",
+                    hardware_type=HardwareType.BASE,
+                    joints=_go2_joints,
+                    adapter_type="transport_lcm",
+                ),
+            ],
+            tasks=[
+                TaskConfig(
+                    name="vel_go2",
+                    type="velocity",
+                    joint_names=_go2_joints,
+                    priority=10,
+                ),
+            ],
+        ),
+    )
+    .remappings(
+        [
+            (GO2Connection, "cmd_vel", "go2_cmd_vel"),
+            (GO2Connection, "odom", "go2_odom"),
+        ]
+    )
+    .transports(
+        {
+            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
+            ("twist_command", Twist): LCMTransport("/cmd_vel", Twist),
+            ("go2_cmd_vel", Twist): LCMTransport("/go2/cmd_vel", Twist),
+            ("go2_odom", PoseStamped): LCMTransport("/go2/odom", PoseStamped),
+            ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        }
+    )
+    .global_config(obstacle_avoidance=False)
+)
 
 __all__ = ["unitree_go2_coordinator"]

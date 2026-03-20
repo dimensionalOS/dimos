@@ -19,9 +19,9 @@ Topics derived from hardware_id: /{hardware_id}/cmd_vel, /{hardware_id}/odom.
 
 from __future__ import annotations
 
+from functools import partial
 import math
 import threading
-from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.transport import LCMTransport
@@ -185,7 +185,9 @@ def register(registry: TwistBaseAdapterRegistry) -> None:
     try:
         from dimos.core.transport import ROSTransport
 
-        registry.register("transport_ros", partial(TransportTwistAdapter, transport_cls=ROSTransport))
+        registry.register(
+            "transport_ros", partial(TransportTwistAdapter, transport_cls=ROSTransport)
+        )
     except ImportError:
         pass
 

@@ -33,7 +33,6 @@ from __future__ import annotations
 import importlib
 import logging
 import os
-import pkgutil
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
