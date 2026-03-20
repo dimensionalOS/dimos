@@ -181,8 +181,6 @@ def test_getter_streaming_blocking_timeout() -> None:
 
 @pytest.mark.slow
 def test_getter_streaming_nonblocking() -> None:
-    # Use 0.2s interval for nonblocking test — fast enough to get multiple
-    # values within reasonable sleep windows, avoids macOS scheduler jitter
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
 
     getter = max_time(
@@ -193,19 +191,17 @@ def test_getter_streaming_nonblocking() -> None:
     min_time(getter, 0.1, "Expected for first value call to block if cache is empty")
     assert getter() == 0
 
-    time.sleep(1.0)  # 1.0s / 0.2s = ~5 ticks
-    val1 = getter()
-    assert val1 >= 2, f"Expected value >= 2 after 1.0s, got {val1}"
+    time.sleep(0.5)
+    assert getter() >= 2, f"Expected value >= 2, got {getter()}"
 
     # sub is active
     assert not source.is_disposed()
 
-    time.sleep(1.0)  # another 1.0s = ~5 more ticks
-    val2 = getter()
-    assert val2 >= 4, f"Expected value >= 4 after 2.0s, got {val2}"
+    time.sleep(0.5)
+    assert getter() >= 4, f"Expected value >= 4, got {getter()}"
 
     getter.dispose()
-    time.sleep(0.5)  # Wait for background interval timer threads to finish
+    time.sleep(0.3)  # Wait for background interval timer threads to finish
     assert source.is_disposed(), "Observable should be disposed"
 
 
