@@ -15,13 +15,16 @@
 #include <semaphore.h>
 
 // RSAIRY PointCloud2 fields — hardcoded, never change.
+// All 6 fields preserved: FAST_LIO ignores time/ring (lidar_type 5 reads only XYZI),
+// ARISE-SLAM needs time+ring for feature extraction and motion compensation.
 static std::vector<sensor_msgs::msg::PointField> make_rsairy_fields() {
-    std::vector<sensor_msgs::msg::PointField> fields(5);
+    std::vector<sensor_msgs::msg::PointField> fields(6);
     fields[0].name = "x";         fields[0].offset = 0;  fields[0].datatype = 7; fields[0].count = 1;
     fields[1].name = "y";         fields[1].offset = 4;  fields[1].datatype = 7; fields[1].count = 1;
     fields[2].name = "z";         fields[2].offset = 8;  fields[2].datatype = 7; fields[2].count = 1;
     fields[3].name = "intensity"; fields[3].offset = 12; fields[3].datatype = 7; fields[3].count = 1;
     fields[4].name = "ring";      fields[4].offset = 16; fields[4].datatype = 4; fields[4].count = 1;
+    fields[5].name = "time";      fields[5].offset = 18; fields[5].datatype = 8; fields[5].count = 1;
     return fields;
 }
 
