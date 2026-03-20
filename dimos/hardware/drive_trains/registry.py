@@ -30,6 +30,7 @@ Usage:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import importlib
 import logging
 import os
@@ -45,10 +46,11 @@ class TwistBaseAdapterRegistry:
     """Registry for twist base adapters with auto-discovery."""
 
     def __init__(self) -> None:
-        self._adapters: dict[str, type[TwistBaseAdapter]] = {}
+        self._adapters: dict[str, type[TwistBaseAdapter] | Callable[..., TwistBaseAdapter]] = {}
 
-    def register(self, name: str, cls: type[TwistBaseAdapter]) -> None:
-        """Register an adapter class."""
+    def register(
+        self, name: str, cls: type[TwistBaseAdapter] | Callable[..., TwistBaseAdapter]
+    ) -> None:
         self._adapters[name.lower()] = cls
 
     def create(self, name: str, **kwargs: Any) -> TwistBaseAdapter:
