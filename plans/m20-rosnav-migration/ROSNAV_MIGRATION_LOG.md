@@ -388,23 +388,43 @@ Using the wrong case causes silent parse errors — the element is ignored and d
 
 ---
 
+## Finding #18: Nav Container Rebuilt with All Fixes Baked In (2026-03-19)
+
+Rebuilt `ghcr.io/aphexcx/m20-nav:latest` with all bridge fixes:
+- FAST_LIO config: `lid_topic: /bridge/LIDAR_POINTS`, `lidar_type: 5`
+- fastdds.xml: 32MB SHM segment, 4MB `maxMessageSize` (camelCase), transport_descriptors BEFORE participant (FastDDS 2.6 parses sequentially)
+- `ros2_pub_fastdds.xml` copied into container at `/ros2_ws/src/drdds_bridge/config/`
+- ros2_pub built with semaphore notification, hardcoded RSAIRY fields, dedicated poll thread
+
+**Important**: `transport_descriptors` block MUST appear before `participant` in the XML — FastDDS 2.6 errors on forward references to transport IDs.
+
+---
+
+## Finding #19: ROSNav Wired to FAST_LIO Topics (2026-03-19)
+
+Connected the dimos navigation pipeline to FAST_LIO:
+- `ros_registered_scan` transport: `/registered_scan` → `/cloud_registered` (FAST_LIO's global-frame point cloud)
+- Added `ros_odometry: In[Odometry]` port subscribed to FAST_LIO `/Odometry`
+- Extracts `PoseStamped` and publishes on `odom: Out[PoseStamped]` for websocket_vis
+- Blueprint `m20_rosnav.py` updated with odom LCM transport
+
+Full pipeline:
+```
+FAST_LIO /cloud_registered → ROSNav → VoxelGridMapper → CostMapper
+FAST_LIO /Odometry → ROSNav → odom → websocket_vis
+```
+
+---
+
 ## Remaining Work
 
-### Immediate Next Steps
+### Completed
 
-1. ~~**Install systemd service for reboot persistence**~~: DONE. `drdds-bridge.service` installed on NOS.
-
-2. **FAST_LIO odometry verification**: Check that `/Odometry` produces reasonable pose estimates (not drifting wildly).
-
-3. **Rebuild nav container image**: ros2_pub + fastdds.xml were modified inside the running container. Need to update the Dockerfile and push a new image so fixes persist across container restarts.
-
-4. **Persist container fastdds.xml fix**: The container's `/ros2_ws/config/fastdds.xml` was fixed in-place (maxMessageSize 1MB→4MB, segment_size 10MB→32MB). This needs to be baked into the Dockerfile.
-
-### FAST_LIO → dimos Integration
-
-4. **Connect dimos to FAST_LIO odometry**: dimos needs `/Odometry` for costmap building and path planning. The M20Connection class must subscribe to FAST_LIO's output instead of lio_perception's `/ODOM`.
-
-5. **Point cloud for costmap**: FAST_LIO publishes `/cloud_registered` and `/cloud_registered_body`. dimos costmap builder needs one of these for obstacle detection.
+1. ~~**Install systemd service for reboot persistence**~~: DONE.
+2. ~~**Rebuild nav container image**~~: DONE. All fixes baked into `ghcr.io/aphexcx/m20-nav:latest`.
+3. ~~**Persist container fastdds.xml fix**~~: DONE. Baked into Dockerfile.
+4. ~~**Connect dimos to FAST_LIO odometry**~~: DONE. ROSNav subscribes to `/Odometry`.
+5. ~~**Point cloud for costmap**~~: DONE. ROSNav subscribes to `/cloud_registered`.
 
 ### ARISE-SLAM Investigation
 
