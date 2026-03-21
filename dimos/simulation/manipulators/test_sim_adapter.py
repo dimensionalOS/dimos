@@ -22,8 +22,10 @@ import pytest
 
 from dimos.simulation.engines.mujoco_engine import MujocoEngine
 
+ARM_DOF = 7
 
-def _make_fake_engine(n_joints: int = 8) -> MagicMock:
+
+def _make_fake_engine(n_joints: int = ARM_DOF + 1) -> MagicMock:
     """Create a fake MujocoEngine with n_joints joints."""
     engine = MagicMock(spec=MujocoEngine)
     engine.joint_names = [f"joint{i}" for i in range(n_joints)]
@@ -63,46 +65,46 @@ class TestSimMujocoAdapter:
 
     @pytest.fixture
     def adapter_with_gripper(self):
-        """SimMujocoAdapter with 7 arm DOF + 1 gripper joint (8 engine joints)."""
+        """SimMujocoAdapter with ARM_DOF arm joints + 1 gripper joint."""
         with patch(
             "dimos.hardware.manipulators.sim.adapter.MujocoEngine",
-            return_value=_make_fake_engine(8),
+            return_value=_make_fake_engine(ARM_DOF + 1),
         ):
             from dimos.hardware.manipulators.sim.adapter import SimMujocoAdapter
 
-            return SimMujocoAdapter(dof=7, address="/fake/scene.xml", headless=True)
+            return SimMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml", headless=True)
 
     @pytest.fixture
     def adapter_no_gripper(self):
-        """SimMujocoAdapter with 7 arm DOF, no extra gripper joint."""
+        """SimMujocoAdapter with ARM_DOF arm joints, no gripper."""
         with patch(
             "dimos.hardware.manipulators.sim.adapter.MujocoEngine",
-            return_value=_make_fake_engine(7),
+            return_value=_make_fake_engine(ARM_DOF),
         ):
             from dimos.hardware.manipulators.sim.adapter import SimMujocoAdapter
 
-            return SimMujocoAdapter(dof=7, address="/fake/scene.xml", headless=True)
+            return SimMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml", headless=True)
 
     def test_address_required(self):
         with pytest.raises(ValueError, match="address"):
             with patch(
                 "dimos.hardware.manipulators.sim.adapter.MujocoEngine",
-                return_value=_make_fake_engine(7),
+                return_value=_make_fake_engine(ARM_DOF),
             ):
                 from dimos.hardware.manipulators.sim.adapter import SimMujocoAdapter
 
-                SimMujocoAdapter(dof=7, address=None)
+                SimMujocoAdapter(dof=ARM_DOF, address=None)
 
     def test_gripper_detected(self, adapter_with_gripper):
-        assert adapter_with_gripper._gripper_idx == 7
+        assert adapter_with_gripper._gripper_idx == ARM_DOF
 
     def test_no_gripper_when_dof_matches(self, adapter_no_gripper):
         assert adapter_no_gripper._gripper_idx is None
 
     def test_read_gripper_position(self, adapter_with_gripper):
-        # Initial qpos for joint index 7 is 0.7 (from mock: i * 0.1)
+        # Initial qpos for gripper index is ARM_DOF * 0.1 (from mock)
         pos = adapter_with_gripper.read_gripper_position()
-        assert pos == pytest.approx(0.7)
+        assert pos == pytest.approx(ARM_DOF * 0.1)
 
     def test_read_write_gripper_roundtrip(self, adapter_with_gripper):
         """Write a gripper position then read it back — should match."""
@@ -117,12 +119,12 @@ class TestSimMujocoAdapter:
         # position=0.0 (fully open) → ctrl should be max (255.0) due to inversion
         result = adapter_with_gripper.write_gripper_position(0.0)
         assert result is True
-        assert adapter_with_gripper._engine._joint_position_targets[7] == pytest.approx(255.0)
+        assert adapter_with_gripper._engine._joint_position_targets[ARM_DOF] == pytest.approx(255.0)
 
         # position=0.85 (fully closed) → ctrl should be min (0.0) due to inversion
         result = adapter_with_gripper.write_gripper_position(0.85)
         assert result is True
-        assert adapter_with_gripper._engine._joint_position_targets[7] == pytest.approx(0.0)
+        assert adapter_with_gripper._engine._joint_position_targets[ARM_DOF] == pytest.approx(0.0)
 
     def test_write_gripper_position_no_gripper(self, adapter_no_gripper):
         assert adapter_no_gripper.write_gripper_position(0.5) is False
@@ -130,18 +132,18 @@ class TestSimMujocoAdapter:
     def test_write_gripper_does_not_clobber_arm(self, adapter_with_gripper):
         """Gripper write must not overwrite arm joint targets."""
         engine = adapter_with_gripper._engine
-        for i in range(7):
+        for i in range(ARM_DOF):
             engine._joint_position_targets[i] = float(i) + 1.0
 
         adapter_with_gripper.write_gripper_position(0.0)
 
-        for i in range(7):
+        for i in range(ARM_DOF):
             assert engine._joint_position_targets[i] == pytest.approx(float(i) + 1.0)
-        assert engine._joint_position_targets[7] == pytest.approx(255.0)
+        assert engine._joint_position_targets[ARM_DOF] == pytest.approx(255.0)
 
     def test_read_joint_positions_excludes_gripper(self, adapter_with_gripper):
         positions = adapter_with_gripper.read_joint_positions()
-        assert len(positions) == 7
+        assert len(positions) == ARM_DOF
 
     def test_connect_and_disconnect(self, adapter_with_gripper):
         assert adapter_with_gripper.connect() is True
