@@ -71,9 +71,7 @@ class TransportTwistAdapter:
         self._odom_unsub = self._odom_transport.subscribe(self._on_odom)
 
         self._connected = True
-        logger.info(
-            f"TransportTwistAdapter connected: cmd_vel={cmd_vel_topic}, odom={odom_topic}"
-        )
+        logger.info(f"TransportTwistAdapter connected: cmd_vel={cmd_vel_topic}, odom={odom_topic}")
         return True
 
     def disconnect(self) -> None:
