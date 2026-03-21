@@ -20,7 +20,6 @@ Topics derived from hardware_id: /{hardware_id}/cmd_vel, /{hardware_id}/odom.
 from __future__ import annotations
 
 from functools import partial
-import math
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -146,16 +145,8 @@ class TransportTwistAdapter:
         return self._enabled
 
     def _on_odom(self, msg: PoseStamped) -> None:
-        x = float(msg.position.x)
-        y = float(msg.position.y)
-        qx = float(msg.orientation.x)
-        qy = float(msg.orientation.y)
-        qz = float(msg.orientation.z)
-        qw = float(msg.orientation.w)
-        yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
-
         with self._lock:
-            self._latest_odom = [x, y, yaw]
+            self._latest_odom = [msg.x, msg.y, msg.yaw]
 
 
 def register(registry: TwistBaseAdapterRegistry) -> None:
