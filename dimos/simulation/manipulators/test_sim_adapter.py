@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from dimos.hardware.manipulators.sim.adapter import SimMujocoAdapter, register
 from dimos.simulation.engines.mujoco_engine import MujocoEngine
 
 ARM_DOF = 7
@@ -70,8 +71,6 @@ class TestSimMujocoAdapter:
             "dimos.hardware.manipulators.sim.adapter.MujocoEngine",
             return_value=_make_fake_engine(ARM_DOF + 1),
         ):
-            from dimos.hardware.manipulators.sim.adapter import SimMujocoAdapter
-
             return SimMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml", headless=True)
 
     @pytest.fixture
@@ -81,8 +80,6 @@ class TestSimMujocoAdapter:
             "dimos.hardware.manipulators.sim.adapter.MujocoEngine",
             return_value=_make_fake_engine(ARM_DOF),
         ):
-            from dimos.hardware.manipulators.sim.adapter import SimMujocoAdapter
-
             return SimMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml", headless=True)
 
     def test_address_required(self):
@@ -91,8 +88,6 @@ class TestSimMujocoAdapter:
                 "dimos.hardware.manipulators.sim.adapter.MujocoEngine",
                 return_value=_make_fake_engine(ARM_DOF),
             ):
-                from dimos.hardware.manipulators.sim.adapter import SimMujocoAdapter
-
                 SimMujocoAdapter(dof=ARM_DOF, address=None)
 
     def test_gripper_detected(self, adapter_with_gripper):
@@ -152,11 +147,6 @@ class TestSimMujocoAdapter:
         adapter_with_gripper._engine.disconnect.assert_called_once()
 
     def test_register(self):
-        from dimos.hardware.manipulators.sim.adapter import register
-
         registry = MagicMock()
         register(registry)
-        registry.register.assert_called_once_with(
-            "sim_mujoco",
-            pytest.importorskip("dimos.hardware.manipulators.sim.adapter").SimMujocoAdapter,
-        )
+        registry.register.assert_called_once_with("sim_mujoco", SimMujocoAdapter)
