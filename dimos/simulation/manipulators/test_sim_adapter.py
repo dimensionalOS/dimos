@@ -28,12 +28,28 @@ def _make_fake_engine(n_joints: int = 8) -> MagicMock:
     engine = MagicMock(spec=MujocoEngine)
     engine.joint_names = [f"joint{i}" for i in range(n_joints)]
     engine.connected = True
-    engine.read_joint_positions.return_value = [float(i) * 0.1 for i in range(n_joints)]
+    positions = [float(i) * 0.1 for i in range(n_joints)]
+    engine.read_joint_positions.side_effect = lambda: list(positions)
     engine.read_joint_velocities.return_value = [0.0] * n_joints
     engine.read_joint_efforts.return_value = [0.0] * n_joints
     targets = [0.0] * n_joints
     engine._joint_position_targets = targets
-    engine.set_position_target.side_effect = lambda idx, val: targets.__setitem__(idx, float(val))
+
+    ctrl_range = (0.0, 255.0)
+    joint_range = (0.0, 0.85)
+
+    def _set_target(idx: int, val: float) -> None:
+        targets[idx] = val
+        # Simulate MuJoCo: ctrl value → joint position (inverse of write mapping)
+        clo, chi = ctrl_range
+        jlo, jhi = joint_range
+        if chi != clo:
+            t = (chi - val) / (chi - clo)
+            positions[idx] = jlo + t * (jhi - jlo)
+        else:
+            positions[idx] = jlo
+
+    engine.set_position_target.side_effect = _set_target
     engine.get_position_target.side_effect = lambda idx: float(targets[idx])
 
     engine.get_actuator_ctrl_range.return_value = (0.0, 255.0)
@@ -84,9 +100,9 @@ class TestSimMujocoAdapter:
         assert adapter_no_gripper._gripper_idx is None
 
     def test_read_gripper_position(self, adapter_with_gripper):
-        # Default target is 0.0 ctrl → maps to fully closed (0.85 joint range)
+        # Initial qpos for joint index 7 is 0.7 (from mock: i * 0.1)
         pos = adapter_with_gripper.read_gripper_position()
-        assert pos == pytest.approx(0.85)
+        assert pos == pytest.approx(0.7)
 
     def test_read_write_gripper_roundtrip(self, adapter_with_gripper):
         """Write a gripper position then read it back — should match."""

@@ -195,19 +195,15 @@ class SimManipInterface:
     def read_gripper_position(self) -> float | None:
         if self._gripper_idx is None:
             return None
-        ctrl_value = self._engine.get_position_target(self._gripper_idx)
-        clo, chi = self._gripper_ctrl_range
-        jlo, jhi = self._gripper_joint_range
-        if chi != clo:
-            t = (chi - ctrl_value) / (chi - clo)
-            return jlo + t * (jhi - jlo)
-        return jlo
+        positions = self._engine.read_joint_positions()
+        return positions[self._gripper_idx]
 
     def write_gripper_position(self, position: float) -> bool:
         if self._gripper_idx is None:
             return False
         jlo, jhi = self._gripper_joint_range
         clo, chi = self._gripper_ctrl_range
+        position = max(jlo, min(jhi, position))
         if jhi != jlo:
             t = (position - jlo) / (jhi - jlo)
             ctrl_value = chi - t * (chi - clo)
