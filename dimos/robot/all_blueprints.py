@@ -61,6 +61,7 @@ all_blueprints = {
     "teleop-quest-dual": "dimos.teleop.quest.blueprints:teleop_quest_dual",
     "teleop-quest-piper": "dimos.teleop.quest.blueprints:teleop_quest_piper",
     "teleop-quest-rerun": "dimos.teleop.quest.blueprints:teleop_quest_rerun",
+    "teleop-quest-xarm6": "dimos.teleop.quest.blueprints:teleop_quest_xarm6",
     "teleop-quest-xarm7": "dimos.teleop.quest.blueprints:teleop_quest_xarm7",
     "uintree-g1-primitive-no-nav": "dimos.robot.unitree.g1.blueprints.primitive.uintree_g1_primitive_no_nav:uintree_g1_primitive_no_nav",
     "unitree-g1": "dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1:unitree_g1",

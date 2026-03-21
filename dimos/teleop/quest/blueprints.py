@@ -17,6 +17,7 @@
 
 from dimos.control.blueprints.teleop import (
     coordinator_teleop_dual,
+    coordinator_teleop_xarm6,
     coordinator_teleop_piper,
     coordinator_teleop_xarm7,
 )
@@ -68,6 +69,20 @@ teleop_quest_piper = autoconnect(
 )
 
 
+# Single XArm6 teleop: right controller -> xarm6
+teleop_quest_xarm6 = autoconnect(
+    arm_teleop_module(task_names={"right": "teleop_xarm"}),
+    coordinator_teleop_xarm6,
+).transports(
+    {
+        ("right_controller_output", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+    }
+)
+
+
 # Dual arm teleop: right -> piper, left -> xarm6 (TeleopIK)
 teleop_quest_dual = autoconnect(
     arm_teleop_module(task_names={"right": "teleop_piper", "left": "teleop_xarm"}),
@@ -89,5 +104,6 @@ __all__ = [
     "teleop_quest_dual",
     "teleop_quest_piper",
     "teleop_quest_rerun",
+    "teleop_quest_xarm6",
     "teleop_quest_xarm7",
 ]
