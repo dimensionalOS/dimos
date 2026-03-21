@@ -155,16 +155,10 @@ class TransportTwistAdapter:
 
 
 def register(registry: TwistBaseAdapterRegistry) -> None:
+    from dimos.core.transport import ROSTransport
+
     registry.register("transport_lcm", partial(TransportTwistAdapter, transport_cls=LCMTransport))
-
-    try:
-        from dimos.core.transport import ROSTransport
-
-        registry.register(
-            "transport_ros", partial(TransportTwistAdapter, transport_cls=ROSTransport)
-        )
-    except ImportError:
-        pass
+    registry.register("transport_ros", partial(TransportTwistAdapter, transport_cls=ROSTransport))
 
 
 __all__ = ["TransportTwistAdapter"]
