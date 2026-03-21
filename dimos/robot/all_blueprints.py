@@ -27,6 +27,7 @@ all_blueprints = {
     "coordinator-mock-twist-base": "dimos.control.blueprints.mobile:coordinator_mock_twist_base",
     "coordinator-piper": "dimos.control.blueprints.basic:coordinator_piper",
     "coordinator-piper-xarm": "dimos.control.blueprints.dual:coordinator_piper_xarm",
+    "coordinator-servo-xarm6": "dimos.control.blueprints.teleop:coordinator_servo_xarm6",
     "coordinator-teleop-dual": "dimos.control.blueprints.teleop:coordinator_teleop_dual",
     "coordinator-teleop-piper": "dimos.control.blueprints.teleop:coordinator_teleop_piper",
     "coordinator-teleop-xarm6": "dimos.control.blueprints.teleop:coordinator_teleop_xarm6",

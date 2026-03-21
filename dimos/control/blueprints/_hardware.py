@@ -105,9 +105,6 @@ def mock_twist_base(hw_id: str = "base") -> HardwareComponent:
     )
 
 
-# --- Simulation adapters ---
-
-
 def sim_xarm7(
     hw_id: str = "arm", *, headless: bool = True, gripper: bool = False
 ) -> HardwareComponent:
