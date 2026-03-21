@@ -237,6 +237,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             component.adapter_type,
             dof=len(component.joints),
             address=component.address,
+            hardware_id=component.hardware_id,
         )
 
     def _create_twist_base_adapter(self, component: HardwareComponent) -> TwistBaseAdapter:
@@ -247,6 +248,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             component.adapter_type,
             dof=len(component.joints),
             address=component.address,
+            hardware_id=component.hardware_id,
         )
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
