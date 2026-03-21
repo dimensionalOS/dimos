@@ -81,21 +81,11 @@ class TransportTwistAdapter:
         self.write_stop()
 
         if self._odom_unsub is not None:
-            try:
-                self._odom_unsub()
-            except Exception:
-                pass
+            self._odom_unsub()
             self._odom_unsub = None
 
-        for attr in ("_cmd_vel_transport", "_odom_transport"):
-            transport = getattr(self, attr, None)
-            if transport is not None:
-                try:
-                    transport.stop()
-                except Exception:
-                    pass
-                setattr(self, attr, None)
-
+        self._cmd_vel_transport = None
+        self._odom_transport = None
         self._connected = False
         self._enabled = False
         with self._lock:
@@ -129,12 +119,8 @@ class TransportTwistAdapter:
             linear=Vector3(x=velocities[0], y=velocities[1] if self._dof > 1 else 0.0, z=0.0),
             angular=Vector3(x=0.0, y=0.0, z=velocities[2] if self._dof > 2 else 0.0),
         )
-        try:
-            self._cmd_vel_transport.broadcast(None, twist)
-            return True
-        except Exception as e:
-            logger.error(f"TransportTwistAdapter write error: {e}")
-            return False
+        self._cmd_vel_transport.publish(twist)
+        return True
 
     def write_stop(self) -> bool:
         with self._lock:
@@ -143,12 +129,8 @@ class TransportTwistAdapter:
         if self._cmd_vel_transport is None:
             return False
 
-        try:
-            self._cmd_vel_transport.broadcast(None, _ZERO_TWIST)
-            return True
-        except Exception as e:
-            logger.error(f"TransportTwistAdapter stop error: {e}")
-            return False
+        self._cmd_vel_transport.publish(_ZERO_TWIST)
+        return True
 
     def write_enable(self, enable: bool) -> bool:
         self._enabled = enable
@@ -160,19 +142,16 @@ class TransportTwistAdapter:
         return self._enabled
 
     def _on_odom(self, msg: PoseStamped) -> None:
-        try:
-            x = float(msg.position.x)
-            y = float(msg.position.y)
-            qx = float(msg.orientation.x)
-            qy = float(msg.orientation.y)
-            qz = float(msg.orientation.z)
-            qw = float(msg.orientation.w)
-            yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        x = float(msg.position.x)
+        y = float(msg.position.y)
+        qx = float(msg.orientation.x)
+        qy = float(msg.orientation.y)
+        qz = float(msg.orientation.z)
+        qw = float(msg.orientation.w)
+        yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
 
-            with self._lock:
-                self._latest_odom = [x, y, yaw]
-        except Exception as e:
-            logger.warning(f"TransportTwistAdapter odom error: {e}")
+        with self._lock:
+            self._latest_odom = [x, y, yaw]
 
 
 def register(registry: TwistBaseAdapterRegistry) -> None:
