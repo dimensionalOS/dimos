@@ -84,8 +84,12 @@ class TransportTwistAdapter:
             self._odom_unsub()
             self._odom_unsub = None
 
-        self._cmd_vel_transport = None
-        self._odom_transport = None
+        if self._cmd_vel_transport is not None:
+            self._cmd_vel_transport.stop()
+            self._cmd_vel_transport = None
+        if self._odom_transport is not None:
+            self._odom_transport.stop()
+            self._odom_transport = None
         self._connected = False
         self._enabled = False
         with self._lock:
