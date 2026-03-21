@@ -64,22 +64,18 @@ class TransportTwistAdapter:
         self._enabled = False
 
     def connect(self) -> bool:
-        try:
-            cmd_vel_topic = f"/{self._prefix}/cmd_vel"
-            odom_topic = f"/{self._prefix}/odom"
+        cmd_vel_topic = f"/{self._prefix}/cmd_vel"
+        odom_topic = f"/{self._prefix}/odom"
 
-            self._cmd_vel_transport = self._transport_cls(cmd_vel_topic, Twist)
-            self._odom_transport = self._transport_cls(odom_topic, PoseStamped)
-            self._odom_unsub = self._odom_transport.subscribe(self._on_odom)
+        self._cmd_vel_transport = self._transport_cls(cmd_vel_topic, Twist)
+        self._odom_transport = self._transport_cls(odom_topic, PoseStamped)
+        self._odom_unsub = self._odom_transport.subscribe(self._on_odom)
 
-            self._connected = True
-            logger.info(
-                f"TransportTwistAdapter connected: cmd_vel={cmd_vel_topic}, odom={odom_topic}"
-            )
-            return True
-        except Exception as e:
-            logger.error(f"TransportTwistAdapter failed to connect: {e}")
-            return False
+        self._connected = True
+        logger.info(
+            f"TransportTwistAdapter connected: cmd_vel={cmd_vel_topic}, odom={odom_topic}"
+        )
+        return True
 
     def disconnect(self) -> None:
         self.write_stop()
