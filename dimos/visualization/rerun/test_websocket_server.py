@@ -143,6 +143,16 @@ class MockViewerPublisher:
 # ---------------------------------------------------------------------------
 
 
+def _collect(received: list[Any], done: threading.Event) -> Any:
+    """Return a callback that appends to *received* and signals *done*."""
+
+    def _cb(msg: Any) -> None:
+        received.append(msg)
+        done.set()
+
+    return _cb
+
+
 def _make_module(port: int = _TEST_PORT) -> RerunWebSocketServer:
     return RerunWebSocketServer(port=port)
 
@@ -199,7 +209,7 @@ class TestClickMessages:
 
         received: list[Any] = []
         done = threading.Event()
-        mod.clicked_point.subscribe(lambda pt: (received.append(pt), done.set()))
+        mod.clicked_point.subscribe(_collect(received, done))
 
         with MockViewerPublisher(f"ws://127.0.0.1:{_TEST_PORT}/ws") as pub:
             pub.send_click(1.5, 2.5, 0.0, "/world", timestamp_ms=1000)
@@ -222,7 +232,7 @@ class TestClickMessages:
 
         received: list[Any] = []
         done = threading.Event()
-        mod.clicked_point.subscribe(lambda pt: (received.append(pt), done.set()))
+        mod.clicked_point.subscribe(_collect(received, done))
 
         with MockViewerPublisher(f"ws://127.0.0.1:{_TEST_PORT}/ws") as pub:
             pub.send_click(0.0, 0.0, 0.0, "/robot/base", timestamp_ms=2000)
@@ -240,7 +250,7 @@ class TestClickMessages:
 
         received: list[Any] = []
         done = threading.Event()
-        mod.clicked_point.subscribe(lambda pt: (received.append(pt), done.set()))
+        mod.clicked_point.subscribe(_collect(received, done))
 
         with MockViewerPublisher(f"ws://127.0.0.1:{_TEST_PORT}/ws") as pub:
             pub.send_click(0.0, 0.0, 0.0, "", timestamp_ms=5000)
@@ -326,6 +336,49 @@ class TestNonClickMessages:
 
         mod.stop()
         assert received == []
+
+    def test_twist_publishes_on_tele_cmd_vel(self) -> None:
+        """Twist messages publish a Twist on the tele_cmd_vel stream."""
+        mod = _make_module()
+        mod.start()
+        _wait_for_server(_TEST_PORT)
+
+        received: list[Any] = []
+        done = threading.Event()
+        mod.tele_cmd_vel.subscribe(_collect(received, done))
+
+        with MockViewerPublisher(f"ws://127.0.0.1:{_TEST_PORT}/ws") as pub:
+            pub.send_twist(0.5, 0.0, 0.0, 0.0, 0.0, 0.8)
+            pub.flush()
+
+        done.wait(timeout=2.0)
+        mod.stop()
+
+        assert len(received) == 1
+        tw = received[0]
+        assert abs(tw.linear.x - 0.5) < 1e-9
+        assert abs(tw.angular.z - 0.8) < 1e-9
+
+    def test_stop_publishes_zero_twist_on_tele_cmd_vel(self) -> None:
+        """Stop messages publish a zero Twist on the tele_cmd_vel stream."""
+        mod = _make_module()
+        mod.start()
+        _wait_for_server(_TEST_PORT)
+
+        received: list[Any] = []
+        done = threading.Event()
+        mod.tele_cmd_vel.subscribe(_collect(received, done))
+
+        with MockViewerPublisher(f"ws://127.0.0.1:{_TEST_PORT}/ws") as pub:
+            pub.send_stop()
+            pub.flush()
+
+        done.wait(timeout=2.0)
+        mod.stop()
+
+        assert len(received) == 1
+        tw = received[0]
+        assert tw.is_zero()
 
     def test_invalid_json_does_not_crash(self) -> None:
         """Malformed JSON is silently dropped; server stays alive."""

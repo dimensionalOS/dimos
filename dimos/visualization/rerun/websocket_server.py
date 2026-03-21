@@ -34,6 +34,8 @@ import json
 import threading
 from typing import Any
 
+import websockets
+
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
@@ -46,6 +48,9 @@ logger = setup_logger()
 
 
 class Config(ModuleConfig):
+    # Intentionally binds 0.0.0.0 by default so the viewer can connect from
+    # any machine on the network (the typical robot deployment scenario).
+    host: str = "0.0.0.0"
     port: int = 3030
 
 
@@ -84,7 +89,7 @@ class RerunWebSocketServer(Module[Config]):
             target=self._run_server, daemon=True, name="rerun-ws-server"
         )
         self._server_thread.start()
-        logger.info(f"RerunWebSocketServer starting on ws://0.0.0.0:{self.config.port}/ws")
+        logger.info(f"RerunWebSocketServer starting on ws://{self.config.host}:{self.config.port}/ws")
 
     @rpc
     def stop(self) -> None:
@@ -116,10 +121,10 @@ class RerunWebSocketServer(Module[Config]):
 
         async with ws_server.serve(
             self._handle_client,
-            host="0.0.0.0",
+            host=self.config.host,
             port=self.config.port,
         ):
-            logger.info(f"RerunWebSocketServer listening on ws://0.0.0.0:{self.config.port}/ws")
+            logger.info(f"RerunWebSocketServer listening on ws://{self.config.host}:{self.config.port}/ws")
             await self._stop_event.wait()
 
     async def _handle_client(self, websocket: Any) -> None:
@@ -128,7 +133,7 @@ class RerunWebSocketServer(Module[Config]):
         try:
             async for raw in websocket:
                 self._dispatch(raw)
-        except Exception as exc:
+        except websockets.ConnectionClosed as exc:
             logger.debug(f"RerunWebSocketServer: client {addr} disconnected ({exc})")
 
     # ------------------------------------------------------------------

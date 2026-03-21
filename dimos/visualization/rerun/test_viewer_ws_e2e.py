@@ -91,7 +91,7 @@ class TestViewerProtocolE2E:
     messages produce stream publishes.
     """
 
-    def test_viewer_click_reaches_stream(self):
+    def test_viewer_click_reaches_stream(self) -> None:
         """A viewer click message received over WebSocket publishes PointStamped."""
         server = _make_server()
         server.start()
@@ -131,7 +131,7 @@ class TestViewerProtocolE2E:
         assert pt.frame_id == "/world/robot"
         assert abs(pt.ts - 42.0) < 1e-6
 
-    def test_viewer_keyboard_twist_no_publish(self):
+    def test_viewer_keyboard_twist_no_publish(self) -> None:
         """Twist messages from keyboard control do not publish clicked_point."""
         server = _make_server()
         server.start()
@@ -158,7 +158,7 @@ class TestViewerProtocolE2E:
         server.stop()
         assert received == []
 
-    def test_viewer_stop_no_publish(self):
+    def test_viewer_stop_no_publish(self) -> None:
         """Stop messages do not publish clicked_point."""
         server = _make_server()
         server.start()
@@ -172,7 +172,7 @@ class TestViewerProtocolE2E:
         server.stop()
         assert received == []
 
-    def test_full_viewer_session_sequence(self):
+    def test_full_viewer_session_sequence(self) -> None:
         """Realistic session: connect, heartbeats, click, WASD, stop → one point."""
         server = _make_server()
         server.start()
@@ -229,7 +229,7 @@ class TestViewerProtocolE2E:
         assert abs(pt.y - 2.71) < 1e-9
         assert abs(pt.z - 1.41) < 1e-9
 
-    def test_reconnect_after_disconnect(self):
+    def test_reconnect_after_disconnect(self) -> None:
         """Server keeps accepting new connections after a client disconnects."""
         server = _make_server()
         server.start()
@@ -273,13 +273,12 @@ class TestViewerBinaryConnectMode:
     """Smoke test: dimos-viewer binary starts in --connect mode and its WebSocket
     client attempts to connect to our Python server."""
 
-    def test_viewer_ws_client_connects(self):
+    def test_viewer_ws_client_connects(self) -> None:
         """dimos-viewer --connect starts and its WS client connects to our server."""
         server = _make_server()
         server.start()
         _wait_for_server(_E2E_PORT)
 
-        threading.Event()
         received: list[Any] = []
 
         def _on_pt(pt: Any) -> None:
