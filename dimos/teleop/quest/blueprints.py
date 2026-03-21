@@ -71,7 +71,7 @@ teleop_quest_piper = autoconnect(
 
 # Single XArm6 teleop: right controller -> xarm6
 teleop_quest_xarm6 = autoconnect(
-    arm_teleop_module(task_names={"right": "teleop_xarm"}),
+    ArmTeleopModule.blueprint(task_names={"right": "teleop_xarm"}),
     coordinator_teleop_xarm6,
 ).transports(
     {

@@ -201,7 +201,7 @@ coordinator_teleop_piper = ControlCoordinator.blueprint(
 )
 
 # Single XArm6 with TeleopIK
-coordinator_teleop_xarm6 = control_coordinator(
+coordinator_teleop_xarm6 = ControlCoordinator.blueprint(
     hardware=[xarm6()],
     tasks=[
         TaskConfig(

@@ -21,7 +21,7 @@ Arm joint methods are inherited from SimManipInterface.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dimos.simulation.engines.mujoco_engine import MujocoEngine
 from dimos.simulation.manipulators.sim_manip_interface import SimManipInterface
@@ -41,7 +41,7 @@ class SimMujocoAdapter(SimManipInterface):
         dof: int = 7,
         address: str | None = None,
         headless: bool = True,
-        **_: object,
+        **_: Any,
     ) -> None:
         if address is None:
             raise ValueError("address (MJCF XML path) is required for sim_mujoco adapter")
