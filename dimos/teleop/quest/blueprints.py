@@ -17,8 +17,8 @@
 
 from dimos.control.blueprints.teleop import (
     coordinator_teleop_dual,
-    coordinator_teleop_xarm6,
     coordinator_teleop_piper,
+    coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
 )
 from dimos.core.blueprints import autoconnect
