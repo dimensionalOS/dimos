@@ -502,6 +502,7 @@ case "${CMD}" in
             --privileged \
             --network host \
             --ipc host \
+            -v /var/run/docker.sock:/var/run/docker.sock \
             -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
             -e ROS_DOMAIN_ID=0 \
             -e CI=1 \
