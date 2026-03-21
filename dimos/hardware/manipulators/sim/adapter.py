@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 
 class SimMujocoAdapter(SimManipInterface):
-    """ Uses ``address`` as the MJCF XML path (same field real adapters use for IP/port).
+    """Uses ``address`` as the MJCF XML path (same field real adapters use for IP/port).
     If the engine has more joints than ``dof``, the extra joint at index ``dof``
     is treated as the gripper, with ctrl range scaled automatically.
     """

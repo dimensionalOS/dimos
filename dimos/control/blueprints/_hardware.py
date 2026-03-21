@@ -148,5 +148,3 @@ def sim_piper(
         adapter_kwargs={"headless": headless},
         gripper_joints=make_gripper_joints(hw_id) if gripper else [],
     )
-
-
