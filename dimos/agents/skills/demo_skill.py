@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.agent import agent
-from dimos.agents.skills.demo_calculator_skill import demo_calculator_skill
+from dimos.agents.agent import Agent
+from dimos.agents.skills.demo_calculator_skill import DemoCalculatorSkill
 from dimos.core.blueprints import autoconnect
 
 demo_skill = autoconnect(
-    demo_calculator_skill(),
-    agent(),
+    DemoCalculatorSkill.blueprint(),
+    Agent.blueprint(),
 )

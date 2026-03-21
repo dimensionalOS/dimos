@@ -32,9 +32,3 @@ class DemoRobot(Module):
 
     def _publish_gps_location(self) -> None:
         self.gps_location.publish(LatLon(lat=37.78092426217621, lon=-122.40682866540769))
-
-
-demo_robot = DemoRobot.blueprint
-
-
-__all__ = ["DemoRobot", "demo_robot"]

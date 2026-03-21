@@ -131,16 +131,3 @@ class ArmTeleopModule(QuestTeleopModule[ArmTeleopConfig]):
             right=right.trigger if right is not None else 0.0,
         )
         self.buttons.publish(buttons)
-
-
-# Module blueprints for easy instantiation
-twist_teleop_module = TwistTeleopModule.blueprint
-arm_teleop_module = ArmTeleopModule.blueprint
-
-__all__ = [
-    "ArmTeleopConfig",
-    "ArmTeleopModule",
-    "TwistTeleopModule",
-    "arm_teleop_module",
-    "twist_teleop_module",
-]

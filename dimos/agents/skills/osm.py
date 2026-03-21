@@ -78,8 +78,3 @@ class OsmSkill(Module):
         distance = int(distance_in_meters(latlon, self._latest_location))  # type: ignore[arg-type]
 
         return f"{context}. It's at position latitude={latlon.lat}, longitude={latlon.lon}. It is {distance} meters away."
-
-
-osm_skill = OsmSkill.blueprint
-
-__all__ = ["OsmSkill", "osm_skill"]

@@ -24,12 +24,12 @@ Usage:
 from __future__ import annotations
 
 from dimos.control.blueprints._hardware import mock_arm, piper, xarm6, xarm7
-from dimos.control.coordinator import TaskConfig, control_coordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 # Minimal blueprint (no hardware, no tasks)
-coordinator_basic = control_coordinator(
+coordinator_basic = ControlCoordinator.blueprint(
     tick_rate=100.0,
     publish_joint_state=True,
     joint_state_frame_id="coordinator",
@@ -40,7 +40,7 @@ coordinator_basic = control_coordinator(
 )
 
 # Mock 7-DOF arm (for testing)
-coordinator_mock = control_coordinator(
+coordinator_mock = ControlCoordinator.blueprint(
     hardware=[mock_arm()],
     tasks=[
         TaskConfig(
@@ -57,7 +57,7 @@ coordinator_mock = control_coordinator(
 )
 
 # XArm7 real hardware
-coordinator_xarm7 = control_coordinator(
+coordinator_xarm7 = ControlCoordinator.blueprint(
     hardware=[xarm7()],
     tasks=[
         TaskConfig(
@@ -74,7 +74,7 @@ coordinator_xarm7 = control_coordinator(
 )
 
 # XArm6 real hardware
-coordinator_xarm6 = control_coordinator(
+coordinator_xarm6 = ControlCoordinator.blueprint(
     hardware=[xarm6()],
     tasks=[
         TaskConfig(
@@ -91,7 +91,7 @@ coordinator_xarm6 = control_coordinator(
 )
 
 # Piper arm (6-DOF, CAN bus)
-coordinator_piper = control_coordinator(
+coordinator_piper = ControlCoordinator.blueprint(
     hardware=[piper()],
     tasks=[
         TaskConfig(

@@ -840,8 +840,3 @@ class WavefrontFrontierExplorer(Module[WavefrontConfig]):
             return "Stopped exploration. The robot has stopped moving."
         else:
             return "Exploration skill was not active, so nothing was stopped."
-
-
-wavefront_frontier_explorer = WavefrontFrontierExplorer.blueprint
-
-__all__ = ["WavefrontFrontierExplorer", "wavefront_frontier_explorer"]

@@ -23,12 +23,12 @@ Usage:
 from __future__ import annotations
 
 from dimos.control.blueprints._hardware import mock_arm, piper, xarm6, xarm7
-from dimos.control.coordinator import TaskConfig, control_coordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 # Dual mock arms (7-DOF left, 6-DOF right)
-coordinator_dual_mock = control_coordinator(
+coordinator_dual_mock = ControlCoordinator.blueprint(
     hardware=[mock_arm("left_arm", 7), mock_arm("right_arm", 6)],
     tasks=[
         TaskConfig(
@@ -51,7 +51,7 @@ coordinator_dual_mock = control_coordinator(
 )
 
 # Dual XArm (XArm7 left, XArm6 right)
-coordinator_dual_xarm = control_coordinator(
+coordinator_dual_xarm = ControlCoordinator.blueprint(
     hardware=[xarm7("left_arm"), xarm6("right_arm")],
     tasks=[
         TaskConfig(
@@ -74,7 +74,7 @@ coordinator_dual_xarm = control_coordinator(
 )
 
 # Dual arm (XArm6 + Piper)
-coordinator_piper_xarm = control_coordinator(
+coordinator_piper_xarm = ControlCoordinator.blueprint(
     hardware=[xarm6("xarm_arm"), piper("piper_arm")],
     tasks=[
         TaskConfig(

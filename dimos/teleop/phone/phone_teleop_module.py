@@ -280,12 +280,3 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
         Override to customize output (e.g., apply limits, remap axes).
         """
         self.twist_output.publish(output_msg)
-
-
-phone_teleop_module = PhoneTeleopModule.blueprint
-
-__all__ = [
-    "PhoneTeleopConfig",
-    "PhoneTeleopModule",
-    "phone_teleop_module",
-]

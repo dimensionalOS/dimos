@@ -142,9 +142,3 @@ class Go2FleetConnection(GO2Connection[FleetConnectionConfig]):
             except Exception as e:
                 logger.error(f"Fleet publish_request failed: {e}")
         return self.connection.publish_request(topic, data)
-
-
-go2_fleet_connection = Go2FleetConnection.blueprint
-
-
-__all__ = ["Go2FleetConnection", "go2_fleet_connection"]

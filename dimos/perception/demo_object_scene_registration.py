@@ -13,26 +13,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.agent import agent
+from dimos.agents.agent import Agent
 from dimos.core.blueprints import autoconnect
-from dimos.hardware.sensors.camera.realsense.camera import realsense_camera
-from dimos.hardware.sensors.camera.zed.compat import zed_camera
+from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.hardware.sensors.camera.zed.compat import ZEDCamera
 from dimos.perception.detection.detectors.yoloe import YoloePromptMode
-from dimos.perception.object_scene_registration import object_scene_registration_module
-from dimos.robot.foxglove_bridge import foxglove_bridge
+from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.robot.foxglove_bridge import FoxgloveBridge
 
 camera_choice = "zed"
 
 if camera_choice == "realsense":
-    camera_module = realsense_camera(enable_pointcloud=False)
+    camera_module = RealSenseCamera.blueprint(enable_pointcloud=False)
 elif camera_choice == "zed":
-    camera_module = zed_camera(enable_pointcloud=False)
+    camera_module = ZEDCamera.blueprint(enable_pointcloud=False)
 else:
     raise ValueError(f"Invalid camera choice: {camera_choice}")
 
 demo_object_scene_registration = autoconnect(
     camera_module,
-    object_scene_registration_module(target_frame="world", prompt_mode=YoloePromptMode.LRPC),
-    foxglove_bridge(),
-    agent(),
+    ObjectSceneRegistrationModule.blueprint(target_frame="world", prompt_mode=YoloePromptMode.LRPC),
+    FoxgloveBridge.blueprint(),
+    Agent.blueprint(),
 ).global_config(viewer="foxglove")

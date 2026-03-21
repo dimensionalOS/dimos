@@ -390,7 +390,3 @@ def cli(
 
 if __name__ == "__main__":
     app()
-
-# you don't need to include this in your blueprint if you are not creating a
-# custom rerun configuration for your deployment, you can also run rerun-bridge standalone
-rerun_bridge = RerunBridgeModule.blueprint

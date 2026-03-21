@@ -44,7 +44,7 @@ from dimos.utils.logging_config import get_run_log_dir, setup_logger
 
 from .clip_filter import CLIP_AVAILABLE, adaptive_keyframes
 from .entity_graph_db import EntityGraphDB
-from .frame_window_accumulator import Frame, FrameWindowAccumulator
+from .frame_window_accumulator import FrameWindowAccumulator
 from .temporal_state import TemporalState
 from .temporal_utils.graph_utils import build_graph_context, extract_time_window
 from .temporal_utils.helpers import is_scene_stale
@@ -624,8 +624,3 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
         if not self._graph_db:
             return {"stats": {}, "entities": [], "recent_relations": []}
         return self._graph_db.get_summary()
-
-
-temporal_memory = TemporalMemory.blueprint
-
-__all__ = ["Frame", "TemporalMemory", "TemporalMemoryConfig", "temporal_memory"]

@@ -438,13 +438,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import TaskConfig, control_coordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import JointState
 
 
 # YourArm (6-DOF) — real hardware
-coordinator_yourarm = control_coordinator(
+coordinator_yourarm = ControlCoordinator.blueprint(
     tick_rate=100.0,                    # Control loop frequency (Hz)
     publish_joint_state=True,           # Publish aggregated joint state
     joint_state_frame_id="coordinator",

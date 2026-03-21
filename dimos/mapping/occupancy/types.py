@@ -12,26 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.agent import Agent
-from dimos.core.blueprints import autoconnect
-from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.hardware.sensors.camera.webcam import Webcam
-from dimos.hardware.sensors.camera.zed import compat as zed
+from typing import Literal, TypeAlias
 
-demo_agent = autoconnect(Agent.blueprint())
-
-
-def _create_webcam() -> Webcam:
-    return Webcam(
-        camera_index=0,
-        fps=15,
-        camera_info=zed.CameraInfo.SingleWebcam,
-    )
-
-
-demo_agent_camera = autoconnect(
-    Agent.blueprint(),
-    CameraModule.blueprint(
-        hardware=_create_webcam,
-    ),
-)
+NavigationStrategy: TypeAlias = Literal["simple", "mixed"]

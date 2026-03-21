@@ -89,14 +89,6 @@ class Mid360(NativeModule[Mid360Config], perception.Lidar, perception.IMU):
     imu: Out[Imu]
 
 
-mid360_module = Mid360.blueprint
-
-__all__ = [
-    "Mid360",
-    "Mid360Config",
-    "mid360_module",
-]
-
 # Verify protocol port compliance (mypy will flag missing ports)
 if TYPE_CHECKING:
     Mid360()

@@ -270,6 +270,3 @@ def graspgen(
     return GraspGenModule.blueprint(
         docker_file=dockerfile, docker_build_context=build_context, **kwargs
     )
-
-
-__all__ = ["GraspGenConfig", "GraspGenModule", "graspgen"]

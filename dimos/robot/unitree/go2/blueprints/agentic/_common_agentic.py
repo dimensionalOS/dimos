@@ -13,20 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.skills.navigation import navigation_skill
-from dimos.agents.skills.person_follow import person_follow_skill
-from dimos.agents.skills.speak_skill import speak_skill
-from dimos.agents.web_human_input import web_input
+from dimos.agents.skills.navigation import NavigationSkillContainer
+from dimos.agents.skills.person_follow import PersonFollowSkillContainer
+from dimos.agents.skills.speak_skill import SpeakSkill
+from dimos.agents.web_human_input import WebInput
 from dimos.core.blueprints import autoconnect
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.robot.unitree.unitree_skill_container import unitree_skills
+from dimos.robot.unitree.unitree_skill_container import UnitreeSkillContainer
 
 _common_agentic = autoconnect(
-    navigation_skill(),
-    person_follow_skill(camera_info=GO2Connection.camera_info_static),
-    unitree_skills(),
-    web_input(),
-    speak_skill(),
+    NavigationSkillContainer.blueprint(),
+    PersonFollowSkillContainer.blueprint(camera_info=GO2Connection.camera_info_static),
+    UnitreeSkillContainer.blueprint(),
+    WebInput.blueprint(),
+    SpeakSkill.blueprint(),
 )
 
 __all__ = ["_common_agentic"]

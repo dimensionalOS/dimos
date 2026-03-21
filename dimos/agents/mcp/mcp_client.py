@@ -304,8 +304,3 @@ def _append_image_to_history(
             ]
         )
     )
-
-
-mcp_client = McpClient.blueprint
-
-__all__ = ["McpClient", "McpClientConfig", "mcp_client"]

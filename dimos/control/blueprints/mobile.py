@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from dimos.control.blueprints._hardware import mock_arm, mock_twist_base
 from dimos.control.components import make_twist_base_joints
-from dimos.control.coordinator import TaskConfig, control_coordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -31,7 +31,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 _base_joints = make_twist_base_joints("base")
 
 # Mock holonomic twist base (3-DOF: vx, vy, wz)
-coordinator_mock_twist_base = control_coordinator(
+coordinator_mock_twist_base = ControlCoordinator.blueprint(
     hardware=[mock_twist_base()],
     tasks=[
         TaskConfig(
@@ -49,7 +49,7 @@ coordinator_mock_twist_base = control_coordinator(
 )
 
 # Mock arm (7-DOF) + mock holonomic base (3-DOF)
-coordinator_mobile_manip_mock = control_coordinator(
+coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
     hardware=[mock_arm(), mock_twist_base()],
     tasks=[
         TaskConfig(

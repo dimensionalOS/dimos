@@ -351,7 +351,3 @@ class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
                 time.sleep(period)
 
         logger.info("Execution loop stopped")
-
-
-# Expose blueprint for declarative composition
-joint_trajectory_controller = JointTrajectoryController.blueprint

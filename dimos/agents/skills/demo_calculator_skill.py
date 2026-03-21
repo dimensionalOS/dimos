@@ -36,8 +36,3 @@ class DemoCalculatorSkill(Module):
         """
 
         return f"{int(n1) + int(n2)}"
-
-
-demo_calculator_skill = DemoCalculatorSkill.blueprint
-
-__all__ = ["DemoCalculatorSkill", "demo_calculator_skill"]
