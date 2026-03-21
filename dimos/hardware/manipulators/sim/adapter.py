@@ -16,7 +16,6 @@
 
 Thin wrapper around SimManipInterface that plugs into the adapter registry.
 Arm joint methods are inherited from SimManipInterface.
-Gripper is handled separately — engine joint at index ``dof`` (if present).
 """
 
 from __future__ import annotations
@@ -32,9 +31,7 @@ if TYPE_CHECKING:
 
 
 class SimMujocoAdapter(SimManipInterface):
-    """ManipulatorAdapter backed by MuJoCo simulation.
-
-    Uses ``address`` as the MJCF XML path (same field real adapters use for IP/port).
+    """ Uses ``address`` as the MJCF XML path (same field real adapters use for IP/port).
     If the engine has more joints than ``dof``, the extra joint at index ``dof``
     is treated as the gripper, with ctrl range scaled automatically.
     """
@@ -50,7 +47,7 @@ class SimMujocoAdapter(SimManipInterface):
             raise ValueError("address (MJCF XML path) is required for sim_mujoco adapter")
         engine = MujocoEngine(config_path=Path(address), headless=headless)
 
-        # Detect gripper from engine joints before calling super().__init__
+        # Detect gripper from engine joints
         gripper_idx = None
         gripper_kwargs = {}
         joint_names = list(engine.joint_names)

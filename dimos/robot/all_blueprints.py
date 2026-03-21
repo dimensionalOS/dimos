@@ -156,7 +156,7 @@ all_modules = {
     "replanning-a-star-planner": "dimos.navigation.replanning_a_star.module",
     "rerun-bridge-module": "dimos.visualization.rerun.bridge",
     "ros-nav": "dimos.navigation.rosnav",
-    "simple-phone-teleop-module": "dimos.teleop.phone.phone_extensions",
+    "simple-phone-teleop": "dimos.teleop.phone.phone_extensions",
     "spatial-memory": "dimos.perception.spatial_perception",
     "speak-skill": "dimos.agents.skills.speak_skill",
     "temporal-memory": "dimos.perception.experimental.temporal_memory.temporal_memory",

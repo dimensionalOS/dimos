@@ -35,6 +35,7 @@ XARM6_MODEL_PATH = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
 XARM7_MODEL_PATH = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
 
 # Simulation model paths (MJCF)
+XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
 XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 PIPER_SIM_PATH = LfsPath("piper/scene.xml")
 
@@ -50,7 +51,7 @@ def mock_arm(hw_id: str = "arm", n_joints: int = 7) -> HardwareComponent:
 
 
 def xarm7(hw_id: str = "arm", *, gripper: bool = False) -> HardwareComponent:
-    """XArm7 (7-DOF). Uses MuJoCo sim when --simulation flag is set."""
+    """XArm7 (7-DOF). Uses sim when --simulation flag is set."""
     if global_config.simulation:
         return sim_xarm7(hw_id, headless=False, gripper=gripper)
     return HardwareComponent(
@@ -65,7 +66,7 @@ def xarm7(hw_id: str = "arm", *, gripper: bool = False) -> HardwareComponent:
 
 
 def xarm6(hw_id: str = "arm", *, gripper: bool = False) -> HardwareComponent:
-    """XArm6 (6-DOF). Uses MuJoCo sim when --simulation flag is set."""
+    """XArm6 (6-DOF). Uses sim when --simulation flag is set."""
     if global_config.simulation:
         return sim_xarm6(hw_id, headless=False, gripper=gripper)
     return HardwareComponent(
@@ -80,7 +81,7 @@ def xarm6(hw_id: str = "arm", *, gripper: bool = False) -> HardwareComponent:
 
 
 def piper(hw_id: str = "arm", *, gripper: bool = False) -> HardwareComponent:
-    """Piper arm (6-DOF, CAN bus). Uses MuJoCo sim when --simulation flag is set."""
+    """Piper arm (6-DOF, CAN bus). Uses sim when --simulation flag is set."""
     if global_config.simulation:
         return sim_piper(hw_id, headless=False, gripper=gripper)
     return HardwareComponent(
@@ -94,16 +95,28 @@ def piper(hw_id: str = "arm", *, gripper: bool = False) -> HardwareComponent:
     )
 
 
+def mock_twist_base(hw_id: str = "base") -> HardwareComponent:
+    """Mock holonomic twist base (3-DOF: vx, vy, wz)."""
+    return HardwareComponent(
+        hardware_id=hw_id,
+        hardware_type=HardwareType.BASE,
+        joints=make_twist_base_joints(hw_id),
+        adapter_type="mock_twist_base",
+    )
+
+
+# --- Simulation adapters ---
+
+
 def sim_xarm7(
     hw_id: str = "arm", *, headless: bool = True, gripper: bool = False
 ) -> HardwareComponent:
-    """Simulated XArm7 via MuJoCo (7-DOF)."""
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
         joints=make_joints(hw_id, 7),
         adapter_type="sim_mujoco",
-        address=str(LfsPath("xarm7/scene.xml")),
+        address=str(XARM7_SIM_PATH),
         adapter_kwargs={"headless": headless},
         gripper_joints=make_gripper_joints(hw_id) if gripper else [],
     )
@@ -112,7 +125,6 @@ def sim_xarm7(
 def sim_xarm6(
     hw_id: str = "arm", *, headless: bool = True, gripper: bool = False
 ) -> HardwareComponent:
-    """Simulated XArm6 via MuJoCo (6-DOF)."""
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
@@ -127,7 +139,6 @@ def sim_xarm6(
 def sim_piper(
     hw_id: str = "arm", *, headless: bool = True, gripper: bool = False
 ) -> HardwareComponent:
-    """Simulated Piper via MuJoCo (6-DOF)."""
     return HardwareComponent(
         hardware_id=hw_id,
         hardware_type=HardwareType.MANIPULATOR,
@@ -139,11 +150,3 @@ def sim_piper(
     )
 
 
-def mock_twist_base(hw_id: str = "base") -> HardwareComponent:
-    """Mock holonomic twist base (3-DOF: vx, vy, wz)."""
-    return HardwareComponent(
-        hardware_id=hw_id,
-        hardware_type=HardwareType.BASE,
-        joints=make_twist_base_joints(hw_id),
-        adapter_type="mock_twist_base",
-    )

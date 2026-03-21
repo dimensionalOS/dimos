@@ -33,7 +33,6 @@ class SimManipInterface:
     def __init__(
         self,
         engine: SimulationEngine,
-        *,
         dof: int | None = None,
         gripper_idx: int | None = None,
         gripper_ctrl_range: tuple[float, float] = (0.0, 1.0),
@@ -42,7 +41,6 @@ class SimManipInterface:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._engine = engine
         self._joint_names = list(engine.joint_names)
-        self._dof_override = dof
         self._dof = dof if dof is not None else len(self._joint_names)
         self._connected = False
         self._servos_enabled = False
@@ -64,9 +62,6 @@ class SimManipInterface:
                 self._connected = True
                 self._servos_enabled = True
                 self._joint_names = list(self._engine.joint_names)
-                self._dof = (
-                    self._dof_override if self._dof_override is not None else len(self._joint_names)
-                )
                 self.logger.info(
                     "Successfully connected to simulation",
                     extra={"dof": self._dof},

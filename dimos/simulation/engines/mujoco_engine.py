@@ -289,12 +289,10 @@ class MujocoEngine(SimulationEngine):
                 self._joint_effort_targets[i] = float(efforts[i])
 
     def set_position_target(self, index: int, value: float) -> None:
-        """Set a single joint position target by index."""
         with self._lock:
             self._joint_position_targets[index] = float(value)
 
     def get_position_target(self, index: int) -> float:
-        """Get a single joint position target by index."""
         with self._lock:
             return float(self._joint_position_targets[index])
 
@@ -305,7 +303,6 @@ class MujocoEngine(SimulationEngine):
                 self._joint_position_targets[i] = self._current_position(mapping)
 
     def get_actuator_ctrl_range(self, joint_index: int) -> tuple[float, float] | None:
-        """Return (lo, hi) actuator ctrl range for the joint at *joint_index*."""
         mapping = self._joint_mappings[joint_index]
         if mapping.actuator_id is None:
             return None
@@ -314,7 +311,6 @@ class MujocoEngine(SimulationEngine):
         return (lo, hi)
 
     def get_joint_range(self, joint_index: int) -> tuple[float, float] | None:
-        """Return (lo, hi) joint position range for the joint at *joint_index*."""
         mapping = self._joint_mappings[joint_index]
         if mapping.tendon_qpos_adrs:
             first_adr = mapping.tendon_qpos_adrs[0]
