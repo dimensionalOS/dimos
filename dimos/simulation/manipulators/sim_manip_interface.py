@@ -61,7 +61,6 @@ class SimManipInterface:
             if self._engine.connected:
                 self._connected = True
                 self._servos_enabled = True
-                self._joint_names = list(self._engine.joint_names)
                 self.logger.info(
                     "Successfully connected to simulation",
                     extra={"dof": self._dof},

@@ -43,8 +43,8 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.quest.quest_types import Buttons
 
-# XArm6 teleop - streaming position control
-coordinator_teleop_xarm6 = ControlCoordinator.blueprint(
+# XArm6 servo - streaming position control
+coordinator_servo_xarm6 = ControlCoordinator.blueprint(
     hardware=[xarm6()],
     tasks=[
         TaskConfig(
