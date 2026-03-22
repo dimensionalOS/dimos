@@ -16,6 +16,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 HardwareId = str
 JointName = str
@@ -57,6 +58,7 @@ class HardwareComponent:
     address: str | None = None
     auto_enable: bool = True
     gripper_joints: list[JointName] = field(default_factory=list)
+    adapter_kwargs: dict[str, Any] = field(default_factory=dict)
 
     @property
     def all_joints(self) -> list[JointName]:
