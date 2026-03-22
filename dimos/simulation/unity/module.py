@@ -314,7 +314,9 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
         self._sim_thread.start()
         self._unity_thread = threading.Thread(target=self._unity_loop, daemon=True)
         self._unity_thread.start()
-        self._launch_unity()
+        # Launch Unity in a thread to avoid blocking start() for up to
+        # unity_connect_timeout seconds (default 30s).
+        threading.Thread(target=self._launch_unity, daemon=True).start()
 
     @rpc
     def stop(self) -> None:
