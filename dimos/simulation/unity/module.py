@@ -469,6 +469,7 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
                     finally:
                         with self._state_lock:
                             self._unity_connected = False
+                        self._unity_ready.clear()
                         conn.close()
                 except TimeoutError:
                     continue
