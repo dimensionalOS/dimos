@@ -398,8 +398,20 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
             cwd=str(binary_path.parent),
             env=env,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
+
+        # Read Unity stderr in a background thread for diagnostics.
+        def _drain_stderr() -> None:
+            assert self._unity_process is not None
+            assert self._unity_process.stderr is not None
+            for raw in self._unity_process.stderr:
+                line = raw.decode("utf-8", errors="replace").rstrip()
+                if line:
+                    logger.warning(f"Unity stderr: {line}")
+            self._unity_process.stderr.close()
+
+        threading.Thread(target=_drain_stderr, daemon=True).start()
         logger.info(f"Unity pid={self._unity_process.pid}, waiting for TCP connection...")
 
         if self._unity_ready.wait(timeout=self.config.unity_connect_timeout):
