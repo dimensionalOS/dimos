@@ -698,6 +698,40 @@ class TestDronePerception(unittest.TestCase):
 class TestDroneMovementAndOdometry(unittest.TestCase):
     """Test drone movement commands and odometry."""
 
+    def test_move_by_distance_delegates(self) -> None:
+        """move_by_distance() calls MavlinkConnection.move_by_distance_body_m."""
+        module = DroneConnectionModule(connection_string="replay")
+        module.connection = MagicMock()
+        module.connection.move_by_distance_body_m.return_value = True
+
+        out = module.move_by_distance(2.0, 0.0, 0.0, 0.5)
+
+        module.connection.move_by_distance_body_m.assert_called_once_with(2.0, 0.0, 0.0, 0.5)
+        self.assertIn("move_by_distance applied", out)
+
+    def test_move_by_distance_body_m_fallback_uses_move(self) -> None:
+        """Without LOCAL_POSITION_NED, move_by_distance_body_m uses timed forward velocity."""
+        conn = MavlinkConnection("udp:0.0.0.0:14550")
+        conn.connected = True
+        conn.telemetry = {}
+        conn.move = MagicMock(return_value=True)  # type: ignore[method-assign]
+
+        assert conn.move_by_distance_body_m(2.0, 0.0, 0.0, 0.5) is True
+        conn.move.assert_called_once_with(Vector3(0.0, 0.5, 0.0), 4.0)
+
+    def test_move_by_distance_body_m_uses_local_ned(self) -> None:
+        """With LOCAL_POSITION_NED + ATTITUDE, move_by_distance_body_m calls set_position_target."""
+        conn = MavlinkConnection("udp:0.0.0.0:14550")
+        conn.connected = True
+        conn.telemetry = {
+            "LOCAL_POSITION_NED": {"x": 1.0, "y": 2.0, "z": 3.0},
+            "ATTITUDE": {"yaw": 0.0},
+        }
+        conn.set_position_target = MagicMock(return_value=True)  # type: ignore[method-assign]
+
+        assert conn.move_by_distance_body_m(1.0, 0.0, 0.0, 0.3) is True
+        conn.set_position_target.assert_called_once_with(2.0, 2.0, 3.0, 0.0, 0.0, 0.0)
+
     @patch("dimos.utils.testing.replay.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
     def test_movement_command_conversion(self, mock_get_data, mock_replay) -> None:

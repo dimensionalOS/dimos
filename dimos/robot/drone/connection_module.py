@@ -276,29 +276,53 @@ class DroneConnectionModule(Module[Config]):
 
     @skill
     def move(self, x: float = 0.0, y: float = 0.0, z: float = 0.0, duration: float = 0.0) -> None:
-        """Send movement command to drone.
+        """Send velocity command (MAV_FRAME_BODY_NED via SET_POSITION_TARGET_LOCAL_NED).
+
+        Use for continuous or manual velocity. Tracking uses move_twist, not this.
 
         Args:
-            x: Velocity in x (forward) in m/s
-            y: Velocity in y (left) in m/s
-            z: Velocity in z (up) in m/s
-            duration: How long to move (0 = continuous)
+            x: Body right velocity in m/s.
+            y: Forward velocity in m/s.
+            z: Down velocity in m/s (positive = descend; negative = climb).
+            duration: How long to move (0 = continuous).
         """
         if self.connection:
             self.connection.move(Vector3(x, y, z), duration)
 
     @skill
-    def move_forward(self, distance: float, speed: float = 0.3) -> None:
-        """Move forward by a given distance in meters.
+    def move_by_distance(
+        self,
+        forward_m: float = 0.0,
+        right_m: float = 0.0,
+        down_m: float = 0.0,
+        speed: float = 0.3,
+    ) -> str:
+        """Move by body-frame displacement in meters.
+
+        Prefers a local NED position setpoint when telemetry allows; otherwise timed forward
+        velocity. For absolute NED coordinates use go_to_position. For follow/track use
+        follow_object (velocity via move_twist), not this.
 
         Args:
-            distance: Distance to move in meters (positive = forward).
-            speed: Forward speed in m/s. Default 0.3.
+            forward_m: Forward/backward distance (m); positive = forward.
+            right_m: Right/left distance (m); positive = right.
+            down_m: Down distance (m); positive = down (NED).
+            speed: Fallback forward speed (m/s) when local position is unavailable.
+
+        Returns:
+            Status message for the agent.
         """
-        if self.connection and abs(distance) >= 0.01:
-            duration = abs(distance) / max(0.01, speed)
-            vx = speed if distance >= 0 else -speed
-            self.connection.move(Vector3(vx, 0.0, 0.0), duration)
+        if not self.connection:
+            return "Failed: no connection."
+        ok = self.connection.move_by_distance_body_m(forward_m, right_m, down_m, speed)
+        if ok:
+            return (
+                f"move_by_distance applied: forward={forward_m}m right={right_m}m down={down_m}m "
+                "(local NED setpoint if available, else forward velocity fallback)."
+            )
+        return (
+            "Failed move_by_distance (e.g. lateral/vertical without LOCAL_POSITION_NED, or FC rejected)."
+        )
 
     @skill
     def go_to_position(
@@ -444,7 +468,7 @@ class DroneConnectionModule(Module[Config]):
     def follow_object(
         self, object_description: str, duration: float = 0.0
     ) -> str:
-        """Follow an object with visual servoing.
+        """Follow an object with visual servoing (velocity via move_twist, not position setpoints).
 
         Example:
 

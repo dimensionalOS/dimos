@@ -279,7 +279,7 @@ class DroneTrackingModule(Module):
                     vy = max(-self._max_velocity, min(self._max_velocity, vy))
                     vz = max(-self._max_velocity, min(self._max_velocity, vz))
 
-                # Publish: vx, vz, yaw_rate (vy=0)
+                # Velocity only (Twist -> move_twist); no position setpoints for follow.
                 if self.cmd_vel.transport:
                     twist = Twist()
                     twist.linear = Vector3(vx, vy, vz)

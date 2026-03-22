@@ -48,6 +48,7 @@ all_blueprints = {
     "demo-skill": "dimos.agents.skills.demo_skill:demo_skill",
     "drone-agentic": "dimos.robot.drone.blueprints.agentic.drone_agentic:drone_agentic",
     "drone-agentic-gazebo": "dimos.robot.drone.blueprints.agentic.drone_agentic:drone_agentic_gazebo",
+    "drone-agentic-gazebo-spatial": "dimos.robot.drone.blueprints.agentic.drone_agentic:drone_agentic_gazebo_spatial",
     "drone-basic": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic",
     "drone-basic-gazebo": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic_gazebo",
     "drone-basic-gazebo-spatial": "dimos.robot.drone.blueprints.basic.drone_basic:drone_basic_gazebo_spatial",

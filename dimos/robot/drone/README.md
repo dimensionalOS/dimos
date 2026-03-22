@@ -24,6 +24,7 @@ dimos run drone-agentic
 dimos run drone-basic-gazebo
 dimos run drone-agentic-gazebo
 dimos run drone-basic-gazebo-spatial
+dimos run drone-agentic-gazebo-spatial  # + spatial memory + navigate
 ```
 
 To interact with the agent, run `dimos humancli` in a separate terminal.
@@ -53,8 +54,8 @@ Composes on top of `drone-basic`, adding autonomous capabilities:
 | `McpServer` + `McpClient` | LLM agent (default: GPT-4o) via MCP |
 | `WebInput` | Web/CLI interface for human commands |
 
-### `drone-basic-gazebo` / `drone-agentic-gazebo` / `drone-basic-gazebo-spatial`
-Same as the non-Gazebo blueprints but with video from Gazebo (RTP/H264 on UDP 5600). Odometry from MAVLink; when SITL sends `LOCAL_POSITION_NED` it is used for position. Spatial variant adds the semantic map (camera + TF).
+### `drone-basic-gazebo` / `drone-agentic-gazebo` / `drone-basic-gazebo-spatial` / `drone-agentic-gazebo-spatial`
+Same as the non-Gazebo blueprints but with video from Gazebo (RTP/H264 on UDP 5600). Odometry from MAVLink; when SITL sends `LOCAL_POSITION_NED` it is used for position. Spatial variants add `SpatialMemory`. **`drone-agentic-gazebo-spatial`** also adds `DroneSpatialNavSkill` with **`navigate_to_where_i_saw(description)`**: text-search remembered views and send a local NED position target to the drone.
 
 ## Running with Gazebo + ArduPilot
 

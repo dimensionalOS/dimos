@@ -17,6 +17,7 @@
 
 import functools
 import logging
+import math
 import time
 from typing import Any
 
@@ -345,6 +346,63 @@ class MavlinkConnection:
             )
 
         return True
+
+    def move_by_distance_body_m(
+        self,
+        forward_m: float,
+        right_m: float = 0.0,
+        down_m: float = 0.0,
+        speed: float = 0.3,
+    ) -> bool:
+        """Move by body-frame displacement in meters.
+
+        If LOCAL_POSITION_NED and ATTITUDE are present, applies offset in local NED via
+        set_position_target. Otherwise uses timed forward body velocity (same mapping as move).
+
+        Body axes match move() / Vector3: x right, y forward, z down.
+
+        Args:
+            forward_m: Forward/backward distance (m); positive = forward.
+            right_m: Right/left distance (m); positive = right.
+            down_m: Down distance (m); positive = down (NED).
+            speed: Forward speed (m/s) for velocity fallback when local position is missing.
+
+        Returns:
+            True if a command was sent or displacement was zero; False if invalid or rejected.
+        """
+        if not self.connected:
+            return False
+
+        if abs(forward_m) < 0.01 and abs(right_m) < 0.01 and abs(down_m) < 0.01:
+            return True
+
+        local = self.telemetry.get("LOCAL_POSITION_NED")
+        if (
+            local
+            and isinstance(local, dict)
+            and all(k in local for k in ("x", "y", "z"))
+        ):
+            yaw = float(self.telemetry.get("ATTITUDE", {}).get("yaw", 0.0))
+            c, s = math.cos(yaw), math.sin(yaw)
+            d_n = forward_m * c - right_m * s
+            d_e = forward_m * s + right_m * c
+            d_d = down_m
+            x = float(local["x"]) + d_n
+            y = float(local["y"]) + d_e
+            z = float(local["z"]) + d_d
+            return self.set_position_target(x, y, z, 0.0, 0.0, 0.0)
+
+        if abs(right_m) >= 0.01 or abs(down_m) >= 0.01:
+            logger.warning(
+                "move_by_distance_body_m: LOCAL_POSITION_NED required for lateral/vertical "
+                "displacement; forward-only velocity fallback available"
+            )
+            if abs(forward_m) < 0.01:
+                return False
+
+        duration = abs(forward_m) / max(0.01, speed)
+        fwd_vel = speed if forward_m >= 0 else -speed
+        return self.move(Vector3(0.0, fwd_vel, 0.0), duration)
 
     def move_twist(self, twist: Twist, duration: float = 0.0, lock_altitude: bool = True) -> bool:
         """Move using ROS-style Twist commands.

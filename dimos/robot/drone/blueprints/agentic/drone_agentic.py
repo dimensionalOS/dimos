@@ -26,20 +26,24 @@ from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillConta
 from dimos.agents.skills.osm import OsmSkill
 from dimos.agents.web_human_input import WebInput
 from dimos.core.blueprints import autoconnect
-from dimos.robot.drone.blueprints.basic.drone_basic import drone_basic, drone_basic_gazebo
+from dimos.robot.drone.blueprints.basic.drone_basic import (
+    drone_basic,
+    drone_basic_gazebo,
+    drone_basic_gazebo_spatial,
+)
+from dimos.robot.drone.drone_spatial_nav_skill import DroneSpatialNavSkill
 from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
 
 DRONE_SYSTEM_PROMPT = """\
-You are controlling a DJI drone with MAVLink interface.
-You have access to drone control skills you are already flying so only run move_twist, set_mode, and fly_to.
-When the user gives commands, use the appropriate skills to control the drone.
-Always confirm actions and report results. Send fly_to commands only at above 200 meters altitude to be safe.
+You control a drone over MAVLink (ArduPilot-compatible). Use the tool/schema names and parameters exactly as exposed.
+Confirm actions and report results. For GPS missions (fly_to), use safe altitudes appropriate to the environment; do not invent extreme altitudes. Use is_flying_to_target to see if a fly_to is still active.
 
-Motion skills: move(x, y, z, duration) and move_forward(distance, speed) use velocity commands.
-For direct position use go_to_position(x, y, z, vx_ff, vy_ff, vz_ff): position in local NED (m; z negative = up) with optional velocity feedforward.
-Yaw control: use rotate_to(heading_deg) to turn to a heading (0–360°, 0=North, 90=East). Remember you have this for "turn left/right", "face North", etc.
+Motion (see each tool's Args): move (velocity, body NED: x right, y forward, z down m/s); move_by_distance (body displacement m → local NED setpoint when available, else timed forward velocity); go_to_position (absolute local NED: x North, y East, z Down — z negative means up);
+rotate_to(heading_deg) for compass yaw (0° North, 90° East), takeoff, land, arm, disarm, set_mode.
+Tracking/follow: follow_object (velocity via move_twist only — do not use move_by_distance for tracking). Perception: observe (camera frame). Maps/OSM: place and route tools when GPS or location context applies.
+Spatial stack (drone-agentic-gazebo-spatial): navigate_to_where_i_saw(description) runs CLIP on stored views and sends a local NED position target; memory fills when the drone moves and TF+video are available.
 
-Here are some GPS locations to remember
+Example GPS waypoints (San Francisco area):
 6th and Natoma intersection: 37.78019978319006, -122.40770815020853,
 454 Natoma (Office): 37.780967465525244, -122.40688342010769
 5th and mission intersection: 37.782598539339695, -122.40649441875473
@@ -74,8 +78,24 @@ drone_agentic_gazebo = autoconnect(
     ]
 )
 
+drone_agentic_gazebo_spatial = autoconnect(
+    drone_basic_gazebo_spatial,
+    DroneTrackingModule.blueprint(outdoor=False),
+    GoogleMapsSkillContainer.blueprint(),
+    OsmSkill.blueprint(),
+    DroneSpatialNavSkill.blueprint(),
+    Agent.blueprint(system_prompt=DRONE_SYSTEM_PROMPT, model="gpt-4o-mini"),
+    WebInput.blueprint(),
+).remappings(
+    [
+        (DroneTrackingModule, "video_input", "video"),
+        (DroneTrackingModule, "cmd_vel", "movecmd_twist"),
+    ]
+)
+
 __all__ = [
     "DRONE_SYSTEM_PROMPT",
     "drone_agentic",
     "drone_agentic_gazebo",
+    "drone_agentic_gazebo_spatial",
 ]
