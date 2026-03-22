@@ -82,3 +82,19 @@ class SimulationEngine(ABC):
     @abstractmethod
     def hold_current_position(self) -> None:
         """Hold current joint positions."""
+
+    @abstractmethod
+    def set_position_target(self, joint_idx: int, value: float) -> None:
+        """Set position target for a single joint/actuator by index."""
+
+    @abstractmethod
+    def get_position_target(self, joint_idx: int) -> float:
+        """Get current position target for a single joint/actuator by index."""
+
+    def get_actuator_ctrl_range(self, actuator_idx: int) -> tuple[float, float] | None:
+        """Get (min, max) ctrl range for an actuator. None if not available."""
+        return None
+
+    def get_joint_range(self, joint_idx: int) -> tuple[float, float] | None:
+        """Get (min, max) position range for a joint. None if not available."""
+        return None

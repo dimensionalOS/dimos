@@ -288,11 +288,44 @@ class MujocoEngine(SimulationEngine):
             for i in range(len(efforts)):
                 self._joint_effort_targets[i] = float(efforts[i])
 
+    def set_position_target(self, index: int, value: float) -> None:
+        with self._lock:
+            self._joint_position_targets[index] = float(value)
+
+    def get_position_target(self, index: int) -> float:
+        with self._lock:
+            return float(self._joint_position_targets[index])
+
     def hold_current_position(self) -> None:
         with self._lock:
             self._command_mode = "position"
             for i, mapping in enumerate(self._joint_mappings):
                 self._joint_position_targets[i] = self._current_position(mapping)
+
+    def get_actuator_ctrl_range(self, joint_index: int) -> tuple[float, float] | None:
+        mapping = self._joint_mappings[joint_index]
+        if mapping.actuator_id is None:
+            return None
+        lo = float(self._model.actuator_ctrlrange[mapping.actuator_id, 0])
+        hi = float(self._model.actuator_ctrlrange[mapping.actuator_id, 1])
+        return (lo, hi)
+
+    def get_joint_range(self, joint_index: int) -> tuple[float, float] | None:
+        mapping = self._joint_mappings[joint_index]
+        if mapping.tendon_qpos_adrs:
+            first_adr = mapping.tendon_qpos_adrs[0]
+            for jid in range(self._model.njnt):
+                if self._model.jnt_qposadr[jid] == first_adr:
+                    return (
+                        float(self._model.jnt_range[jid, 0]),
+                        float(self._model.jnt_range[jid, 1]),
+                    )
+        if mapping.joint_id is not None:
+            return (
+                float(self._model.jnt_range[mapping.joint_id, 0]),
+                float(self._model.jnt_range[mapping.joint_id, 1]),
+            )
+        return None
 
 
 __all__ = [
