@@ -513,6 +513,45 @@ These are moot for the native host architecture (Finding #23), but documented fo
 
 ---
 
+## Finding #25: glibc 2.31 vs 2.32 — rclpy Incompatible, pybind11 Solution (2026-03-22)
+
+**Problem**: NOS host is Ubuntu 20.04 (glibc 2.31). ROS2 Humble's rclpy C extension (`_rclpy_pybind11.cpython-310-aarch64-linux-gnu.so`) was compiled on Ubuntu 22.04 (glibc 2.32+). Loading it fails with `GLIBC_2.32 not found`.
+
+This blocks the `/NAV_CMD` velocity publisher, which was the only host-side component needing rclpy. Everything else uses LCM (host ↔ container) or UDP (M20Connection ↔ robot).
+
+**Solution**: pybind11 module (`nav_cmd_pub.cpp`) compiled directly on NOS against the host's `libdrdds.so` (FastDDS 2.14). Wraps `DrDDSPublisher<NavCmdPubSubType>` with a 3-method Python API: `publish(x_vel, y_vel, yaw_vel)`, `matched_count()`, `shutdown()`.
+
+**Performance**: 0.02ms per publish (50x under 1ms requirement). Built with g++ 9.3.0 on aarch64.
+
+**Key files**:
+- `dimos/robot/deeprobotics/m20/docker/drdds_bridge/src/nav_cmd_publisher.cpp` — pybind11 module
+- `dimos/robot/deeprobotics/m20/docker/drdds_bridge/build_nav_cmd_pub.sh` — build script
+- `dimos/robot/deeprobotics/m20/velocity_controller_dds.py` — updated to use `nav_cmd_pub`
+
+---
+
+## Finding #26: rosnav3 Changed FAST_LIO Topic Names + Added Autonomy Bridge (2026-03-22)
+
+Latest rosnav3 merge introduced `fastlio2_autonomy_bridge` — a lifecycle node that remaps FAST_LIO output:
+- `/fastlio2/lio_odom` → `/state_estimation`
+- `/fastlio2/world_cloud` → `/registered_scan`
+
+FAST_LIO itself now reads config from `lio_autonomy.yaml` which expects:
+- `/lidar/scan` (was `/bridge/LIDAR_POINTS` in our `robosense.yaml`)
+- `/imu/data` (was `/IMU`)
+
+Created `lio_autonomy_m20.yaml` to override with M20 topics. But the deeper issue is FastDDS discovery: ros2_pub and FAST_LIO are in the same container but use different FastDDS profiles, preventing topic discovery. The old `fastdds_m20.xml` was UDP-only (for AOS unicast discovery), which prevents intra-container SHM communication.
+
+**Status**: FAST_LIO starts, bridge publishes at 10Hz, but FAST_LIO never receives data. Needs a unified FastDDS config that supports both AOS unicast discovery AND intra-container SHM.
+
+---
+
+## Finding #27: NOS Has 15GB RAM (Not 2GB) (2026-03-22)
+
+Previous spec stated "~2GB usable RAM" — this was from the old architecture where the dimos-m20 Docker container consumed most memory. Verified via `free -h`: NOS has **15GB total, 13GB available**. The nav container memory limit (1.5g) and SHM size (1g) are appropriate given this headroom.
+
+---
+
 ## Remaining Work
 
 ### Completed
@@ -528,22 +567,33 @@ These are moot for the native host architecture (Finding #23), but documented fo
 9. ~~**ARISE-SLAM compatibility assessment**~~: DONE. Velodyne mode likely works with `scan_line: 32`.
 10. ~~**Architecture clarification**~~: DONE. dimos runs natively, not in container.
 
-### Phase 1.1: NOS Host Setup (BLOCKED — robot offline)
+### Phase 1.1: NOS Host Setup
 
-11. **Install uv on NOS**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-12. **Create Python 3.10 venv**: `uv venv --python 3.10`
-13. **Install dimos from source**: `uv pip install -e /path/to/dimos`
-14. **Rebuild drdds-ros2-msgs for Python 3.10 ABI**: Required for `/NAV_CMD` publishing.
-15. **Add `deploy.sh setup` subcommand**: One-time NOS host setup automation.
+11. ~~**Install uv on NOS**~~: DONE. uv 0.10.12 at `~/.local/bin/uv`.
+12. ~~**Create Python 3.10 venv**~~: DONE. `~/dimos-venv` with CPython 3.10.20.
+13. ~~**Install dimos from source**~~: DONE. `uv pip install -e /opt/dimos/src` — all binary wheels, no compilation on NOS.
+14. ~~**Build drdds-ros2-msgs for Python 3.10**~~: DONE. Built inside nav container (colcon + Humble rosidl), NavCmd pure Python import works on host.
+15. **Add `deploy.sh setup` subcommand**: Not yet automated — steps done manually.
+
+### Phase 1.1b: glibc Compatibility (Finding #25)
+
+16. ~~**Discover rclpy glibc incompatibility**~~: DONE. Humble rclpy needs glibc 2.32+, NOS has 2.31.
+17. ~~**Build pybind11 NavCmd publisher**~~: DONE. `nav_cmd_pub.so` compiled on NOS, 0.02ms/publish. Replaces rclpy entirely for `/NAV_CMD`.
+18. ~~**Update velocity_controller_dds.py**~~: DONE. Uses `nav_cmd_pub` instead of rclpy.
 
 ### Phase 1.2: M20ROSNavConfig
 
-16. **Fix M20ROSNavConfig inheritance**: Currently extends `ModuleConfig`, should extend `ROSNavConfig` from `rosnav_module.py` for proper DockerModule behavior.
-17. **Update blueprint to pass M20 config**: `ros_nav(config=M20ROSNavConfig())` instead of `ros_nav()` with default G1 settings.
+19. ~~**Fix M20ROSNavConfig inheritance**~~: DONE. Extends `ROSNavConfig`, `M20ROSNav` subclass with `default_config = M20ROSNavConfig`.
+20. ~~**Update blueprint**~~: DONE. Uses `m20_ros_nav()` instead of `ros_nav()`.
+21. ~~**Merge latest rosnav3**~~: DONE. 20 new commits including fastlio2_autonomy_bridge, PGO, wiring cleanup.
+22. ~~**Fix self._speed bug**~~: DONE. Jeff's code referenced nonexistent `self._speed` → fixed to `self._max_linear_speed`.
+23. ~~**Add dimos/spec/__init__.py**~~: DONE. Needed for `from dimos import spec; spec.Camera`.
 
-### Phase 1.3: End-to-End Test
+### Phase 1.3: End-to-End Test (BLOCKED — FastDDS config mismatch)
 
-18. **Run launch_nos.py natively on NOS**: Verify dimos → DockerModule → dimos-nav → FAST_LIO → odometry → costmap.
+24. **Fix FastDDS config for intra-container discovery**: ros2_pub publishes `/bridge/LIDAR_POINTS` but FAST_LIO can't see it. Root cause: `fastdds_m20.xml` was UDP-only (no SHM), and even with SHM added, DDS discovery between ros2_pub and FAST_LIO fails. See Finding #25.
+25. **Align FAST_LIO topic names with bridge**: New rosnav3 uses `lio_autonomy.yaml` expecting `/lidar/scan` + `/imu/data`. Our bridge publishes `/bridge/LIDAR_POINTS` + `/IMU`. Created `lio_autonomy_m20.yaml` override but FAST_LIO still can't receive data due to #24.
+26. **Run launch_nos.py natively on NOS**: Blocked by #24.
 
 ### ARISE-SLAM (Phase 2)
 

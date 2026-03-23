@@ -24,15 +24,24 @@
                 <receiveBufferSize>1048576</receiveBufferSize>
                 <non_blocking_send>true</non_blocking_send>
             </transport_descriptor>
+            <!-- SHM for intra-container communication (ros2_pub → FAST_LIO).
+                 32MB segment fits 3MB lidar messages without UDP fallback. -->
+            <transport_descriptor>
+                <transport_id>shm_large</transport_id>
+                <type>SHM</type>
+                <segment_size>33554432</segment_size>
+                <maxMessageSize>4194304</maxMessageSize>
+            </transport_descriptor>
         </transport_descriptors>
 
         <participant profile_name="m20_nav_participant" is_default_profile="true">
             <rtps>
-                <!-- Disable built-in transports; use only the custom UDP above -->
+                <!-- Disable built-in transports; use custom UDP + SHM -->
                 <useBuiltinTransports>false</useBuiltinTransports>
 
                 <userTransports>
                     <transport_id>udp_transport</transport_id>
+                    <transport_id>shm_large</transport_id>
                 </userTransports>
 
                 <builtin>
