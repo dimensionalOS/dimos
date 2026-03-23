@@ -29,8 +29,8 @@ from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.nav_msgs import Path
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.std_msgs import Bool
-from dimos.navigation.rosnav import ros_nav
 from dimos.robot.deeprobotics.m20.connection import m20_connection
+from dimos.robot.deeprobotics.m20.rosnav_docker import m20_ros_nav
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
 # NOS-tuned parameters from domain expert (Lesh):
@@ -50,7 +50,7 @@ m20_rosnav = (
             can_climb=0.25,
             smoothing=5.0,
         )),
-        ros_nav(),
+        m20_ros_nav(),
         websocket_vis(),
     )
     .global_config(

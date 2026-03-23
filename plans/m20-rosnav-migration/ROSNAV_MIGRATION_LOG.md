@@ -3,7 +3,7 @@
 **Goal**: Replace M20's proprietary drdds-based navigation stack with FAST_LIO (ROS2 Humble) + dimos ROSNav, enabling autonomous navigation on the M20 quadruped.
 
 **Date started**: 2026-03-12
-**Last updated**: 2026-03-18
+**Last updated**: 2026-03-22
 **Branch**: `integration/m20-rosnav-migration`
 
 ---
@@ -416,6 +416,103 @@ FAST_LIO /Odometry → ROSNav → odom → websocket_vis
 
 ---
 
+## Finding #20: Merged jeff/fix/rosnav3 — ROSNav Restructured (2026-03-20)
+
+Merged Jeff's `jeff/fix/rosnav3` branch (586 files changed). Key changes:
+- `rosnav.py` → `dimos/navigation/rosnav/rosnav_module.py` (package restructure)
+- Docker module init + RPC timeout fixes
+- Multi-arch Dockerfile (amd64: desktop-full, arm64: ros-base)
+- CI cleanup, websocket_vis updates
+
+15 merge conflicts resolved. All non-M20 files accepted Jeff's version. Dockerfile kept our SHM config (16MB segment) while taking Jeff's multi-arch base images.
+
+Ported our topic remaps to the new module location:
+- `/registered_scan` → `/cloud_registered` (FAST_LIO's global-frame scan)
+- `/state_estimation` → `/Odometry` (FAST_LIO odometry output)
+
+Added missing `__init__.py` to `dimos/navigation/rosnav/` (Jeff's merge didn't include it, causing ImportError).
+
+---
+
+## Finding #21: time Field Removal Was a Misdiagnosis (2026-03-20)
+
+The per-point `time` field was removed from ros2_pub to "fix" FAST_LIO's "lidar loop back" error. This was wrong:
+
+- FAST_LIO with `lidar_type: 5` reads only x,y,z,intensity via `pcl::fromROSMsg` — it **completely ignores** extra fields like `time` and `ring`
+- The actual fix was restarting yesense (IMU) — FAST_LIO needs IMU data during init
+- The `time` field removal happened in the same deploy cycle, so the fix was incorrectly attributed to it
+
+Re-added all 6 fields (x, y, z, intensity, ring, time). Both FAST_LIO and ARISE-SLAM now work with the same bridge output.
+
+**Lesson**: Don't attribute fixes to coincidental changes. The field removal had zero effect on FAST_LIO — only the restart sequence mattered.
+
+---
+
+## Finding #22: ARISE-SLAM Compatibility Assessment (2026-03-20)
+
+ARISE-SLAM (`arise_slam_mid360`) supports three sensor types: `velodyne`, `ouster`, `livox`. No native `robosense` option.
+
+**Velodyne mode** is the best candidate for RSAIRY lidars:
+- `PointcloudXYZITR` expects: x(f32), y(f32), z(f32), intensity(f32), time(f32), ring(u16)
+- Our bridge output has: x(f32), y(f32), z(f32), intensity(f32), ring(u16), time(f64)
+- `pcl::fromROSMsg` maps by **name** not position — field ordering doesn't matter
+- time datatype mismatch (f64 vs f32) may need investigation
+
+**Topic mapping** (ARISE-SLAM ↔ FAST_LIO):
+
+| | ARISE-SLAM | FAST_LIO |
+|---|---|---|
+| Lidar input | `/lidar/scan` | `/bridge/LIDAR_POINTS` |
+| IMU input | `/imu/data` | `/IMU` |
+| Odom output | `/state_estimation` | `/Odometry` |
+| Scan output | `/registered_scan` | `/cloud_registered` |
+| scan_line | 4 (Livox) → 32 (RSAIRY) | 32 |
+| sensor type | `velodyne` | `lidar_type: 5` |
+
+An M20-specific ARISE-SLAM config with `sensor: "velodyne"`, `scan_line: 32`, and M20 topic names is needed for Phase 2.
+
+---
+
+## Finding #23: Architecture Clarification — dimos Runs Natively, Not in Container (2026-03-22)
+
+**Critical realization**: The `ghcr.io/aphexcx/m20-nos:latest` container (dimos-m20) is the **OLD architecture** where everything ran in a single Docker container. The ROSNav migration target is:
+
+```
+NOS Host (native, Python 3.10 via uv):
+  dimos (m20_rosnav blueprint)
+    ├── M20Connection (UDP velocity + camera)
+    ├── VoxelGridMapper
+    ├── CostMapper
+    ├── WebsocketVisModule
+    └── ROSNav (DockerModule → manages dimos-nav container)
+
+dimos-nav Container (ROS2 Humble):
+  ├── FAST_LIO → /Odometry, /cloud_registered
+  ├── FAR Planner
+  ├── base_autonomy
+  └── ROSNav bridge (ROS2 ↔ LCM, runs via entrypoint.sh)
+```
+
+**Key changes from old architecture**:
+- No `dimos-m20` container at all
+- dimos runs natively on NOS with uv/Python 3.10
+- ROSNav is a DockerModule that manages the dimos-nav container
+- NOS currently only has Python 3.8 (Foxy) — needs Python 3.10 via uv
+
+**Jeff confirmed** (2026-03-22): base off `jeff/fix/rosnav3`, specifically mimic `rosnav_module.py` at commit d37401a6. ROSNav as DockerModule is the correct pattern.
+
+---
+
+## Finding #24: Docker Socket Required for DockerModule (2026-03-21)
+
+When testing with the old m20-nos container, the ROSNav DockerModule failed because:
+1. `/var/run/docker.sock` was not mounted (fixed in deploy.sh)
+2. Docker CLI binary was not installed in the container
+
+These are moot for the native host architecture (Finding #23), but documented for reference. When dimos runs natively on NOS, it has direct access to Docker.
+
+---
+
 ## Remaining Work
 
 ### Completed
@@ -425,12 +522,33 @@ FAST_LIO /Odometry → ROSNav → odom → websocket_vis
 3. ~~**Persist container fastdds.xml fix**~~: DONE. Baked into Dockerfile.
 4. ~~**Connect dimos to FAST_LIO odometry**~~: DONE. ROSNav subscribes to `/Odometry`.
 5. ~~**Point cloud for costmap**~~: DONE. ROSNav subscribes to `/cloud_registered`.
+6. ~~**Merge jeff/fix/rosnav3**~~: DONE. 586 files, 15 conflicts resolved.
+7. ~~**Port topic remaps to new module**~~: DONE. `/cloud_registered` + `/Odometry`.
+8. ~~**Re-add time field to bridge**~~: DONE. All 6 fields preserved.
+9. ~~**ARISE-SLAM compatibility assessment**~~: DONE. Velodyne mode likely works with `scan_line: 32`.
+10. ~~**Architecture clarification**~~: DONE. dimos runs natively, not in container.
 
-### ARISE-SLAM Investigation
+### Phase 1.1: NOS Host Setup (BLOCKED — robot offline)
 
-6. **Evaluate ARISE-SLAM vs FAST_LIO**: Per the epic, ARISE-SLAM is the target SLAM system. Need to build and test ARISE-SLAM with the same bridge infrastructure.
+11. **Install uv on NOS**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+12. **Create Python 3.10 venv**: `uv venv --python 3.10`
+13. **Install dimos from source**: `uv pip install -e /path/to/dimos`
+14. **Rebuild drdds-ros2-msgs for Python 3.10 ABI**: Required for `/NAV_CMD` publishing.
+15. **Add `deploy.sh setup` subcommand**: One-time NOS host setup automation.
 
-7. **ARISE-SLAM field requirements**: Check if ARISE-SLAM needs different PointCloud2 field layout or lidar_type configuration than FAST_LIO.
+### Phase 1.2: M20ROSNavConfig
+
+16. **Fix M20ROSNavConfig inheritance**: Currently extends `ModuleConfig`, should extend `ROSNavConfig` from `rosnav_module.py` for proper DockerModule behavior.
+17. **Update blueprint to pass M20 config**: `ros_nav(config=M20ROSNavConfig())` instead of `ros_nav()` with default G1 settings.
+
+### Phase 1.3: End-to-End Test
+
+18. **Run launch_nos.py natively on NOS**: Verify dimos → DockerModule → dimos-nav → FAST_LIO → odometry → costmap.
+
+### ARISE-SLAM (Phase 2)
+
+19. **Create M20 ARISE-SLAM config**: `sensor: "velodyne"`, `scan_line: 32`, M20 topic names.
+20. **Test time field compatibility**: Verify f64→f32 conversion works in pcl::fromROSMsg.
 
 ---
 
@@ -450,3 +568,8 @@ FAST_LIO /Odometry → ROSNav → odom → websocket_vis
 | fastdds.xml | (in container) `/ros2_ws/config/fastdds.xml` | Subscriber SHM profile (32MB segment, 4MB maxMessageSize) |
 | drdds-bridge.service | `dimos/robot/deeprobotics/m20/docker/drdds_bridge/drdds-bridge.service` | Systemd service (starts before rsdriver) |
 | plan.md | `plans/m20-rosnav-migration/05-drdds-bridge/plan.md` | Original bridge implementation plan |
+| rosnav_module.py | `dimos/navigation/rosnav/rosnav_module.py` | ROSNav module (Jeff's restructured version) |
+| m20_rosnav.py | `dimos/robot/deeprobotics/m20/blueprints/rosnav/m20_rosnav.py` | M20 ROSNav blueprint |
+| rosnav_docker.py | `dimos/robot/deeprobotics/m20/rosnav_docker.py` | M20ROSNavConfig (needs fix — see #16) |
+| launch_nos.py | `dimos/robot/deeprobotics/m20/docker/launch_nos.py` | Host-side launcher for native dimos |
+| spec.md | `plans/m20-rosnav-migration/02-spec/spec.md` | Full migration spec (Phase 1.1-1.8) |

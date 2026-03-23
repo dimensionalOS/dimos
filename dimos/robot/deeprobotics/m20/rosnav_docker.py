@@ -17,101 +17,95 @@
 M20ROSNavConfig: Docker configuration for running the CMU navigation stack
 (FASTLIO2 + FAR planner + base_autonomy) on a Deep Robotics M20.
 
-The container runs on the M20 NOS (Ubuntu 20.04 / arm64 / RK3588). DDS domain 0
-matches the NOS rsdriver and lio_perception stack. Volumes are minimal — no X11,
-Unity, or simulation assets.
+Extends the base ROSNavConfig with M20-specific overrides:
+- NOS (RK3588, arm64) has no NVIDIA GPU → docker_gpus=None
+- 15GB total RAM but shared with host dimos + bridge → 512m SHM, 1.5g memory limit for nav container
+- DDS domain 0 (matches NOS rsdriver/yesense)
+- No X11, Unity, or simulation assets
+- IPC host for drdds bridge shared memory
 """
 
-from dataclasses import dataclass, field
+from dataclasses import field
 from pathlib import Path
 
-from dimos.core.module import ModuleConfig
+from dimos.navigation.rosnav.rosnav_module import ROSNav, ROSNavConfig
 
 
-@dataclass
-class M20ROSNavConfig(ModuleConfig):
-    """Docker-oriented config for the M20 navigation container.
-
-    Acceptance criteria:
-      - M20ROSNavConfig() instantiates without error
-      - docker_env["ROS_DOMAIN_ID"] == "0"
-      - docker_extra_args contains "--memory=1.5g"
-      - docker_volumes does NOT contain X11 or Unity paths
-      - docker_env["LOCALIZATION_METHOD"] == "fastlio"
-    """
-
+class M20ROSNavConfig(ROSNavConfig):
     # --- Docker image ---
     docker_image: str = "ghcr.io/aphexcx/m20-nav:latest"
-    docker_file: Path | None = field(
-        default_factory=lambda: Path(__file__).parent / "docker" / "Dockerfile"
-    )
-    docker_build_context: Path | None = field(
-        default_factory=lambda: Path(__file__).parents[3]  # repo root
-    )
-
-    # --- Docker runtime ---
     docker_container_name: str = "dimos-nav"
-    docker_network_mode: str = "host"
-    docker_shm_size: str = "512m"
-    docker_gpus: str | None = None  # M20 NOS (RK3588) has no NVIDIA GPU
+
+    # --- NOS hardware constraints ---
+    docker_gpus: str | None = None  # RK3588 has no NVIDIA GPU
+    docker_shm_size: str = "1g"  # NOS has 15GB but shared with host dimos (was 8g for G1)
     docker_privileged: bool = False
     docker_startup_timeout: float = 180.0
 
-    docker_entrypoint: str = field(
-        default_factory=lambda: str(
-            Path(__file__).parent / "docker" / "entrypoint.sh"
-        )
-    )
-
     docker_extra_args: list[str] = field(
         default_factory=lambda: [
-            "--memory=1.5g",
+            "--memory=1.5g",  # Fail predictably before OOM-killing host
             "--cap-add=NET_ADMIN",
+            "--ipc=host",  # Required for drdds bridge POSIX SHM
         ]
     )
 
     docker_env: dict[str, str] = field(
         default_factory=lambda: {
             "ROS_DISTRO": "humble",
-            "ROS_DOMAIN_ID": "0",
+            "ROS_DOMAIN_ID": "0",  # Match NOS rsdriver (not 42 like G1)
             "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
             "FASTRTPS_DEFAULT_PROFILES_FILE": "/ros2_ws/config/fastdds.xml",
             "LOCALIZATION_METHOD": "fastlio",
         }
     )
 
-    docker_volumes: list[tuple[str, str, str]] = field(
-        default_factory=lambda: []
-    )
-
+    docker_volumes: list[tuple[str, str, str]] = field(default_factory=list)
     docker_devices: list[str] = field(default_factory=list)
 
-    # --- Navigation settings ---
+    # --- M20 navigation settings ---
     mode: str = "hardware"
+    localization_method: str = "fastlio"
     robot_config_path: str = "deeprobotics/m20"
+    vehicle_height: float = 0.47  # 47cm lidar height in agile stance
+    use_rviz: bool = False
 
-    def __post_init__(self) -> None:
-        super().__post_init__()
+    def model_post_init(self, __context: object) -> None:
+        # Skip ROSNavConfig.model_post_init — it adds G1-specific volumes
+        # (X11, Unity, Unitree hardware env vars). We set M20-specific ones here.
 
         self.docker_env["MODE"] = self.mode
+        self.docker_env["LOCALIZATION_METHOD"] = self.localization_method
         self.docker_env["ROBOT_CONFIG_PATH"] = self.robot_config_path
+        self.docker_env["VEHICLE_HEIGHT"] = str(self.vehicle_height)
+        self.docker_env["USE_RVIZ"] = "true" if self.use_rviz else "false"
 
         repo_root = Path(__file__).parents[3]
+        m20_docker_dir = Path(__file__).parent / "docker"
 
         # Minimal NOS volumes — no X11, no Unity sim assets
         self.docker_volumes = [
             # Live dimos source so the module is always up-to-date
             (str(repo_root), "/workspace/dimos", "rw"),
-            # M20-specific DDS config — unicast to AOS only (excludes GOS)
+            # M20-specific DDS config (large SHM segments for bridge)
             (
-                str(Path(__file__).parent / "docker" / "fastdds_m20.xml"),
+                str(m20_docker_dir / "fastdds_m20.xml"),
                 "/ros2_ws/config/fastdds.xml",
                 "ro",
             ),
-            # M20-specific entrypoint
+            # M20-specific entrypoint (hardware mode, no Unity)
             (
-                str(Path(__file__).parent / "docker" / "entrypoint.sh"),
+                str(m20_docker_dir / "entrypoint.sh"),
                 "/usr/local/bin/entrypoint.sh",
                 "ro",
             ),
         ]
+
+
+class M20ROSNav(ROSNav):
+    """ROSNav module with M20-specific Docker configuration."""
+
+    default_config = M20ROSNavConfig
+
+
+m20_ros_nav = M20ROSNav.blueprint
