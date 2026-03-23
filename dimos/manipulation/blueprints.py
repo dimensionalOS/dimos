@@ -409,7 +409,14 @@ xarm_perception = (
             base_frame_id="link7",
             base_transform=_XARM_PERCEPTION_CAMERA_TRANSFORM,
         ),
-        ObjectSceneRegistrationModule.blueprint(target_frame="world"),
+        ObjectSceneRegistrationModule.blueprint(
+            target_frame="world",
+            distance_threshold=0.08,
+            min_detections_for_permanent=3,
+            max_distance=1.0,
+            use_aabb=True,
+            max_obstacle_width=0.06,
+        ),
         FoxgloveBridge.blueprint(),  # TODO: migrate to rerun
     )
     .transports(

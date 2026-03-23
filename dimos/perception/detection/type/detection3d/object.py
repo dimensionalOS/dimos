@@ -156,7 +156,9 @@ class Object(Detection3D):
         statistical_std_ratio: float = 0.5,
         voxel_downsample: float = 0.005,
         mask_erode_pixels: int = 3,
-        max_distance: float = 1.0,
+        max_distance: float = 0.0,
+        use_aabb: bool = False,
+        max_obstacle_width: float = 0.0,
     ) -> list[Object]:
         """Create 3D Objects from 2D detections and RGBD images.
 
@@ -177,7 +179,11 @@ class Object(Detection3D):
             mask_erode_pixels: Number of pixels to erode the mask by to remove
                               noisy depth edge points. Set to 0 to disable.
             max_distance: Maximum distance from origin (meters) for object center.
-                Objects beyond this are discarded as background.
+                Objects beyond this are discarded as background. 0 disables the filter.
+            use_aabb: Use axis-aligned bounding box instead of oriented bounding box.
+                Produces upright obstacles with identity orientation.
+            max_obstacle_width: Clamp X/Y size to this value (meters). Useful for
+                manipulation where obstacles must fit within the gripper. 0 disables.
 
         Returns:
             List of Object instances with pointclouds
@@ -257,20 +263,24 @@ class Object(Detection3D):
             else:
                 frame_id = depth_image.frame_id
 
-            # Use axis-aligned bounding box for stable, upright obstacles.
-            aabb = pc.pointcloud.get_axis_aligned_bounding_box()
-            aabb_center = (aabb.min_bound + aabb.max_bound) / 2.0
-            aabb_extent = aabb.max_bound - aabb.min_bound
-            center = Vector3(aabb_center[0], aabb_center[1], aabb_center[2])
+            # Compute bounding box: AABB for stable upright obstacles, OBB for tighter fit
+            if use_aabb:
+                aabb = pc.pointcloud.get_axis_aligned_bounding_box()
+                aabb_center = (aabb.min_bound + aabb.max_bound) / 2.0
+                aabb_extent = aabb.max_bound - aabb.min_bound
+                center = Vector3(aabb_center[0], aabb_center[1], aabb_center[2])
+                sx, sy, sz = float(aabb_extent[0]), float(aabb_extent[1]), float(aabb_extent[2])
+                orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
+            else:
+                obb = pc.pointcloud.get_oriented_bounding_box()
+                center = Vector3(obb.center[0], obb.center[1], obb.center[2])
+                sx, sy, sz = float(obb.extent[0]), float(obb.extent[1]), float(obb.extent[2])
+                orientation = Quaternion.from_rotation_matrix(obb.R)
 
-            # Clamp X/Y (width/depth) to 6cm so obstacles fit within gripper.
-            # Z (height) is left unclamped.
-            max_wd = 0.06
-            sx = min(float(aabb_extent[0]), max_wd)
-            sy = min(float(aabb_extent[1]), max_wd)
-            sz = float(aabb_extent[2])
+            if max_obstacle_width > 0:
+                sx = min(sx, max_obstacle_width)
+                sy = min(sy, max_obstacle_width)
             size = Vector3(sx, sy, sz)
-            orientation = Quaternion(0.0, 0.0, 0.0, 1.0)  # upright
             pose = PoseStamped(
                 ts=det.ts,
                 frame_id=frame_id,
@@ -279,9 +289,10 @@ class Object(Detection3D):
             )
 
             # Skip objects too far from origin (background detections)
-            dist = (center.x**2 + center.y**2 + center.z**2) ** 0.5
-            if dist > max_distance:
-                continue
+            if max_distance > 0:
+                dist = (center.x**2 + center.y**2 + center.z**2) ** 0.5
+                if dist > max_distance:
+                    continue
 
             objects.append(
                 cls(

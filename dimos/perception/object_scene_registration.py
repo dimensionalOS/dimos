@@ -70,12 +70,25 @@ class ObjectSceneRegistrationModule(Module):
         self,
         target_frame: str = "map",
         prompt_mode: YoloePromptMode = YoloePromptMode.LRPC,
+        # ObjectDB tuning
+        distance_threshold: float = 0.2,
+        min_detections_for_permanent: int = 6,
+        # Object 3D reconstruction tuning
+        max_distance: float = 0.0,
+        use_aabb: bool = False,
+        max_obstacle_width: float = 0.0,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._target_frame = target_frame
         self._prompt_mode = prompt_mode
-        self._object_db = ObjectDB()
+        self._object_db = ObjectDB(
+            distance_threshold=distance_threshold,
+            min_detections_for_permanent=min_detections_for_permanent,
+        )
+        self._max_distance = max_distance
+        self._use_aabb = use_aabb
+        self._max_obstacle_width = max_obstacle_width
 
     @rpc
     def start(self) -> None:
@@ -340,6 +353,9 @@ class ObjectSceneRegistrationModule(Module):
             depth_image=depth_image,
             camera_info=self._camera_info,
             camera_transform=camera_transform,
+            max_distance=self._max_distance,
+            use_aabb=self._use_aabb,
+            max_obstacle_width=self._max_obstacle_width,
         )
         if not objects:
             return
