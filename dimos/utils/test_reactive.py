@@ -193,13 +193,13 @@ def test_getter_streaming_nonblocking() -> None:
     min_time(getter, 0.1, "Expected for first value call to block if cache is empty")
     assert getter() == 0
 
-    time.sleep(0.5)
+    time.sleep(1.5 if _IS_MACOS else 0.5)
     assert getter() >= 2, f"Expected value >= 2, got {getter()}"
 
     # sub is active
     assert not source.is_disposed()
 
-    time.sleep(0.5)
+    time.sleep(1.5 if _IS_MACOS else 0.5)
     assert getter() >= 4, f"Expected value >= 4, got {getter()}"
 
     getter.dispose()
