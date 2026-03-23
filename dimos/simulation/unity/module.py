@@ -327,17 +327,17 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
             self._sim_thread.join(timeout=2.0)
         if self._unity_thread:
             self._unity_thread.join(timeout=2.0)
-        if self._unity_process is not None and self._unity_process.poll() is None:
-            logger.info(f"Stopping Unity (pid={self._unity_process.pid})")
-            self._unity_process.send_signal(signal.SIGTERM)
-            try:
-                self._unity_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                logger.warning(
-                    f"Unity pid={self._unity_process.pid} did not exit after SIGTERM, killing"
-                )
-                self._unity_process.kill()
+        with self._state_lock:
+            proc = self._unity_process
             self._unity_process = None
+        if proc is not None and proc.poll() is None:
+            logger.info(f"Stopping Unity (pid={proc.pid})")
+            proc.send_signal(signal.SIGTERM)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                logger.warning(f"Unity pid={proc.pid} did not exit after SIGTERM, killing")
+                proc.kill()
         super().stop()
 
     def _resolve_binary(self) -> Path | None:
@@ -395,23 +395,29 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
         if "DISPLAY" not in env and not self.config.headless:
             env["DISPLAY"] = ":0"
 
-        self._unity_process = subprocess.Popen(
+        proc = subprocess.Popen(
             cmd,
             cwd=str(binary_path.parent),
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
+        with self._state_lock:
+            self._unity_process = proc
 
         # Read Unity stderr in a background thread for diagnostics.
+        proc = self._unity_process  # capture ref — stop() may clear self._unity_process
+
         def _drain_stderr() -> None:
-            assert self._unity_process is not None
-            assert self._unity_process.stderr is not None
-            for raw in self._unity_process.stderr:
-                line = raw.decode("utf-8", errors="replace").rstrip()
-                if line:
-                    logger.warning(f"Unity stderr: {line}")
-            self._unity_process.stderr.close()
+            try:
+                assert proc.stderr is not None
+                for raw in proc.stderr:
+                    line = raw.decode("utf-8", errors="replace").rstrip()
+                    if line:
+                        logger.warning(f"Unity stderr: {line}")
+                proc.stderr.close()
+            except (OSError, ValueError):
+                pass  # process killed or pipe closed by stop()
 
         threading.Thread(target=_drain_stderr, daemon=True).start()
         logger.info(f"Unity pid={self._unity_process.pid}, waiting for TCP connection...")
@@ -420,7 +426,7 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
             logger.info("Unity connected")
         else:
             # Check if process died
-            rc = self._unity_process.poll()
+            rc = proc.poll()
             if rc is not None:
                 logger.error(
                     f"Unity process exited with code {rc} before connecting. "
@@ -523,8 +529,6 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
         finally:
             halt.set()
             sender.join(timeout=2.0)
-            with self._state_lock:
-                self._unity_connected = False
 
     def _unity_sender(self, sock: socket.socket, halt: threading.Event) -> None:
         while not halt.is_set():

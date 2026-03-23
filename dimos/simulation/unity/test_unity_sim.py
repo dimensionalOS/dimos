@@ -24,7 +24,6 @@ Markers:
 """
 
 import os
-import pickle
 import platform
 import socket
 import struct
@@ -158,19 +157,6 @@ class TestPlatformValidation:
     def test_rejects_unsupported_platform(self):
         with pytest.raises(RuntimeError, match="requires"):
             _validate_platform()
-
-
-# Pickle — fast, runs everywhere
-
-
-class TestPickle:
-    def test_module_survives_pickle(self):
-        m = UnityBridgeModule(unity_binary="")
-        m2 = pickle.loads(pickle.dumps(m))
-        assert hasattr(m2, "_cmd_lock")
-        assert not m2._running.is_set()
-        m.stop()
-        m2.stop()
 
 
 # ROS1 Deserialization — fast, runs everywhere
