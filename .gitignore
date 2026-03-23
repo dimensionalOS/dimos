@@ -67,7 +67,6 @@ yolo11n.pt
 /results
 **/cpp/result
 **/smartnav/modules/*/result
-**/smartnav/modules/*/flake.lock
 
 CLAUDE.MD
 /assets/teleop_certs/
