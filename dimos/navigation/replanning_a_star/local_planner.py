@@ -95,7 +95,7 @@ class LocalPlanner(Resource):
         self._max_linear_speed = max_linear_speed
         self._control_frequency = control_frequency
 
-        speed = self._speed
+        speed = self._max_linear_speed
         if global_config.nerf_speed < 1.0:
             speed *= global_config.nerf_speed
 
