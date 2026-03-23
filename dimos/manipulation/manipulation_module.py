@@ -24,11 +24,12 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from enum import Enum
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
+
+from pydantic import Field
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -82,7 +83,7 @@ class ManipulationState(Enum):
 class ManipulationModuleConfig(ModuleConfig):
     """Configuration for ManipulationModule."""
 
-    robots: Iterable[RobotModelConfig] = ()
+    robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
     enable_viz: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
@@ -90,6 +91,10 @@ class ManipulationModuleConfig(ModuleConfig):
     # Safe waypoint joints to move through before returning to init.
     # Set to None to disable.
     safe_waypoint: list[float] | None = None
+    # Floor plane Z height (meters). When set, a box obstacle is added at startup
+    # to prevent the planner from routing trajectories below this height.
+    # Set to None to disable.
+    floor_z: float | None = None
 
 
 class ManipulationModule(Module[ManipulationModuleConfig]):
@@ -171,6 +176,23 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             self._robots[robot_config.name] = (robot_id, robot_config, traj_gen)
 
         self._world_monitor.finalize()
+
+        # Add floor obstacle to prevent trajectories below the table surface
+        if self.config.floor_z is not None:
+            fz = self.config.floor_z
+            thickness = 0.2
+            floor_pose = Pose(
+                Vector3(0.7, 0.0, fz - thickness / 2),
+                Quaternion(0.0, 0.0, 0.0, 1.0),
+            )
+            floor_obs = Obstacle(
+                name="floor",
+                pose=floor_pose,
+                obstacle_type=ObstacleType.BOX,
+                dimensions=[0.6, 1.2, thickness],
+            )
+            self._world_monitor.add_obstacle(floor_obs)
+            logger.info(f"Floor obstacle added at z={fz:.3f}")
 
         for _, (robot_id, _, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
@@ -901,6 +923,22 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
 
         logger.warning(f"Trajectory execution timed out after {timeout}s")
         return False
+
+    def _lift_if_low(self, robot_name: RobotName | None = None, min_z: float = 0.05) -> str | None:
+        """If the end-effector is below *min_z*, plan and execute a short lift.
+
+        Returns None on success (or if already above threshold), error string on failure.
+        """
+        ee = self.get_ee_pose(robot_name)
+        if ee is None or ee.position.z >= min_z:
+            return None
+
+        lift_z = min_z + 0.05
+        logger.info(f"EE z={ee.position.z:.3f} < {min_z}, lifting to z={lift_z:.3f}")
+        lift_pose = Pose(Vector3(ee.position.x, ee.position.y, lift_z), ee.orientation)
+        if not self.plan_to_pose(lift_pose, robot_name):
+            return f"Error: Failed to plan lift from z={ee.position.z:.3f}"
+        return self._preview_execute_wait(robot_name)
 
     def _preview_execute_wait(
         self, robot_name: RobotName | None = None, preview_duration: float = 0.5

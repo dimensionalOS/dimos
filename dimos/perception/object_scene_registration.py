@@ -70,8 +70,9 @@ class ObjectSceneRegistrationModule(Module):
         self,
         target_frame: str = "map",
         prompt_mode: YoloePromptMode = YoloePromptMode.LRPC,
+        **kwargs: Any,
     ) -> None:
-        super().__init__()
+        super().__init__(**kwargs)
         self._target_frame = target_frame
         self._prompt_mode = prompt_mode
         self._object_db = ObjectDB()

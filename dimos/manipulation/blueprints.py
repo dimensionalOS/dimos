@@ -404,6 +404,7 @@ xarm_perception = (
             planning_timeout=10.0,
             enable_viz=True,
             safe_waypoint=[0.0, -1.7453, 0.0, 0.1745, 0.0, 0.4363, 0.0],
+            floor_z=-0.02,
         ),
         RealSenseCamera.blueprint(
             base_frame_id="link7",
