@@ -175,6 +175,7 @@ agents = [
 
 web = [
     "fastapi>=0.115.6",
+    "python-socketio>=5.11.0",
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
     "ffmpeg-python",
@@ -195,6 +196,12 @@ perception = [
 unitree = [
     "dimos[base]",
     "unitree-webrtc-connect-leshy>=2.0.7"
+]
+
+booster = [
+    "dimos[base,web]",
+    "booster-rpc>=0.0.8",
+    "websockets>=13.0",
 ]
 
 manipulation = [
