@@ -83,6 +83,7 @@ all_blueprints = {
     "unitree-g1-nav-explore-onboard": "dimos.robot.unitree.g1.blueprints.navigation.unitree_g1_nav_explore_onboard:unitree_g1_nav_explore_onboard",
     "unitree-g1-nav-arise-onboard": "dimos.robot.unitree.g1.blueprints.navigation.unitree_g1_nav_arise_onboard:unitree_g1_nav_arise_onboard",
     "unitree-g1-nav-pgo-onboard": "dimos.robot.unitree.g1.blueprints.navigation.unitree_g1_nav_pgo_onboard:unitree_g1_nav_pgo_onboard",
+    "unitree-g1-nav-arise-sim": "dimos.robot.unitree.g1.blueprints.navigation.unitree_g1_nav_arise_sim:unitree_g1_nav_arise_sim",
     "unitree-g1-nav-basic-sim": "dimos.robot.unitree.g1.blueprints.navigation.unitree_g1_nav_basic_sim:unitree_g1_nav_basic_sim",
     "unitree-g1-nav-explore-sim": "dimos.robot.unitree.g1.blueprints.navigation.unitree_g1_nav_explore_sim:unitree_g1_nav_explore_sim",
     "unitree-g1-nav-sim": "dimos.robot.unitree.g1.blueprints.navigation.unitree_g1_nav_sim:unitree_g1_nav_sim",
