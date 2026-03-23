@@ -301,6 +301,7 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         logger.info("Motion cancelled")
         return True
 
+    @rpc
     @skill
     def reset(self) -> str:
         """Reset the robot module to IDLE state, clearing any fault.

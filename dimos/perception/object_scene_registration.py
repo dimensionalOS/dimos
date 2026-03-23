@@ -75,7 +75,6 @@ class ObjectSceneRegistrationModule(Module):
         self._target_frame = target_frame
         self._prompt_mode = prompt_mode
         self._object_db = ObjectDB()
-        self._registration_paused = False
 
     @rpc
     def start(self) -> None:
@@ -113,16 +112,6 @@ class ObjectSceneRegistrationModule(Module):
 
         logger.info("ObjectSceneRegistrationModule stopped")
         super().stop()
-
-    @rpc
-    def pause_registration(self) -> None:
-        """Pause 3D object registration (2D detection still runs)."""
-        self._registration_paused = True
-
-    @rpc
-    def resume_registration(self) -> None:
-        """Resume 3D object registration."""
-        self._registration_paused = False
 
     @rpc
     def set_prompts(
@@ -322,7 +311,7 @@ class ObjectSceneRegistrationModule(Module):
         depth_image: Image,
     ) -> None:
         """Convert 2D detections to 3D and publish."""
-        if self._camera_info is None or self._registration_paused:
+        if self._camera_info is None:
             return
 
         # Cache depth image for full scene pointcloud generation
