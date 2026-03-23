@@ -208,7 +208,10 @@ def test_getter_streaming_nonblocking() -> None:
 
 
 def test_getter_streaming_nonblocking_timeout() -> None:
-    source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
+    # macOS: nonblocking subscription starts buffering immediately; first item from
+    # rx.interval(0.2) can arrive in <0.1s due to scheduling, racing the timeout.
+    _interval = 0.5 if _IS_MACOS else 0.2
+    source = dispose_spy(rx.interval(_interval).pipe(ops.take(50)))
     getter = getter_streaming(source, timeout=0.1, nonblocking=True)
     with pytest.raises(Exception):
         getter()
