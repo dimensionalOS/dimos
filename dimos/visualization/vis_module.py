@@ -27,38 +27,14 @@ def vis_module(
     rerun_config: dict[str, Any] | None = None,
     foxglove_config: dict[str, Any] | None = None,
 ) -> Blueprint:
+    """Create a visualization blueprint based on the selected viewer backend.
+
+    Bundles the appropriate viewer module (Rerun or Foxglove) together with
+    the ``RerunWebSocketServer`` so that the dimos-viewer keyboard/click
+    events work out of the box.
     """
-    Example usage:
-        from dimos.core.global_config import global_config
-        viz = vis_module(
-            global_config.viewer,
-            rerun_config={
-                "visual_override": {
-                    "world/camera_info": lambda camera_info: camera_info.to_rerun(
-                        image_topic="/world/color_image",
-                        optical_frame="camera_optical",
-                    ),
-                    "world/global_map": lambda grid: grid.to_rerun(voxel_size=0.1, mode="boxes"),
-                    "world/navigation_costmap": lambda grid: grid.to_rerun(
-                        colormap="Accent",
-                        z_offset=0.015,
-                        opacity=0.2,
-                        background="#484981",
-                    ),
-                },
-                "static": {
-                    "world/tf/base_link": lambda rr: [
-                        rr.Boxes3D(
-                            half_sizes=[0.2, 0.15, 0.75],
-                            colors=[(0, 255, 127)],
-                            fill_mode="MajorWireframe",
-                        ),
-                        rr.Transform3D(parent_frame="tf#/base_link"),
-                    ]
-                },
-            }
-        )
-    """
+    from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
+
     if foxglove_config is None:
         foxglove_config = {}
     if rerun_config is None:
@@ -70,13 +46,24 @@ def vis_module(
         case "foxglove":
             from dimos.robot.foxglove_bridge import FoxgloveBridge
 
-            result = autoconnect(FoxgloveBridge.blueprint(**foxglove_config))
-        case "rerun" | "rerun-web" | "rerun-connect":
+            return autoconnect(
+                FoxgloveBridge.blueprint(**foxglove_config),
+                RerunWebSocketServer.blueprint(),
+            )
+        case "rerun" | "rerun-web":
             from dimos.visualization.rerun.bridge import _BACKEND_TO_MODE, RerunBridgeModule
 
             viewer_mode = _BACKEND_TO_MODE.get(viewer_backend, "native")
-            result = autoconnect(RerunBridgeModule.blueprint(viewer_mode=viewer_mode, **rerun_config))
-        case _:
-            result = autoconnect()
+            return autoconnect(
+                RerunBridgeModule.blueprint(viewer_mode=viewer_mode, **rerun_config),
+                RerunWebSocketServer.blueprint(),
+            )
+        case "rerun-connect":
+            from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-    return result
+            return autoconnect(
+                RerunBridgeModule.blueprint(viewer_mode="connect", **rerun_config),
+                RerunWebSocketServer.blueprint(),
+            )
+        case _:
+            return autoconnect(RerunWebSocketServer.blueprint())

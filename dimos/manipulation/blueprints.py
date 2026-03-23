@@ -45,8 +45,8 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
-from dimos.robot.foxglove_bridge import FoxgloveBridge  # TODO: migrate to rerun
 from dimos.utils.data import get_data
+from dimos.visualization.vis_module import vis_module
 
 
 def _make_base_pose(
@@ -407,7 +407,7 @@ xarm_perception = (
             base_transform=_XARM_PERCEPTION_CAMERA_TRANSFORM,
         ),
         ObjectSceneRegistrationModule.blueprint(target_frame="world"),
-        FoxgloveBridge.blueprint(),  # TODO: migrate to rerun
+        vis_module("foxglove"),
     )
     .transports(
         {
