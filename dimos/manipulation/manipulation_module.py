@@ -88,9 +88,6 @@ class ManipulationModuleConfig(ModuleConfig):
     enable_viz: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
-    # Safe waypoint joints to move through before returning to init.
-    # Set to None to disable.
-    safe_waypoint: list[float] | None = None
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
     # to prevent the planner from routing trajectories below this height.
     # Set to None to disable.
@@ -1145,15 +1142,27 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         if err:
             return err
 
-        # Move through safe waypoint before going to init
-        if self.config.safe_waypoint is not None:
-            logger.info("Moving to safe waypoint before init...")
-            goal = JointState(position=self.config.safe_waypoint)
-            if not self.plan_to_joints(goal, robot_name):
-                return "Error: Failed to plan path to safe waypoint"
-            err = self._preview_execute_wait(robot_name)
-            if err:
-                return err
+        # Move through a safe waypoint: 10cm above and 5cm in front of init pose.
+        # This avoids direct paths through the workspace that could collide with objects.
+        robot = self._get_robot(robot_name)
+        if robot is not None and self._world_monitor is not None:
+            _, robot_id, _, _ = robot
+            init_ee = self._world_monitor.get_ee_pose(robot_id, joint_state=self._init_joints)
+            if init_ee is not None:
+                wp = Pose(
+                    Vector3(
+                        init_ee.position.x + 0.05,
+                        init_ee.position.y,
+                        init_ee.position.z + 0.10,
+                    ),
+                    init_ee.orientation,
+                )
+                if self.plan_to_pose(wp, robot_name):
+                    err = self._preview_execute_wait(robot_name)
+                    if err:
+                        return err
+                else:
+                    logger.warning("Safe waypoint unreachable, going directly to init")
 
         logger.info(
             f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in self._init_joints.position)}]..."
