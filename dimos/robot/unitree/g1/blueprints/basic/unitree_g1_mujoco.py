@@ -34,7 +34,7 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
-from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
+from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.robot.unitree.g1.blueprints.primitive._mapper import _mapper
 from dimos.robot.unitree.g1.blueprints.primitive._vis import (
@@ -43,10 +43,10 @@ from dimos.robot.unitree.g1.blueprints.primitive._vis import (
     _convert_navigation_costmap,
     _static_base_link,
 )
-from dimos.robot.unitree.g1.legacy.sim import g1_sim_connection
+from dimos.robot.unitree.g1.legacy.sim import G1SimConnection
 from dimos.simulation.mujoco.constants import VIDEO_CAMERA_FOV, VIDEO_HEIGHT, VIDEO_WIDTH
 from dimos.visualization.vis_module import vis_module
-from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 
 def _static_mujoco_pinhole(rr: Any) -> list[Any]:
@@ -94,9 +94,9 @@ unitree_g1_mujoco = (
     autoconnect(
         _vis_mujoco,
         _mapper,
-        websocket_vis(),
-        g1_sim_connection(),
-        replanning_a_star_planner(),
+        WebsocketVisModule.blueprint(),
+        G1SimConnection.blueprint(),
+        ReplanningAStarPlanner.blueprint(),
     )
     .global_config(n_workers=4, robot_model="unitree_g1")
     .transports(

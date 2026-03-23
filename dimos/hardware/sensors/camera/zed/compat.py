@@ -28,26 +28,24 @@ except ImportError:
     HAS_ZED_SDK = False
 
 if HAS_ZED_SDK:
-    from dimos.hardware.sensors.camera.zed.camera import ZEDCamera, ZEDModule, zed_camera
+    from dimos.hardware.sensors.camera.zed.camera import ZEDCamera, ZEDModule
 else:
     # Provide stub classes when SDK is not available
+    _ZED_ERR = (
+        "ZED SDK not installed. Please install pyzed package to use ZED camera functionality."
+    )
+
     class ZEDCamera:  # type: ignore[no-redef]
         def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-            raise ImportError(
-                "ZED SDK not installed. Please install pyzed package to use ZED camera functionality."
-            )
+            raise ImportError(_ZED_ERR)
+
+        @classmethod
+        def blueprint(cls, *args: object, **kwargs: object) -> None:  # type: ignore[no-untyped-def]
+            raise ImportError(_ZED_ERR)
 
     class ZEDModule:  # type: ignore[no-redef]
         def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-            raise ImportError(
-                "ZED SDK not installed. Please install pyzed package to use ZED camera functionality."
-            )
-
-    def zed_camera(*args: object, **kwargs: object) -> None:  # type: ignore[misc,no-redef]
-        raise ModuleNotFoundError(
-            "ZED SDK not installed. Please install pyzed package to use ZED camera functionality.",
-            name="pyzed",
-        )
+            raise ImportError(_ZED_ERR)
 
 
 # Set up camera calibration provider (always available)
@@ -59,5 +57,4 @@ __all__ = [
     "CameraInfo",
     "ZEDCamera",
     "ZEDModule",
-    "zed_camera",
 ]

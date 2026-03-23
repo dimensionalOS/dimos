@@ -257,8 +257,7 @@ def test_rosnav_goal_reached():
             print("  ✅ goal_reached signal received")
         else:
             print(
-                f"  ✅ Robot moved {displacement:.2f}m toward goal "
-                f"(goal_reached not yet received)"
+                f"  ✅ Robot moved {displacement:.2f}m toward goal (goal_reached not yet received)"
             )
 
     finally:

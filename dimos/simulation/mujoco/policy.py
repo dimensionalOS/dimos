@@ -40,7 +40,12 @@ class OnnxController(ABC):
         drift_compensation: list[float] | None = None,
     ) -> None:
         self._output_names = ["continuous_actions"]
-        self._policy = ort.InferenceSession(policy_path, providers=ort.get_available_providers())
+        providers = ort.get_available_providers()
+        try:
+            self._policy = ort.InferenceSession(policy_path, providers=providers)
+        except RuntimeError:
+            logger.warning("GPU providers failed, falling back to CPUExecutionProvider")
+            self._policy = ort.InferenceSession(policy_path, providers=["CPUExecutionProvider"])
         logger.info(f"Loaded policy: {policy_path} with providers: {self._policy.get_providers()}")
 
         self._action_scale = action_scale

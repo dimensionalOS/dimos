@@ -414,8 +414,3 @@ class WebsocketVisModule(Module[WebsocketConfig]):
     def _emit(self, event: str, data: Any) -> None:
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
             asyncio.run_coroutine_threadsafe(self.sio.emit(event, data), self._broadcast_loop)
-
-
-websocket_vis = WebsocketVisModule.blueprint
-
-__all__ = ["WebsocketVisModule", "websocket_vis"]

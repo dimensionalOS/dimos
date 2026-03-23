@@ -19,12 +19,12 @@ from dimos.core.blueprints import autoconnect
 from dimos.robot.unitree.g1.blueprints.primitive._mapper import _mapper
 from dimos.robot.unitree.g1.blueprints.primitive._vis import _vis
 from dimos.robot.unitree.g1.effectors.high_level.dds_sdk import G1HighLevelDdsSdk
-from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 unitree_g1_onboard = autoconnect(
     _vis,
     _mapper,
-    websocket_vis(),
+    WebsocketVisModule.blueprint(),
     G1HighLevelDdsSdk.blueprint(),
 ).global_config(n_workers=4, robot_model="unitree_g1")
 

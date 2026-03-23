@@ -13,57 +13,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""G1 with ROSNav in simulation mode (Unity).
+"""G1 with ROSNav + external Unity simulation.
 
-Unlike the onboard blueprint, the sim variant does NOT include
-G1HighLevelDdsSdk (which requires the Unitree SDK and real hardware).
-In simulation the ROSNav container drives cmd_vel internally.
+The Unity simulator runs on the host (via UnityBridgeModule) and provides
+lidar, camera, and odometry data.  ROSNav runs in hardware mode inside
+Docker — its nav stack receives the external sensor data via ROS2 topics
+republished by ROSNav's ext_* input streams.
+
+cmd_vel flows back from the nav stack (or teleop) through LCM to the
+UnityBridgeModule, which drives the simulated robot.
 """
 
-import math
 from typing import Any
 
 from dimos.core.blueprints import autoconnect
+from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.voxels import VoxelGridMapper
 from dimos.core.global_config import global_config
 from dimos.navigation.rosnav.rosnav_module import ROSNav
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.robot.unitree.g1.blueprints.primitive._mapper import _mapper
-from dimos.robot.unitree.g1.blueprints.primitive._vis import (
-    _convert_camera_info,
-    _convert_global_map,
-    _convert_navigation_costmap,
-    _static_base_link,
-    _static_path_frame,
-)
+from dimos.simulation.unity.module import UnityBridgeModule
 from dimos.visualization.vis_module import vis_module
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule, websocket_vis
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 
-def _static_sim_pinhole(rr: Any) -> list[Any]:
-    """Pinhole + transform for the sim equirectangular camera.
+def _static_path_frame(rr: Any) -> list[Any]:
+    return [rr.Transform3D(parent_frame="tf#/sensor")]
 
-    Connects ``world/color_image`` directly to ``tf#/base_link`` with the
-    combined camera-link translation [0.05, 0, 0.6] and ROS optical-frame
-    rotation so that Rerun can resolve the full transform chain to the view
-    root without intermediate entity-path hops.
+
+def _static_base_link(rr: Any) -> list[Any]:
+    """Green wireframe box tracking the robot.
+
+    Attached to ``tf#/sensor`` because the UnityBridgeModule publishes
+    ``map → sensor`` (there is no separate ``base_link`` frame in external
+    sim mode).
     """
-    width, height = 1920, 640
-    hfov_rad = math.radians(120.0)
-    fx = (width / 2.0) / math.tan(hfov_rad / 2.0)
-    fy = fx  # square pixels
-    cx, cy = width / 2.0, height / 2.0
     return [
-        rr.Pinhole(
-            resolution=[width, height],
-            focal_length=[fx, fy],
-            principal_point=[cx, cy],
-            camera_xyz=rr.ViewCoordinates.RDF,
+        rr.Boxes3D(
+            half_sizes=[0.2, 0.15, 0.62],
+            centers=[[0, 0, -0.62]],
+            colors=[(0, 255, 127)],
+            fill_mode="MajorWireframe",
         ),
-        rr.Transform3D(
-            parent_frame="tf#/base_link",
-            translation=[0.05, 0.0, 0.6],
-            rotation=rr.Quaternion(xyzw=[0.5, -0.5, 0.5, -0.5]),
-        ),
+        rr.Transform3D(parent_frame="tf#/sensor"),
     ]
 
 
@@ -72,13 +65,11 @@ _vis_sim = vis_module(
     rerun_config={
         "pubsubs": [LCM()],
         "visual_override": {
-            "world/camera_info": _convert_camera_info,
-            "world/global_map": _convert_global_map,
-            "world/navigation_costmap": _convert_navigation_costmap,
+            "world/camera_info": UnityBridgeModule.rerun_suppress_camera_info,
         },
         "static": {
+            "world/color_image": UnityBridgeModule.rerun_static_pinhole,
             "world/tf/base_link": _static_base_link,
-            "world/color_image": _static_sim_pinhole,
             "world/path": _static_path_frame,
         },
     },
@@ -88,12 +79,23 @@ unitree_g1_rosnav_sim = (
     autoconnect(
         _vis_sim,
         _mapper,
-        websocket_vis(),
-        ROSNav.blueprint(mode="simulation", vehicle_height=1.24),
+        UnityBridgeModule.blueprint(),
+        ROSNav.blueprint(mode="external_sim", vehicle_height=1.24, mount_sim_assets=True),
     )
     .remappings(
         [
-            (WebsocketVisModule, "cmd_vel", "teleop_cmd_vel"),
+            # Wire Unity sensor outputs → ROSNav external inputs.
+            # Use "ext_*" names matching the UnityBridgeModule output names
+            # to avoid colliding with ROSNav's own output streams of the same type.
+            (UnityBridgeModule, "registered_scan", "ext_registered_scan"),
+            (UnityBridgeModule, "odometry", "ext_odometry"),
+            # Feed local terrain data from nav stack to Unity for Z-height adjustment
+            # Rename VoxelGridMapper/CostMapper streams to avoid collisions
+            (VoxelGridMapper, "lidar", "global_pointcloud"),
+            (VoxelGridMapper, "global_map", "global_voxel_map"),
+            (CostMapper, "global_map", "global_voxel_map"),
+            # Teleop: WebsocketVisModule cmd_vel → ROSNav tele_cmd_vel
+            (WebsocketVisModule, "cmd_vel", "tele_cmd_vel"),
         ]
     )
     .global_config(n_workers=4, robot_model="unitree_g1")

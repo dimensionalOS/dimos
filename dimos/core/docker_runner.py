@@ -183,8 +183,8 @@ class DockerModule(ModuleProxyProtocol):
             image_exists,
         )
 
-        # global_config is passed by deploy pipeline but isn't a config field
-        kwargs.pop("global_config", None)
+        # g (GlobalConfig) is passed by deploy pipeline but handled by the base config
+        kwargs.pop("g", None)
 
         config_class = getattr(module_class, "default_config", DockerModuleConfig)
         if not issubclass(config_class, DockerModuleConfig):
@@ -198,7 +198,7 @@ class DockerModule(ModuleProxyProtocol):
         self.config = config
         self._args = args
         self._kwargs = kwargs
-        self._running = False
+        self._running = threading.Event()
         self.remote_name = module_class.__name__
         # Derive container name from image + class name: "my-registry/foo:v2" → "dimos_myclass_foo_v2"
         image_ref = config.docker_image.rsplit("/", 1)[-1]
@@ -229,13 +229,10 @@ class DockerModule(ModuleProxyProtocol):
                 r = subprocess.run(
                     [config.docker_bin, "pull", config.docker_image],
                     text=True,
-                    stderr=subprocess.PIPE,
                     timeout=config.docker_pull_timeout,
                 )
                 if r.returncode != 0:
-                    raise RuntimeError(
-                        f"Failed to pull image '{config.docker_image}'.\nSTDERR:\n{r.stderr}"
-                    )
+                    raise RuntimeError(f"Failed to pull image '{config.docker_image}'.")
 
             reconnect = False
             if _is_container_running(config, self._container_name):
@@ -259,7 +256,7 @@ class DockerModule(ModuleProxyProtocol):
                         f"Failed to start container.\nSTDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}"
                     )
             self.rpc.start()
-            self._running = True
+            self._running.set()
             # docker run -d returns before Module.__init__ finishes in the container,
             # so we poll until the RPC server is reachable before returning.
             self._wait_for_rpc()
@@ -299,9 +296,9 @@ class DockerModule(ModuleProxyProtocol):
 
     def stop(self) -> None:
         """Gracefully stop the Docker container and clean up resources."""
-        if not self._running:
+        if not self._running.is_set():
             return
-        self._running = False  # claim shutdown before any side-effects
+        self._running.clear()  # claim shutdown before any side-effects
         with suppress(Exception):
             self.rpc.call_nowait(f"{self.remote_name}/stop", ([], {}))
         self._cleanup()
@@ -310,11 +307,10 @@ class DockerModule(ModuleProxyProtocol):
         """Release all resources. Idempotent — safe to call from partial init or after stop()."""
         with suppress(Exception):
             self.rpc.stop()
-        for unsub in getattr(self, "_unsub_fns", []):
+        for unsub in self._unsub_fns:
             with suppress(Exception):
                 unsub()
-        with suppress(Exception):
-            self._unsub_fns.clear()
+        self._unsub_fns.clear()
         if not getattr(getattr(self, "config", None), "docker_reconnect_container", False):
             with suppress(Exception):
                 _run(
@@ -323,7 +319,7 @@ class DockerModule(ModuleProxyProtocol):
                 )
             with suppress(Exception):
                 _remove_container(self.config, self._container_name)
-        self._running = False
+        self._running.clear()
         logger.info(f"Cleaned up container handle: {self._container_name}")
 
     def status(self) -> dict[str, Any]:
@@ -332,7 +328,7 @@ class DockerModule(ModuleProxyProtocol):
             "module": self.remote_name,
             "container_name": self._container_name,
             "image": cfg.docker_image,
-            "running": bool(self._running and _is_container_running(cfg, self._container_name)),
+            "running": self._running.is_set() and _is_container_running(cfg, self._container_name),
         }
 
     def tail_logs(self, n: int = 200) -> str:

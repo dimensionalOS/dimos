@@ -24,10 +24,10 @@ dedicated container that wires to the correct RPC endpoints.
 import difflib
 
 from dimos.agents.annotation import skill
-from dimos.agents.skills.navigation import navigation_skill
-from dimos.agents.skills.person_follow import person_follow_skill
-from dimos.agents.skills.speak_skill import speak_skill
-from dimos.agents.web_human_input import web_input
+from dimos.agents.skills.navigation import NavigationSkillContainer
+from dimos.agents.skills.person_follow import PersonFollowSkillContainer
+from dimos.agents.skills.speak_skill import SpeakSkill
+from dimos.agents.web_human_input import WebInput
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -150,11 +150,11 @@ Here are all the command names and what they do.
 g1_mujoco_skills = G1MujocoSkillContainer.blueprint
 
 _mujoco_agentic_skills = autoconnect(
-    navigation_skill(),
-    person_follow_skill(camera_info=MujocoConnection.camera_info_static),
+    NavigationSkillContainer.blueprint(),
+    PersonFollowSkillContainer.blueprint(camera_info=MujocoConnection.camera_info_static),
     g1_mujoco_skills(),
-    web_input(),
-    speak_skill(),
+    WebInput.blueprint(),
+    SpeakSkill.blueprint(),
 )
 
 __all__ = ["G1MujocoSkillContainer", "_mujoco_agentic_skills", "g1_mujoco_skills"]

@@ -31,6 +31,16 @@ class CaptionDetail(Enum):
     NORMAL = "<DETAILED_CAPTION>"
     DETAILED = "<MORE_DETAILED_CAPTION>"
 
+    @classmethod
+    def from_str(cls, name: str) -> "CaptionDetail":
+        _ALIASES: dict[str, CaptionDetail] = {
+            "brief": cls.BRIEF,
+            "normal": cls.NORMAL,
+            "detailed": cls.DETAILED,
+            "more_detailed": cls.DETAILED,
+        }
+        return _ALIASES.get(name.lower()) or cls[name.upper()]
+
 
 class Florence2Model(HuggingFaceModel, Captioner):
     """Florence-2 captioning model from Microsoft.
@@ -74,13 +84,18 @@ class Florence2Model(HuggingFaceModel, Captioner):
                 return text[len(prefix) :]
         return text
 
-    def caption(self, image: Image) -> str:
+    def caption(self, image: Image, detail: str | CaptionDetail | None = None) -> str:
         """Generate a caption for the image.
 
         Returns:
             Text description of the image
         """
-        task_prompt = self._task_prompt
+        if detail is None:
+            task_prompt = self._task_prompt
+        elif isinstance(detail, CaptionDetail):
+            task_prompt = detail.value
+        else:
+            task_prompt = CaptionDetail.from_str(detail).value
 
         # Convert to PIL
         pil_image = PILImage.fromarray(image.to_rgb().data)

@@ -592,7 +592,3 @@ class PickAndPlaceModule(ManipulationModule):
                 self._graspgen = None
 
         super().stop()
-
-
-# Expose blueprint for declarative composition
-pick_and_place_module = PickAndPlaceModule.blueprint

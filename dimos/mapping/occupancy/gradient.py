@@ -12,10 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING, Literal, TypeAlias, cast
+
 import numpy as np
 from scipy import ndimage  # type: ignore[import-untyped]
 
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+
+GradientStrategy: TypeAlias = Literal["gradient", "voronoi"]
 
 
 def gradient(
@@ -50,7 +58,7 @@ def gradient(
 
     # Compute distance transform (distance to nearest obstacle in cells)
     # Unknown cells are treated as if they don't exist for distance calculation
-    distance_cells = ndimage.distance_transform_edt(1 - obstacle_map)
+    distance_cells = cast("NDArray[np.float64]", ndimage.distance_transform_edt(1 - obstacle_map))
 
     # Convert to meters and clip to max distance
     distance_meters = np.clip(distance_cells * occupancy_grid.resolution, 0, max_distance)  # type: ignore[operator]

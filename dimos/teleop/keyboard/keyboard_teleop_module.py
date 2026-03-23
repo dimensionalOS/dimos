@@ -213,6 +213,3 @@ class KeyboardTeleopModule(Module[KeyboardTeleopConfig]):
             clock.tick(50)
 
         pygame.quit()
-
-
-keyboard_teleop_module = KeyboardTeleopModule.blueprint

@@ -353,7 +353,36 @@ cd "$STACK_ROOT"
 #
 # mode
 #
-if [ "$MODE" = "simulation" ]; then
+if [ "$MODE" = "external_sim" ]; then
+    # External sim: launch only the nav stack nodes needed for planning.
+    # No Unity bridge (port 10000), no internal sim, no sensor scan gen.
+    # Sensor data (/registered_scan, /state_estimation) arrives via rclpy
+    # publishers in the ROSNav module from the external UnityBridgeModule.
+    echo "[entrypoint] external_sim: launching nav stack (no internal sim, no bridge)"
+    setsid bash -c "
+        source /opt/ros/${ROS_DISTRO:-humble}/setup.bash
+        source /ros2_ws/install/setup.bash
+        cd ${STACK_ROOT}
+
+        ros2 launch local_planner local_planner.launch.py \
+            realRobot:=false \
+            cameraOffsetZ:=0.1 \
+            goalX:=0.0 \
+            goalY:=0.0 &
+
+        ros2 launch terrain_analysis terrain_analysis.launch.py &
+
+        ros2 launch terrain_analysis_ext terrain_analysis_ext.launch \
+            checkTerrainConn:=true &
+
+        ros2 launch visualization_tools visualization_tools.launch \
+            world_name:=unity &
+
+        wait
+    " &
+    ROS_NAV_PID=$!
+    echo "[entrypoint] ROS nav stack PID: $ROS_NAV_PID"
+elif [ "$MODE" = "simulation" ]; then
     if [ "$USE_ROUTE_PLANNER" = "true" ]; then
         LAUNCH_FILE="system_simulation_with_route_planner.launch.py"
     else
@@ -431,7 +460,7 @@ elif [ "$MODE" = "bagfile" ]; then
     ros2 bag play "$BAGFILE_PATH" --clock &
     start_ros_nav_stack
 else
-    echo "MODE must be one of 'simulation', 'hardware', 'bagfile' but got '$MODE'"
+    echo "MODE must be one of 'simulation', 'external_sim', 'hardware', 'bagfile' but got '$MODE'"
     exit 19
 fi
 

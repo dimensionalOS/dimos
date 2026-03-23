@@ -229,7 +229,8 @@ class GO2Connection(Module[_Config], Camera, Pointcloud):
     @rpc
     def start(self) -> None:
         super().start()
-
+        if not hasattr(self, "connection"):
+            return
         self.connection.start()
 
         def onimage(image: Image) -> None:
@@ -337,9 +338,6 @@ class GO2Connection(Module[_Config], Camera, Pointcloud):
         return self._latest_video_frame
 
 
-go2_connection = GO2Connection.blueprint
-
-
 def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy":
     from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 
@@ -358,6 +356,3 @@ def deploy(dimos: ModuleCoordinator, ip: str, prefix: str = "") -> "ModuleProxy"
     connection.start()
 
     return connection
-
-
-__all__ = ["GO2Connection", "deploy", "go2_connection", "make_connection"]

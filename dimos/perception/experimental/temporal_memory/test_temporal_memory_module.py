@@ -20,7 +20,7 @@ import json
 import os
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, create_autospec, patch
 
 from dotenv import load_dotenv
@@ -42,7 +42,6 @@ from dimos.perception.experimental.temporal_memory.frame_window_accumulator impo
 )
 from dimos.perception.experimental.temporal_memory.temporal_memory import (
     TemporalMemory,
-    TemporalMemoryConfig,
 )
 from dimos.perception.experimental.temporal_memory.temporal_state import TemporalState
 from dimos.perception.experimental.temporal_memory.temporal_utils.graph_utils import (
@@ -522,8 +521,8 @@ class VideoReplayModule(Module):
 
     video_out: Out[Image]
 
-    def __init__(self, num_frames: int = 5) -> None:
-        super().__init__()
+    def __init__(self, num_frames: int = 5, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self.num_frames = num_frames
 
     @rpc
@@ -596,14 +595,12 @@ class TestTemporalMemoryIntegration:
             tm = dimos_cluster.deploy(
                 TemporalMemory,
                 vlm=vlm,
-                config=TemporalMemoryConfig(
-                    fps=1.0,
-                    window_s=2.0,
-                    stride_s=2.0,
-                    summary_interval_s=10.0,
-                    max_frames_per_window=3,
-                    db_dir=str(db_dir),
-                ),
+                fps=1.0,
+                window_s=2.0,
+                stride_s=2.0,
+                summary_interval_s=10.0,
+                max_frames_per_window=3,
+                db_dir=str(db_dir),
             )
         yield tm
         try:

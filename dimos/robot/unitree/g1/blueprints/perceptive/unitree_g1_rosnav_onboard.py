@@ -18,7 +18,7 @@
 import os
 
 from dimos.core.blueprints import autoconnect
-from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
+from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.rosnav.rosnav_module import ROSNav
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_onboard import unitree_g1_onboard
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
@@ -26,7 +26,7 @@ from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 unitree_g1_rosnav_onboard = (
     autoconnect(
         unitree_g1_onboard,
-        replanning_a_star_planner(),
+        ReplanningAStarPlanner.blueprint(),
         ROSNav.blueprint(
             mode="hardware",
             vehicle_height=1.24,
@@ -40,7 +40,7 @@ unitree_g1_rosnav_onboard = (
     )
     .remappings(
         [
-            (WebsocketVisModule, "cmd_vel", "teleop_cmd_vel"),
+            (WebsocketVisModule, "cmd_vel", "tele_cmd_vel"),
         ]
     )
     .global_config(n_workers=8, robot_model="unitree_g1")

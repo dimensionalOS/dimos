@@ -173,8 +173,3 @@ class VlmStreamTester(Module):
             except Exception as exc:
                 logger.warning("RPC query_image failed", error=str(exc))
             time.sleep(self._query_interval_s)
-
-
-vlm_stream_tester = VlmStreamTester.blueprint
-
-__all__ = ["VlmStreamTester", "vlm_stream_tester"]

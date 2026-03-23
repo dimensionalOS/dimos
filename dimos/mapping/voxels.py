@@ -256,6 +256,3 @@ def ensure_legacy_pcd(
     )
 
     return pcd_any.to_legacy()
-
-
-voxel_mapper = VoxelGridMapper.blueprint

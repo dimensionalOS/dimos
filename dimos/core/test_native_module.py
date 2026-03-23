@@ -107,6 +107,9 @@ def test_process_crash_triggers_stop() -> None:
 
     assert mod._process is None, f"Watchdog did not clean up after process {pid} died"
 
+    # Ensure all threads (LCM transport, event loop) are cleaned up
+    mod.stop()
+
 
 @pytest.mark.slow
 def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:

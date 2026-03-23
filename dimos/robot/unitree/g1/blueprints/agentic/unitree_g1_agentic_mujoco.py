@@ -19,20 +19,20 @@ This is the new-architecture equivalent of the legacy ``unitree_g1_agentic_sim``
 blueprint, using the MuJoCo simulator instead of ROSNav/Unity for simulation.
 """
 
-from dimos.agents.agent import agent
+from dimos.agents.agent import Agent
 from dimos.core.blueprints import autoconnect
-from dimos.perception.object_tracker import object_tracking
+from dimos.perception.object_tracker import ObjectTracking
 from dimos.perception.perceive_loop_skill import PerceiveLoopSkill
-from dimos.perception.spatial_perception import spatial_memory
+from dimos.perception.spatial_perception import SpatialMemory
 from dimos.robot.unitree.g1.blueprints.agentic._mujoco_skills import _mujoco_agentic_skills
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_mujoco import unitree_g1_mujoco
 
 unitree_g1_agentic_mujoco = autoconnect(
     unitree_g1_mujoco,
-    spatial_memory(),
-    object_tracking(frame_id="camera_link"),
+    SpatialMemory.blueprint(),
+    ObjectTracking.blueprint(frame_id="camera_link"),
     PerceiveLoopSkill.blueprint(),
-    agent(),
+    Agent.blueprint(),
     _mujoco_agentic_skills,
 ).global_config(n_workers=8)
 

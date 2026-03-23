@@ -26,6 +26,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
 
 
@@ -116,3 +117,11 @@ def start_person_track() -> Generator[StartPersonTrack, None, None]:
         thread.join(timeout=1.0)
     if publisher is not None:
         publisher.stop()
+
+
+@pytest.fixture
+def direct_cmd_vel_explorer() -> Generator[PersonTrackPublisher, None, None]:
+    explorer = DirectCmdVelExplorer()
+    explorer.start()
+    yield explorer
+    explorer.stop()

@@ -14,7 +14,7 @@
 
 from dimos.agents.agent import Agent
 from dimos.core.blueprints import autoconnect
-from dimos.hardware.sensors.camera.module import camera_module
+from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.hardware.sensors.camera.zed import compat as zed
 
@@ -31,7 +31,7 @@ def _create_webcam() -> Webcam:
 
 demo_agent_camera = autoconnect(
     Agent.blueprint(),
-    camera_module(
+    CameraModule.blueprint(
         hardware=_create_webcam,
     ),
 )

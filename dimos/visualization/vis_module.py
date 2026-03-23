@@ -27,38 +27,31 @@ def vis_module(
     rerun_config: dict[str, Any] | None = None,
     foxglove_config: dict[str, Any] | None = None,
 ) -> Blueprint:
-    """
-    Example usage:
+    """Create a visualization blueprint based on the selected viewer backend.
+
+    Bundles the appropriate viewer module (Rerun or Foxglove) together with
+    the ``WebsocketVisModule`` and ``RerunWebSocketServer`` so that the web
+    dashboard and remote viewer connections work out of the box.
+
+    Example usage::
+
+
         from dimos.core.global_config import global_config
         viz = vis_module(
             global_config.viewer,
             rerun_config={
                 "visual_override": {
-                    "world/camera_info": lambda camera_info: camera_info.to_rerun(
-                        image_topic="/world/color_image",
-                        optical_frame="camera_optical",
-                    ),
-                    "world/global_map": lambda grid: grid.to_rerun(voxel_size=0.1, mode="boxes"),
-                    "world/navigation_costmap": lambda grid: grid.to_rerun(
-                        colormap="Accent",
-                        z_offset=0.015,
-                        opacity=0.2,
-                        background="#484981",
-                    ),
+                    "world/camera_info": lambda ci: ci.to_rerun(...),
                 },
                 "static": {
-                    "world/tf/base_link": lambda rr: [
-                        rr.Boxes3D(
-                            half_sizes=[0.2, 0.15, 0.75],
-                            colors=[(0, 255, 127)],
-                            fill_mode="MajorWireframe",
-                        ),
-                        rr.Transform3D(parent_frame="tf#/base_link"),
-                    ]
+                    "world/tf/base_link": lambda rr: [rr.Boxes3D(...)],
                 },
-            }
+            },
         )
     """
+    from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+
+
     if foxglove_config is None:
         foxglove_config = {}
     if rerun_config is None:
@@ -68,15 +61,29 @@ def vis_module(
 
     match viewer_backend:
         case "foxglove":
-            from dimos.robot.foxglove_bridge import foxglove_bridge
+            from dimos.robot.foxglove_bridge import FoxgloveBridge
 
-            result = autoconnect(foxglove_bridge(**foxglove_config))
-        case "rerun" | "rerun-web" | "rerun-connect":
-            from dimos.visualization.rerun.bridge import _BACKEND_TO_MODE, rerun_bridge
+            return autoconnect(
+                FoxgloveBridge.blueprint(**foxglove_config),
+                WebsocketVisModule.blueprint(),
+            )
+        case "rerun" | "rerun-web":
+            from dimos.visualization.rerun.bridge import _BACKEND_TO_MODE, RerunBridgeModule
+            from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
             viewer_mode = _BACKEND_TO_MODE.get(viewer_backend, "native")
-            result = autoconnect(rerun_bridge(viewer_mode=viewer_mode, **rerun_config))
-        case _:
-            result = autoconnect()
+            return autoconnect(
+                RerunBridgeModule.blueprint(viewer_mode=viewer_mode, **rerun_config),
+                RerunWebSocketServer.blueprint(),
+                WebsocketVisModule.blueprint(),
+            )
+        case "rerun-connect":
+            from dimos.visualization.rerun.bridge import RerunBridgeModule
+            from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
-    return result
+            return autoconnect(
+                RerunBridgeModule.blueprint(viewer_mode="connect", **rerun_config),
+                RerunWebSocketServer.blueprint(),
+            )
+        case _:
+            return autoconnect(WebsocketVisModule.blueprint())

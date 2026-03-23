@@ -43,12 +43,10 @@ Run:
 import json
 import math
 import os
-import threading
-import time
 from pathlib import Path
+import threading
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
 from langchain_core.messages import HumanMessage
 from langchain_core.messages.base import BaseMessage
 import pytest
@@ -56,10 +54,10 @@ from reactivex.disposable import Disposable
 
 from dimos.agents.agent import Agent
 from dimos.agents.agent_test_runner import AgentTestRunner
-from dimos.agents.skills.navigation import navigation_skill
-from dimos.agents.skills.person_follow import person_follow_skill
-from dimos.agents.skills.speak_skill import speak_skill
-from dimos.agents.web_human_input import web_input
+from dimos.agents.skills.navigation import NavigationSkillContainer
+from dimos.agents.skills.person_follow import PersonFollowSkillContainer
+from dimos.agents.skills.speak_skill import SpeakSkill
+from dimos.agents.web_human_input import WebInput
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.docker_runner import DockerModule
@@ -68,13 +66,9 @@ from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In
 from dimos.core.transport import pLCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.Path import Path as NavPath
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.perception.object_tracker import object_tracking
+from dimos.perception.object_tracker import ObjectTracking
 from dimos.perception.perceive_loop_skill import PerceiveLoopSkill
-from dimos.perception.spatial_perception import spatial_memory
+from dimos.perception.spatial_perception import SpatialMemory
 from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1_rosnav_sim import (
     unitree_g1_rosnav_sim,
 )
@@ -178,12 +172,6 @@ def _ensure_fixture(name: str, responses: list[dict]) -> Path:
     return fixture_path
 
 
-# ---------------------------------------------------------------------------
-# The actual blueprint — mirrors unitree_g1_agentic_sim exactly, but swaps
-# Agent for FilteredAgent(model_fixture=...) and adds test harness modules.
-# ---------------------------------------------------------------------------
-
-
 def _build_agentic_sim_test(
     fixture_path: Path,
     messages: list[BaseMessage],
@@ -211,29 +199,33 @@ def _build_agentic_sim_test(
     #   - AgentTestRunner for driving messages
     #   - OdomRecorder for position assertions
     blueprint = autoconnect(
-        # === From unitree_g1_rosnav_sim ===
+        # From unitree_g1_rosnav_sim
         unitree_g1_rosnav_sim,
-        # === From unitree_g1_agentic_sim (all production modules) ===
-        navigation_skill(),                                    # NavigationSkillContainer
-        person_follow_skill(camera_info=_camera_info_static()),  # PersonFollowSkill
-        spatial_memory(),                                       # SpatialMemory
-        object_tracking(frame_id="camera_link"),               # ObjectTracking
-        PerceiveLoopSkill.blueprint(),                          # PerceiveLoopSkill
-        web_input(),                                            # WebHumanInput
-        speak_skill(),                                          # SpeakSkill
-        # === Test overrides ===
-        FilteredAgent.blueprint(**agent_kwargs),                # Replaces agent()
-        AgentTestRunner.blueprint(messages=messages),           # Test driver
-        OdomRecorder.blueprint(),                               # Position tracking
+        # From unitree_g1_agentic_sim (all production modules)
+        NavigationSkillContainer.blueprint(),  # NavigationSkillContainer
+        PersonFollowSkillContainer.blueprint(
+            camera_info=_camera_info_static()
+        ),  # PersonFollowSkill
+        SpatialMemory.blueprint(),  # SpatialMemory
+        ObjectTracking.blueprint(frame_id="camera_link"),  # ObjectTracking
+        PerceiveLoopSkill.blueprint(),  # PerceiveLoopSkill
+        WebInput.blueprint(),  # WebHumanInput
+        SpeakSkill.blueprint(),  # SpeakSkill
+        # Test overrides
+        FilteredAgent.blueprint(**agent_kwargs),  # Replaces agent()
+        AgentTestRunner.blueprint(messages=messages),  # Test driver
+        OdomRecorder.blueprint(),  # Position tracking
     ).global_config(viewer="none", n_workers=8)
 
     coordinator = blueprint.build()
-    return coordinator, coordinator.get_instance(OdomRecorder), history, finished_event, agent_transport, finished_transport
-
-
-# ---------------------------------------------------------------------------
-# Test 1: "Go to coordinates (2, 0)" — basic navigation via navigate_with_text
-# ---------------------------------------------------------------------------
+    return (
+        coordinator,
+        coordinator.get_instance(OdomRecorder),
+        history,
+        finished_event,
+        agent_transport,
+        finished_transport,
+    )
 
 
 @pytest.mark.slow
@@ -270,15 +262,13 @@ def test_agentic_sim_navigate_to_coordinates():
         ],
     )
 
-    coordinator, recorder, history, finished_event, agent_tp, finished_tp = (
-        _build_agentic_sim_test(
-            fixture,
-            messages=[HumanMessage("Start exploring the environment.")],
-            system_prompt=(
-                "You are a robot assistant. Use begin_exploration to make the "
-                "robot explore autonomously. Execute commands immediately."
-            ),
-        )
+    coordinator, recorder, history, finished_event, agent_tp, finished_tp = _build_agentic_sim_test(
+        fixture,
+        messages=[HumanMessage("Start exploring the environment.")],
+        system_prompt=(
+            "You are a robot assistant. Use begin_exploration to make the "
+            "robot explore autonomously. Execute commands immediately."
+        ),
     )
 
     try:
@@ -312,13 +302,19 @@ def test_agentic_sim_navigate_to_coordinates():
         print(f"  Odom messages: {recorder.get_odom_count()}")
 
         # Check agent response
-        texts = [m for m in history if hasattr(m, "content") and m.content and not getattr(m, "tool_calls", None)]
+        texts = [
+            m
+            for m in history
+            if hasattr(m, "content") and m.content and not getattr(m, "tool_calls", None)
+        ]
         if texts:
             print(f"  Agent: {texts[-1].content[:120]}")
 
         # Assertions
         explore_calls = [tc for tc in tool_calls if tc["name"] == "begin_exploration"]
-        assert len(explore_calls) >= 1, f"Agent didn't call begin_exploration. Tools: {[tc['name'] for tc in tool_calls]}"
+        assert len(explore_calls) >= 1, (
+            f"Agent didn't call begin_exploration. Tools: {[tc['name'] for tc in tool_calls]}"
+        )
         assert displacement > 0.3, f"Robot only moved {displacement:.2f}m during exploration"
         print("  ✅ PASSED: agentic exploration command")
 
@@ -326,11 +322,6 @@ def test_agentic_sim_navigate_to_coordinates():
         agent_tp.stop()
         finished_tp.stop()
         coordinator.stop()
-
-
-# ---------------------------------------------------------------------------
-# Test 2: "Stop moving" — agent uses stop_navigation skill
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow
@@ -358,15 +349,13 @@ def test_agentic_sim_stop_navigation():
         ],
     )
 
-    coordinator, recorder, history, finished_event, agent_tp, finished_tp = (
-        _build_agentic_sim_test(
-            fixture,
-            messages=[HumanMessage("Stop moving right now.")],
-            system_prompt=(
-                "You are a robot assistant. You can stop the robot with stop_navigation(). "
-                "Execute commands immediately."
-            ),
-        )
+    coordinator, recorder, history, finished_event, agent_tp, finished_tp = _build_agentic_sim_test(
+        fixture,
+        messages=[HumanMessage("Stop moving right now.")],
+        system_prompt=(
+            "You are a robot assistant. You can stop the robot with stop_navigation(). "
+            "Execute commands immediately."
+        ),
     )
 
     try:
@@ -379,13 +368,19 @@ def test_agentic_sim_stop_navigation():
         tool_calls = [tc for msg in history if hasattr(msg, "tool_calls") for tc in msg.tool_calls]
         print(f"  Tool calls: {[tc['name'] for tc in tool_calls]}")
 
-        texts = [m for m in history if hasattr(m, "content") and m.content and not getattr(m, "tool_calls", None)]
+        texts = [
+            m
+            for m in history
+            if hasattr(m, "content") and m.content and not getattr(m, "tool_calls", None)
+        ]
         if texts:
             print(f"  Agent: {texts[-1].content[:120]}")
 
         assert agent_done, "Agent did not finish processing stop command"
         stop_calls = [tc for tc in tool_calls if tc["name"] == "stop_navigation"]
-        assert len(stop_calls) >= 1, f"Agent didn't call stop_navigation. Tools: {[tc['name'] for tc in tool_calls]}"
+        assert len(stop_calls) >= 1, (
+            f"Agent didn't call stop_navigation. Tools: {[tc['name'] for tc in tool_calls]}"
+        )
         print("  ✅ PASSED: agentic stop navigation")
 
     finally:

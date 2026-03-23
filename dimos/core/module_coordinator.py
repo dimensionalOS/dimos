@@ -131,7 +131,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
 
         deployed_module: ModuleProxyProtocol
         if is_docker_module(module_class):
-            deployed_module = DockerModule(module_class, global_config=global_config, **kwargs)  # type: ignore[arg-type]
+            deployed_module = DockerModule(module_class, g=global_config, **kwargs)  # type: ignore[arg-type]
         else:
             deployed_module = self._client.deploy(module_class, global_config, kwargs)
         self._deployed_modules[module_class] = deployed_module  # type: ignore[assignment]
@@ -165,7 +165,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
                 return
             assert self._client is not None
             for index, module in zip(
-                worker_indices, self._client.deploy_parallel(worker_specs), strict=False
+                worker_indices, self._client.deploy_parallel(worker_specs), strict=True
             ):
                 results[index] = module
 
@@ -173,12 +173,12 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
             if not docker_specs:
                 return
             for index, module in zip(
-                docker_indices, DockerWorkerManager.deploy_parallel(docker_specs), strict=False
+                docker_indices, DockerWorkerManager.deploy_parallel(docker_specs), strict=True
             ):
                 results[index] = module
 
         def _register() -> None:
-            for (module_class, _, _), module in zip(module_specs, results, strict=False):
+            for (module_class, _, _), module in zip(module_specs, results, strict=True):
                 if module is not None:
                     self._deployed_modules[module_class] = module
 

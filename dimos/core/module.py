@@ -30,6 +30,7 @@ from typing import (
 )
 
 from langchain_core.tools import tool
+from pydantic import Field
 from reactivex.disposable import CompositeDisposable
 
 from dimos.core.core import T, rpc
@@ -80,7 +81,7 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = LCMRPC
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
-    rpc_timeouts: dict[str, float] = dict(DEFAULT_RPC_TIMEOUTS)
+    rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))
     tf_transport: type[TFSpec] = LCMTF  # type: ignore[type-arg]
     frame_id_prefix: str | None = None
     frame_id: str | None = None
@@ -122,7 +123,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         self._loop, self._loop_thread = get_loop()
         self._disposables = CompositeDisposable()
         try:
-            self.rpc = self.config.rpc_transport(
+            self.rpc = self.config.rpc_transport(  # type: ignore[call-arg]
                 rpc_timeouts=self.config.rpc_timeouts,
                 default_rpc_timeout=self.config.default_rpc_timeout,
             )
