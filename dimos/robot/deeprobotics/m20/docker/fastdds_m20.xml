@@ -1,78 +1,48 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!--
-  FastDDS discovery profile for the M20 navigation container (NOS).
-
-  Uses unicast initialPeersList to discover only the AOS rsdriver
-  (10.21.31.103). GOS (10.21.31.104) is intentionally excluded so
-  FASTLIO2 does not pick up duplicate rsdriver topics from GOS.
+  Unified FastDDS profile for ALL ROS2 processes in the M20 nav container.
+  Used by FAST_LIO, ros2_pub, and any other ROS2 nodes.
 
   Mounted into the container at /ros2_ws/config/fastdds.xml via
   M20ROSNavConfig.docker_volumes.
+
+  Design rationale (see ROSNAV_MIGRATION_LOG.md):
+  - useBuiltinTransports=true: enables builtin SHM discovery so
+    ros2_pub and FAST_LIO discover each other inside the container.
+    Also enables UDP multicast for /IMU from AOS yesense.  (Finding #28)
+  - shm_large (32MB): default SHM is 512KB, too small for 3MB lidar
+    messages — causes UDP fallback + fragment loss.              (Finding #12)
+  - transport_descriptors BEFORE participant: FastDDS 2.6 parses
+    sequentially; forward refs to transport IDs cause errors.    (Finding #18)
+  - <profiles> root element (not <dds><profiles>): most compatible
+    with FastDDS 2.6 XML parser in ROS2 Humble.
+  - maxMessageSize camelCase: FastDDS 2.6 uses camelCase, 2.14 uses
+    snake_case. Wrong case silently falls back to defaults.      (Finding #17)
 -->
-<dds xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
-    <profiles>
-        <!-- Transport must be defined before the participant references it -->
-        <transport_descriptors>
-            <transport_descriptor>
-                <transport_id>udp_transport</transport_id>
-                <type>UDPv4</type>
-                <interfaceWhiteList>
-                    <!-- NOS wired interface to AOS/GOS subnet -->
-                    <address>10.21.31.106</address>
-                </interfaceWhiteList>
-                <sendBufferSize>1048576</sendBufferSize>
-                <receiveBufferSize>1048576</receiveBufferSize>
-                <non_blocking_send>true</non_blocking_send>
-            </transport_descriptor>
-            <!-- SHM for intra-container communication (ros2_pub → FAST_LIO).
-                 32MB segment fits 3MB lidar messages without UDP fallback. -->
-            <transport_descriptor>
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+
+    <transport_descriptors>
+        <!-- Large SHM for 3MB lidar messages without UDP fallback (Finding #12).
+             32MB segment fits multiple frames in flight. -->
+        <transport_descriptor>
+            <transport_id>shm_large</transport_id>
+            <type>SHM</type>
+            <segment_size>33554432</segment_size>
+            <maxMessageSize>4194304</maxMessageSize>
+        </transport_descriptor>
+    </transport_descriptors>
+
+    <participant profile_name="participant_profile" is_default_profile="true">
+        <rtps>
+            <!-- Builtin transports = default SHM + UDP.
+                 SHM: intra-container discovery (ros2_pub ↔ FAST_LIO)
+                 UDP: external discovery (/IMU from AOS yesense on 10.21.31.x) -->
+            <useBuiltinTransports>true</useBuiltinTransports>
+            <!-- Add large SHM on top of builtins for lidar data -->
+            <userTransports>
                 <transport_id>shm_large</transport_id>
-                <type>SHM</type>
-                <segment_size>33554432</segment_size>
-                <maxMessageSize>4194304</maxMessageSize>
-            </transport_descriptor>
-        </transport_descriptors>
+            </userTransports>
+        </rtps>
+    </participant>
 
-        <participant profile_name="m20_nav_participant" is_default_profile="true">
-            <rtps>
-                <!-- Disable built-in transports; use custom UDP + SHM -->
-                <useBuiltinTransports>false</useBuiltinTransports>
-
-                <userTransports>
-                    <transport_id>udp_transport</transport_id>
-                    <transport_id>shm_large</transport_id>
-                </userTransports>
-
-                <builtin>
-                    <discovery_config>
-                        <discoveryProtocol>SIMPLE</discoveryProtocol>
-                    </discovery_config>
-
-                    <metatrafficUnicastLocatorList>
-                        <locator>
-                            <udpv4>
-                                <address>10.21.31.106</address>
-                            </udpv4>
-                        </locator>
-                    </metatrafficUnicastLocatorList>
-
-                    <initialPeersList>
-                        <!-- AOS: rsdriver publishes /LIDAR/POINTS and /IMU -->
-                        <locator>
-                            <udpv4>
-                                <address>10.21.31.103</address>
-                            </udpv4>
-                        </locator>
-                        <!-- NOS localhost for intra-container discovery -->
-                        <locator>
-                            <udpv4>
-                                <address>10.21.31.106</address>
-                            </udpv4>
-                        </locator>
-                    </initialPeersList>
-                </builtin>
-            </rtps>
-        </participant>
-    </profiles>
-</dds>
+</profiles>

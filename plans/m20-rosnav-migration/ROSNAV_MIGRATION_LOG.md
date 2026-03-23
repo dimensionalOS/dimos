@@ -3,7 +3,7 @@
 **Goal**: Replace M20's proprietary drdds-based navigation stack with FAST_LIO (ROS2 Humble) + dimos ROSNav, enabling autonomous navigation on the M20 quadruped.
 
 **Date started**: 2026-03-12
-**Last updated**: 2026-03-22
+**Last updated**: 2026-03-23
 **Branch**: `integration/m20-rosnav-migration`
 
 ---
@@ -552,6 +552,31 @@ Previous spec stated "~2GB usable RAM" — this was from the old architecture wh
 
 ---
 
+## Finding #28: Unified FastDDS Config Fixes Intra-Container Discovery (2026-03-23)
+
+**Root cause of the Finding #26 blocker**: `ros2_pub` and `FAST_LIO` used **different FastDDS XML configs** inside the same container, causing DDS discovery failure.
+
+| Process | Config | useBuiltinTransports | Discovery | SHM |
+|---------|--------|---------------------|-----------|-----|
+| FAST_LIO | `fastdds_m20.xml` (mounted) | **false** | UDP unicast to AOS+NOS | 32MB custom |
+| ros2_pub | `ros2_pub_fastdds.xml` (override) | **true** | Builtin SHM + UDP multicast | 16MB custom |
+
+With `useBuiltinTransports=false`, FAST_LIO only discovered via UDP unicast peers. With `useBuiltinTransports=true`, ros2_pub used builtin SHM+multicast. The two discovery mechanisms were incompatible — neither could find the other.
+
+**Fix**: Unified `fastdds_m20.xml` for ALL processes:
+- `useBuiltinTransports=true` — enables builtin SHM discovery (intra-container) + UDP multicast (external /IMU from AOS)
+- Custom `shm_large` (32MB, 4MB maxMessageSize) — prevents UDP fallback for 3MB lidar (Finding #12)
+- Removed UDP interfaceWhiteList and initialPeersList — no longer needed since FAST_LIO subscribes to `/bridge/LIDAR_POINTS` (not `/LIDAR/POINTS`), so GOS rsdriver topics on different topic names don't conflict
+- `<profiles>` root element, `transport_descriptors` before `participant` (Finding #18), `maxMessageSize` camelCase (Finding #17)
+
+**deploy.sh change**: Removed `FASTRTPS_DEFAULT_PROFILES_FILE` override from `bridge-start` step 6. ros2_pub now inherits the container's env var (`/ros2_ws/config/fastdds.xml` = mounted `fastdds_m20.xml`).
+
+**Codex second opinion** (2026-03-23): Confirmed approach is correct. Noted GOS discovery broadening is acceptable because topic names differ. Flagged that deploy.sh wiring must also be updated (done). Both `<profiles>` and `<dds><profiles>` are valid per FastDDS 2.6 docs.
+
+**Status**: Config committed. Needs rebuild (`deploy.sh push`) + deploy (`deploy.sh pull && deploy.sh start && deploy.sh bridge-start`) to test on robot.
+
+---
+
 ## Remaining Work
 
 ### Completed
@@ -589,11 +614,11 @@ Previous spec stated "~2GB usable RAM" — this was from the old architecture wh
 22. ~~**Fix self._speed bug**~~: DONE. Jeff's code referenced nonexistent `self._speed` → fixed to `self._max_linear_speed`.
 23. ~~**Add dimos/spec/__init__.py**~~: DONE. Needed for `from dimos import spec; spec.Camera`.
 
-### Phase 1.3: End-to-End Test (BLOCKED — FastDDS config mismatch)
+### Phase 1.3: End-to-End Test
 
-24. **Fix FastDDS config for intra-container discovery**: ros2_pub publishes `/bridge/LIDAR_POINTS` but FAST_LIO can't see it. Root cause: `fastdds_m20.xml` was UDP-only (no SHM), and even with SHM added, DDS discovery between ros2_pub and FAST_LIO fails. See Finding #25.
-25. **Align FAST_LIO topic names with bridge**: New rosnav3 uses `lio_autonomy.yaml` expecting `/lidar/scan` + `/imu/data`. Our bridge publishes `/bridge/LIDAR_POINTS` + `/IMU`. Created `lio_autonomy_m20.yaml` override but FAST_LIO still can't receive data due to #24.
-26. **Run launch_nos.py natively on NOS**: Blocked by #24.
+24. ~~**Fix FastDDS config for intra-container discovery**~~: DONE. Unified `fastdds_m20.xml` with `useBuiltinTransports=true` + 32MB SHM. deploy.sh updated to not override ros2_pub's config. See Finding #28.
+25. **Align FAST_LIO topic names with bridge**: New rosnav3 uses `lio_autonomy.yaml` expecting `/lidar/scan` + `/imu/data`. Our bridge publishes `/bridge/LIDAR_POINTS` + `/IMU`. Created `lio_autonomy_m20.yaml` override — needs testing now that #24 is fixed.
+26. **Run launch_nos.py natively on NOS**: Unblocked by #24. Needs deploy + test.
 
 ### ARISE-SLAM (Phase 2)
 
