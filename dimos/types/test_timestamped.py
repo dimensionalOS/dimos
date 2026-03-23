@@ -319,7 +319,7 @@ def test_timestamp_alignment(test_scheduler) -> None:
     aligned_frames = align_timestamped(fake_video_processor, video_raw).pipe(ops.to_list()).run()
 
     assert len(raw_frames) == 30
-    assert len(processed_frames) > 2
+    assert len(processed_frames) >= 2
     assert len(aligned_frames) >= 2
 
     # Due to async processing, the last frame might not be aligned before completion

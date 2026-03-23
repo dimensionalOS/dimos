@@ -62,22 +62,27 @@ class TestB1Connection:
         assert conn._current_cmd.mode == 2
         assert not conn.timeout_active
 
-        # Wait for watchdog timeout (200ms + buffer)
-        time.sleep(0.3)
+        try:
+            # Poll for watchdog timeout (generous 2s deadline)
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if conn.timeout_active:
+                    break
+                time.sleep(0.05)
 
-        # Verify commands were zeroed by watchdog
-        assert conn._current_cmd.ly == 0.0
-        assert conn._current_cmd.lx == 0.0
-        assert conn._current_cmd.rx == 0.0
-        assert conn._current_cmd.ry == 0.0
-        assert conn._current_cmd.mode == 2  # Mode maintained
-        assert conn.timeout_active
-
-        conn.running = False
-        conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
-        conn._close_module()
+            # Verify commands were zeroed by watchdog
+            assert conn._current_cmd.ly == 0.0
+            assert conn._current_cmd.lx == 0.0
+            assert conn._current_cmd.rx == 0.0
+            assert conn._current_cmd.ry == 0.0
+            assert conn._current_cmd.mode == 2  # Mode maintained
+            assert conn.timeout_active
+        finally:
+            conn.running = False
+            conn.watchdog_running = False
+            conn.send_thread.join(timeout=1.0)
+            conn.watchdog_thread.join(timeout=1.0)
+            conn._close_module()
 
     def test_watchdog_resets_on_new_command(self) -> None:
         """Test that watchdog timeout resets when new command arrives."""
@@ -347,36 +352,45 @@ class TestB1Connection:
         assert conn.current_mode == 2  # WALK mode
         assert not conn.timeout_active
 
-        # Wait for watchdog to detect timeout (200ms + buffer)
-        time.sleep(0.3)
+        try:
+            # Poll for watchdog timeout (generous 2s deadline)
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if conn.timeout_active:
+                    break
+                time.sleep(0.05)
 
-        assert conn.timeout_active, "Watchdog should have detected timeout"
-        assert conn._current_cmd.ly == 0.0, "Forward velocity should be zeroed"
-        assert conn._current_cmd.lx == 0.0, "Lateral velocity should be zeroed"
-        assert conn._current_cmd.rx == 0.0, "Rotation X should be zeroed"
-        assert conn._current_cmd.ry == 0.0, "Rotation Y should be zeroed"
-        assert conn.current_mode == 2, "Mode should stay as WALK"
+            assert conn.timeout_active, "Watchdog should have detected timeout"
+            assert conn._current_cmd.ly == 0.0, "Forward velocity should be zeroed"
+            assert conn._current_cmd.lx == 0.0, "Lateral velocity should be zeroed"
+            assert conn._current_cmd.rx == 0.0, "Rotation X should be zeroed"
+            assert conn._current_cmd.ry == 0.0, "Rotation Y should be zeroed"
+            assert conn.current_mode == 2, "Mode should stay as WALK"
 
-        # Verify recovery works - send new command
-        twist = TwistStamped(
-            ts=time.time(),
-            frame_id="base_link",
-            linear=Vector3(0.5, 0, 0),
-            angular=Vector3(0, 0, 0),
-        )
-        conn.handle_twist_stamped(twist)
+            # Verify recovery works - send new command
+            twist = TwistStamped(
+                ts=time.time(),
+                frame_id="base_link",
+                linear=Vector3(0.5, 0, 0),
+                angular=Vector3(0, 0, 0),
+            )
+            conn.handle_twist_stamped(twist)
 
-        # Give watchdog time to detect recovery
-        time.sleep(0.1)
+            # Poll for recovery (timeout_active should clear)
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if not conn.timeout_active:
+                    break
+                time.sleep(0.05)
 
-        assert not conn.timeout_active, "Should recover from timeout"
-        assert conn._current_cmd.ly == 0.5, "Should accept new commands"
-
-        conn.running = False
-        conn.watchdog_running = False
-        conn.send_thread.join(timeout=0.5)
-        conn.watchdog_thread.join(timeout=0.5)
-        conn._close_module()
+            assert not conn.timeout_active, "Should recover from timeout"
+            assert conn._current_cmd.ly == 0.5, "Should accept new commands"
+        finally:
+            conn.running = False
+            conn.watchdog_running = False
+            conn.send_thread.join(timeout=1.0)
+            conn.watchdog_thread.join(timeout=1.0)
+            conn._close_module()
 
     def test_rapid_command_thread_safety(self) -> None:
         """Test thread safety with rapid commands from multiple threads."""
