@@ -189,9 +189,16 @@ class UnityBridgeConfig(ModuleConfig):
     # Kinematic sim rate (Hz) for odometry integration
     sim_rate: float = 200.0
 
-    # Gaussian noise standard deviation applied to odometry x/y (metres).
+    # Gaussian noise standard deviation applied per-step to odometry x/y (metres).
     # Set to 0.0 for perfect odometry.
     odom_noise_std: float = 0.0
+
+    # Odometry drift rate: standard deviation of Gaussian noise added to the
+    # internal drift offset each sim step (metres per step). Drift accumulates
+    # over time, simulating encoder/IMU integration error.
+    # At 200Hz with drift_rate=0.001: ~4.5cm drift after 10s, ~14cm after 100s.
+    # Set to 0.0 for no drift.
+    odom_drift_rate: float = 0.0
 
 
 # Camera intrinsics constants.
@@ -272,6 +279,9 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
         self._yaw_rate = 0.0
         self._cmd_lock = threading.Lock()
         self._state_lock = threading.Lock()
+        # Accumulated odometry drift (x/y offset that grows over time)
+        self._drift_x = 0.0
+        self._drift_y = 0.0
         self._running = threading.Event()
         self._sim_thread: threading.Thread | None = None
         self._unity_thread: threading.Thread | None = None
@@ -620,8 +630,14 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
             now = time.time()
             quat = Quaternion.from_euler(Vector3(roll, pitch, yaw))
 
-            # Apply Gaussian noise to reported x/y position (not actual state).
-            odom_x, odom_y = x, y
+            # Accumulate drift (persistent integration error).
+            if self.config.odom_drift_rate > 0:
+                self._drift_x += np.random.normal(0.0, self.config.odom_drift_rate)
+                self._drift_y += np.random.normal(0.0, self.config.odom_drift_rate)
+
+            # Apply drift + per-step noise to reported x/y (not actual state).
+            odom_x = x + self._drift_x
+            odom_y = y + self._drift_y
             if self.config.odom_noise_std > 0:
                 odom_x += np.random.normal(0.0, self.config.odom_noise_std)
                 odom_y += np.random.normal(0.0, self.config.odom_noise_std)
