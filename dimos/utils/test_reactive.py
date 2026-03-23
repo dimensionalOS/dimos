@@ -162,9 +162,9 @@ def test_getter_streaming_blocking() -> None:
         f"Expected to get the first array [0,1,2], got {getter()}"
     )
 
-    time.sleep(0.5)
+    time.sleep(1.5 if _IS_MACOS else 0.5)
     assert getter()[0] >= 2, f"Expected array with first value >= 2, got {getter()}"
-    time.sleep(0.5)
+    time.sleep(1.5 if _IS_MACOS else 0.5)
     assert getter()[0] >= 4, f"Expected array with first value >= 4, got {getter()}"
 
     getter.dispose()
