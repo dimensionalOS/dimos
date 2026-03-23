@@ -186,7 +186,7 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
                 name="floor",
                 pose=floor_pose,
                 obstacle_type=ObstacleType.BOX,
-                dimensions=[0.6, 1.2, thickness],
+                dimensions=(0.6, 1.2, thickness),
             )
             self._world_monitor.add_obstacle(floor_obs)
             logger.info(f"Floor obstacle added at z={fz:.3f}")
