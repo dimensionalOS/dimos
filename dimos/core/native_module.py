@@ -183,11 +183,17 @@ class NativeModule(Module[_NativeConfig]):
                 )
                 self._process.kill()
                 self._process.wait(timeout=5)
-        if self._watchdog is not None and self._watchdog is not threading.current_thread():
-            self._watchdog.join(timeout=2)
-        self._watchdog = None
         self._process = None
         super().stop()
+        # Join the watchdog AFTER super().stop() so all module threads are
+        # cleaned up first.  When the watchdog itself is the caller (crash
+        # path), it skips joining itself — but the thread exits naturally
+        # right after this returns.  A second stop() from external code
+        # (e.g. test teardown) will reach here and join the now-finished
+        # watchdog thread, preventing monitor_threads from seeing a leak.
+        if self._watchdog is not None and self._watchdog is not threading.current_thread():
+            self._watchdog.join(timeout=2)
+            self._watchdog = None
 
     def _watch_process(self) -> None:
         """Block until the native process exits; trigger stop() if it crashed."""

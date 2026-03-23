@@ -107,6 +107,10 @@ def test_process_crash_triggers_stop() -> None:
 
     assert mod._process is None, f"Watchdog did not clean up after process {pid} died"
 
+    # Join the watchdog thread. stop() is idempotent but will now join the
+    # watchdog on the second call since the reference is preserved.
+    mod.stop()
+
 
 @pytest.mark.slow
 def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
