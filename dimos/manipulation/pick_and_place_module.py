@@ -308,8 +308,8 @@ class PickAndPlaceModule(ManipulationModule):
     def _grasp_orientation(gx: float, gy: float, xy_dist: float) -> Quaternion:
         """Compute grasp orientation that tilts toward the object for far reaches.
 
-        Close objects (< 0.5m): top-down (pitch = 180°)
-        Far objects (> 0.8m): tilted 45° toward object
+        Close objects (< 0.6m): top-down (pitch = 180°)
+        Far objects (> 1.0m): tilted 45° toward object
         In between: linear interpolation
         """
         near = 0.6
@@ -356,8 +356,8 @@ class PickAndPlaceModule(ManipulationModule):
         xy_dist = (cx**2 + cy**2) ** 0.5
 
         # Distance-adaptive occlusion offset:
-        # Near (< 0.6m): small inset — grasp shifted well toward robot (front surface)
-        # Far (>= 0.6m): larger inset — less toward-robot shift (grasp closer to true center)
+        # Near (< 0.8m): small inset — grasp shifted well toward robot (front surface)
+        # Far (>= 0.8m): larger inset — less toward-robot shift (grasp closer to true center)
         inset = 0.01 if xy_dist < 0.8 else 0.05
         gx, gy = self._occlusion_offset(det.center, det.size, inset=inset)
 

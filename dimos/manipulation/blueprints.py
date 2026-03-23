@@ -167,7 +167,7 @@ def _make_xarm6_config(
         collision_exclusion_pairs=XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
         auto_convert_meshes=True,
         max_velocity=1.0,
-        max_acceleration=1.5,
+        max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
         home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -221,7 +221,7 @@ def _make_xarm7_config(
         xacro_args=xacro_args,
         collision_exclusion_pairs=XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
         auto_convert_meshes=True,
-        max_velocity=1.2,
+        max_velocity=1.0,
         max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
@@ -265,8 +265,8 @@ def _make_piper_config(
         xacro_args={},  # Piper xacro doesn't need special args
         collision_exclusion_pairs=PIPER_GRIPPER_COLLISION_EXCLUSIONS,
         auto_convert_meshes=True,
-        max_velocity=2.0,
-        max_acceleration=4.0,
+        max_velocity=1.0,
+        max_acceleration=2.0,
         joint_name_mapping=joint_mapping,
         coordinator_task_name=coordinator_task,
         home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
@@ -428,10 +428,9 @@ xarm_perception = (
 )
 
 
-# XArm7 perception + LLM agent for agentic manipulation
-# Includes coordinator_xarm7 so everything runs in a single blueprint.
+# XArm7 perception + LLM agent for agentic manipulation.
 # Skills (pick, place, move_to_pose, etc.) auto-register with the agent's SkillCoordinator.
-# Usage: dimos run xarm-perception-agent
+# Usage: XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
 _MANIPULATION_AGENT_SYSTEM_PROMPT = """\
 You are a robotic manipulation assistant controlling an xArm7 robot arm with an \
 eye-in-hand RealSense camera and a gripper.
@@ -499,7 +498,6 @@ If planning fails with COLLISION_AT_START: call **clear_perception_obstacles**, 
 """
 
 xarm_perception_agent = autoconnect(
-    # coordinator_xarm7,
     xarm_perception,
     McpServer.blueprint(),
     McpClient.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
