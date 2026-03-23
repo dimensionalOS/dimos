@@ -83,9 +83,11 @@ project(drdds)
 
 find_package(ament_cmake REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 
 rosidl_generate_interfaces(\${PROJECT_NAME}
 $(echo -e "${MSG_LIST}")
+  DEPENDENCIES builtin_interfaces
 )
 
 ament_package()

@@ -52,25 +52,17 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 # ---------------------------------------------------------------------------
-# Conditional import of drdds — only available on the M20 NOS host.
-# deploy.sh setup extracts drdds from the Humble nav container into the host
-# Python 3.10 venv.  Foxy uses 'header', Humble uses 'meta'.
+# Conditional import of nav_cmd_pub — pybind11 module compiled on NOS against
+# the host's libdrdds.so (FastDDS 2.14).  Bypasses rclpy entirely, avoiding
+# the glibc 2.32 incompatibility between Ubuntu 22.04 (Humble) and 20.04 (NOS).
+# Built by: dimos/robot/deeprobotics/m20/docker/drdds_bridge/build_nav_cmd_pub.sh
 # ---------------------------------------------------------------------------
-DRDDS_AVAILABLE = False
-_DRDDS_HEADER_FIELD: str = "header"  # default to Foxy naming
+NAV_CMD_PUB_AVAILABLE = False
 
 try:
-    from drdds.msg import NavCmd as DDSNavCmd  # type: ignore[import-untyped]
+    import nav_cmd_pub  # type: ignore[import-untyped]
 
-    DRDDS_AVAILABLE = True
-
-    # Detect Foxy ('header') vs Humble ('meta') field naming
-    _probe = DDSNavCmd()
-    if hasattr(_probe, "meta"):
-        _DRDDS_HEADER_FIELD = "meta"
-    elif hasattr(_probe, "header"):
-        _DRDDS_HEADER_FIELD = "header"
-    del _probe
+    NAV_CMD_PUB_AVAILABLE = True
 except ImportError:
     pass
 
@@ -158,9 +150,8 @@ class M20VelocityController:
         self._watchdog_thread.start()
 
         logger.info(
-            "M20VelocityController started (drdds=%s, header_field=%s, test=%s)",
-            DRDDS_AVAILABLE,
-            _DRDDS_HEADER_FIELD,
+            "M20VelocityController started (nav_cmd_pub=%s, test=%s)",
+            NAV_CMD_PUB_AVAILABLE,
             self._test_mode,
         )
 
@@ -180,6 +171,11 @@ class M20VelocityController:
         if self._watchdog_thread:
             self._watchdog_thread.join(timeout=0.5)
 
+        if self._dds_publisher is not None:
+            try:
+                self._dds_publisher.shutdown()
+            except Exception:
+                pass
         self._dds_publisher = None
         logger.info("M20VelocityController stopped")
 
@@ -202,59 +198,31 @@ class M20VelocityController:
     def _init_publisher(self) -> None:
         """Set up the DDS publisher for /NAV_CMD.
 
-        Uses rclpy with the drdds NavCmd message type.  The ROSNav module
-        already initialises rclpy, so we reuse its context.  On the NOS host
-        the drdds package is installed from the Humble nav container by
-        deploy.sh setup.
+        Uses the nav_cmd_pub pybind11 module (compiled on NOS against the
+        host's libdrdds.so).  No rclpy dependency — avoids the glibc 2.32
+        incompatibility between Humble (Ubuntu 22.04) and the NOS host
+        (Ubuntu 20.04).
         """
         if self._test_mode:
             logger.info("[TEST] M20VelocityController in test mode — no DDS publishing")
             return
 
-        if not DRDDS_AVAILABLE:
+        if not NAV_CMD_PUB_AVAILABLE:
             logger.warning(
-                "drdds not available — /NAV_CMD will be logged only. "
-                "Run 'deploy.sh setup' to install drdds bindings."
+                "nav_cmd_pub not available — /NAV_CMD will be logged only. "
+                "Run 'build_nav_cmd_pub.sh' on NOS to compile the module."
             )
             return
 
         try:
-            import rclpy  # type: ignore[import-untyped]
-            from rclpy.node import Node  # type: ignore[import-untyped]
-
-            if not rclpy.ok():  # type: ignore[attr-defined]
-                rclpy.init()
-
-            node = Node("m20_velocity_controller")
-            self._dds_publisher = node.create_publisher(DDSNavCmd, "/NAV_CMD", 10)
-            logger.info(
-                "DDS publisher created via rclpy for /NAV_CMD (header_field=%s)",
-                _DRDDS_HEADER_FIELD,
-            )
+            self._dds_publisher = nav_cmd_pub.NavCmdPublisher("/NAV_CMD", 0)
+            logger.info("DDS publisher created via native drdds for /NAV_CMD")
         except Exception as exc:
             logger.warning(
-                "Failed to create rclpy publisher for /NAV_CMD: %s — "
+                "Failed to create native /NAV_CMD publisher: %s — "
                 "velocity commands will be logged only.",
                 exc,
             )
-
-    def _populate_dds_msg(self, cmd: NavCmd) -> object:
-        """Create and populate a DDSNavCmd message from a local NavCmd."""
-        msg = DDSNavCmd()
-
-        # Populate the header/meta with current timestamp
-        hdr = getattr(msg, _DRDDS_HEADER_FIELD)
-        hdr.frame_id = 0
-        now = time.time()
-        hdr.timestamp.sec = int(now)
-        hdr.timestamp.nsec = int((now % 1) * 1e9)
-
-        # Populate velocity fields
-        msg.data.x_vel = cmd.x_vel  # type: ignore[attr-defined]
-        msg.data.y_vel = cmd.y_vel  # type: ignore[attr-defined]
-        msg.data.yaw_vel = cmd.yaw_vel  # type: ignore[attr-defined]
-
-        return msg
 
     def _publish_once(self, cmd: NavCmd) -> None:
         """Publish a single NavCmd to /NAV_CMD."""
@@ -273,8 +241,7 @@ class M20VelocityController:
             return
 
         try:
-            msg = self._populate_dds_msg(cmd)
-            self._dds_publisher.publish(msg)  # type: ignore[union-attr]
+            self._dds_publisher.publish(cmd.x_vel, cmd.y_vel, cmd.yaw_vel)
         except Exception as exc:
             if self._packet_count % SEND_HZ == 0:
                 logger.error("Failed to publish /NAV_CMD: %s", exc)
