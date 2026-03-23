@@ -189,6 +189,10 @@ class UnityBridgeConfig(ModuleConfig):
     # Kinematic sim rate (Hz) for odometry integration
     sim_rate: float = 200.0
 
+    # Gaussian noise standard deviation applied to odometry x/y (metres).
+    # Set to 0.0 for perfect odometry.
+    odom_noise_std: float = 0.0
+
 
 # Camera intrinsics constants.
 #
@@ -616,13 +620,19 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
             now = time.time()
             quat = Quaternion.from_euler(Vector3(roll, pitch, yaw))
 
+            # Apply Gaussian noise to reported x/y position (not actual state).
+            odom_x, odom_y = x, y
+            if self.config.odom_noise_std > 0:
+                odom_x += np.random.normal(0.0, self.config.odom_noise_std)
+                odom_y += np.random.normal(0.0, self.config.odom_noise_std)
+
             self.odometry.publish(
                 Odometry(
                     ts=now,
                     frame_id="map",
                     child_frame_id="sensor",
                     pose=Pose(
-                        position=[x, y, z],
+                        position=[odom_x, odom_y, z],
                         orientation=[quat.x, quat.y, quat.z, quat.w],
                     ),
                     twist=Twist(
