@@ -125,7 +125,26 @@ def topic_send(topic: str, message_expr: str) -> None:
             continue
 
     try:
-        message = eval(message_expr, eval_context)
+        # Use compile() + restricted eval to prevent arbitrary code execution.
+        # Only allow expressions (not statements) and restrict the global
+        # namespace to known message types, blocking access to builtins.
+        code = compile(message_expr, "<message>", "eval")
+
+        # Disallow attribute access to dunders (e.g. __import__, __class__)
+        # which can be used to escape a restricted eval sandbox.
+        _DUNDER_PATTERN = re.compile(r"__\w+__")
+        if _DUNDER_PATTERN.search(message_expr):
+            typer.echo(
+                "Error: expressions containing dunder attributes are not allowed",
+                err=True,
+            )
+            raise typer.Exit(1)
+
+        safe_context: dict[str, object] = {"__builtins__": {}}
+        safe_context.update(eval_context)
+        message = eval(code, safe_context)
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"Error parsing message: {e}", err=True)
         raise typer.Exit(1)
