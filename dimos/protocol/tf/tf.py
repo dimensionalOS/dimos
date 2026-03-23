@@ -16,6 +16,7 @@
 
 from abc import abstractmethod
 from collections import deque
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import reduce
 from typing import TypeVar
@@ -63,8 +64,7 @@ class TFSpec(Service[TFConfig]):
     def receive_transform(self, *args: Transform) -> None: ...
 
     def receive_tfmessage(self, msg: TFMessage) -> None:
-        for transform in msg.transforms:
-            self.receive_transform(transform)
+        self.receive_transform(*msg.transforms)
 
 
 MsgT = TypeVar("MsgT")
@@ -117,6 +117,47 @@ class MultiTBuffer:
     def __init__(self, buffer_size: float = 10.0) -> None:
         self.buffers: dict[tuple[str, str], TBuffer] = {}
         self.buffer_size = buffer_size
+        self._on_transform_cbs: list[Callable[[], None]] = []
+        self._cached_children_of: dict[str, list[str]] = {}
+        self._cached_roots: list[str] = []
+        self._cached_num_edges: int = 0
+
+    def subscribe(self, cb: Callable[[], None]) -> Callable[[], None]:
+        """Subscribe to transform updates. Returns an unsubscribe callable."""
+        self._on_transform_cbs.append(cb)
+
+        def unsub() -> None:
+            try:
+                self._on_transform_cbs.remove(cb)
+            except ValueError:
+                pass
+
+        return unsub
+
+    def _invalidate_cache(self) -> None:
+        """Recompute children_of/roots cache if edges changed."""
+        num_edges = len(self.buffers)
+        if num_edges != self._cached_num_edges:
+            self._cached_num_edges = num_edges
+            children_of: dict[str, list[str]] = {}
+            all_children: set[str] = set()
+            for parent, child in self.buffers:
+                children_of.setdefault(parent, []).append(child)
+                all_children.add(child)
+            self._cached_children_of = children_of
+            self._cached_roots = [f for f in children_of if f not in all_children]
+
+    @property
+    def children_of(self) -> Mapping[str, list[str]]:
+        """Adjacency map: parent -> [children]. Cached, recomputed when edges change."""
+        self._invalidate_cache()
+        return self._cached_children_of
+
+    @property
+    def roots(self) -> list[str]:
+        """Frames that are parents but never children. Cached, recomputed when edges change."""
+        self._invalidate_cache()
+        return self._cached_roots
 
     def receive_transform(self, *args: Transform) -> None:
         for transform in args:
@@ -124,6 +165,8 @@ class MultiTBuffer:
             if key not in self.buffers:
                 self.buffers[key] = TBuffer(self.buffer_size)
             self.buffers[key].add(transform)
+        for cb in self._on_transform_cbs:
+            cb()
 
     def get_frames(self) -> set[str]:
         frames = set()
@@ -187,6 +230,13 @@ class MultiTBuffer:
         if direct is not None:
             return [direct]
 
+        # Build bidirectional adjacency from the cached forward map (O(E) once)
+        neighbors: dict[str, set[str]] = {}
+        for parent, kids in self.children_of.items():
+            for kid in kids:
+                neighbors.setdefault(parent, set()).add(kid)
+                neighbors.setdefault(kid, set()).add(parent)
+
         # BFS to find shortest path
         queue: deque[tuple[str, list[Transform]]] = deque([(parent_frame, [])])
         visited = {parent_frame}
@@ -197,14 +247,10 @@ class MultiTBuffer:
             if current_frame == child_frame:
                 return path
 
-            # Get all connections for current frame
-            connections = self.get_connections(current_frame)
-
-            for next_frame in connections:
+            for next_frame in neighbors.get(current_frame, set()):
                 if next_frame not in visited:
                     visited.add(next_frame)
 
-                    # Get the transform between current and next frame
                     transform = self.get_transform(
                         current_frame, next_frame, time_point, time_tolerance
                     )

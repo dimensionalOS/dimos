@@ -37,6 +37,7 @@ import typer
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.tf2_msgs import TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.utils.logging_config import setup_logger
@@ -68,31 +69,6 @@ RERUN_WEB_PORT = 9090
 # to define custom visualizations for specific topics
 #
 # as well as pubsubs={} to specify which protocols to listen to.
-
-
-# TODO better TF processing
-#
-# this is rerun bridge specific, rerun has a specific (better) way of handling TFs
-# using entity path conventions, each of these nodes in a path are TF frames:
-#
-# /world/robot1/base_link/camera/optical
-#
-# While here since we are just listening on TFMessage messages which optionally contain
-# just a subset of full TF tree we don't know the full tree structure to build full entity
-# path for a transform being published
-#
-# This is easy to reconstruct but a service/tf.py already does this so should be integrated here
-#
-# we have decoupled entity paths and actual transforms (like ROS TF frames)
-# https://rerun.io/docs/concepts/logging-and-ingestion/transforms
-#
-# tf#/world
-# tf#/base_link
-# tf#/camera
-#
-# In order to solve this, bridge needs to own it's own tf service
-# and render it's tf tree into correct rerun entity paths
-
 
 logger = setup_logger()
 
@@ -184,6 +160,9 @@ class Config(ModuleConfig):
     viewer_mode: ViewerMode = field(default_factory=_resolve_viewer_mode)
     connect_url: str = "rerun+http://127.0.0.1:9877/proxy"
     memory_limit: str = "25%"
+    # When True, TFMessages are intercepted and rendered as hierarchical
+    # entity paths, bypassing visual_override for TF topics.
+    tf_enabled: bool = True
 
     # Blueprint factory: callable(rrb) -> Blueprint for viewer layout configuration
     # Set to None to disable default blueprint
@@ -208,6 +187,7 @@ class RerunBridgeModule(Module):
 
     default_config = Config
     config: Config
+    _last_tf_render_time: float = 0.0
 
     @lru_cache(maxsize=256)
     def _visual_override_for_entity_path(
@@ -273,6 +253,11 @@ class RerunBridgeModule(Module):
                 return
             self._last_log[entity_path] = now
 
+        # TFMessages are handled by the shared TF service via callbacks.
+        # Early return prevents them from hitting the visual_override path.
+        if self.config.tf_enabled and isinstance(msg, TFMessage):
+            return
+
         # apply visual overrides (including final_convert which handles .to_rerun())
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
 
@@ -294,6 +279,10 @@ class RerunBridgeModule(Module):
         super().start()
 
         self._last_log: dict[str, float] = {}
+        self._last_tf_render_time: float = 0.0
+        if self.config.tf_enabled:
+            unsub_tf = self.tf.subscribe(self._on_tf_changed)
+            self._disposables.add(Disposable(unsub_tf))
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
 
         # Initialize and spawn Rerun viewer
@@ -340,6 +329,60 @@ class RerunBridgeModule(Module):
                 self._disposables.add(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
         self._log_static()
+
+    def _on_tf_changed(self) -> None:
+        """Called by TF service on every transform update. Rate-limits re-renders."""
+        now = time.monotonic()
+        if now - self._last_tf_render_time >= self.config.min_interval_sec:
+            self._last_tf_render_time = now
+            self._render_tf_tree()
+
+    def _render_tf_tree(self) -> None:
+        """Render the TF tree as hierarchical Rerun entity paths.
+
+        Uses the shared TF service's children_of/roots (cached by edge count)
+        and DFS-walks the tree to log each transform at its hierarchical
+        entity path (e.g. world/base_link/camera).
+        """
+        import rerun as rr
+
+        tf = self.tf
+        children = tf.children_of
+        roots = tf.roots
+
+        visited: set[str] = set()
+
+        def _walk(frame: str, entity_path: str) -> None:
+            if frame in visited:
+                return
+            visited.add(frame)
+            for child in children.get(frame, []):
+                child_path = f"{entity_path}/{child}"
+                transform = tf.get_transform(frame, child)
+                if transform is not None:
+                    rr.log(
+                        child_path,
+                        rr.Transform3D(
+                            translation=[
+                                transform.translation.x,
+                                transform.translation.y,
+                                transform.translation.z,
+                            ],
+                            rotation=rr.Quaternion(
+                                xyzw=[
+                                    transform.rotation.x,
+                                    transform.rotation.y,
+                                    transform.rotation.z,
+                                    transform.rotation.w,
+                                ],
+                            ),
+                        ),
+                    )
+                _walk(child, child_path)
+
+        prefix = self.config.entity_prefix
+        for root in roots:
+            _walk(root, f"{prefix}/{root}" if prefix else root)
 
     def _log_static(self) -> None:
         import rerun as rr
