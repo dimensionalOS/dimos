@@ -183,6 +183,3 @@ def test_autoconnect(args_file: str) -> None:
         "output_file": args_file,
         "some_param": "2.5",
     }
-
-
-# macOS CI retrigger

@@ -137,8 +137,10 @@ def test_sharpness_barrier() -> None:
     time.sleep(0.6 if _IS_MACOS else 0.08)
 
     if _IS_MACOS:
-        # All images land in one wide window — just check sharpest emitted
-        assert len(emitted_images) >= 1, f"Expected at least 1 emission, got {len(emitted_images)}"
+        # At 2Hz all 5 images land in one 500ms window → exactly 1 emission
+        assert len(emitted_images) == 1, (
+            f"Expected exactly 1 emission (one window), got {len(emitted_images)}"
+        )
         assert emitted_images[0].sharpness == 0.3711
     else:
         # Items span 2 windows at 20Hz: items 1-4 in first, item 5 in second

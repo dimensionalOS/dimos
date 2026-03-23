@@ -121,7 +121,7 @@ def test_backpressure_handling() -> None:
         print("Slow observer received:", len(received_slow), [arr[0] for arr in received_slow])
 
         # Fast observer should get all or nearly all items
-        _min_fast = 5 if _IS_MACOS else 15
+        _min_fast = 10 if _IS_MACOS else 15
         assert len(received_fast) > _min_fast, (
             f"Expected fast observer to receive most items, got {len(received_fast)}"
         )
@@ -131,7 +131,7 @@ def test_backpressure_handling() -> None:
             "Slow observer should receive fewer items than fast observer"
         )
         # Specifically, processing at 0.25s means ~4 items per second, so expect 8-10 items
-        _slow_lo, _slow_hi = (5, 20) if _IS_MACOS else (7, 11)
+        _slow_lo, _slow_hi = (6, 14) if _IS_MACOS else (7, 11)
         assert _slow_lo <= len(received_slow) <= _slow_hi, (
             f"Expected {_slow_lo}-{_slow_hi} items, got {len(received_slow)}"
         )
@@ -176,9 +176,7 @@ def test_getter_streaming_blocking() -> None:
 
 
 def test_getter_streaming_blocking_timeout() -> None:
-    source = dispose_spy(
-        rx.interval(1.0).pipe(ops.take(50))
-    )  # 10x margin vs timeout=0.1 — avoids macOS scheduler jitter
+    source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
     with pytest.raises(Exception):
         getter = getter_streaming(source, timeout=0.1)
         getter.dispose()
@@ -214,9 +212,7 @@ def test_getter_streaming_nonblocking() -> None:
 
 
 def test_getter_streaming_nonblocking_timeout() -> None:
-    source = dispose_spy(
-        rx.interval(1.0).pipe(ops.take(50))
-    )  # 10x margin vs timeout=0.1 — avoids macOS scheduler jitter
+    source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
     getter = getter_streaming(source, timeout=0.1, nonblocking=True)
     with pytest.raises(Exception):
         getter()
@@ -252,9 +248,7 @@ def test_getter_ondemand() -> None:
 
 
 def test_getter_ondemand_timeout() -> None:
-    source = dispose_spy(
-        rx.interval(1.0).pipe(ops.take(50))
-    )  # 10x margin vs timeout=0.1 — avoids macOS scheduler jitter
+    source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
     getter = getter_ondemand(source, timeout=0.1)
     with pytest.raises(Exception):
         getter()
