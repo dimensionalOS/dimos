@@ -573,7 +573,37 @@ With `useBuiltinTransports=false`, FAST_LIO only discovered via UDP unicast peer
 
 **Codex second opinion** (2026-03-23): Confirmed approach is correct. Noted GOS discovery broadening is acceptable because topic names differ. Flagged that deploy.sh wiring must also be updated (done). Both `<profiles>` and `<dds><profiles>` are valid per FastDDS 2.6 docs.
 
-**Status**: Config committed. Needs rebuild (`deploy.sh push`) + deploy (`deploy.sh pull && deploy.sh start && deploy.sh bridge-start`) to test on robot.
+**Status**: Deployed and tested on robot. Discovery works — `/bridge/LIDAR_POINTS` visible in `ros2 topic list`. See Finding #29 for the next blocker.
+
+---
+
+## Finding #29: fastlio2 Requires Livox CustomMsg, Not PointCloud2 (2026-03-23)
+
+**New blocker discovered during on-robot testing of Finding #28 fix.**
+
+`ros2 topic info /bridge/LIDAR_POINTS -v` shows:
+- **Publisher** (ros2_pub): `sensor_msgs/msg/PointCloud2`, BEST_EFFORT
+- **Subscriber** (fastlio2): `livox_ros_driver2/msg/CustomMsg`, RELIABLE
+
+Jeff's `fastlio2` (`lio_node.cpp:81`) is **hardcoded** to subscribe to `livox_ros_driver2::msg::CustomMsg`:
+```cpp
+m_lidar_sub = this->create_subscription<livox_ros_driver2::msg::CustomMsg>(
+    m_node_config.lidar_topic, 10, ...);
+```
+
+The callback uses `Utils::livox2PCL()` to convert — no PointCloud2 code path exists.
+
+The old `fast_lio` (package `fast_lio`, binary `fastlio_mapping`) accepted PointCloud2 via `lidar_type: 5`. The new `fastlio2` from rosnav3 does not.
+
+**Options** (in order of recommended effort):
+
+1. **Modify ros2_pub to publish CustomMsg** — convert RSAIRY PointCloud2 fields (x,y,z,intensity,ring,time) to Livox CustomMsg format (`livox_ros_driver2/msg/CustomMsg`). Requires: adding livox_ros_driver2 msg dep to bridge CMake, mapping fields. Cleanest long-term fix.
+
+2. **Use old fast_lio instead of fastlio2** — the container has both at `/ros2_ws/install/fast_lio/` and `/ros2_ws/install/fastlio2/`. Launch the old `fastlio_mapping` with `robosense.yaml` (`lidar_type: 5`). Quick but loses rosnav3's lifecycle management and autonomy bridge.
+
+3. **Add PointCloud2 subscriber to fastlio2** — fork lio_node.cpp to accept both message types based on a config flag. Most flexible but requires rebuilding the nav image.
+
+**Also**: QoS mismatch — publisher is BEST_EFFORT, subscriber is RELIABLE. After fixing the type mismatch, the subscriber QoS needs to be changed to BEST_EFFORT (or the publisher to RELIABLE, but that risks ACK blocking per Finding #12).
 
 ---
 
@@ -617,8 +647,10 @@ With `useBuiltinTransports=false`, FAST_LIO only discovered via UDP unicast peer
 ### Phase 1.3: End-to-End Test
 
 24. ~~**Fix FastDDS config for intra-container discovery**~~: DONE. Unified `fastdds_m20.xml` with `useBuiltinTransports=true` + 32MB SHM. deploy.sh updated to not override ros2_pub's config. See Finding #28.
-25. **Align FAST_LIO topic names with bridge**: New rosnav3 uses `lio_autonomy.yaml` expecting `/lidar/scan` + `/imu/data`. Our bridge publishes `/bridge/LIDAR_POINTS` + `/IMU`. Created `lio_autonomy_m20.yaml` override — needs testing now that #24 is fixed.
+25. ~~**Align FAST_LIO topic names with bridge**~~: DONE. `lio_autonomy_m20.yaml` overrides topic names. FastDDS discovery confirmed working (Finding #28).
 26. **Run launch_nos.py natively on NOS**: Unblocked by #24. Needs deploy + test.
+27. **Fix message type mismatch (BLOCKED)**: fastlio2 subscribes to `livox_ros_driver2/msg/CustomMsg` but ros2_pub publishes `sensor_msgs/msg/PointCloud2`. See Finding #29.
+28. **Fix QoS mismatch**: fastlio2 subscribes RELIABLE, ros2_pub publishes BEST_EFFORT. After fixing #27, need to align QoS.
 
 ### ARISE-SLAM (Phase 2)
 

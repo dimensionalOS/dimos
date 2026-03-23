@@ -1,0 +1,48 @@
+# M20 override for lio_autonomy.yaml
+# Only changes: topic names for M20 drdds bridge + yesense IMU
+imu_topic: /IMU
+lidar_topic: /bridge/LIDAR_POINTS
+
+body_frame: sensor
+world_frame: map
+
+print_time_cost: false
+print_odom: false
+odom_log_interval: 0.5
+
+publish_body_aligned: true
+
+auto_pitch_align: true
+auto_pitch_align_samples: 30
+r_bi: [1.0, 0.0, 0.0,
+       0.0, 1.0, 0.0,
+       0.0, 0.0, 1.0]
+
+lidar_filter_num: 4
+lidar_min_range: 0.5
+lidar_max_range: 30.0
+scan_resolution: 0.15
+map_resolution: 0.3
+
+cube_len: 300
+det_range: 60
+move_thresh: 1.5
+
+na: 0.01
+ng: 0.01
+nba: 0.0001
+nbg: 0.0001
+
+imu_init_num: 20
+near_search_num: 5
+ieskf_max_iter: 5
+
+gravity_align: true
+esti_il: false
+
+r_il: [1.0, 0.0, 0.0,
+       0.0, 1.0, 0.0,
+       0.0, 0.0, 1.0]
+t_il: [-0.011, -0.02329, 0.04412]
+
+lidar_cov_inv: 1000.0
