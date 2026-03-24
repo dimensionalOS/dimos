@@ -30,24 +30,24 @@ Quick start:
 import math
 from pathlib import Path
 
-from dimos.agents.agent import Agent
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import TaskConfig, control_coordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.hardware.sensors.camera.realsense import realsense_camera
-from dimos.manipulation.manipulation_module import manipulation_module
-from dimos.manipulation.pick_and_place_module import pick_and_place_module
-from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import JointState
-from dimos.perception.object_scene_registration import object_scene_registration_module
-from dimos.robot.foxglove_bridge import foxglove_bridge  # TODO: migrate to rerun
+from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.robot.foxglove_bridge import FoxgloveBridge  # TODO: migrate to rerun
 from dimos.utils.data import get_data
-
-# =============================================================================
-# Pose Helpers
-# =============================================================================
 
 
 def _make_base_pose(
@@ -68,11 +68,6 @@ def _make_base_pose(
         position=Vector3(x=x, y=y, z=z),
         orientation=Quaternion.from_euler(Vector3(x=roll, y=pitch, z=yaw)),
     )
-
-
-# =============================================================================
-# URDF Helpers
-# =============================================================================
 
 
 def _get_xarm_urdf_path() -> Path:
@@ -131,11 +126,6 @@ XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
     ("link6", "left_outer_knuckle"),
     ("link6", "right_outer_knuckle"),
 ]
-
-
-# =============================================================================
-# Robot Configs
-# =============================================================================
 
 
 def _make_xarm6_config(
@@ -283,13 +273,8 @@ def _make_piper_config(
     )
 
 
-# =============================================================================
-# Blueprints
-# =============================================================================
-
-
 # Single XArm6 planner (standalone, no coordinator)
-xarm6_planner_only = manipulation_module(
+xarm6_planner_only = ManipulationModule.blueprint(
     robots=[_make_xarm6_config()],
     planning_timeout=10.0,
     enable_viz=True,
@@ -302,7 +287,7 @@ xarm6_planner_only = manipulation_module(
 
 # Dual XArm6 planner with coordinator integration
 # Usage: Start with coordinator_dual_mock, then plan/execute via RPC
-dual_xarm6_planner = manipulation_module(
+dual_xarm6_planner = ManipulationModule.blueprint(
     robots=[
         _make_xarm6_config(
             "left_arm", y_offset=0.5, joint_prefix="left_", coordinator_task="traj_left"
@@ -323,12 +308,12 @@ dual_xarm6_planner = manipulation_module(
 # Single XArm7 planner + mock coordinator (standalone, no external coordinator needed)
 # Usage: dimos run xarm7-planner-coordinator
 xarm7_planner_coordinator = autoconnect(
-    manipulation_module(
+    ManipulationModule.blueprint(
         robots=[_make_xarm7_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
         planning_timeout=10.0,
         enable_viz=True,
     ),
-    control_coordinator(
+    ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
@@ -389,7 +374,8 @@ ERROR RECOVERY: If a motion fails or the state becomes FAULT, call reset before 
 
 xarm7_planner_coordinator_agent = autoconnect(
     xarm7_planner_coordinator,
-    Agent.blueprint(system_prompt=_BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=_BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
 
 
@@ -403,7 +389,7 @@ _XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
 
 xarm_perception = (
     autoconnect(
-        pick_and_place_module(
+        PickAndPlaceModule.blueprint(
             robots=[
                 _make_xarm7_config(
                     "arm",
@@ -418,12 +404,12 @@ xarm_perception = (
             planning_timeout=10.0,
             enable_viz=True,
         ),
-        realsense_camera(
+        RealSenseCamera.blueprint(
             base_frame_id="link7",
             base_transform=_XARM_PERCEPTION_CAMERA_TRANSFORM,
         ),
-        object_scene_registration_module(target_frame="world"),
-        foxglove_bridge(),  # TODO: migrate to rerun
+        ObjectSceneRegistrationModule.blueprint(target_frame="world"),
+        FoxgloveBridge.blueprint(),  # TODO: migrate to rerun
     )
     .transports(
         {
@@ -468,7 +454,8 @@ Do NOT use the 'detect' or 'select' skills — use scan_objects instead.
 
 xarm_perception_agent = autoconnect(
     xarm_perception,
-    Agent.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
 
 

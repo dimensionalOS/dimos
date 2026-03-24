@@ -19,7 +19,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import Pose
+from dimos.msgs.geometry_msgs.Pose import Pose
 
 
 class PersonPositionController:

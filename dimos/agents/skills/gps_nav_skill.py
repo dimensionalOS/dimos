@@ -19,7 +19,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out
-from dimos.mapping.types import LatLon
+from dimos.mapping.models import LatLon
 from dimos.mapping.utils.distance import distance_in_meters
 from dimos.utils.logging_config import setup_logger
 
@@ -98,9 +98,3 @@ class GpsNavSkillContainer(Module):
             return None
 
         return LatLon(lat=lat, lon=lon)
-
-
-gps_nav_skill = GpsNavSkillContainer.blueprint
-
-
-__all__ = ["GpsNavSkillContainer", "gps_nav_skill"]

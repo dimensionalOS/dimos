@@ -23,6 +23,7 @@ import traceback
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.library_config import apply_library_config
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.sequential_ids import SequentialIds
 
@@ -292,6 +293,7 @@ def _suppress_console_output() -> None:
 
 
 def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
+    apply_library_config()
     instances: dict[int, Any] = {}
 
     try:

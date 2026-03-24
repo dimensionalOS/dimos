@@ -30,7 +30,7 @@ from dimos.types.timestamped import to_ros_stamp
 if TYPE_CHECKING:
     from ultralytics.engine.results import Results
 
-    from dimos.msgs.sensor_msgs import Image
+    from dimos.msgs.sensor_msgs.Image import Image
 
 
 @dataclass

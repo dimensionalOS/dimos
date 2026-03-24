@@ -35,7 +35,7 @@ from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.spec.utils import Spec
 
 # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
@@ -111,11 +111,6 @@ class ModuleC(Module):
     data3: In[Data3]
 
 
-module_a = ModuleA.blueprint
-module_b = ModuleB.blueprint
-module_c = ModuleC.blueprint
-
-
 def test_get_connection_set() -> None:
     assert _BlueprintAtom.create(CatModule, kwargs={"k": "v"}) == _BlueprintAtom(
         module=CatModule,
@@ -129,7 +124,7 @@ def test_get_connection_set() -> None:
 
 
 def test_autoconnect() -> None:
-    blueprint_set = autoconnect(module_a(), module_b())
+    blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
 
     assert blueprint_set == Blueprint(
         blueprints=(
@@ -169,7 +164,7 @@ def test_config() -> None:
 
 def test_transports() -> None:
     custom_transport = LCMTransport("/custom_topic", Data1)
-    blueprint_set = autoconnect(module_a(), module_b()).transports(
+    blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).transports(
         {("data1", Data1): custom_transport}
     )
 
@@ -178,7 +173,9 @@ def test_transports() -> None:
 
 
 def test_global_config() -> None:
-    blueprint_set = autoconnect(module_a(), module_b()).global_config(option1=True, option2=42)
+    blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint()).global_config(
+        option1=True, option2=42
+    )
 
     assert "option1" in blueprint_set.global_config_overrides
     assert blueprint_set.global_config_overrides["option1"] is True
@@ -188,7 +185,7 @@ def test_global_config() -> None:
 
 @pytest.mark.slow
 def test_build_happy_path() -> None:
-    blueprint_set = autoconnect(module_a(), module_b(), module_c())
+    blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint())
 
     coordinator = blueprint_set.build(_BUILD_WITHOUT_RERUN.copy())
 
@@ -490,7 +487,9 @@ def test_module_ref_spec() -> None:
 
 @pytest.mark.slow
 def test_disabled_modules_are_skipped_during_build() -> None:
-    blueprint_set = autoconnect(module_a(), module_b(), module_c()).disabled_modules(ModuleC)
+    blueprint_set = autoconnect(
+        ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint()
+    ).disabled_modules(ModuleC)
 
     coordinator = blueprint_set.build(_BUILD_WITHOUT_RERUN.copy())
 
@@ -505,11 +504,11 @@ def test_disabled_modules_are_skipped_during_build() -> None:
 
 def test_autoconnect_merges_disabled_modules() -> None:
     bp_a = Blueprint(
-        blueprints=module_a().blueprints,
+        blueprints=ModuleA.blueprint().blueprints,
         disabled_modules_tuple=(ModuleA,),
     )
     bp_b = Blueprint(
-        blueprints=module_b().blueprints,
+        blueprints=ModuleB.blueprint().blueprints,
         disabled_modules_tuple=(ModuleB,),
     )
 

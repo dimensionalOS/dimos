@@ -23,9 +23,10 @@ from reactivex import Subject
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.nav_msgs import OccupancyGrid, Path
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.base import NavigationState
 from dimos.navigation.replanning_a_star.controllers import Controller, PController
 from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
@@ -85,9 +86,13 @@ class LocalPlanner(Resource):
         self._navigation_map = navigation_map
         self._goal_tolerance = goal_tolerance
 
+        speed = self._speed
+        if global_config.nerf_speed < 1.0:
+            speed *= global_config.nerf_speed
+
         self._controller = PController(
             self._global_config,
-            self._speed,
+            speed,
             self._control_frequency,
         )
 

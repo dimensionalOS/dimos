@@ -24,10 +24,13 @@ from typing import Any, Generic, TypeVar
 
 import pytest
 
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, LCMPubSubBase, Topic
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.pubsub.spec import AllPubSub, PubSub
+from dimos.utils.testing.collector import CallbackCollector
 
 TopicT = TypeVar("TopicT")
 MsgT = TypeVar("MsgT")
@@ -49,10 +52,14 @@ class Case(Generic[TopicT, MsgT]):
     regex_patterns: list[tuple[TopicT, set[int]]] = field(default_factory=list)
 
 
+# Use an isolated multicast group to avoid cross-test LCM contamination.
+_ISOLATED_LCM_URL = "udpm://239.255.76.99:7699?ttl=0"
+
+
 @contextmanager
 def lcm_typed_context() -> Generator[tuple[LCM, LCM], None, None]:
-    pub = LCM()
-    sub = LCM()
+    pub = LCM(url=_ISOLATED_LCM_URL)
+    sub = LCM(url=_ISOLATED_LCM_URL)
     pub.start()
     sub.start()
     try:
@@ -64,8 +71,8 @@ def lcm_typed_context() -> Generator[tuple[LCM, LCM], None, None]:
 
 @contextmanager
 def lcm_bytes_context() -> Generator[tuple[LCMPubSubBase, LCMPubSubBase], None, None]:
-    pub = LCMPubSubBase()
-    sub = LCMPubSubBase()
+    pub = LCMPubSubBase(url=_ISOLATED_LCM_URL)
+    sub = LCMPubSubBase(url=_ISOLATED_LCM_URL)
     pub.start()
     sub.start()
     try:
@@ -137,22 +144,20 @@ def _topic_matches_prefix(topic: Any, prefix: str = "/") -> bool:
 @pytest.mark.parametrize("tc", all_cases, ids=lambda c: c.name)
 def test_subscribe_all_receives_all_topics(tc: Case[Any, Any]) -> None:
     """Test that subscribe_all receives messages from all topics."""
-    received: list[tuple[Any, Any]] = []
+    collector = CallbackCollector(len(tc.topic_values))
 
     with tc.pubsub_context() as (pub, sub):
-        # Filter to only our test topics (LCM multicast can leak from parallel tests)
-        sub.subscribe_all(lambda msg, topic: received.append((msg, topic)))
-        time.sleep(0.01)  # Allow subscription to be ready
+        sub.subscribe_all(collector)
+        time.sleep(0.01)  # Allow subscription to register
 
         for topic, value in tc.topic_values:
             pub.publish(topic, value)
 
-        time.sleep(0.01)
+        collector.wait()
 
-        assert len(received) == len(tc.topic_values)
+        assert len(collector.results) == len(tc.topic_values)
 
-        # Verify all messages were received
-        received_msgs = [r[0] for r in received]
+        received_msgs = [r[0] for r in collector.results]
         expected_msgs = [v for _, v in tc.topic_values]
         for expected in expected_msgs:
             assert expected in received_msgs
@@ -161,47 +166,45 @@ def test_subscribe_all_receives_all_topics(tc: Case[Any, Any]) -> None:
 @pytest.mark.parametrize("tc", all_cases, ids=lambda c: c.name)
 def test_subscribe_all_unsubscribe(tc: Case[Any, Any]) -> None:
     """Test that unsubscribe stops receiving messages."""
-    received: list[tuple[Any, Any]] = []
+    collector = CallbackCollector(1)
     topic, value = tc.topic_values[0]
 
     with tc.pubsub_context() as (pub, sub):
-        unsub = sub.subscribe_all(lambda msg, topic: received.append((msg, topic)))
-        time.sleep(0.01)  # Allow subscription to be ready
+        unsub = sub.subscribe_all(collector)
+        time.sleep(0.01)  # Allow subscription to register
 
         pub.publish(topic, value)
-        time.sleep(0.01)
-        assert len(received) == 1
+        collector.wait()
+        assert len(collector.results) == 1
 
         unsub()
 
         pub.publish(topic, value)
-        time.sleep(0.01)
-        assert len(received) == 1  # No new messages
+        time.sleep(0.1)  # Wait to confirm no new messages arrive
+        assert len(collector.results) == 1  # No new messages
 
 
 @pytest.mark.parametrize("tc", all_cases, ids=lambda c: c.name)
 def test_subscribe_all_with_regular_subscribe(tc: Case[Any, Any]) -> None:
     """Test that subscribe_all coexists with regular subscriptions."""
-    all_received: list[tuple[Any, Any]] = []
+    all_collector = CallbackCollector(2)
     specific_received: list[tuple[Any, Any]] = []
     topic1, value1 = tc.topic_values[0]
     topic2, value2 = tc.topic_values[1]
 
     with tc.pubsub_context() as (pub, sub):
         sub.subscribe_all(
-            lambda msg, topic: all_received.append((msg, topic))
-            if _topic_matches_prefix(topic)
-            else None
+            lambda msg, topic: all_collector(msg, topic) if _topic_matches_prefix(topic) else None
         )
         sub.subscribe(topic1, lambda msg, topic: specific_received.append((msg, topic)))
-        time.sleep(0.01)  # Allow subscriptions to be ready
+        time.sleep(0.01)  # Allow subscriptions to register
 
         pub.publish(topic1, value1)
         pub.publish(topic2, value2)
-        time.sleep(0.01)
+        all_collector.wait()
 
         # subscribe_all gets both
-        assert len(all_received) == 2
+        assert len(all_collector.results) == 2
 
         # specific subscription gets only topic1
         assert len(specific_received) == 1
@@ -212,25 +215,24 @@ def test_subscribe_all_with_regular_subscribe(tc: Case[Any, Any]) -> None:
 def test_subscribe_glob(tc: Case[Any, Any]) -> None:
     """Test that glob pattern subscriptions receive only matching topics."""
     for pattern_topic, expected_indices in tc.glob_patterns:
-        received: list[tuple[Any, Any]] = []
+        collector = CallbackCollector(len(expected_indices))
 
         with tc.pubsub_context() as (pub, sub):
-            sub.subscribe(pattern_topic, lambda msg, topic, r=received: r.append((msg, topic)))
-            time.sleep(0.01)  # Allow subscription to be ready
+            sub.subscribe(pattern_topic, collector)
+            time.sleep(0.01)  # Allow subscription to register
 
             for topic, value in tc.topic_values:
                 pub.publish(topic, value)
 
-            time.sleep(0.01)
+            collector.wait()
 
-            assert len(received) == len(expected_indices), (
+            assert len(collector.results) == len(expected_indices), (
                 f"Expected {len(expected_indices)} messages for pattern {pattern_topic}, "
-                f"got {len(received)}"
+                f"got {len(collector.results)}"
             )
 
-            # Verify we received the expected messages
             expected_msgs = [tc.topic_values[i][1] for i in expected_indices]
-            received_msgs = [r[0] for r in received]
+            received_msgs = [r[0] for r in collector.results]
             for expected in expected_msgs:
                 assert expected in received_msgs
 
@@ -239,25 +241,23 @@ def test_subscribe_glob(tc: Case[Any, Any]) -> None:
 def test_subscribe_regex(tc: Case[Any, Any]) -> None:
     """Test that regex pattern subscriptions receive only matching topics."""
     for pattern_topic, expected_indices in tc.regex_patterns:
-        received: list[tuple[Any, Any]] = []
+        collector = CallbackCollector(len(expected_indices))
 
         with tc.pubsub_context() as (pub, sub):
-            sub.subscribe(pattern_topic, lambda msg, topic, r=received: r.append((msg, topic)))
-
-            time.sleep(0.01)
+            sub.subscribe(pattern_topic, collector)
+            time.sleep(0.01)  # Allow subscription to register
 
             for topic, value in tc.topic_values:
                 pub.publish(topic, value)
 
-            time.sleep(0.01)
+            collector.wait()
 
-            assert len(received) == len(expected_indices), (
+            assert len(collector.results) == len(expected_indices), (
                 f"Expected {len(expected_indices)} messages for pattern {pattern_topic}, "
-                f"got {len(received)}"
+                f"got {len(collector.results)}"
             )
 
-            # Verify we received the expected messages
             expected_msgs = [tc.topic_values[i][1] for i in expected_indices]
-            received_msgs = [r[0] for r in received]
+            received_msgs = [r[0] for r in collector.results]
             for expected in expected_msgs:
                 assert expected in received_msgs

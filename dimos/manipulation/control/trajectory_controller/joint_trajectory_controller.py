@@ -36,8 +36,11 @@ from typing import Any
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryState, TrajectoryStatus
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.RobotState import RobotState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState, TrajectoryStatus
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -153,10 +156,6 @@ class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
         super().stop()
         logger.info("JointTrajectoryController stopped")
 
-    # =========================================================================
-    # RPC Methods - Action-server-like interface
-    # =========================================================================
-
     @rpc
     def execute_trajectory(self, trajectory: JointTrajectory) -> bool:
         """
@@ -270,10 +269,6 @@ class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
                 error=self._error_message,
             )
 
-    # =========================================================================
-    # Callbacks
-    # =========================================================================
-
     def _on_joint_state(self, msg: JointState) -> None:
         """Callback for joint state feedback."""
         self._latest_joint_state = msg
@@ -288,10 +283,6 @@ class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
             f"Received trajectory via topic: {len(msg.points)} points, duration={msg.duration:.3f}s"
         )
         self.execute_trajectory(msg)
-
-    # =========================================================================
-    # Execution Loop
-    # =========================================================================
 
     def _execution_loop(self) -> None:
         """
@@ -360,7 +351,3 @@ class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
                 time.sleep(period)
 
         logger.info("Execution loop stopped")
-
-
-# Expose blueprint for declarative composition
-joint_trajectory_controller = JointTrajectoryController.blueprint

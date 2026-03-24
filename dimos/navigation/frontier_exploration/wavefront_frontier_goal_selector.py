@@ -34,8 +34,9 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.mapping.occupancy.inflation import simple_inflate
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
-from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance
 
@@ -839,8 +840,3 @@ class WavefrontFrontierExplorer(Module[WavefrontConfig]):
             return "Stopped exploration. The robot has stopped moving."
         else:
             return "Exploration skill was not active, so nothing was stopped."
-
-
-wavefront_frontier_explorer = WavefrontFrontierExplorer.blueprint
-
-__all__ = ["WavefrontFrontierExplorer", "wavefront_frontier_explorer"]

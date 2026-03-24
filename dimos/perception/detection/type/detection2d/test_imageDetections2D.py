@@ -13,7 +13,7 @@
 # limitations under the License.
 import pytest
 
-from dimos.perception.detection.type import ImageDetections2D
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 
 def test_from_ros_detection2d_array(get_moment_2d) -> None:

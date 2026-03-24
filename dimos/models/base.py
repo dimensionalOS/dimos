@@ -22,7 +22,7 @@ from typing import Annotated, Any
 import torch
 
 from dimos.core.resource import Resource
-from dimos.protocol.service import BaseConfig, Configurable
+from dimos.protocol.service.spec import BaseConfig, Configurable
 
 # Device string type - 'cuda', 'cpu', 'cuda:0', 'cuda:1', etc.
 DeviceType = Annotated[str, "Device identifier (e.g., 'cuda', 'cpu', 'cuda:0')"]

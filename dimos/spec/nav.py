@@ -15,8 +15,9 @@
 from typing import Protocol
 
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import PoseStamped, Twist
-from dimos.msgs.nav_msgs import Path
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.nav_msgs.Path import Path
 
 
 class Nav(Protocol):

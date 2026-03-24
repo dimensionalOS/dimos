@@ -38,7 +38,7 @@ Change **Transport Type** to "Streamable HTTP", change **URL** to `http://localh
 
 **Terminal 1** - Start DimOS:
 ```bash
-uv run dimos run unitree-go2-agentic-mcp
+uv run dimos run unitree-go2-agentic
 ```
 
 **Claude Code** - Use robot skills:

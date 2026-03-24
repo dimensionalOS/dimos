@@ -21,7 +21,7 @@ from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -121,8 +121,3 @@ class VLMAgent(Module[VLMAgentConfig]):
         response = self._invoke_image(image, query, response_format=response_format)
         content = response.content
         return content if isinstance(content, str) else str(content)
-
-
-vlm_agent = VLMAgent.blueprint
-
-__all__ = ["VLMAgent", "vlm_agent"]

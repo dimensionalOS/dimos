@@ -44,7 +44,7 @@ from dimos.control.examples.cartesian_ik_jogger import JogState
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 # Force X11 driver to avoid OpenGL threading issues
 os.environ["SDL_VIDEODRIVER"] = "x11"
@@ -213,6 +213,3 @@ class KeyboardTeleopModule(Module[KeyboardTeleopConfig]):
             clock.tick(50)
 
         pygame.quit()
-
-
-keyboard_teleop_module = KeyboardTeleopModule.blueprint

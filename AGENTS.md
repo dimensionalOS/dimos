@@ -18,8 +18,7 @@ dimos list
 # --- Go2 quadruped ---
 dimos --replay run unitree-go2                  # perception + mapping, replay data
 dimos --replay run unitree-go2 --daemon         # same, backgrounded
-dimos --replay run unitree-go2-agentic          # + LLM agent (GPT-4o) + skills
-dimos --replay run unitree-go2-agentic-mcp      # + McpServer + McpClient (MCP tools live)
+dimos --replay run unitree-go2-agentic          # + LLM agent (GPT-4o) + skills + MCP server
 dimos run unitree-go2-agentic --robot-ip 192.168.123.161  # real Go2 hardware
 
 # --- G1 humanoid ---
@@ -39,11 +38,11 @@ dimos restart          # stop + re-run with same original args
 
 | Blueprint | Robot | Hardware | Agent | MCP server | Notes |
 |-----------|-------|----------|-------|------------|-------|
-| `unitree-go2-agentic-mcp` | Go2 | real | via McpClient | ✓ | **Only blueprint with McpServer live** |
+| `unitree-go2-agentic` | Go2 | real | via McpClient | ✓ | McpServer live |
 | `unitree-g1-agentic-sim` | G1 | sim | GPT-4o (G1 prompt) | — | Full agentic sim, no real robot needed |
 | `xarm-perception-agent` | xArm | real | GPT-4o | — | Manipulation + perception + agent |
 | `xarm7-trajectory-sim` | xArm7 | sim | — | — | Trajectory planning sim |
-| `arm-teleop-xarm7` | xArm7 | real | — | — | Quest VR teleop |
+| `teleop-quest-xarm7` | xArm7 | real | — | — | Quest VR teleop |
 | `dual-xarm6-planner` | xArm6×2 | real | — | — | Dual-arm motion planner |
 
 Run `dimos list` for the full list.
@@ -52,11 +51,11 @@ Run `dimos list` for the full list.
 
 ## Tools available to you (MCP)
 
-**MCP only works if the blueprint includes `McpServer`.** Currently the only shipped blueprint that does is `unitree-go2-agentic-mcp`. All other agentic blueprints use the in-process `Agent` module and do NOT expose an MCP endpoint.
+**MCP only works if the blueprint includes `McpServer`.** All shipped agentic blueprints use `McpServer` + `McpClient`. E.g.: `unitree-go2-agentic`.
 
 ```bash
 # Start the MCP-enabled blueprint first:
-dimos --replay run unitree-go2-agentic-mcp --daemon
+dimos --replay run unitree-go2-agentic --daemon
 
 # Then use MCP tools:
 dimos mcp list-tools                                              # all available skills as JSON
@@ -73,21 +72,21 @@ The MCP server runs at `http://localhost:9990/mcp` (`GlobalConfig.mcp_port`).
 
 ### Adding McpServer to a blueprint
 
-Use **both** `McpServer` and `mcp_client()` — do not mix with `agent()`.
+Use **both** `McpServer.blueprint()` and `McpClient.blueprint()`.
 
 ```python
-from dimos.agents.mcp.mcp_client import mcp_client
+from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 
-unitree_go2_agentic_mcp = autoconnect(
+unitree_go2_agentic = autoconnect(
     unitree_go2_spatial,   # robot stack
     McpServer.blueprint(), # HTTP MCP server — exposes all @skill methods on port 9990
-    mcp_client(),          # LLM agent — fetches tools from McpServer
+    McpClient.blueprint(), # LLM agent — fetches tools from McpServer
     _common_agentic,       # skill containers
 )
 ```
 
-Reference: `dimos/robot/unitree/go2/blueprints/agentic/unitree_go2_agentic_mcp.py`
+Reference: `dimos/robot/unitree/go2/blueprints/agentic/unitree_go2_agentic.py`
 
 ---
 
@@ -276,7 +275,7 @@ my_skill_container = MySkillContainer.blueprint
 | Go2 (default) | `dimos/agents/system_prompt.py` | `SYSTEM_PROMPT` |
 | G1 humanoid | `dimos/robot/unitree/g1/system_prompt.py` | `G1_SYSTEM_PROMPT` |
 
-Pass the robot-specific prompt: `agent(system_prompt=G1_SYSTEM_PROMPT)`. Agent defaults to Go2 — wrong prompt causes hallucinated skills.
+Pass the robot-specific prompt: `McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT)`. The default prompt is Go2-specific; using it on G1 causes hallucinated skills.
 
 ### RPC Wiring
 

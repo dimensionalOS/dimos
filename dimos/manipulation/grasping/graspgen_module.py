@@ -25,13 +25,13 @@ from dimos.core.core import rpc
 from dimos.core.docker_runner import DockerModuleConfig
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseArray
-from dimos.msgs.std_msgs import Header
+from dimos.msgs.geometry_msgs.PoseArray import PoseArray
+from dimos.msgs.std_msgs.Header import Header
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import matrix_to_pose
 
 if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs import PointCloud2
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 logger = setup_logger()
 
@@ -270,6 +270,3 @@ def graspgen(
     return GraspGenModule.blueprint(
         docker_file=dockerfile, docker_build_context=build_context, **kwargs
     )
-
-
-__all__ = ["GraspGenConfig", "GraspGenModule", "graspgen"]

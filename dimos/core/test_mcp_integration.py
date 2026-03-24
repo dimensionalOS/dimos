@@ -55,11 +55,6 @@ if TYPE_CHECKING:
 MCP_URL = f"http://localhost:{global_config.mcp_port}/mcp"
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture(autouse=True)
 def _ci_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CI", "1")
@@ -119,11 +114,6 @@ def mcp_entry(mcp_shared: ModuleCoordinator, tmp_path: object) -> Generator[RunE
 def _adapter() -> McpAdapter:
     """Return an McpAdapter using GlobalConfig port."""
     return McpAdapter()
-
-
-# ---------------------------------------------------------------------------
-# Tests -- read-only against a shared MCP server
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow
@@ -321,11 +311,6 @@ class TestAgentSend:
         result = CliRunner().invoke(main, ["agent-send", "hello from CLI"])
         assert result.exit_code == 0
         assert "hello from CLI" in result.output
-
-
-# ---------------------------------------------------------------------------
-# Tests -- lifecycle management (own setup/teardown per test)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.slow

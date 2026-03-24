@@ -16,7 +16,8 @@ import time
 
 import pytest
 
-from dimos.utils.decorators import RollingAverageAccumulator, limit, retry, simple_mcache, ttl_cache
+from dimos.utils.decorators.accumulators import RollingAverageAccumulator
+from dimos.utils.decorators.decorators import limit, retry, simple_mcache, ttl_cache
 
 
 def test_limit() -> None:

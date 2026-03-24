@@ -14,7 +14,8 @@
 
 import pytest
 
-from dimos.perception.detection.type import Detection2DPerson, ImageDetections2D
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 
 
 @pytest.fixture(scope="session")

@@ -6,7 +6,7 @@ import pytest
 
 from dimos.models.vl.florence import Florence2Model
 from dimos.models.vl.moondream import MoondreamVlModel
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 
 

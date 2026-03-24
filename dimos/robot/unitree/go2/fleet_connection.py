@@ -34,10 +34,10 @@ from dimos.utils.logging_config import setup_logger
 if sys.version_info >= (3, 11):
     from typing import Self
 else:
-    from typing import Any as Self
+    from typing_extensions import Self
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import Twist
+    from dimos.msgs.geometry_msgs.Twist import Twist
 
 logger = setup_logger()
 
@@ -142,9 +142,3 @@ class Go2FleetConnection(GO2Connection[FleetConnectionConfig]):
             except Exception as e:
                 logger.error(f"Fleet publish_request failed: {e}")
         return self.connection.publish_request(topic, data)
-
-
-go2_fleet_connection = Go2FleetConnection.blueprint
-
-
-__all__ = ["Go2FleetConnection", "go2_fleet_connection"]

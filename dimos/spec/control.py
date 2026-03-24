@@ -15,7 +15,7 @@
 from typing import Protocol
 
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import Twist
+from dimos.msgs.geometry_msgs.Twist import Twist
 
 
 class LocalPlanner(Protocol):

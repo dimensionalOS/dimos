@@ -35,9 +35,11 @@ from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untype
 )
 
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs import Pose, Transform, Twist
-from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.sensor_msgs.Image import ImageFormat
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import RawLidarMsg, pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.robot.unitree.type.odometry import Odometry
@@ -183,7 +185,7 @@ class UnitreeWebRTCConnection(Resource):
             self.stop_timer.cancel()
 
         # Auto-stop after 0.5 seconds if no new commands
-        self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop)
+        self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop_movement)
         self.stop_timer.daemon = True
         self.stop_timer.start()
 
@@ -193,7 +195,7 @@ class UnitreeWebRTCConnection(Resource):
                 future = asyncio.run_coroutine_threadsafe(async_move_duration(), self.loop)
                 future.result()
                 # Stop after duration
-                self.stop()
+                self.stop_movement()
             else:
                 # Single command for continuous movement
                 future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
@@ -278,6 +280,7 @@ class UnitreeWebRTCConnection(Resource):
         return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]}))
 
     def balance_stand(self) -> bool:
+        """Activate BalanceStand mode — enables WIRELESS_CONTROLLER joystick commands."""
         return bool(
             self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
         )
@@ -287,6 +290,10 @@ class UnitreeWebRTCConnection(Resource):
             RTC_TOPIC["OBSTACLES_AVOID"],
             {"api_id": 1001, "parameter": {"enable": int(enabled)}},
         )
+
+    def free_walk(self) -> bool:
+        """Activate FreeWalk locomotion mode — enables walking and velocity commands."""
+        return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["FreeWalk"]}))
 
     def liedown(self) -> bool:
         return bool(
@@ -360,17 +367,11 @@ class UnitreeWebRTCConnection(Resource):
         """
         return self.video_stream()  # type: ignore[no-any-return]
 
-    def stop(self) -> bool:  # type: ignore[no-redef]
-        """Stop the robot's movement.
-
-        Returns:
-            bool: True if stop command was sent successfully
-        """
-        # Cancel timer since we're explicitly stopping
+    def stop_movement(self) -> None:
+        """Cancel the auto-stop timer (used by move() for continuous commands)."""
         if self.stop_timer:
             self.stop_timer.cancel()
             self.stop_timer = None
-        return True
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""

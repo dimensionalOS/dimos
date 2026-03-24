@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from dimos.mapping.types import LatLon
+from dimos.mapping.models import LatLon
 
 
 def test_get_position(maps_client, maps_fixture) -> None:

@@ -45,7 +45,7 @@ Composes on top of `drone-basic`, adding autonomous capabilities:
 | `DroneTrackingModule` | Visual servoing & object tracking |
 | `GoogleMapsSkillContainer` | GPS-based navigation skills |
 | `OsmSkill` | OpenStreetMap queries |
-| `Agent` | LLM agent (default: GPT-4o) |
+| `McpServer` + `McpClient` | LLM agent (default: GPT-4o) via MCP |
 | `WebInput` | Web/CLI interface for human commands |
 
 ## Installation

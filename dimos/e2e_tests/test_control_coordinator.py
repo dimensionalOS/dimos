@@ -24,8 +24,10 @@ import pytest
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.rpc_client import RPCClient
-from dimos.msgs.sensor_msgs import JointState
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint, TrajectoryState
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
 
 @pytest.mark.skipif_in_ci

@@ -19,7 +19,7 @@ import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from dimos.msgs import DimosMsg
+    from dimos.msgs.protocol import DimosMsg
 
 
 @lru_cache(maxsize=256)
@@ -38,7 +38,10 @@ def resolve_msg_type(type_name: str) -> type[DimosMsg] | None:
         return None
 
     # Try different import paths
+    # First try the direct submodule path (e.g., dimos.msgs.geometry_msgs.Quaternion)
+    # then fall back to parent package (for dimos_lcm or other packages)
     import_paths = [
+        f"dimos.msgs.{module_name}.{class_name}",
         f"dimos.msgs.{module_name}",
         f"dimos_lcm.{module_name}",
     ]

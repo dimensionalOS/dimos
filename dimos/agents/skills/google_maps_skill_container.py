@@ -20,7 +20,7 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.mapping.google_maps.google_maps import GoogleMaps
-from dimos.mapping.types import LatLon
+from dimos.mapping.models import LatLon
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -124,8 +124,3 @@ class GoogleMapsSkillContainer(Module):
                 results.append(f"no result for {query}")
 
         return json.dumps(results)
-
-
-google_maps_skill = GoogleMapsSkillContainer.blueprint
-
-__all__ = ["GoogleMapsSkillContainer", "google_maps_skill"]

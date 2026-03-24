@@ -25,7 +25,8 @@ from typing import Any
 import lcm as lcm_mod
 
 from dimos.protocol.service.spec import BaseConfig, Service
-from dimos.protocol.service.system_configurator import configure_system, lcm_configurators
+from dimos.protocol.service.system_configurator.base import configure_system
+from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
 from dimos.utils.logging_config import setup_logger
 
 if sys.version_info < (3, 13):

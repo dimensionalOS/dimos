@@ -154,8 +154,6 @@ class FrameProcessor:
         rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
         return rgb
 
-    # ==============================
-
     def process_stream_edge_detection(self, frame_stream):  # type: ignore[no-untyped-def]
         return frame_stream.pipe(
             ops.map(self.edge_detection),

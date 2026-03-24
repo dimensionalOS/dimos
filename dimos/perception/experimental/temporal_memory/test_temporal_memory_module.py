@@ -20,7 +20,7 @@ import json
 import os
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, create_autospec, patch
 
 from dotenv import load_dotenv
@@ -34,15 +34,16 @@ from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.models.vl.base import VlModel
-from dimos.msgs.sensor_msgs import Image
-from dimos.perception.experimental.temporal_memory import (
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB
+from dimos.perception.experimental.temporal_memory.frame_window_accumulator import (
     Frame,
     FrameWindowAccumulator,
-    TemporalMemory,
-    TemporalMemoryConfig,
-    TemporalState,
 )
-from dimos.perception.experimental.temporal_memory.entity_graph_db import EntityGraphDB
+from dimos.perception.experimental.temporal_memory.temporal_memory import (
+    TemporalMemory,
+)
+from dimos.perception.experimental.temporal_memory.temporal_state import TemporalState
 from dimos.perception.experimental.temporal_memory.temporal_utils.graph_utils import (
     extract_time_window,
 )
@@ -62,11 +63,6 @@ logger = setup_logger()
 def _make_image(value: int = 128, shape: tuple[int, ...] = (64, 64, 3)) -> Image:
     data = np.full(shape, value, dtype=np.uint8)
     return Image.from_numpy(data)
-
-
-# ======================================================================
-# 1. FrameWindowAccumulator tests
-# ======================================================================
 
 
 class TestFrameWindowAccumulator:
@@ -123,11 +119,6 @@ class TestFrameWindowAccumulator:
         assert acc.buffer_size == 1
         acc.clear()
         assert acc.buffer_size == 0
-
-
-# ======================================================================
-# 2. TemporalState tests
-# ======================================================================
 
 
 class TestTemporalState:
@@ -226,11 +217,6 @@ class TestTemporalState:
         assert "E2" in ids
 
 
-# ======================================================================
-# 3. extract_time_window (regex-only) tests
-# ======================================================================
-
-
 class TestExtractTimeWindow:
     def test_keyword_patterns(self) -> None:
         assert extract_time_window("just now") == 60
@@ -246,11 +232,6 @@ class TestExtractTimeWindow:
     def test_no_time_reference(self) -> None:
         assert extract_time_window("what entities are visible?") is None
         assert extract_time_window("is there a person?") is None
-
-
-# ======================================================================
-# 4. EntityGraphDB tests
-# ======================================================================
 
 
 class TestEntityGraphDB:
@@ -315,11 +296,6 @@ class TestEntityGraphDB:
         assert "semantic_relations" not in stats
 
 
-# ======================================================================
-# 5. Persistence test (new_memory flag)
-# ======================================================================
-
-
 class TestPersistence:
     def test_new_memory_clears_db(self, tmp_path: Path) -> None:
         db_dir = tmp_path / "memory" / "temporal"
@@ -372,11 +348,6 @@ class TestPersistence:
             tm.stop()
 
 
-# ======================================================================
-# 6. Per-run JSONL logging test
-# ======================================================================
-
-
 class TestJSONLLogging:
     def test_log_entries(self, tmp_path: Path) -> None:
         db_dir = tmp_path / "db"
@@ -413,11 +384,6 @@ class TestJSONLLogging:
         assert line["type"] == "window_analysis"
         assert line["raw_vlm_response"] == "test raw response"
         tm.stop()
-
-
-# ======================================================================
-# 7. Rerun visualization test
-# ======================================================================
 
 
 class TestEntityMarkers:
@@ -480,11 +446,6 @@ class TestEntityMarkers:
         import rerun as rr
 
         assert isinstance(archetype, rr.Points3D)
-
-
-# ======================================================================
-# 8. WindowAnalyzer mock tests
-# ======================================================================
 
 
 class TestWindowAnalyzer:
@@ -555,18 +516,13 @@ class TestWindowAnalyzer:
         assert result.answer == "The answer is 42"
 
 
-# ======================================================================
-# 9. Integration test with ModuleCoordinator
-# ======================================================================
-
-
 class VideoReplayModule(Module):
     """Module that replays synthetic video data for tests."""
 
     video_out: Out[Image]
 
-    def __init__(self, num_frames: int = 5) -> None:
-        super().__init__()
+    def __init__(self, num_frames: int = 5, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self.num_frames = num_frames
 
     @rpc
@@ -639,14 +595,12 @@ class TestTemporalMemoryIntegration:
             tm = dimos_cluster.deploy(
                 TemporalMemory,
                 vlm=vlm,
-                config=TemporalMemoryConfig(
-                    fps=1.0,
-                    window_s=2.0,
-                    stride_s=2.0,
-                    summary_interval_s=10.0,
-                    max_frames_per_window=3,
-                    db_dir=str(db_dir),
-                ),
+                fps=1.0,
+                window_s=2.0,
+                stride_s=2.0,
+                summary_interval_s=10.0,
+                max_frames_per_window=3,
+                db_dir=str(db_dir),
             )
         yield tm
         try:

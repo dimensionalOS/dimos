@@ -20,9 +20,6 @@ def normalize_angle(angle: float):  # type: ignore[no-untyped-def]
     return math.atan2(math.sin(angle), math.cos(angle))
 
 
-# ----------------------------
-# PID Controller Class
-# ----------------------------
 class PIDController:
     def __init__(  # type: ignore[no-untyped-def]
         self,
@@ -120,9 +117,6 @@ class PIDController:
         return error
 
 
-# ----------------------------
-# Visual Servoing Controller Class
-# ----------------------------
 class VisualServoingController:
     def __init__(self, distance_pid_params, angle_pid_params) -> None:  # type: ignore[no-untyped-def]
         """

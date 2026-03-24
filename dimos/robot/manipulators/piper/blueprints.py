@@ -23,14 +23,16 @@ Usage:
 """
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import TaskConfig, control_coordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.manipulation.manipulation_module import manipulation_module
-from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
-from dimos.msgs.sensor_msgs import JointState
-from dimos.teleop.keyboard.keyboard_teleop_module import keyboard_teleop_module
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.utils.data import LfsPath, get_data
 
 _PIPER_MODEL_PATH = LfsPath("piper_description/mujoco_model/piper_no_gripper_description.xml")
@@ -38,8 +40,8 @@ _PIPER_DATA = get_data("piper_description")
 
 # Piper 6-DOF mock sim + keyboard teleop + Drake visualization
 keyboard_teleop_piper = autoconnect(
-    keyboard_teleop_module(model_path=_PIPER_MODEL_PATH, ee_joint_id=6),
-    control_coordinator(
+    KeyboardTeleopModule.blueprint(model_path=_PIPER_MODEL_PATH, ee_joint_id=6),
+    ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
@@ -62,7 +64,7 @@ keyboard_teleop_piper = autoconnect(
             ),
         ],
     ),
-    manipulation_module(
+    ManipulationModule.blueprint(
         robots=[
             RobotModelConfig(
                 name="arm",

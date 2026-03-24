@@ -25,7 +25,7 @@ from dimos_lcm.foxglove_msgs.Point2 import Point2
 import numpy as np
 
 from dimos.msgs.foxglove_msgs.Color import Color
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.types.timestamped import to_ros_stamp
 from dimos.utils.decorators.decorators import simple_mcache

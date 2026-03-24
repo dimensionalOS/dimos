@@ -36,7 +36,7 @@ import numpy as np
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from dimos.manipulation.planning.spec import Jacobian
+    from dimos.manipulation.planning.spec.models import Jacobian
 
 
 def damped_pseudoinverse(

@@ -25,12 +25,12 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseArray
+from dimos.msgs.geometry_msgs.PoseArray import PoseArray
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import quaternion_to_euler
 
 if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs import PointCloud2
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 logger = setup_logger()
 
@@ -145,7 +145,3 @@ class GraspingModule(Module):
             f"Best grasp: pos=({pos.x:.4f}, {pos.y:.4f}, {pos.z:.4f}), "
             f"rpy=({rpy.x:.1f}, {rpy.y:.1f}, {rpy.z:.1f}) degrees"
         )
-
-
-grasping_module = GraspingModule.blueprint
-__all__ = ["GraspingModule", "grasping_module"]

@@ -49,7 +49,9 @@ from typing import Any
 
 from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.manipulation_module import ManipulationModule
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 _client = RPCClient(None, ManipulationModule)
 
@@ -71,7 +73,7 @@ def state() -> str:
 
 def plan(target_joints: list[float], robot_name: str | None = None) -> bool:
     """Plan to joint configuration. e.g. plan([0.1]*7)"""
-    from dimos.msgs.sensor_msgs import JointState
+    from dimos.msgs.sensor_msgs.JointState import JointState
 
     js = JointState(position=target_joints)
     return _client.plan_to_joints(js, robot_name)
@@ -106,7 +108,7 @@ def execute(robot_name: str | None = None) -> bool:
 
 def home(robot_name: str | None = None) -> bool:
     """Plan and execute move to home position."""
-    from dimos.msgs.sensor_msgs import JointState
+    from dimos.msgs.sensor_msgs.JointState import JointState
 
     home_joints = _client.get_robot_info(robot_name).get("home_joints", [0.0] * 7)
     success = _client.plan_to_joints(JointState(position=home_joints), robot_name)

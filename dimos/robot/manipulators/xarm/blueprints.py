@@ -24,17 +24,17 @@ Usage:
 """
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import TaskConfig, control_coordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.manipulation.blueprints import (
     _make_xarm6_config,
     _make_xarm7_config,
 )
-from dimos.manipulation.manipulation_module import manipulation_module
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import JointState
-from dimos.teleop.keyboard.keyboard_teleop_module import keyboard_teleop_module
+from dimos.manipulation.manipulation_module import ManipulationModule
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.utils.data import LfsPath
 
 _XARM6_MODEL_PATH = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
@@ -42,8 +42,8 @@ _XARM7_MODEL_PATH = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
 
 # XArm6 mock sim + keyboard teleop + Drake visualization
 keyboard_teleop_xarm6 = autoconnect(
-    keyboard_teleop_module(model_path=_XARM6_MODEL_PATH, ee_joint_id=6),
-    control_coordinator(
+    KeyboardTeleopModule.blueprint(model_path=_XARM6_MODEL_PATH, ee_joint_id=6),
+    ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
@@ -66,7 +66,7 @@ keyboard_teleop_xarm6 = autoconnect(
             ),
         ],
     ),
-    manipulation_module(
+    ManipulationModule.blueprint(
         robots=[_make_xarm6_config(name="arm", joint_prefix="arm_", add_gripper=False)],
         enable_viz=True,
     ),
@@ -81,8 +81,8 @@ keyboard_teleop_xarm6 = autoconnect(
 
 # XArm7 mock sim + keyboard teleop + Drake visualization
 keyboard_teleop_xarm7 = autoconnect(
-    keyboard_teleop_module(model_path=_XARM7_MODEL_PATH, ee_joint_id=7),
-    control_coordinator(
+    KeyboardTeleopModule.blueprint(model_path=_XARM7_MODEL_PATH, ee_joint_id=7),
+    ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
@@ -105,7 +105,7 @@ keyboard_teleop_xarm7 = autoconnect(
             ),
         ],
     ),
-    manipulation_module(
+    ManipulationModule.blueprint(
         robots=[_make_xarm7_config(name="arm", joint_prefix="arm_", add_gripper=False)],
         enable_viz=True,
     ),

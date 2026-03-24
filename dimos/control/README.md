@@ -96,9 +96,9 @@ dimos/control/
 ## Configuration
 
 ```python
-from dimos.control import control_coordinator, HardwareComponent, TaskConfig
+from dimos.control import ControlCoordinator, HardwareComponent, TaskConfig
 
-my_robot = control_coordinator(
+my_robot = ControlCoordinator.blueprint(
     tick_rate=100.0,
     hardware=[
         HardwareComponent(

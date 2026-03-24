@@ -25,22 +25,23 @@ from dimos.protocol.service.lcmservice import (
     LCMService,
     autoconf,
 )
-from dimos.protocol.service.system_configurator import (
+from dimos.protocol.service.system_configurator.lcm import (
     BufferConfiguratorLinux,
     BufferConfiguratorMacOS,
-    LibPythonConfiguratorMacOS,
     MaxFileConfiguratorMacOS,
     MulticastConfiguratorLinux,
     MulticastConfiguratorMacOS,
 )
+from dimos.protocol.service.system_configurator.libpython import LibPythonConfiguratorMacOS
 
-# ----------------------------- autoconf tests -----------------------------
+# autoconf tests
 
 
 class TestConfigureSystemForLcm:
     def test_creates_linux_checks_on_linux(self) -> None:
         with patch(
-            "dimos.protocol.service.system_configurator.platform.system", return_value="Linux"
+            "dimos.protocol.service.system_configurator.lcm_config.platform.system",
+            return_value="Linux",
         ):
             with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
                 autoconf()
@@ -53,7 +54,8 @@ class TestConfigureSystemForLcm:
 
     def test_creates_macos_checks_on_darwin(self) -> None:
         with patch(
-            "dimos.protocol.service.system_configurator.platform.system", return_value="Darwin"
+            "dimos.protocol.service.system_configurator.lcm_config.platform.system",
+            return_value="Darwin",
         ):
             with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
                 autoconf()
@@ -68,7 +70,8 @@ class TestConfigureSystemForLcm:
 
     def test_passes_check_only_flag(self) -> None:
         with patch(
-            "dimos.protocol.service.system_configurator.platform.system", return_value="Linux"
+            "dimos.protocol.service.system_configurator.lcm_config.platform.system",
+            return_value="Linux",
         ):
             with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
                 autoconf(check_only=True)
@@ -77,7 +80,8 @@ class TestConfigureSystemForLcm:
 
     def test_logs_error_on_unsupported_system(self) -> None:
         with patch(
-            "dimos.protocol.service.system_configurator.platform.system", return_value="Windows"
+            "dimos.protocol.service.system_configurator.lcm_config.platform.system",
+            return_value="Windows",
         ):
             with patch("dimos.protocol.service.lcmservice.configure_system") as mock_configure:
                 with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
@@ -87,7 +91,7 @@ class TestConfigureSystemForLcm:
                     assert "Windows" in mock_logger.error.call_args[0][0]
 
 
-# ----------------------------- LCMConfig tests -----------------------------
+# LCMConfig tests
 
 
 class TestLCMConfig:
@@ -103,7 +107,7 @@ class TestLCMConfig:
         assert config.url == custom_url
 
 
-# ----------------------------- Topic tests -----------------------------
+# Topic tests
 
 
 class TestTopic:
@@ -118,7 +122,7 @@ class TestTopic:
         assert str(topic) == "my_topic#TestMessage"
 
 
-# ----------------------------- LCMService tests -----------------------------
+# LCMService tests
 
 
 class TestLCMService:

@@ -20,7 +20,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.messages.base import BaseMessage
 from reactivex.disposable import Disposable
 
-from dimos.agents.agent import AgentSpec
+from dimos.agents.agent_spec import AgentSpec
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient

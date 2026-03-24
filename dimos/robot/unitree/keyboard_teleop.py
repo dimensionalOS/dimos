@@ -22,7 +22,8 @@ import pygame
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import Twist, Vector3
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # Force X11 driver to avoid OpenGL threading issues
 os.environ["SDL_VIDEODRIVER"] = "x11"
@@ -201,8 +202,3 @@ class KeyboardTeleop(Module):
             y_pos += 25
 
         pygame.display.flip()
-
-
-keyboard_teleop = KeyboardTeleop.blueprint
-
-__all__ = ["KeyboardTeleop", "keyboard_teleop"]

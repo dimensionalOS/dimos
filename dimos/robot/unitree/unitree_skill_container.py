@@ -24,7 +24,9 @@ from unitree_webrtc_connect.constants import RTC_TOPIC
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.base import NavigationState
 from dimos.utils.logging_config import setup_logger
 
@@ -332,8 +334,3 @@ Here are all the command names and what they do.
 
 {_commands}
 """
-
-
-unitree_skills = UnitreeSkillContainer.blueprint
-
-__all__ = ["UnitreeSkillContainer", "unitree_skills"]

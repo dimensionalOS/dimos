@@ -27,7 +27,6 @@ import numpy as np
 from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
 
-from dimos import spec
 from dimos.agents_deprecated.memory.image_embedding import ImageEmbeddingProvider
 from dimos.agents_deprecated.memory.spatial_vector_db import SpatialVectorDB
 from dimos.agents_deprecated.memory.visual_memory import VisualMemory
@@ -36,12 +35,13 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.spec.perception import Camera
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import Vector3
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 _OUTPUT_DIR = DIMOS_PROJECT_ROOT / "assets" / "output"
 _MEMORY_DIR = _OUTPUT_DIR / "memory"
@@ -577,14 +577,9 @@ class SpatialMemory(Module[SpatialConfig]):
 
 def deploy(  # type: ignore[no-untyped-def]
     dimos: ModuleCoordinator,
-    camera: spec.Camera,
+    camera: Camera,
 ):
     spatial_memory = dimos.deploy(SpatialMemory, db_path="/tmp/spatial_memory_db")  # type: ignore[attr-defined]
     spatial_memory.color_image.connect(camera.color_image)
     spatial_memory.start()
     return spatial_memory
-
-
-spatial_memory = SpatialMemory.blueprint
-
-__all__ = ["SpatialMemory", "deploy", "spatial_memory"]

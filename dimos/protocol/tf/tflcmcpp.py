@@ -14,7 +14,7 @@
 
 from datetime import datetime
 
-from dimos.msgs.geometry_msgs import Transform
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 from dimos.protocol.tf.tf import TFConfig, TFSpec
 

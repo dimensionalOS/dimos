@@ -34,8 +34,14 @@ from typing import Any
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Twist, Vector3
-from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.RobotState import RobotState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.simple_controller import PIDController
 
@@ -272,10 +278,6 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
         super().stop()
         logger.info("CartesianMotionController stopped")
 
-    # =========================================================================
-    # RPC Methods - High-level control
-    # =========================================================================
-
     @rpc
     def set_target_pose(
         self, position: list[float], orientation: list[float], frame_id: str = "world"
@@ -349,10 +351,6 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
             and ori_error < self.config.orientation_tolerance
         )
 
-    # =========================================================================
-    # Private Methods - Callbacks
-    # =========================================================================
-
     def _on_joint_state(self, msg: JointState) -> None:
         """Callback when new joint state is received."""
         logger.debug(f"Received joint_state: {len(msg.position)} joints")
@@ -371,10 +369,6 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
             self._last_target_time = time.time()
             self._is_tracking = True
         logger.debug(f"New target received: {msg}")
-
-    # =========================================================================
-    # Private Methods - Control Loop
-    # =========================================================================
 
     def _control_loop(self) -> None:
         """
@@ -714,7 +708,3 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
     def _normalize_angle(angle: float) -> float:
         """Normalize angle to [-pi, pi]."""
         return math.atan2(math.sin(angle), math.cos(angle))
-
-
-# Expose blueprint for declarative composition
-cartesian_motion_controller = CartesianMotionController.blueprint
