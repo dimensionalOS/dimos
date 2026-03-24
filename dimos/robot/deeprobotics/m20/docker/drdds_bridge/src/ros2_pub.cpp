@@ -35,7 +35,11 @@ public:
           lidar_reader_(drdds_bridge::SHM_LIDAR_NAME),
           rsairy_fields_(make_rsairy_fields())
     {
-        auto qos = rclcpp::SensorDataQoS();
+        // RELIABLE QoS to match ARISE SLAM's default subscriber (rclcpp::QoS(2)
+        // is RELIABLE). SensorDataQoS (BEST_EFFORT) is incompatible — ARISE
+        // won't receive any data. RELIABLE risks ACK blocking for 3MB messages
+        // but works over SHM intra-container with negligible overhead.
+        auto qos = rclcpp::QoS(rclcpp::KeepLast(5)).reliable();
         lidar_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
             "/bridge/LIDAR_POINTS", qos);
 
@@ -101,6 +105,38 @@ private:
             const uint8_t* data = lidar_reader_.slot_data(slot);
             msg->data.resize(data_size);
             std::memcpy(msg->data.data(), data, data_size);
+
+            // Post-process point data for ARISE SLAM compatibility:
+            // 1. Make time relative (absolute f64 → relative f64, then pcl truncates to f32)
+            // 2. Remap rings from 0-191 (RSAIRY 192ch) to 0-63 (ARISE N_SCANS=64)
+            {
+                const uint32_t pt_step = msg->point_step; // 26 bytes
+                const uint32_t n_pts = msg->width * msg->height;
+                constexpr size_t ring_off = 16; // ring field offset (uint16)
+                constexpr size_t time_off = 18; // time field offset (float64)
+                if (n_pts > 0 && pt_step > 0) {
+                    // Read first point's time for relative offset
+                    double first_t;
+                    std::memcpy(&first_t, msg->data.data() + time_off, sizeof(double));
+
+                    for (uint32_t i = 0; i < n_pts; i++) {
+                        uint8_t* pt = msg->data.data() + i * pt_step;
+
+                        // Remap ring: 0-191 → 0-63 (groups of 3 original rings per bin)
+                        uint16_t ring;
+                        std::memcpy(&ring, pt + ring_off, sizeof(uint16_t));
+                        ring = static_cast<uint16_t>(ring * 64 / 192);
+                        if (ring > 63) ring = 63;
+                        std::memcpy(pt + ring_off, &ring, sizeof(uint16_t));
+
+                        // Make time relative to first point
+                        double t;
+                        std::memcpy(&t, pt + time_off, sizeof(double));
+                        t -= first_t;
+                        std::memcpy(pt + time_off, &t, sizeof(double));
+                    }
+                }
+            }
 
             auto t1 = std::chrono::steady_clock::now();
 

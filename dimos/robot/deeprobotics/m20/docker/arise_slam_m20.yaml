@@ -1,0 +1,124 @@
+# M20 ARISE SLAM config — RoboSense RSAIRY dual lidar in Velodyne mode
+# Based on livox_mid360.yaml with M20-specific overrides:
+#   - sensor: velodyne (RSAIRY outputs standard PointCloud2)
+#   - scan_line: 32 (RSAIRY beam count — verify ring range from bridge data)
+#   - M20 topics: /bridge/LIDAR_POINTS (from drdds bridge), /IMU (from yesense)
+#   - Blind zones for M20 body (820x430mm)
+
+# Feature Extraction Params
+feature_extraction_node:
+    ros__parameters:
+        use_sim_time: false
+        PROJECT_NAME: ""
+
+        imu_topic: "/IMU"
+        laser_topic: "/bridge/LIDAR_POINTS"
+        odom_topic: "/dummy"
+        depthup_topic: "/rs_up/depth/cloud_filtered"
+        depthdown_topic: "/rs_down/depth/cloud_filtered"
+        world_frame: "map"
+        world_frame_rot: "map_rot"
+        sensor_frame: "sensor"
+        sensor_frame_rot: "sensor_rot"
+
+        scan_line: 64   # RSAIRY 192ch remapped to 64 bins in ros2_pub (ring * 64 / 192)
+        sensor: "velodyne"
+        mapping_skip_frame: 1
+        lidar_flip: false
+        # M20 body blind zones (820x430mm, lidar at center-ish)
+        blindFront: 0.5
+        blindBack: -0.5
+        blindLeft: 0.3
+        blindRight: -0.3
+        blindDiskLow: -0.05
+        blindDiskHigh: 0.05
+        blindDiskRadius: 0.5
+        use_imu_roll_pitch: false
+        use_dynamic_mask: false
+        use_up_realsense_points: false
+        use_down_realsense_points: false
+        min_range: 0.5
+        max_range: 30.0
+        skip_realsense_points: 3
+        provide_imu_laser_extrinsic: true
+        provide_point_time: 1
+        debug_view: false
+
+        imu_acc_x_offset: 0.0
+        imu_acc_y_offset: 0.0
+        imu_acc_z_offset: 0.0
+        imu_acc_x_limit: 1.0
+        imu_acc_y_limit: 1.0
+        imu_acc_z_limit: 1.0
+
+# Laser Mapping Params
+laser_mapping_node:
+    ros__parameters:
+        use_sim_time: false
+        PROJECT_NAME: ""
+
+        imu_topic: "/IMU"
+        laser_topic: "/bridge/LIDAR_POINTS"
+        odom_topic: "integrated_to_init"
+        depthup_topic: "/rs_up/depth/cloud_filtered"
+        depthdown_topic: "/rs_down/depth/cloud_filtered"
+        world_frame: "map"
+        world_frame_rot: "map_rot"
+        sensor_frame: "sensor"
+        sensor_frame_rot: "sensor_rot"
+
+        scanPeriod: 0.1
+        mapping_line_resolution: 0.1
+        mapping_plane_resolution: 0.2
+        max_iterations: 5
+        debug_view: false
+        enable_ouster_data: false
+        publish_only_feature_points: false
+        use_imu_roll_pitch: false
+        start_from_previous_map: false
+        max_surface_features: 2000
+        velocity_failure_threshold: 30.0
+        provide_imu_laser_extrinsic: true
+        auto_voxel_size: true
+        forget_far_chunks: false
+        visual_confidence_factor: 1.0
+        pos_degeneracy_threshold: 1.0
+        ori_degeneracy_threshold: 1.0
+        shift_avg_ratio: 0.2
+        shift_undistortion: true
+
+        read_pose_file: false
+
+# IMU Preintegration Params
+imu_preintegration_node:
+    ros__parameters:
+        use_sim_time: false
+        PROJECT_NAME: ""
+        sensor: "velodyne"
+        imu_topic: "/IMU"
+        laser_topic: "/bridge/LIDAR_POINTS"
+        odom_topic: "integrated_to_init"
+        depthup_topic: "/rs_up/depth/cloud_filtered"
+        depthdown_topic: "/rs_down/depth/cloud_filtered"
+        world_frame: "map"
+        world_frame_rot: "map_rot"
+        sensor_frame: "sensor"
+        sensor_frame_rot: "sensor_rot"
+
+        lidar_correction_noise: 0.01
+        smooth_factor: 0.9
+        provide_imu_laser_extrinsic: true
+        # Yesense IMU noise parameters (conservative starting values — tune later)
+        acc_n: 0.4
+        gyr_n: 0.002
+        acc_w: 0.006
+        gyr_w: 0.00004
+        g_norm: 9.80511
+        use_imu_roll_pitch: false
+        lidar_flip: false
+        imu_acc_x_offset: 0.0
+        imu_acc_y_offset: 0.0
+        imu_acc_z_offset: 0.0
+        imu_acc_x_limit: 0.3
+        imu_acc_y_limit: 0.2
+        imu_acc_z_limit: 0.1
