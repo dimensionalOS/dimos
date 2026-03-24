@@ -1,7 +1,10 @@
 # M20 override for lio_autonomy.yaml
-# Only changes: topic names for M20 drdds bridge + yesense IMU
+# Changes: topic names, PointCloud2 mode for RSAIRY lidar bridge
 imu_topic: /IMU
 lidar_topic: /bridge/LIDAR_POINTS
+lidar_msg_type: pointcloud2          # ros2_pub publishes PointCloud2, not Livox CustomMsg
+pointcloud2_time_field: time         # RSAIRY per-point timestamp field name
+pointcloud2_time_unit: sec           # RSAIRY timestamps are absolute seconds
 
 body_frame: sensor
 world_frame: map

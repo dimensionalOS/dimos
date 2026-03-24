@@ -145,6 +145,16 @@ RUN git clone -b ${NAV_STACK_REF} --depth 1 \
         https://github.com/jeff-hykin/ros-navigation-autonomy-stack.git \
         ${WORKSPACE}/src/ros-navigation-autonomy-stack
 
+# Clone foxglove-bridge into workspace (not in Humble arm64 apt repos)
+ARG TARGETARCH
+RUN if [ "${TARGETARCH}" = "arm64" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            ros-${ROS_DISTRO}-foxglove-msgs \
+            && rm -rf /var/lib/apt/lists/* && \
+        git clone --depth 1 https://github.com/foxglove/ros-foxglove-bridge.git \
+            ${WORKSPACE}/src/ros-foxglove-bridge; \
+    fi
+
 # On arm64, replace pre-built x86_64 or-tools with arm64 built version
 RUN if [ "${TARGETARCH}" = "arm64" ] && [ -d "/opt/or-tools" ]; then \
         echo "Replacing x86_64 or-tools with arm64 build..." && \
@@ -193,6 +203,15 @@ RUN cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam 
     make -j$(nproc) && make install && ldconfig && \
     rm -rf ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam/build
 
+# Patch fastlio2 for PointCloud2 support (M20 RSAIRY lidars).
+# Adds lidar_msg_type config flag to accept sensor_msgs/PointCloud2 alongside Livox CustomMsg.
+COPY docker/navigation/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/fastlio2/src/lio_node.cpp \
+     ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/fastlio2/src/lio_node.cpp
+COPY docker/navigation/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/fastlio2/src/utils.h \
+     ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/fastlio2/src/utils.h
+COPY docker/navigation/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/fastlio2/src/utils.cpp \
+     ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/fastlio2/src/utils.cpp
+
 # Build ROS workspace with both SLAM systems (no --symlink-install for multi-stage build compatibility)
 RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     cd ${WORKSPACE} && \
@@ -223,7 +242,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # ROS packages
     ros-${ROS_DISTRO}-pcl-ros \
     ros-${ROS_DISTRO}-cv-bridge \
-    ros-${ROS_DISTRO}-foxglove-bridge \
     ros-${ROS_DISTRO}-rviz2 \
     ros-${ROS_DISTRO}-rqt* \
     ros-${ROS_DISTRO}-joy \
@@ -256,6 +274,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Time sync for multi-computer setups
     chrony \
     && rm -rf /var/lib/apt/lists/*
+
+# foxglove-bridge: not in Humble arm64 apt repos. On amd64, install from apt.
+# On arm64, it was already built in the builder stage as part of the workspace.
+ARG TARGETARCH
+RUN if [ "${TARGETARCH}" != "arm64" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            ros-${ROS_DISTRO}-foxglove-bridge \
+            && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # Copy installed libraries from builder
 COPY --from=builder /usr/local/lib /usr/local/lib
