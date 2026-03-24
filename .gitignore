@@ -36,8 +36,8 @@ __pycache__
 
 # node env (used by devcontainers cli)
 node_modules
-package.json
-package-lock.json
+/package.json
+/package-lock.json
 
 # Ignore build artifacts
 dist/

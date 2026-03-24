@@ -66,7 +66,7 @@ Dimensional is agent native -- "vibecode" your robots in natural language and bu
   <tr>
     <td align="center" width="50%">
       <h3><a href="docs/capabilities/agents/readme.md">Agentive Control, MCP</a></h3>
-      "hey Robot, go find the kitchen"<br><a href="https://x.com/stash_pomichter/status/2015912688854200322">Watch video</a>
+      "hey Robot, go find the kitchen"<br><a href="https://x.com/stash_pomichter/status/2015912688854200322">Watch video</a><br><a href="dimos/agents/mcp/README.md">Run with OpenClaw</a>
     </td>
     <td align="center" width="50%">
       <h3>Spatial Memory</a></h3>
