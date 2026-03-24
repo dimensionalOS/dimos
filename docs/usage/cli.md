@@ -204,18 +204,18 @@ Works with any agentic blueprint — does not require MCP. Publishes directly to
 
 ### `dimos mcp`
 
-Interact with the running MCP server. **Requires a blueprint that includes `McpServer`** — for example `unitree-go2-agentic-mcp`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcp-port` / `--mcp-host` to override).
+Interact with the running MCP server. **Requires a blueprint that includes `McpServer`** — for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcp-port` / `--mcp-host` to override).
 
-To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `mcp_client()` (LLM agent that fetches tools from the server):
+To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `McpClient.blueprint()` (LLM agent that fetches tools from the server):
 
 ```python
-from dimos.agents.mcp.mcp_client import mcp_client
+from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 
 my_mcp_blueprint = autoconnect(
     my_robot_stack,
     McpServer.blueprint(),
-    mcp_client(),
+    McpClient.blueprint(),
     my_skill_containers,
 )
 ```

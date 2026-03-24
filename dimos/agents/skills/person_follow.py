@@ -22,7 +22,7 @@ import numpy as np
 from reactivex.disposable import Disposable
 from turbojpeg import TurboJPEG
 
-from dimos.agents.agent import AgentSpec
+from dimos.agents.agent_spec import AgentSpec
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig

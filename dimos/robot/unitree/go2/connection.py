@@ -229,7 +229,8 @@ class GO2Connection(Module[_Config], Camera, Pointcloud):
     @rpc
     def start(self) -> None:
         super().start()
-
+        if not hasattr(self, "connection"):
+            return
         self.connection.start()
 
         def onimage(image: Image) -> None:

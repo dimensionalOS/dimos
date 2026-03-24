@@ -14,7 +14,6 @@
 
 from collections.abc import Generator
 from contextlib import contextmanager
-import os
 from pathlib import Path
 import shutil
 import tempfile

@@ -20,8 +20,9 @@ from dotenv import load_dotenv
 from langchain_core.messages.base import BaseMessage
 import pytest
 
-from dimos.agents.agent import Agent
 from dimos.agents.agent_test_runner import AgentTestRunner
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import pLCMTransport
@@ -74,7 +75,8 @@ def agent_setup(request):
 
         blueprint = autoconnect(
             *blueprints,
-            Agent.blueprint(**agent_kwargs),
+            McpServer.blueprint(),
+            McpClient.blueprint(**agent_kwargs),
             AgentTestRunner.blueprint(messages=messages),
         )
 

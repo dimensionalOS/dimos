@@ -34,7 +34,7 @@ from dimos.utils.logging_config import setup_logger
 if sys.version_info >= (3, 11):
     from typing import Self
 else:
-    from typing import Any as Self
+    from typing_extensions import Self
 
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Twist import Twist
