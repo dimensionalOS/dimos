@@ -11,7 +11,7 @@ feature_extraction_node:
         use_sim_time: false
         PROJECT_NAME: ""
 
-        imu_topic: "/IMU"
+        imu_topic: "/bridge/IMU"
         laser_topic: "/bridge/LIDAR_POINTS"
         odom_topic: "/dummy"
         depthup_topic: "/rs_up/depth/cloud_filtered"
@@ -57,7 +57,7 @@ laser_mapping_node:
         use_sim_time: false
         PROJECT_NAME: ""
 
-        imu_topic: "/IMU"
+        imu_topic: "/bridge/IMU"
         laser_topic: "/bridge/LIDAR_POINTS"
         odom_topic: "integrated_to_init"
         depthup_topic: "/rs_up/depth/cloud_filtered"
@@ -95,7 +95,7 @@ imu_preintegration_node:
         use_sim_time: false
         PROJECT_NAME: ""
         sensor: "velodyne"
-        imu_topic: "/IMU"
+        imu_topic: "/bridge/IMU"
         laser_topic: "/bridge/LIDAR_POINTS"
         odom_topic: "integrated_to_init"
         depthup_topic: "/rs_up/depth/cloud_filtered"

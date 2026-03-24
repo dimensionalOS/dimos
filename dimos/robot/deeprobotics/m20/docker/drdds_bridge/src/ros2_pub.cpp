@@ -1,14 +1,13 @@
-// ros2_pub.cpp - Reads lidar data from shared memory and publishes
-// as standard ROS2 Humble PointCloud2 for FAST_LIO consumption.
+// ros2_pub.cpp - Reads lidar + IMU data from shared memory and publishes
+// as standard ROS2 Humble topics for ARISE SLAM / FAST_LIO consumption.
 //
 // Uses a dedicated polling thread (bypasses rclcpp executor scheduling).
-// With SHM-only FastDDS transport (ros2_pub_fastdds.xml), publish() takes
-// ~5-10ms instead of 30-80ms, so single-thread is sufficient for 10Hz.
 
 #include "shm_transport.h"
 
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <sensor_msgs/msg/imu.hpp>
 
 #include <thread>
 #include <atomic>
@@ -24,7 +23,7 @@ static std::vector<sensor_msgs::msg::PointField> make_rsairy_fields() {
     fields[2].name = "z";         fields[2].offset = 8;  fields[2].datatype = 7; fields[2].count = 1;
     fields[3].name = "intensity"; fields[3].offset = 12; fields[3].datatype = 7; fields[3].count = 1;
     fields[4].name = "ring";      fields[4].offset = 16; fields[4].datatype = 4; fields[4].count = 1;
-    fields[5].name = "time";      fields[5].offset = 18; fields[5].datatype = 8; fields[5].count = 1;
+    fields[5].name = "time";      fields[5].offset = 18; fields[5].datatype = 7; fields[5].count = 1; // FLOAT32 (ARISE PointcloudXYZITR expects f32)
     return fields;
 }
 
@@ -33,6 +32,7 @@ public:
     BridgePublisher()
         : Node("drdds_bridge"),
           lidar_reader_(drdds_bridge::SHM_LIDAR_NAME),
+          imu_reader_(drdds_bridge::SHM_IMU_NAME),
           rsairy_fields_(make_rsairy_fields())
     {
         // RELIABLE QoS to match ARISE SLAM's default subscriber (rclcpp::QoS(2)
@@ -42,6 +42,8 @@ public:
         auto qos = rclcpp::QoS(rclcpp::KeepLast(5)).reliable();
         lidar_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
             "/bridge/LIDAR_POINTS", qos);
+        imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>(
+            "/bridge/IMU", rclcpp::QoS(rclcpp::KeepLast(50)).reliable());
 
         // Open notification semaphore (created by drdds_recv)
         notify_sem_ = sem_open(drdds_bridge::SHM_NOTIFY_NAME, O_CREAT, 0666, 0);
@@ -129,11 +131,12 @@ private:
                         if (ring > 63) ring = 63;
                         std::memcpy(pt + ring_off, &ring, sizeof(uint16_t));
 
-                        // Make time relative to first point
+                        // Make time relative to first point, write as float32
+                        // (PCL fromROSMsg can't convert f64→f32; PointcloudXYZITR expects f32)
                         double t;
                         std::memcpy(&t, pt + time_off, sizeof(double));
-                        t -= first_t;
-                        std::memcpy(pt + time_off, &t, sizeof(double));
+                        float t_f32 = static_cast<float>(t - first_t);
+                        std::memcpy(pt + time_off, &t_f32, sizeof(float));
                     }
                 }
             }
@@ -152,16 +155,56 @@ private:
                             lidar_count_, copy_us, pub_us, data_size,
                             slot->width * slot->height);
             }
+
+            // Drain all pending IMU messages (200Hz IMU vs 10Hz lidar)
+            poll_imu();
+        }
+    }
+
+    void poll_imu() {
+        if (!imu_reader_.is_open()) {
+            if (!imu_reader_.try_open()) return;
+            RCLCPP_INFO(this->get_logger(), "IMU SHM connected");
+        }
+        while (auto* slot = imu_reader_.poll()) {
+            if (slot->msg_type != 1) continue;
+            if (slot->data_size < 80) continue;
+
+            auto msg = std::make_unique<sensor_msgs::msg::Imu>();
+            msg->header.stamp.sec = slot->stamp_sec;
+            msg->header.stamp.nanosec = slot->stamp_nsec;
+            msg->header.frame_id = "imu_link";
+
+            const uint8_t* d = imu_reader_.slot_data(slot);
+            size_t off = 0;
+            auto read_d = [&]() -> double { double v; std::memcpy(&v, d + off, 8); off += 8; return v; };
+
+            msg->orientation.x = read_d();
+            msg->orientation.y = read_d();
+            msg->orientation.z = read_d();
+            msg->orientation.w = read_d();
+            msg->angular_velocity.x = read_d();
+            msg->angular_velocity.y = read_d();
+            msg->angular_velocity.z = read_d();
+            msg->linear_acceleration.x = read_d();
+            msg->linear_acceleration.y = read_d();
+            msg->linear_acceleration.z = read_d();
+
+            imu_pub_->publish(std::move(msg));
+            imu_count_++;
         }
     }
 
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
     drdds_bridge::ShmReader lidar_reader_;
+    drdds_bridge::ShmReader imu_reader_;
     const std::vector<sensor_msgs::msg::PointField> rsairy_fields_;
     sem_t* notify_sem_ = nullptr;
     std::atomic<bool> running_{true};
     std::thread poll_thread_;
     uint64_t lidar_count_ = 0;
+    uint64_t imu_count_ = 0;
 };
 
 int main(int argc, char** argv) {

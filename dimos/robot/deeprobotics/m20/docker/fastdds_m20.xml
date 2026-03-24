@@ -35,13 +35,29 @@
     <participant profile_name="participant_profile" is_default_profile="true">
         <rtps>
             <!-- Builtin transports = default SHM + UDP.
-                 SHM: intra-container discovery (ros2_pub ↔ FAST_LIO)
-                 UDP: external discovery (/IMU from AOS yesense on 10.21.31.x) -->
+                 SHM: intra-container discovery (ros2_pub ↔ ARISE/FAST_LIO)
+                 UDP: external discovery (/IMU from yesense on NOS host) -->
             <useBuiltinTransports>true</useBuiltinTransports>
             <!-- Add large SHM on top of builtins for lidar data -->
             <userTransports>
                 <transport_id>shm_large</transport_id>
             </userTransports>
+            <builtin>
+                <initialPeersList>
+                    <!-- localhost: needed for intra-container lifecycle service discovery -->
+                    <locator>
+                        <udpv4>
+                            <address>127.0.0.1</address>
+                        </udpv4>
+                    </locator>
+                    <!-- NOS host: yesense publishes /IMU via drdds (FastDDS 2.14) -->
+                    <locator>
+                        <udpv4>
+                            <address>10.21.31.106</address>
+                        </udpv4>
+                    </locator>
+                </initialPeersList>
+            </builtin>
         </rtps>
     </participant>
 

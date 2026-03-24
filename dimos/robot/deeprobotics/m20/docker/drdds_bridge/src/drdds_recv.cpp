@@ -8,6 +8,8 @@
 #include "drdds/core/drdds_core.h"
 #include "dridl/sensor_msgs/msg/PointCloud2.h"
 #include "dridl/sensor_msgs/msg/PointCloud2PubSubTypes.h"
+#include "dridl/sensor_msgs/msg/Imu.h"
+#include "dridl/sensor_msgs/msg/ImuPubSubTypes.h"
 #include <csignal>
 #include <iostream>
 #include <chrono>
@@ -19,6 +21,7 @@ static std::atomic<bool> g_running{true};
 static void signal_handler(int) { g_running = false; }
 
 static std::atomic<uint64_t> lidar_count{0};
+static std::atomic<uint64_t> imu_count{0};
 
 int main(int argc, char** argv) {
     signal(SIGINT, signal_handler);
@@ -42,7 +45,12 @@ int main(int argc, char** argv) {
         notify_sem = nullptr;
     }
 
-    std::cout << "[drdds_recv] SHM initialized. Subscribing to /LIDAR/POINTS..." << std::endl;
+    drdds_bridge::ShmWriter imu_shm(
+        drdds_bridge::SHM_IMU_NAME,
+        drdds_bridge::IMU_NUM_SLOTS,
+        drdds_bridge::IMU_SLOT_SIZE);
+
+    std::cout << "[drdds_recv] SHM initialized. Subscribing to /LIDAR/POINTS + /IMU..." << std::endl;
 
     // Lidar callback — only passes raw point data + header metadata.
     // PointField descriptors are hardcoded in ros2_pub (RSAIRY fields never change).
@@ -81,12 +89,54 @@ int main(int argc, char** argv) {
         }
     };
 
-    // DrDDSChannel (pub+sub) — required for rsdriver matching
-    // IMU NOT bridged — yesense /IMU is directly readable by ROS2 (verified 2026-03-18)
+    // IMU callback — serializes IMU data into a flat buffer for SHM transport.
+    // Layout: [stamp_sec(4) stamp_nsec(4) orientation(4×f64=32) angular_vel(3×f64=24) linear_acc(3×f64=24)]
+    // Total: 88 bytes (fits easily in IMU_SLOT_SIZE=256)
+    auto on_imu = [&](const sensor_msgs::msg::Imu* msg) {
+        auto* slot = imu_shm.acquire();
+        uint8_t* data = imu_shm.slot_data(slot);
+
+        slot->data_size = 88;
+        slot->msg_type = 1; // Imu
+        slot->stamp_sec = msg->header().stamp().sec();
+        slot->stamp_nsec = msg->header().stamp().nanosec();
+
+        // Pack IMU data as doubles into flat buffer
+        size_t off = 0;
+        auto write_d = [&](double v) { std::memcpy(data + off, &v, 8); off += 8; };
+        // Orientation quaternion (x, y, z, w)
+        write_d(msg->orientation().x());
+        write_d(msg->orientation().y());
+        write_d(msg->orientation().z());
+        write_d(msg->orientation().w());
+        // Angular velocity (x, y, z)
+        write_d(msg->angular_velocity().x());
+        write_d(msg->angular_velocity().y());
+        write_d(msg->angular_velocity().z());
+        // Linear acceleration (x, y, z)
+        write_d(msg->linear_acceleration().x());
+        write_d(msg->linear_acceleration().y());
+        write_d(msg->linear_acceleration().z());
+
+        imu_shm.commit();
+        if (notify_sem) sem_post(notify_sem);
+
+        uint64_t c = imu_count.fetch_add(1) + 1;
+        if (c % 200 == 1) {
+            std::cout << "[drdds_recv] imu #" << c
+                      << " acc=(" << msg->linear_acceleration().x()
+                      << "," << msg->linear_acceleration().y()
+                      << "," << msg->linear_acceleration().z() << ")" << std::endl;
+        }
+    };
+
+    // DrDDSChannel (pub+sub) — required for rsdriver/yesense matching
     DrDDSChannel<sensor_msgs::msg::PointCloud2PubSubType> lidar_ch(
         on_lidar, "/LIDAR/POINTS", 0);
+    DrDDSChannel<sensor_msgs::msg::ImuPubSubType> imu_ch(
+        on_imu, "/IMU", 0);
 
-    std::cout << "[drdds_recv] Channels created. Waiting for data..." << std::endl;
+    std::cout << "[drdds_recv] Channels created (lidar + IMU). Waiting for data..." << std::endl;
 
     // Health watchdog: warn if no data for 30s
     uint64_t last_lidar = 0;
@@ -96,7 +146,9 @@ int main(int argc, char** argv) {
         std::this_thread::sleep_for(std::chrono::seconds(5));
         uint64_t cur = lidar_count.load();
         std::cout << "[drdds_recv] status: lidar_matched=" << lidar_ch.GetMatchedCount()
-                  << " lidar_msgs=" << cur << std::endl;
+                  << " lidar_msgs=" << cur
+                  << " imu_matched=" << imu_ch.GetMatchedCount()
+                  << " imu_msgs=" << imu_count.load() << std::endl;
 
         if (cur == last_lidar) {
             no_data_cycles++;

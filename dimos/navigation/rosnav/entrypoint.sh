@@ -332,7 +332,7 @@ LAUNCH_ARGS="enable_bridge:=false vehicleHeight:=${VEHICLE_HEIGHT}"
 if [ "$LOCALIZATION_METHOD" = "fastlio" ]; then
     LAUNCH_ARGS="use_fastlio2:=true ${LAUNCH_ARGS}"
 elif [ "$LOCALIZATION_METHOD" = "arise_slam" ]; then
-    : # nothing it's the default
+    LAUNCH_ARGS="use_fastlio2:=false ${LAUNCH_ARGS}"
 else
     echo "LOCALIZATION_METHOD must be empty or one of 'fastlio', 'arise_slam', but got '$LOCALIZATION_METHOD'"
     exit 9
