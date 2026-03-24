@@ -607,6 +607,23 @@ The old `fast_lio` (package `fast_lio`, binary `fastlio_mapping`) accepted Point
 
 ---
 
+## Finding #30: fastlio2 Patched for PointCloud2 — Image Building (2026-03-24)
+
+**Option 3 implemented** (ace-er6): Patched fastlio2 to accept `sensor_msgs/msg/PointCloud2` via config flag.
+
+**Changes made** (committed as `4a06f68c5`):
+- `utils.cpp`: Added `pointcloud2ToPCL()` — manual byte iteration over PointCloud2, maps x/y/z/intensity directly, converts absolute `time` → relative ms offset in `p.curvature` (matching Livox path semantics)
+- `utils.h`: Declaration for new function
+- `lio_node.cpp`: `lidar_msg_type` config flag (`livox_custom` | `pointcloud2`), conditional subscription with `SensorDataQoS` for PointCloud2 mode, refactored common `enqueueCloud()`, empty cloud guard in `syncPackage()`
+- `lio_autonomy_m20.yaml`: Added `lidar_msg_type: pointcloud2`, `pointcloud2_time_field: time`, `pointcloud2_time_unit: sec`
+- `Dockerfile`: COPY patched fastlio2 source before colcon build; foxglove-bridge built from source in builder stage for arm64 (not in Humble arm64 apt repos)
+
+**Dockerfile foxglove-bridge issue**: First build attempt poisoned `/opt/ros/humble/setup.bash` — colcon install metadata from foxglove-bridge contained hardcoded `/tmp/ros-foxglove-bridge/install` path that broke ROS setup chain. Fixed by cloning foxglove source into the workspace so it's built alongside all other packages in the existing `colcon build`.
+
+**Status**: Nav container image building (colcon full rebuild due to cache invalidation from foxglove-bridge addition). Once built: verify `ros2` works locally → transfer to NOS via WiFi → deploy → test FAST_LIO receiving `/bridge/LIDAR_POINTS`.
+
+---
+
 ## Remaining Work
 
 ### Completed
@@ -649,8 +666,9 @@ The old `fast_lio` (package `fast_lio`, binary `fastlio_mapping`) accepted Point
 24. ~~**Fix FastDDS config for intra-container discovery**~~: DONE. Unified `fastdds_m20.xml` with `useBuiltinTransports=true` + 32MB SHM. deploy.sh updated to not override ros2_pub's config. See Finding #28.
 25. ~~**Align FAST_LIO topic names with bridge**~~: DONE. `lio_autonomy_m20.yaml` overrides topic names. FastDDS discovery confirmed working (Finding #28).
 26. **Run launch_nos.py natively on NOS**: Unblocked by #24. Needs deploy + test.
-27. **Fix message type mismatch (BLOCKED)**: fastlio2 subscribes to `livox_ros_driver2/msg/CustomMsg` but ros2_pub publishes `sensor_msgs/msg/PointCloud2`. See Finding #29.
-28. **Fix QoS mismatch**: fastlio2 subscribes RELIABLE, ros2_pub publishes BEST_EFFORT. After fixing #27, need to align QoS.
+27. ~~**Fix message type mismatch**~~: DONE. Patched fastlio2 with `lidar_msg_type: pointcloud2` config flag + `pointcloud2ToPCL()` converter. See Finding #30.
+28. ~~**Fix QoS mismatch**~~: DONE. PointCloud2 subscription uses `SensorDataQoS` (BEST_EFFORT). Part of #27 patch.
+29. **Deploy patched nav image + test**: Image building (full colcon rebuild). Transfer to NOS → deploy → verify FAST_LIO produces odometry.
 
 ### ARISE-SLAM (Phase 2)
 
