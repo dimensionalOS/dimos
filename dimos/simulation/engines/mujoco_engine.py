@@ -76,7 +76,7 @@ _engine_registry_lock = threading.Lock()
 
 
 def get_or_create_engine(
-    config_path: "Path",
+    config_path: Path,
     headless: bool = True,
     cameras: list[CameraConfig] | None = None,
 ) -> MujocoEngine:
@@ -99,9 +99,7 @@ def get_or_create_engine(
                         engine._camera_configs.append(cam)
             return engine
 
-        engine = MujocoEngine(
-            config_path=Path(config_path), headless=headless, cameras=cameras
-        )
+        engine = MujocoEngine(config_path=Path(config_path), headless=headless, cameras=cameras)
         _engine_registry[key] = engine
         return engine
 
@@ -269,22 +267,21 @@ class MujocoEngine(SimulationEngine):
             for cfg in self._camera_configs:
                 if cfg.name in cam_renderers:
                     continue
-                cam_id = mujoco.mj_name2id(
-                    self._model, mujoco.mjtObj.mjOBJ_CAMERA, cfg.name
-                )
+                cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, cfg.name)
                 if cam_id < 0:
                     logger.warning(f"Camera '{cfg.name}' not found in MJCF, skipping")
                     continue
-                rgb_renderer = mujoco.Renderer(
-                    self._model, height=cfg.height, width=cfg.width
-                )
-                depth_renderer = mujoco.Renderer(
-                    self._model, height=cfg.height, width=cfg.width
-                )
+                rgb_renderer = mujoco.Renderer(self._model, height=cfg.height, width=cfg.width)
+                depth_renderer = mujoco.Renderer(self._model, height=cfg.height, width=cfg.width)
                 depth_renderer.enable_depth_rendering()
                 interval = 1.0 / cfg.fps if cfg.fps > 0 else float("inf")
                 cam_renderers[cfg.name] = (
-                    cfg, cam_id, rgb_renderer, depth_renderer, interval, 0.0,
+                    cfg,
+                    cam_id,
+                    rgb_renderer,
+                    depth_renderer,
+                    interval,
+                    0.0,
                 )
                 logger.info(
                     f"Camera '{cfg.name}' renderer created "

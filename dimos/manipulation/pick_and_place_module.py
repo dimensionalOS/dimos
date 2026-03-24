@@ -303,8 +303,19 @@ class PickAndPlaceModule(ManipulationModule):
             return None
 
         c = det.center
-        grasp_pose = Pose(Vector3(c.x, c.y, c.z), Quaternion.from_euler(Vector3(0.0, math.pi, 0.0)))
-        logger.info(f"Heuristic grasp for '{object_name}' at ({c.x:.3f}, {c.y:.3f}, {c.z:.3f})")
+        # Depth cameras see the surface, not the volumetric center.
+        # Offset Z downward by half the detected height so the gripper
+        # reaches the object center rather than hovering above it.
+        z_offset = det.size.z * 0.5 if det.size.z > 0 else 0.0
+        grasp_z = c.z - z_offset
+        grasp_pose = Pose(
+            Vector3(c.x, c.y, grasp_z),
+            Quaternion.from_euler(Vector3(0.0, math.pi, 0.0)),
+        )
+        logger.info(
+            f"Heuristic grasp for '{object_name}' at ({c.x:.3f}, {c.y:.3f}, {grasp_z:.3f})"
+            f" (surface={c.z:.3f}, z_offset={z_offset:.3f})"
+        )
         return [grasp_pose]
 
     @skill

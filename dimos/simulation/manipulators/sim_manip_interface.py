@@ -206,7 +206,7 @@ class SimManipInterface:
         position = max(jlo, min(jhi, position))
         if jhi != jlo:
             t = (position - jlo) / (jhi - jlo)
-            ctrl_value = chi - t * (chi - clo)
+            ctrl_value = clo + t * (chi - clo)
         else:
             ctrl_value = clo
         self._engine.set_position_target(self._gripper_idx, ctrl_value)

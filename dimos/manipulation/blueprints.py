@@ -183,6 +183,8 @@ def _make_xarm7_config(
     add_gripper: bool = False,
     gripper_hardware_id: str | None = None,
     tf_extra_links: list[str] | None = None,
+    pre_grasp_offset: float = 0.10,
+    home_joints: list[float] | None = None,
 ) -> RobotModelConfig:
     """Create XArm7 robot config.
 
@@ -226,8 +228,8 @@ def _make_xarm7_config(
         coordinator_task_name=coordinator_task,
         gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=tf_extra_links or [],
-        # Home configuration: arm extended forward, elbow up (safe observe pose)
-        home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        pre_grasp_offset=pre_grasp_offset,
+        home_joints=home_joints or [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     )
 
 
@@ -467,53 +469,49 @@ from dimos.control.blueprints._hardware import XARM7_SIM_PATH, sim_xarm7
 from dimos.simulation.mujoco.camera import MujocoCamera
 from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
 
-xarm_perception_sim = (
-    autoconnect(
-        PickAndPlaceModule.blueprint(
-            robots=[
-                _make_xarm7_config(
-                    "arm",
-                    joint_prefix="arm_",
-                    coordinator_task="traj_arm",
-                    add_gripper=True,
-                    gripper_hardware_id="arm",
-                    tf_extra_links=["link7"],
-                ),
-            ],
-            planning_timeout=10.0,
-            enable_viz=True,
-        ),
-        MujocoCamera.blueprint(
-            address=str(XARM7_SIM_PATH),
-            camera_name="wrist_camera",
-            base_frame_id="link7",
-        ),
-        ObjectSceneRegistrationModule.blueprint(target_frame="world"),
-        ControlCoordinator.blueprint(
-            tick_rate=100.0,
-            publish_joint_state=True,
-            joint_state_frame_id="coordinator",
-            hardware=[sim_xarm7("arm", headless=False, gripper=True)],
-            tasks=[
-                TaskConfig(
-                    name="traj_arm",
-                    type="trajectory",
-                    joint_names=[f"arm_joint{i + 1}" for i in range(7)],
-                    priority=10,
-                ),
-            ],
-        ),
-        RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode()),
-        FoxgloveBridge.blueprint(),
-    )
-    .transports(
-        {
-            ("joint_state", JointState): LCMTransport(
-                "/coordinator/joint_state", JointState
+xarm_perception_sim = autoconnect(
+    PickAndPlaceModule.blueprint(
+        robots=[
+            _make_xarm7_config(
+                "arm",
+                joint_prefix="arm_",
+                coordinator_task="traj_arm",
+                add_gripper=True,
+                gripper_hardware_id="arm",
+                tf_extra_links=["link7"],
+                pre_grasp_offset=0.05,
+                # Observation pose: arm raised, camera above table looking down
+                home_joints=[0.0, -0.3, 0.0, 1.0, 0.0, 0.5, 0.0],
             ),
-        }
-    )
-    .global_config(viewer="foxglove")
+        ],
+        planning_timeout=10.0,
+        enable_viz=True,
+    ),
+    MujocoCamera.blueprint(
+        address=str(XARM7_SIM_PATH),
+        camera_name="wrist_camera",
+        base_frame_id="link7",
+    ),
+    ObjectSceneRegistrationModule.blueprint(target_frame="world"),
+    ControlCoordinator.blueprint(
+        tick_rate=100.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[sim_xarm7("arm", headless=False, gripper=True)],
+        tasks=[
+            TaskConfig(
+                name="traj_arm",
+                type="trajectory",
+                joint_names=[f"arm_joint{i + 1}" for i in range(7)],
+                priority=10,
+            ),
+        ],
+    ),
+    RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode()),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
 )
 
 

@@ -101,7 +101,11 @@ class PointCloud2(Timestamped):
         del state["_pcd_tensor"]
         state["_pcd_legacy_cache"] = None
         # Remove cached_property entries that hold Open3D C++ objects
-        for key in ("axis_aligned_bounding_box", "oriented_bounding_box", "bounding_box_dimensions"):
+        for key in (
+            "axis_aligned_bounding_box",
+            "oriented_bounding_box",
+            "bounding_box_dimensions",
+        ):
             state.pop(key, None)
         return state
 

@@ -24,15 +24,13 @@ import math
 import threading
 import time
 
-import numpy as np
-import reactivex as rx
 from pydantic import Field
+import reactivex as rx
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import (
-    OPTICAL_ROTATION,
     DepthCameraConfig,
     DepthCameraHardware,
 )
@@ -338,95 +336,60 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
             self.depth_camera_info.publish(self._depth_camera_info)
 
     def _publish_tf(self, ts: float, frame: CameraFrame | None = None) -> None:
-        transforms = []
+        """Publish TF for the camera frame chain.
 
-        # world -> camera_link (from MuJoCo camera world pose, updated each frame)
-        if frame is not None:
-            from scipy.spatial.transform import Rotation as R
+        For MuJoCo sim cameras we publish world -> optical_frame directly,
+        skipping the intermediate camera_link/color_frame chain. This avoids
+        convention mismatches between MuJoCo (X=right, Y=up, -Z=look) and
+        ROS camera_link (X=forward, Y=left, Z=up).
 
-            # MuJoCo camera frame: X=right, Y=up, Z=back (looks along -Z)
-            # ROS camera_link:     X=forward, Y=left, Z=up
-            # OPTICAL_ROTATION converts camera_link -> optical (X=right, Y=down, Z=forward)
-            # We need: cam_xmat @ correction @ OPTICAL_ROTATION = cam_xmat @ Rx(180)
-            # So correction = Rx(180) @ OPTICAL_ROTATION.inv()
-            _MJ_TO_CAMLINK = R.from_quat([0.5, -0.5, -0.5, -0.5])  # xyzw
-            mj_rot = R.from_matrix(frame.cam_mat.reshape(3, 3))
-            q_xyzw = (mj_rot * _MJ_TO_CAMLINK).as_quat()
-            transforms.append(
-                Transform(
-                    translation=Vector3(
-                        float(frame.cam_pos[0]),
-                        float(frame.cam_pos[1]),
-                        float(frame.cam_pos[2]),
-                    ),
-                    rotation=Quaternion(
-                        float(q_xyzw[0]),
-                        float(q_xyzw[1]),
-                        float(q_xyzw[2]),
-                        float(q_xyzw[3]),
-                    ),
-                    frame_id="world",
-                    child_frame_id=self._camera_link,
-                    ts=ts,
-                )
-            )
-        elif self.config.base_transform is not None:
-            # Fallback: static base_frame_id -> camera_link
-            transforms.append(
-                Transform(
-                    translation=self.config.base_transform.translation,
-                    rotation=self.config.base_transform.rotation,
-                    frame_id=self.config.base_frame_id,
-                    child_frame_id=self._camera_link,
-                    ts=ts,
-                )
-            )
+        MuJoCo optical = cam_xmat @ Rx(180):
+          X_opt = cam_X (right in image)
+          Y_opt = -cam_Y (down in image)
+          Z_opt = -cam_Z (into scene = look direction)
+        """
+        if frame is None:
+            return
 
-        # camera_link -> depth_frame (identity — same virtual camera)
-        transforms.append(
-            Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id=self._camera_link,
-                child_frame_id=self._depth_frame,
-                ts=ts,
-            )
+        from scipy.spatial.transform import Rotation as R
+
+        # MuJoCo cam frame -> optical frame: flip Y and Z (Rx 180°)
+        _RX180 = R.from_euler("x", 180, degrees=True)
+        mj_rot = R.from_matrix(frame.cam_mat.reshape(3, 3))
+        optical_rot = mj_rot * _RX180
+        q = optical_rot.as_quat()  # xyzw
+
+        pos = Vector3(
+            float(frame.cam_pos[0]),
+            float(frame.cam_pos[1]),
+            float(frame.cam_pos[2]),
         )
+        rot = Quaternion(float(q[0]), float(q[1]), float(q[2]), float(q[3]))
 
-        # depth_frame -> depth_optical_frame
-        transforms.append(
+        # Publish world -> all optical/link frames (all co-located in sim)
+        self.tf.publish(
             Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=OPTICAL_ROTATION,
-                frame_id=self._depth_frame,
-                child_frame_id=self._depth_optical_frame,
-                ts=ts,
-            )
-        )
-
-        # camera_link -> color_frame (identity — co-located in sim)
-        transforms.append(
-            Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id=self._camera_link,
-                child_frame_id=self._color_frame,
-                ts=ts,
-            )
-        )
-
-        # color_frame -> color_optical_frame
-        transforms.append(
-            Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=OPTICAL_ROTATION,
-                frame_id=self._color_frame,
+                translation=pos,
+                rotation=rot,
+                frame_id="world",
                 child_frame_id=self._color_optical_frame,
                 ts=ts,
-            )
+            ),
+            Transform(
+                translation=pos,
+                rotation=rot,
+                frame_id="world",
+                child_frame_id=self._depth_optical_frame,
+                ts=ts,
+            ),
+            Transform(
+                translation=pos,
+                rotation=rot,
+                frame_id="world",
+                child_frame_id=self._camera_link,
+                ts=ts,
+            ),
         )
-
-        self.tf.publish(*transforms)
 
     def _generate_pointcloud(self) -> None:
         """Generate pointcloud from latest depth frame (optional, for visualization)."""
