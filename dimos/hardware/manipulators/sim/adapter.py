@@ -23,7 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from dimos.simulation.engines.mujoco_engine import MujocoEngine
+from dimos.simulation.engines.mujoco_engine import MujocoEngine, get_or_create_engine
 from dimos.simulation.manipulators.sim_manip_interface import SimManipInterface
 
 if TYPE_CHECKING:
@@ -41,11 +41,13 @@ class SimMujocoAdapter(SimManipInterface):
         dof: int = 7,
         address: str | None = None,
         headless: bool = True,
+        engine: MujocoEngine | None = None,
         **_: Any,
     ) -> None:
-        if address is None:
-            raise ValueError("address (MJCF XML path) is required for sim_mujoco adapter")
-        engine = MujocoEngine(config_path=Path(address), headless=headless)
+        if engine is None:
+            if address is None:
+                raise ValueError("address (MJCF XML path) is required for sim_mujoco adapter")
+            engine = get_or_create_engine(config_path=Path(address), headless=headless)
 
         # Detect gripper from engine joints
         gripper_idx = None

@@ -91,6 +91,7 @@ all_blueprints = {
     "unitree-go2-webrtc-keyboard-teleop": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_webrtc_keyboard_teleop:unitree_go2_webrtc_keyboard_teleop",
     "xarm-perception": "dimos.manipulation.blueprints:xarm_perception",
     "xarm-perception-agent": "dimos.manipulation.blueprints:xarm_perception_agent",
+    "xarm-perception-sim": "dimos.manipulation.blueprints:xarm_perception_sim",
     "xarm6-planner-only": "dimos.manipulation.blueprints:xarm6_planner_only",
     "xarm7-planner-coordinator": "dimos.manipulation.blueprints:xarm7_planner_coordinator",
     "xarm7-planner-coordinator-agent": "dimos.manipulation.blueprints:xarm7_planner_coordinator_agent",

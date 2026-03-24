@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from pydantic import Field
@@ -65,7 +64,7 @@ class RobotModelConfig(ModuleConfig):
     velocity_limits: list[float] | None = None
     auto_convert_meshes: bool = False
     xacro_args: dict[str, str] = Field(default_factory=dict)
-    collision_exclusion_pairs: Iterable[tuple[str, str]] = ()
+    collision_exclusion_pairs: list[tuple[str, str]] = Field(default_factory=list)
     # Motion constraints for trajectory generation
     max_velocity: float = 1.0
     max_acceleration: float = 2.0
@@ -74,9 +73,9 @@ class RobotModelConfig(ModuleConfig):
     coordinator_task_name: str | None = None
     gripper_hardware_id: str | None = None
     # TF publishing for extra links (e.g., camera mount)
-    tf_extra_links: Sequence[str] = ()
+    tf_extra_links: list[str] = Field(default_factory=list)
     # Home/observe joint configuration for go_home skill
-    home_joints: Iterable[float] | None = None
+    home_joints: list[float] | None = None
     # Pre-grasp offset distance in meters (along approach direction)
     pre_grasp_offset: float = 0.10
 

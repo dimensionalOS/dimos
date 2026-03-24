@@ -456,6 +456,67 @@ xarm_perception_agent = autoconnect(
 )
 
 
+# ---------------------------------------------------------------------------
+# Sim perception: MuJoCo camera replaces RealSense for sim-based pick-and-place
+# ---------------------------------------------------------------------------
+# Both the sim adapter and camera resolve the same MujocoEngine via the registry
+# (keyed by MJCF path), so they share physics state.
+# The engine is created lazily when the adapter connects / camera starts.
+
+from dimos.control.blueprints._hardware import XARM7_SIM_PATH, sim_xarm7
+from dimos.simulation.mujoco.camera import MujocoCamera
+from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
+
+xarm_perception_sim = (
+    autoconnect(
+        PickAndPlaceModule.blueprint(
+            robots=[
+                _make_xarm7_config(
+                    "arm",
+                    joint_prefix="arm_",
+                    coordinator_task="traj_arm",
+                    add_gripper=True,
+                    gripper_hardware_id="arm",
+                    tf_extra_links=["link7"],
+                ),
+            ],
+            planning_timeout=10.0,
+            enable_viz=True,
+        ),
+        MujocoCamera.blueprint(
+            address=str(XARM7_SIM_PATH),
+            camera_name="wrist_camera",
+            base_frame_id="link7",
+        ),
+        ObjectSceneRegistrationModule.blueprint(target_frame="world"),
+        ControlCoordinator.blueprint(
+            tick_rate=100.0,
+            publish_joint_state=True,
+            joint_state_frame_id="coordinator",
+            hardware=[sim_xarm7("arm", headless=False, gripper=True)],
+            tasks=[
+                TaskConfig(
+                    name="traj_arm",
+                    type="trajectory",
+                    joint_names=[f"arm_joint{i + 1}" for i in range(7)],
+                    priority=10,
+                ),
+            ],
+        ),
+        RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode()),
+        FoxgloveBridge.blueprint(),
+    )
+    .transports(
+        {
+            ("joint_state", JointState): LCMTransport(
+                "/coordinator/joint_state", JointState
+            ),
+        }
+    )
+    .global_config(viewer="foxglove")
+)
+
+
 __all__ = [
     "PIPER_GRIPPER_COLLISION_EXCLUSIONS",
     "XARM_GRIPPER_COLLISION_EXCLUSIONS",
@@ -465,4 +526,5 @@ __all__ = [
     "xarm7_planner_coordinator_agent",
     "xarm_perception",
     "xarm_perception_agent",
+    "xarm_perception_sim",
 ]

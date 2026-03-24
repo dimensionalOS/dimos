@@ -16,12 +16,15 @@
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 from typing import TYPE_CHECKING
 
 import mujoco
 import mujoco.viewer as viewer  # type: ignore[import-untyped,import-not-found]
+import numpy as np
+from numpy.typing import NDArray
 
 from dimos.simulation.engines.base import SimulationEngine
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
@@ -35,6 +38,74 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+@dataclasses.dataclass
+class CameraConfig:
+    """Configuration for a camera to be rendered inside the sim loop."""
+
+    name: str
+    """Camera name as defined in the MJCF XML."""
+    width: int = 640
+    height: int = 480
+    fps: float = 15.0
+
+
+@dataclasses.dataclass
+class CameraFrame:
+    """Thread-safe container for a rendered camera frame."""
+
+    rgb: NDArray[np.uint8]
+    """RGB image, shape (H, W, 3)."""
+    depth: NDArray[np.float32]
+    """Depth image in meters, shape (H, W)."""
+    cam_pos: NDArray[np.float64]
+    """Camera world position, shape (3,)."""
+    cam_mat: NDArray[np.float64]
+    """Camera rotation matrix (flattened 3x3), shape (9,)."""
+    fovy: float
+    """Vertical field of view in degrees."""
+    timestamp: float
+    """Time of rendering."""
+
+
+# ---------------------------------------------------------------------------
+# Engine registry — allows adapter and camera to share the same engine instance
+# by MJCF path.
+# ---------------------------------------------------------------------------
+_engine_registry: dict[str, MujocoEngine] = {}
+_engine_registry_lock = threading.Lock()
+
+
+def get_or_create_engine(
+    config_path: "Path",
+    headless: bool = True,
+    cameras: list[CameraConfig] | None = None,
+) -> MujocoEngine:
+    """Return the shared MujocoEngine for *config_path*, creating one if needed.
+
+    If an engine already exists for the resolved path and *cameras* are supplied,
+    any **new** camera configs are appended (idempotent by name).
+    """
+    from pathlib import Path
+
+    key = str(Path(config_path).resolve())
+    with _engine_registry_lock:
+        if key in _engine_registry:
+            engine = _engine_registry[key]
+            # Merge new camera configs (by name)
+            if cameras:
+                existing_names = {c.name for c in engine._camera_configs}
+                for cam in cameras:
+                    if cam.name not in existing_names:
+                        engine._camera_configs.append(cam)
+            return engine
+
+        engine = MujocoEngine(
+            config_path=Path(config_path), headless=headless, cameras=cameras
+        )
+        _engine_registry[key] = engine
+        return engine
+
+
 class MujocoEngine(SimulationEngine):
     """
     MuJoCo simulation engine.
@@ -44,7 +115,12 @@ class MujocoEngine(SimulationEngine):
     - applies control commands
     """
 
-    def __init__(self, config_path: Path, headless: bool) -> None:
+    def __init__(
+        self,
+        config_path: Path,
+        headless: bool,
+        cameras: list[CameraConfig] | None = None,
+    ) -> None:
         super().__init__(config_path=config_path, headless=headless)
 
         xml_path = self._resolve_xml_path(config_path)
@@ -75,6 +151,11 @@ class MujocoEngine(SimulationEngine):
             current_pos = self._current_position(mapping)
             self._joint_position_targets[i] = current_pos
             self._joint_positions[i] = current_pos
+
+        # Camera rendering state (renderers created in sim thread)
+        self._camera_configs = cameras or []
+        self._camera_frames: dict[str, CameraFrame] = {}
+        self._camera_lock = threading.Lock()
 
     def _resolve_xml_path(self, config_path: Path) -> Path:
         if config_path is None:
@@ -177,6 +258,64 @@ class MujocoEngine(SimulationEngine):
         logger.info(f"{self.__class__.__name__}: sim loop started")
         dt = 1.0 / self._control_frequency
 
+        # Camera renderers — created in sim thread (MuJoCo thread-safety).
+        # Checked each tick so cameras added after connect() are picked up.
+        cam_renderers: dict[
+            str, tuple[CameraConfig, int, mujoco.Renderer, mujoco.Renderer, float, float]
+        ] = {}  # name -> (cfg, cam_id, rgb_r, depth_r, interval, last_render_time)
+
+        def _init_new_cameras() -> None:
+            """Create renderers for any camera configs not yet initialized."""
+            for cfg in self._camera_configs:
+                if cfg.name in cam_renderers:
+                    continue
+                cam_id = mujoco.mj_name2id(
+                    self._model, mujoco.mjtObj.mjOBJ_CAMERA, cfg.name
+                )
+                if cam_id < 0:
+                    logger.warning(f"Camera '{cfg.name}' not found in MJCF, skipping")
+                    continue
+                rgb_renderer = mujoco.Renderer(
+                    self._model, height=cfg.height, width=cfg.width
+                )
+                depth_renderer = mujoco.Renderer(
+                    self._model, height=cfg.height, width=cfg.width
+                )
+                depth_renderer.enable_depth_rendering()
+                interval = 1.0 / cfg.fps if cfg.fps > 0 else float("inf")
+                cam_renderers[cfg.name] = (
+                    cfg, cam_id, rgb_renderer, depth_renderer, interval, 0.0,
+                )
+                logger.info(
+                    f"Camera '{cfg.name}' renderer created "
+                    f"({cfg.width}x{cfg.height} @ {cfg.fps}fps)"
+                )
+
+        def _render_cameras(now: float) -> None:
+            _init_new_cameras()
+            for name in cam_renderers:
+                cfg, cam_id, rgb_r, depth_r, interval, last_t = cam_renderers[name]
+                if now - last_t < interval:
+                    continue
+                cam_renderers[name] = (cfg, cam_id, rgb_r, depth_r, interval, now)
+
+                rgb_r.update_scene(self._data, camera=cam_id)
+                rgb = rgb_r.render().copy()
+
+                depth_r.update_scene(self._data, camera=cam_id)
+                depth = depth_r.render().copy()
+
+                frame = CameraFrame(
+                    rgb=rgb,
+                    depth=depth.astype(np.float32),
+                    cam_pos=self._data.cam_xpos[cam_id].copy(),
+                    cam_mat=self._data.cam_xmat[cam_id].copy(),
+                    fovy=float(self._model.cam_fovy[cam_id]),
+                    timestamp=now,
+                )
+                with self._camera_lock:
+                    self._camera_frames[cfg.name] = frame
+
         def _step_once(sync_viewer: bool) -> None:
             loop_start = time.time()
             self._apply_control()
@@ -184,6 +323,7 @@ class MujocoEngine(SimulationEngine):
             if sync_viewer:
                 m_viewer.sync()
             self._update_joint_state()
+            _render_cameras(loop_start)
 
             elapsed = time.time() - loop_start
             sleep_time = dt - elapsed
@@ -199,6 +339,11 @@ class MujocoEngine(SimulationEngine):
             ) as m_viewer:
                 while m_viewer.is_running() and not self._stop_event.is_set():
                     _step_once(sync_viewer=True)
+
+        # Clean up renderers
+        for _cfg, _cam_id, rgb_r, depth_r, _interval, _t in cam_renderers.values():
+            rgb_r.close()
+            depth_r.close()
 
         logger.info(f"{self.__class__.__name__}: sim loop stopped")
 
@@ -327,7 +472,25 @@ class MujocoEngine(SimulationEngine):
             )
         return None
 
+    def read_camera(self, camera_name: str) -> CameraFrame | None:
+        """Read the latest rendered frame for a camera (thread-safe).
+
+        Returns None if the camera hasn't rendered yet or doesn't exist.
+        """
+        with self._camera_lock:
+            return self._camera_frames.get(camera_name)
+
+    def get_camera_fovy(self, camera_name: str) -> float | None:
+        """Get vertical field of view for a named camera, in degrees."""
+        cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
+        if cam_id < 0:
+            return None
+        return float(self._model.cam_fovy[cam_id])
+
 
 __all__ = [
+    "CameraConfig",
+    "CameraFrame",
     "MujocoEngine",
+    "get_or_create_engine",
 ]
