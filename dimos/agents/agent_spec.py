@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.mcp.mcp_client import McpClient
-from dimos.agents.mcp.mcp_server import McpServer
-from dimos.agents.skills.demo_robot import DemoRobot
-from dimos.agents.skills.osm import OsmSkill
-from dimos.core.blueprints import autoconnect
+from typing import Any, Protocol
 
-demo_osm = autoconnect(
-    DemoRobot.blueprint(),
-    OsmSkill.blueprint(),
-    McpServer.blueprint(),
-    McpClient.blueprint(),
-)
+from langchain_core.messages.base import BaseMessage
+
+from dimos.spec.utils import Spec
+
+
+class AgentSpec(Spec, Protocol):
+    def add_message(self, message: BaseMessage) -> None: ...
+    def dispatch_continuation(
+        self, continuation: dict[str, Any], continuation_context: dict[str, Any]
+    ) -> None: ...

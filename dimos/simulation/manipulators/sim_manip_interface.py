@@ -30,16 +30,26 @@ if TYPE_CHECKING:
 class SimManipInterface:
     """Adapter wrapper around a simulation engine to provide a uniform manipulator API."""
 
-    def __init__(self, engine: SimulationEngine) -> None:
+    def __init__(
+        self,
+        engine: SimulationEngine,
+        dof: int | None = None,
+        gripper_idx: int | None = None,
+        gripper_ctrl_range: tuple[float, float] = (0.0, 1.0),
+        gripper_joint_range: tuple[float, float] = (0.0, 1.0),
+    ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._engine = engine
         self._joint_names = list(engine.joint_names)
-        self._dof = len(self._joint_names)
+        self._dof = dof if dof is not None else len(self._joint_names)
         self._connected = False
         self._servos_enabled = False
         self._control_mode = ControlMode.POSITION
         self._error_code = 0
         self._error_message = ""
+        self._gripper_idx = gripper_idx
+        self._gripper_ctrl_range = gripper_ctrl_range
+        self._gripper_joint_range = gripper_joint_range
 
     def connect(self) -> bool:
         """Connect to the simulation engine."""
@@ -51,8 +61,6 @@ class SimManipInterface:
             if self._engine.connected:
                 self._connected = True
                 self._servos_enabled = True
-                self._joint_names = list(self._engine.joint_names)
-                self._dof = len(self._joint_names)
                 self.logger.info(
                     "Successfully connected to simulation",
                     extra={"dof": self._dof},
@@ -64,14 +72,14 @@ class SimManipInterface:
             self.logger.error(f"Sim connection failed: {exc}")
             return False
 
-    def disconnect(self) -> bool:
+    def disconnect(self) -> None:
         """Disconnect from simulation."""
         try:
-            return self._engine.disconnect()
+            self._engine.disconnect()
         except Exception as exc:
-            self._connected = False
             self.logger.error(f"Sim disconnection failed: {exc}")
-            return False
+        finally:
+            self._connected = False
 
     def is_connected(self) -> bool:
         return bool(self._connected and self._engine.connected)
@@ -135,7 +143,7 @@ class SimManipInterface:
     def read_error(self) -> tuple[int, str]:
         return self._error_code, self._error_message
 
-    def write_joint_positions(self, positions: list[float]) -> bool:
+    def write_joint_positions(self, positions: list[float], velocity: float = 1.0) -> bool:
         if not self._servos_enabled:
             return False
         self._control_mode = ControlMode.POSITION
@@ -185,11 +193,24 @@ class SimManipInterface:
         return False
 
     def read_gripper_position(self) -> float | None:
-        return None
+        if self._gripper_idx is None:
+            return None
+        positions = self._engine.read_joint_positions()
+        return positions[self._gripper_idx]
 
     def write_gripper_position(self, position: float) -> bool:
-        _ = position
-        return False
+        if self._gripper_idx is None:
+            return False
+        jlo, jhi = self._gripper_joint_range
+        clo, chi = self._gripper_ctrl_range
+        position = max(jlo, min(jhi, position))
+        if jhi != jlo:
+            t = (position - jlo) / (jhi - jlo)
+            ctrl_value = chi - t * (chi - clo)
+        else:
+            ctrl_value = clo
+        self._engine.set_position_target(self._gripper_idx, ctrl_value)
+        return True
 
     def read_force_torque(self) -> list[float] | None:
         return None

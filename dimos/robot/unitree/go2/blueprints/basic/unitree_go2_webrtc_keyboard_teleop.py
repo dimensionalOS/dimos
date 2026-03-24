@@ -13,17 +13,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.mcp.mcp_client import McpClient
-from dimos.agents.mcp.mcp_server import McpServer
-from dimos.core.blueprints import autoconnect
-from dimos.robot.unitree.go2.blueprints.agentic._common_agentic import _common_agentic
-from dimos.robot.unitree.go2.blueprints.smart.unitree_go2_spatial import unitree_go2_spatial
+"""Unitree Go2 keyboard teleop via ControlCoordinator.
 
-unitree_go2_agentic_mcp = autoconnect(
-    unitree_go2_spatial,
-    McpServer.blueprint(),
-    McpClient.blueprint(),
-    _common_agentic,
+Usage:
+    dimos run unitree-go2-webrtc-keyboard-teleop
+    dimos --simulation run unitree-go2-webrtc-keyboard-teleop
+"""
+
+from __future__ import annotations
+
+from dimos.core.blueprints import autoconnect
+from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_coordinator import (
+    unitree_go2_coordinator,
+)
+from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
+
+unitree_go2_webrtc_keyboard_teleop = autoconnect(
+    unitree_go2_coordinator,
+    KeyboardTeleop.blueprint(),
 )
 
-__all__ = ["unitree_go2_agentic_mcp"]
+__all__ = ["unitree_go2_webrtc_keyboard_teleop"]

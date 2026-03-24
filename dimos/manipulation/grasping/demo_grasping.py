@@ -14,7 +14,8 @@
 # limitations under the License.
 from pathlib import Path
 
-from dimos.agents.agent import Agent
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.blueprints import autoconnect
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.grasping.graspgen_module import graspgen
@@ -44,5 +45,6 @@ demo_grasping = autoconnect(
         ],  # Grasp visualization debug standalone: python -m dimos.manipulation.grasping.visualize_grasps
     ),
     FoxgloveBridge.blueprint(),
-    Agent.blueprint(),
+    McpServer.blueprint(),
+    McpClient.blueprint(),
 ).global_config(viewer="foxglove")

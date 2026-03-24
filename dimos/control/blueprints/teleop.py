@@ -43,8 +43,8 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.teleop.quest.quest_types import Buttons
 
-# XArm6 teleop - streaming position control
-coordinator_teleop_xarm6 = ControlCoordinator.blueprint(
+# XArm6 servo - streaming position control
+coordinator_servo_xarm6 = ControlCoordinator.blueprint(
     hardware=[xarm6()],
     tasks=[
         TaskConfig(
@@ -200,6 +200,30 @@ coordinator_teleop_piper = ControlCoordinator.blueprint(
     }
 )
 
+# Single XArm6 with TeleopIK
+coordinator_teleop_xarm6 = ControlCoordinator.blueprint(
+    hardware=[xarm6()],
+    tasks=[
+        TaskConfig(
+            name="teleop_xarm",
+            type="teleop_ik",
+            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
+            priority=10,
+            model_path=XARM6_MODEL_PATH,
+            ee_joint_id=6,
+            hand="right",
+        ),
+    ],
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+        ("cartesian_command", PoseStamped): LCMTransport(
+            "/coordinator/cartesian_command", PoseStamped
+        ),
+        ("buttons", Buttons): LCMTransport("/teleop/buttons", Buttons),
+    }
+)
+
 # Dual arm teleop: XArm6 + Piper with TeleopIK
 coordinator_teleop_dual = ControlCoordinator.blueprint(
     hardware=[xarm6("xarm_arm"), piper("piper_arm")],
@@ -235,15 +259,13 @@ coordinator_teleop_dual = ControlCoordinator.blueprint(
 
 
 __all__ = [
-    # Cartesian IK
     "coordinator_cartesian_ik_mock",
     "coordinator_cartesian_ik_piper",
     "coordinator_combined_xarm6",
+    "coordinator_servo_xarm6",
     "coordinator_teleop_dual",
     "coordinator_teleop_piper",
-    # Servo / Velocity
     "coordinator_teleop_xarm6",
-    # TeleopIK
     "coordinator_teleop_xarm7",
     "coordinator_velocity_xarm6",
 ]
