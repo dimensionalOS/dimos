@@ -65,8 +65,11 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...]
 
 | Option | Description |
 |--------|-------------|
+| `--config` `-c` | Path to read JSON config file from (options can be overriden with `-o` |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
+| `--option`, `-o` | Provide an configuration option to the blueprint (e.g. `-o voxelgridmapper.voxel_size=1` |
+| `--help` | Display the available configuration options that can be changed with `-o` or the config file |
 
 ```bash
 # Foreground (Ctrl-C to stop)
