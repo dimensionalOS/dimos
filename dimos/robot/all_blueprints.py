@@ -78,7 +78,6 @@ all_blueprints = {
     "unitree-go2": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2",
     "unitree-go2-agentic": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic:unitree_go2_agentic",
     "unitree-go2-agentic-huggingface": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_huggingface:unitree_go2_agentic_huggingface",
-    "unitree-go2-agentic-mcp": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_mcp:unitree_go2_agentic_mcp",
     "unitree-go2-agentic-ollama": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_ollama:unitree_go2_agentic_ollama",
     "unitree-go2-basic": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic:unitree_go2_basic",
     "unitree-go2-coordinator": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_coordinator:unitree_go2_coordinator",
@@ -89,6 +88,7 @@ all_blueprints = {
     "unitree-go2-temporal-memory": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_temporal_memory:unitree_go2_temporal_memory",
     "unitree-go2-vlm-stream-test": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2_vlm_stream_test:unitree_go2_vlm_stream_test",
     "unitree-go2-webrtc-keyboard-teleop": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_webrtc_keyboard_teleop:unitree_go2_webrtc_keyboard_teleop",
+    "unity-sim": "dimos.simulation.unity.blueprint:unity_sim",
     "xarm-perception": "dimos.manipulation.blueprints:xarm_perception",
     "xarm-perception-agent": "dimos.manipulation.blueprints:xarm_perception_agent",
     "xarm6-planner-only": "dimos.manipulation.blueprints:xarm6_planner_only",
@@ -98,7 +98,6 @@ all_blueprints = {
 
 
 all_modules = {
-    "agent": "dimos.agents.agent",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation",
     "b1-connection-module": "dimos.robot.unitree.b1.connection",
@@ -166,6 +165,7 @@ all_modules = {
     "twist-teleop-module": "dimos.teleop.quest.quest_extensions",
     "unitree-g1-skill-container": "dimos.robot.unitree.g1.skill_container",
     "unitree-skill-container": "dimos.robot.unitree.unitree_skill_container",
+    "unity-bridge-module": "dimos.simulation.unity.module",
     "vlm-agent": "dimos.agents.vlm_agent",
     "vlm-stream-tester": "dimos.agents.vlm_stream_tester",
     "voxel-grid-mapper": "dimos.mapping.voxels",

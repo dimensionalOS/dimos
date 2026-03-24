@@ -30,7 +30,8 @@ Quick start:
 import math
 from pathlib import Path
 
-from dimos.agents.agent import Agent
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.blueprints import autoconnect
@@ -373,7 +374,8 @@ ERROR RECOVERY: If a motion fails or the state becomes FAULT, call reset before 
 
 xarm7_planner_coordinator_agent = autoconnect(
     xarm7_planner_coordinator,
-    Agent.blueprint(system_prompt=_BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=_BASE_MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
 
 
@@ -452,7 +454,8 @@ Do NOT use the 'detect' or 'select' skills — use scan_objects instead.
 
 xarm_perception_agent = autoconnect(
     xarm_perception,
-    Agent.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
 )
 
 
