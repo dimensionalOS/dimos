@@ -53,16 +53,18 @@ public:
         }
 
         RCLCPP_INFO(this->get_logger(), "Bridge publisher started. Waiting for SHM...");
-        poll_thread_ = std::thread([this]() { poll_loop(); });
+        lidar_thread_ = std::thread([this]() { lidar_poll_loop(); });
+        imu_thread_ = std::thread([this]() { imu_poll_loop(); });
     }
 
     ~BridgePublisher() {
         running_ = false;
-        if (poll_thread_.joinable()) poll_thread_.join();
+        if (lidar_thread_.joinable()) lidar_thread_.join();
+        if (imu_thread_.joinable()) imu_thread_.join();
     }
 
 private:
-    void poll_loop() {
+    void lidar_poll_loop() {
         while (running_) {
             if (!lidar_reader_.is_open()) {
                 if (!lidar_reader_.try_open()) {
@@ -156,19 +158,26 @@ private:
                             slot->width * slot->height);
             }
 
-            // Drain all pending IMU messages (200Hz IMU vs 10Hz lidar)
-            poll_imu();
+            // IMU handled by separate thread
         }
     }
 
-    void poll_imu() {
-        if (!imu_reader_.is_open()) {
-            if (!imu_reader_.try_open()) return;
-            RCLCPP_INFO(this->get_logger(), "IMU SHM connected");
-        }
-        while (auto* slot = imu_reader_.poll()) {
-            if (slot->msg_type != 1) continue;
-            if (slot->data_size < 80) continue;
+    void imu_poll_loop() {
+        while (running_) {
+            if (!imu_reader_.is_open()) {
+                if (!imu_reader_.try_open()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    continue;
+                }
+                RCLCPP_INFO(this->get_logger(), "IMU SHM connected");
+            }
+
+            auto* slot = imu_reader_.poll();
+            if (!slot) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+            if (slot->msg_type != 1 || slot->data_size < 80) continue;
 
             auto msg = std::make_unique<sensor_msgs::msg::Imu>();
             msg->header.stamp.sec = slot->stamp_sec;
@@ -202,7 +211,8 @@ private:
     const std::vector<sensor_msgs::msg::PointField> rsairy_fields_;
     sem_t* notify_sem_ = nullptr;
     std::atomic<bool> running_{true};
-    std::thread poll_thread_;
+    std::thread lidar_thread_;
+    std::thread imu_thread_;
     uint64_t lidar_count_ = 0;
     uint64_t imu_count_ = 0;
 };

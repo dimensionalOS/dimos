@@ -124,6 +124,7 @@ int main(int argc, char** argv) {
         uint64_t c = imu_count.fetch_add(1) + 1;
         if (c % 200 == 1) {
             std::cout << "[drdds_recv] imu #" << c
+                      << " stamp=" << msg->header().stamp().sec() << "." << msg->header().stamp().nanosec()
                       << " acc=(" << msg->linear_acceleration().x()
                       << "," << msg->linear_acceleration().y()
                       << "," << msg->linear_acceleration().z() << ")" << std::endl;
