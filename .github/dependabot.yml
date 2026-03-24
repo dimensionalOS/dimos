@@ -17,7 +17,7 @@ updates:
 
   - package-ecosystem: "docker"
     target-branch: "dev"
-    directories: "/docker/*/"
+    directories: ["/docker/*/"]
     labels:
       - dependencies
     schedule:
