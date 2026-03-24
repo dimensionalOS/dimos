@@ -28,10 +28,14 @@ from dimos.protocol.pubsub.impl.lcmpubsub import (
 )
 from dimos.utils.testing.collector import CallbackCollector
 
+# Isolated multicast group so stale messages from other tests
+# (which use the default 239.255.76.67:7667) don't leak in.
+_ISOLATED_LCM_URL = "udpm://239.255.76.98:7698?ttl=0"
+
 
 @pytest.fixture
 def lcm_pub_sub_base() -> Generator[LCMPubSubBase, None, None]:
-    lcm = LCMPubSubBase()
+    lcm = LCMPubSubBase(url=_ISOLATED_LCM_URL)
     lcm.start()
     yield lcm
     lcm.stop()
@@ -39,7 +43,7 @@ def lcm_pub_sub_base() -> Generator[LCMPubSubBase, None, None]:
 
 @pytest.fixture
 def pickle_lcm() -> Generator[PickleLCM, None, None]:
-    lcm = PickleLCM()
+    lcm = PickleLCM(url=_ISOLATED_LCM_URL)
     lcm.start()
     yield lcm
     lcm.stop()
@@ -47,7 +51,7 @@ def pickle_lcm() -> Generator[PickleLCM, None, None]:
 
 @pytest.fixture
 def lcm() -> Generator[LCM, None, None]:
-    lcm = LCM()
+    lcm = LCM(url=_ISOLATED_LCM_URL)
     lcm.start()
     yield lcm
     lcm.stop()

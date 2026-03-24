@@ -52,10 +52,14 @@ class Case(Generic[TopicT, MsgT]):
     regex_patterns: list[tuple[TopicT, set[int]]] = field(default_factory=list)
 
 
+# Use an isolated multicast group to avoid cross-test LCM contamination.
+_ISOLATED_LCM_URL = "udpm://239.255.76.99:7699?ttl=0"
+
+
 @contextmanager
 def lcm_typed_context() -> Generator[tuple[LCM, LCM], None, None]:
-    pub = LCM()
-    sub = LCM()
+    pub = LCM(url=_ISOLATED_LCM_URL)
+    sub = LCM(url=_ISOLATED_LCM_URL)
     pub.start()
     sub.start()
     try:
@@ -67,8 +71,8 @@ def lcm_typed_context() -> Generator[tuple[LCM, LCM], None, None]:
 
 @contextmanager
 def lcm_bytes_context() -> Generator[tuple[LCMPubSubBase, LCMPubSubBase], None, None]:
-    pub = LCMPubSubBase()
-    sub = LCMPubSubBase()
+    pub = LCMPubSubBase(url=_ISOLATED_LCM_URL)
+    sub = LCMPubSubBase(url=_ISOLATED_LCM_URL)
     pub.start()
     sub.start()
     try:
