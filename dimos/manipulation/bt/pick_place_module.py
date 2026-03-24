@@ -26,6 +26,7 @@ import py_trees
 from pydantic import Field
 
 from dimos.agents.annotation import skill
+from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.transport import pLCMTransport
 from dimos.manipulation.bt.trees import build_go_home_tree, build_pick_tree, build_place_tree
@@ -145,6 +146,10 @@ class PickPlaceModule(Module):
 
         # Result notification — publishes BT completion to agent via /human_input
         self._result_transport: pLCMTransport[str] = pLCMTransport("/human_input")
+
+    @rpc
+    def start(self) -> None:
+        super().start()
 
     def _on_stop_signal(self, _msg: object) -> None:
         """Handle direct stop signal from CLI (bypasses blocked agent)."""

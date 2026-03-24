@@ -89,10 +89,6 @@ class BTManipulationModule(ManipulationModule):
         self._graspgen: DockerRunner | None = None
         self._detection_snapshot: list[DetObject] = []
 
-    # =========================================================================
-    # Lifecycle
-    # =========================================================================
-
     @rpc
     def start(self) -> None:
         super().start()
@@ -130,10 +126,6 @@ class BTManipulationModule(ManipulationModule):
         """Move to home position (RPC only, not registered as agent skill)."""
         return super().go_home(robot_name)
 
-    # =========================================================================
-    # Perception RPCs
-    # =========================================================================
-
     @rpc
     def refresh_obstacles(self, min_duration: float = 0.0) -> list[dict[str, Any]]:
         """Refresh perception obstacles and snapshot detections."""
@@ -159,10 +151,6 @@ class BTManipulationModule(ManipulationModule):
         if self._world_monitor is None:
             return []
         return self._world_monitor.list_cached_detections()
-
-    # =========================================================================
-    # GraspGen
-    # =========================================================================
 
     def _get_graspgen(self) -> DockerRunner:
         """Get or create GraspGen Docker module (lazy init, thread-safe)."""

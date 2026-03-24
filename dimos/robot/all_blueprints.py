@@ -101,6 +101,7 @@ all_blueprints = {
 all_modules = {
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation",
+    "bt-manipulation-module": "dimos.manipulation.bt.bt_manipulation_module",
     "b1-connection-module": "dimos.robot.unitree.b1.connection",
     "camera-module": "dimos.hardware.sensors.camera.module",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller",
@@ -152,6 +153,7 @@ all_modules = {
     "person-tracker": "dimos.perception.detection.person_tracker",
     "phone-teleop-module": "dimos.teleop.phone.phone_teleop_module",
     "pick-and-place-module": "dimos.manipulation.pick_and_place_module",
+    "pick-place-module": "dimos.manipulation.bt.pick_place_module",
     "quest-teleop-module": "dimos.teleop.quest.quest_teleop_module",
     "real-sense-camera": "dimos.hardware.sensors.camera.realsense.camera",
     "receiver-module": "dimos.utils.demo_image_encoding",

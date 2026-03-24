@@ -45,8 +45,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# --- Base class ---
-
 
 class ManipulationAction(py_trees.behaviour.Behaviour):
     """Base class for all BT action nodes.
@@ -62,9 +60,6 @@ class ManipulationAction(py_trees.behaviour.Behaviour):
         # Register common keys for error/result messages
         self.bb.register_key(key="error_message", access=py_trees.common.Access.WRITE)
         self.bb.register_key(key="result_message", access=py_trees.common.Access.WRITE)
-
-
-# --- Perception actions ---
 
 
 class ScanObjects(ManipulationAction):
@@ -190,9 +185,6 @@ class GetScenePointcloud(ManipulationAction):
             logger.warning(f"[GetScenePointcloud] Could not get scene PC: {e}")
             self.bb.scene_pointcloud = None
             return Status.SUCCESS  # Non-fatal — grasps work without scene PC
-
-
-# --- Grasp generation actions ---
 
 
 class GenerateGrasps(ManipulationAction):
@@ -439,9 +431,6 @@ class ComputePreGrasp(ManipulationAction):
         return Status.SUCCESS
 
 
-# --- Motion actions ---
-
-
 class PlanToPose(ManipulationAction):
     """Plan collision-free path to a pose from the blackboard.
 
@@ -570,9 +559,6 @@ class ExecuteTrajectory(ManipulationAction):
                 logger.warning(f"[ExecuteTrajectory] Cancel on interrupt failed (best-effort): {e}")
 
 
-# --- Gripper actions ---
-
-
 class SetGripper(ManipulationAction):
     """Set gripper to target position. Returns RUNNING during settle, then SUCCESS."""
 
@@ -607,9 +593,6 @@ class SetGripper(ManipulationAction):
             logger.info(f"[SetGripper] Gripper set to {self.position:.2f}m")
             return Status.SUCCESS
         return Status.RUNNING
-
-
-# --- Utility actions ---
 
 
 class StorePickPosition(ManipulationAction):
@@ -662,9 +645,6 @@ class SetResultMessage(ManipulationAction):
     def update(self) -> Status:
         self.bb.result_message = self.message
         return Status.SUCCESS
-
-
-# --- Robot state actions ---
 
 
 class ResetRobot(ManipulationAction):
@@ -790,9 +770,6 @@ class ExhaustRetriesIfHolding(ManipulationAction):
             self.bb.error_message = "Error: Holding object but lift failed — retries exhausted"
             logger.warning("[ExhaustRetriesIfHolding] Object held — aborting retries")
         return Status.SUCCESS
-
-
-# --- Lift / retreat actions ---
 
 
 class ComputeLiftPose(ManipulationAction):

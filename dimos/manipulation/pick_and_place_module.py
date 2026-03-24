@@ -289,10 +289,6 @@ class PickAndPlaceModule(ManipulationModule):
         logger.info(f"Visualized {num}/{len(poses)} grasp poses in MeshCat")
         return True
 
-    # =========================================================================
-    # Pick/Place Helpers
-    # =========================================================================
-
     def _compute_pre_grasp_pose(self, grasp_pose: Pose, offset: float = 0.10) -> Pose:
         """Compute a pre-grasp pose offset along the approach direction (local -Z).
 
