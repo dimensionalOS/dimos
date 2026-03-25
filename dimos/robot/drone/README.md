@@ -19,9 +19,33 @@ dimos run drone-basic --set outdoor=true
 
 # Agentic with LLM control
 dimos run drone-agentic
+
+# RoboMaster TT / Tello (Wi-Fi SDK)
+dimos run drone-tello-tt-basic --robot-ip 192.168.10.1
+dimos run drone-tello-tt-agentic --robot-ip 192.168.10.1 --disable web-input
 ```
 
 To interact with the agent, run `dimos humancli` in a separate terminal.
+
+## RoboMaster TT / Tello Hardware + Network Setup
+
+Tello control traffic and cloud API traffic should be split across two interfaces.
+
+1. Power on the drone and connect to `TELLO-XXXXXX` from one network interface.
+2. Keep internet on a separate interface:
+   - wired Ethernet is recommended, or
+   - a second Wi-Fi adapter connected to normal internet.
+3. Confirm network state:
+   - Tello link: `ip a` should show `192.168.10.x` on the Tello interface.
+   - Tello subnet route: `192.168.10.0/24` on that same interface.
+   - Default route should prefer internet interface (not `192.168.10.1`).
+4. Verify both paths:
+   - `ping -c 1 192.168.10.1`
+   - `curl -I https://api.openai.com`
+5. Run the Tello blueprint:
+   - `dimos --robot-ip 192.168.10.1 run drone-tello-tt-agentic --disable web-input`
+
+If you use only one Wi-Fi radio and connect it to Tello, cloud model calls usually fail due to loss of internet routing.
 
 ## Blueprints
 
@@ -46,6 +70,25 @@ Composes on top of `drone-basic`, adding autonomous capabilities:
 | `GoogleMapsSkillContainer` | GPS-based navigation skills |
 | `OsmSkill` | OpenStreetMap queries |
 | `McpServer` + `McpClient` | LLM agent (default: GPT-4o) via MCP |
+| `WebInput` | Web/CLI interface for human commands |
+
+### `drone-tello-tt-basic`
+RoboMaster TT/Tello SDK control over Wi-Fi UDP.
+
+| Module | Purpose |
+|--------|---------|
+| `TelloConnectionModule` | Tello command/state/video bridge, skills, and follow commands |
+| `DroneCameraModule` | Camera intrinsics + camera streams |
+| `WebsocketVisModule` | Web-based visualization |
+| `RerunBridgeModule` / `FoxgloveBridge` | 3D viewer (selected by `--viewer`) |
+
+### `drone-tello-tt-agentic`
+Composes on top of `drone-tello-tt-basic`, adding:
+
+| Module | Purpose |
+|--------|---------|
+| `DroneTrackingModule` | Person detection, follow, yaw-centering, tracking overlay |
+| `Agent` | LLM agent (default: GPT-4o) |
 | `WebInput` | Web/CLI interface for human commands |
 
 ## Installation
@@ -73,6 +116,17 @@ export OPENAI_API_KEY=sk-...
 
 # Optional
 export GOOGLE_MAPS_API_KEY=...  # For GoogleMapsSkillContainer
+export ALIBABA_API_KEY=...      # Optional Qwen detection for tracking
+```
+
+### Optional Tello Tracking Tuning
+These variables are optional and only affect local YOLO person detection in `DroneTrackingModule`:
+
+```bash
+export DIMOS_DRONE_YOLO_DEVICE=cuda:0   # or cpu
+export DIMOS_DRONE_YOLO_MODEL=yolo11s-pose.pt
+export DIMOS_DRONE_YOLO_IMGSZ=416
+export DIMOS_DRONE_YOLO_MAX_DET=5
 ```
 
 ## RosettaDrone Setup (Critical)
@@ -139,12 +193,16 @@ DJI Drone ← Wireless → DJI Controller ← USB → Android Device ← WiFi �
 dimos/robot/drone/
 ├── blueprints/
 │   ├── basic/drone_basic.py              # Base blueprint (connection + camera + vis)
+│   ├── basic/drone_tello_tt_basic.py     # Tello basic blueprint
 │   └── agentic/drone_agentic.py          # Agentic blueprint (composes on basic)
+│   └── agentic/drone_tello_tt_agentic.py # Tello agentic blueprint
 ├── connection_module.py                   # MAVLink communication & skills
 ├── camera_module.py                       # Camera processing & intrinsics
 ├── drone_tracking_module.py               # Visual servoing & object tracking
 ├── drone_visual_servoing_controller.py    # PID-based visual servoing
 ├── mavlink_connection.py                  # Low-level MAVLink protocol
+├── tello_connection_module.py             # Tello module and skills
+├── tello_sdk.py                           # Low-level Tello UDP SDK adapter
 └── dji_video_stream.py                    # GStreamer video capture + replay
 ```
 
@@ -197,6 +255,13 @@ Parameters: `(Kp, Ki, Kd, (min_output, max_output), integral_limit, deadband_pix
 3. PID controller computes velocity from pixel error
 4. Velocity commands sent via LCM stream
 5. Connection module converts to MAVLink commands
+
+### Tello Tracking Flow
+1. Tello camera stream is decoded in `TelloSdkClient`.
+2. `DroneTrackingModule` receives `/video`, publishes `/tracking_overlay`.
+3. For TT agentic blueprint, person follow uses detector-driven tracking with yaw-centering and forward approach.
+4. `cmd_vel` is remapped to `/movecmd_twist` and converted to Tello `rc` commands by `TelloConnectionModule`.
+5. Agent skills call `follow_object`, `center_person_by_yaw`, and `orbit_object`.
 
 ## Available Skills
 
