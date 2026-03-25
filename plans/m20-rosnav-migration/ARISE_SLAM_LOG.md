@@ -88,17 +88,98 @@ With ring remapping to 64 bins:
 
 ### Phase 1: Quick Test (no image rebuild)
 1. [x] Verify ring values from hardware (Finding #1)
-2. [ ] Update ros2_pub: remap rings to 0-63, make time relative, change QoS to RELIABLE
-3. [ ] Rebuild bridge on NOS (minutes, not hours)
-4. [ ] Create ARISE SLAM M20 config (YAML only)
-5. [ ] Start nav container with LOCALIZATION_METHOD=arise_slam using existing image
-6. [ ] Test: does ARISE produce /state_estimation and /registered_scan?
+2. [x] Update ros2_pub: remap rings to 0-63, make time relative (f32), RELIABLE QoS
+3. [x] Rebuild bridge on NOS (drdds_recv + ros2_pub)
+4. [x] Create ARISE SLAM M20 config (arise_slam_m20.yaml)
+5. [x] Start nav container with LOCALIZATION_METHOD=arise_slam
+6. [x] Add IMU to bridge (Finding #6) — separate poll thread at 200Hz
+7. [x] Fix entrypoint: explicitly pass use_fastlio2:=false for arise_slam
+8. **BLOCKED**: laser_mapping_node lifecycle never activates (Finding #7)
+
+### Phase 1b: Fix Lifecycle (CURRENT BLOCKER)
+9. [ ] Fix laser_mapping lifecycle activation — options:
+   a. Mount patched launch file with longer timer delays (30s instead of 1.5s)
+   b. Add retry script in entrypoint that calls `ros2 lifecycle set` in a loop
+   c. Patch ARISE nodes to auto-configure on startup (bypass lifecycle)
+10. [ ] Verify ARISE produces /state_estimation and /registered_scan
 
 ### Phase 2: Full Support (image rebuild)
-7. [ ] Patch ARISE to accept N_SCANS=192 (one-line change)
-8. [ ] Rebuild nav image with ARISE patch
-9. [ ] Remove ring remapping from bridge (use native 192 rings)
-10. [ ] Tune feature extraction parameters for RSAIRY scan pattern
+11. [ ] Patch ARISE to accept N_SCANS=192 (one-line change)
+12. [ ] Rebuild nav image with ARISE patch
+13. [ ] Remove ring remapping from bridge (use native 192 rings)
+14. [ ] Tune feature extraction parameters for RSAIRY scan pattern
+
+---
+
+## Finding #6: IMU Bridge Required — Cross-Version DDS Unreliable (2026-03-24)
+
+Yesense `/IMU` was previously directly readable (Finding #16 in ROSNAV_MIGRATION_LOG). After NOS reboot + startup ordering changes, cross-version DDS discovery (FastDDS 2.14 host ↔ 2.6 container) stopped working.
+
+Adding `initialPeersList` to force discovery breaks ARISE's lifecycle node management.
+
+**Fix**: Re-added IMU to the POSIX SHM bridge:
+- drdds_recv: subscribes `/IMU` via DrDDSChannel, writes to IMU SHM (64 slots × 256B)
+- ros2_pub: separate IMU poll thread (1ms sleep, ~200Hz), publishes `/bridge/IMU`
+- ARISE config: `imu_topic: /bridge/IMU`
+
+---
+
+## Finding #7: ARISE Lifecycle Activation Race Condition (2026-03-24)
+
+**Current blocker.** The ARISE launch file (`arize_slam.launch.py`) uses timed lifecycle transitions:
+- `TimerAction(period=0.5)` → configure feature_extraction
+- `TimerAction(period=1.5)` → configure laser_mapping
+- `TimerAction(period=2.5)` → configure imu_preintegration
+
+These fire too early — DDS discovery on the ARM64 NOS takes longer than 1.5s. `laser_mapping_node`'s lifecycle service isn't discoverable in time, so the configure event fails silently. `feature_extraction` and `imu_preintegration` sometimes succeed (race).
+
+Additionally: the baked-in `/ros2_ws/config/fastdds.xml` in the Docker image had incorrect transport descriptor ordering (Finding #18), causing XML parse errors that also prevented lifecycle activation. Fixed by mounting our `fastdds_m20.xml` over it.
+
+**Root cause**: ROS2 lifecycle transitions via `EmitEvent(ChangeState(...))` use DDS service calls, which require DDS discovery to complete first. On slow ARM64, 1.5s is insufficient.
+
+**Fix**: Mounted patched launch file (`arize_slam_m20.launch.py`) with timers increased to 5/10/15s. Also enabled stderr on laser_mapping_node (was commented out — Codex caught this). With 10s delay, all three nodes configure and activate successfully.
+
+---
+
+## Finding #8: Velodyne Processing Pipeline Never Called (2026-03-24)
+
+**NEW BLOCKER after lifecycle fix.** All three ARISE nodes configure + activate, but no SLAM output (`/state_estimation`, `/registered_scan`). The lidar buffer fills to 50, frames drop, refills — infinite loop.
+
+**Root cause**: `undistortionAndscanregistration()` is **commented out** in the Velodyne handler (`laserCloudHandler`, line 1587):
+```cpp
+//undistortionAndscanregistration();
+```
+
+This function is the entire processing pipeline — IMU/lidar sync, point cloud undistortion, feature extraction, and publishing features to `laser_mapping_node`. Without it, lidar frames are buffered but never processed.
+
+The function IS called in the **Livox handler** (line 1393), gated behind `IMU_INIT==true`. But the Velodyne handler has no equivalent — it just buffers and returns.
+
+**Verified against upstream**: Both `jizhang-cmu/autonomy_stack_diablo_setup` and `autonomy_stack_mecanum_wheel_platform` have the same commented-out call. **ARISE SLAM's Velodyne mode has never worked out of the box in any version of this code.**
+
+The `else` branch at line 1398-1404 (non-LIVOX path in the Livox handler) also has it commented out, with only buffer cleanup running.
+
+**Proposed fix**: Mirror the Livox handler's IMU init + processing logic in the Velodyne handler:
+1. Check if IMU buffer has enough data (200 × imuPeriod = 1 second)
+2. Run `imu_Init->imuInit(imuBuf)` to calibrate gravity
+3. Set `IMU_INIT = true`
+4. Call `undistortionAndscanregistration()`
+5. Clean lidar buffer after processing
+
+**Researching**: How SuperOdom, AutonomyStackGO1, and other forks handle this — results pending.
+
+---
+
+### Phase 1b: Fix Lifecycle (RESOLVED)
+
+Patched launch file with 5/10/15s timers. All three nodes now configure + activate.
+
+### Phase 1c: Fix Velodyne Processing (CURRENT BLOCKER)
+
+9. [ ] Research how other forks handle the Velodyne processing trigger
+10. [ ] Apply the correct fix (uncomment + IMU init, or alternative approach)
+11. [ ] Rebuild nav image on Mac with ARISE patch
+12. [ ] Transfer to NOS, deploy, test
+13. [ ] Verify ARISE produces /state_estimation and /registered_scan
 
 ---
 
@@ -106,8 +187,9 @@ With ring remapping to 64 bins:
 
 | File | Purpose |
 |------|---------|
-| `dimos/robot/deeprobotics/m20/docker/drdds_bridge/src/ros2_pub.cpp` | Bridge publisher (ring remap + time fix + QoS) |
-| `dimos/robot/deeprobotics/m20/docker/arise_slam_m20.yaml` | M20 ARISE SLAM config |
-| `docker/navigation/.../arise_slam_mid360/src/FeatureExtraction/featureExtraction.cpp` | ARISE feature extraction (N_SCANS validation) |
-| `docker/navigation/.../arise_slam_mid360/config/livox_mid360.yaml` | Base ARISE config |
-| `docker/navigation/.../arise_slam_mid360/include/.../point_os.h` | PointcloudXYZITR definition |
+| `dimos/robot/deeprobotics/m20/docker/drdds_bridge/src/ros2_pub.cpp` | Bridge: lidar (ring remap, time f32, RELIABLE) + IMU (separate 200Hz thread) |
+| `dimos/robot/deeprobotics/m20/docker/drdds_bridge/src/drdds_recv.cpp` | Bridge: drdds subscriber for lidar + IMU → POSIX SHM |
+| `dimos/robot/deeprobotics/m20/docker/arise_slam_m20.yaml` | M20 ARISE config (velodyne, scan_line=64, /bridge/IMU) |
+| `dimos/robot/deeprobotics/m20/docker/fastdds_m20.xml` | FastDDS config (32MB SHM, no initialPeersList) |
+| `dimos/navigation/rosnav/entrypoint.sh` | Fixed: use_fastlio2:=false for arise_slam |
+| `docker/navigation/.../arise_slam_mid360/launch/arize_slam.launch.py` | Lifecycle launch (NEEDS TIMER FIX) |
