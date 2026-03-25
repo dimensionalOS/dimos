@@ -5,14 +5,14 @@
 # the navigation stack based on LOCALIZATION_METHOD.
 #
 # LOCALIZATION_METHOD values:
-#   fastlio  — Launch FAST_LIO with RoboSense config (Phase 1)
-#   <other>  — Launch system_real_robot.launch.py (arise_slam)
+#   arise_slam — Launch system_real_robot.launch.py with ARISE SLAM (default)
+#   fastlio    — Launch FAST_LIO with RoboSense config (legacy)
 
 set -eo pipefail
 
 TOPIC_TIMEOUT="${TOPIC_TIMEOUT:-60}"
 POLL_INTERVAL="${POLL_INTERVAL:-2}"
-LOCALIZATION_METHOD="${LOCALIZATION_METHOD:-fastlio}"
+LOCALIZATION_METHOD="${LOCALIZATION_METHOD:-arise_slam}"
 FASTLIO_CONFIG="${FASTLIO_CONFIG:-/ros2_ws/src/fast_lio/config/robosense.yaml}"
 
 GREEN='\033[0;32m'
@@ -130,10 +130,15 @@ case "${LOCALIZATION_METHOD}" in
         fi
         ;;
 
-    *)
-        log "Launching default autonomy stack (arise_slam)..."
-        ros2 launch vehicle_simulator system_real_robot.launch.py &
+    arise_slam)
+        log "Launching autonomy stack with ARISE SLAM..."
+        ros2 launch vehicle_simulator system_real_robot.launch.py use_fastlio2:=false &
         PIDS+=($!)
+        ;;
+
+    *)
+        err "Unknown LOCALIZATION_METHOD: ${LOCALIZATION_METHOD}"
+        exit 1
         ;;
 esac
 

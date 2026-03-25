@@ -384,9 +384,15 @@ class ROSNav(Module, NavigationInterface):
         self.goal_waypoint_sub = self._node.create_subscription(
             ROSPointStamped, "/way_point", self._on_ros_goal_waypoint, 10
         )
-        # FAST_LIO publishes registered scans on /cloud_registered (not /registered_scan)
+        # Topic names depend on the SLAM backend:
+        #   ARISE SLAM: /registered_scan, /state_estimation
+        #   FAST_LIO:   /cloud_registered, /Odometry
+        _use_arise = self.config.localization_method == "arise_slam"
+        _scan_topic = "/registered_scan" if _use_arise else "/cloud_registered"
+        _odom_topic = "/state_estimation" if _use_arise else "/Odometry"
+
         self.registered_scan_sub = self._node.create_subscription(
-            ROSPointCloud2, "/cloud_registered", self._on_ros_registered_scan, 10
+            ROSPointCloud2, _scan_topic, self._on_ros_registered_scan, 10
         )
 
         self.terrain_map_sub = self._node.create_subscription(
@@ -402,9 +408,8 @@ class ROSNav(Module, NavigationInterface):
 
         self.path_sub = self._node.create_subscription(ROSPath, "/path", self._on_ros_path, 10)
         self.tf_sub = self._node.create_subscription(ROSTFMessage, "/tf", self._on_ros_tf, 10)
-        # FAST_LIO publishes odometry on /Odometry (not /state_estimation)
         self.odom_sub = self._node.create_subscription(
-            ROSOdometry, "/Odometry", self._on_ros_odom, 10
+            ROSOdometry, _odom_topic, self._on_ros_odom, 10
         )
 
         # ROS2 publisher for external sensor data.
@@ -414,7 +419,10 @@ class ROSNav(Module, NavigationInterface):
         self._ext_scan_pub = self._node.create_publisher(ROSPointCloud2, "/registered_scan", 10)
         self._ext_odom_pub = self._node.create_publisher(ROSOdometry, "/state_estimation", 10)
 
-        logger.info("NavigationModule initialized with ROS2 node")
+        logger.info(
+            "NavigationModule initialized with ROS2 node "
+            f"(scan={_scan_topic}, odom={_odom_topic})"
+        )
 
     @rpc
     def start(self) -> None:

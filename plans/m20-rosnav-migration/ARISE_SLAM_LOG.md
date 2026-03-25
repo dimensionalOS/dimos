@@ -185,13 +185,26 @@ Patched launch file with 5/10/15s timers. All three nodes now configure + activa
 12. [x] Transfer to NOS via WiFi, deploy
 13. [x] **VERIFIED**: ARISE produces /state_estimation and /registered_scan
 
+### Phase 1d: Connect dimos ROSNav to ARISE (DONE)
+
+14. [x] Update rosnav_module.py: topic subscriptions conditional on localization_method
+        - arise_slam → /state_estimation + /registered_scan
+        - fastlio → /Odometry + /cloud_registered
+15. [x] Update M20ROSNavConfig: localization_method → arise_slam, LOCALIZATION_METHOD env → arise_slam
+16. [x] Add volume mounts: ARISE config, patched launch file, M20 local_planner config
+17. [x] Create local_planner_m20.yaml: M20 vehicle dimensions (0.85x0.45), conservative speeds (0.3 m/s)
+
+### Known Issues
+
+- **Entrypoint `/IMU` check**: The M20 entrypoint waits for `/IMU` via `ros2 topic list`, but ARISE uses `/bridge/IMU` (via SHM bridge). If cross-version DDS discovery is flaky after reboot, the check may fail even though the bridge is healthy. Workaround: ensure yesense is running before container starts. See Finding #6.
+- **FAST_LIO fallback**: The entrypoint's `fastlio` case still remaps `/cloud_registered` → `/registered_scan`, which conflicts with `rosnav_module.py`'s `/cloud_registered` subscription for fastlio mode. Not an issue since ARISE is the active path.
+
 ### Next Steps
 
-14. [ ] Connect dimos ROSNav module to ARISE outputs (/state_estimation, /registered_scan)
-15. [ ] Test navigation: send a goal, verify robot plans + drives
-16. [ ] Fix foxglove-bridge on arm64 (corrupts /opt/ros/humble/setup.bash)
-17. [ ] Tune ARISE feature extraction for RSAIRY scan pattern (if needed)
-18. [ ] Phase 2: patch N_SCANS=192 to use native ring values (remove 64-bin remap)
+18. [ ] Test navigation on robot: send a goal, verify robot plans + drives
+19. [ ] Fix foxglove-bridge on arm64 (corrupts /opt/ros/humble/setup.bash)
+20. [ ] Tune ARISE feature extraction for RSAIRY scan pattern (if needed)
+21. [ ] Phase 2: patch N_SCANS=192 to use native ring values (remove 64-bin remap)
 
 ---
 

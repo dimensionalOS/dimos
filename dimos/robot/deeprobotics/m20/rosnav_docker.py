@@ -56,7 +56,7 @@ class M20ROSNavConfig(ROSNavConfig):
             "ROS_DOMAIN_ID": "0",  # Match NOS rsdriver (not 42 like G1)
             "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
             "FASTRTPS_DEFAULT_PROFILES_FILE": "/ros2_ws/config/fastdds.xml",
-            "LOCALIZATION_METHOD": "fastlio",
+            "LOCALIZATION_METHOD": "arise_slam",
         }
     )
 
@@ -65,7 +65,7 @@ class M20ROSNavConfig(ROSNavConfig):
 
     # --- M20 navigation settings ---
     mode: str = "hardware"
-    localization_method: str = "fastlio"
+    localization_method: str = "arise_slam"
     robot_config_path: str = "deeprobotics/m20"
     vehicle_height: float = 0.47  # 47cm lidar height in agile stance
     use_rviz: bool = False
@@ -83,6 +83,9 @@ class M20ROSNavConfig(ROSNavConfig):
         repo_root = Path(__file__).parents[3]
         m20_docker_dir = Path(__file__).parent / "docker"
 
+        arise_share = "/ros2_ws/install/arise_slam_mid360/share/arise_slam_mid360"
+        planner_share = "/ros2_ws/install/local_planner/share/local_planner"
+
         # Minimal NOS volumes — no X11, no Unity sim assets
         self.docker_volumes = [
             # Live dimos source so the module is always up-to-date
@@ -97,6 +100,24 @@ class M20ROSNavConfig(ROSNavConfig):
             (
                 str(m20_docker_dir / "entrypoint.sh"),
                 "/usr/local/bin/entrypoint.sh",
+                "ro",
+            ),
+            # ARISE SLAM M20 config (overrides default livox_mid360.yaml)
+            (
+                str(m20_docker_dir / "arise_slam_m20.yaml"),
+                f"{arise_share}/config/livox_mid360.yaml",
+                "ro",
+            ),
+            # Patched ARISE launch with longer lifecycle timers for ARM64
+            (
+                str(m20_docker_dir / "arize_slam_m20.launch.py"),
+                f"{arise_share}/launch/arize_slam.launch.py",
+                "ro",
+            ),
+            # M20 robot config for local_planner (vehicle dimensions, speeds)
+            (
+                str(m20_docker_dir / "local_planner_m20.yaml"),
+                f"{planner_share}/config/deeprobotics/m20.yaml",
                 "ro",
             ),
         ]

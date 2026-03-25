@@ -1,0 +1,75 @@
+# Deep Robotics M20 robot config for local_planner + ARISE SLAM
+# M20: 820x430x570mm quadruped, 47cm lidar height (agile stance)
+# Dual RSAIRY lidars (front+back), Yesense IMU
+
+# Sensor mounting offsets (lidar ~center of body)
+sensorMountingOffsets:
+  ros__parameters:
+    sensorOffsetX: 0.0
+    sensorOffsetY: 0.0
+    sensorOffsetZ: 0.0
+
+# SLAM sensor configuration (blind zones for M20 body)
+feature_extraction_node:
+  ros__parameters:
+    lidar_flip: false
+    blindFront: 0.5
+    blindBack: -0.5
+    blindLeft: 0.3
+    blindRight: -0.3
+    blindDiskLow: -0.05
+    blindDiskHigh: 0.05
+    blindDiskRadius: 0.5
+
+imu_preintegration_node:
+  ros__parameters:
+    lidar_flip: false
+
+localPlanner:
+  ros__parameters:
+    obstacleHeightThre: 0.1
+
+    sensorOffsetX: 0.0
+    sensorOffsetY: 0.0
+
+    # M20 dimensions: 820x430mm + margin
+    vehicleLength: 0.85
+    vehicleWidth: 0.45
+
+    # Conservative speeds for initial testing
+    maxSpeed: 0.5
+    autonomySpeed: 0.3
+
+    pathScale: 0.875
+    minPathScale: 0.675
+    pathScaleStep: 0.1
+    minPathRange: 0.8
+    pathRangeStep: 0.6
+    adjacentRange: 3.5
+
+    goalClearRange: 0.6
+    goalBehindRange: 0.8
+    goalReachedThreshold: 0.3
+    goalYawThreshold: 0.15
+
+pathFollower:
+  ros__parameters:
+    lookAheadDis: 0.5
+    maxAccel: 1.0
+
+    maxSpeed: 0.5
+    autonomySpeed: 0.3
+
+    slowDwnDisThre: 0.875
+    omniDirDiffThre: 1.5
+    yawRateGain: 1.5
+    stopYawRateGain: 1.5
+    maxYawRate: 40.0
+    dirDiffThre: 0.4
+    stopDisThre: 0.4
+
+terrainAnalysis:
+  ros__parameters:
+    # RSAIRY vertical FOV is ~90° hemispherical
+    minDyObsVFOV: -55.0
+    maxDyObsVFOV: 10.0

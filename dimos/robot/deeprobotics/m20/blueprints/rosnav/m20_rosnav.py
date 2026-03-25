@@ -71,7 +71,7 @@ m20_rosnav = (
             ("goal_req", PoseStamped): LCMTransport("/goal_req", PoseStamped),
             ("goal_active", PoseStamped): LCMTransport("/goal_active", PoseStamped),
             ("path_active", Path): LCMTransport("/path_active", Path),
-            # Odometry (FAST_LIO /Odometry → ROSNav → websocket_vis)
+            # Odometry (ARISE /state_estimation → ROSNav → websocket_vis)
             ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
             # Goal lifecycle
             ("goal_reached", Bool): LCMTransport("/goal_reached", Bool),
