@@ -203,6 +203,11 @@ RUN cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam 
     make -j$(nproc) && make install && ldconfig && \
     rm -rf ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam/build
 
+# Patch ARISE SLAM: uncomment undistortionAndscanregistration() in Velodyne handler.
+# Without this, the Velodyne code path buffers lidar frames but never processes them.
+COPY docker/navigation/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/src/FeatureExtraction/featureExtraction.cpp \
+     ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/arise_slam_mid360/src/FeatureExtraction/featureExtraction.cpp
+
 # Patch fastlio2 for PointCloud2 support (M20 RSAIRY lidars).
 # Adds lidar_msg_type config flag to accept sensor_msgs/PointCloud2 alongside Livox CustomMsg.
 COPY docker/navigation/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/fastlio2/src/lio_node.cpp \
