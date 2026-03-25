@@ -1,0 +1,125 @@
+name: macos
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - '**.md'
+      - 'docker/**'
+      - '.github/workflows/docker.yml'
+      - '.github/workflows/_docker-build-template.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check-changes:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    outputs:
+      should-run: ${{ steps.filter.outputs.python }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            python:
+              - 'dimos/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.github/workflows/macos.yml'
+
+  macos-tests:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.should-run == 'true'
+    runs-on: [self-hosted, macos, arm64]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install system dependencies
+        run: brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo
+
+      - name: Set up git-lfs
+        run: |
+          git lfs install
+          git lfs pull
+
+      - name: Install dependencies
+        run: |
+          uv sync --all-extras --no-extra dds --no-extra cuda --frozen
+
+      - name: Check disk usage
+        run: |
+          df -h .
+          du -sh .venv/ || true
+
+      - name: Configure LCM networking
+        run: |
+          # Same as dimos autoconf for macOS (skipped when CI=1)
+          sudo route add -net 224.0.0.0/4 -interface lo0 || true
+          sudo sysctl -w kern.ipc.maxsockbuf=6291456
+          sudo sysctl -w net.inet.udp.recvspace=2097152
+          sudo sysctl -w net.inet.udp.maxdgram=65535
+
+      - name: Run tests
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+          LCM_DEFAULT_URL: "udpm://239.255.76.67:7667?ttl=0"
+          CI: "1"
+        run: |
+          source .venv/bin/activate
+          python -m pytest --durations=10 -m 'not (tool or mujoco)' --timeout=120 dimos/
+
+      - name: Check disk usage (post-test)
+        if: always()
+        run: df -h .
+
+  macos-mypy:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.should-run == 'true'
+    runs-on: [self-hosted, macos, arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install system dependencies
+        run: brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo
+
+      - name: Install dependencies
+        run: |
+          uv sync --all-extras --no-extra dds --no-extra cuda --frozen
+
+      - name: Run mypy
+        run: |
+          source .venv/bin/activate
+          mypy dimos
+# macOS CI retrigger
