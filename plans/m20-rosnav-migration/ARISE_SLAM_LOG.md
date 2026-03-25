@@ -165,7 +165,11 @@ The `else` branch at line 1398-1404 (non-LIVOX path in the Livox handler) also h
 4. Call `undistortionAndscanregistration()`
 5. Clean lidar buffer after processing
 
-**Researching**: How SuperOdom, AutonomyStackGO1, and other forks handle this — results pending.
+**Research results** (2026-03-24): SuperOdom (author's cleaned-up version) fixes this by calling `undistortionAndFeatureExtraction()` from ALL lidar callbacks with `IMU_INIT || imuBuf.empty()` guard. No other fork (12+ checked) has fixed this. AutonomyStackGO1 uses Livox only. ground_based_autonomy_basic uses LOAM, not ARISE.
+
+**Fix applied**: Mirrored SuperOdom pattern — added IMU init + processing call with `IMU_INIT || imuBuf.empty()` fallback to Velodyne handler.
+
+**Result**: ARISE SLAM producing `/state_estimation` (nav_msgs/Odometry) and `/registered_scan` from M20 RoboSense RSAIRY dual lidars. **WORKING as of 2026-03-24.**
 
 ---
 
@@ -173,13 +177,21 @@ The `else` branch at line 1398-1404 (non-LIVOX path in the Livox handler) also h
 
 Patched launch file with 5/10/15s timers. All three nodes now configure + activate.
 
-### Phase 1c: Fix Velodyne Processing (CURRENT BLOCKER)
+### Phase 1c: Fix Velodyne Processing (RESOLVED)
 
-9. [ ] Research how other forks handle the Velodyne processing trigger
-10. [ ] Apply the correct fix (uncomment + IMU init, or alternative approach)
-11. [ ] Rebuild nav image on Mac with ARISE patch
-12. [ ] Transfer to NOS, deploy, test
-13. [ ] Verify ARISE produces /state_estimation and /registered_scan
+9. [x] Research how other forks handle the Velodyne processing trigger
+10. [x] Apply the correct fix (SuperOdom pattern: IMU init + processing in lidar callback)
+11. [x] Rebuild nav image on Mac with ARISE patch (foxglove disabled on arm64)
+12. [x] Transfer to NOS via WiFi, deploy
+13. [x] **VERIFIED**: ARISE produces /state_estimation and /registered_scan
+
+### Next Steps
+
+14. [ ] Connect dimos ROSNav module to ARISE outputs (/state_estimation, /registered_scan)
+15. [ ] Test navigation: send a goal, verify robot plans + drives
+16. [ ] Fix foxglove-bridge on arm64 (corrupts /opt/ros/humble/setup.bash)
+17. [ ] Tune ARISE feature extraction for RSAIRY scan pattern (if needed)
+18. [ ] Phase 2: patch N_SCANS=192 to use native ring values (remove 64-bin remap)
 
 ---
 
