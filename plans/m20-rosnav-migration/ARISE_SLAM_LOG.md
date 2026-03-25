@@ -208,9 +208,17 @@ Processes started via `docker exec` cannot join the container's DDS domain. Host
 
 ### Finding #11: IMU/Lidar Timestamp Desync — ARISE Drops All Frames (2026-03-24)
 
-ARISE feature_extraction reports "All lidar data is more recent than all IMU data" and drops every frame. drdds_recv timestamps show lidar and IMU are properly synced on NOS wall clock (~0.5s phase offset, normal). The desync must occur in ros2_pub SHM reading (stale IMU data from pre-restart SHM buffer?) or in ARISE timestamp comparison logic.
+ARISE feature_extraction reports "All lidar data is more recent than all IMU data" and drops every frame. drdds_recv timestamps show lidar and IMU are properly synced on NOS wall clock (~0.5s phase offset, normal).
 
-**Status**: Root cause TBD. drdds_recv timestamps verified correct. Investigate ros2_pub IMU SHM reader startup behavior.
+**Root cause (found 2026-03-24):** The SuperOdom-pattern fix (Finding #8) called `undistortionAndscanregistration()` from `laserCloudHandler` (the lidar callback). But `synchronize_measurements()` requires `meas_end_time > lidar_end_time`, where `lidar_end_time = lidar_start_time + last_point_relative_time` (~+100ms for 10Hz). When the lidar callback fires, IMU data has NOT yet accumulated past the frame's end time — the latest IMU sample is at approximately the lidar frame's START time, not 100ms past it. So the check `meas_end_time <= lidar_end_time` always fails.
+
+The Livox handler avoids this by triggering processing from the **IMU callback**, gated by `imu_timestamp > lidar_first_time + LIDAR_MESSAGE_TIME + 0.05`. This guarantees IMU extends past the lidar frame before sync is attempted.
+
+**Fix:** Extended the Livox IMU-callback processing path to include `SensorType::VELODYNE` (`if(LIVOX || VELODYNE)`). Removed the processing trigger from `laserCloudHandler`. The lidar handler now only buffers frames; the IMU handler triggers processing when timing is satisfied.
+
+**Additional fix (Codex review):** The Livox processing path had `lidarBuf.clean()` after `undistortionAndscanregistration()`. For LIVOX this is correct (publishTopic doesn't clean). For VELODYNE, `feature_extraction()` (called inside undistortionAndscanregistration) already cleans the processed frame — the explicit clean would drop the NEXT buffered frame, dropping every other scan. Fixed by guarding the explicit clean with `if (LIVOX)`.
+
+**Status**: Fix applied. Requires nav image rebuild to deploy.
 
 ### Known Issues
 
@@ -220,10 +228,12 @@ ARISE feature_extraction reports "All lidar data is more recent than all IMU dat
 
 ### Next Steps
 
-18. [ ] Test navigation on robot: send a goal, verify robot plans + drives
-19. [ ] Fix foxglove-bridge on arm64 (corrupts /opt/ros/humble/setup.bash)
-20. [ ] Tune ARISE feature extraction for RSAIRY scan pattern (if needed)
-21. [ ] Phase 2: patch N_SCANS=192 to use native ring values (remove 64-bin remap)
+18. [ ] Rebuild nav image with Finding #11 fix (IMU-triggered processing for Velodyne)
+19. [ ] Deploy to NOS and verify ARISE produces /state_estimation + /registered_scan
+20. [ ] Test navigation on robot: send a goal, verify robot plans + drives
+21. [ ] Fix foxglove-bridge on arm64 (corrupts /opt/ros/humble/setup.bash)
+22. [ ] Tune ARISE feature extraction for RSAIRY scan pattern (if needed)
+23. [ ] Phase 2: patch N_SCANS=192 to use native ring values (remove 64-bin remap)
 
 ---
 

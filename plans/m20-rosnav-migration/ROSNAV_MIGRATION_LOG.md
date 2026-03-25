@@ -3,7 +3,7 @@
 **Goal**: Replace M20's proprietary drdds-based navigation stack with FAST_LIO (ROS2 Humble) + dimos ROSNav, enabling autonomous navigation on the M20 quadruped.
 
 **Date started**: 2026-03-12
-**Last updated**: 2026-03-23
+**Last updated**: 2026-03-24
 **Branch**: `integration/m20-rosnav-migration`
 
 ---
