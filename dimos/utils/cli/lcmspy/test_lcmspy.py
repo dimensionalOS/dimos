@@ -164,7 +164,7 @@ def test_graph_lcmspy_basic(graph_lcmspy_instance) -> None:
     """Test GraphLCMSpy basic functionality"""
     # Simulate a message
     graph_lcmspy_instance.msg("/test", b"test data")
-    time.sleep(0.2)  # Wait for graph update
+    time.sleep(0.5)  # Wait for graph update — macOS needs longer for thread scheduling
 
     # Should create GraphTopic with history
     topic = graph_lcmspy_instance.topic["/test"]

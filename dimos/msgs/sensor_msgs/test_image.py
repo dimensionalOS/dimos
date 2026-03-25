@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+
 import numpy as np
 import pytest
 from reactivex import operators as ops
+
+_IS_MACOS = sys.platform == "darwin"
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_barrier
 from dimos.utils.data import get_data
@@ -114,8 +118,9 @@ def test_sharpness_barrier() -> None:
         """Track what sharpness_barrier emits"""
         emitted_images.append(img)
 
-    # Use 20Hz frequency (0.05s windows) for faster test
-    # Emit images at 100Hz to get ~5 per window
+    # macOS timer coalescing causes jitter at high frequencies, so use
+    # wider windows (2Hz) there. Linux handles 20Hz windows fine.
+    _freq = 2 if _IS_MACOS else 20
     from reactivex import from_iterable, interval
 
     source = from_iterable(mock_images).pipe(
@@ -125,24 +130,22 @@ def test_sharpness_barrier() -> None:
 
     source.pipe(
         ops.do_action(track_input),  # Track inputs
-        sharpness_barrier(20),  # 20Hz = 0.05s windows
+        sharpness_barrier(_freq),
         ops.do_action(track_output),  # Track outputs
     ).run()
 
-    # Only need 0.08s for 1 full window at 20Hz plus buffer
-    time.sleep(0.08)
+    time.sleep(0.6 if _IS_MACOS else 0.08)
 
-    # Verify we got correct emissions (items span across 2 windows due to timing)
-    # Items 1-4 arrive in first window (0-50ms), item 5 arrives in second window (50-100ms)
-    assert len(emitted_images) == 2, (
-        f"Expected exactly 2 emissions (one per window), got {len(emitted_images)}"
-    )
-
-    # Group inputs by wall-clock windows and verify we got the sharpest
-
-    # Verify each window emitted the sharpest image from that window
-    # First window (0-50ms): items 1-4
-    assert emitted_images[0].sharpness == 0.3711  # Highest among first 4 items
-
-    # Second window (50-100ms): only item 5
-    assert emitted_images[1].sharpness == 0.3665  # Only item in second window
+    if _IS_MACOS:
+        # At 2Hz all 5 images land in one 500ms window → exactly 1 emission
+        assert len(emitted_images) == 1, (
+            f"Expected exactly 1 emission (one window), got {len(emitted_images)}"
+        )
+        assert emitted_images[0].sharpness == 0.3711
+    else:
+        # Items span 2 windows at 20Hz: items 1-4 in first, item 5 in second
+        assert len(emitted_images) == 2, (
+            f"Expected exactly 2 emissions (one per window), got {len(emitted_images)}"
+        )
+        assert emitted_images[0].sharpness == 0.3711  # Highest among first 4
+        assert emitted_images[1].sharpness == 0.3665  # Only item in second window

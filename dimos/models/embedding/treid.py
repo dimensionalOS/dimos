@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import warnings
+from typing import overload
 
 warnings.filterwarnings("ignore", message="Cython evaluation.*unavailable", category=UserWarning)
 
@@ -50,6 +51,10 @@ class TorchReIDModel(EmbeddingModel, LocalModel):
             device=self.config.device,
         )
 
+    @overload
+    def embed(self, image: Image, /) -> Embedding: ...
+    @overload
+    def embed(self, *images: Image) -> list[Embedding]: ...
     def embed(self, *images: Image) -> Embedding | list[Embedding]:
         """Embed one or more images.
 
@@ -79,6 +84,10 @@ class TorchReIDModel(EmbeddingModel, LocalModel):
 
         return embeddings[0] if len(images) == 1 else embeddings
 
+    @overload
+    def embed_text(self, text: str, /) -> Embedding: ...
+    @overload
+    def embed_text(self, *texts: str) -> list[Embedding]: ...
     def embed_text(self, *texts: str) -> Embedding | list[Embedding]:
         """Text embedding not supported for ReID models.
 
