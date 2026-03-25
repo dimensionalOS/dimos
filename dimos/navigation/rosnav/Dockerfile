@@ -145,15 +145,8 @@ RUN git clone -b ${NAV_STACK_REF} --depth 1 \
         https://github.com/jeff-hykin/ros-navigation-autonomy-stack.git \
         ${WORKSPACE}/src/ros-navigation-autonomy-stack
 
-# Clone foxglove-bridge into workspace (not in Humble arm64 apt repos)
-ARG TARGETARCH
-RUN if [ "${TARGETARCH}" = "arm64" ]; then \
-        apt-get update && apt-get install -y --no-install-recommends \
-            ros-${ROS_DISTRO}-foxglove-msgs \
-            && rm -rf /var/lib/apt/lists/* && \
-        git clone --depth 1 https://github.com/foxglove/ros-foxglove-bridge.git \
-            ${WORKSPACE}/src/ros-foxglove-bridge; \
-    fi
+# foxglove-bridge: disabled on arm64 for now (corrupts /opt/ros/humble/setup.bash)
+# TODO: fix foxglove arm64 build — see ARISE_SLAM_LOG.md Finding #30 in ROSNAV_MIGRATION_LOG
 
 # On arm64, replace pre-built x86_64 or-tools with arm64 built version
 RUN if [ "${TARGETARCH}" = "arm64" ] && [ -d "/opt/or-tools" ]; then \
@@ -280,8 +273,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     chrony \
     && rm -rf /var/lib/apt/lists/*
 
-# foxglove-bridge: not in Humble arm64 apt repos. On amd64, install from apt.
-# On arm64, it was already built in the builder stage as part of the workspace.
+# foxglove-bridge: install from apt on amd64 only (arm64 disabled — see above)
 ARG TARGETARCH
 RUN if [ "${TARGETARCH}" != "arm64" ]; then \
         apt-get update && apt-get install -y --no-install-recommends \
