@@ -82,8 +82,8 @@ fi
 
 log "Required topics checked. Launching navigation stack."
 
-# --- If explicit command provided, run it instead of auto-launch ---
-if [ $# -gt 0 ]; then
+# --- If explicit command provided (not the default CMD), run it instead ---
+if [ $# -gt 0 ] && [ "$1" != "bash" ] && [ "$1" != "" ]; then
     log "Executing provided command: $*"
     exec "$@"
 fi
@@ -131,8 +131,19 @@ case "${LOCALIZATION_METHOD}" in
         ;;
 
     arise_slam)
+        # Start ros2_pub bridge FIRST so ARISE nodes discover it during lifecycle
+        if [ -f /ros2_ws/install/drdds_bridge/lib/drdds_bridge/ros2_pub ]; then
+            log "Starting ros2_pub bridge..."
+            ros2 run drdds_bridge ros2_pub > /tmp/ros2_pub.log 2>&1 &
+            PIDS+=($!)
+            sleep 3  # Let DDS discovery find ros2_pub before launching ARISE
+        else
+            warn "ros2_pub not built — run 'colcon build --packages-select drdds_bridge --cmake-args -DBUILD_ROS2_PUB=ON' inside container"
+        fi
+
         log "Launching autonomy stack with ARISE SLAM..."
-        ros2 launch vehicle_simulator system_real_robot.launch.py use_fastlio2:=false &
+        ros2 launch vehicle_simulator system_real_robot.launch.py \
+            use_fastlio2:=false enable_bridge:=false &
         PIDS+=($!)
         ;;
 
