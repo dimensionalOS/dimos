@@ -220,11 +220,13 @@ private:
 int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
     auto node = std::make_shared<BridgePublisher>();
-    // Don't spin executor — poll thread does all work.
-    // spin() would waste a CPU core on an idle executor loop.
-    while (rclcpp::ok()) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
+    // Spin in a background thread for DDS discovery (participant announcement).
+    // Without spin, ros2_pub's publishers are invisible to other ROS2 nodes.
+    // The poll thread handles actual data — spin only processes discovery.
+    std::thread spin_thread([&node]() {
+        rclcpp::spin(node);
+    });
+    spin_thread.join();
     node.reset();
     rclcpp::shutdown();
     return 0;
