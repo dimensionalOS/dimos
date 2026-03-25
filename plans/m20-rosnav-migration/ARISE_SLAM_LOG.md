@@ -194,10 +194,29 @@ Patched launch file with 5/10/15s timers. All three nodes now configure + activa
 16. [x] Add volume mounts: ARISE config, patched launch file, M20 local_planner config
 17. [x] Create local_planner_m20.yaml: M20 vehicle dimensions (0.85x0.45), conservative speeds (0.3 m/s)
 
+### Finding #9: ros2_pub DDS Discovery Requires spin() (2026-03-24)
+
+ros2_pub's main loop was `while(ok()) sleep(1)` — no executor spinning. Without `rclcpp::spin()`, DDS discovery callbacks never fire, so the node is invisible to other ROS2 nodes. `ros2 node list` doesn't show it, `ros2 topic info` shows publisher count 0.
+
+**Fix**: replaced sleep loop with `rclcpp::spin()` in a thread. Publisher still works via dedicated poll threads.
+
+### Finding #10: docker exec DDS Discovery Broken with --ipc host (2026-03-24)
+
+Processes started via `docker exec` cannot join the container's DDS domain. Host's drdds_recv (FastDDS 2.14) creates SHM port files in `/dev/shm/fastrtps_port*` that the container's FastDDS 2.6 can't read/lock. Any new DDS participant fails with `Failed init_port fastrtps_port*: open_and_lock_file failed`.
+
+**Workaround**: start ros2_pub from the entrypoint (same process context as system launch), NOT via `docker exec`. Entrypoint-started processes CAN discover each other.
+
+### Finding #11: IMU/Lidar Timestamp Desync — ARISE Drops All Frames (2026-03-24)
+
+ARISE feature_extraction reports "All lidar data is more recent than all IMU data" and drops every frame. drdds_recv timestamps show lidar and IMU are properly synced on NOS wall clock (~0.5s phase offset, normal). The desync must occur in ros2_pub SHM reading (stale IMU data from pre-restart SHM buffer?) or in ARISE timestamp comparison logic.
+
+**Status**: Root cause TBD. drdds_recv timestamps verified correct. Investigate ros2_pub IMU SHM reader startup behavior.
+
 ### Known Issues
 
-- **Entrypoint `/IMU` check**: The M20 entrypoint waits for `/IMU` via `ros2 topic list`, but ARISE uses `/bridge/IMU` (via SHM bridge). If cross-version DDS discovery is flaky after reboot, the check may fail even though the bridge is healthy. Workaround: ensure yesense is running before container starts. See Finding #6.
-- **FAST_LIO fallback**: The entrypoint's `fastlio` case still remaps `/cloud_registered` → `/registered_scan`, which conflicts with `rosnav_module.py`'s `/cloud_registered` subscription for fastlio mode. Not an issue since ARISE is the active path.
+- **Entrypoint `/IMU` check**: waits for `/IMU` via ros2 topic list, but ARISE uses `/bridge/IMU`. See Finding #6.
+- **FAST_LIO fallback remap**: entrypoint remaps `/cloud_registered` → `/registered_scan`, conflicts with rosnav_module's `/cloud_registered` subscription for fastlio mode. Not an issue since ARISE is active.
+- **ros2_pub not baked into nav image**: must build inside container on first start (`colcon build --packages-select drdds_bridge --cmake-args -DBUILD_ROS2_PUB=ON`). Use `docker commit` to persist.
 
 ### Next Steps
 
