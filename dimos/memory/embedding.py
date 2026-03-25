@@ -14,7 +14,6 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import cast
 
 from pydantic import Field
 import reactivex as rx
@@ -88,7 +87,7 @@ class EmbeddingMemory(Module[Config]):
         return rx.of(SpatialEntry(image=img, pose=pose))
 
     def _embed_spatial_entry(self, spatial_entry: SpatialEntry) -> SpatialEmbedding:
-        embedding = cast("Embedding", self.config.embedding_model.embed(spatial_entry.image))
+        embedding = self.config.embedding_model.embed(spatial_entry.image)
         return SpatialEmbedding(
             image=spatial_entry.image,
             pose=spatial_entry.pose,

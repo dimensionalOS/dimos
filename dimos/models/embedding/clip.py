@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from functools import cached_property
+from typing import overload
 
 from PIL import Image as PILImage
 import torch
@@ -45,6 +48,10 @@ class CLIPModel(EmbeddingModel, HuggingFaceModel):
     def _processor(self) -> CLIPProcessor:
         return CLIPProcessor.from_pretrained(self.config.model_name)
 
+    @overload
+    def embed(self, image: Image, /) -> Embedding: ...
+    @overload
+    def embed(self, *images: Image) -> list[Embedding]: ...
     def embed(self, *images: Image) -> Embedding | list[Embedding]:
         """Embed one or more images.
 
@@ -69,6 +76,10 @@ class CLIPModel(EmbeddingModel, HuggingFaceModel):
 
         return embeddings[0] if len(images) == 1 else embeddings
 
+    @overload
+    def embed_text(self, text: str, /) -> Embedding: ...
+    @overload
+    def embed_text(self, *texts: str) -> list[Embedding]: ...
     def embed_text(self, *texts: str) -> Embedding | list[Embedding]:
         """Embed one or more text strings.
 

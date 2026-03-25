@@ -21,7 +21,10 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from dimos.memory2.embed import EmbedImages
 from dimos.memory2.store.sqlite import SqliteStore
+from dimos.memory2.transform import QualityWindow
+from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data_dir
@@ -254,3 +257,45 @@ class TestE2EQuery:
         overlap_end = min(v_last, l_last)
         assert overlap_start < overlap_end, "Video and lidar should overlap in time"
         assert overlap_start < overlap_end, "Video and lidar should overlap in time"
+
+
+@pytest.mark.tool
+class TestEmbedImages:
+    """CLIP-embed imported video frames and search by text."""
+
+    def test_embed_and_save(self, session: SqliteStore, clip: CLIPModel) -> None:
+        """Embed video frames at 1Hz and persist to an embedded stream."""
+        video = session.stream("color_image", Image)
+
+        # Clear any prior run so the test is idempotent
+        if "color_image_embedded" in session.list_streams():
+            session.delete_stream("color_image_embedded")
+
+        embedded = session.stream("color_image_embedded", Image)
+
+        # Downsample to 1Hz, then embed
+        pipeline = (
+            video.transform(QualityWindow(lambda img: img.sharpness, window=1.0))
+            .transform(EmbedImages(clip))
+            .save(embedded)
+        )
+
+        count = 0
+        for obs in pipeline:
+            count += 1
+            print(f"  [{count}] ts={obs.ts:.2f} pose={obs.pose}")
+
+        assert count > 0
+        print(f"Embedded {count} frames (1Hz from {video.count()} total)")
+
+    def test_search_by_text(self, session: SqliteStore, clip: CLIPModel) -> None:
+        """Search embedded frames with a text query."""
+        embedded = session.stream("color_image_embedded", Image)
+        query = clip.embed_text("a door")
+
+        results = embedded.search(query, k=5).fetch()
+        assert len(results) > 0
+        for obs in results:
+            assert obs.similarity is not None
+            assert obs.pose is not None
+            print(f"sim={obs.similarity:.3f} ts={obs.ts} pose={obs.pose}")
