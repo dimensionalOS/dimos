@@ -379,14 +379,3 @@ class QuestTeleopModule(Module[_Config]):
         """
         buttons = Buttons.from_controllers(left, right)
         self.buttons.publish(buttons)
-
-
-quest_teleop_module = QuestTeleopModule.blueprint
-
-__all__ = [
-    "Hand",
-    "QuestTeleopConfig",
-    "QuestTeleopModule",
-    "QuestTeleopStatus",
-    "quest_teleop_module",
-]

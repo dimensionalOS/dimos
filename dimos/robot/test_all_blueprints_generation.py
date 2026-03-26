@@ -17,6 +17,7 @@ from collections.abc import Generator
 import difflib
 import os
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -32,6 +33,7 @@ IGNORED_FILES: set[str] = {
     "dimos/core/test_blueprints.py",
 }
 BLUEPRINT_METHODS = {"transports", "global_config", "remappings", "requirements", "configurators"}
+_EXCLUDED_MODULE_NAMES = {"Module", "ModuleBase"}
 
 
 def test_all_blueprints_is_current() -> None:
@@ -76,22 +78,107 @@ def test_all_blueprints_is_current() -> None:
             )
 
 
+def _camel_to_snake(name: str) -> str:
+    """Convert CamelCase class name to snake_case."""
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
+    return s.lower()
+
+
+def _get_base_class_names(node: ast.ClassDef) -> list[str]:
+    """Extract base class names from a ClassDef, handling Name, Attribute, and Subscript."""
+    names: list[str] = []
+    for base in node.bases:
+        if isinstance(base, ast.Name):
+            names.append(base.id)
+        elif isinstance(base, ast.Attribute):
+            names.append(base.attr)
+        elif isinstance(base, ast.Subscript):
+            # Handle Generic[T] style: class Module(ModuleBase[ConfigT])
+            v = base.value
+            if isinstance(v, ast.Name):
+                names.append(v.id)
+            elif isinstance(v, ast.Attribute):
+                names.append(v.attr)
+    return names
+
+
+def _build_module_class_set(root: Path) -> set[str]:
+    """Build the set of all class names that are Module subclasses.
+
+    Uses the same transitive-closure approach as dimos.core.test_modules:
+    start from {"Module", "ModuleBase"} and iteratively add any class whose
+    base appears in the known set until convergence.
+    """
+    known: set[str] = {"Module", "ModuleBase"}
+    all_classes: list[tuple[str, list[str]]] = []
+
+    for path in sorted(root.rglob("*.py")):
+        if "__pycache__" in str(path):
+            continue
+        try:
+            tree = ast.parse(path.read_text("utf-8"), str(path))
+        except Exception:
+            continue
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                all_classes.append((node.name, _get_base_class_names(node)))
+
+    changed = True
+    while changed:
+        changed = False
+        for name, bases in all_classes:
+            if name not in known and any(b in known for b in bases):
+                known.add(name)
+                changed = True
+
+    return known
+
+
+def _is_production_module_file(file_path: Path, root: Path) -> bool:
+    """Return True if this file should contribute to the all_modules registry.
+
+    Excludes test helpers, deprecated code, and framework base classes in core/.
+    """
+    rel = str(file_path.relative_to(root))
+    stem = file_path.stem
+    return not (
+        stem.startswith("test_")
+        or "_test_" in stem
+        or stem.endswith("_test")
+        or stem.startswith("fake_")
+        or stem.startswith("mock_")
+        or "deprecated" in rel
+        or "/testing/" in rel
+        or rel.startswith("core/")
+    )
+
+
 def _scan_for_blueprints(root: Path) -> tuple[dict[str, str], dict[str, str]]:
     all_blueprints: dict[str, str] = {}
     all_modules: dict[str, str] = {}
 
+    module_classes = _build_module_class_set(root)
+
     for file_path in sorted(_get_all_python_files(root)):
         module_name = _path_to_module_name(file_path, root)
-        blueprint_vars, module_vars = _find_blueprints_in_file(file_path)
+        blueprint_vars, module_vars = _find_blueprints_in_file(file_path, module_classes)
 
         for var_name in blueprint_vars:
             full_path = f"{module_name}:{var_name}"
             cli_name = var_name.replace("_", "-")
             all_blueprints[cli_name] = full_path
 
-        for var_name in module_vars:
-            cli_name = var_name.replace("_", "-")
-            all_modules[cli_name] = module_name
+        # Only register modules from production files (skip test, deprecated, core)
+        if _is_production_module_file(file_path, root):
+            for var_name in module_vars:
+                cli_name = var_name.replace("_", "-")
+                all_modules[cli_name] = module_name
+
+    # Blueprints take priority when names collide (e.g. a pre-configured
+    # blueprint named "mid360" vs the raw Mid360 Module class).
+    for key in set(all_modules) & set(all_blueprints):
+        del all_modules[key]
 
     return all_blueprints, all_modules
 
@@ -161,7 +248,9 @@ def _path_to_module_name(path: Path, root: Path) -> str:
     return ".".join(parts)
 
 
-def _find_blueprints_in_file(file_path: Path) -> tuple[list[str], list[str]]:
+def _find_blueprints_in_file(
+    file_path: Path, module_classes: set[str] | None = None
+) -> tuple[list[str], list[str]]:
     blueprint_vars: list[str] = []
     module_vars: list[str] = []
 
@@ -173,24 +262,26 @@ def _find_blueprints_in_file(file_path: Path) -> tuple[list[str], list[str]]:
 
     # Only look at top-level statements (direct children of the Module node)
     for node in tree.body:
-        if not isinstance(node, ast.Assign):
-            continue
+        if isinstance(node, ast.Assign):
+            # Get the variable name(s)
+            for target in node.targets:
+                if not isinstance(target, ast.Name):
+                    continue
+                var_name = target.id
 
-        # Get the variable name(s)
-        for target in node.targets:
-            if not isinstance(target, ast.Name):
+                if var_name.startswith("_"):
+                    continue
+
+                # Check if it's a blueprint (ModuleBlueprintSet instance)
+                if _is_autoconnect_call(node.value) or _ends_with_blueprint_method(node.value):
+                    blueprint_vars.append(var_name)
+
+        # Detect Module subclasses by checking base classes against the known set
+        elif isinstance(node, ast.ClassDef) and module_classes:
+            if node.name.startswith("_") or node.name in _EXCLUDED_MODULE_NAMES:
                 continue
-            var_name = target.id
-
-            if var_name.startswith("_"):
-                continue
-
-            # Check if it's a blueprint (ModuleBlueprintSet instance)
-            if _is_autoconnect_call(node.value) or _ends_with_blueprint_method(node.value):
-                blueprint_vars.append(var_name)
-            # Check if it's a module factory (SomeModule.blueprint)
-            elif _is_blueprint_factory(node.value):
-                module_vars.append(var_name)
+            if any(b in module_classes for b in _get_base_class_names(node)):
+                module_vars.append(_camel_to_snake(node.name))
 
     return blueprint_vars, module_vars
 
@@ -212,10 +303,4 @@ def _ends_with_blueprint_method(node: ast.expr) -> bool:
         func = node.func
         if isinstance(func, ast.Attribute) and func.attr in BLUEPRINT_METHODS:
             return True
-    return False
-
-
-def _is_blueprint_factory(node: ast.expr) -> bool:
-    if isinstance(node, ast.Attribute):
-        return node.attr == "blueprint"
     return False

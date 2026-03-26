@@ -87,17 +87,24 @@ class SqliteVectorStore(VectorStore):
         )
 
     def search(self, stream_name: str, query: Embedding, k: int) -> list[tuple[int, float]]:
-        if stream_name not in self._tables:
-            return []
+        validate_identifier(stream_name)
         vec = query.to_numpy().tolist()
-        rows = self._conn.execute(
-            f'SELECT rowid, distance FROM "{stream_name}_vec" WHERE embedding MATCH ? AND k = ?',
-            (json.dumps(vec), k),
-        ).fetchall()
+        try:
+            rows = self._conn.execute(
+                f'SELECT rowid, distance FROM "{stream_name}_vec" WHERE embedding MATCH ? AND k = ?',
+                (json.dumps(vec), k),
+            ).fetchall()
+        except sqlite3.OperationalError as e:
+            if "no such table" in str(e):
+                return []
+            raise
         # vec0 cosine distance = 1 - cosine_similarity
         return [(int(row[0]), max(0.0, 1.0 - row[1])) for row in rows]
 
     def delete(self, stream_name: str, key: int) -> None:
-        if stream_name not in self._tables:
-            return
-        self._conn.execute(f'DELETE FROM "{stream_name}_vec" WHERE rowid = ?', (key,))
+        validate_identifier(stream_name)
+        try:
+            self._conn.execute(f'DELETE FROM "{stream_name}_vec" WHERE rowid = ?', (key,))
+        except sqlite3.OperationalError as e:
+            if "no such table" not in str(e):
+                raise

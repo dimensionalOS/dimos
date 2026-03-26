@@ -17,7 +17,6 @@
 import asyncio
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-import threading
 import time
 from typing import Any
 
@@ -26,6 +25,7 @@ import pytest
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.impl.memory import Memory
+from dimos.utils.testing.collector import CallbackCollector
 
 
 @contextmanager
@@ -148,26 +148,14 @@ testdata.append(
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
 def test_store(pubsub_context: Callable[[], Any], topic: Any, values: list[Any]) -> None:
     with pubsub_context() as x:
-        # Create a list to capture received messages
-        received_messages: list[Any] = []
-        msg_event = threading.Event()
+        collector = CallbackCollector(1)
 
-        # Define callback function that stores received messages
-        def callback(message: Any, _: Any) -> None:
-            received_messages.append(message)
-            msg_event.set()
-
-        # Subscribe to the topic with our callback
-        x.subscribe(topic, callback)
-
-        # Publish the first value to the topic
+        x.subscribe(topic, collector)
         x.publish(topic, values[0])
+        collector.wait()
 
-        assert msg_event.wait(timeout=1.0), "Timed out waiting for message"
-
-        # Verify the callback was called with the correct value
-        assert len(received_messages) == 1
-        assert received_messages[0] == values[0]
+        assert len(collector.results) == 1
+        assert collector.results[0][0] == values[0]
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
@@ -176,36 +164,21 @@ def test_multiple_subscribers(
 ) -> None:
     """Test that multiple subscribers receive the same message."""
     with pubsub_context() as x:
-        # Create lists to capture received messages for each subscriber
-        received_messages_1: list[Any] = []
-        received_messages_2: list[Any] = []
-        event_1 = threading.Event()
-        event_2 = threading.Event()
+        collector_1 = CallbackCollector(1)
+        collector_2 = CallbackCollector(1)
 
-        # Define callback functions
-        def callback_1(message: Any, topic: Any) -> None:
-            received_messages_1.append(message)
-            event_1.set()
+        x.subscribe(topic, collector_1)
+        x.subscribe(topic, collector_2)
 
-        def callback_2(message: Any, topic: Any) -> None:
-            received_messages_2.append(message)
-            event_2.set()
-
-        # Subscribe both callbacks to the same topic
-        x.subscribe(topic, callback_1)
-        x.subscribe(topic, callback_2)
-
-        # Publish the first value
         x.publish(topic, values[0])
 
-        assert event_1.wait(timeout=1.0), "Timed out waiting for subscriber 1"
-        assert event_2.wait(timeout=1.0), "Timed out waiting for subscriber 2"
+        collector_1.wait()
+        collector_2.wait()
 
-        # Verify both callbacks received the message
-        assert len(received_messages_1) == 1
-        assert received_messages_1[0] == values[0]
-        assert len(received_messages_2) == 1
-        assert received_messages_2[0] == values[0]
+        assert len(collector_1.results) == 1
+        assert collector_1.results[0][0] == values[0]
+        assert len(collector_2.results) == 1
+        assert collector_2.results[0][0] == values[0]
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
@@ -241,28 +214,17 @@ def test_multiple_messages(
 ) -> None:
     """Test that subscribers receive multiple messages in order."""
     with pubsub_context() as x:
-        # Create a list to capture received messages
-        received_messages: list[Any] = []
-        all_received = threading.Event()
-
-        # Publish the rest of the values (after the first one used in basic tests)
         messages_to_send = values[1:] if len(values) > 1 else values
+        collector = CallbackCollector(len(messages_to_send))
 
-        # Define callback function
-        def callback(message: Any, topic: Any) -> None:
-            received_messages.append(message)
-            if len(received_messages) >= len(messages_to_send):
-                all_received.set()
-
-        # Subscribe to the topic
-        x.subscribe(topic, callback)
+        x.subscribe(topic, collector)
 
         for msg in messages_to_send:
             x.publish(topic, msg)
 
-        assert all_received.wait(timeout=1.0), "Timed out waiting for all messages"
+        collector.wait()
 
-        # Verify all messages were received in order
+        received_messages = [r[0] for r in collector.results]
         assert len(received_messages) == len(messages_to_send)
         assert received_messages == messages_to_send
 

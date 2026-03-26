@@ -1,8 +1,7 @@
-from typing import Any, Literal
+from typing import Any
 
 from dimos.models.vl.base import VlModel
-
-VlModelName = Literal["qwen", "moondream"]
+from dimos.models.vl.types import VlModelName
 
 
 def create(name: VlModelName) -> VlModel[Any]:

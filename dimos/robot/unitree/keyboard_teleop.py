@@ -202,8 +202,3 @@ class KeyboardTeleop(Module):
             y_pos += 25
 
         pygame.display.flip()
-
-
-keyboard_teleop = KeyboardTeleop.blueprint
-
-__all__ = ["KeyboardTeleop", "keyboard_teleop"]

@@ -121,8 +121,3 @@ class VLMAgent(Module[VLMAgentConfig]):
         response = self._invoke_image(image, query, response_format=response_format)
         content = response.content
         return content if isinstance(content, str) else str(content)
-
-
-vlm_agent = VLMAgent.blueprint
-
-__all__ = ["VLMAgent", "vlm_agent"]

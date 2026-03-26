@@ -528,6 +528,3 @@ if __name__ == "__main__":
 
 
 ZEDModule = ZEDCamera
-zed_camera = ZEDCamera.blueprint
-
-__all__ = ["ZEDCamera", "ZEDCameraConfig", "ZEDModule", "zed_camera"]

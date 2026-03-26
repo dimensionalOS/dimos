@@ -145,7 +145,3 @@ class GraspingModule(Module):
             f"Best grasp: pos=({pos.x:.4f}, {pos.y:.4f}, {pos.z:.4f}), "
             f"rpy=({rpy.x:.1f}, {rpy.y:.1f}, {rpy.z:.1f}) degrees"
         )
-
-
-grasping_module = GraspingModule.blueprint
-__all__ = ["GraspingModule", "grasping_module"]

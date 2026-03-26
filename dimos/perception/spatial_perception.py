@@ -583,8 +583,3 @@ def deploy(  # type: ignore[no-untyped-def]
     spatial_memory.color_image.connect(camera.color_image)
     spatial_memory.start()
     return spatial_memory
-
-
-spatial_memory = SpatialMemory.blueprint
-
-__all__ = ["SpatialMemory", "deploy", "spatial_memory"]

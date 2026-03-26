@@ -105,9 +105,3 @@ def deploy(
     )
     foxglove_bridge.start()
     return foxglove_bridge
-
-
-foxglove_bridge = FoxgloveBridge.blueprint
-
-
-__all__ = ["FoxgloveBridge", "deploy", "foxglove_bridge"]

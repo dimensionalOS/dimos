@@ -1121,7 +1121,3 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             self._world_monitor.stop_all_monitors()
 
         super().stop()
-
-
-# Expose blueprint for declarative composition
-manipulation_module = ManipulationModule.blueprint

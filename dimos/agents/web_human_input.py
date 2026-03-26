@@ -84,8 +84,3 @@ class WebInput(Module):
         if self._human_transport:
             self._human_transport.lcm.stop()
         super().stop()
-
-
-web_input = WebInput.blueprint
-
-__all__ = ["WebInput", "web_input"]

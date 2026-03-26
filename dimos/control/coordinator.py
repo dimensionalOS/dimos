@@ -237,6 +237,8 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             component.adapter_type,
             dof=len(component.joints),
             address=component.address,
+            hardware_id=component.hardware_id,
+            **component.adapter_kwargs,
         )
 
     def _create_twist_base_adapter(self, component: HardwareComponent) -> TwistBaseAdapter:
@@ -247,6 +249,7 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             component.adapter_type,
             dof=len(component.joints),
             address=component.address,
+            hardware_id=component.hardware_id,
         )
 
     def _create_task_from_config(self, cfg: TaskConfig) -> ControlTask:
@@ -722,16 +725,3 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     def get_tick_count(self) -> int:
         """Get the number of ticks since start."""
         return self._tick_loop.tick_count if self._tick_loop else 0
-
-
-# Blueprint export
-control_coordinator = ControlCoordinator.blueprint
-
-
-__all__ = [
-    "ControlCoordinator",
-    "ControlCoordinatorConfig",
-    "HardwareComponent",
-    "TaskConfig",
-    "control_coordinator",
-]

@@ -198,8 +198,9 @@ def min_cost_astar(
                 continue
 
             if neighbor_val == CostValues.UNKNOWN:
-                # Unknown cells have a moderate traversal cost
                 cell_cost = cost_threshold * unknown_penalty
+                if cell_cost >= cost_threshold:
+                    continue
             elif neighbor_val == CostValues.FREE:
                 cell_cost = 0.0
             else:

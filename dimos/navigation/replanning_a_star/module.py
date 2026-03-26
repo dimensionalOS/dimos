@@ -108,7 +108,14 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         self._planner.cancel_goal()
         return True
 
+    @rpc
+    def set_replanning_enabled(self, enabled: bool) -> None:
+        self._planner.set_replanning_enabled(enabled)
 
-replanning_a_star_planner = ReplanningAStarPlanner.blueprint
+    @rpc
+    def set_safe_goal_clearance(self, clearance: float) -> None:
+        self._planner.set_safe_goal_clearance(clearance)
 
-__all__ = ["ReplanningAStarPlanner", "replanning_a_star_planner"]
+    @rpc
+    def reset_safe_goal_clearance(self) -> None:
+        self._planner.reset_safe_goal_clearance()
