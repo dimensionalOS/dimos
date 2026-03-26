@@ -16,7 +16,7 @@
 Smoke tests for Docker module deployment routing.
 
 These tests verify that the ModuleCoordinator correctly detects and routes
-docker modules to DockerModuleOuter WITHOUT actually running Docker.
+docker modules to DockerModuleProxy WITHOUT actually running Docker.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dimos.core.docker_module import DockerModuleConfig, DockerModuleOuter, is_docker_module
+from dimos.core.docker_module import DockerModuleConfig, DockerModuleProxy, is_docker_module
 from dimos.core.global_config import global_config
 from dimos.core.module import Module
 from dimos.core.module_coordinator import ModuleCoordinator
@@ -197,13 +197,13 @@ class TestModuleCoordinatorDockerRouting:
         mock_docker.stop.assert_called_once()
 
 
-class TestDockerModuleOuterGetattr:
-    """Tests for DockerModuleOuter.__getattr__ avoiding infinite recursion."""
+class TestDockerModuleProxyGetattr:
+    """Tests for DockerModuleProxy.__getattr__ avoiding infinite recursion."""
 
     def test_getattr_no_recursion_when_rpcs_not_set(self):
         """If __init__ fails before self.rpcs is assigned, __getattr__ must not recurse."""
 
-        dm = DockerModuleOuter.__new__(DockerModuleOuter)
+        dm = DockerModuleProxy.__new__(DockerModuleProxy)
         # Don't set rpcs, _module_class, or any instance attrs — simulates early __init__ failure
         with pytest.raises(AttributeError):
             _ = dm.some_method
@@ -211,14 +211,14 @@ class TestDockerModuleOuterGetattr:
     def test_getattr_no_recursion_on_cleanup_attrs(self):
         """Accessing cleanup-related attrs before they exist must raise, not recurse."""
 
-        dm = DockerModuleOuter.__new__(DockerModuleOuter)
+        dm = DockerModuleProxy.__new__(DockerModuleProxy)
         # These are accessed during _cleanup() — if rpcs isn't set, they must not recurse
         for attr in ("rpc", "config", "_container_name", "_unsub_fns"):
             with pytest.raises(AttributeError):
                 getattr(dm, attr)
 
     def test_getattr_delegates_to_rpc_when_rpcs_set(self):
-        dm = DockerModuleOuter.__new__(DockerModuleOuter)
+        dm = DockerModuleProxy.__new__(DockerModuleProxy)
         dm.rpcs = {"do_thing"}
 
         # _module_class needs a real method with __name__ for RpcCall
@@ -234,19 +234,19 @@ class TestDockerModuleOuterGetattr:
         assert isinstance(result, RpcCall)
 
     def test_getattr_raises_for_unknown_method(self):
-        dm = DockerModuleOuter.__new__(DockerModuleOuter)
+        dm = DockerModuleProxy.__new__(DockerModuleProxy)
         dm.rpcs = {"do_thing"}
 
         with pytest.raises(AttributeError, match="not found"):
             _ = dm.nonexistent
 
 
-class TestDockerModuleOuterCleanupReconnect:
-    """Tests for DockerModuleOuter._cleanup with docker_reconnect_container."""
+class TestDockerModuleProxyCleanupReconnect:
+    """Tests for DockerModuleProxy._cleanup with docker_reconnect_container."""
 
     def test_cleanup_skips_stop_when_reconnect(self):
-        with patch.object(DockerModuleOuter, "__init__", lambda self: None):
-            dm = DockerModuleOuter.__new__(DockerModuleOuter)
+        with patch.object(DockerModuleProxy, "__init__", lambda self: None):
+            dm = DockerModuleProxy.__new__(DockerModuleProxy)
             dm._running = threading.Event()
             dm._running.set()
             dm._container_name = "test_container"
@@ -265,8 +265,8 @@ class TestDockerModuleOuterCleanupReconnect:
                 mock_rm.assert_not_called()
 
     def test_cleanup_stops_container_when_not_reconnect(self):
-        with patch.object(DockerModuleOuter, "__init__", lambda self: None):
-            dm = DockerModuleOuter.__new__(DockerModuleOuter)
+        with patch.object(DockerModuleProxy, "__init__", lambda self: None):
+            dm = DockerModuleProxy.__new__(DockerModuleProxy)
             dm._running = threading.Event()
             dm._running.set()
             dm._container_name = "test_container"

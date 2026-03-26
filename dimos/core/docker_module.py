@@ -14,7 +14,7 @@
 
 """
 Docker module support: image building, Dockerfile conversion, host-side
-proxy (DockerModuleOuter), and container-side runner (DockerModuleInner).
+proxy (DockerModuleProxy), and container-side runner (DockerModuleInner).
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ class DockerModuleConfig(ModuleConfig):
     For advanced Docker options not listed here, use docker_extra_args.
     Example: docker_extra_args=["--cap-add=SYS_ADMIN", "--read-only"]
 
-    NOTE: a DockerModuleOuter will rebuild automatically if the Dockerfile or build args change
+    NOTE: a DockerModuleProxy will rebuild automatically if the Dockerfile or build args change
     """
 
     # Build / image
@@ -125,7 +125,7 @@ def is_docker_module(module_class: type) -> bool:
     )
 
 
-class DockerModuleOuter(ModuleProxyProtocol):
+class DockerModuleProxy(ModuleProxyProtocol):
     """
     Host-side handle for a module running inside Docker.
 
@@ -154,7 +154,7 @@ class DockerModuleOuter(ModuleProxyProtocol):
         self._args = args
         self._kwargs = kwargs
         self._running = threading.Event()
-        self._is_built = False
+        self._is_built = threading.Event()
         self.remote_name = module_class.__name__
         # Derive container name from image + class name: "my-registry/foo:v2" → "dimos_myclass_foo_v2"
         image_ref = config.docker_image.rsplit("/", 1)[-1]
@@ -178,7 +178,7 @@ class DockerModuleOuter(ModuleProxyProtocol):
         Idempotent — safe to call multiple times. Has no RPC timeout since
         this runs host-side (not via RPC to a worker process).
         """
-        if self._is_built:
+        if self._is_built.is_set():
             return
 
         config = self.config
@@ -229,7 +229,7 @@ class DockerModuleOuter(ModuleProxyProtocol):
             # docker run -d returns before Module.__init__ finishes in the container,
             # so we poll until the RPC server is reachable before returning.
             self._wait_for_rpc()
-            self._is_built = True
+            self._is_built.set()
         except Exception:
             with suppress(Exception):
                 self._cleanup()
@@ -356,7 +356,7 @@ class DockerModuleOuter(ModuleProxyProtocol):
         using_host_network = cfg.docker_network is None and cfg.docker_network_mode == "host"
         if not using_host_network:
             logger.warning(
-                "DockerModuleOuter not using host network. LCM multicast requires --network=host. "
+                "DockerModuleProxy not using host network. LCM multicast requires --network=host. "
                 "RPC communication may not work with bridge/custom networks."
             )
 
@@ -478,7 +478,7 @@ class DockerModuleOuter(ModuleProxyProtocol):
             payload_json = json.dumps(payload, separators=(",", ":"))
         except TypeError as e:
             raise TypeError(
-                f"Cannot serialize DockerModuleOuter payload to JSON: {e}\n"
+                f"Cannot serialize DockerModuleProxy payload to JSON: {e}\n"
                 f"Ensure all constructor args/kwargs for {self._module_class.__name__} are "
                 f"JSON-serializable, or use docker_command to bypass automatic payload generation."
             ) from e
@@ -720,7 +720,7 @@ def _cli_run(payload_json: str) -> None:
 # Container-side entrypoint: invoked as `python -m dimos.core.docker_module run --payload '...'`
 # by the generated entrypoint.sh inside Docker containers (see docker/python/module-install.sh).
 # This is what makes `DockerModuleInner` actually run — without it, containers would have no
-# way to bootstrap the module from the JSON payload that `DockerModuleOuter` passes via `docker run`.
+# way to bootstrap the module from the JSON payload that `DockerModuleProxy` passes via `docker run`.
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="dimos.core.docker_module")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -745,7 +745,7 @@ __all__ = [
     "DIMOS_FOOTER",
     "DockerModuleConfig",
     "DockerModuleInner",
-    "DockerModuleOuter",
+    "DockerModuleProxy",
     "build_image",
     "image_exists",
     "is_docker_module",

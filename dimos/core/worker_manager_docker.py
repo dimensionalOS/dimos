@@ -22,7 +22,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
 
 if TYPE_CHECKING:
-    from dimos.core.docker_module import DockerModuleOuter
+    from dimos.core.docker_module import DockerModuleProxy
     from dimos.core.rpc_client import ModuleProxyProtocol
 
 logger = setup_logger()
@@ -33,7 +33,7 @@ class WorkerManagerDocker:
 
     def __init__(self, g: GlobalConfig) -> None:
         self._cfg = g
-        self._deployed: list[DockerModuleOuter] = []
+        self._deployed: list[DockerModuleProxy] = []
 
     def should_manage(self, module_class: type) -> bool:
         # inlined to prevent circular dependency
@@ -51,27 +51,27 @@ class WorkerManagerDocker:
         kwargs: dict[str, Any],
     ) -> ModuleProxyProtocol:
         # inlined to prevent circular dependency
-        from dimos.core.docker_module import DockerModuleOuter
+        from dimos.core.docker_module import DockerModuleProxy
 
-        mod = DockerModuleOuter(module_class, g=global_config, **kwargs)  # type: ignore[arg-type]
+        mod = DockerModuleProxy(module_class, g=global_config, **kwargs)  # type: ignore[arg-type]
         mod.build()
         self._deployed.append(mod)
         return mod
 
     def deploy_parallel(self, specs: list[ModuleSpec]) -> list[ModuleProxyProtocol]:
         # inlined to prevent circular dependency
-        from dimos.core.docker_module import DockerModuleOuter
+        from dimos.core.docker_module import DockerModuleProxy
 
         def _on_errors(
-            _outcomes: list[Any], successes: list[DockerModuleOuter], errors: list[Exception]
+            _outcomes: list[Any], successes: list[DockerModuleProxy], errors: list[Exception]
         ) -> None:
             for mod in successes:
                 with suppress(Exception):
                     mod.stop()
             raise ExceptionGroup("docker deploy_parallel failed", errors)
 
-        def _deploy_one(spec: ModuleSpec) -> DockerModuleOuter:
-            mod = DockerModuleOuter(spec[0], g=spec[1], **spec[2])  # type: ignore[arg-type]
+        def _deploy_one(spec: ModuleSpec) -> DockerModuleProxy:
+            mod = DockerModuleProxy(spec[0], g=spec[1], **spec[2])  # type: ignore[arg-type]
             mod.build()
             return mod
 
