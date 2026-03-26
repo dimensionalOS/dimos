@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.rpc_client import RPCClient
-from dimos.core.worker_python import Worker
+from dimos.core.worker import Worker
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
 

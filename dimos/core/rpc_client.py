@@ -16,7 +16,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.stream import RemoteStream
-from dimos.core.worker_python import MethodCallProxy
+from dimos.core.worker import MethodCallProxy
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.utils.logging_config import setup_logger
