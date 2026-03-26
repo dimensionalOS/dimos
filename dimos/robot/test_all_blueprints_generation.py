@@ -171,9 +171,9 @@ def _scan_for_blueprints(root: Path) -> tuple[dict[str, str], dict[str, str]]:
 
         # Only register modules from production files (skip test, deprecated, core)
         if _is_production_module_file(file_path, root):
-            for var_name in module_vars:
+            for var_name, class_name in module_vars:
                 cli_name = var_name.replace("_", "-")
-                all_modules[cli_name] = module_name
+                all_modules[cli_name] = f"{module_name}.{class_name}"
 
     # Blueprints take priority when names collide (e.g. a pre-configured
     # blueprint named "mid360" vs the raw Mid360 Module class).
@@ -250,9 +250,9 @@ def _path_to_module_name(path: Path, root: Path) -> str:
 
 def _find_blueprints_in_file(
     file_path: Path, module_classes: set[str] | None = None
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[tuple[str, str]]]:
     blueprint_vars: list[str] = []
-    module_vars: list[str] = []
+    module_vars: list[tuple[str, str]] = []
 
     try:
         source = file_path.read_text(encoding="utf-8")
@@ -281,7 +281,7 @@ def _find_blueprints_in_file(
             if node.name.startswith("_") or node.name in _EXCLUDED_MODULE_NAMES:
                 continue
             if any(b in module_classes for b in _get_base_class_names(node)):
-                module_vars.append(_camel_to_snake(node.name))
+                module_vars.append((_camel_to_snake(node.name), node.name))
 
     return blueprint_vars, module_vars
 
