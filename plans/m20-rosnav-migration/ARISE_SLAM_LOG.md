@@ -218,7 +218,26 @@ The Livox handler avoids this by triggering processing from the **IMU callback**
 
 **Additional fix (Codex review):** The Livox processing path had `lidarBuf.clean()` after `undistortionAndscanregistration()`. For LIVOX this is correct (publishTopic doesn't clean). For VELODYNE, `feature_extraction()` (called inside undistortionAndscanregistration) already cleans the processed frame — the explicit clean would drop the NEXT buffered frame, dropping every other scan. Fixed by guarding the explicit clean with `if (LIVOX)`.
 
-**Status**: Fix applied. Requires nav image rebuild to deploy.
+**Status**: Fix deployed and verified on robot (2026-03-25). No "lidar more recent than IMU" errors. ARISE producing `/state_estimation` via laser_mapping ICP. Performance: ~1-2Hz on ARM64 (scan registration >100ms per frame vs 10Hz input).
+
+### Finding #12: ARISE Velodyne Pipeline Verified Working (2026-03-25)
+
+Deployed patched nav image (`ghcr.io/aphexcx/m20-nav:latest`) with Finding #11 fix. Results:
+
+- `sensor = VELODYNE`, `scan_line = 64`, topics `/bridge/LIDAR_POINTS` + `/bridge/IMU` ✓
+- `IMU Initialization Process Finish!` — triggered from IMU callback (our fix) ✓
+- **No "All lidar data is more recent than all IMU data" errors** ✓
+- `laser_mapping_node` running ICP: "Using IMU Roll Pitch in ICP" ✓
+- `/state_estimation` and `/registered_scan` topics registered ✓
+- Processing rate ~1-2Hz on ARM64 (scan registration >100ms, lidar input 10Hz)
+- Lidar buffer grows to 10 but caps at 50 — frames processed, just slowly
+
+**Deployment notes:**
+- Launch param is `config_file:=` (not `config_path:=`)
+- Volume-mount fastdds to `/tmp/fastdds_m20.xml` with `-e FASTRTPS_DEFAULT_PROFILES_FILE=/tmp/fastdds_m20.xml` (image has no `/ros2_ws/config/` dir)
+- Must use `--entrypoint bash` + `-c "sleep infinity"` to bypass entrypoint for testing
+- `ros2_pub` binary not in new image — copy from `local-with-bridge` tag
+- `ros2 topic hz` / `ros2 topic echo` from `docker exec` fails (Finding #10, DDS discovery broken for exec'd processes)
 
 ### Known Issues
 
@@ -228,8 +247,8 @@ The Livox handler avoids this by triggering processing from the **IMU callback**
 
 ### Next Steps
 
-18. [ ] Rebuild nav image with Finding #11 fix (IMU-triggered processing for Velodyne)
-19. [ ] Deploy to NOS and verify ARISE produces /state_estimation + /registered_scan
+18. [x] Rebuild nav image with Finding #11 fix (IMU-triggered processing for Velodyne)
+19. [x] Deploy to NOS and verify ARISE produces /state_estimation + /registered_scan
 20. [ ] Test navigation on robot: send a goal, verify robot plans + drives
 21. [ ] Fix foxglove-bridge on arm64 (corrupts /opt/ros/humble/setup.bash)
 22. [ ] Tune ARISE feature extraction for RSAIRY scan pattern (if needed)
