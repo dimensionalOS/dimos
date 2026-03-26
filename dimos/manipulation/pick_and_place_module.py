@@ -56,6 +56,18 @@ logger = setup_logger()
 _GRASPGEN_VIZ_CONTAINER_DIR = "/output/graspgen"
 _GRASPGEN_VIZ_CONTAINER_PATH = f"{_GRASPGEN_VIZ_CONTAINER_DIR}/visualization.json"
 
+# Beyond this XY distance from the base, the arm cannot reach both high and far,
+# so pre-grasp/pre-place offsets are reduced.
+_FAR_REACH_XY_THRESHOLD = 0.7
+
+# Beyond this XY distance, the occlusion inset is increased so the grasp
+# targets closer to the true center rather than the front surface.
+_FAR_OCCLUSION_XY_THRESHOLD = 0.8
+
+# Objects taller than this are grasped in the upper third to avoid
+# plunging deep and colliding with the object body.
+_TALL_OBJECT_MIN_HEIGHT = 0.06
+
 
 class PickAndPlaceModuleConfig(ManipulationModuleConfig):
     """Configuration for PickAndPlaceModule (adds GraspGen settings)."""
@@ -358,13 +370,13 @@ class PickAndPlaceModule(ManipulationModule):
         # Distance-adaptive occlusion offset:
         # Near (< 0.8m): small inset — grasp shifted well toward robot (front surface)
         # Far (>= 0.8m): larger inset — less toward-robot shift (grasp closer to true center)
-        inset = 0.01 if xy_dist < 0.8 else 0.05
+        inset = 0.01 if xy_dist < _FAR_OCCLUSION_XY_THRESHOLD else 0.05
         gx, gy = self._occlusion_offset(det.center, det.size, inset=inset)
 
         # For tall objects, grasp in the upper third instead of center
         # to avoid plunging deep and colliding with the object.
         obj_height = det.size.z
-        if obj_height > 0.06:
+        if obj_height > _TALL_OBJECT_MIN_HEIGHT:
             gz = cz + obj_height * 0.2  # shift up ~20% from center (upper third)
         else:
             gz = cz
@@ -555,7 +567,7 @@ then refreshes perception obstacles.
             # Reduce pre-grasp height for far objects (arm can't reach high + far)
             gp = grasp_pose.position
             xy_dist = (gp.x**2 + gp.y**2) ** 0.5
-            offset = pre_grasp_offset if xy_dist < 0.7 else 0.05
+            offset = pre_grasp_offset if xy_dist < _FAR_REACH_XY_THRESHOLD else 0.05
             pre_grasp_pose = self._compute_pre_grasp_pose(grasp_pose, offset)
 
             logger.info(f"Planning approach to pre-grasp (attempt {i + 1}/{max_attempts})...")
@@ -641,7 +653,7 @@ then refreshes perception obstacles.
 
         # Reduce pre-place height for far targets
         xy_dist = (x**2 + y**2) ** 0.5
-        if xy_dist >= 0.7:
+        if xy_dist >= _FAR_REACH_XY_THRESHOLD:
             pre_place_offset = 0.05
 
         place_pose = Pose(Vector3(x, y, z), orientation)

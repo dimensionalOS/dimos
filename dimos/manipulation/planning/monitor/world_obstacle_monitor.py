@@ -494,23 +494,17 @@ class WorldObstacleMonitor:
         """Remove a single object's obstacle from the planning world.
 
         Args:
-            object_id: The object_id (or truncated prefix) to remove.
+            object_id: The exact object_id to remove.
 
         Returns:
             True if found and removed, False otherwise.
         """
         with self._lock:
-            # Support truncated IDs
-            matched_oid = None
-            for oid in self._object_obstacles:
-                if oid == object_id or oid.startswith(object_id):
-                    matched_oid = oid
-                    break
-            if matched_oid is None:
+            obs_id = self._object_obstacles.pop(object_id, None)
+            if obs_id is None:
                 return False
-            obs_id = self._object_obstacles.pop(matched_oid)
             self._world.remove_obstacle(obs_id)
-            logger.info(f"Removed obstacle for object '{matched_oid}'")
+            logger.info(f"Removed obstacle for object '{object_id}'")
             return True
 
     def clear_perception_obstacles(self) -> int:

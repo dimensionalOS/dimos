@@ -341,7 +341,7 @@ class ObjectSceneRegistrationModule(Module):
                 0.1,
             )
             if camera_transform is None:
-                logger.debug("Failed to lookup transform from camera frame to target frame")
+                logger.info("Failed to lookup transform from camera frame to target frame")
                 return
 
         # Cache camera transform for full scene pointcloud
