@@ -63,7 +63,7 @@ def test_patrol_step_transitions_to_following_on_detection(
     assert module._state == "FOLLOWING"
     last_state = module.security_state.publish.call_args[0][0]
     assert last_state.data == "FOLLOWING"
-    module._speak_skill.speak.assert_called_with("Intruder detected")
+    module._speak_skill.speak.assert_called_with("Intruder detected", blocking=False)
     module.goal_request.publish.assert_called()  # goal cancellation
     module.detection.publish.assert_called()
     assert module._has_active_goal is False
@@ -126,7 +126,9 @@ def test_follow_step_transitions_to_patrolling_on_person_lost(security_module, p
     published_twist = module.cmd_vel.publish.call_args[0][0]
     assert published_twist.is_zero()
 
-    module._speak_skill.speak.assert_called_with("Lost sight of intruder, resuming patrol")
+    module._speak_skill.speak.assert_called_with(
+        "Lost sight of intruder, resuming patrol", blocking=False
+    )
     module._router.reset.assert_called_once()
     assert module._state == "PATROLLING"
     assert module._has_active_goal is False

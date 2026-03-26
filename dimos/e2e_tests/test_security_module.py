@@ -47,9 +47,9 @@ def test_security_module(
         "unitree-go2-security",
     )
 
-    lcm_spy.save_topic("/rpc/Agent/on_system_modules/res")
+    lcm_spy.save_topic("/rpc/McpClient/on_system_modules/res")
     lcm_spy.save_topic("/security_state#std_msgs.String")
-    lcm_spy.wait_for_saved_topic("/rpc/Agent/on_system_modules/res", timeout=120.0)
+    lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res", timeout=120.0)
 
     time.sleep(2)
 

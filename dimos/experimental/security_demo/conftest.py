@@ -45,7 +45,7 @@ def empty_image():
 def security_module(mocker):
     mocker.patch("dimos.experimental.security_demo.security_module._create_router")
     mocker.patch("dimos.experimental.security_demo.security_module._create_visual_servo")
-    mocker.patch("dimos.experimental.security_demo.security_module.Yolo2DDetector")
+    mocker.patch("dimos.experimental.security_demo.security_module.YoloPersonDetector")
     mocker.patch("dimos.experimental.security_demo.security_module.EdgeTAMProcessor")
 
     module = SecurityModule(camera_info=CameraInfo())

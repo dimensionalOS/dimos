@@ -22,11 +22,10 @@ import cv2
 import numpy as np
 import torch
 from dimos_lcm.std_msgs import String, Bool
-from PIL import Image as PILImage
 from reactivex.disposable import Disposable
-from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
 from dimos.agents.annotation import skill
+from dimos.experimental.security_demo.depth_estimator import DepthEstimator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
@@ -52,8 +51,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-
-_DEPTH_MODEL_NAME = "depth-anything/Depth-Anything-V2-Small-hf"
 
 # COCO skeleton connections for drawing
 _SKELETON_CONNECTIONS = [
@@ -152,8 +149,6 @@ class SecurityModule(Module[SecurityModuleConfig]):
     _planner_spec: ReplanningAStarPlannerSpec
     _speak_skill: SpeakSkillSpec
 
-    _publish_depth_image: bool = True
-
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
@@ -162,13 +157,9 @@ class SecurityModule(Module[SecurityModuleConfig]):
         self._detector = YoloPersonDetector()
         self._tracker = EdgeTAMProcessor()
 
-        if not torch.cuda.is_available():
-            self._publish_depth_image = False
-        if self._publish_depth_image:
-            self._depth_processor = AutoImageProcessor.from_pretrained(_DEPTH_MODEL_NAME)
-            self._depth_model = AutoModelForDepthEstimation.from_pretrained(_DEPTH_MODEL_NAME).to(
-                "cuda"
-            )
+        self._depth_estimator: DepthEstimator | None = None
+        if torch.cuda.is_available():
+            self._depth_estimator = DepthEstimator(self.depth_image.publish)
 
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -189,9 +180,14 @@ class SecurityModule(Module[SecurityModuleConfig]):
         self._disposables.add(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
         self._disposables.add(Disposable(self.color_image.subscribe(self._on_color_image)))
 
+        if self._depth_estimator is not None:
+            self._depth_estimator.start()
+
     @rpc
     def stop(self) -> None:
         self._stop_security_patrol_internal()
+        if self._depth_estimator is not None:
+            self._depth_estimator.stop()
         self._detector.stop()
         self._tracker.stop()
         super().stop()
@@ -241,30 +237,8 @@ class SecurityModule(Module[SecurityModuleConfig]):
     def _on_color_image(self, image: Image) -> None:
         with self._lock:
             self._latest_image = image
-        if self._publish_depth_image:
-            self._publish_depth(image)
-
-    def _publish_depth(self, image: Image) -> None:
-        rgb = image.to_rgb()
-        pil_image = PILImage.fromarray(rgb.data)
-        inputs = self._depth_processor(images=pil_image, return_tensors="pt").to("cuda")
-
-        with torch.no_grad():
-            outputs = self._depth_model(**inputs)
-
-        depth = torch.nn.functional.interpolate(
-            outputs.predicted_depth.unsqueeze(1),
-            size=(image.height, image.width),
-            mode="bicubic",
-            align_corners=False,
-        ).squeeze()
-
-        depth_np = depth.cpu().numpy().astype(np.float32)
-        self.depth_image.publish(
-            Image.from_numpy(
-                depth_np, format=ImageFormat.DEPTH, frame_id=image.frame_id, ts=image.ts
-            )
-        )
+        if self._depth_estimator is not None:
+            self._depth_estimator.submit(image)
 
     def _main_loop(self) -> None:
         self._transition_to("PATROLLING")
