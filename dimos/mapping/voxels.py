@@ -228,10 +228,6 @@ class VoxelMapTransformer(Transformer[PointCloud2, PointCloud2]):
             grid.dispose()
 
 
-# Keep backward-compatible alias
-VoxelMap = VoxelMapTransformer
-
-
 class VoxelGridMapperConfig(ModuleConfig):
     """Configuration for VoxelGridMapper."""
 
@@ -249,7 +245,7 @@ class VoxelGridMapper(StreamModule[VoxelGridMapperConfig]):
 
     def pipeline(self, stream: Stream[PointCloud2]) -> Stream[PointCloud2]:
         cfg = self.config.model_dump(
-            include=set(VoxelGridMapperConfig.model_fields) - set(ModuleConfig.model_fields)
+            include=set(VoxelGridMeapperConfig.model_fields) - set(ModuleConfig.model_fields)
         )
         return stream.transform(VoxelMap(**cfg))
 

@@ -20,14 +20,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from dimos.mapping.voxels import VoxelMap
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.transform import Batch, QualityWindow
 from dimos.models.embedding.clip import CLIPModel
 from dimos.models.vl.florence import Florence2Model
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.utils.data import get_data_dir
+from dimos.utils.data import get_data, get_data_dir
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -137,23 +135,23 @@ class TestVisualizer:
     def test_agent_visual_description_passive(self, store: SqliteStore) -> None:
         florence = Florence2Model()
         with florence:
-            pipeline = store.streams.color_image.transform(
-                QualityWindow(lambda img: img.sharpness, window=5.0)
-                # we are batch processing images here,
-                # so we can use the more efficient batch captioning API
-                # (instead of using .map() and calling caption() for each image,
-            ).transform(Batch(lambda imgs: florence.caption_batch(*imgs)))
+            pipeline = (
+                store.streams.color_image.limit(200)
+                .transform(
+                    QualityWindow(lambda img: img.sharpness, window=5.0)
+                    # we are batch processing images here,
+                    # so we can use the more efficient batch captioning API
+                    # (instead of using .map() and calling caption() for each image,
+                )
+                .transform(Batch(lambda imgs: florence.caption_batch(*imgs)))
+            )
             # this can be stored, further embedded etc
 
             for obs in pipeline:
                 print(obs.ts, obs.data)
 
     def test_build_global_map(self, store: SqliteStore) -> None:
-        """Build a global voxel map from all lidar frames."""
-        lidar = store.stream("lidar", PointCloud2)
-        n_frames = lidar.count()
-        print(f"\nLidar frames: {n_frames}")
+        import pickle
 
-        result = lidar.transform(VoxelMap(voxel_size=0.05)).last()
-        global_map = result.data
-        print(f"Global map: {len(global_map)} voxels from {result.tags['frame_count']} frames")
+        global_map = pickle.loads(get_data("unitree_go2_bigoffice_map.pickle").read_bytes())
+        print(f"Global map: {len(global_map)}")

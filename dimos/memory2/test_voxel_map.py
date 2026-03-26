@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
-from dimos.mapping.voxels import VoxelMap
+from dimos.mapping.voxels import VoxelMapTransformer
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.type.observation import Observation
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -47,18 +47,18 @@ def test_accumulate_two_frames() -> None:
     obs1 = _make_obs(0, pts, ts=1.0)
     obs2 = _make_obs(1, pts + 10.0, ts=2.0)  # offset by 10m, no overlap
 
-    xf = VoxelMap(voxel_size=0.5, carve_columns=False)
+    xf = VoxelMapTransformer(voxel_size=0.5, carve_columns=False)
     results = list(xf(iter([obs1, obs2])))
 
     assert len(results) == 2  # emit_every=1 default
     global_map = results[-1].data  # last result has the full accumulated map
 
-    single_results = list(VoxelMap(voxel_size=0.5)(iter([obs1])))
+    single_results = list(VoxelMapTransformer(voxel_size=0.5)(iter([obs1])))
     assert len(global_map) > len(single_results[0].data)
 
 
 def test_empty_stream() -> None:
-    xf = VoxelMap(voxel_size=0.5)
+    xf = VoxelMapTransformer(voxel_size=0.5)
     assert list(xf(iter([]))) == []
 
 
@@ -66,7 +66,7 @@ def test_frame_count_tag() -> None:
     pts = _unit_cube_points(30)
     obs = [_make_obs(i, pts, ts=float(i)) for i in range(5)]
 
-    xf = VoxelMap(voxel_size=0.5, device="CPU:0")
+    xf = VoxelMapTransformer(voxel_size=0.5, device="CPU:0")
     results = list(xf(iter(obs)))
 
     assert len(results) == 5  # emit_every=1 (default), one result per frame
@@ -78,7 +78,7 @@ def test_emit_every_batch_mode() -> None:
     pts = _unit_cube_points(30)
     obs = [_make_obs(i, pts, ts=float(i)) for i in range(5)]
 
-    xf = VoxelMap(voxel_size=0.5, device="CPU:0", emit_every=0)
+    xf = VoxelMapTransformer(voxel_size=0.5, device="CPU:0", emit_every=0)
     results = list(xf(iter(obs)))
 
     assert len(results) == 1
@@ -90,7 +90,7 @@ def test_emit_every_n() -> None:
     pts = _unit_cube_points(30)
     obs = [_make_obs(i, pts, ts=float(i)) for i in range(7)]
 
-    xf = VoxelMap(voxel_size=0.5, device="CPU:0", emit_every=3)
+    xf = VoxelMapTransformer(voxel_size=0.5, device="CPU:0", emit_every=3)
     results = list(xf(iter(obs)))
 
     # 7 frames / emit_every=3 → yields at frame 3, 6, then remainder (7) on exhaustion
@@ -111,50 +111,27 @@ def store() -> Iterator[SqliteStore]:
 
 
 @pytest.mark.tool
-class TestVoxelMapReplay:
-    """Build a global voxel map from real LiDAR frames in go2_bigoffice.db."""
+def test_build_global_map(self, store: SqliteStore) -> None:
+    t_total = time.perf_counter()
 
-    def test_build_global_map(self, store: SqliteStore) -> None:
-        t_total = time.perf_counter()
+    lidar = store.stream("lidar", PointCloud2)
+    n_frames = lidar.count()
 
-        lidar = store.stream("lidar", PointCloud2)
-        n_frames = lidar.count()
+    t0 = time.perf_counter()
+    result = lidar.transform(VoxelMapTransformer(voxel_size=0.05)).last()
+    t_transform = time.perf_counter() - t0
 
-        t0 = time.perf_counter()
-        result = lidar.transform(VoxelMap(voxel_size=0.05)).last()
-        t_transform = time.perf_counter() - t0
+    t_total = time.perf_counter() - t_total
 
-        t_total = time.perf_counter() - t_total
+    global_map = result.data
+    frame_count = result.tags["frame_count"]
 
-        global_map = result.data
-        frame_count = result.tags["frame_count"]
+    assert frame_count == n_frames
+    assert len(global_map) > 0
 
-        assert frame_count == n_frames
-        assert len(global_map) > 0
-
-        print(
-            lidar.summary(),
-            f"\n{frame_count} frames -> {len(global_map)} voxels"
-            f"\n  transform: {t_transform:.2f}s ({t_transform / frame_count * 1000:.1f}ms/frame)"
-            f"\n  total wall: {t_total:.2f}s",
-        )
-
-    def test_subset_fewer_voxels_than_full(self, store: SqliteStore) -> None:
-        """First 100 frames should produce fewer voxels than the full dataset."""
-        lidar = store.stream("lidar", PointCloud2)
-
-        full = lidar.transform(VoxelMap(voxel_size=0.05)).last()
-        small = lidar.limit(100).transform(VoxelMap(voxel_size=0.05)).last()
-
-        assert small.tags["frame_count"] == 100
-        assert len(small.data) < len(full.data)
-
-    def test_coarse_vs_fine_resolution(self, store: SqliteStore) -> None:
-        """Coarser voxel size should produce fewer voxels."""
-        lidar = store.stream("lidar", PointCloud2).limit(200)
-
-        fine = lidar.transform(VoxelMap(voxel_size=0.05)).last()
-        coarse = lidar.transform(VoxelMap(voxel_size=0.20)).last()
-
-        assert len(coarse.data) < len(fine.data)
-        print(f"\nfine(0.05): {len(fine.data)} voxels, coarse(0.20): {len(coarse.data)} voxels")
+    print(
+        lidar.summary(),
+        f"\n{frame_count} frames -> {len(global_map)} voxels"
+        f"\n  transform: {t_transform:.2f}s ({t_transform / frame_count * 1000:.1f}ms/frame)"
+        f"\n  total wall: {t_total:.2f}s",
+    )

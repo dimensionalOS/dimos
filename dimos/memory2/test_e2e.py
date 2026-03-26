@@ -126,6 +126,31 @@ class TestImportReplay:
         assert lidar.count() == count
         print(f"Imported {count} lidar frames")
 
+    def test_embed_and_save(self, session: SqliteStore, clip: CLIPModel) -> None:
+        """Embed video frames at 1Hz and persist to an embedded stream."""
+        video = session.stream("color_image", Image)
+
+        # Clear any prior run so the test is idempotent
+        if "color_image_embedded" in session.list_streams():
+            session.delete_stream("color_image_embedded")
+
+        embedded = session.stream("color_image_embedded", Image)
+
+        # Downsample to 1Hz, then embed
+        pipeline = (
+            video.transform(QualityWindow(lambda img: img.sharpness, window=1.0))
+            .transform(EmbedImages(clip))
+            .save(embedded)
+        )
+
+        count = 0
+        for obs in pipeline:
+            count += 1
+            print(f"  [{count}] ts={obs.ts:.2f} pose={obs.pose}")
+
+        assert count > 0
+        print(f"Embedded {count} frames (1Hz from {video.count()} total)")
+
     def test_query_imported_data(self, session: SqliteStore) -> None:
         video = session.stream("color_image", Image)
         lidar = session.stream("lidar", PointCloud2)
@@ -262,31 +287,6 @@ class TestE2EQuery:
 @pytest.mark.tool
 class TestEmbedImages:
     """CLIP-embed imported video frames and search by text."""
-
-    def test_embed_and_save(self, session: SqliteStore, clip: CLIPModel) -> None:
-        """Embed video frames at 1Hz and persist to an embedded stream."""
-        video = session.stream("color_image", Image)
-
-        # Clear any prior run so the test is idempotent
-        if "color_image_embedded" in session.list_streams():
-            session.delete_stream("color_image_embedded")
-
-        embedded = session.stream("color_image_embedded", Image)
-
-        # Downsample to 1Hz, then embed
-        pipeline = (
-            video.transform(QualityWindow(lambda img: img.sharpness, window=1.0))
-            .transform(EmbedImages(clip))
-            .save(embedded)
-        )
-
-        count = 0
-        for obs in pipeline:
-            count += 1
-            print(f"  [{count}] ts={obs.ts:.2f} pose={obs.pose}")
-
-        assert count > 0
-        print(f"Embedded {count} frames (1Hz from {video.count()} total)")
 
     def test_search_by_text(self, session: SqliteStore, clip: CLIPModel) -> None:
         """Search embedded frames with a text query."""
