@@ -22,6 +22,7 @@ import threading
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
     Literal,
     Protocol,
     get_args,
@@ -79,12 +80,10 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
         return loop, thr
 
 
-class ModuleConfig(BaseConfig):
-    # Deployment target for this module. Worker managers declare which deployment
-    # type they handle; the coordinator routes modules accordingly.
-    # Future options may include "cloud" and "native".
-    deployment: Literal["python", "docker"] = "python"
+Deployment = Literal["python", "docker"]
 
+
+class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = LCMRPC
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
     rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))
@@ -104,6 +103,10 @@ class _BlueprintPartial(Protocol):
 class ModuleBase(Configurable[ModuleConfigT], Resource):
     # This won't type check against the TypeVar, but we need it as the default.
     default_config: type[ModuleConfigT] = ModuleConfig  # type: ignore[assignment]
+
+    # Deployment target. Worker managers declare which deployment type they
+    # handle; the coordinator routes modules accordingly.
+    deployment: ClassVar[Deployment] = "python"
 
     _rpc: RPCSpec | None = None
     _tf: TFSpec[Any] | None = None

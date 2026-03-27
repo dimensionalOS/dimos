@@ -54,7 +54,7 @@ class TestWorkerManagerDockerPartialFailure:
         FakeB = type("B", (), {})
         FakeC = type("C", (), {})
 
-        with pytest.raises(ExceptionGroup, match="docker deploy_parallel failed") as exc_info:
+        with pytest.raises(ExceptionGroup, match="safe_thread_map failed") as exc_info:
             WorkerManagerDocker(g=GlobalConfig()).deploy_parallel(
                 [
                     (FakeA, (), {}),
@@ -92,7 +92,7 @@ class TestWorkerManagerDockerPartialFailure:
         FakeB = type("B", (), {})
         FakeC = type("C", (), {})
 
-        with pytest.raises(ExceptionGroup, match="docker deploy_parallel failed") as exc_info:
+        with pytest.raises(ExceptionGroup, match="safe_thread_map failed") as exc_info:
             WorkerManagerDocker(g=GlobalConfig()).deploy_parallel(
                 [
                     (FakeA, (), {}),
@@ -154,7 +154,7 @@ class TestWorkerManagerDockerPartialFailure:
         FakeA = type("A", (), {})
         FakeB = type("B", (), {})
 
-        with pytest.raises(ExceptionGroup, match="docker deploy_parallel failed"):
+        with pytest.raises(ExceptionGroup, match="safe_thread_map failed"):
             WorkerManagerDocker(g=GlobalConfig()).deploy_parallel(
                 [(FakeA, (), {}), (FakeB, (), {})]
             )
@@ -164,7 +164,7 @@ class TestWorkerManagerDockerPartialFailure:
 
 
 class TestWorkerManagerPartialFailure:
-    """WorkerManager.deploy_parallel must clean up successful RPCClients when one fails."""
+    """WorkerManager.deploy_parallel must shut down workers when a deploy fails."""
 
     def test_middle_module_fails_cleans_up_siblings(self):
         manager = WorkerManager(g=GlobalConfig(n_workers=2))
@@ -191,18 +191,8 @@ class TestWorkerManagerPartialFailure:
         FakeB = type("B", (), {})
         FakeC = type("C", (), {})
 
-        rpc_clients_created: list[MagicMock] = []
-
-        with patch("dimos.core.worker_manager.RPCClient") as mock_rpc_cls:
-
-            def make_rpc(actor, cls):
-                client = MagicMock(name=f"rpc_{cls.__name__}")
-                rpc_clients_created.append(client)
-                return client
-
-            mock_rpc_cls.side_effect = make_rpc
-
-            with pytest.raises(ExceptionGroup, match="worker deploy_parallel failed"):
+        with patch("dimos.core.worker_manager.RPCClient"):
+            with pytest.raises(ExceptionGroup, match="safe_thread_map failed"):
                 manager.deploy_parallel(
                     [
                         (FakeA, (), {}),
@@ -211,6 +201,6 @@ class TestWorkerManagerPartialFailure:
                     ]
                 )
 
-        # Every successfully-created RPC client must have been cleaned up exactly once
-        for client in rpc_clients_created:
-            client.stop_rpc_client.assert_called_once()
+        # Workers must have been shut down
+        for w in mock_workers:
+            w.stop.assert_called_once()

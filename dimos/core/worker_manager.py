@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.global_config import GlobalConfig
@@ -23,7 +22,7 @@ from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.rpc_client import RPCClient
 from dimos.core.worker import Worker
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
+from dimos.utils.safe_thread_map import safe_thread_map
 
 if TYPE_CHECKING:
     from dimos.core.resource_monitor.monitor import StatsMonitor
@@ -32,9 +31,7 @@ logger = setup_logger()
 
 
 class WorkerManager:
-    # Deployment type this manager handles. ModuleCoordinator routes modules
-    # whose config.deployment matches this value to this manager.
-    handles_deployment: str = "python"
+    deployment_identifier: str = "python"
 
     def __init__(self, g: GlobalConfig) -> None:
         self._cfg = g
@@ -96,22 +93,17 @@ class WorkerManager:
             worker.reserve_slot()
             assignments.append((worker, module_class, global_config, kwargs))
 
-        def _on_errors(
-            _outcomes: list[Any], successes: list[RPCClient], errors: list[Exception]
-        ) -> None:
-            for rpc_client in successes:
-                with suppress(Exception):
-                    rpc_client.stop_rpc_client()
-            raise ExceptionGroup("worker deploy_parallel failed", errors)
-
-        return safe_thread_map(
-            assignments,
-            lambda item: RPCClient(item[0].deploy_module(item[1], item[2], item[3]), item[1]),
-            _on_errors,
-        )
+        try:
+            # item: (worker, module_class, global_config, kwargs)
+            return safe_thread_map(
+                assignments,
+                lambda item: RPCClient(item[0].deploy_module(item[1], item[2], item[3]), item[1]),
+            )
+        except:
+            self.stop()
+            raise
 
     def health_check(self) -> bool:
-        """Verify all worker processes are alive."""
         if len(self._workers) == 0:
             logger.error("health_check: no workers found")
             return False
@@ -122,7 +114,6 @@ class WorkerManager:
         return True
 
     def suppress_console(self) -> None:
-        """Tell all workers to redirect stdout/stderr to /dev/null."""
         for worker in self._workers:
             worker.suppress_console()
 

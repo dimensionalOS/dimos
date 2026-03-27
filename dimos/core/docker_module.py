@@ -24,7 +24,7 @@ import signal
 import subprocess
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from dimos.core.module import ModuleBase, ModuleConfig
 from dimos.core.rpc_client import ModuleProxyProtocol, RpcCall
@@ -57,10 +57,6 @@ class DockerModuleConfig(ModuleConfig):
 
     NOTE: a DockerModuleProxy will rebuild automatically if the Dockerfile or build args change
     """
-
-    # Override deployment to "docker" — modules inheriting this config
-    # will automatically be routed to the Docker worker manager.
-    deployment: Literal["python", "docker"] = "docker"
 
     # Build / image
     docker_image: str
@@ -112,16 +108,6 @@ class DockerModuleConfig(ModuleConfig):
 
     # Advanced
     docker_bin: str = "docker"
-
-
-def is_docker_module(module_class: type) -> bool:
-    """Check if a module class should run in Docker based on its default_config."""
-    default_config = getattr(module_class, "default_config", None)
-    return (
-        default_config is not None
-        and isinstance(default_config, type)
-        and issubclass(default_config, DockerModuleConfig)
-    )
 
 
 class DockerModuleProxy(ModuleProxyProtocol):
@@ -300,7 +286,6 @@ class DockerModuleProxy(ModuleProxyProtocol):
         }
 
     def is_running(self) -> bool:
-        """Check if the Docker container is still running."""
         return self._running.is_set() and _is_container_running(self.config, self._container_name)
 
     def tail_logs(self, n: int = 200) -> str:
@@ -727,5 +712,4 @@ __all__ = [
     "DockerModuleProxy",
     "build_image",
     "image_exists",
-    "is_docker_module",
 ]
