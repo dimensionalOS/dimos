@@ -110,6 +110,8 @@ class ObjectDB:
         stats["pending"] = len(self._pending_objects)
         stats["permanent"] = len(self._objects)
         self._last_add_stats = stats
+        if stats["created"] > 0 or stats["promoted"] > 0:
+            logger.info(f"ObjectDB: {stats}")
         return results
 
     def get_last_add_stats(self) -> dict[str, int]:
@@ -254,11 +256,17 @@ class ObjectDB:
         return obj
 
     def _match_by_distance(self, obj: Object) -> Object | None:
-        """Find object within distance threshold."""
+        """Find object within distance threshold (name-agnostic).
+
+        Name matching is intentionally excluded because YOLO labels are
+        unstable across frames — the same physical object may be called
+        "sharpener" one frame and "spray can" the next.  With a tight
+        distance threshold (5cm), two distinct objects at the same spot
+        is effectively impossible.
+        """
         if obj.center is None:
             return None
 
-        # Combine all objects and filter by valid center
         all_objects = list(self._objects.values()) + list(self._pending_objects.values())
         candidates = [
             o
