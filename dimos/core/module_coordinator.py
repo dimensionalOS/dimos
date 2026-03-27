@@ -43,8 +43,9 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         g: GlobalConfig = global_config,
     ) -> None:
         self._global_config = g
+        manager_types: list[type[DeploymentManager]] = [WorkerManagerDocker, WorkerManager]
         self._managers: dict[str, DeploymentManager] = {
-            each.deployment_identifier: each(g=g) for each in [WorkerManagerDocker, WorkerManager]
+            cls.deployment_identifier: cls(g=g) for cls in manager_types
         }
         self._deployed_modules = {}
 
