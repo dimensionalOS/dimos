@@ -299,6 +299,10 @@ class DockerModuleProxy(ModuleProxyProtocol):
             "running": self._running.is_set() and _is_container_running(cfg, self._container_name),
         }
 
+    def is_running(self) -> bool:
+        """Check if the Docker container is still running."""
+        return self._running.is_set() and _is_container_running(self.config, self._container_name)
+
     def tail_logs(self, n: int = 200) -> str:
         return _tail_logs(self.config, self._container_name, n=n)
 

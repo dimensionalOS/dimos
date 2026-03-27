@@ -136,20 +136,13 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
             for index, module in zip(indices_by_manager[mid], deployed, strict=True):
                 results[index] = module
 
-        def _on_errors(
-            _outcomes: list[Any], _successes: list[Any], errors: list[Exception]
-        ) -> None:
-            # If any manager fails, stop all successfully deployed modules
-            for mod in results:
-                if mod is not None:
-                    with suppress(Exception):
-                        mod.stop()
-            for m in self._managers:
-                with suppress(Exception):
-                    m.stop()
-            raise ExceptionGroup("deploy_parallel failed", errors)
+        try:
+            safe_thread_map(list(groups.keys()), _deploy_group)
+        except Exception:
+            # Any deployment failure → tear down everything already deployed
+            self.stop()
+            raise
 
-        safe_thread_map(list(groups.keys()), _deploy_group, _on_errors)
         self._deployed_modules.update(
             {
                 cls: mod

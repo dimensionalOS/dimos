@@ -84,7 +84,14 @@ class WorkerManagerDocker:
         self._deployed.clear()
 
     def health_check(self) -> bool:
-        # TODO: in the future decide on what a meaninful health check would be
+        """Check all deployed Docker containers are still running."""
+        for mod in self._deployed:
+            if not mod.is_running():
+                logger.error(
+                    "Docker container not running",
+                    module=getattr(mod, "_module_name", "unknown"),
+                )
+                return False
         return True
 
     def suppress_console(self) -> None:
