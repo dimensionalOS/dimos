@@ -52,7 +52,6 @@ class WorkerManagerDocker:
         from dimos.core.docker_module import DockerModuleProxy
 
         mod = DockerModuleProxy(module_class, g=global_config, **kwargs)
-        mod.build()
         self._deployed.append(mod)
         return mod
 
@@ -69,9 +68,7 @@ class WorkerManagerDocker:
             raise ExceptionGroup("docker deploy_parallel failed", errors)
 
         def _deploy_one(spec: ModuleSpec) -> DockerModuleProxy:
-            mod = DockerModuleProxy(spec[0], g=spec[1], **spec[2])
-            mod.build()
-            return mod
+            return DockerModuleProxy(spec[0], g=spec[1], **spec[2])
 
         results = safe_thread_map(specs, _deploy_one, _on_errors)
         self._deployed.extend(results)
