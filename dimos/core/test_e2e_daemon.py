@@ -26,6 +26,7 @@ from typer.testing import CliRunner
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import Module
+import dimos.core.run_registry as _reg
 from dimos.core.run_registry import (
     RunEntry,
     cleanup_stale,
@@ -33,6 +34,7 @@ from dimos.core.run_registry import (
     list_runs,
 )
 from dimos.core.stream import Out
+from dimos.core.worker_manager import WorkerManager
 from dimos.robot.cli.dimos import main
 
 
@@ -59,8 +61,6 @@ def _ci_env(monkeypatch):
 @pytest.fixture(autouse=True)
 def _clean_registry(tmp_path, monkeypatch):
     """Redirect registry to a temp dir for test isolation."""
-    import dimos.core.run_registry as _reg
-
     test_dir = tmp_path / "runs"
     test_dir.mkdir()
     monkeypatch.setattr(_reg, "REGISTRY_DIR", test_dir)
@@ -129,8 +129,6 @@ class TestDaemonE2E:
 
     def test_health_check_detects_dead_worker(self, coordinator):
         """Kill a worker process — health check should fail."""
-        from dimos.core.worker_manager import WorkerManager
-
         py_mgr = next(m for m in coordinator._managers if isinstance(m, WorkerManager))
         worker = py_mgr.workers[0]
         worker_pid = worker.pid
@@ -243,8 +241,6 @@ class TestCLIWithRealBlueprint:
         assert len(matching) == 1
 
     def test_stop_kills_real_workers(self, live_blueprint):
-        from dimos.core.worker_manager import WorkerManager
-
         coord, _entry = live_blueprint
         py_mgr = next(m for m in coord._managers if isinstance(m, WorkerManager))
         worker_pids = [w.pid for w in py_mgr.workers if w.pid]
