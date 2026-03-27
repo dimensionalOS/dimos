@@ -35,6 +35,10 @@ def confirm(message: str, *, default: bool = True) -> bool:
 
 def sudo_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
     """Run a command, prepending sudo if not already root."""
-    if os.geteuid() == 0:
+    try:
+        is_root = os.geteuid() == 0
+    except AttributeError:
+        is_root = False
+    if is_root:
         return subprocess.run(list(args), **kwargs)
     return subprocess.run(["sudo", *args], **kwargs)
