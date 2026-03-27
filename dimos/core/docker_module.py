@@ -24,9 +24,9 @@ import signal
 import subprocess
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
-from dimos.core.module import ModuleConfig
+from dimos.core.module import ModuleBase, ModuleConfig
 from dimos.core.rpc_client import ModuleProxyProtocol, RpcCall
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.logging_config import setup_logger
@@ -57,6 +57,10 @@ class DockerModuleConfig(ModuleConfig):
 
     NOTE: a DockerModuleProxy will rebuild automatically if the Dockerfile or build args change
     """
+
+    # Override deployment to "docker" — modules inheriting this config
+    # will automatically be routed to the Docker worker manager.
+    deployment: Literal["python", "docker"] = "docker"
 
     # Build / image
     docker_image: str
@@ -135,7 +139,7 @@ class DockerModuleProxy(ModuleProxyProtocol):
 
     config: DockerModuleConfig
 
-    def __init__(self, module_class: type[Module], *args: Any, **kwargs: Any) -> None:
+    def __init__(self, module_class: type[ModuleBase], *args: Any, **kwargs: Any) -> None:
         config_class = getattr(module_class, "default_config", DockerModuleConfig)
         if not issubclass(config_class, DockerModuleConfig):
             raise TypeError(

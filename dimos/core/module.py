@@ -22,6 +22,7 @@ import threading
 from typing import (
     TYPE_CHECKING,
     Any,
+    Literal,
     Protocol,
     get_args,
     get_origin,
@@ -79,6 +80,11 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 
 
 class ModuleConfig(BaseConfig):
+    # Deployment target for this module. Worker managers declare which deployment
+    # type they handle; the coordinator routes modules accordingly.
+    # Future options may include "cloud" and "native".
+    deployment: Literal["python", "docker"] = "python"
+
     rpc_transport: type[RPCSpec] = LCMRPC
     default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
     rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))

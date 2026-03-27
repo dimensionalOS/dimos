@@ -24,6 +24,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from dimos.core.global_config import GlobalConfig
+from dimos.core.worker_manager import WorkerManager
+from dimos.core.worker_manager_docker import WorkerManagerDocker
 from dimos.utils.safe_thread_map import ExceptionGroup
 
 
@@ -33,9 +36,6 @@ class TestWorkerManagerDockerPartialFailure:
     @patch("dimos.core.docker_module.DockerModuleProxy")
     def test_middle_module_fails_stops_siblings(self, mock_docker_module_cls):
         """Deploy 3 modules where the middle one fails. The other two must be stopped."""
-        from dimos.core.global_config import GlobalConfig
-        from dimos.core.worker_manager_docker import WorkerManagerDocker
-
         mod_a = MagicMock(name="ModuleA")
         mod_c = MagicMock(name="ModuleC")
 
@@ -73,9 +73,6 @@ class TestWorkerManagerDockerPartialFailure:
     @patch("dimos.core.docker_module.DockerModuleProxy")
     def test_multiple_failures_raises_exception_group(self, mock_docker_module_cls):
         """Deploy 3 modules where two fail. Should raise ExceptionGroup with both errors."""
-        from dimos.core.global_config import GlobalConfig
-        from dimos.core.worker_manager_docker import WorkerManagerDocker
-
         mod_a = MagicMock(name="ModuleA")
 
         barrier = threading.Barrier(3, timeout=5)
@@ -115,9 +112,6 @@ class TestWorkerManagerDockerPartialFailure:
     @patch("dimos.core.docker_module.DockerModuleProxy")
     def test_all_succeed_no_stops(self, mock_docker_module_cls):
         """When all deployments succeed, no modules should be stopped."""
-        from dimos.core.global_config import GlobalConfig
-        from dimos.core.worker_manager_docker import WorkerManagerDocker
-
         mocks = [MagicMock(name=f"Mod{i}") for i in range(3)]
 
         def fake_constructor(cls, *args, **kwargs):
@@ -144,9 +138,6 @@ class TestWorkerManagerDockerPartialFailure:
     @patch("dimos.core.docker_module.DockerModuleProxy")
     def test_stop_failure_does_not_mask_deploy_error(self, mock_docker_module_cls):
         """If stop() itself raises during cleanup, the original deploy error still propagates."""
-        from dimos.core.global_config import GlobalConfig
-        from dimos.core.worker_manager_docker import WorkerManagerDocker
-
         mod_a = MagicMock(name="ModuleA")
         mod_a.stop.side_effect = OSError("stop failed")
 
@@ -176,9 +167,6 @@ class TestWorkerManagerPartialFailure:
     """WorkerManager.deploy_parallel must clean up successful RPCClients when one fails."""
 
     def test_middle_module_fails_cleans_up_siblings(self):
-        from dimos.core.global_config import GlobalConfig
-        from dimos.core.worker_manager import WorkerManager
-
         manager = WorkerManager(g=GlobalConfig(n_workers=2))
 
         mock_workers = [MagicMock(name=f"Worker{i}") for i in range(2)]

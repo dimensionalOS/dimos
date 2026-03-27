@@ -32,6 +32,10 @@ logger = setup_logger()
 
 
 class WorkerManager:
+    # Deployment type this manager handles. ModuleCoordinator routes modules
+    # whose config.deployment matches this value to this manager.
+    handles_deployment: str = "python"
+
     def __init__(self, g: GlobalConfig) -> None:
         self._cfg = g
         self._n_workers = g.n_workers
@@ -105,10 +109,6 @@ class WorkerManager:
             lambda item: RPCClient(item[0].deploy_module(item[1], item[2], item[3]), item[1]),
             _on_errors,
         )
-
-    def should_manage(self, module_class: type) -> bool:
-        """Catch-all — accepts any module not claimed by another manager."""
-        return True
 
     def health_check(self) -> bool:
         """Verify all worker processes are alive."""

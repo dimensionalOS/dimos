@@ -31,15 +31,13 @@ logger = setup_logger()
 class WorkerManagerDocker:
     """Manages deployment of Docker-backed modules."""
 
+    # Deployment type this manager handles. ModuleCoordinator routes modules
+    # whose config.deployment matches this value to this manager.
+    handles_deployment: str = "docker"
+
     def __init__(self, g: GlobalConfig) -> None:
         self._cfg = g
         self._deployed: list[DockerModuleProxy] = []
-
-    def should_manage(self, module_class: type) -> bool:
-        # inlined to prevent circular dependency
-        from dimos.core.docker_module import is_docker_module
-
-        return is_docker_module(module_class)
 
     def start(self) -> None:
         """No-op — Docker manager has no persistent workers."""
@@ -53,7 +51,7 @@ class WorkerManagerDocker:
         # inlined to prevent circular dependency
         from dimos.core.docker_module import DockerModuleProxy
 
-        mod = DockerModuleProxy(module_class, g=global_config, **kwargs)  # type: ignore[arg-type]
+        mod = DockerModuleProxy(module_class, g=global_config, **kwargs)
         mod.build()
         self._deployed.append(mod)
         return mod
@@ -71,13 +69,13 @@ class WorkerManagerDocker:
             raise ExceptionGroup("docker deploy_parallel failed", errors)
 
         def _deploy_one(spec: ModuleSpec) -> DockerModuleProxy:
-            mod = DockerModuleProxy(spec[0], g=spec[1], **spec[2])  # type: ignore[arg-type]
+            mod = DockerModuleProxy(spec[0], g=spec[1], **spec[2])
             mod.build()
             return mod
 
         results = safe_thread_map(specs, _deploy_one, _on_errors)
         self._deployed.extend(results)
-        return results  # type: ignore[return-value]
+        return results
 
     def stop(self) -> None:
         for mod in reversed(self._deployed):

@@ -56,10 +56,21 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
     def _find_manager(
         self, module_class: type[ModuleBase[Any]]
     ) -> WorkerManagerDocker | WorkerManager:
+        # Get the deployment type from the module's default_config.
+        # Pydantic models expose field defaults via model_fields, not as class attributes.
+        config_class = getattr(module_class, "default_config", None)
+        deployment = "python"
+        if config_class is not None:
+            field_info = getattr(config_class, "model_fields", {}).get("deployment")
+            if field_info is not None:
+                deployment = field_info.default
+
         for m in self._managers:
-            if m.should_manage(module_class):
+            if m.handles_deployment == deployment:
                 return m
-        raise ValueError(f"No manager found for {module_class.__name__}")
+        raise ValueError(
+            f"No manager found for {module_class.__name__} with deployment={deployment!r}"
+        )
 
     def health_check(self) -> bool:
         return all(m.health_check() for m in self._managers)
