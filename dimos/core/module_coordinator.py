@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-DeploymentManager = WorkerManagerDocker | WorkerManager
+DeploymentManager: TypeAlias = WorkerManagerDocker | WorkerManager
 
 
 class ModuleCoordinator(Resource):  # type: ignore[misc]
@@ -44,11 +44,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
     ) -> None:
         self._global_config = g
         self._managers: dict[str, DeploymentManager] = {
-            m.deployment_identifier: m
-            for m in [
-                WorkerManagerDocker(g=g),
-                WorkerManager(g=g),
-            ]
+            each.deployment_identifier: each(g=g) for each in [WorkerManagerDocker, WorkerManager]
         }
         self._deployed_modules = {}
 
@@ -121,8 +117,9 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
 
         try:
             safe_thread_map(list(specs_by_deployment.keys()), _deploy_group)
-        finally:
+        except:
             self.stop()
+            raise
 
         self._deployed_modules.update(
             {

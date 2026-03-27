@@ -63,8 +63,9 @@ class WorkerManagerDocker:
 
         try:
             return safe_thread_map(specs, _deploy)
-        finally:
+        except:
             self.stop()
+            raise
 
     def stop(self) -> None:
         for mod in reversed(self._deployed):
