@@ -26,6 +26,7 @@ import time
 
 from pydantic import Field
 import reactivex as rx
+from scipy.spatial.transform import Rotation as R
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -52,6 +53,8 @@ from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
+_RX180 = R.from_euler("x", 180, degrees=True)
+
 
 def _default_identity_transform() -> Transform:
     return Transform(
@@ -71,7 +74,7 @@ class MujocoCameraConfig(ModuleConfig, DepthCameraConfig):
     fps: int = 15
     base_frame_id: str = "link7"
     base_transform: Transform | None = Field(default_factory=_default_identity_transform)
-    # MuJoCo renders color+depth from same virtual camera — alignment is a no-op
+    # MuJoCo renders color+depth from same virtual camera, alignment is a no-op
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_pointcloud: bool = False
@@ -103,16 +106,11 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
         self._engine: MujocoEngine | None = None
         self._running = False
         self._thread: threading.Thread | None = None
-        self._color_camera_info: CameraInfo | None = None
-        self._depth_camera_info: CameraInfo | None = None
-
-    # -- Engine injection (called before start) --
+        self._camera_info_base: CameraInfo | None = None
 
     def set_engine(self, engine: MujocoEngine) -> None:
         """Inject the shared MujocoEngine reference."""
         self._engine = engine
-
-    # -- DepthCameraHardware interface --
 
     @property
     def _camera_link(self) -> str:
@@ -136,18 +134,15 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
 
     @rpc
     def get_color_camera_info(self) -> CameraInfo | None:
-        return self._color_camera_info
+        return self._camera_info_base
 
     @rpc
     def get_depth_camera_info(self) -> CameraInfo | None:
-        return self._depth_camera_info
+        return self._camera_info_base
 
     @rpc
     def get_depth_scale(self) -> float:
-        # MuJoCo depth is already in meters
         return 1.0
-
-    # -- Intrinsics --
 
     def _build_camera_info(self) -> None:
         """Compute camera intrinsics from the MuJoCo model (pinhole, no distortion)."""
@@ -170,7 +165,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
         P = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
         D = [0.0, 0.0, 0.0, 0.0, 0.0]
 
-        info = CameraInfo(
+        self._camera_info_base = CameraInfo(
             height=h,
             width=w,
             distortion_model="plumb_bob",
@@ -179,19 +174,6 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
             P=P,
             frame_id=self._color_optical_frame,
         )
-        # Color and depth share the same virtual camera
-        self._color_camera_info = info
-        self._depth_camera_info = CameraInfo(
-            height=h,
-            width=w,
-            distortion_model="plumb_bob",
-            D=D,
-            K=K,
-            P=P,
-            frame_id=self._color_optical_frame,
-        )
-
-    # -- Lifecycle --
 
     @rpc
     def start(self) -> None:
@@ -251,11 +233,8 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
             self._thread = None
-        self._color_camera_info = None
-        self._depth_camera_info = None
+        self._camera_info_base = None
         super().stop()
-
-    # -- Publishing --
 
     def _publish_loop(self) -> None:
         """Poll engine for rendered frames and publish at configured FPS."""
@@ -323,22 +302,27 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
                 time.sleep(1.0)
 
     def _publish_camera_info(self) -> None:
+        base = self._camera_info_base
+        if base is None:
+            return
         ts = time.time()
-        if self._color_camera_info:
-            self._color_camera_info.ts = ts
-            self.camera_info.publish(self._color_camera_info)
-        if self._depth_camera_info:
-            self._depth_camera_info.ts = ts
-            self.depth_camera_info.publish(self._depth_camera_info)
+        color_info = CameraInfo(
+            height=base.height,
+            width=base.width,
+            distortion_model=base.distortion_model,
+            D=base.D,
+            K=base.K,
+            P=base.P,
+            frame_id=base.frame_id,
+            ts=ts,
+        )
+        self.camera_info.publish(color_info)
+        self.depth_camera_info.publish(color_info)
 
     def _publish_tf(self, ts: float, frame: CameraFrame | None = None) -> None:
         if frame is None:
             return
 
-        from scipy.spatial.transform import Rotation as R
-
-        # MuJoCo cam frame -> optical frame: flip Y and Z (Rx 180°)
-        _RX180 = R.from_euler("x", 180, degrees=True)
         mj_rot = R.from_matrix(frame.cam_mat.reshape(3, 3))
         optical_rot = mj_rot * _RX180
         q = optical_rot.as_quat()  # xyzw
@@ -377,7 +361,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
 
     def _generate_pointcloud(self) -> None:
         """Generate pointcloud from latest depth frame (optional, for visualization)."""
-        if self._engine is None or self._color_camera_info is None:
+        if self._engine is None or self._camera_info_base is None:
             return
         frame = self._engine.read_camera(self.config.camera_name)
         if frame is None:
@@ -398,7 +382,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
             pcd = PointCloud2.from_rgbd(
                 color_image=color_img,
                 depth_image=depth_img,
-                camera_info=self._color_camera_info,
+                camera_info=self._camera_info_base,
                 depth_scale=1.0,
             )
             pcd = pcd.voxel_downsample(0.005)
