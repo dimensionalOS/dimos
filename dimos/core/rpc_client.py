@@ -78,11 +78,7 @@ class RpcCall:
         return (self._name, self._remote_name)
 
     def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
-        # Support both old 2-tuple and new 3-tuple (legacy) state for pickle compat.
-        if len(state) == 3:
-            self._name, self._remote_name, _ = state
-        else:
-            self._name, self._remote_name = state
+        self._name, self._remote_name = state
         self._unsub_fns = []
         self._rpc = None
         self._stop_rpc_client = None
