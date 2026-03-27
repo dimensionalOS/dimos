@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 import cv2
 from langchain_core.messages import HumanMessage
 
-from dimos.agents.agent import AgentSpec
+from dimos.agents.agent_spec import AgentSpec
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module

@@ -1,8 +1,0 @@
-{
-  "responses": [
-    {
-      "content": "My name is Johnny. How can I assist you today?",
-      "tool_calls": []
-    }
-  ]
-}

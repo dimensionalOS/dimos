@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 from dimos.memory2.utils.formatting import FilterRepr
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Sequence
 
     from dimos.memory2.type.observation import Observation
 
@@ -76,6 +76,33 @@ class FnIterTransformer(Transformer[T, R]):
 
     def __call__(self, upstream: Iterator[Observation[T]]) -> Iterator[Observation[R]]:
         return self._fn(upstream)
+
+
+class Batch(Transformer[T, R]):
+    """Batched transform: collects observations, applies a batch function, derives new data.
+
+    The ``fn`` receives a list of data items and returns a list of results,
+    one per input (e.g. ``model.caption_batch``, ``model.embed``).
+    """
+
+    def __init__(self, fn: Callable[[list[T]], Sequence[R]], batch_size: int = 16) -> None:
+        self._fn = fn
+        self._batch_size = batch_size
+
+    def __call__(self, upstream: Iterator[Observation[T]]) -> Iterator[Observation[R]]:
+        fn = self._fn
+        batch: list[Observation[T]] = []
+        for obs in upstream:
+            batch.append(obs)
+            if len(batch) >= self._batch_size:
+                results = fn([o.data for o in batch])
+                for o, r in zip(batch, results, strict=True):
+                    yield o.derive(data=r)
+                batch = []
+        if batch:
+            results = fn([o.data for o in batch])
+            for o, r in zip(batch, results, strict=True):
+                yield o.derive(data=r)
 
 
 class QualityWindow(Transformer[T, T]):

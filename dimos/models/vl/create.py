@@ -1,7 +1,7 @@
 from typing import Any
 
-from dimos.models.vl.types import VlModelName
 from dimos.models.vl.base import VlModel
+from dimos.models.vl.types import VlModelName
 
 
 def create(name: VlModelName) -> VlModel[Any]:
