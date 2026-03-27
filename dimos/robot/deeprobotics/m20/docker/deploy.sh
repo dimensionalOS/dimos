@@ -1,20 +1,23 @@
 #!/bin/bash
 #
-# Deploy dimos Docker container to M20 NOS
+# Deploy M20 nav container to NOS
+#
+# The nav container runs ARISE SLAM + nav planner + drdds bridge (ros2_pub).
+# dimos runs natively on the NOS host via launch_nos.py.
 #
 # Usage:
-#   ./deploy.sh push      # Build image on Mac + push to GHCR
+#   ./deploy.sh push      # Build nav image on Mac + push to GHCR
 #   ./deploy.sh pull      # Pull latest image on NOS from GHCR
 #   ./deploy.sh dev       # Sync Python source into running container (fast, ~1-2 min)
-#   ./deploy.sh start     # Start container (with lio health check)
+#   ./deploy.sh start     # Start nav container
 #   ./deploy.sh stop      # Stop container
 #   ./deploy.sh restart   # Restart running container
 #   ./deploy.sh logs      # Tail container logs
 #   ./deploy.sh shell     # Open shell in running container
-#   ./deploy.sh status    # Show container + lio status
+#   ./deploy.sh status    # Show container + bridge status
 #
 # Options:
-#   --host <hostname>     # Access robot via Tailscale (e.g., m20-781-mochi)
+#   --host <hostname>     # Access robot via Tailscale (e.g., m20-770-gogo)
 #                         # Without --host: uses AOS WiFi (10.21.41.1) as gateway
 #
 # Workflows:
@@ -61,10 +64,8 @@ NOS_HOST="${1:-10.21.31.106}"
 NOS_USER="${2:-user}"
 AOS_INTERNAL="10.21.31.103"
 DEPLOY_DIR="/opt/dimos/src"
-CONTAINER_NAME="dimos-m20"
-GHCR_IMAGE="ghcr.io/aphexcx/m20-nos:latest"
-NAV_CONTAINER_NAME="dimos-nav"
-NAV_GHCR_IMAGE="ghcr.io/aphexcx/m20-nav:latest"
+CONTAINER_NAME="dimos-nav"
+GHCR_IMAGE="ghcr.io/aphexcx/m20-nav:latest"
 NAV_BASE_IMAGE="ghcr.io/aphexcx/m20-nav-base:latest"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -387,33 +388,11 @@ with open('${config}', 'w') as f: json.dump(c, f, indent=2)
 
 case "${CMD}" in
     push)
-        echo "=== Building + Pushing M20 Docker Image ==="
-        echo "Image: ${GHCR_IMAGE}"
-        echo "Context: ${DIMOS_ROOT}"
-        echo ""
-
-        # Build on Mac (ARM64 native — same arch as NOS RK3588)
-        # BuildKit required for --mount=type=cache in Dockerfile
-        echo "Building Docker image..."
-        DOCKER_BUILDKIT=1 docker build \
-            -t "${GHCR_IMAGE}" \
-            -f "${DIMOS_ROOT}/dimos/robot/deeprobotics/m20/docker/Dockerfile" \
-            "${DIMOS_ROOT}"
-
-        echo ""
-        echo "Pushing to GHCR..."
-        docker push "${GHCR_IMAGE}"
-
-        echo ""
-        echo "=== Push Complete ==="
-        echo "Deploy to robot: $0 pull && $0 start"
-        ;;
-
-    push-nav)
         echo "=== Building + Pushing M20 Nav Image ==="
+        echo "Image: ${GHCR_IMAGE}"
         echo ""
 
-        # Step 1: Build base nav image (generic, no M20 stuff)
+        # Step 1: Build base nav image (generic ARISE + FASTLIO + planner)
         echo "--- Building base nav image: ${NAV_BASE_IMAGE} ---"
         DOCKER_BUILDKIT=1 docker build \
             --platform linux/arm64 \
@@ -423,21 +402,21 @@ case "${CMD}" in
 
         # Step 2: Build M20 nav layer (ros2_pub + M20 configs)
         echo ""
-        echo "--- Building M20 nav image: ${NAV_GHCR_IMAGE} ---"
+        echo "--- Building M20 nav image: ${GHCR_IMAGE} ---"
         DOCKER_BUILDKIT=1 docker build \
             --platform linux/arm64 \
-            -t "${NAV_GHCR_IMAGE}" \
+            -t "${GHCR_IMAGE}" \
             --build-arg BASE_NAV_IMAGE="${NAV_BASE_IMAGE}" \
             -f "${DIMOS_ROOT}/dimos/robot/deeprobotics/m20/docker/Dockerfile.nav" \
             "${DIMOS_ROOT}"
 
         echo ""
         echo "Pushing to GHCR..."
-        docker push "${NAV_GHCR_IMAGE}"
+        docker push "${GHCR_IMAGE}"
 
         echo ""
-        echo "=== Nav Push Complete ==="
-        echo "Deploy to robot: $0 pull-nav && $0 start-nav"
+        echo "=== Push Complete ==="
+        echo "Deploy to robot: $0 pull && $0 start"
         ;;
 
     pull)
@@ -521,7 +500,7 @@ case "${CMD}" in
         ;;
 
     start)
-        echo "=== Starting dimos M20 Docker Container ==="
+        echo "=== Starting M20 Nav Container ==="
 
         check_conflicts
         ensure_lio_enabled
@@ -530,27 +509,23 @@ case "${CMD}" in
         # Remove old container if exists
         remote_ssh docker rm -f ${CONTAINER_NAME} 2>/dev/null || true
 
-        echo "Starting container..."
+        echo "Starting container (MODE=hardware, LOCALIZATION_METHOD=arise_slam)..."
         remote_ssh docker run -d \
             --name ${CONTAINER_NAME} \
             --privileged \
             --network host \
             --ipc host \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -e RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
-            -e ROS_DOMAIN_ID=0 \
-            -e CI=1 \
-            --restart no \
+            -v /dev/shm:/dev/shm \
+            -v /opt/dimos/src:/workspace/dimos \
+            -e MODE=hardware \
+            -e LOCALIZATION_METHOD=arise_slam \
+            --restart unless-stopped \
             "${GHCR_IMAGE}"
 
         sleep 5
         echo ""
         echo "Container status:"
         remote_ssh docker ps --filter name=${CONTAINER_NAME}
-        echo ""
-        echo "Access from Mac:"
-        echo "  Web UI:  http://${ACCESS_HOST}:7779/command-center"
-        echo "  Rerun:   rerun --connect rerun+http://${ACCESS_HOST}:9876/proxy"
         ;;
 
     stop)
