@@ -25,12 +25,21 @@ from typing import Any
 
 
 def confirm(message: str, *, default: bool = True) -> bool:
-    """Ask yes/no"""
+    """Ask yes/no.
+
+    In non-interactive mode (no tty), returns *default* without prompting
+    — useful for daemons and CI where stdin is unavailable.
+
+    In interactive mode, no default is pre-selected so the user must
+    explicitly type ``y`` or ``n``.  This prevents accidental Enter-mashing
+    from silently triggering system changes (some of which require sudo).
+    """
     if not sys.stdin.isatty():
         return default
     import typer
 
-    return typer.confirm(message, default=default)
+    # No default in interactive mode — require explicit y/n
+    return typer.confirm(message)
 
 
 def sudo_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
