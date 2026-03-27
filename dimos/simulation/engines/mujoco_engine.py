@@ -59,6 +59,7 @@ class CameraFrame:
     fovy: float
     timestamp: float
 
+
 # ---------------------------------------------------------------------------
 # Engine registry — allows adapter and camera to share the same engine instance
 # by MJCF path.

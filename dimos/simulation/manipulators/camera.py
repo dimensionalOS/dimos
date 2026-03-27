@@ -336,6 +336,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
             return
 
         from scipy.spatial.transform import Rotation as R
+
         # MuJoCo cam frame -> optical frame: flip Y and Z (Rx 180°)
         _RX180 = R.from_euler("x", 180, degrees=True)
         mj_rot = R.from_matrix(frame.cam_mat.reshape(3, 3))
