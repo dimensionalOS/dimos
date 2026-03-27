@@ -91,15 +91,11 @@ class M20ROSNavConfig(ROSNavConfig):
             # Live dimos source so the module is always up-to-date
             (str(repo_root), "/workspace/dimos", "rw"),
             # M20-specific DDS config (large SHM segments for bridge)
+            # Note: fastdds.xml and entrypoint are baked into the M20 nav image
+            # (Dockerfile.nav). These mounts are kept for dev overrides only.
             (
                 str(m20_docker_dir / "fastdds_m20.xml"),
                 "/ros2_ws/config/fastdds.xml",
-                "ro",
-            ),
-            # M20-specific entrypoint (hardware mode, no Unity)
-            (
-                str(m20_docker_dir / "entrypoint.sh"),
-                "/usr/local/bin/entrypoint.sh",
                 "ro",
             ),
             # ARISE SLAM M20 config (overrides default livox_mid360.yaml)
