@@ -75,8 +75,10 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
     def stop(self) -> None:
         for module_class, module in reversed(self._deployed_modules.items()):
             logger.info("Stopping module...", module=module_class.__name__)
-            with suppress(Exception):
+            try:
                 module.stop()
+            except Exception:
+                logger.error("Error stopping module", module=module_class.__name__, exc_info=True)
             logger.info("Module stopped.", module=module_class.__name__)
 
         def _stop_manager(m: WorkerManagerDocker | WorkerManager) -> None:
