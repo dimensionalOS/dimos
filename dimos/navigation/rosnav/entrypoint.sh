@@ -392,44 +392,30 @@ elif [ "$MODE" = "simulation" ]; then
     launch_with_retry
 elif [ "$MODE" = "hardware" ]; then
 
-    # --- M20 with ARISE SLAM: drdds bridge + ARISE + nav planning nodes ---
+    # --- ARISE SLAM hardware: ARISE + nav planning nodes ---
+    # Robot-specific sensor bridges (e.g., drdds ros2_pub for M20) should be started
+    # by a wrapper entrypoint BEFORE this one. See Dockerfile.m20 for example.
     if [ "$LOCALIZATION_METHOD" = "arise_slam" ]; then
-        echo "[entrypoint] hardware + arise_slam: starting drdds bridge + ARISE SLAM + nav planner"
+        echo "[entrypoint] hardware + arise_slam: starting ARISE SLAM + nav planner"
 
-        # 1. Start ros2_pub (drdds SHM bridge → ROS2 topics)
-        # Must start from entrypoint context (not docker exec) for DDS discovery.
-        # Waits for SHM to appear (created by drdds_recv on the host).
-        echo "[entrypoint] Starting ros2_pub bridge..."
-        /ros2_ws/install/drdds_bridge/lib/drdds_bridge/ros2_pub &
-        ROS2_PUB_PID=$!
-        echo "[entrypoint] ros2_pub PID: $ROS2_PUB_PID"
-
-        # Wait for bridge to connect to SHM
-        for i in $(seq 1 30); do
-            if [ -f /dev/shm/drdds_bridge_lidar ]; then
-                echo "[entrypoint] SHM connected (${i}s)"
-                break
-            fi
-            sleep 1
-        done
-
-        # 2. Launch ARISE SLAM with M20 config
-        ARISE_CONFIG="${ARISE_CONFIG:-/ros2_ws/config/arise_slam_m20.yaml}"
-        ARISE_LAUNCH="${ARISE_LAUNCH:-/ros2_ws/config/arize_slam_m20.launch.py}"
-        # Use baked-in launch file if it exists, otherwise fall back to installed package
-        if [ -f "$ARISE_LAUNCH" ]; then
+        # 1. Launch ARISE SLAM
+        ARISE_CONFIG="${ARISE_CONFIG:-}"
+        ARISE_LAUNCH="${ARISE_LAUNCH:-}"
+        if [ -n "$ARISE_LAUNCH" ] && [ -f "$ARISE_LAUNCH" ]; then
             echo "[entrypoint] Launching ARISE SLAM (config: $ARISE_CONFIG, launch: $ARISE_LAUNCH)"
             ros2 launch "$ARISE_LAUNCH" config_file:="$ARISE_CONFIG" &
-        else
+        elif [ -n "$ARISE_CONFIG" ]; then
             echo "[entrypoint] Launching ARISE SLAM from package (config: $ARISE_CONFIG)"
             ros2 launch arise_slam_mid360 arize_slam.launch.py config_file:="$ARISE_CONFIG" &
+        else
+            echo "[entrypoint] Launching ARISE SLAM with default config"
+            ros2 launch arise_slam_mid360 arize_slam.launch.py &
         fi
         ARISE_PID=$!
         echo "[entrypoint] ARISE PID: $ARISE_PID"
 
-        # 3. Launch nav planning nodes (local_planner + terrain analysis)
-        # These consume /state_estimation + /registered_scan from ARISE and produce /way_point commands.
-        LOCAL_PLANNER_CONFIG="${LOCAL_PLANNER_CONFIG:-m20}"
+        # 2. Launch nav planning nodes (local_planner + terrain analysis)
+        LOCAL_PLANNER_CONFIG="${LOCAL_PLANNER_CONFIG:-mechanum_drive}"
         echo "[entrypoint] Launching nav planning (robot_config: $LOCAL_PLANNER_CONFIG)..."
         setsid bash -c "
             source /opt/ros/${ROS_DISTRO:-humble}/setup.bash

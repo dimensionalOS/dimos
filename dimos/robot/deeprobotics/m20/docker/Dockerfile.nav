@@ -1,0 +1,66 @@
+# M20 Navigation Docker Image
+#
+# Extends the base dimos nav image with M20-specific components:
+#   - drdds bridge (ros2_pub) for RSAIRY lidar + Yesense IMU via POSIX SHM
+#   - ARISE SLAM config (velodyne mode, 64 scan lines, M20 blind zones)
+#   - FastDDS config (32MB SHM, no initialPeersList)
+#   - M20 local planner config (robot dimensions, conservative speeds)
+#   - Patched ARISE launch file (longer lifecycle timers for ARM64)
+#
+# Build:
+#   docker build -t ghcr.io/aphexcx/m20-nav:latest \
+#     -f dimos/robot/deeprobotics/m20/docker/Dockerfile.nav .
+#
+# Run:
+#   docker run --network host --ipc host --privileged \
+#     -v /dev/shm:/dev/shm -v /opt/dimos/src:/workspace/dimos \
+#     -e MODE=hardware -e LOCALIZATION_METHOD=arise_slam \
+#     ghcr.io/aphexcx/m20-nav:latest
+
+# --- Stage 1: Build ros2_pub against ROS2 Humble ---
+ARG ROS_DISTRO=humble
+FROM ros:${ROS_DISTRO}-ros-base AS m20-builder
+
+ARG ROS_DISTRO
+ENV WORKSPACE=/ros2_ws
+
+RUN mkdir -p ${WORKSPACE}/src
+COPY dimos/robot/deeprobotics/m20/docker/drdds_bridge ${WORKSPACE}/src/drdds_bridge
+
+RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
+    cd ${WORKSPACE} && \
+    colcon build --packages-select drdds_bridge \
+      --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_ROS2_PUB=ON -DBUILD_DRDDS_RECV=OFF"
+
+# --- Stage 2: M20 nav image (extends base nav) ---
+ARG BASE_NAV_IMAGE=ghcr.io/aphexcx/m20-nav-base:latest
+FROM ${BASE_NAV_IMAGE}
+
+ENV WORKSPACE=/ros2_ws
+
+# ros2_pub binary
+COPY --from=m20-builder ${WORKSPACE}/install/drdds_bridge ${WORKSPACE}/install/drdds_bridge
+
+# M20 config files
+COPY dimos/robot/deeprobotics/m20/docker/arise_slam_m20.yaml ${WORKSPACE}/config/arise_slam_m20.yaml
+COPY dimos/robot/deeprobotics/m20/docker/fastdds_m20.xml ${WORKSPACE}/config/fastdds.xml
+COPY dimos/robot/deeprobotics/m20/docker/arize_slam_m20.launch.py ${WORKSPACE}/config/arize_slam_m20.launch.py
+COPY dimos/robot/deeprobotics/m20/docker/local_planner_m20.yaml ${WORKSPACE}/config/local_planner_m20.yaml
+
+# Install M20 planner config where launch files can find it (robot_config:=m20)
+RUN cp ${WORKSPACE}/config/local_planner_m20.yaml \
+       ${WORKSPACE}/install/local_planner/share/local_planner/config/m20.yaml
+
+# M20 environment defaults
+ENV LOCALIZATION_METHOD=arise_slam
+ENV ARISE_CONFIG=/ros2_ws/config/arise_slam_m20.yaml
+ENV ARISE_LAUNCH=/ros2_ws/config/arize_slam_m20.launch.py
+ENV LOCAL_PLANNER_CONFIG=m20
+ENV FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml
+
+# M20 wrapper entrypoint: starts drdds bridge before base entrypoint
+COPY dimos/robot/deeprobotics/m20/docker/m20_entrypoint.sh /usr/local/bin/m20_entrypoint.sh
+RUN chmod +x /usr/local/bin/m20_entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/m20_entrypoint.sh"]
+CMD ["bash"]

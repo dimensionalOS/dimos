@@ -210,22 +210,11 @@ COPY docker/navigation/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/fast
 COPY docker/navigation/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/fastlio2/src/utils.cpp \
      ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/fastlio2/src/utils.cpp
 
-# Copy drdds bridge (ros2_pub only — drdds_recv is built on the host against host FastDDS)
-COPY dimos/robot/deeprobotics/m20/docker/drdds_bridge ${WORKSPACE}/src/drdds_bridge
-
-# Copy M20 config files into image
-COPY dimos/robot/deeprobotics/m20/docker/arise_slam_m20.yaml ${WORKSPACE}/config/arise_slam_m20.yaml
-COPY dimos/robot/deeprobotics/m20/docker/fastdds_m20.xml ${WORKSPACE}/config/fastdds.xml
-COPY dimos/robot/deeprobotics/m20/docker/arize_slam_m20.launch.py ${WORKSPACE}/config/arize_slam_m20.launch.py
-# M20 planner config — also install to local_planner share dir so launch files find it via robot_config:=m20
-COPY dimos/robot/deeprobotics/m20/docker/local_planner_m20.yaml ${WORKSPACE}/config/local_planner_m20.yaml
-COPY dimos/robot/deeprobotics/m20/docker/local_planner_m20.yaml ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/base_autonomy/local_planner/launch/m20.yaml
-
-# Build ROS workspace with both SLAM systems + drdds bridge ros2_pub
+# Build ROS workspace with both SLAM systems (no --symlink-install for multi-stage build compatibility)
 RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     cd ${WORKSPACE} && \
-    echo 'Building with arise_slam, FASTLIO2, and drdds_bridge ros2_pub' && \
-    colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release -DBUILD_ROS2_PUB=ON -DBUILD_DRDDS_RECV=OFF"
+    echo 'Building with both arise_slam and FASTLIO2' && \
+    colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release"
 
 # -----------------------------------------------------------------------------
 # STAGE 2: Runtime Stage - minimal image for running
@@ -243,7 +232,6 @@ ENV DIMOS_PATH=/workspace/dimos
 ENV LOCALIZATION_METHOD=arise_slam
 
 # DDS Configuration - Use FastDDS (default ROS 2 middleware)
-# fastdds.xml is baked into the image at build time (from fastdds_m20.xml for M20, or default)
 ENV RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 ENV FASTRTPS_DEFAULT_PROFILES_FILE=/ros2_ws/config/fastdds.xml
 
@@ -301,11 +289,6 @@ RUN ldconfig
 
 # Copy built ROS workspace from builder
 COPY --from=builder ${WORKSPACE}/install ${WORKSPACE}/install
-# Copy baked-in config files (FastDDS, ARISE M20 config, launch files, planner configs)
-COPY --from=builder ${WORKSPACE}/config ${WORKSPACE}/config
-# Install m20.yaml to local_planner share dir so robot_config:=m20 works in launch files
-RUN cp ${WORKSPACE}/config/local_planner_m20.yaml \
-       ${WORKSPACE}/install/local_planner/share/local_planner/config/m20.yaml 2>/dev/null || true
 
 # Copy only config/rviz files from src (not the large dependency folders)
 # These are needed if running without volume mount

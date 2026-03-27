@@ -63,6 +63,9 @@ AOS_INTERNAL="10.21.31.103"
 DEPLOY_DIR="/opt/dimos/src"
 CONTAINER_NAME="dimos-m20"
 GHCR_IMAGE="ghcr.io/aphexcx/m20-nos:latest"
+NAV_CONTAINER_NAME="dimos-nav"
+NAV_GHCR_IMAGE="ghcr.io/aphexcx/m20-nav:latest"
+NAV_BASE_IMAGE="ghcr.io/aphexcx/m20-nav-base:latest"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIMOS_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
@@ -404,6 +407,37 @@ case "${CMD}" in
         echo ""
         echo "=== Push Complete ==="
         echo "Deploy to robot: $0 pull && $0 start"
+        ;;
+
+    push-nav)
+        echo "=== Building + Pushing M20 Nav Image ==="
+        echo ""
+
+        # Step 1: Build base nav image (generic, no M20 stuff)
+        echo "--- Building base nav image: ${NAV_BASE_IMAGE} ---"
+        DOCKER_BUILDKIT=1 docker build \
+            --platform linux/arm64 \
+            -t "${NAV_BASE_IMAGE}" \
+            -f "${DIMOS_ROOT}/dimos/navigation/rosnav/Dockerfile" \
+            "${DIMOS_ROOT}"
+
+        # Step 2: Build M20 nav layer (ros2_pub + M20 configs)
+        echo ""
+        echo "--- Building M20 nav image: ${NAV_GHCR_IMAGE} ---"
+        DOCKER_BUILDKIT=1 docker build \
+            --platform linux/arm64 \
+            -t "${NAV_GHCR_IMAGE}" \
+            --build-arg BASE_NAV_IMAGE="${NAV_BASE_IMAGE}" \
+            -f "${DIMOS_ROOT}/dimos/robot/deeprobotics/m20/docker/Dockerfile.nav" \
+            "${DIMOS_ROOT}"
+
+        echo ""
+        echo "Pushing to GHCR..."
+        docker push "${NAV_GHCR_IMAGE}"
+
+        echo ""
+        echo "=== Nav Push Complete ==="
+        echo "Deploy to robot: $0 pull-nav && $0 start-nav"
         ;;
 
     pull)
