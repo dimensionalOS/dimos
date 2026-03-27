@@ -213,9 +213,13 @@ COPY docker/navigation/ros-navigation-autonomy-stack/src/slam/FASTLIO2_ROS2/fast
 # Copy drdds bridge (ros2_pub only — drdds_recv is built on the host against host FastDDS)
 COPY dimos/robot/deeprobotics/m20/docker/drdds_bridge ${WORKSPACE}/src/drdds_bridge
 
-# Copy M20 ARISE config + FastDDS config into image
+# Copy M20 config files into image
 COPY dimos/robot/deeprobotics/m20/docker/arise_slam_m20.yaml ${WORKSPACE}/config/arise_slam_m20.yaml
 COPY dimos/robot/deeprobotics/m20/docker/fastdds_m20.xml ${WORKSPACE}/config/fastdds.xml
+COPY dimos/robot/deeprobotics/m20/docker/arize_slam_m20.launch.py ${WORKSPACE}/config/arize_slam_m20.launch.py
+# M20 planner config — also install to local_planner share dir so launch files find it via robot_config:=m20
+COPY dimos/robot/deeprobotics/m20/docker/local_planner_m20.yaml ${WORKSPACE}/config/local_planner_m20.yaml
+COPY dimos/robot/deeprobotics/m20/docker/local_planner_m20.yaml ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/base_autonomy/local_planner/launch/m20.yaml
 
 # Build ROS workspace with both SLAM systems + drdds bridge ros2_pub
 RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
@@ -297,8 +301,11 @@ RUN ldconfig
 
 # Copy built ROS workspace from builder
 COPY --from=builder ${WORKSPACE}/install ${WORKSPACE}/install
-# Copy baked-in config files (FastDDS, ARISE M20 config)
+# Copy baked-in config files (FastDDS, ARISE M20 config, launch files, planner configs)
 COPY --from=builder ${WORKSPACE}/config ${WORKSPACE}/config
+# Install m20.yaml to local_planner share dir so robot_config:=m20 works in launch files
+RUN cp ${WORKSPACE}/config/local_planner_m20.yaml \
+       ${WORKSPACE}/install/local_planner/share/local_planner/config/m20.yaml 2>/dev/null || true
 
 # Copy only config/rviz files from src (not the large dependency folders)
 # These are needed if running without volume mount

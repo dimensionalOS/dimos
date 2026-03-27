@@ -391,27 +391,87 @@ elif [ "$MODE" = "simulation" ]; then
     start_unity
     launch_with_retry
 elif [ "$MODE" = "hardware" ]; then
-    if [ "$USE_ROUTE_PLANNER" = "true" ]; then
-        LAUNCH_FILE="system_real_robot_with_route_planner.launch.py"
+
+    # --- M20 with ARISE SLAM: drdds bridge + ARISE + nav planning nodes ---
+    if [ "$LOCALIZATION_METHOD" = "arise_slam" ]; then
+        echo "[entrypoint] hardware + arise_slam: starting drdds bridge + ARISE SLAM + nav planner"
+
+        # 1. Start ros2_pub (drdds SHM bridge → ROS2 topics)
+        # Must start from entrypoint context (not docker exec) for DDS discovery.
+        # Waits for SHM to appear (created by drdds_recv on the host).
+        echo "[entrypoint] Starting ros2_pub bridge..."
+        /ros2_ws/install/drdds_bridge/lib/drdds_bridge/ros2_pub &
+        ROS2_PUB_PID=$!
+        echo "[entrypoint] ros2_pub PID: $ROS2_PUB_PID"
+
+        # Wait for bridge to connect to SHM
+        for i in $(seq 1 30); do
+            if [ -f /dev/shm/drdds_bridge_lidar ]; then
+                echo "[entrypoint] SHM connected (${i}s)"
+                break
+            fi
+            sleep 1
+        done
+
+        # 2. Launch ARISE SLAM with M20 config
+        ARISE_CONFIG="${ARISE_CONFIG:-/ros2_ws/config/arise_slam_m20.yaml}"
+        ARISE_LAUNCH="${ARISE_LAUNCH:-/ros2_ws/config/arize_slam_m20.launch.py}"
+        # Use baked-in launch file if it exists, otherwise fall back to installed package
+        if [ -f "$ARISE_LAUNCH" ]; then
+            echo "[entrypoint] Launching ARISE SLAM (config: $ARISE_CONFIG, launch: $ARISE_LAUNCH)"
+            ros2 launch "$ARISE_LAUNCH" config_file:="$ARISE_CONFIG" &
+        else
+            echo "[entrypoint] Launching ARISE SLAM from package (config: $ARISE_CONFIG)"
+            ros2 launch arise_slam_mid360 arize_slam.launch.py config_file:="$ARISE_CONFIG" &
+        fi
+        ARISE_PID=$!
+        echo "[entrypoint] ARISE PID: $ARISE_PID"
+
+        # 3. Launch nav planning nodes (local_planner + terrain analysis)
+        # These consume /state_estimation + /registered_scan from ARISE and produce /way_point commands.
+        LOCAL_PLANNER_CONFIG="${LOCAL_PLANNER_CONFIG:-m20}"
+        echo "[entrypoint] Launching nav planning (robot_config: $LOCAL_PLANNER_CONFIG)..."
+        setsid bash -c "
+            source /opt/ros/${ROS_DISTRO:-humble}/setup.bash
+            source /ros2_ws/install/setup.bash
+            cd ${STACK_ROOT}
+
+            ros2 launch local_planner local_planner.launch.py \
+                realRobot:=true \
+                robot_config:=${LOCAL_PLANNER_CONFIG} \
+                vehicleHeight:=${VEHICLE_HEIGHT} &
+
+            ros2 launch terrain_analysis terrain_analysis.launch.py &
+
+            ros2 launch terrain_analysis_ext terrain_analysis_ext.launch \
+                checkTerrainConn:=true &
+
+            wait
+        " &
+        NAV_PID=$!
+        echo "[entrypoint] Nav planning PID: $NAV_PID"
+
     else
-        LAUNCH_FILE="system_real_robot.launch.py"
-    fi
+        # --- Non-ARISE hardware (Livox Mid-360 / FAST_LIO) ---
+        if [ "$USE_ROUTE_PLANNER" = "true" ]; then
+            LAUNCH_FILE="system_real_robot_with_route_planner.launch.py"
+        else
+            LAUNCH_FILE="system_real_robot.launch.py"
+        fi
 
-    # --- Hardware sensor / network setup ---
+        # Assign static IP to the ethernet interface connected to the Mid-360 lidar
+        if [ -n "${LIDAR_INTERFACE}" ] && [ -n "${LIDAR_COMPUTER_IP}" ]; then
+            echo "[entrypoint] Configuring ${LIDAR_INTERFACE} for Mid-360 lidar (IP: ${LIDAR_COMPUTER_IP})..."
+            ip addr add "${LIDAR_COMPUTER_IP}/24" dev "${LIDAR_INTERFACE}" 2>/dev/null || true
+            ip link set "${LIDAR_INTERFACE}" up 2>/dev/null || true
+        fi
 
-    # Assign static IP to the ethernet interface connected to the Mid-360 lidar
-    if [ -n "${LIDAR_INTERFACE}" ] && [ -n "${LIDAR_COMPUTER_IP}" ]; then
-        echo "[entrypoint] Configuring ${LIDAR_INTERFACE} for Mid-360 lidar (IP: ${LIDAR_COMPUTER_IP})..."
-        ip addr add "${LIDAR_COMPUTER_IP}/24" dev "${LIDAR_INTERFACE}" 2>/dev/null || true
-        ip link set "${LIDAR_INTERFACE}" up 2>/dev/null || true
-    fi
-
-    # Generate MID360_config.json so the Livox driver knows where to listen
-    if [ -n "${LIDAR_COMPUTER_IP}" ] && [ -n "${LIDAR_IP}" ]; then
-        MID360_SRC="${STACK_ROOT}/src/utilities/livox_ros_driver2/config/MID360_config.json"
-        MID360_INST="/ros2_ws/install/livox_ros_driver2/share/livox_ros_driver2/config/MID360_config.json"
-        echo "[entrypoint] Generating MID360_config.json (lidar=${LIDAR_IP}, host=${LIDAR_COMPUTER_IP})..."
-        cat > "${MID360_SRC}" <<EOF
+        # Generate MID360_config.json so the Livox driver knows where to listen
+        if [ -n "${LIDAR_COMPUTER_IP}" ] && [ -n "${LIDAR_IP}" ]; then
+            MID360_SRC="${STACK_ROOT}/src/utilities/livox_ros_driver2/config/MID360_config.json"
+            MID360_INST="/ros2_ws/install/livox_ros_driver2/share/livox_ros_driver2/config/MID360_config.json"
+            echo "[entrypoint] Generating MID360_config.json (lidar=${LIDAR_IP}, host=${LIDAR_COMPUTER_IP})..."
+            cat > "${MID360_SRC}" <<EOFMID360
 {
   "lidar_summary_info": { "lidar_type": 8 },
   "MID360": {
@@ -432,14 +492,14 @@ elif [ "$MODE" = "hardware" ]; then
     "extrinsic_parameter": { "roll": 0.0, "pitch": 0.0, "yaw": 0.0, "x": 0, "y": 0, "z": 0 }
   }]
 }
-EOF
-        cp "${MID360_SRC}" "${MID360_INST}" 2>/dev/null || true
+EOFMID360
+            cp "${MID360_SRC}" "${MID360_INST}" 2>/dev/null || true
+        fi
+
+        start_ros_nav_stack
     fi
 
-    start_ros_nav_stack
-
-    # Start Unitree WebRTC control bridge (subscribes /cmd_vel, enables robot control).
-    # This is required for the robot connection; also publishes robot state to ROS.
+    # Start Unitree WebRTC control bridge if configured
     if [[ "${ROBOT_CONFIG_PATH:-}" == *"unitree"* ]]; then
         echo "[entrypoint] Starting Unitree WebRTC control (IP: ${UNITREE_IP:-192.168.12.1}, Method: ${UNITREE_CONN:-LocalAP})..."
         ros2 launch unitree_webrtc_ros unitree_control.launch.py \
