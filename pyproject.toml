@@ -388,6 +388,8 @@ module = [
     "annotation_protocol",
     "cyclonedds",
     "cyclonedds.*",
+    "depth_anything_3",
+    "depth_anything_3.*",
     "dimos_lcm.*",
     "etils",
     "geometry_msgs.*",

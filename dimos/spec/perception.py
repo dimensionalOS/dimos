@@ -30,8 +30,11 @@ class Camera(Image):
     camera_info: Out[CameraInfo]
 
 
-class DepthCamera(Camera):
+class Depth(Protocol):
     depth_image: Out[ImageMsg]
+
+
+class DepthCamera(Camera, Depth):
     depth_camera_info: Out[CameraInfo]
 
 
