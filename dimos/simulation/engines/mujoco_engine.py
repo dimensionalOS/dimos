@@ -60,6 +60,18 @@ class CameraFrame:
     timestamp: float
 
 
+@dataclasses.dataclass
+class _CameraRendererState:
+    """Mutable state for a single camera renderer (sim-thread only)."""
+
+    cfg: CameraConfig
+    cam_id: int
+    rgb_renderer: mujoco.Renderer
+    depth_renderer: mujoco.Renderer
+    interval: float
+    last_render_time: float = 0.0
+
+
 # ---------------------------------------------------------------------------
 # Engine registry — allows adapter and camera to share the same engine instance
 # by MJCF path.
@@ -95,6 +107,14 @@ def get_or_create_engine(
         engine = MujocoEngine(config_path=Path(config_path), headless=headless, cameras=cameras)
         _engine_registry[key] = engine
         return engine
+
+
+def unregister_engine(engine: MujocoEngine) -> None:
+    """Remove an engine from the registry (called on disconnect)."""
+    with _engine_registry_lock:
+        keys_to_remove = [k for k, v in _engine_registry.items() if v is engine]
+        for k in keys_to_remove:
+            del _engine_registry[k]
 
 
 class MujocoEngine(SimulationEngine):
@@ -240,10 +260,69 @@ class MujocoEngine(SimulationEngine):
             if self._sim_thread and self._sim_thread.is_alive():
                 self._sim_thread.join(timeout=2.0)
             self._sim_thread = None
+            unregister_engine(self)
             return True
         except Exception as e:
             logger.error(f"{self.__class__.__name__}: disconnect() failed: {e}")
             return False
+
+    def _init_new_cameras(self, cam_renderers: dict[str, _CameraRendererState]) -> None:
+        """Create renderers for any camera configs not yet initialized.
+
+        Must be called from the sim thread (MuJoCo thread-safety).
+        """
+        for cfg in self._camera_configs:
+            if cfg.name in cam_renderers:
+                continue
+            cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, cfg.name)
+            if cam_id < 0:
+                logger.warning(f"Camera '{cfg.name}' not found in MJCF, skipping")
+                continue
+            rgb_renderer = mujoco.Renderer(self._model, height=cfg.height, width=cfg.width)
+            depth_renderer = mujoco.Renderer(self._model, height=cfg.height, width=cfg.width)
+            depth_renderer.enable_depth_rendering()
+            interval = 1.0 / cfg.fps if cfg.fps > 0 else float("inf")
+            cam_renderers[cfg.name] = _CameraRendererState(
+                cfg=cfg,
+                cam_id=cam_id,
+                rgb_renderer=rgb_renderer,
+                depth_renderer=depth_renderer,
+                interval=interval,
+            )
+            logger.info(
+                f"Camera '{cfg.name}' renderer created ({cfg.width}x{cfg.height} @ {cfg.fps}fps)"
+            )
+
+    def _render_cameras(self, now: float, cam_renderers: dict[str, _CameraRendererState]) -> None:
+        """Render all due cameras and store frames. Must be called from sim thread."""
+        self._init_new_cameras(cam_renderers)
+        for state in cam_renderers.values():
+            if now - state.last_render_time < state.interval:
+                continue
+            state.last_render_time = now
+
+            state.rgb_renderer.update_scene(self._data, camera=state.cam_id)
+            rgb = state.rgb_renderer.render().copy()
+
+            state.depth_renderer.update_scene(self._data, camera=state.cam_id)
+            depth = state.depth_renderer.render().copy()
+
+            frame = CameraFrame(
+                rgb=rgb,
+                depth=depth.astype(np.float32),
+                cam_pos=self._data.cam_xpos[state.cam_id].copy(),
+                cam_mat=self._data.cam_xmat[state.cam_id].copy(),
+                fovy=float(self._model.cam_fovy[state.cam_id]),
+                timestamp=now,
+            )
+            with self._camera_lock:
+                self._camera_frames[state.cfg.name] = frame
+
+    @staticmethod
+    def _close_cam_renderers(cam_renderers: dict[str, _CameraRendererState]) -> None:
+        for state in cam_renderers.values():
+            state.rgb_renderer.close()
+            state.depth_renderer.close()
 
     def _sim_loop(self) -> None:
         logger.info(f"{self.__class__.__name__}: sim loop started")
@@ -251,60 +330,7 @@ class MujocoEngine(SimulationEngine):
 
         # Camera renderers — created in sim thread (MuJoCo thread-safety).
         # Checked each tick so cameras added after connect() are picked up.
-        cam_renderers: dict[
-            str, tuple[CameraConfig, int, mujoco.Renderer, mujoco.Renderer, float, float]
-        ] = {}  # name -> (cfg, cam_id, rgb_r, depth_r, interval, last_render_time)
-
-        def _init_new_cameras() -> None:
-            """Create renderers for any camera configs not yet initialized."""
-            for cfg in self._camera_configs:
-                if cfg.name in cam_renderers:
-                    continue
-                cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, cfg.name)
-                if cam_id < 0:
-                    logger.warning(f"Camera '{cfg.name}' not found in MJCF, skipping")
-                    continue
-                rgb_renderer = mujoco.Renderer(self._model, height=cfg.height, width=cfg.width)
-                depth_renderer = mujoco.Renderer(self._model, height=cfg.height, width=cfg.width)
-                depth_renderer.enable_depth_rendering()
-                interval = 1.0 / cfg.fps if cfg.fps > 0 else float("inf")
-                cam_renderers[cfg.name] = (
-                    cfg,
-                    cam_id,
-                    rgb_renderer,
-                    depth_renderer,
-                    interval,
-                    0.0,
-                )
-                logger.info(
-                    f"Camera '{cfg.name}' renderer created "
-                    f"({cfg.width}x{cfg.height} @ {cfg.fps}fps)"
-                )
-
-        def _render_cameras(now: float) -> None:
-            _init_new_cameras()
-            for name in cam_renderers:
-                cfg, cam_id, rgb_r, depth_r, interval, last_t = cam_renderers[name]
-                if now - last_t < interval:
-                    continue
-                cam_renderers[name] = (cfg, cam_id, rgb_r, depth_r, interval, now)
-
-                rgb_r.update_scene(self._data, camera=cam_id)
-                rgb = rgb_r.render().copy()
-
-                depth_r.update_scene(self._data, camera=cam_id)
-                depth = depth_r.render().copy()
-
-                frame = CameraFrame(
-                    rgb=rgb,
-                    depth=depth.astype(np.float32),
-                    cam_pos=self._data.cam_xpos[cam_id].copy(),
-                    cam_mat=self._data.cam_xmat[cam_id].copy(),
-                    fovy=float(self._model.cam_fovy[cam_id]),
-                    timestamp=now,
-                )
-                with self._camera_lock:
-                    self._camera_frames[cfg.name] = frame
+        cam_renderers: dict[str, _CameraRendererState] = {}
 
         def _step_once(sync_viewer: bool) -> None:
             loop_start = time.time()
@@ -313,7 +339,7 @@ class MujocoEngine(SimulationEngine):
             if sync_viewer:
                 m_viewer.sync()
             self._update_joint_state()
-            _render_cameras(loop_start)
+            self._render_cameras(loop_start, cam_renderers)
 
             elapsed = time.time() - loop_start
             sleep_time = dt - elapsed
@@ -330,11 +356,7 @@ class MujocoEngine(SimulationEngine):
                 while m_viewer.is_running() and not self._stop_event.is_set():
                     _step_once(sync_viewer=True)
 
-        # Clean up renderers
-        for _cfg, _cam_id, rgb_r, depth_r, _interval, _t in cam_renderers.values():
-            rgb_r.close()
-            depth_r.close()
-
+        self._close_cam_renderers(cam_renderers)
         logger.info(f"{self.__class__.__name__}: sim loop stopped")
 
     @property
@@ -483,4 +505,5 @@ __all__ = [
     "CameraFrame",
     "MujocoEngine",
     "get_or_create_engine",
+    "unregister_engine",
 ]
