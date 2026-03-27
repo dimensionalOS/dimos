@@ -43,7 +43,6 @@ class CameraConfig:
     """Configuration for a camera to be rendered inside the sim loop."""
 
     name: str
-    """Camera name as defined in the MJCF XML."""
     width: int = 640
     height: int = 480
     fps: float = 15.0
@@ -54,18 +53,11 @@ class CameraFrame:
     """Thread-safe container for a rendered camera frame."""
 
     rgb: NDArray[np.uint8]
-    """RGB image, shape (H, W, 3)."""
     depth: NDArray[np.float32]
-    """Depth image in meters, shape (H, W)."""
     cam_pos: NDArray[np.float64]
-    """Camera world position, shape (3,)."""
     cam_mat: NDArray[np.float64]
-    """Camera rotation matrix (flattened 3x3), shape (9,)."""
     fovy: float
-    """Vertical field of view in degrees."""
     timestamp: float
-    """Time of rendering."""
-
 
 # ---------------------------------------------------------------------------
 # Engine registry — allows adapter and camera to share the same engine instance

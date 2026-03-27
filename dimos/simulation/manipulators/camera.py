@@ -64,12 +64,8 @@ class MujocoCameraConfig(ModuleConfig, DepthCameraConfig):
     """Configuration for the MuJoCo simulation camera."""
 
     address: str = ""
-    """MJCF XML path — same as the sim adapter's address.
-    Used to look up the shared MujocoEngine from the registry."""
     headless: bool = False
-    """Whether to run MuJoCo without a viewer window."""
     camera_name: str = "wrist_camera"
-    """Camera name as defined in the MJCF XML."""
     width: int = 640
     height: int = 480
     fps: int = 15
@@ -336,23 +332,10 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
             self.depth_camera_info.publish(self._depth_camera_info)
 
     def _publish_tf(self, ts: float, frame: CameraFrame | None = None) -> None:
-        """Publish TF for the camera frame chain.
-
-        For MuJoCo sim cameras we publish world -> optical_frame directly,
-        skipping the intermediate camera_link/color_frame chain. This avoids
-        convention mismatches between MuJoCo (X=right, Y=up, -Z=look) and
-        ROS camera_link (X=forward, Y=left, Z=up).
-
-        MuJoCo optical = cam_xmat @ Rx(180):
-          X_opt = cam_X (right in image)
-          Y_opt = -cam_Y (down in image)
-          Z_opt = -cam_Z (into scene = look direction)
-        """
         if frame is None:
             return
 
         from scipy.spatial.transform import Rotation as R
-
         # MuJoCo cam frame -> optical frame: flip Y and Z (Rx 180°)
         _RX180 = R.from_euler("x", 180, degrees=True)
         mj_rot = R.from_matrix(frame.cam_mat.reshape(3, 3))
