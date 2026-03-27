@@ -62,6 +62,7 @@ class HelloDockerModule(Module["HelloDockerConfig"]):
     """A trivial module that runs inside Docker and echoes greetings."""
 
     default_config = HelloDockerConfig
+    deployment = "docker"
 
     prompt: In[str]
     greeting: Out[str]

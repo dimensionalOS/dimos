@@ -129,7 +129,7 @@ class TestDaemonE2E:
 
     def test_health_check_detects_dead_worker(self, coordinator):
         """Kill a worker process — health check should fail."""
-        py_mgr = next(m for m in coordinator._managers if isinstance(m, WorkerManager))
+        py_mgr = next(m for m in coordinator._managers.values() if isinstance(m, WorkerManager))
         worker = py_mgr.workers[0]
         worker_pid = worker.pid
         assert worker_pid is not None
@@ -242,7 +242,7 @@ class TestCLIWithRealBlueprint:
 
     def test_stop_kills_real_workers(self, live_blueprint):
         coord, _entry = live_blueprint
-        py_mgr = next(m for m in coord._managers if isinstance(m, WorkerManager))
+        py_mgr = next(m for m in coord._managers.values() if isinstance(m, WorkerManager))
         worker_pids = [w.pid for w in py_mgr.workers if w.pid]
         assert len(worker_pids) >= 1
 
