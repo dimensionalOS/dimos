@@ -82,7 +82,6 @@ def camera_with_mock_engine(mock_engine: MagicMock):
     cam.stop()
 
 
-
 @pytest.mark.mujoco
 class TestEngineRegistry:
     def test_creates_new(self):
@@ -163,7 +162,6 @@ class TestEngineRegistry:
                 p.stop()
 
 
-
 @pytest.mark.mujoco
 class TestCameraIntrinsics:
     def test_fovy_45(self, camera_with_mock_engine: MujocoCamera):
@@ -209,7 +207,6 @@ class TestCameraIntrinsics:
         assert info.frame_id == "wrist_camera_color_optical_frame"
 
 
-
 @pytest.mark.mujoco
 class TestMujocoCameraLifecycle:
     def test_start_no_engine_raises(self):
@@ -248,7 +245,6 @@ class TestMujocoCameraLifecycle:
         assert cam._depth_frame == "wrist_camera_depth_frame"
         assert cam._depth_optical_frame == "wrist_camera_depth_optical_frame"
         cam.stop()
-
 
 
 @pytest.mark.mujoco

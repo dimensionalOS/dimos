@@ -70,6 +70,7 @@ class _CameraRendererState:
     interval: float
     last_render_time: float = 0.0
 
+
 _engine_registry: dict[str, MujocoEngine] = {}
 _engine_registry_lock = threading.Lock()
 
