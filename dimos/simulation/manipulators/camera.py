@@ -246,7 +246,11 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
 
         # Wait for engine to connect (adapter may not have started yet)
         deadline = time.monotonic() + 30.0
-        while not self._stop_event.is_set() and self._engine is not None and not self._engine.connected:
+        while (
+            not self._stop_event.is_set()
+            and self._engine is not None
+            and not self._engine.connected
+        ):
             if time.monotonic() > deadline:
                 logger.error("MujocoCamera: timed out waiting for engine to connect")
                 return
