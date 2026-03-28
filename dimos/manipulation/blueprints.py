@@ -560,6 +560,13 @@ xarm_perception_sim = autoconnect(
 )
 
 
+xarm_perception_sim_agent = autoconnect(
+    xarm_perception_sim,
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
+)
+
+
 __all__ = [
     "PIPER_GRIPPER_COLLISION_EXCLUSIONS",
     "XARM_GRIPPER_COLLISION_EXCLUSIONS",
@@ -570,4 +577,5 @@ __all__ = [
     "xarm_perception",
     "xarm_perception_agent",
     "xarm_perception_sim",
+    "xarm_perception_sim_agent",
 ]
