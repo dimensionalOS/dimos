@@ -82,10 +82,6 @@ def camera_with_mock_engine(mock_engine: MagicMock):
     cam.stop()
 
 
-# ---------------------------------------------------------------------------
-# 1. Engine Registry
-# ---------------------------------------------------------------------------
-
 
 @pytest.mark.mujoco
 class TestEngineRegistry:
@@ -167,10 +163,6 @@ class TestEngineRegistry:
                 p.stop()
 
 
-# ---------------------------------------------------------------------------
-# 2. Camera Intrinsics
-# ---------------------------------------------------------------------------
-
 
 @pytest.mark.mujoco
 class TestCameraIntrinsics:
@@ -217,10 +209,6 @@ class TestCameraIntrinsics:
         assert info.frame_id == "wrist_camera_color_optical_frame"
 
 
-# ---------------------------------------------------------------------------
-# 3. Camera Lifecycle
-# ---------------------------------------------------------------------------
-
 
 @pytest.mark.mujoco
 class TestMujocoCameraLifecycle:
@@ -261,10 +249,6 @@ class TestMujocoCameraLifecycle:
         assert cam._depth_optical_frame == "wrist_camera_depth_optical_frame"
         cam.stop()
 
-
-# ---------------------------------------------------------------------------
-# 4. TF Publishing
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.mujoco

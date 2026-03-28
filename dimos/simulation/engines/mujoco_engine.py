@@ -70,11 +70,6 @@ class _CameraRendererState:
     interval: float
     last_render_time: float = 0.0
 
-
-# ---------------------------------------------------------------------------
-# Engine registry — allows adapter and camera to share the same engine instance
-# by MJCF path.
-# ---------------------------------------------------------------------------
 _engine_registry: dict[str, MujocoEngine] = {}
 _engine_registry_lock = threading.Lock()
 
