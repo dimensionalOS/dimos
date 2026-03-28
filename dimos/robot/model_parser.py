@@ -16,9 +16,9 @@
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 from dimos.utils.logging_config import setup_logger
 
@@ -58,6 +58,7 @@ class ModelDescription:
             if j.name == name:
                 return j
         return None
+
 
 logger = setup_logger()
 
@@ -99,8 +100,7 @@ def _expand_xacro(
         import xacro  # type: ignore[import-not-found,import-untyped]
     except ImportError:
         raise ImportError(
-            "xacro is required for processing .xacro files. "
-            "Install with: pip install xacro"
+            "xacro is required for processing .xacro files. Install with: pip install xacro"
         )
 
     from xacro import substitution_args

@@ -38,6 +38,7 @@ class GripperConfig(BaseModel):
     open_position: float = 1.0
     close_position: float = 0.0
 
+
 if TYPE_CHECKING:
     from dimos.control.components import HardwareComponent
     from dimos.control.coordinator import TaskConfig
@@ -165,7 +166,7 @@ class RobotConfig(BaseModel):
 
     # -- Converter methods ----------------------------------------------------
 
-    def to_robot_model_config(self) -> "RobotModelConfig":
+    def to_robot_model_config(self) -> RobotModelConfig:
         """Generate RobotModelConfig for ManipulationModule."""
         from dimos.manipulation.planning.spec.config import RobotModelConfig
         from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -203,7 +204,7 @@ class RobotConfig(BaseModel):
             pre_grasp_offset=self.pre_grasp_offset,
         )
 
-    def to_hardware_component(self) -> "HardwareComponent":
+    def to_hardware_component(self) -> HardwareComponent:
         """Generate HardwareComponent for ControlCoordinator."""
         from dimos.control.components import (
             HardwareComponent,
@@ -212,9 +213,7 @@ class RobotConfig(BaseModel):
 
         gripper_joints: list[str] = []
         if self.gripper and self.gripper.joints:
-            gripper_joints = [
-                f"{self.joint_prefix}{j}" for j in self.gripper.joints
-            ]
+            gripper_joints = [f"{self.joint_prefix}{j}" for j in self.gripper.joints]
 
         adapter_kwargs = dict(self.adapter_kwargs)
         if self.home_joints is not None:
@@ -231,7 +230,7 @@ class RobotConfig(BaseModel):
             adapter_kwargs=adapter_kwargs,
         )
 
-    def to_task_config(self) -> "TaskConfig":
+    def to_task_config(self) -> TaskConfig:
         """Generate TaskConfig for ControlCoordinator."""
         from dimos.control.coordinator import TaskConfig
 

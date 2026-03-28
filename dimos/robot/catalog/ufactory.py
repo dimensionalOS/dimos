@@ -19,7 +19,6 @@ from __future__ import annotations
 from typing import Any
 
 from dimos.robot.config import RobotConfig
-from dimos.robot.config import GripperConfig
 from dimos.utils.data import get_data
 
 # XArm gripper collision exclusions (parallel linkage mechanism)
