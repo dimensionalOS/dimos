@@ -129,6 +129,31 @@ class RerunConvertible(Protocol):
 ViewerMode = Literal["native", "web", "connect", "none"]
 
 
+def _hex_to_rgba(hex_color: str) -> int:
+    """Convert '#RRGGBB' to a 0xRRGGBBAA int (fully opaque)."""
+    h = hex_color.lstrip("#")
+    return (int(h, 16) << 8) | 0xFF
+
+
+def _with_graph_tab(bp: Blueprint) -> Blueprint:
+    """Add a Graph tab alongside the existing viewer layout without changing it."""
+    import rerun.blueprint as rrb
+
+    # Keep the original root container as-is, just add GraphView as a sibling tab.
+    root = bp.root_container
+    if root is None:
+        return bp
+    return rrb.Blueprint(  # type: ignore[no-any-return]
+        rrb.Tabs(
+            root,
+            rrb.GraphView(origin="blueprint", name="Graph"),
+        ),
+        auto_layout=bp.auto_layout,
+        auto_views=bp.auto_views,
+        collapse_panels=bp.collapse_panels,
+    )
+
+
 def _default_blueprint() -> Blueprint:
     """Default blueprint with black background and raised grid."""
     import rerun as rr
@@ -314,7 +339,7 @@ class RerunBridgeModule(Module[Config]):
         # "none" - just init, no viewer (connect externally)
 
         if self.config.blueprint:
-            rr.send_blueprint(self.config.blueprint())
+            rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
 
         # Start pubsubs and subscribe to all messages
         for pubsub in self.config.pubsubs:
@@ -341,6 +366,84 @@ class RerunBridgeModule(Module[Config]):
                     rr.log(entity_path, archetype, static=True)
             else:
                 rr.log(entity_path, data, static=True)
+
+    @rpc
+    def log_blueprint_graph(self, dot_code: str, module_names: list[str]) -> None:
+        """Log a blueprint module graph from a Graphviz DOT string.
+
+        Runs ``dot -Tplain`` to compute positions, then logs
+        ``rr.GraphNodes`` + ``rr.GraphEdges`` to the active recording.
+
+        Args:
+            dot_code: The DOT-format graph (from ``introspection.blueprint.dot.render``).
+            module_names: List of module class names (to distinguish modules from channels).
+        """
+        import subprocess
+
+        import rerun as rr
+
+        from dimos.core.introspection.utils import (
+            GROUP_COLORS,
+            TYPE_COLORS,
+            color_for_string,
+        )
+
+        # Run graphviz to get node positions
+        result = subprocess.run(
+            ["dot", "-Tplain"], input=dot_code, text=True, capture_output=True
+        )
+        if result.returncode != 0:
+            logger.warning("graphviz failed, skipping blueprint graph", stderr=result.stderr)
+            return
+
+        # Parse plain-text output
+        node_ids: list[str] = []
+        node_labels: list[str] = []
+        node_colors: list[int] = []
+        positions: list[tuple[float, float]] = []
+        radii: list[float] = []
+        edges: list[tuple[str, str]] = []
+        module_set = set(module_names)
+
+        for line in result.stdout.splitlines():
+            if line.startswith("node "):
+                parts = line.split()
+                node_id = parts[1].strip('"')
+                x = float(parts[2]) * 100
+                y = -float(parts[3]) * 100  # flip Y
+                label = parts[6].strip('"')
+
+                node_ids.append(node_id)
+                node_labels.append(label)
+                positions.append((x, y))
+
+                if node_id in module_set:
+                    node_colors.append(_hex_to_rgba(color_for_string(GROUP_COLORS, label)))
+                    radii.append(30.0)
+                else:
+                    node_colors.append(_hex_to_rgba(color_for_string(TYPE_COLORS, label)))
+                    radii.append(20.0)
+
+            elif line.startswith("edge "):
+                parts = line.split()
+                edges.append((parts[1].strip('"'), parts[2].strip('"')))
+
+        if not node_ids:
+            return
+
+        rr.log(
+            "blueprint",
+            rr.GraphNodes(
+                node_ids=node_ids,
+                labels=node_labels,
+                colors=node_colors,
+                positions=positions,
+                radii=radii,
+                show_labels=True,
+            ),
+            rr.GraphEdges(edges=edges, graph_type="directed"),
+            static=True,
+        )
 
     @rpc
     def stop(self) -> None:
