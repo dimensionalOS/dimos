@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from dimos.robot.config import RobotConfig
-from dimos.utils.data import get_data
+from dimos.utils.data import LfsPath
 
 # Panda gripper collision exclusions (parallel jaw gripper)
 PANDA_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
@@ -47,7 +47,7 @@ def panda(
     """
     defaults: dict[str, Any] = {
         "name": name,
-        "model_path": get_data("panda_description") / "urdf/panda.urdf",
+        "model_path": LfsPath("panda_description") / "urdf/panda.urdf",
         "end_effector_link": "link7",
         "adapter_type": adapter_type,
         "address": address,

@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from dimos.robot.config import RobotConfig
-from dimos.utils.data import get_data
+from dimos.utils.data import LfsPath
 
 # XArm gripper collision exclusions (parallel linkage mechanism)
 # The gripper uses mimic joints where non-adjacent links can overlap legitimately
@@ -67,7 +67,7 @@ def xarm7(
 
     defaults: dict[str, Any] = {
         "name": name,
-        "model_path": get_data("xarm_description") / "urdf/xarm_device.urdf.xacro",
+        "model_path": LfsPath("xarm_description") / "urdf/xarm_device.urdf.xacro",
         "end_effector_link": "link_tcp" if add_gripper else "link7",
         "adapter_type": adapter_type,
         "address": address,
@@ -75,7 +75,7 @@ def xarm7(
         "base_link": "link_base",
         "home_joints": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         "base_pose": [0, y_offset, z_offset, 0, 0, 0, 1],
-        "package_paths": {"xarm_description": get_data("xarm_description")},
+        "package_paths": {"xarm_description": LfsPath("xarm_description")},
         "xacro_args": xacro_args,
         "auto_convert_meshes": True,
         "collision_exclusion_pairs": XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
@@ -105,7 +105,7 @@ def xarm6(
 
     defaults: dict[str, Any] = {
         "name": name,
-        "model_path": get_data("xarm_description") / "urdf/xarm_device.urdf.xacro",
+        "model_path": LfsPath("xarm_description") / "urdf/xarm_device.urdf.xacro",
         "end_effector_link": "link_tcp" if add_gripper else "link6",
         "adapter_type": adapter_type,
         "address": address,
@@ -113,7 +113,7 @@ def xarm6(
         "base_link": "link_base",
         "home_joints": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         "base_pose": [0, y_offset, 0, 0, 0, 0, 1],
-        "package_paths": {"xarm_description": get_data("xarm_description")},
+        "package_paths": {"xarm_description": LfsPath("xarm_description")},
         "xacro_args": xacro_args,
         "auto_convert_meshes": True,
         "collision_exclusion_pairs": XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],

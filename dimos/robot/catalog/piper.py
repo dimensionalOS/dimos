@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from dimos.robot.config import RobotConfig
-from dimos.utils.data import get_data
+from dimos.utils.data import LfsPath
 
 # Piper gripper collision exclusions (parallel jaw gripper)
 # The gripper fingers (link7, link8) can touch each other and gripper_base
@@ -53,7 +53,7 @@ def piper(
     """
     defaults: dict[str, Any] = {
         "name": name,
-        "model_path": get_data("piper_description") / "urdf/piper_description.xacro",
+        "model_path": LfsPath("piper_description") / "urdf/piper_description.xacro",
         "end_effector_link": "gripper_base",
         "adapter_type": adapter_type,
         "address": address,
@@ -61,7 +61,7 @@ def piper(
         "base_link": "arm_base",
         "home_joints": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         "base_pose": [0, y_offset, 0, 0, 0, 0, 1],
-        "package_paths": {"piper_description": get_data("piper_description")},
+        "package_paths": {"piper_description": LfsPath("piper_description")},
         "xacro_args": {},
         "auto_convert_meshes": True,
         "collision_exclusion_pairs": PIPER_GRIPPER_COLLISION_EXCLUSIONS,
