@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Prompts that are safe to call in modules (despite potentially no stdin, or poentially a TUI that eats/controls the stdin)
+Prompts that are safe to call in modules (despite potentially no stdin, or potentially a TUI that eats/controls the stdin)
 """
 
 from __future__ import annotations
