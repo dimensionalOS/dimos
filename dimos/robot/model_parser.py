@@ -16,9 +16,9 @@
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+import threading
 import xml.etree.ElementTree as ET
 
 from dimos.utils.logging_config import setup_logger
@@ -177,7 +177,9 @@ def _parse_urdf_string(xml_string: str) -> ModelDescription:
     if len(non_child_links) == 1:
         root_link = non_child_links[0]
     elif len(non_child_links) > 1:
-        logger.warning("Multiple root candidates: %s; using %s", non_child_links, non_child_links[0])
+        logger.warning(
+            "Multiple root candidates: %s; using %s", non_child_links, non_child_links[0]
+        )
         root_link = non_child_links[0]
     else:
         root_link = ""
