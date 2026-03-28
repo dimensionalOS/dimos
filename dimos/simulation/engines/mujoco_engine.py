@@ -117,6 +117,12 @@ def unregister_engine(engine: MujocoEngine) -> None:
             del _engine_registry[k]
 
 
+def _clear_registry() -> None:
+    """Clear the engine registry (for test teardown only)."""
+    with _engine_registry_lock:
+        _engine_registry.clear()
+
+
 class MujocoEngine(SimulationEngine):
     """
     MuJoCo simulation engine.
