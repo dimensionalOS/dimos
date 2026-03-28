@@ -230,7 +230,7 @@ def _make_xarm7_config(
         gripper_hardware_id=gripper_hardware_id,
         tf_extra_links=tf_extra_links or [],
         pre_grasp_offset=pre_grasp_offset,
-        home_joints=home_joints or [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        home_joints=home_joints or [0.0] * 7,
     )
 
 
@@ -506,9 +506,7 @@ xarm_perception_agent = autoconnect(
 )
 
 
-# ---------------------------------------------------------------------------
 # Sim perception: MuJoCo camera replaces RealSense for sim-based pick-and-place
-# ---------------------------------------------------------------------------
 # Both the sim adapter and camera resolve the same MujocoEngine via the registry
 # (keyed by MJCF path), so they share physics state.
 # The engine is created lazily when the adapter connects / camera starts.
@@ -528,7 +526,6 @@ xarm_perception_sim = autoconnect(
                 gripper_hardware_id="arm",
                 tf_extra_links=["link7"],
                 pre_grasp_offset=0.05,
-                # Observation pose: arm raised, camera above table looking down
                 home_joints=[0.0, -0.3, 0.0, 1.0, 0.0, 0.5, 0.0],
             ),
         ],

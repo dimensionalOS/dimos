@@ -197,10 +197,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
                 "MujocoCamera: set address (MJCF path) in config or call set_engine()"
             )
 
-        logger.info(
-            f"MujocoCamera: engine resolved, connected={self._engine.connected}, "
-            f"cameras={[c.name for c in self._engine._camera_configs]}"
-        )
+        logger.info(f"MujocoCamera: engine resolved, connected={self._engine.connected}")
 
         self._build_camera_info()
 

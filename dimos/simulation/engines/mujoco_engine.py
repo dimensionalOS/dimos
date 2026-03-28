@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -31,8 +32,6 @@ from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from dimos.msgs.sensor_msgs.JointState import JointState
 
 logger = setup_logger()
@@ -90,21 +89,25 @@ def get_or_create_engine(
     If an engine already exists for the resolved path and *cameras* are supplied,
     any **new** camera configs are appended (idempotent by name).
     """
-    from pathlib import Path
-
-    key = str(Path(config_path).resolve())
+    key = str(config_path.resolve())
     with _engine_registry_lock:
         if key in _engine_registry:
             engine = _engine_registry[key]
-            # Merge new camera configs (by name)
+            if engine._headless != headless:
+                logger.warning(
+                    f"get_or_create_engine: ignoring headless={headless} — "
+                    f"existing engine for '{key}' was created with headless={engine._headless}"
+                )
+            # Merge new camera configs (by name), guarded against sim-thread iteration
             if cameras:
-                existing_names = {c.name for c in engine._camera_configs}
-                for cam in cameras:
-                    if cam.name not in existing_names:
-                        engine._camera_configs.append(cam)
+                with engine._camera_lock:
+                    existing_names = {c.name for c in engine._camera_configs}
+                    for cam in cameras:
+                        if cam.name not in existing_names:
+                            engine._camera_configs.append(cam)
             return engine
 
-        engine = MujocoEngine(config_path=Path(config_path), headless=headless, cameras=cameras)
+        engine = MujocoEngine(config_path=config_path, headless=headless, cameras=cameras)
         _engine_registry[key] = engine
         return engine
 
@@ -277,7 +280,9 @@ class MujocoEngine(SimulationEngine):
 
         Must be called from the sim thread (MuJoCo thread-safety).
         """
-        for cfg in self._camera_configs:
+        with self._camera_lock:
+            configs_snapshot = list(self._camera_configs)
+        for cfg in configs_snapshot:
             if cfg.name in cam_renderers:
                 continue
             cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, cfg.name)
