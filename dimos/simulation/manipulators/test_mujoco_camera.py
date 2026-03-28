@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+import threading
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -65,6 +66,7 @@ def _make_mock_engine(fovy: float = 45.0) -> MagicMock:
     mock_engine.get_camera_fovy.return_value = fovy
     mock_engine.connected = True
     mock_engine._camera_configs = []
+    mock_engine._camera_lock = threading.Lock()
     mock_engine.read_camera.return_value = _make_camera_frame()
     return mock_engine
 
