@@ -16,7 +16,7 @@
 
 from __future__ import annotations
 
-import dataclasses
+from dataclasses import dataclass
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-@dataclasses.dataclass
+@dataclass
 class CameraConfig:
     """Configuration for a camera to be rendered inside the sim loop."""
 
@@ -48,7 +48,7 @@ class CameraConfig:
     fps: float = 15.0
 
 
-@dataclasses.dataclass
+@dataclass
 class CameraFrame:
     """Thread-safe container for a rendered camera frame."""
 
@@ -60,7 +60,7 @@ class CameraFrame:
     timestamp: float
 
 
-@dataclasses.dataclass
+@dataclass
 class _CameraRendererState:
     """Mutable state for a single camera renderer (sim-thread only)."""
 
