@@ -167,7 +167,6 @@ class TestEngineRegistry:
                 p.stop()
 
 
-
 # ---------------------------------------------------------------------------
 # 2. Camera Intrinsics
 # ---------------------------------------------------------------------------
@@ -261,7 +260,6 @@ class TestMujocoCameraLifecycle:
         assert cam._depth_frame == "wrist_camera_depth_frame"
         assert cam._depth_optical_frame == "wrist_camera_depth_optical_frame"
         cam.stop()
-
 
 
 # ---------------------------------------------------------------------------
