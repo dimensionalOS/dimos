@@ -138,6 +138,7 @@ all_modules = {
     "mock-b1-connection-module": "dimos.robot.unitree.b1.connection",
     "module-a": "dimos.robot.unitree.demo_error_on_name_conflicts",
     "module-b": "dimos.robot.unitree.demo_error_on_name_conflicts",
+    "mujoco-camera": "dimos.simulation.manipulators.camera",
     "navigation-module": "dimos.robot.unitree.rosnav",
     "navigation-skill-container": "dimos.agents.skills.navigation",
     "object-db-module": "dimos.perception.detection.moduleDB",

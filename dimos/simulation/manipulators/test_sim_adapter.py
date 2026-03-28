@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 
 from dimos.hardware.manipulators.sim.adapter import SimMujocoAdapter, register
+from dimos.simulation.engines.mujoco_engine import _clear_registry
 from dimos.simulation.utils.xml_parser import JointMapping
 
 ARM_DOF = 7
@@ -98,6 +99,12 @@ def _patch_mujoco_engine(n_joints: int):
 
 class TestSimMujocoAdapter:
     """Tests for SimMujocoAdapter with and without gripper."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_engine_registry(self):
+        _clear_registry()
+        yield
+        _clear_registry()
 
     @pytest.fixture
     def adapter_with_gripper(self):
