@@ -46,7 +46,6 @@ def piper(
 
     Args:
         name: Robot identifier.
-        joint_prefix: Prefix for coordinator joint namespace.
         adapter_type: Hardware adapter ("mock", "piper").
         address: CAN port (e.g., "can0").
         y_offset: Y-axis offset for base pose (multi-arm setups).

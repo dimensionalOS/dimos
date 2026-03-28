@@ -41,7 +41,6 @@ def panda(
 
     Args:
         name: Robot identifier (must contain 'panda' for VAMP auto-detection).
-        joint_prefix: Prefix for coordinator joint namespace.
         adapter_type: Hardware adapter ("mock").
         address: Connection address.
         **overrides: Override any RobotConfig field.
