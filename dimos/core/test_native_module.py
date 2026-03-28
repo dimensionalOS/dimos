@@ -111,6 +111,9 @@ def test_process_crash_triggers_stop() -> None:
     # after the watchdog-triggered stop(). Without this, monitor_threads catches them.
     time.sleep(0.5)
 
+    # Ensure all threads (LCM transport, event loop) are cleaned up
+    mod.stop()
+
 
 @pytest.mark.slow
 def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:

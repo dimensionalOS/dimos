@@ -445,7 +445,7 @@ class RealSenseCamera(DepthCameraHardware, Module[RealSenseCameraConfig], percep
 
 
 def main() -> None:
-    dimos = ModuleCoordinator(n=2)
+    dimos = ModuleCoordinator()
     dimos.start()
 
     camera = dimos.deploy(RealSenseCamera, enable_pointcloud=True, pointcloud_fps=5.0)  # type: ignore[type-var]

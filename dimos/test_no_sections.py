@@ -58,7 +58,7 @@ IGNORED_DIRS = {
 # Each entry is (relative_path, line_substring) — if both match, the line is skipped.
 WHITELIST = [
     # Sentinel marker used at runtime to detect already-converted Dockerfiles
-    ("dimos/core/docker_build.py", "DIMOS_SENTINEL"),
+    ("dimos/core/docker_module.py", "DIMOS_SENTINEL"),
 ]
 
 
