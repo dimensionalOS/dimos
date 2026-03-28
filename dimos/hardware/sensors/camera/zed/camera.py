@@ -491,7 +491,7 @@ class ZEDCamera(DepthCameraHardware, Module[ZEDCameraConfig], perception.DepthCa
 
 
 def main() -> None:
-    dimos = ModuleCoordinator(n=2)
+    dimos = ModuleCoordinator()
     dimos.start()
 
     camera = dimos.deploy(ZEDCamera, enable_pointcloud=True, pointcloud_fps=5.0)  # type: ignore[type-var]

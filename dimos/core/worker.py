@@ -215,25 +215,27 @@ class Worker:
             "module_class": module_class,
             "kwargs": kwargs,
         }
-        with self._lock:
-            self._conn.send(request)
-            response = self._conn.recv()
+        try:
+            with self._lock:
+                self._conn.send(request)
+                response = self._conn.recv()
 
-        if response.get("error"):
-            raise RuntimeError(f"Failed to deploy module: {response['error']}")
+            if response.get("error"):
+                raise RuntimeError(f"Failed to deploy module: {response['error']}")
 
-        actor = Actor(self._conn, module_class, self._worker_id, module_id, self._lock)
-        actor.set_ref(actor).result()
+            actor = Actor(self._conn, module_class, self._worker_id, module_id, self._lock)
+            actor.set_ref(actor).result()
 
-        self._modules[module_id] = actor
-        self._reserved = max(0, self._reserved - 1)
-        logger.info(
-            "Deployed module.",
-            module=module_class.__name__,
-            worker_id=self._worker_id,
-            module_id=module_id,
-        )
-        return actor
+            self._modules[module_id] = actor
+            logger.info(
+                "Deployed module.",
+                module=module_class.__name__,
+                worker_id=self._worker_id,
+                module_id=module_id,
+            )
+            return actor
+        finally:
+            self._reserved = max(0, self._reserved - 1)
 
     def suppress_console(self) -> None:
         if self._conn is None:
