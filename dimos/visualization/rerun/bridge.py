@@ -139,10 +139,7 @@ def _with_graph_tab(bp: Blueprint) -> Blueprint:
     """Add a Graph tab alongside the existing viewer layout without changing it."""
     import rerun.blueprint as rrb
 
-    # Keep the original root container as-is, just add GraphView as a sibling tab.
     root = bp.root_container
-    if root is None:
-        return bp
     return rrb.Blueprint(  # type: ignore[no-any-return]
         rrb.Tabs(
             root,
@@ -382,19 +379,10 @@ class RerunBridgeModule(Module[Config]):
 
         import rerun as rr
 
-        from dimos.core.introspection.utils import (
-            GROUP_COLORS,
-            TYPE_COLORS,
-            color_for_string,
-        )
-
-        # Run graphviz to get node positions
         result = subprocess.run(["dot", "-Tplain"], input=dot_code, text=True, capture_output=True)
         if result.returncode != 0:
-            logger.warning("graphviz failed, skipping blueprint graph", stderr=result.stderr)
             return
 
-        # Parse plain-text output
         node_ids: list[str] = []
         node_labels: list[str] = []
         node_colors: list[int] = []
@@ -408,19 +396,15 @@ class RerunBridgeModule(Module[Config]):
                 parts = line.split()
                 node_id = parts[1].strip('"')
                 x = float(parts[2]) * 100
-                y = -float(parts[3]) * 100  # flip Y
+                y = -float(parts[3]) * 100
                 label = parts[6].strip('"')
+                color = parts[9]
 
                 node_ids.append(node_id)
                 node_labels.append(label)
                 positions.append((x, y))
-
-                if node_id in module_set:
-                    node_colors.append(_hex_to_rgba(color_for_string(GROUP_COLORS, label)))
-                    radii.append(30.0)
-                else:
-                    node_colors.append(_hex_to_rgba(color_for_string(TYPE_COLORS, label)))
-                    radii.append(20.0)
+                node_colors.append(_hex_to_rgba(color))
+                radii.append(30.0 if node_id in module_set else 20.0)
 
             elif line.startswith("edge "):
                 parts = line.split()
