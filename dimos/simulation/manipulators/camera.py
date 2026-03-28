@@ -104,7 +104,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
         self._engine: MujocoEngine | None = None
-        self._running = False
+        self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._camera_info_base: CameraInfo | None = None
 
@@ -204,7 +204,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
 
         self._build_camera_info()
 
-        self._running = True
+        self._stop_event.clear()
         self._thread = threading.Thread(target=self._publish_loop, daemon=True)
         self._thread.start()
 
@@ -229,7 +229,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
 
     @rpc
     def stop(self) -> None:
-        self._running = False
+        self._stop_event.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
             self._thread = None
@@ -245,19 +245,23 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
         logger.info(f"MujocoCamera publish loop started (camera={self.config.camera_name})")
 
         # Wait for engine to connect (adapter may not have started yet)
-        while self._running and self._engine is not None and not self._engine.connected:
-            time.sleep(0.1)
+        deadline = time.monotonic() + 30.0
+        while not self._stop_event.is_set() and self._engine is not None and not self._engine.connected:
+            if time.monotonic() > deadline:
+                logger.error("MujocoCamera: timed out waiting for engine to connect")
+                return
+            self._stop_event.wait(timeout=0.1)
 
-        if not self._running:
+        if self._stop_event.is_set():
             return
 
         logger.info("MujocoCamera: engine connected, polling for frames")
 
-        while self._running and self._engine is not None:
+        while not self._stop_event.is_set() and self._engine is not None:
             try:
                 frame = self._engine.read_camera(self.config.camera_name)
                 if frame is None or frame.timestamp <= last_timestamp:
-                    time.sleep(interval * 0.5)
+                    self._stop_event.wait(timeout=interval * 0.5)
                     continue
 
                 last_timestamp = frame.timestamp
