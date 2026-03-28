@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -62,6 +63,8 @@ class ModelDescription:
 
 logger = setup_logger()
 
+_xacro_patch_lock = threading.Lock()
+
 
 def parse_model(
     path: Path | str,
@@ -105,21 +108,22 @@ def _expand_xacro(
 
     from xacro import substitution_args
 
-    original_find = substitution_args._find
+    with _xacro_patch_lock:
+        original_find = substitution_args._find
 
-    def custom_find(resolved: str, a: str, args: list[str], context: dict[str, str]) -> str:
-        pkg_name = args[0] if args else ""
-        if pkg_name in package_paths:
-            pkg_path = str(Path(package_paths[pkg_name]).resolve())
-            return resolved.replace(f"$({a})", pkg_path)
-        return str(original_find(resolved, a, args, context))
+        def custom_find(resolved: str, a: str, args: list[str], context: dict[str, str]) -> str:
+            pkg_name = args[0] if args else ""
+            if pkg_name in package_paths:
+                pkg_path = str(Path(package_paths[pkg_name]).resolve())
+                return resolved.replace(f"$({a})", pkg_path)
+            return str(original_find(resolved, a, args, context))
 
-    substitution_args._find = custom_find
-    try:
-        doc = xacro.process_file(str(path), mappings=xacro_args)
-        return str(doc.toprettyxml(indent="  "))
-    finally:
-        substitution_args._find = original_find
+        substitution_args._find = custom_find
+        try:
+            doc = xacro.process_file(str(path), mappings=xacro_args)
+            return str(doc.toprettyxml(indent="  "))
+        finally:
+            substitution_args._find = original_find
 
 
 def _parse_urdf_string(xml_string: str) -> ModelDescription:
@@ -169,11 +173,14 @@ def _parse_urdf_string(xml_string: str) -> ModelDescription:
         )
 
     # Root link = parent that is never a child
-    root_link = ""
-    for link_name in links:
-        if link_name not in child_links:
-            root_link = link_name
-            break
+    non_child_links = [l for l in links if l not in child_links]
+    if len(non_child_links) == 1:
+        root_link = non_child_links[0]
+    elif len(non_child_links) > 1:
+        logger.warning("Multiple root candidates: %s; using %s", non_child_links, non_child_links[0])
+        root_link = non_child_links[0]
+    else:
+        root_link = ""
 
     return ModelDescription(joints=joints, root_link=root_link, links=links)
 
