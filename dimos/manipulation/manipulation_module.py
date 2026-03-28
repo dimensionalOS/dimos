@@ -471,6 +471,14 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         if start is None:
             return self._fail("No joint state")
 
+        # Trim goal to planner DOF (e.g. strip gripper joint from coordinator state)
+        planner_dof = len(start.position)
+        if len(goal.position) > planner_dof:
+            goal = JointState(
+                name=list(goal.name[:planner_dof]) if goal.name else [],
+                position=list(goal.position[:planner_dof]),
+            )
+
         result = self._planner.plan_joint_path(
             world=self._world_monitor.world,
             robot_id=robot_id,

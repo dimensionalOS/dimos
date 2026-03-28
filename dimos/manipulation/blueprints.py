@@ -526,7 +526,7 @@ xarm_perception_sim = autoconnect(
                 gripper_hardware_id="arm",
                 tf_extra_links=["link7"],
                 pre_grasp_offset=0.05,
-                home_joints=[0.0, -0.3, 0.0, 1.0, 0.0, 0.5, 0.0],
+                home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0],
             ),
         ],
         planning_timeout=10.0,
