@@ -69,7 +69,7 @@ class RobotConfig(BaseModel):
 
     # Multi-robot / coordinator
     joint_prefix: str | None = None  # defaults to "{name}_"
-    base_pose: list[float] = Field(default_factory=lambda: [0, 0, 0, 0, 0, 0, 1])
+    base_pose: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
 
     # Planning
     max_velocity: float = 1.0
