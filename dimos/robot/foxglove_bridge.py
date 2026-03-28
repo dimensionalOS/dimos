@@ -66,7 +66,7 @@ class FoxgloveBridge(Module[FoxgloveConfig]):
                         handler.setLevel(logging.ERROR)
 
                 bridge = LCMFoxgloveBridge(
-                    host="0.0.0.0",
+                    host="127.0.0.1",
                     port=8765,
                     debug=False,
                     num_threads=4,
