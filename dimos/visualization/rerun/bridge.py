@@ -389,9 +389,7 @@ class RerunBridgeModule(Module[Config]):
         )
 
         # Run graphviz to get node positions
-        result = subprocess.run(
-            ["dot", "-Tplain"], input=dot_code, text=True, capture_output=True
-        )
+        result = subprocess.run(["dot", "-Tplain"], input=dot_code, text=True, capture_output=True)
         if result.returncode != 0:
             logger.warning("graphviz failed, skipping blueprint graph", stderr=result.stderr)
             return
