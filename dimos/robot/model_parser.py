@@ -16,9 +16,9 @@
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+import threading
 import xml.etree.ElementTree as ET
 
 from dimos.utils.logging_config import setup_logger
