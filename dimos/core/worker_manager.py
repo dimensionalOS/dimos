@@ -15,24 +15,31 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.rpc_client import RPCClient
 from dimos.core.worker import Worker
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.safe_thread_map import safe_thread_map
+
+if TYPE_CHECKING:
+    from dimos.core.resource_monitor.monitor import StatsMonitor
 
 logger = setup_logger()
 
 
 class WorkerManager:
-    def __init__(self, n_workers: int = 2) -> None:
-        self._n_workers = n_workers
+    deployment_identifier: str = "python"
+
+    def __init__(self, g: GlobalConfig) -> None:
+        self._cfg = g
+        self._n_workers = g.n_workers
         self._workers: list[Worker] = []
         self._closed = False
         self._started = False
+        self._stats_monitor: StatsMonitor | None = None
 
     def start(self) -> None:
         if self._started:
@@ -44,6 +51,12 @@ class WorkerManager:
             self._workers.append(worker)
         logger.info("Worker pool started.", n_workers=self._n_workers)
 
+        if self._cfg.dtop:
+            from dimos.core.resource_monitor.monitor import StatsMonitor
+
+            self._stats_monitor = StatsMonitor(self)
+            self._stats_monitor.start()
+
     def _select_worker(self) -> Worker:
         return min(self._workers, key=lambda w: w.module_count)
 
@@ -53,7 +66,6 @@ class WorkerManager:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
 
-        # Auto-start for backward compatibility
         if not self._started:
             self.start()
 
@@ -65,7 +77,10 @@ class WorkerManager:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
 
-        # Auto-start for backward compatibility
+        module_specs = list(module_specs)
+        if len(module_specs) == 0:
+            return []
+
         if not self._started:
             self.start()
 
@@ -78,20 +93,27 @@ class WorkerManager:
             worker.reserve_slot()
             assignments.append((worker, module_class, global_config, kwargs))
 
-        def _deploy(
-            item: tuple[Worker, type[ModuleBase], GlobalConfig, dict[str, Any]],
-        ) -> RPCClient:
-            worker, module_class, global_config, kwargs = item
-            actor = worker.deploy_module(module_class, global_config=global_config, kwargs=kwargs)
-            return RPCClient(actor, module_class)
+        try:
+            # item: (worker, module_class, global_config, kwargs)
+            return safe_thread_map(
+                assignments,
+                lambda item: RPCClient(item[0].deploy_module(item[1], item[2], item[3]), item[1]),
+            )
+        except:
+            self.stop()
+            raise
 
-        with ThreadPoolExecutor(max_workers=len(assignments)) as pool:
-            results = list(pool.map(_deploy, assignments))
-
-        return results
+    def health_check(self) -> bool:
+        if len(self._workers) == 0:
+            logger.error("health_check: no workers found")
+            return False
+        for w in self._workers:
+            if w.pid is None:
+                logger.error("health_check: worker died", worker_id=w.worker_id)
+                return False
+        return True
 
     def suppress_console(self) -> None:
-        """Tell all workers to redirect stdout/stderr to /dev/null."""
         for worker in self._workers:
             worker.suppress_console()
 
@@ -99,10 +121,14 @@ class WorkerManager:
     def workers(self) -> list[Worker]:
         return list(self._workers)
 
-    def close_all(self) -> None:
+    def stop(self) -> None:
         if self._closed:
             return
         self._closed = True
+
+        if self._stats_monitor is not None:
+            self._stats_monitor.stop()
+            self._stats_monitor = None
 
         logger.info("Shutting down all workers...")
 

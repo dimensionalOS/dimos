@@ -158,50 +158,41 @@ class TestPortConflicts:
 from dimos.core.module_coordinator import ModuleCoordinator
 
 
-def _mock_worker(pid: int | None = 1234, worker_id: int = 0):
-    """Create a mock Worker with a controllable pid."""
-    w = mock.MagicMock()
-    w.worker_id = worker_id
-    w.pid = pid
-    return w
-
-
-def _mock_coordinator(workers: list | None = None) -> ModuleCoordinator:
-    """Create a ModuleCoordinator with mocked internals and controllable workers."""
+def _mock_coordinator(manager_health: list[bool] | None = None) -> ModuleCoordinator:
+    """Create a ModuleCoordinator with mocked managers and controllable health."""
     coord = mock.MagicMock(spec=ModuleCoordinator)
     # Bind the real health_check method so it runs actual logic
     coord.health_check = ModuleCoordinator.health_check.__get__(coord)
-    if workers is not None:
-        coord.workers = workers
-        coord.n_workers = len(workers)
+    if manager_health is not None:
+        managers: dict[str, mock.MagicMock] = {}
+        for i, healthy in enumerate(manager_health):
+            m = mock.MagicMock()
+            m.health_check.return_value = healthy
+            managers[str(i)] = m
+        coord._managers = managers
     else:
-        coord.workers = []
-        coord.n_workers = 0
+        coord._managers = {}
     return coord
 
 
 class TestHealthCheck:
-    """health_check verifies all workers are alive after synchronous build."""
+    """health_check delegates to managers and returns all() of their results."""
 
     def test_all_healthy(self):
-        workers = [_mock_worker(pid=os.getpid(), worker_id=i) for i in range(3)]
-        coord = _mock_coordinator(workers)
+        coord = _mock_coordinator([True, True])
         assert coord.health_check() is True
 
-    def test_dead_worker(self):
-        dead = _mock_worker(pid=None, worker_id=0)
-        coord = _mock_coordinator([dead])
+    def test_one_unhealthy(self):
+        coord = _mock_coordinator([True, False])
         assert coord.health_check() is False
 
-    def test_no_workers(self):
-        coord = _mock_coordinator(workers=[])
-        assert coord.health_check() is False
+    def test_no_managers(self):
+        coord = _mock_coordinator([])
+        # all([]) is True — no managers means nothing to fail
+        assert coord.health_check() is True
 
-    def test_partial_death(self):
-        w1 = _mock_worker(pid=os.getpid(), worker_id=0)
-        w2 = _mock_worker(pid=os.getpid(), worker_id=1)
-        w3 = _mock_worker(pid=None, worker_id=2)
-        coord = _mock_coordinator([w1, w2, w3])
+    def test_all_unhealthy(self):
+        coord = _mock_coordinator([False, False])
         assert coord.health_check() is False
 
 

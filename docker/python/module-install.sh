@@ -66,7 +66,7 @@ cat > /dimos/entrypoint.sh <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 export PYTHONPATH="/dimos/source:/dimos/third_party:\${PYTHONPATH:-}"
-exec ${PYTHON} -m dimos.core.docker_runner run "\$@"
+exec ${PYTHON} -m dimos.core.docker_module run "\$@"
 EOF
 
 chmod +x /dimos/entrypoint.sh
