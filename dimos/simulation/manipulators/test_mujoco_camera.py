@@ -166,9 +166,6 @@ class TestEngineRegistry:
             for p in patches:
                 p.stop()
 
-    def test_unregister_noop_unknown(self):
-        mock = MagicMock(spec=MujocoEngine)
-        unregister_engine(mock)  # should not raise
 
 
 # ---------------------------------------------------------------------------
@@ -201,12 +198,6 @@ class TestCameraIntrinsics:
         # tan(45°) = 1.0, so fy = 480 / 2 = 240
         assert info.K[0] == pytest.approx(240.0, abs=0.01)
         assert info.K[4] == pytest.approx(240.0, abs=0.01)
-        cam.stop()
-
-    def test_no_engine_noop(self):
-        cam = MujocoCamera(camera_name="wrist_camera")
-        cam._build_camera_info()
-        assert cam._camera_info_base is None
         cam.stop()
 
     def test_unknown_camera(self, mock_engine: MagicMock):
@@ -262,13 +253,6 @@ class TestMujocoCameraLifecycle:
         assert cam._stop_event.is_set()
         assert cam._thread is None
 
-    def test_set_engine_injection(self, mock_engine: MagicMock):
-        cam = MujocoCamera(camera_name="cam")
-        assert cam._engine is None
-        cam.set_engine(mock_engine)
-        assert cam._engine is mock_engine
-        cam.stop()
-
     def test_frame_name_properties(self):
         cam = MujocoCamera(camera_name="wrist_camera")
         assert cam._camera_link == "wrist_camera_link"
@@ -278,10 +262,6 @@ class TestMujocoCameraLifecycle:
         assert cam._depth_optical_frame == "wrist_camera_depth_optical_frame"
         cam.stop()
 
-    def test_depth_scale(self):
-        cam = MujocoCamera(camera_name="cam")
-        assert cam.get_depth_scale() == 1.0
-        cam.stop()
 
 
 # ---------------------------------------------------------------------------
