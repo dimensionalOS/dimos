@@ -16,6 +16,7 @@ from langchain_core.messages import HumanMessage
 import pytest
 
 from dimos.agents.skills.gps_nav_skill import GpsNavSkillContainer
+from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.mapping.models import LatLon
@@ -27,6 +28,12 @@ class FakeGPS(Module):
     gps_location: Out[LatLon]
 
 
+class StubWebsocketVis(Module):
+    @rpc
+    def set_gps_travel_goal_points(self, points: list[LatLon]) -> None:
+        pass
+
+
 class MockedGpsNavSkill(GpsNavSkillContainer):
     _latest_location = LatLon(lat=37.782654, lon=-122.413273)
     _started = True
@@ -36,7 +43,11 @@ class MockedGpsNavSkill(GpsNavSkillContainer):
 @pytest.mark.slow
 def test_set_gps_travel_points(agent_setup) -> None:
     history = agent_setup(
-        blueprints=[FakeGPS.blueprint(), MockedGpsNavSkill.blueprint()],
+        blueprints=[
+            FakeGPS.blueprint(),
+            MockedGpsNavSkill.blueprint(),
+            StubWebsocketVis.blueprint(),
+        ],
         messages=[
             HumanMessage(
                 'Set GPS travel points to [{"lat": 37.782654, "lon": -122.413273}]. '
@@ -51,7 +62,11 @@ def test_set_gps_travel_points(agent_setup) -> None:
 @pytest.mark.slow
 def test_set_gps_travel_points_multiple(agent_setup) -> None:
     history = agent_setup(
-        blueprints=[FakeGPS.blueprint(), MockedGpsNavSkill.blueprint()],
+        blueprints=[
+            FakeGPS.blueprint(),
+            MockedGpsNavSkill.blueprint(),
+            StubWebsocketVis.blueprint(),
+        ],
         messages=[
             HumanMessage(
                 "Set GPS travel points to these locations in order: "
