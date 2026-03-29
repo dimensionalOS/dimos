@@ -138,18 +138,14 @@ def _process_xacro(
 ) -> str:
     """Process xacro file to URDF."""
     try:
-        import xacro  # type: ignore[import-not-found,import-untyped]
+        from dimos.utils.ament_prefix import process_xacro
     except ImportError:
         raise ImportError(
             "xacro is required for processing .xacro files. "
             "Install the manipulation extra: pip install dimos[manipulation]"
         )
 
-    from dimos.utils.ament_prefix import ensure_ament_packages
-
-    ensure_ament_packages(package_paths)
-    doc = xacro.process_file(str(xacro_path), mappings=xacro_args)
-    return str(doc.toprettyxml(indent="  "))
+    return process_xacro(xacro_path, package_paths, xacro_args)
 
 
 def _strip_transmission_blocks(urdf_content: str) -> str:

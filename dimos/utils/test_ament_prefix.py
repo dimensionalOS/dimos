@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the fake ament prefix utility."""
+"""Tests for the xacro package resolution utility."""
 
 from __future__ import annotations
 
@@ -22,24 +22,22 @@ from pathlib import Path
 import pytest
 
 from dimos.utils import ament_prefix
-from dimos.utils.ament_prefix import ensure_ament_packages
+from dimos.utils.ament_prefix import ensure_ament_packages, process_xacro
+
+_needs_ament = pytest.mark.skipif(
+    not ament_prefix._has_ament, reason="ament_index_python not installed"
+)
 
 
 @pytest.fixture(autouse=True)
 def _isolate_ament_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Reset module state and use a temp prefix dir for each test."""
-    monkeypatch.setattr(ament_prefix, "_prefix_dir", None)
-    monkeypatch.setattr(ament_prefix, "_registered", {})
-    # Use a unique temp dir per test so tests don't interfere
-    monkeypatch.setattr(
-        ament_prefix,
-        "_get_prefix_dir",
-        lambda: tmp_path / "dimos_ament_prefix",
-    )
-    # Clear AMENT_PREFIX_PATH so tests start clean
+    """Reset module state for each test."""
+    monkeypatch.setattr(ament_prefix, "_prefix_dir", tmp_path / "dimos_ament_prefix")
+    monkeypatch.setattr(ament_prefix, "_ament_registered", {})
     monkeypatch.delenv("AMENT_PREFIX_PATH", raising=False)
 
 
+@_needs_ament
 def test_creates_directory_structure(tmp_path: Path) -> None:
     pkg_dir = tmp_path / "my_robot_description"
     pkg_dir.mkdir()
@@ -55,16 +53,18 @@ def test_creates_directory_structure(tmp_path: Path) -> None:
     assert share_link.resolve() == pkg_dir.resolve()
 
 
+@_needs_ament
 def test_sets_ament_prefix_path(tmp_path: Path) -> None:
     pkg_dir = tmp_path / "pkg"
     pkg_dir.mkdir()
 
     ensure_ament_packages({"pkg": pkg_dir})
 
-    prefix = tmp_path / "dimos_ament_prefix"
-    assert str(prefix) in os.environ["AMENT_PREFIX_PATH"]
+    prefix_str = str(tmp_path / "dimos_ament_prefix")
+    assert prefix_str in os.environ.get("AMENT_PREFIX_PATH", "")
 
 
+@_needs_ament
 def test_idempotent(tmp_path: Path) -> None:
     pkg_dir = tmp_path / "pkg"
     pkg_dir.mkdir()
@@ -72,12 +72,12 @@ def test_idempotent(tmp_path: Path) -> None:
     ensure_ament_packages({"pkg": pkg_dir})
     ensure_ament_packages({"pkg": pkg_dir})
 
-    # AMENT_PREFIX_PATH should not have duplicates
     paths = os.environ["AMENT_PREFIX_PATH"].split(os.pathsep)
     prefix_str = str(tmp_path / "dimos_ament_prefix")
     assert paths.count(prefix_str) == 1
 
 
+@_needs_ament
 def test_updates_symlink_on_target_change(tmp_path: Path) -> None:
     old_dir = tmp_path / "old"
     old_dir.mkdir()
@@ -85,8 +85,7 @@ def test_updates_symlink_on_target_change(tmp_path: Path) -> None:
     new_dir.mkdir()
 
     ensure_ament_packages({"pkg": old_dir})
-    # Force re-registration by clearing internal cache
-    ament_prefix._registered.clear()
+    ament_prefix._ament_registered.clear()
     ensure_ament_packages({"pkg": new_dir})
 
     prefix = tmp_path / "dimos_ament_prefix"
@@ -96,9 +95,10 @@ def test_updates_symlink_on_target_change(tmp_path: Path) -> None:
 
 def test_empty_dict_is_noop() -> None:
     ensure_ament_packages({})
-    assert "AMENT_PREFIX_PATH" not in os.environ or os.environ.get("AMENT_PREFIX_PATH") == ""
+    assert not os.environ.get("AMENT_PREFIX_PATH")
 
 
+@_needs_ament
 def test_preserves_existing_ament_prefix_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -112,10 +112,10 @@ def test_preserves_existing_ament_prefix_path(
     assert "/opt/ros/humble" in paths
     prefix_str = str(tmp_path / "dimos_ament_prefix")
     assert prefix_str in paths
-    # Our prefix should come first
     assert paths.index(prefix_str) < paths.index("/opt/ros/humble")
 
 
+@_needs_ament
 def test_ament_index_resolves(tmp_path: Path) -> None:
     """Verify ament_index_python can find the package after setup."""
     pkg_dir = tmp_path / "test_pkg_data"
@@ -127,3 +127,18 @@ def test_ament_index_resolves(tmp_path: Path) -> None:
 
     resolved = get_package_share_directory("test_pkg_data")
     assert Path(resolved).resolve() == pkg_dir.resolve()
+
+
+def test_process_xacro_with_simple_file(tmp_path: Path) -> None:
+    """Test process_xacro works with a minimal xacro file (no $(find))."""
+    xacro_file = tmp_path / "test.urdf.xacro"
+    xacro_file.write_text(
+        '<?xml version="1.0"?>\n'
+        '<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="test">\n'
+        '  <link name="base_link"/>\n'
+        "</robot>\n"
+    )
+
+    result = process_xacro(xacro_file, {}, {})
+    assert "<robot" in result
+    assert "base_link" in result
