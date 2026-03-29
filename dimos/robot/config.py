@@ -22,7 +22,7 @@ automatically. Generates RobotModelConfig, HardwareComponent, and TaskConfig.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr, model_validator
 
@@ -39,10 +39,12 @@ class GripperConfig(BaseModel):
     close_position: float = 0.0
 
 
-if TYPE_CHECKING:
-    from dimos.control.components import HardwareComponent
-    from dimos.control.coordinator import TaskConfig
-    from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.control.components import HardwareComponent, HardwareType
+from dimos.control.coordinator import TaskConfig
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 class RobotConfig(BaseModel):
@@ -168,11 +170,6 @@ class RobotConfig(BaseModel):
 
     def to_robot_model_config(self) -> RobotModelConfig:
         """Generate RobotModelConfig for ManipulationModule."""
-        from dimos.manipulation.planning.spec.config import RobotModelConfig
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
         bp = self.base_pose
         base_pose = PoseStamped(
             position=Vector3(x=bp[0], y=bp[1], z=bp[2]),
@@ -206,11 +203,6 @@ class RobotConfig(BaseModel):
 
     def to_hardware_component(self) -> HardwareComponent:
         """Generate HardwareComponent for ControlCoordinator."""
-        from dimos.control.components import (
-            HardwareComponent,
-            HardwareType,
-        )
-
         gripper_joints: list[str] = []
         if self.gripper and self.gripper.joints:
             gripper_joints = [f"{self.joint_prefix}{j}" for j in self.gripper.joints]
@@ -232,8 +224,6 @@ class RobotConfig(BaseModel):
 
     def to_task_config(self) -> TaskConfig:
         """Generate TaskConfig for ControlCoordinator."""
-        from dimos.control.coordinator import TaskConfig
-
         return TaskConfig(
             name=self.coordinator_task_name,
             type=self.task_type,

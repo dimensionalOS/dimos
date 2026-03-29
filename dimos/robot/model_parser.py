@@ -23,6 +23,10 @@ import xml.etree.ElementTree as ET
 
 from dimos.utils.logging_config import setup_logger
 
+logger = setup_logger()
+
+_xacro_patch_lock = threading.Lock()
+
 
 @dataclass(frozen=True)
 class JointDescription:
@@ -59,11 +63,6 @@ class ModelDescription:
             if j.name == name:
                 return j
         return None
-
-
-logger = setup_logger()
-
-_xacro_patch_lock = threading.Lock()
 
 
 def parse_model(
