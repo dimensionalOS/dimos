@@ -50,7 +50,7 @@ def _add_disposable(composite: CompositeDisposable, item: Disposable | Any) -> N
 
 
 class Config(ModuleConfig):
-    connection_string: str = "udp:127.0.0.1:14550"
+    connection_string: str = "udp:0.0.0.0:14550"
     video_port: int = 5600
     outdoor: bool = False
 

@@ -79,7 +79,7 @@ else:
     _vis = autoconnect()
 
 # Determine connection string based on replay flag
-connection_string = "udp:127.0.0.1:14550"
+connection_string = "udp:0.0.0.0:14550"
 video_port = 5600
 if global_config.replay:
     connection_string = "replay"

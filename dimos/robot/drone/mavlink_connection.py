@@ -37,7 +37,7 @@ class MavlinkConnection:
 
     def __init__(
         self,
-        connection_string: str = "udp:127.0.0.1:14550",
+        connection_string: str = "udp:0.0.0.0:14550",
         outdoor: bool = False,
         max_velocity: float = 5.0,
     ) -> None:
