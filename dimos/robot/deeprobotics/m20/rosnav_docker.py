@@ -14,113 +14,42 @@
 # limitations under the License.
 
 """
-M20ROSNavConfig: Docker configuration for running the CMU navigation stack
-(FASTLIO2 + FAR planner + base_autonomy) on a Deep Robotics M20.
+M20 ROSNav configuration.
 
-Extends the base ROSNavConfig with M20-specific overrides:
-- NOS (RK3588, arm64) has no NVIDIA GPU → docker_gpus=None
-- 15GB total RAM but shared with host dimos + bridge → 512m SHM, 1.5g memory limit for nav container
-- DDS domain 0 (matches NOS rsdriver/yesense)
-- No X11, Unity, or simulation assets
-- IPC host for drdds bridge shared memory
+The nav container (dimos-nav) is started independently via deploy.sh start.
+dimos reconnects to the already-running container rather than managing its lifecycle.
 """
 
 from dataclasses import field
-from pathlib import Path
 
 from dimos.navigation.rosnav.rosnav_module import ROSNav, ROSNavConfig
 
 
 class M20ROSNavConfig(ROSNavConfig):
-    # --- Docker image ---
+    """M20 nav config — reconnects to pre-started container (no build/pull)."""
+
+    # Container is started by deploy.sh, not by dimos
     docker_image: str = "ghcr.io/aphexcx/m20-nav:latest"
     docker_container_name: str = "dimos-nav"
+    docker_file: None = None  # Don't try to build
+    docker_reconnect_container: bool = True  # Reconnect to existing container
 
-    # --- NOS hardware constraints ---
-    docker_gpus: str | None = None  # RK3588 has no NVIDIA GPU
-    docker_shm_size: str = "1g"  # NOS has 15GB but shared with host dimos (was 8g for G1)
+    # NOS constraints
+    docker_gpus: str | None = None
     docker_privileged: bool = False
-    docker_startup_timeout: float = 180.0
-
     docker_extra_args: list[str] = field(
-        default_factory=lambda: [
-            "--memory=1.5g",  # Fail predictably before OOM-killing host
-            "--cap-add=NET_ADMIN",
-            "--ipc=host",  # Required for drdds bridge POSIX SHM
-        ]
+        default_factory=lambda: ["--ipc=host"]
     )
 
-    docker_env: dict[str, str] = field(
-        default_factory=lambda: {
-            "ROS_DISTRO": "humble",
-            "ROS_DOMAIN_ID": "0",  # Match NOS rsdriver (not 42 like G1)
-            "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
-            "FASTRTPS_DEFAULT_PROFILES_FILE": "/ros2_ws/config/fastdds.xml",
-            "LOCALIZATION_METHOD": "arise_slam",
-        }
-    )
-
-    docker_volumes: list[tuple[str, str, str]] = field(default_factory=list)
-    docker_devices: list[str] = field(default_factory=list)
-
-    # --- M20 navigation settings ---
-    mode: str = "hardware"
+    # M20 navigation settings
     localization_method: str = "arise_slam"
-    robot_config_path: str = "deeprobotics/m20"
+    mode: str = "hardware"
     vehicle_height: float = 0.47  # 47cm lidar height in agile stance
     use_rviz: bool = False
 
-    def model_post_init(self, __context: object) -> None:
-        # Skip ROSNavConfig.model_post_init — it adds G1-specific volumes
-        # (X11, Unity, Unitree hardware env vars). We set M20-specific ones here.
-
-        self.docker_env["MODE"] = self.mode
-        self.docker_env["LOCALIZATION_METHOD"] = self.localization_method
-        self.docker_env["ROBOT_CONFIG_PATH"] = self.robot_config_path
-        self.docker_env["VEHICLE_HEIGHT"] = str(self.vehicle_height)
-        self.docker_env["USE_RVIZ"] = "true" if self.use_rviz else "false"
-
-        repo_root = Path(__file__).parents[3]
-        m20_docker_dir = Path(__file__).parent / "docker"
-
-        arise_share = "/ros2_ws/install/arise_slam_mid360/share/arise_slam_mid360"
-        planner_share = "/ros2_ws/install/local_planner/share/local_planner"
-
-        # Minimal NOS volumes — no X11, no Unity sim assets
-        self.docker_volumes = [
-            # Live dimos source so the module is always up-to-date
-            (str(repo_root), "/workspace/dimos", "rw"),
-            # M20-specific DDS config (large SHM segments for bridge)
-            # Note: fastdds.xml and entrypoint are baked into the M20 nav image
-            # (Dockerfile.nav). These mounts are kept for dev overrides only.
-            (
-                str(m20_docker_dir / "fastdds_m20.xml"),
-                "/ros2_ws/config/fastdds.xml",
-                "ro",
-            ),
-            # ARISE SLAM M20 config (overrides default livox_mid360.yaml)
-            (
-                str(m20_docker_dir / "arise_slam_m20.yaml"),
-                f"{arise_share}/config/livox_mid360.yaml",
-                "ro",
-            ),
-            # Patched ARISE launch with longer lifecycle timers for ARM64
-            (
-                str(m20_docker_dir / "arize_slam_m20.launch.py"),
-                f"{arise_share}/launch/arize_slam.launch.py",
-                "ro",
-            ),
-            # M20 robot config for local_planner (vehicle dimensions, speeds)
-            (
-                str(m20_docker_dir / "local_planner_m20.yaml"),
-                f"{planner_share}/config/deeprobotics/m20.yaml",
-                "ro",
-            ),
-        ]
-
 
 class M20ROSNav(ROSNav):
-    """ROSNav module with M20-specific Docker configuration."""
+    """ROSNav module that reconnects to the pre-started M20 nav container."""
 
     default_config = M20ROSNavConfig
 

@@ -31,7 +31,7 @@ from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.std_msgs import Bool
 from dimos.robot.deeprobotics.m20.connection import m20_connection
 from dimos.robot.deeprobotics.m20.rosnav_docker import m20_ros_nav
-from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 # NOS-tuned parameters from domain expert (Lesh):
 # - voxel_size=0.05: fine enough for indoor nav (doors ~0.8m wide)
@@ -51,7 +51,7 @@ m20_rosnav = (
             smoothing=5.0,
         )),
         m20_ros_nav(),
-        websocket_vis(),
+        WebsocketVisModule.blueprint(),
     )
     .global_config(
         n_workers=2,
