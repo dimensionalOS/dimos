@@ -106,7 +106,7 @@ def _expand_xacro(
             "Install the manipulation extra: pip install dimos[manipulation]"
         )
 
-    from xacro.substitution_args import commands as _xacro_commands
+    from xacro.substitution_args import commands as _xacro_commands  # type: ignore[import-untyped]
 
     with _xacro_patch_lock:
         # xacro has no public API for custom $(find ...) resolution,
