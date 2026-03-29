@@ -24,7 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, Field, PrivateAttr
 
 from dimos.robot.model_parser import ModelDescription, parse_model
 
@@ -50,8 +50,7 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 class RobotConfig(BaseModel):
     """Unified robot configuration — URDF/MJCF is the ground truth.
 
-    Parsed eagerly at construction time. Joint names, base link, and limits
-    are derived from the model unless explicitly overridden.
+    Model parsing is lazy to avoid LFS downloads at import time.
     """
 
     # Required fields
@@ -97,26 +96,24 @@ class RobotConfig(BaseModel):
     # Collision exclusion pairs (gripper-specific, cannot be parsed from model)
     collision_exclusion_pairs: list[tuple[str, str]] = Field(default_factory=list)
 
-    _parsed: ModelDescription = PrivateAttr()
+    _parsed: ModelDescription | None = PrivateAttr(default=None)
 
-    @model_validator(mode="after")
-    def _parse_model_and_fill_defaults(self) -> RobotConfig:
-        """Parse model file eagerly and fill defaults."""
-        parsed = parse_model(self.model_path, self.package_paths, self.xacro_args)
-        self._parsed = parsed
-
-        if self.joint_prefix is None:
-            self.joint_prefix = f"{self.name}_"
-        if self.joint_names is None:
-            self.joint_names = parsed.actuated_joint_names
-        if self.base_link is None:
-            self.base_link = parsed.root_link
-        if self.home_joints is None:
-            self.home_joints = self._compute_default_home()
-
-        return self
+    def _ensure_parsed(self) -> ModelDescription:
+        """Parse model lazily on first access."""
+        if self._parsed is None:
+            self._parsed = parse_model(self.model_path, self.package_paths, self.xacro_args)
+            if self.joint_prefix is None:
+                self.joint_prefix = f"{self.name}_"
+            if self.joint_names is None:
+                self.joint_names = self._parsed.actuated_joint_names
+            if self.base_link is None:
+                self.base_link = self._parsed.root_link
+            if self.home_joints is None:
+                self.home_joints = self._compute_default_home()
+        return self._parsed
 
     def _compute_default_home(self) -> list[float]:
+        assert self._parsed is not None
         home = []
         for joint_name in self.resolved_joint_names:
             joint = self._parsed.get_joint(joint_name)
@@ -134,15 +131,17 @@ class RobotConfig(BaseModel):
 
     @property
     def model_description(self) -> ModelDescription:
-        return self._parsed
+        return self._ensure_parsed()
 
     @property
     def resolved_joint_names(self) -> list[str]:
+        self._ensure_parsed()
         assert self.joint_names is not None
         return self.joint_names
 
     @property
     def resolved_base_link(self) -> str:
+        self._ensure_parsed()
         assert self.base_link is not None
         return self.base_link
 
