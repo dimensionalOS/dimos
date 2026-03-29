@@ -103,13 +103,16 @@ def _expand_xacro(
         import xacro  # type: ignore[import-not-found,import-untyped]
     except ImportError:
         raise ImportError(
-            "xacro is required for processing .xacro files. Install with: pip install xacro"
+            "xacro is required for processing .xacro files. "
+            "Install the manipulation extra: pip install dimos[manipulation]"
         )
 
-    from xacro import substitution_args
+    from xacro.substitution_args import commands as _xacro_commands
 
     with _xacro_patch_lock:
-        original_find = substitution_args._find
+        # xacro has no public API for custom $(find ...) resolution,
+        # so we temporarily override its command dispatch table.
+        original_find = _xacro_commands["find"]
 
         def custom_find(resolved: str, a: str, args: list[str], context: dict[str, str]) -> str:
             pkg_name = args[0] if args else ""
@@ -118,12 +121,12 @@ def _expand_xacro(
                 return resolved.replace(f"$({a})", pkg_path)
             return str(original_find(resolved, a, args, context))
 
-        substitution_args._find = custom_find
+        _xacro_commands["find"] = custom_find
         try:
             doc = xacro.process_file(str(path), mappings=xacro_args)
             return str(doc.toprettyxml(indent="  "))
         finally:
-            substitution_args._find = original_find
+            _xacro_commands["find"] = original_find
 
 
 def _parse_urdf_string(xml_string: str) -> ModelDescription:
