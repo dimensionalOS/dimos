@@ -40,7 +40,9 @@ _ament_registered: dict[str, Path] = {}
 
 _has_ament: bool
 try:
-    from ament_index_python.packages import get_package_share_directory as _ament_get  # noqa: F401
+    from ament_index_python.packages import (
+        get_package_share_directory as _ament_get,  # type: ignore[import-not-found]  # noqa: F401
+    )
 
     _has_ament = True
 except ImportError:
