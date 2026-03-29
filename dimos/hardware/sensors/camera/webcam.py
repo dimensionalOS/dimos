@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
 from functools import cache
 import threading
 import time
 from typing import Literal
 
 import cv2
+from pydantic import Field
 from reactivex import create
 from reactivex.observable import Observable
 
@@ -28,13 +28,12 @@ from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.reactive import backpressure
 
 
-@dataclass
 class WebcamConfig(CameraConfig):
     camera_index: int = 0  # /dev/videoN
     width: int = 640
     height: int = 480
     fps: float = 15.0
-    camera_info: CameraInfo = field(default_factory=CameraInfo)
+    camera_info: CameraInfo = Field(default_factory=CameraInfo)
     frame_id_prefix: str | None = None
     stereo_slice: Literal["left", "right"] | None = None  # For stereo cameras
 
@@ -167,6 +166,10 @@ class Webcam(CameraHardware[WebcamConfig]):
 
     @property
     def camera_info(self) -> CameraInfo:
-        return self.config.camera_info
+        info = self.config.camera_info
+        if info.width == 0 or info.height == 0:
+            info.width = self.config.width
+            info.height = self.config.height
+        return info
 
     def emit(self, image: Image) -> None: ...
