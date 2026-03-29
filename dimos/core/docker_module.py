@@ -154,9 +154,7 @@ class DockerModuleProxy(ModuleProxyProtocol):
             default_rpc_timeout=self.config.default_rpc_timeout,
         )
         self.rpcs = set(module_class.rpcs.keys())  # type: ignore[attr-defined]
-        self.rpc_calls: list[str] = getattr(module_class, "rpc_calls", [])
         self._unsub_fns: list[Callable[[], None]] = []
-        self._bound_rpc_calls: dict[str, RpcCall] = {}
 
     def build(self) -> None:
         """Build/pull docker image, launch container, wait for RPC readiness.
@@ -217,26 +215,6 @@ class DockerModuleProxy(ModuleProxyProtocol):
             with suppress(Exception):
                 self._cleanup()
             raise
-
-    def get_rpc_method_names(self) -> list[str]:
-        return self.rpc_calls
-
-    def set_rpc_method(self, method: str, callable: RpcCall) -> None:
-        callable.set_rpc(self.rpc)
-        self._bound_rpc_calls[method] = callable
-        # Forward to container — Module.set_rpc_method unpickles the RpcCall
-        # and wires it with the container's own LCMRPC
-        self.rpc.call_sync(
-            f"{self.remote_name}/set_rpc_method",
-            ([method, callable], {}),
-        )
-
-    def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall, ...]:
-        missing = set(methods) - self._bound_rpc_calls.keys()
-        if missing:
-            raise ValueError(f"RPC methods not found: {missing}")
-        calls = tuple(self._bound_rpc_calls[m] for m in methods)
-        return calls[0] if len(calls) == 1 else calls
 
     def start(self) -> None:
         """Invoke the remote module's start() RPC."""
@@ -462,7 +440,7 @@ class DockerModuleProxy(ModuleProxyProtocol):
 
             try:
                 self.rpc.call_sync(
-                    f"{self.remote_name}/get_rpc_method_names",
+                    f"{self.remote_name}/get_skills",
                     ([], {}),
                     rpc_timeout=3.0,  # short timeout for polling readiness
                 )
