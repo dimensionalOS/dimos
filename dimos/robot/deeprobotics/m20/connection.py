@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 """M20 Connection Module for dimos.
 
 Provides the primary interface between dimos and the Deep Robotics M20

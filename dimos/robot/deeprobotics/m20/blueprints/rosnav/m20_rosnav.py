@@ -22,9 +22,9 @@ a Docker container on the NOS; ROSNav bridges DDS topics to dimos transports.
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.mapping.costmapper import cost_mapper
+from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.pointclouds.occupancy import HeightCostConfig
-from dimos.mapping.voxels import voxel_mapper
+from dimos.mapping.voxels import VoxelGridMapper
 from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.nav_msgs import Path
 from dimos.msgs.sensor_msgs import PointCloud2
@@ -42,8 +42,8 @@ from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 m20_rosnav = (
     autoconnect(
         m20_connection(enable_ros=False, enable_lidar=False, lidar_height=0.47),
-        voxel_mapper(voxel_size=0.05, publish_interval=1.0, max_height=0.7),
-        cost_mapper(config=HeightCostConfig(
+        VoxelGridMapper.blueprint(voxel_size=0.05, publish_interval=1.0, max_height=0.7),
+        CostMapper.blueprint(config=HeightCostConfig(
             max_height=0.7,
             resolution=0.05,
             ignore_noise=0.05,
