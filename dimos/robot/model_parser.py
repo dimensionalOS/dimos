@@ -18,14 +18,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-import threading
 import xml.etree.ElementTree as ET
 
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
-
-_xacro_patch_lock = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -106,26 +103,11 @@ def _expand_xacro(
             "Install the manipulation extra: pip install dimos[manipulation]"
         )
 
-    from xacro.substitution_args import commands as _xacro_commands  # type: ignore[import-untyped]
+    from dimos.utils.ament_prefix import ensure_ament_packages
 
-    with _xacro_patch_lock:
-        # xacro has no public API for custom $(find ...) resolution,
-        # so we temporarily override its command dispatch table.
-        original_find = _xacro_commands["find"]
-
-        def custom_find(resolved: str, a: str, args: list[str], context: dict[str, str]) -> str:
-            pkg_name = args[0] if args else ""
-            if pkg_name in package_paths:
-                pkg_path = str(Path(package_paths[pkg_name]).resolve())
-                return resolved.replace(f"$({a})", pkg_path)
-            return str(original_find(resolved, a, args, context))
-
-        _xacro_commands["find"] = custom_find
-        try:
-            doc = xacro.process_file(str(path), mappings=xacro_args)
-            return str(doc.toprettyxml(indent="  "))
-        finally:
-            _xacro_commands["find"] = original_find
+    ensure_ament_packages(package_paths)
+    doc = xacro.process_file(str(path), mappings=xacro_args)
+    return str(doc.toprettyxml(indent="  "))
 
 
 def _parse_urdf_string(xml_string: str) -> ModelDescription:

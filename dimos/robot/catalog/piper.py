@@ -61,7 +61,10 @@ def piper(
         "base_link": "arm_base",
         "home_joints": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         "base_pose": [0, y_offset, 0, 0, 0, 0, 1],
-        "package_paths": {"piper_description": LfsPath("piper_description")},
+        "package_paths": {
+            "piper_description": LfsPath("piper_description"),
+            "piper_gazebo": LfsPath("piper_description"),
+        },
         "xacro_args": {},
         "auto_convert_meshes": True,
         "collision_exclusion_pairs": PIPER_GRIPPER_COLLISION_EXCLUSIONS,
