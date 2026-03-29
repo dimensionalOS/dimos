@@ -513,7 +513,7 @@ class Blueprint:
 
             dot_code = render(self)
             module_names = [bp.module.__name__ for bp in self._active_blueprints]
-            bridge = module_coordinator.get_instance(RerunBridgeModule)
+            bridge = module_coordinator.get_instance(RerunBridgeModule)  # type: ignore[arg-type]
             bridge.log_blueprint_graph(dot_code, module_names)
         except Exception:
             logger.error("Failed to log blueprint graph to Rerun", exc_info=True)

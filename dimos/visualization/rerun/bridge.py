@@ -379,7 +379,12 @@ class RerunBridgeModule(Module[Config]):
 
         import rerun as rr
 
-        result = subprocess.run(["dot", "-Tplain"], input=dot_code, text=True, capture_output=True)
+        try:
+            result = subprocess.run(
+                ["dot", "-Tplain"], input=dot_code, text=True, capture_output=True, timeout=30
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return
         if result.returncode != 0:
             return
 
@@ -398,7 +403,7 @@ class RerunBridgeModule(Module[Config]):
                 x = float(parts[2]) * 100
                 y = -float(parts[3]) * 100
                 label = parts[6].strip('"')
-                color = parts[9]
+                color = parts[9].strip('"')
 
                 node_ids.append(node_id)
                 node_labels.append(label)
