@@ -20,7 +20,7 @@ import operator
 import sys
 import types as types_mod
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin, get_type_hints
 
 if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
@@ -40,6 +40,30 @@ else:
     from typing_extensions import Self
 
 logger = setup_logger()
+
+
+class _DisabledModuleProxy:
+    def __init__(self, spec_name: str) -> None:
+        object.__setattr__(self, "_spec_name", spec_name)
+
+    def __getattr__(self, name: str) -> Any:
+        spec = object.__getattribute__(self, "_spec_name")
+
+        def _noop(*_args: Any, **_kwargs: Any) -> None:
+            logger.warning(
+                "Called on disabled module (no-op)",
+                method=name,
+                spec=spec,
+            )
+            return None
+
+        return _noop
+
+    def __reduce__(self) -> tuple[type, tuple[str]]:
+        return (_DisabledModuleProxy, (self._spec_name,))
+
+    def __repr__(self) -> str:
+        return f"<DisabledModuleProxy spec={self._spec_name}>"
 
 
 @dataclass(frozen=True)
@@ -310,6 +334,9 @@ class Blueprint:
             if is_spec(replacement) or is_module_type(replacement)
         }
 
+        disabled_ref_proxies: dict[tuple[type[ModuleBase], str], _DisabledModuleProxy] = {}
+        disabled_set = set(self.disabled_modules_tuple)
+
         # after this loop we should have an exact module for every module_ref on every blueprint
         for blueprint in self._active_blueprints:
             for each_module_ref in blueprint.module_refs:
@@ -341,6 +368,29 @@ class Blueprint:
                 # none
                 if len(possible_module_candidates) == 0:
                     if each_module_ref.optional:
+                        continue
+                    # Check whether a *disabled* module would have satisfied this ref.
+                    disabled_candidate = next(
+                        (
+                            bp.module
+                            for bp in self.blueprints
+                            if bp.module in disabled_set
+                            and spec_structural_compliance(bp.module, spec)
+                        ),
+                        None,
+                    )
+                    if disabled_candidate is not None:
+                        logger.warning(
+                            "Module ref unsatisfied because provider is disabled; "
+                            "installing no-op proxy",
+                            ref=each_module_ref.name,
+                            consumer=blueprint.module.__name__,
+                            disabled_provider=disabled_candidate.__name__,
+                            spec=each_module_ref.spec.__name__,
+                        )
+                        disabled_ref_proxies[blueprint.module, each_module_ref.name] = (
+                            _DisabledModuleProxy(each_module_ref.spec.__name__)
+                        )
                         continue
                     raise Exception(
                         f"""The {blueprint.module.__name__} has a module reference ({each_module_ref}) which requested a module that fills out the {each_module_ref.spec.__name__} spec. But I couldn't find a module that met that spec.\n"""
@@ -385,6 +435,12 @@ class Blueprint:
             )
             # Ensure the remote module instance can use the module ref inside its own RPC handlers.
             base_module_proxy.set_module_ref(module_ref_name, target_module_proxy)
+
+        # Wire up no-op proxies for refs whose providers were disabled.
+        for (base_module, module_ref_name), proxy in disabled_ref_proxies.items():
+            base_module_proxy = module_coordinator.get_instance(base_module)
+            setattr(base_module_proxy, module_ref_name, proxy)
+            base_module_proxy.set_module_ref(module_ref_name, cast("Any", proxy))
 
     def build(
         self,
