@@ -162,6 +162,27 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
     def get_instance(self, module: type[ModuleBase]) -> ModuleProxy:
         return self._deployed_modules.get(module)  # type: ignore[return-value, no-any-return]
 
+    # ── Python API accessors ──
+
+    def module(self, name: str) -> ModuleProxy:
+        """Get a deployed module by class name.
+
+        Example::
+
+            skills = coordinator.module("UnitreeSkillContainer")
+            skills.relative_move(forward=1.0)
+        """
+        for cls, proxy in self._deployed_modules.items():
+            if cls.__name__ == name:
+                return proxy
+        available = [c.__name__ for c in self._deployed_modules]
+        raise KeyError(f"No module '{name}'. Available: {available}")
+
+    @property
+    def module_names(self) -> list[str]:
+        """List names of all deployed modules."""
+        return [cls.__name__ for cls in self._deployed_modules]
+
     def loop(self) -> None:
         stop = threading.Event()
         try:

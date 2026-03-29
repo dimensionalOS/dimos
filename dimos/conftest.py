@@ -154,10 +154,13 @@ def monitor_threads(request):
             # https://github.com/huggingface/transformers/issues/29513
             "Thread-auto_conversion",
         ]
+        # LCM transport daemon threads persist until process exit
+        expected_persistent_thread_suffixes = ["(_lcm_loop)"]
         new_threads = [
             t
             for t in new_threads
             if not any(t.name.startswith(prefix) for prefix in expected_persistent_thread_prefixes)
+            and not any(t.name.endswith(suffix) for suffix in expected_persistent_thread_suffixes)
         ]
 
         # Filter out threads we've already seen (from previous tests)
