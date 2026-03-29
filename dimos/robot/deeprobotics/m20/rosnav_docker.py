@@ -40,11 +40,14 @@ class M20ROSNavConfig(ROSNavConfig):
     # Don't try to build from Dockerfile — image is pre-built via deploy.sh push
     docker_file: None = None
 
+    # M20 entrypoint starts ros2_pub (drdds bridge) before the base entrypoint
+    docker_entrypoint: str = "/usr/local/bin/m20_entrypoint.sh"
+
     # NOS hardware constraints
     docker_gpus: str | None = None  # RK3588 has no NVIDIA GPU
     docker_shm_size: str = "1g"
     docker_privileged: bool = True  # Required for --ipc host + /dev/shm access
-    docker_startup_timeout: float = 300.0  # ARM64 lifecycle takes longer
+    docker_startup_timeout: float = 600.0  # ARM64: pip install + pybind11 build on first start
 
     docker_extra_args: list[str] = field(
         default_factory=lambda: [
