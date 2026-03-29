@@ -75,7 +75,8 @@ class M20ROSNavConfig(ROSNavConfig):
 
     def model_post_init(self, __context: object) -> None:
         # Minimal volumes — configs are baked into the image via Dockerfile.nav
-        repo_root = Path(__file__).parents[3]
+        # parents: [0]=m20/ [1]=deeprobotics/ [2]=robot/ [3]=dimos/ [4]=repo_root/
+        repo_root = Path(__file__).parents[4]
         self.docker_volumes = [
             # Live dimos source for RPC module + editable install
             (str(repo_root), "/workspace/dimos", "rw"),
