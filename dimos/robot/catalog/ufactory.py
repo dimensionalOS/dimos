@@ -49,6 +49,7 @@ def xarm7(
     adapter_type: str = "mock",
     address: str | None = None,
     add_gripper: bool = False,
+    x_offset: float = 0.0,
     y_offset: float = 0.0,
     z_offset: float = 0.0,
     pitch: float = 0.0,
@@ -59,7 +60,7 @@ def xarm7(
     xacro_args: dict[str, str] = {
         "dof": "7",
         "limited": "true",
-        "attach_xyz": f"0 {y_offset} {z_offset}",
+        "attach_xyz": f"{x_offset} {y_offset} {z_offset}",
         "attach_rpy": f"0 {pitch} 0",
     }
     if add_gripper:
@@ -74,7 +75,7 @@ def xarm7(
         "joint_names": [f"joint{i}" for i in range(1, 8)],
         "base_link": "link_base",
         "home_joints": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        "base_pose": [0, y_offset, z_offset, 0, 0, 0, 1],
+        "base_pose": [x_offset, y_offset, z_offset, 0, 0, 0, 1],
         "package_paths": {"xarm_description": LfsPath("xarm_description")},
         "xacro_args": xacro_args,
         "auto_convert_meshes": True,
@@ -91,14 +92,19 @@ def xarm6(
     adapter_type: str = "mock",
     address: str | None = None,
     add_gripper: bool = True,
+    x_offset: float = 0.0,
     y_offset: float = 0.0,
+    z_offset: float = 0.0,
+    pitch: float = 0.0,
+    tf_extra_links: list[str] | None = None,
     **overrides: Any,
 ) -> RobotConfig:
     """Create an xArm6 robot configuration."""
     xacro_args: dict[str, str] = {
         "dof": "6",
         "limited": "true",
-        "attach_xyz": f"0 {y_offset} 0",
+        "attach_xyz": f"{x_offset} {y_offset} {z_offset}",
+        "attach_rpy": f"0 {pitch} 0",
     }
     if add_gripper:
         xacro_args["add_gripper"] = "true"
@@ -112,11 +118,12 @@ def xarm6(
         "joint_names": [f"joint{i}" for i in range(1, 7)],
         "base_link": "link_base",
         "home_joints": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        "base_pose": [0, y_offset, 0, 0, 0, 0, 1],
+        "base_pose": [x_offset, y_offset, z_offset, 0, 0, 0, 1],
         "package_paths": {"xarm_description": LfsPath("xarm_description")},
         "xacro_args": xacro_args,
         "auto_convert_meshes": True,
         "collision_exclusion_pairs": XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
+        "tf_extra_links": tf_extra_links or [],
     }
     defaults.update(overrides)
     return RobotConfig(**defaults)
