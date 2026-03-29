@@ -26,6 +26,7 @@ from dimos.core.blueprints import (
     ModuleRef,
     StreamRef,
     _BlueprintAtom,
+    _DisabledModuleProxy,
     autoconnect,
 )
 from dimos.core.core import rpc
@@ -476,6 +477,26 @@ def test_disabled_modules_are_skipped_during_build() -> None:
         assert coordinator.get_instance(ModuleB) is not None
 
         assert coordinator.get_instance(ModuleC) is None
+    finally:
+        coordinator.stop()
+
+
+@pytest.mark.slow
+def test_disabled_module_ref_gets_noop_proxy() -> None:
+    blueprint_set = autoconnect(
+        Calculator1.blueprint(),
+        Mod2.blueprint(),
+    ).disabled_modules(Calculator1)
+
+    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
+
+    try:
+        mod2 = coordinator.get_instance(Mod2)
+        assert mod2 is not None
+        # The proxy should be a _DisabledModuleProxy, not a real Calculator.
+        assert isinstance(mod2.calc, _DisabledModuleProxy)
+        # Calling methods on it should return None (no-op).
+        assert mod2.calc.compute1(1, 2) is None
     finally:
         coordinator.stop()
 
