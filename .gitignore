@@ -77,3 +77,6 @@ CLAUDE.MD
 htmlcov/
 .coverage
 .coverage.*
+
+# Created from simulation
+MUJOCO_LOG.TXT

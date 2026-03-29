@@ -42,6 +42,7 @@
           { vals.pkg=pkgs.opensshWithKerberos;flags={}; }
           { vals.pkg=pkgs.unixtools.ifconfig; flags={}; }
           { vals.pkg=pkgs.unixtools.netstat;  flags={}; }
+          { vals.pkg=pkgs.uv;                 flags={}; }
 
           # when pip packages call cc with -I/usr/include, that causes problems on some machines, this swaps that out for the nix cc headers
           # this is only necessary for pip packages from venv, pip packages from nixpkgs.python312Packages.* already have "-I/usr/include" patched with the nix equivalent

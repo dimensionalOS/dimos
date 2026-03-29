@@ -30,6 +30,8 @@ from dimos.core.module import Module, ModuleBase, ModuleSpec, is_module_type
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.record.record_replay import RecordReplay
 from dimos.spec.utils import Spec, is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -471,6 +473,79 @@ class Blueprint:
                     requested_method_name, rpc_methods_dot[requested_method_name]
                 )
 
+    def replay(
+        self,
+        recording: RecordReplay | str,
+        *,
+        speed: float = 1.0,
+        cli_config_overrides: Mapping[str, Any] | None = None,
+    ) -> ModuleCoordinator:
+        """Build the blueprint with a recording providing some module outputs.
+
+        Modules whose OUT streams are fully covered by the recording are
+        disabled — their data comes from the recording instead. All other
+        modules run normally.
+
+        Args:
+            recording: A :class:`RecordReplay` instance, or a str
+                       to a ``.db`` recording file.
+            speed: Playback speed multiplier (1.0 = realtime).
+            cli_config_overrides: Extra global config overrides.
+
+        Returns:
+            The running :class:`ModuleCoordinator`.
+        """
+        if isinstance(recording, str):
+            recording = RecordReplay(recording)
+
+        recorded_streams = set(recording.store.list_streams())
+        if not recorded_streams:
+            raise ValueError("Recording is empty — no streams to replay")
+
+        # Find modules whose OUTs overlap with the recording.
+        # If ANY OUTs are covered, disable the module — the recording
+        # replaces it.  Uncovered OUTs (e.g. on SHM, or never published)
+        # are simply absent during replay; downstream modules that need
+        # them won't receive data, which is the expected degraded mode.
+        modules_to_disable: list[type[ModuleBase]] = []
+        for bp in self.blueprints:
+            out_names = {conn.name for conn in bp.streams if conn.direction == "out"}
+            if not out_names:
+                continue
+            covered = out_names & recorded_streams
+            if covered:
+                modules_to_disable.append(bp.module)
+                uncovered = out_names - covered
+                if uncovered:
+                    logger.warning(
+                        "Replay: disabling %s (partial coverage: replaying %s, missing %s)",
+                        bp.module.__name__,
+                        covered,
+                        uncovered,
+                    )
+                else:
+                    logger.info(
+                        "Replay: disabling %s (all OUTs covered)",
+                        bp.module.__name__,
+                    )
+
+        if not modules_to_disable:
+            logger.warning(
+                "Replay: no modules disabled — recording streams %s "
+                "don't match any module OUT names",
+                recorded_streams,
+            )
+
+        patched = self.disabled_modules(*modules_to_disable)
+        coordinator = patched.build(cli_config_overrides)
+
+        # Start playback in background — publishes to LCM so other modules receive data
+        lcm = LCM()
+        lcm.start()
+        recording.play(pubsub=lcm, speed=speed)
+
+        return coordinator
+
     def build(
         self,
         cli_config_overrides: Mapping[str, Any] | None = None,
@@ -479,6 +554,29 @@ class Blueprint:
         global_config.update(**dict(self.global_config_overrides))
         if cli_config_overrides:
             global_config.update(**dict(cli_config_overrides))
+
+        # Auto-replay if --replay-file is set in global config
+        replay_file = global_config.replay_file
+        if replay_file:
+            logger.info("Auto-replay from %s", replay_file)
+            # Strip replay_file from all override sources so the nested
+            # build() inside replay() does not re-enter this branch.
+            global_config.replay_file = None
+            clean_cli = (
+                {k: v for k, v in cli_config_overrides.items() if k != "replay_file"}
+                if cli_config_overrides
+                else None
+            )
+            clean_bp = replace(
+                self,
+                global_config_overrides=MappingProxyType(
+                    {k: v for k, v in self.global_config_overrides.items() if k != "replay_file"}
+                ),
+            )
+            return clean_bp.replay(
+                replay_file,
+                cli_config_overrides=clean_cli,
+            )
 
         self._run_configurators()
         self._check_requirements()

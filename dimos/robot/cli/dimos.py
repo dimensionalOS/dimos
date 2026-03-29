@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import inspect
 import json
@@ -28,9 +29,21 @@ import requests
 import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
+from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
-from dimos.utils.logging_config import setup_logger
+from dimos.core.run_registry import (
+    LOG_BASE_DIR,
+    RunEntry,
+    check_port_conflicts,
+    cleanup_stale,
+    generate_run_id,
+    get_most_recent,
+    is_pid_alive,
+    stop_entry,
+)
+from dimos.robot.get_all_blueprints import get_by_name, get_module_by_name
+from dimos.utils.cli.recorder.run_recorder import main as recorder_main
+from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler, setup_logger
 
 logger = setup_logger()
 
@@ -108,27 +121,12 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 
 
-@main.command()
-def run(
+async def _run(
     ctx: typer.Context,
     robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
     daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
     disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
 ) -> None:
-    """Start a robot blueprint"""
-    logger.info("Starting DimOS")
-
-    from dimos.core.blueprints import autoconnect
-    from dimos.core.run_registry import (
-        LOG_BASE_DIR,
-        RunEntry,
-        check_port_conflicts,
-        cleanup_stale,
-        generate_run_id,
-    )
-    from dimos.robot.get_all_blueprints import get_by_name, get_module_by_name
-    from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
-
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
@@ -203,7 +201,7 @@ def run(
         )
         entry.save()
         install_signal_handlers(entry, coordinator)
-        coordinator.loop()
+        await coordinator.loop()
     else:
         entry = RunEntry(
             run_id=run_id,
@@ -217,9 +215,21 @@ def run(
         )
         entry.save()
         try:
-            coordinator.loop()
+            await coordinator.loop()
         finally:
             entry.remove()
+
+
+@main.command()
+def run(
+    ctx: typer.Context,
+    robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
+    daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
+    disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+) -> None:
+    """Start a robot blueprint"""
+    logger.info("Starting DimOS")
+    asyncio.run(_run(ctx, robot_types, daemon, disable))
 
 
 @main.command()
@@ -521,6 +531,13 @@ def top(ctx: typer.Context) -> None:
 
     sys.argv = ["dtop", *ctx.args]
     dtop_main()
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def recorder(ctx: typer.Context) -> None:
+    """Record and replay tool — terminal VLC for dimos recordings."""
+    sys.argv = ["recorder", *ctx.args]
+    recorder_main()
 
 
 topic_app = typer.Typer(help="Topic commands for pub/sub")

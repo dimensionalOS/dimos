@@ -440,5 +440,21 @@ class SqliteObservationStore(ObservationStore[T]):
         rows = self._conn.execute(sql, ids).fetchall()
         return [self._row_to_obs(r, has_blob=join) for r in rows]
 
+    def delete_range(self, t1: float, t2: float) -> list[int]:
+        """Delete observations with ts in [t1, t2]. Returns deleted IDs."""
+        with self._lock:
+            rows = self._conn.execute(
+                f'SELECT id FROM "{self._name}" WHERE ts >= ? AND ts <= ?', (t1, t2)
+            ).fetchall()
+            ids = [r[0] for r in rows]
+            if ids:
+                placeholders = ",".join("?" * len(ids))
+                self._conn.execute(f'DELETE FROM "{self._name}" WHERE id IN ({placeholders})', ids)
+                self._conn.execute(
+                    f'DELETE FROM "{self._name}_rtree" WHERE id IN ({placeholders})', ids
+                )
+                self._conn.commit()
+        return ids
+
     def stop(self) -> None:
         super().stop()

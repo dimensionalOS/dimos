@@ -14,8 +14,8 @@
 
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
-import threading
 from typing import TYPE_CHECKING, Any
 
 from dimos.core.global_config import GlobalConfig, global_config
@@ -154,10 +154,10 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
     def get_instance(self, module: type[ModuleBase]) -> ModuleProxy:
         return self._deployed_modules.get(module)  # type: ignore[return-value, no-any-return]
 
-    def loop(self) -> None:
-        stop = threading.Event()
+    async def loop(self) -> None:
+        stop = asyncio.Event()
         try:
-            stop.wait()
+            await stop.wait()
         except KeyboardInterrupt:
             return
         finally:

@@ -335,6 +335,12 @@ class Stream(Resource, Generic[T]):
             on_completed=on_completed,
         )
 
+    def delete_range(self, t1: float, t2: float) -> int:
+        """Delete all observations with timestamps in [t1, t2]. Returns count deleted."""
+        if isinstance(self._source, Stream):
+            raise TypeError("Cannot delete from a transform stream.")
+        return self._source.delete_range(t1, t2)
+
     def append(
         self,
         payload: T,
