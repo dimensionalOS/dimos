@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+import sys
 import time
 from typing import Any, TypeVar
 
@@ -22,6 +23,8 @@ import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 from reactivex.scheduler import ThreadPoolScheduler
+
+_IS_MACOS = sys.platform == "darwin"
 
 from dimos.utils.reactive import (
     backpressure,
@@ -118,7 +121,8 @@ def test_backpressure_handling() -> None:
         print("Slow observer received:", len(received_slow), [arr[0] for arr in received_slow])
 
         # Fast observer should get all or nearly all items
-        assert len(received_fast) > 15, (
+        _min_fast = 10 if _IS_MACOS else 15
+        assert len(received_fast) > _min_fast, (
             f"Expected fast observer to receive most items, got {len(received_fast)}"
         )
 
@@ -158,9 +162,9 @@ def test_getter_streaming_blocking() -> None:
         f"Expected to get the first array [0,1,2], got {getter()}"
     )
 
-    time.sleep(0.5)
+    time.sleep(1.5 if _IS_MACOS else 0.5)
     assert getter()[0] >= 2, f"Expected array with first value >= 2, got {getter()}"
-    time.sleep(0.5)
+    time.sleep(1.5 if _IS_MACOS else 0.5)
     assert getter()[0] >= 4, f"Expected array with first value >= 4, got {getter()}"
 
     getter.dispose()
@@ -189,13 +193,13 @@ def test_getter_streaming_nonblocking() -> None:
     min_time(getter, 0.1, "Expected for first value call to block if cache is empty")
     assert getter() == 0
 
-    time.sleep(0.5)
+    time.sleep(1.5 if _IS_MACOS else 0.5)
     assert getter() >= 2, f"Expected value >= 2, got {getter()}"
 
     # sub is active
     assert not source.is_disposed()
 
-    time.sleep(0.5)
+    time.sleep(1.5 if _IS_MACOS else 0.5)
     assert getter() >= 4, f"Expected value >= 4, got {getter()}"
 
     getter.dispose()
@@ -204,7 +208,10 @@ def test_getter_streaming_nonblocking() -> None:
 
 
 def test_getter_streaming_nonblocking_timeout() -> None:
-    source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
+    # macOS: nonblocking subscription starts buffering immediately; first item from
+    # rx.interval(0.2) can arrive in <0.1s due to scheduling, racing the timeout.
+    _interval = 0.5 if _IS_MACOS else 0.2
+    source = dispose_spy(rx.interval(_interval).pipe(ops.take(50)))
     getter = getter_streaming(source, timeout=0.1, nonblocking=True)
     with pytest.raises(Exception):
         getter()

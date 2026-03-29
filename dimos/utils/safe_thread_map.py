@@ -13,9 +13,10 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 import sys
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import Any, TypeVar
 
 if sys.version_info < (3, 11):
 
@@ -31,9 +32,6 @@ else:
     import builtins
 
     ExceptionGroup = builtins.ExceptionGroup  # type: ignore[misc]
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -56,26 +54,6 @@ def safe_thread_map(
       If *on_errors* returns normally, its return value is returned from
       ``safe_thread_map``. If *on_errors* is ``None``, raises an
       ``ExceptionGroup``.
-
-    Example::
-
-        def start_service(name: str) -> Connection:
-            return connect(name)
-
-        def cleanup(
-            outcomes: list[tuple[str, Connection | Exception]],
-            successes: list[Connection],
-            errors: list[Exception],
-        ) -> None:
-            for conn in successes:
-                conn.close()
-            raise ExceptionGroup("failed to start services", errors)
-
-        connections = safe_thread_map(
-            ["db", "cache", "queue"],
-            start_service,
-            cleanup,  # called only if any start_service() raises
-        )
     """
     if not items:
         return []
@@ -91,8 +69,6 @@ def safe_thread_map(
             except Exception as e:
                 outcomes[idx] = e
 
-    # Note: successes/errors are in completion order, not input order.
-    # This is fine — on_errors only needs them for cleanup, not ordering.
     successes: list[R] = []
     errors: list[Exception] = []
     for v in outcomes.values():

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from dimos.core.core import rpc
-from dimos.core.docker_runner import DockerModuleConfig
+from dimos.core.docker_module import DockerModuleConfig
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseArray import PoseArray

@@ -12,7 +12,7 @@ Human Input ──→ Agent ──→ Skill Calls ──→ Robot
           color_image, odom, spatial_memory
 ```
 
-**Agent** (`dimos/agents/agent.py`) is a `Module` with:
+**McpClient** (`dimos/agents/mcp/mcp_client.py`) is a `Module` with:
 - `human_input: In[str]`: receives text from `humancli`, `WebInput`, or `agent-send`
 - `agent: Out[BaseMessage]`: publishes agent responses (text, tool calls, images)
 - `agent_idle: Out[bool]`: signals when the agent is waiting for input
@@ -61,7 +61,7 @@ class MySkillContainer(Module):
 
 ## MCP
 
-There is also an MCP implementation. It replaces the `Agent` with two modules: `McpServer` and `McpClient`.
+All agentic blueprints use two modules: `McpServer` and `McpClient`.
 
 * `McpServer` exposes the methods annotated with `@skill` as MCP tools. Any external client can connect to the server to use the MCP tools.
 * `McpClient` has a LangGraph LLM which calls MCP tools from `McpServer`.
@@ -88,4 +88,4 @@ dimos mcp status                                    # Server status
 |--------|-------|-------|
 | Default | `gpt-4o` | Best quality, requires `OPENAI_API_KEY` |
 | `ollama:llama3.1` | Local Ollama | Requires `ollama serve` running |
-| Custom | Any LangChain-compatible | Set via `AgentConfig(model="...")` |
+| Custom | Any LangChain-compatible | Set via `McpClient.blueprint(model="...")` |

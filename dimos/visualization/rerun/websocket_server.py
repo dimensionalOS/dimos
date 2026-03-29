@@ -34,6 +34,7 @@ import json
 import threading
 from typing import Any
 
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 import websockets
 
 from dimos.core.core import rpc
@@ -43,8 +44,6 @@ from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
-
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 
 logger = setup_logger()
 

@@ -70,7 +70,7 @@ from dimos_lcm.std_msgs import Bool
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
-from dimos.core.docker_runner import DockerModuleConfig
+from dimos.core.docker_module import DockerModuleConfig
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -493,7 +493,6 @@ class ROSNav(Module, NavigationInterface):
         # FIXME: disabling for now for perf onboard G1 (and cause we don't have an overall map rn)
         # self.rosnav_overall_map.publish(_pc2_from_ros(msg))
         pass
-
 
     def _on_ros_path(self, msg: ROSPath) -> None:
         dimos_path = _path_from_ros(msg)
@@ -1001,7 +1000,9 @@ def _pc2_to_ros(pc2: PointCloud2) -> "ROSPointCloud2":
     Includes a zero-filled ``intensity`` field because the CMU nav stack's
     terrain analysis nodes require it (they filter on ``intensity``).
     """
-    from builtin_interfaces.msg import Time as ROSTime  # type: ignore[attr-defined]
+    from builtin_interfaces.msg import (
+        Time as ROSTime,  # type: ignore[attr-defined,import-not-found]
+    )
     from sensor_msgs.msg import PointField  # type: ignore[attr-defined]
 
     points, _ = pc2.as_numpy()  # (N, 3) float32
@@ -1031,7 +1032,9 @@ def _pc2_to_ros(pc2: PointCloud2) -> "ROSPointCloud2":
 
 def _odometry_to_ros(odom: Odometry) -> "ROSOdometry":
     """Convert a DimOS Odometry to a ROS2 nav_msgs/Odometry."""
-    from builtin_interfaces.msg import Time as ROSTime  # type: ignore[attr-defined]
+    from builtin_interfaces.msg import (
+        Time as ROSTime,  # type: ignore[attr-defined,import-not-found]
+    )
     from geometry_msgs.msg import (  # type: ignore[attr-defined]
         Point as ROSPoint,
         Pose as ROSPose,
@@ -1049,8 +1052,10 @@ def _odometry_to_ros(odom: Odometry) -> "ROSOdometry":
             x=odom.pose.position.x, y=odom.pose.position.y, z=odom.pose.position.z
         ),
         orientation=ROSQuat(  # type: ignore[no-untyped-call]
-            x=odom.pose.orientation.x, y=odom.pose.orientation.y,
-            z=odom.pose.orientation.z, w=odom.pose.orientation.w,
+            x=odom.pose.orientation.x,
+            y=odom.pose.orientation.y,
+            z=odom.pose.orientation.z,
+            w=odom.pose.orientation.w,
         ),
     )
     ros_msg.twist.twist = ROSTwist(  # type: ignore[no-untyped-call]

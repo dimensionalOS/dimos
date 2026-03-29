@@ -19,7 +19,7 @@ Builds the **exact same modules** as the production agentic blueprint —
 ROSNav, NavigationSkillContainer, spatial memory, object tracking,
 perceive loop, person follow, speak, web input — with only two changes:
 
-  1. Agent is replaced by a ``FilteredAgent`` that skips DockerModule
+  1. Agent is replaced by a ``FilteredAgent`` that skips DockerModuleProxy
      proxies in ``on_system_modules`` (they can't survive pickle across
      the forkserver boundary) and uses a ``MockModel`` fixture for
      deterministic, offline-capable LLM responses.
@@ -60,7 +60,7 @@ from dimos.agents.skills.speak_skill import SpeakSkill
 from dimos.agents.web_human_input import WebInput
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
-from dimos.core.docker_runner import DockerModule
+from dimos.core.docker_module import DockerModuleProxy
 from dimos.core.module import Module
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In
@@ -82,9 +82,9 @@ NAV_TIMEOUT_SEC = 180  # Agent → skill → ROS nav → arrival
 
 
 class FilteredAgent(Agent):
-    """Agent that filters DockerModule proxies from on_system_modules.
+    """Agent that filters DockerModuleProxy proxies from on_system_modules.
 
-    DockerModule proxies hold host-process LCMRPC connections that don't
+    DockerModuleProxy proxies hold host-process LCMRPC connections that don't
     survive pickle serialization across the forkserver worker boundary.
     Worker-side modules (NavigationSkillContainer, etc.) discover their
     own skills and connect to Docker RPCs via ``rpc_calls`` — so filtering
@@ -93,7 +93,7 @@ class FilteredAgent(Agent):
 
     @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:
-        worker_modules = [m for m in modules if not isinstance(m, DockerModule)]
+        worker_modules = [m for m in modules if not isinstance(m, DockerModuleProxy)]
         super().on_system_modules(worker_modules)
 
 
@@ -194,7 +194,7 @@ def _build_agentic_sim_test(
     finished_transport.subscribe(lambda _: finished_event.set())
 
     # Build the EXACT same modules as unitree_g1_agentic_sim, but with:
-    #   - FilteredAgent instead of Agent (handles DockerModule pickle issue)
+    #   - FilteredAgent instead of Agent (handles DockerModuleProxy pickle issue)
     #   - model_fixture for deterministic testing
     #   - AgentTestRunner for driving messages
     #   - OdomRecorder for position assertions

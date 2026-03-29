@@ -80,7 +80,7 @@ class UnitreeB1(Robot, Resource):
         self.capabilities = [RobotCapability.LOCOMOTION]
         self.connection = None
         self.joystick = None
-        self._dimos = ModuleCoordinator(n=2)
+        self._dimos = ModuleCoordinator()
 
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")

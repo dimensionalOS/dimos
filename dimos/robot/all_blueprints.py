@@ -85,7 +85,6 @@ all_blueprints = {
     "unitree-go2": "dimos.robot.unitree.go2.blueprints.smart.unitree_go2:unitree_go2",
     "unitree-go2-agentic": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic:unitree_go2_agentic",
     "unitree-go2-agentic-huggingface": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_huggingface:unitree_go2_agentic_huggingface",
-    "unitree-go2-agentic-mcp": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_mcp:unitree_go2_agentic_mcp",
     "unitree-go2-agentic-ollama": "dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic_ollama:unitree_go2_agentic_ollama",
     "unitree-go2-basic": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic:unitree_go2_basic",
     "unitree-go2-coordinator": "dimos.robot.unitree.go2.blueprints.basic.unitree_go2_coordinator:unitree_go2_coordinator",
@@ -107,7 +106,6 @@ all_blueprints = {
 
 
 all_modules = {
-    "agent": "dimos.agents.agent",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions",
     "b-box-navigation-module": "dimos.navigation.bbox_navigation",
     "b1-connection-module": "dimos.robot.unitree.b1.connection",

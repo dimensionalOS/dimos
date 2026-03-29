@@ -40,7 +40,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
-from dimos.core.docker_runner import DockerModuleConfig
+from dimos.core.docker_module import DockerModuleConfig
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 

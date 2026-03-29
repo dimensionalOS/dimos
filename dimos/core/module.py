@@ -140,6 +140,15 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         return base
 
     @rpc
+    def build(self) -> None:
+        """Optional build step for heavy one-time work (docker builds, LFS downloads, etc.).
+
+        Called after deploy and stream wiring but before start().
+        Has a very long timeout (24h) so long-running builds don't fail.
+        Default is a no-op — override in subclasses that need a build step.
+        """
+
+    @rpc
     def start(self) -> None:
         pass
 

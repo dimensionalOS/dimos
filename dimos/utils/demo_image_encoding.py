@@ -97,7 +97,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    dimos = ModuleCoordinator(n=2)
+    dimos = ModuleCoordinator()
     dimos.start()
     emitter = dimos.deploy(EmitterModule)
     receiver = dimos.deploy(ReceiverModule)

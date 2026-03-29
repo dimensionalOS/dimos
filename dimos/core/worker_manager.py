@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from contextlib import suppress
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleBase, ModuleSpec
@@ -25,15 +25,20 @@ from dimos.core.worker import Worker
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import ExceptionGroup, safe_thread_map
 
+if TYPE_CHECKING:
+    from dimos.core.resource_monitor.monitor import StatsMonitor
+
 logger = setup_logger()
 
 
 class WorkerManager:
-    def __init__(self, n_workers: int = 2) -> None:
-        self._n_workers = n_workers
+    def __init__(self, g: GlobalConfig) -> None:
+        self._cfg = g
+        self._n_workers = g.n_workers
         self._workers: list[Worker] = []
         self._closed = False
         self._started = False
+        self._stats_monitor: StatsMonitor | None = None
 
     def start(self) -> None:
         if self._started:
@@ -45,6 +50,12 @@ class WorkerManager:
             self._workers.append(worker)
         logger.info("Worker pool started.", n_workers=self._n_workers)
 
+        if self._cfg.dtop:
+            from dimos.core.resource_monitor.monitor import StatsMonitor
+
+            self._stats_monitor = StatsMonitor(self)
+            self._stats_monitor.start()
+
     def _select_worker(self) -> Worker:
         return min(self._workers, key=lambda w: w.module_count)
 
@@ -54,7 +65,6 @@ class WorkerManager:
         if self._closed:
             raise RuntimeError("WorkerManager is closed")
 
-        # Auto-start for backward compatibility
         if not self._started:
             self.start()
 
@@ -70,7 +80,6 @@ class WorkerManager:
         if len(module_specs) == 0:
             return []
 
-        # Auto-start for backward compatibility
         if not self._started:
             self.start()
 
@@ -93,10 +102,24 @@ class WorkerManager:
 
         return safe_thread_map(
             assignments,
-            # item = [worker, module_class, global_config, kwargs]
             lambda item: RPCClient(item[0].deploy_module(item[1], item[2], item[3]), item[1]),
             _on_errors,
         )
+
+    def should_manage(self, module_class: type) -> bool:
+        """Catch-all — accepts any module not claimed by another manager."""
+        return True
+
+    def health_check(self) -> bool:
+        """Verify all worker processes are alive."""
+        if len(self._workers) == 0:
+            logger.error("health_check: no workers found")
+            return False
+        for w in self._workers:
+            if w.pid is None:
+                logger.error("health_check: worker died", worker_id=w.worker_id)
+                return False
+        return True
 
     def suppress_console(self) -> None:
         """Tell all workers to redirect stdout/stderr to /dev/null."""
@@ -107,10 +130,14 @@ class WorkerManager:
     def workers(self) -> list[Worker]:
         return list(self._workers)
 
-    def close_all(self) -> None:
+    def stop(self) -> None:
         if self._closed:
             return
         self._closed = True
+
+        if self._stats_monitor is not None:
+            self._stats_monitor.stop()
+            self._stats_monitor = None
 
         logger.info("Shutting down all workers...")
 

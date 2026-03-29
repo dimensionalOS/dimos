@@ -264,9 +264,8 @@ class TestViewerBinaryConnectMode:
 
     @pytest.mark.skipif(
         shutil.which("dimos-viewer") is None
-        or "--connect" not in subprocess.run(
-            ["dimos-viewer", "--help"], capture_output=True, text=True
-        ).stdout,
+        or "--connect"
+        not in subprocess.run(["dimos-viewer", "--help"], capture_output=True, text=True).stdout,
         reason="dimos-viewer binary not installed or does not support --connect",
     )
     def test_viewer_ws_client_connects(self) -> None:

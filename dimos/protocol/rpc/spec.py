@@ -34,7 +34,12 @@ class RPCInspectable(Protocol):
 # module.py and other places imports these constants and choose what to give RPCClient
 # the RPCClient below does not use these constants directly (by design)
 DEFAULT_RPC_TIMEOUT: float = 120.0
-DEFAULT_RPC_TIMEOUTS: MappingProxyType[str, float] = MappingProxyType({"start": 1200.0})
+DEFAULT_RPC_TIMEOUTS: MappingProxyType[str, float] = MappingProxyType(
+    {
+        "build": 86400.0,  # 24h — docker builds, LFS downloads, etc.
+        "start": 1200.0,
+    }
+)
 
 
 class RPCClient(Protocol):
@@ -60,14 +65,10 @@ class RPCClient(Protocol):
         self, name: str, arguments: Args, rpc_timeout: float | None = None
     ) -> tuple[Any, Callable[[], None]]:
         if rpc_timeout is None:
-            # Try full topic name first, then bare method name (after last "/").
-            rpc_timeout = self.rpc_timeouts.get(name)
-            if rpc_timeout is None:
-                method = name.rsplit("/", 1)[-1]
-                if method != name:
-                    rpc_timeout = self.rpc_timeouts.get(method, self.default_rpc_timeout)
-                else:
-                    rpc_timeout = self.default_rpc_timeout
+            method = name.rsplit("/", 1)[-1]
+            rpc_timeout = self.rpc_timeouts.get(name) or self.rpc_timeouts.get(
+                method, self.default_rpc_timeout
+            )
         event = threading.Event()
 
         def receive_value(val) -> None:  # type: ignore[no-untyped-def]

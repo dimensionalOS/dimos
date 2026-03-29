@@ -561,7 +561,7 @@ if [ "$#" -gt 0 ]; then
         exit 29
     fi
 
-    exec python -m dimos.core.docker_runner run "$@"
+    exec python -m dimos.core.docker_module run "$@"
 fi
 
 # Otherwise keep container alive with the nav stack process.

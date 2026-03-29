@@ -51,7 +51,6 @@ def vis_module(
     """
     from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
-
     if foxglove_config is None:
         foxglove_config = {}
     if rerun_config is None:

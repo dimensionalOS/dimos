@@ -27,9 +27,9 @@ UnityBridgeModule, which drives the simulated robot.
 from typing import Any
 
 from dimos.core.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels import VoxelGridMapper
-from dimos.core.global_config import global_config
 from dimos.navigation.rosnav.rosnav_module import ROSNav
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.robot.unitree.g1.blueprints.primitive._mapper import _mapper

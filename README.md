@@ -189,7 +189,7 @@ dimos run unitree-go2
 |-------------|-------------|
 | `dimos --replay run unitree-go2` | Quadruped navigation replay — SLAM, costmap, A* planning |
 | `dimos --replay --replay-dir unitree_go2_office_walk2 run unitree-go2-temporal-memory` | Quadruped temporal memory replay |
-| `dimos --simulation run unitree-go2-agentic-mcp` | Quadruped agentic + MCP server in simulation |
+| `dimos --simulation run unitree-go2-agentic` | Quadruped agentic + MCP server in simulation |
 | `dimos --simulation run unitree-g1` | Humanoid in MuJoCo simulation |
 | `dimos --replay run drone-basic` | Drone video + telemetry replay |
 | `dimos --replay run drone-agentic` | Drone + LLM agent with flight skills (replay) |
@@ -204,7 +204,7 @@ dimos run unitree-go2
 The `dimos` CLI manages the full lifecycle — run blueprints, inspect state, interact with agents, and call skills via MCP.
 
 ```bash
-dimos run unitree-go2-agentic-mcp --daemon   # Start in background
+dimos run unitree-go2-agentic --daemon   # Start in background
 dimos status                              # Check what's running
 dimos log -f                              # Follow logs
 dimos agent-send "explore the room"       # Send agent a command
@@ -270,17 +270,19 @@ Blueprints are instructions for how to construct and wire modules. We compose th
 
 Blueprints can be composed, remapped, and have transports overridden if `autoconnect()` fails due to conflicting variable names or `In[]` and `Out[]` message types.
 
-A blueprint example that connects the image stream from a robot to an LLM Agent for reasoning and action execution.
+A blueprint example that connects the image stream from a robot to an MCP-backed LLM agent for reasoning and action execution.
 ```py
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree.go2.connection import go2_connection
-from dimos.agents.agent import agent
+from dimos.agents.mcp.mcp_client import McpClient
+from dimos.agents.mcp.mcp_server import McpServer
 
 blueprint = autoconnect(
     go2_connection(),
-    agent(),
+    McpServer.blueprint(),
+    McpClient.blueprint(),
 ).transports({("color_image", Image): LCMTransport("/color_image", Image)})
 
 # Run the blueprint

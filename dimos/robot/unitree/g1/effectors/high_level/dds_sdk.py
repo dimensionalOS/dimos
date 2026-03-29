@@ -210,12 +210,13 @@ class G1HighLevelDdsSdk(Module, HighLevelG1Spec):
                     except Exception as e:
                         logger.error(f"Auto-stop failed: {e}")
 
+                # Send move command before starting the timeout timer to avoid
+                # a race where the timer fires before the move is sent.
+                self.loco_client.Move(vx, vy, vyaw, continous_move=True)
+
                 self._stop_timer = threading.Timer(self.config.cmd_vel_timeout, auto_stop)
                 self._stop_timer.daemon = True
                 self._stop_timer.start()
-
-                # logger.info(f"Continuous move: vx={vx}, vy={vy}, vyaw={vyaw}")
-                self.loco_client.Move(vx, vy, vyaw, continous_move=True)
 
             return True
         except Exception as e:

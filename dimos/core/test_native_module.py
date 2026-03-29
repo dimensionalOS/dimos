@@ -107,6 +107,10 @@ def test_process_crash_triggers_stop() -> None:
 
     assert mod._process is None, f"Watchdog did not clean up after process {pid} died"
 
+    # Wait for background threads (run_forever, _lcm_loop, _watch_process) to finish
+    # after the watchdog-triggered stop(). Without this, monitor_threads catches them.
+    time.sleep(0.5)
+
     # Ensure all threads (LCM transport, event loop) are cleaned up
     mod.stop()
 

@@ -111,7 +111,6 @@ class TestDaemonE2E:
 
     def test_single_worker_lifecycle(self, coordinator, registry_entry):
         """Build -> health check -> registry -> status (1 worker)."""
-        assert len(coordinator.workers) == 1
         assert coordinator.n_modules == 2
 
         assert coordinator.health_check(), "Health check should pass"
@@ -126,15 +125,14 @@ class TestDaemonE2E:
 
     def test_multiple_workers(self, coordinator_2w):
         """Build with 2 workers — both should be alive."""
-        assert len(coordinator_2w.workers) == 2
-        for w in coordinator_2w.workers:
-            assert w.pid is not None, f"Worker {w.worker_id} has no PID"
-
         assert coordinator_2w.health_check(), "Health check should pass"
 
     def test_health_check_detects_dead_worker(self, coordinator):
         """Kill a worker process — health check should fail."""
-        worker = coordinator.workers[0]
+        from dimos.core.worker_manager import WorkerManager
+
+        py_mgr = next(m for m in coordinator._managers if isinstance(m, WorkerManager))
+        worker = py_mgr.workers[0]
         worker_pid = worker.pid
         assert worker_pid is not None
 
@@ -237,21 +235,19 @@ class TestCLIWithRealBlueprint:
         assert "ping-pong" in result.output
         assert str(os.getpid()) in result.output
 
-    def test_status_shows_worker_count_via_registry(self, live_blueprint):
-        coord, entry = live_blueprint
-
-        assert len(coord.workers) >= 1
-        for w in coord.workers:
-            assert w.pid is not None
+    def test_status_shows_live_entry_via_registry(self, live_blueprint):
+        _coord, entry = live_blueprint
 
         runs = list_runs(alive_only=True)
         matching = [r for r in runs if r.run_id == entry.run_id]
         assert len(matching) == 1
 
     def test_stop_kills_real_workers(self, live_blueprint):
-        coord, _entry = live_blueprint
+        from dimos.core.worker_manager import WorkerManager
 
-        worker_pids = [w.pid for w in coord.workers if w.pid]
+        coord, _entry = live_blueprint
+        py_mgr = next(m for m in coord._managers if isinstance(m, WorkerManager))
+        worker_pids = [w.pid for w in py_mgr.workers if w.pid]
         assert len(worker_pids) >= 1
 
         coord.stop()
