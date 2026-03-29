@@ -202,7 +202,7 @@ class DrakeWorld(WorldSpec):
             self._robot_counter += 1
             robot_id = f"robot_{self._robot_counter}"
 
-            model_instance = self._load_urdf(config)
+            model_instance = self._load_model(config)
             self._weld_base_if_needed(config, model_instance)
             self._validate_joints(config, model_instance)
 
@@ -214,7 +214,7 @@ class DrakeWorld(WorldSpec):
             # Load a second copy of the URDF as the preview (yellow ghost) robot
             preview_model_instance = None
             if self._enable_viz:
-                preview_model_instance = self._load_urdf(config)
+                preview_model_instance = self._load_model(config)
                 self._weld_base_if_needed(config, preview_model_instance)
 
             self._robots[robot_id] = _RobotData(
@@ -230,31 +230,31 @@ class DrakeWorld(WorldSpec):
             logger.info(f"Added robot '{robot_id}' ({config.name})")
             return robot_id
 
-    def _load_urdf(self, config: RobotModelConfig) -> Any:
-        """Load URDF/xacro and return model instance."""
-        original_path = config.urdf_path.resolve()
+    def _load_model(self, config: RobotModelConfig) -> Any:
+        """Load robot model (URDF/xacro/MJCF) and return model instance."""
+        original_path = config.model_path.resolve()
         if not original_path.exists():
-            raise FileNotFoundError(f"URDF/xacro not found: {original_path}")
+            raise FileNotFoundError(f"Robot model not found: {original_path}")
 
-        urdf_path = prepare_urdf_for_drake(
+        prepared_path = prepare_urdf_for_drake(
             urdf_path=original_path,
             package_paths=config.package_paths,
             xacro_args=config.xacro_args,
             convert_meshes=config.auto_convert_meshes,
         )
-        urdf_path_obj = Path(urdf_path)
-        logger.info(f"Using prepared URDF: {urdf_path_obj}")
+        prepared_path_obj = Path(prepared_path)
+        logger.info(f"Using prepared model: {prepared_path_obj}")
 
         # Register package paths
         if config.package_paths:
             for pkg_name, pkg_path in config.package_paths.items():
                 self._parser.package_map().Add(pkg_name, Path(pkg_path))
         else:
-            self._parser.package_map().Add(f"{config.name}_description", urdf_path_obj.parent)
+            self._parser.package_map().Add(f"{config.name}_description", prepared_path_obj.parent)
 
-        model_instances = self._parser.AddModels(urdf_path_obj)
+        model_instances = self._parser.AddModels(prepared_path_obj)
         if not model_instances:
-            raise ValueError(f"Failed to parse URDF: {urdf_path}")
+            raise ValueError(f"Failed to parse model: {prepared_path}")
         return model_instances[0]
 
     def _weld_base_if_needed(self, config: RobotModelConfig, model_instance: Any) -> None:
@@ -531,6 +531,11 @@ class DrakeWorld(WorldSpec):
             for obs_id in obstacle_ids:
                 self.remove_obstacle(obs_id)
 
+    def get_obstacles(self) -> list[Obstacle]:
+        """Get all obstacles currently in the world."""
+        with self._lock:
+            return [data.obstacle for data in self._obstacles.values()]
+
     # Preview Robot Setup
 
     def _set_preview_colors(self) -> None:
@@ -630,6 +635,12 @@ class DrakeWorld(WorldSpec):
             self._scene_graph_context = self._diagram.GetMutableSubsystemContext(
                 self._scene_graph, self._live_context
             )
+
+            # Set home pose for robots that have one configured
+            for robot_data in self._robots.values():
+                if robot_data.config.home_joints is not None:
+                    home = np.array(robot_data.config.home_joints, dtype=np.float64)
+                    self._set_positions_internal(self._plant_context, robot_data.robot_id, home)
 
             self._finalized = True
             logger.info(f"World finalized with {len(self._robots)} robots")

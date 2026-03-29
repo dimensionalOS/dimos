@@ -39,7 +39,7 @@ def robot_config():
     """Create a robot config for testing."""
     return RobotModelConfig(
         name="test_arm",
-        urdf_path=Path("/path/to/robot.urdf"),
+        model_path=Path("/path/to/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         end_effector_link="link_tcp",
@@ -55,7 +55,7 @@ def robot_config_with_mapping():
     """Create a robot config with joint name mapping (dual-arm scenario)."""
     return RobotModelConfig(
         name="left_arm",
-        urdf_path=Path("/path/to/robot.urdf"),
+        model_path=Path("/path/to/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         end_effector_link="link_tcp",
@@ -227,7 +227,7 @@ class TestExecute:
         module = _make_module()
         config_no_task = RobotModelConfig(
             name="arm",
-            urdf_path=Path("/path"),
+            model_path=Path("/path"),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["j1"],
             end_effector_link="ee",

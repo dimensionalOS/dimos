@@ -30,7 +30,7 @@ class RobotModelConfig(ModuleConfig):
 
     Attributes:
         name: Human-readable robot name
-        urdf_path: Path to URDF file (can be .urdf or .xacro)
+        model_path: Path to robot model file (.urdf, .xacro, or .xml/MJCF)
         base_pose: Pose of robot base in world frame (position + orientation)
         joint_names: Ordered list of controlled joint names (in URDF namespace)
         end_effector_link: Name of the end-effector link for FK/IK
@@ -54,7 +54,7 @@ class RobotModelConfig(ModuleConfig):
     """
 
     name: str
-    urdf_path: Path
+    model_path: Path
     base_pose: PoseStamped
     joint_names: list[str]
     end_effector_link: str
