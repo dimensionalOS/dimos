@@ -565,4 +565,6 @@ if [ "$#" -gt 0 ]; then
 fi
 
 # Otherwise keep container alive with the nav stack process.
-wait "$ROS_NAV_PID"
+# ROS_NAV_PID is set by start_ros_nav_stack (sim/hardware-fastlio/bagfile modes).
+# NAV_PID is set by the arise_slam hardware path. ARISE_PID is ARISE SLAM itself.
+wait "${ROS_NAV_PID:-${NAV_PID:-${ARISE_PID:-}}}" 2>/dev/null || wait

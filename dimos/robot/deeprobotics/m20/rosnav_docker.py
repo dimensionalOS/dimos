@@ -14,32 +14,55 @@
 # limitations under the License.
 
 """
-M20 ROSNav configuration.
+M20 ROSNav Docker configuration.
 
-The nav container (dimos-nav) is started independently via deploy.sh start.
-dimos reconnects to the already-running container rather than managing its lifecycle.
+dimos manages the nav container lifecycle via DockerModuleProxy. The container
+runs ARISE SLAM + nav planner (started by the entrypoint) alongside the dimos
+RPC server (started by docker_module run). The M20-specific Dockerfile.nav
+bakes in ros2_pub, configs, and the M20 wrapper entrypoint.
 """
 
+from __future__ import annotations
+
 from dataclasses import field
+from pathlib import Path
 
 from dimos.navigation.rosnav.rosnav_module import ROSNav, ROSNavConfig
 
 
 class M20ROSNavConfig(ROSNavConfig):
-    """M20 nav config — reconnects to pre-started container (no build/pull)."""
+    """M20 nav config — dimos manages the container lifecycle."""
 
-    # Container is started by deploy.sh, not by dimos
+    # Use the M20 nav image (includes ros2_pub + ARISE configs)
     docker_image: str = "ghcr.io/aphexcx/m20-nav:latest"
     docker_container_name: str = "dimos-nav"
-    docker_file: None = None  # Don't try to build
-    docker_reconnect_container: bool = True  # Reconnect to existing container
 
-    # NOS constraints
-    docker_gpus: str | None = None
-    docker_privileged: bool = False
+    # Don't try to build from Dockerfile — image is pre-built via deploy.sh push
+    docker_file: None = None
+
+    # NOS hardware constraints
+    docker_gpus: str | None = None  # RK3588 has no NVIDIA GPU
+    docker_shm_size: str = "1g"
+    docker_privileged: bool = True  # Required for --ipc host + /dev/shm access
+    docker_startup_timeout: float = 300.0  # ARM64 lifecycle takes longer
+
     docker_extra_args: list[str] = field(
-        default_factory=lambda: ["--ipc=host"]
+        default_factory=lambda: [
+            "--ipc=host",  # Required for drdds bridge POSIX SHM
+        ]
     )
+
+    docker_env: dict[str, str] = field(
+        default_factory=lambda: {
+            "ROS_DISTRO": "humble",
+            "ROS_DOMAIN_ID": "0",
+            "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
+            "LOCALIZATION_METHOD": "arise_slam",
+            "MODE": "hardware",
+        }
+    )
+
+    docker_devices: list[str] = field(default_factory=list)
 
     # M20 navigation settings
     localization_method: str = "arise_slam"
@@ -47,9 +70,17 @@ class M20ROSNavConfig(ROSNavConfig):
     vehicle_height: float = 0.47  # 47cm lidar height in agile stance
     use_rviz: bool = False
 
+    def model_post_init(self, __context: object) -> None:
+        # Minimal volumes — configs are baked into the image via Dockerfile.nav
+        repo_root = Path(__file__).parents[3]
+        self.docker_volumes = [
+            # Live dimos source for RPC module + editable install
+            (str(repo_root), "/workspace/dimos", "rw"),
+        ]
+
 
 class M20ROSNav(ROSNav):
-    """ROSNav module that reconnects to the pre-started M20 nav container."""
+    """ROSNav module for M20 — runs in dimos-managed Docker container."""
 
     default_config = M20ROSNavConfig
 
