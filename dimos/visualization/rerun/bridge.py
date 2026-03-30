@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import field
 from functools import lru_cache
+import subprocess
 import time
 from typing import (
     Any,
@@ -140,7 +141,7 @@ def _with_graph_tab(bp: Blueprint) -> Blueprint:
     import rerun.blueprint as rrb
 
     root = bp.root_container
-    return rrb.Blueprint(  # type: ignore[no-any-return]
+    return rrb.Blueprint(
         rrb.Tabs(
             root,
             rrb.GraphView(origin="blueprint", name="Graph"),
@@ -156,7 +157,7 @@ def _default_blueprint() -> Blueprint:
     import rerun as rr
     import rerun.blueprint as rrb
 
-    return rrb.Blueprint(  # type: ignore[no-any-return]
+    return rrb.Blueprint(
         rrb.Spatial3DView(
             origin="world",
             background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
@@ -222,6 +223,10 @@ class RerunBridgeModule(Module[Config]):
     """
 
     default_config = Config
+
+    GV_SCALE = 100.0  # graphviz inches to rerun screen units
+    MODULE_RADIUS = 30.0
+    CHANNEL_RADIUS = 20.0
 
     @lru_cache(maxsize=256)
     def _visual_override_for_entity_path(
@@ -375,8 +380,6 @@ class RerunBridgeModule(Module[Config]):
             dot_code: The DOT-format graph (from ``introspection.blueprint.dot.render``).
             module_names: List of module class names (to distinguish modules from channels).
         """
-        import subprocess
-
         import rerun as rr
 
         try:
@@ -400,8 +403,8 @@ class RerunBridgeModule(Module[Config]):
             if line.startswith("node "):
                 parts = line.split()
                 node_id = parts[1].strip('"')
-                x = float(parts[2]) * 100
-                y = -float(parts[3]) * 100
+                x = float(parts[2]) * self.GV_SCALE
+                y = -float(parts[3]) * self.GV_SCALE
                 label = parts[6].strip('"')
                 color = parts[9].strip('"')
 
@@ -409,7 +412,7 @@ class RerunBridgeModule(Module[Config]):
                 node_labels.append(label)
                 positions.append((x, y))
                 node_colors.append(_hex_to_rgba(color))
-                radii.append(30.0 if node_id in module_set else 20.0)
+                radii.append(self.MODULE_RADIUS if node_id in module_set else self.CHANNEL_RADIUS)
 
             elif line.startswith("edge "):
                 parts = line.split()
