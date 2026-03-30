@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 """M20 Connection Module for dimos.
 
 Provides the primary interface between dimos and the Deep Robotics M20
@@ -137,9 +135,9 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
     _velocity_ctrl: M20VelocityController
     _global_config: GlobalConfig
     _camera_info: CameraInfo  # required by spec.Camera
-    _camera_info_thread: Thread | None = None
+    _camera_info_thread: "Thread | None" = None
     _camera_info_running: bool = False
-    _latest_video_frame: Image | None = None
+    _latest_video_frame: "Image | None" = None
 
     def __init__(
         self,
