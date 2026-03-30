@@ -252,37 +252,28 @@ class TestKinematicSim:
     def test_odometry_published(self):
         m = UnityBridgeModule(unity_binary="", sim_rate=100.0)
         ts = _wire(m)
+        dt = 1.0 / m.config.sim_rate
 
-        m._running.set()
-        m._sim_thread = threading.Thread(target=m._sim_loop, daemon=True)
-        m._sim_thread.start()
-        try:
-            time.sleep(0.2)
-        finally:
-            m._running.clear()
-            m._sim_thread.join(timeout=2)
-            m.stop()
+        for _ in range(10):
+            m._sim_step(dt)
+        m.stop()
 
-        assert len(ts["odometry"]._messages) > 5
+        assert len(ts["odometry"]._messages) == 10
         assert ts["odometry"]._messages[0].frame_id == "map"
 
     def test_cmd_vel_moves_robot(self):
         m = UnityBridgeModule(unity_binary="", sim_rate=200.0)
         ts = _wire(m)
+        dt = 1.0 / m.config.sim_rate
 
         m._on_cmd_vel(Twist(linear=[1.0, 0.0, 0.0], angular=[0.0, 0.0, 0.0]))
-        m._running.set()
-        m._sim_thread = threading.Thread(target=m._sim_loop, daemon=True)
-        m._sim_thread.start()
-        try:
-            time.sleep(1.0)
-        finally:
-            m._running.clear()
-            m._sim_thread.join(timeout=2)
-            m.stop()
+        # 200 steps at dt=0.005s with fwd=1.0 m/s → 200 * 0.005 * 1.0 = 1.0m
+        for _ in range(200):
+            m._sim_step(dt)
+        m.stop()
 
         last_odom = ts["odometry"]._messages[-1]
-        assert last_odom.x > 0.5
+        assert last_odom.x == pytest.approx(1.0, abs=0.01)
 
 
 # Rerun Config — fast, runs everywhere

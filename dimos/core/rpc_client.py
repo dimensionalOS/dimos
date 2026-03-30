@@ -13,12 +13,12 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from dimos.core.stream import RemoteStream
 from dimos.core.worker import MethodCallProxy
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
-from dimos.protocol.rpc.spec import RPCSpec
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -67,7 +67,10 @@ class RpcCall:
                 self._stop_rpc_client()
             return None
 
-        result, unsub_fn = self._rpc.call_sync(f"{self._remote_name}/{self._name}", (args, kwargs))  # type: ignore[arg-type]
+        result, unsub_fn = self._rpc.call_sync(
+            f"{self._remote_name}/{self._name}",
+            (args, kwargs),  # type: ignore[arg-type]
+        )
         self._unsub_fns.append(unsub_fn)
         return result
 
@@ -81,9 +84,22 @@ class RpcCall:
         self._stop_rpc_client = None
 
 
+class ModuleProxyProtocol(Protocol):
+    """Protocol for host-side handles to remote modules (worker or Docker)."""
+
+    def build(self) -> None: ...
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+    def set_transport(self, stream_name: str, transport: Any) -> bool: ...
+
+
 class RPCClient:
     def __init__(self, actor_instance, actor_class) -> None:  # type: ignore[no-untyped-def]
-        self.rpc = LCMRPC()
+        default_config = getattr(actor_class, "default_config", None)
+        self.rpc = LCMRPC(
+            rpc_timeouts=getattr(default_config, "rpc_timeouts", dict(DEFAULT_RPC_TIMEOUTS)),
+            default_rpc_timeout=getattr(default_config, "default_rpc_timeout", DEFAULT_RPC_TIMEOUT),
+        )
         self.actor_class = actor_class
         self.remote_name = actor_class.__name__
         self.actor_instance = actor_instance
@@ -157,5 +173,6 @@ if TYPE_CHECKING:
     # why? because the RPCClient instance is going to have all the methods of a Module
     # but those methods/attributes are super dynamic, so the type hints can't figure that out
     class ModuleProxy(RPCClient, Module):  # type: ignore[misc]
+        def build(self) -> None: ...
         def start(self) -> None: ...
         def stop(self) -> None: ...

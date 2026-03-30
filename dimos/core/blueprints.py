@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC
 from collections import defaultdict
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field, replace
 from functools import cached_property, reduce
 import operator
 import sys
+import types as types_mod
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, get_args, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, Literal, Union, cast, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel, create_model
 
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from dimos.protocol.service.system_configurator.base import SystemConfigurator
 
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module, ModuleBase, ModuleSpec, is_module_type
+from dimos.core.module import ModuleBase, ModuleSpec, is_module_type
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
@@ -44,6 +44,30 @@ else:
 logger = setup_logger()
 
 
+class _DisabledModuleProxy:
+    def __init__(self, spec_name: str) -> None:
+        object.__setattr__(self, "_spec_name", spec_name)
+
+    def __getattr__(self, name: str) -> Any:
+        spec = object.__getattribute__(self, "_spec_name")
+
+        def _noop(*_args: Any, **_kwargs: Any) -> None:
+            logger.warning(
+                "Called on disabled module (no-op)",
+                method=name,
+                spec=spec,
+            )
+            return None
+
+        return _noop
+
+    def __reduce__(self) -> tuple[type, tuple[str]]:
+        return (_DisabledModuleProxy, (self._spec_name,))
+
+    def __repr__(self) -> str:
+        return f"<DisabledModuleProxy spec={self._spec_name}>"
+
+
 @dataclass(frozen=True)
 class StreamRef:
     name: str
@@ -55,6 +79,7 @@ class StreamRef:
 class ModuleRef:
     name: str
     spec: type[Spec] | type[ModuleBase]
+    optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -101,6 +126,15 @@ class _BlueprintAtom:
             # linking to specific/known module directly
             elif is_module_type(annotation):
                 module_refs.append(ModuleRef(name=name, spec=annotation))
+            # Optional Spec or Module: SomeSpec | None
+            elif origin in (Union, types_mod.UnionType):
+                args = [a for a in get_args(annotation) if a is not type(None)]
+                if len(args) == 1:
+                    inner = args[0]
+                    if is_spec(inner):
+                        module_refs.append(ModuleRef(name=name, spec=inner, optional=True))
+                    elif is_module_type(inner):
+                        module_refs.append(ModuleRef(name=name, spec=inner, optional=True))
 
         return cls(
             module=module,
@@ -169,25 +203,6 @@ class Blueprint:
             return self.blueprints
         disabled = set(self.disabled_modules_tuple)
         return tuple(bp for bp in self.blueprints if bp.module not in disabled)
-
-    def _check_ambiguity(
-        self,
-        requested_method_name: str,
-        interface_methods: Mapping[str, list[tuple[type[ModuleBase], Callable[..., Any]]]],
-        requesting_module: type[ModuleBase],
-    ) -> None:
-        if (
-            requested_method_name in interface_methods
-            and len(interface_methods[requested_method_name]) > 1
-        ):
-            modules_str = ", ".join(
-                impl[0].__name__ for impl in interface_methods[requested_method_name]
-            )
-            raise ValueError(
-                f"Ambiguous RPC method '{requested_method_name}' requested by "
-                f"{requesting_module.__name__}. Multiple implementations found: "
-                f"{modules_str}. Please use a concrete class name instead."
-            )
 
     def _get_transport_for(self, name: str, stream_type: type) -> PubSubTransport[Any]:
         transport = self.transport_map.get((name, stream_type), None)
@@ -329,6 +344,9 @@ class Blueprint:
             if is_spec(replacement) or is_module_type(replacement)
         }
 
+        disabled_ref_proxies: dict[tuple[type[ModuleBase], str], _DisabledModuleProxy] = {}
+        disabled_set = set(self.disabled_modules_tuple)
+
         # after this loop we should have an exact module for every module_ref on every blueprint
         for blueprint in self._active_blueprints:
             for each_module_ref in blueprint.module_refs:
@@ -359,6 +377,31 @@ class Blueprint:
                 ]
                 # none
                 if len(possible_module_candidates) == 0:
+                    if each_module_ref.optional:
+                        continue
+                    # Check whether a *disabled* module would have satisfied this ref.
+                    disabled_candidate = next(
+                        (
+                            bp.module
+                            for bp in self.blueprints
+                            if bp.module in disabled_set
+                            and spec_structural_compliance(bp.module, spec)
+                        ),
+                        None,
+                    )
+                    if disabled_candidate is not None:
+                        logger.warning(
+                            "Module ref unsatisfied because provider is disabled; "
+                            "installing no-op proxy",
+                            ref=each_module_ref.name,
+                            consumer=blueprint.module.__name__,
+                            disabled_provider=disabled_candidate.__name__,
+                            spec=each_module_ref.spec.__name__,
+                        )
+                        disabled_ref_proxies[blueprint.module, each_module_ref.name] = (
+                            _DisabledModuleProxy(each_module_ref.spec.__name__)
+                        )
+                        continue
                     raise Exception(
                         f"""The {blueprint.module.__name__} has a module reference ({each_module_ref}) which requested a module that fills out the {each_module_ref.spec.__name__} spec. But I couldn't find a module that met that spec.\n"""
                     )
@@ -375,7 +418,7 @@ class Blueprint:
                 # more than one
                 elif len(valid_module_candidates) > 1:
                     raise Exception(
-                        f"""The {blueprint.module.__name__} has a module reference ({each_module_ref}) which requested a module that fills out the {each_module_ref.spec.__name__} spec. But I found multiple modules that met that spec: {possible_module_candidates}.\nTo fix this use .remappings, for example:\n    autoconnect(...).remappings([ ({blueprint.module.__name__}, {each_module_ref.name!r}, <ModuleThatHasTheRpcCalls>) ])\n"""
+                        f"""The {blueprint.module.__name__} has a module reference ({each_module_ref}) which requested a module that fills out the {each_module_ref.spec.__name__} spec. But I found multiple modules that met that spec: {valid_module_candidates}.\nTo fix this use .remappings, for example:\n    autoconnect(...).remappings([ ({blueprint.module.__name__}, {each_module_ref.name!r}, <ModuleThatHasTheRpcCalls>) ])\n"""
                     )
                 # structural candidates, but no valid candidates
                 elif len(valid_module_candidates) == 0:
@@ -403,83 +446,11 @@ class Blueprint:
             # Ensure the remote module instance can use the module ref inside its own RPC handlers.
             base_module_proxy.set_module_ref(module_ref_name, target_module_proxy)
 
-    def _connect_rpc_methods(self, module_coordinator: ModuleCoordinator) -> None:
-        # Gather all RPC methods.
-        rpc_methods = {}
-        rpc_methods_dot = {}
-
-        # Track interface methods to detect ambiguity.
-        interface_methods: defaultdict[str, list[tuple[type[ModuleBase], Callable[..., Any]]]] = (
-            defaultdict(list)
-        )  # interface_name_method -> [(module_class, method)]
-        interface_methods_dot: defaultdict[
-            str, list[tuple[type[ModuleBase], Callable[..., Any]]]
-        ] = defaultdict(list)  # interface_name.method -> [(module_class, method)]
-
-        for blueprint in self._active_blueprints:
-            for method_name in blueprint.module.rpcs.keys():  # type: ignore[attr-defined]
-                module_proxy = module_coordinator.get_instance(blueprint.module)  # type: ignore[assignment]
-                method_for_rpc_client = getattr(module_proxy, method_name)
-                # Register under concrete class name (backward compatibility)
-                rpc_methods[f"{blueprint.module.__name__}_{method_name}"] = method_for_rpc_client
-                rpc_methods_dot[f"{blueprint.module.__name__}.{method_name}"] = (
-                    method_for_rpc_client
-                )
-
-                # Also register under any interface names
-                for base in blueprint.module.mro():
-                    # Check if this base is an abstract interface with the method
-                    if (
-                        base is not Module
-                        and issubclass(base, ABC)
-                        and hasattr(base, method_name)
-                        and getattr(base, method_name, None) is not None
-                    ):
-                        interface_key = f"{base.__name__}.{method_name}"
-                        interface_methods_dot[interface_key].append(
-                            (blueprint.module, method_for_rpc_client)
-                        )
-                        interface_key_underscore = f"{base.__name__}_{method_name}"
-                        interface_methods[interface_key_underscore].append(
-                            (blueprint.module, method_for_rpc_client)
-                        )
-
-        # Check for ambiguity in interface methods and add non-ambiguous ones
-        for interface_key, implementations in interface_methods_dot.items():
-            if len(implementations) == 1:
-                rpc_methods_dot[interface_key] = implementations[0][1]
-        for interface_key, implementations in interface_methods.items():
-            if len(implementations) == 1:
-                rpc_methods[interface_key] = implementations[0][1]
-
-        # Fulfil method requests (so modules can call each other).
-        for blueprint in self._active_blueprints:
-            instance = module_coordinator.get_instance(blueprint.module)  # type: ignore[assignment]
-
-            for method_name in blueprint.module.rpcs.keys():  # type: ignore[attr-defined]
-                if not method_name.startswith("set_"):
-                    continue
-
-                linked_name = method_name.removeprefix("set_")
-
-                self._check_ambiguity(linked_name, interface_methods, blueprint.module)
-
-                if linked_name not in rpc_methods:
-                    continue
-
-                getattr(instance, method_name)(rpc_methods[linked_name])
-
-            for requested_method_name in instance.get_rpc_method_names():  # type: ignore[union-attr]
-                self._check_ambiguity(
-                    requested_method_name, interface_methods_dot, blueprint.module
-                )
-
-                if requested_method_name not in rpc_methods_dot:
-                    continue
-
-                instance.set_rpc_method(  # type: ignore[union-attr]
-                    requested_method_name, rpc_methods_dot[requested_method_name]
-                )
+        # Wire up no-op proxies for refs whose providers were disabled.
+        for (base_module, module_ref_name), proxy in disabled_ref_proxies.items():
+            base_module_proxy = module_coordinator.get_instance(base_module)
+            setattr(base_module_proxy, module_ref_name, proxy)
+            base_module_proxy.set_module_ref(module_ref_name, cast("Any", proxy))
 
     def build(
         self,
@@ -496,15 +467,15 @@ class Blueprint:
         self._verify_no_name_conflicts()
 
         logger.info("Starting the modules")
-        module_coordinator = ModuleCoordinator(cfg=global_config)
+        module_coordinator = ModuleCoordinator(g=global_config)
         module_coordinator.start()
 
         # all module constructors are called here (each of them setup their own)
         self._deploy_all_modules(module_coordinator, global_config, blueprint_args)
         self._connect_streams(module_coordinator)
-        self._connect_rpc_methods(module_coordinator)
         self._connect_module_refs(module_coordinator)
 
+        module_coordinator.build_all_modules()
         module_coordinator.start_all_modules()
 
         return module_coordinator

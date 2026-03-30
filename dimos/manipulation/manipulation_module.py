@@ -24,11 +24,12 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from enum import Enum
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
+
+from pydantic import Field
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -82,11 +83,15 @@ class ManipulationState(Enum):
 class ManipulationModuleConfig(ModuleConfig):
     """Configuration for ManipulationModule."""
 
-    robots: Iterable[RobotModelConfig] = ()
+    robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
     enable_viz: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
+    # Floor plane Z height (meters). When set, a box obstacle is added at startup
+    # to prevent the planner from routing trajectories below this height.
+    # Set to None to disable.
+    floor_z: float | None = None
 
 
 class ManipulationModule(Module[ManipulationModuleConfig]):
@@ -168,6 +173,23 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             self._robots[robot_config.name] = (robot_id, robot_config, traj_gen)
 
         self._world_monitor.finalize()
+
+        # Add floor obstacle to prevent trajectories below the table surface
+        if self.config.floor_z is not None:
+            fz = self.config.floor_z
+            thickness = 0.2
+            floor_pose = Pose(
+                Vector3(0.7, 0.0, fz - thickness / 2),
+                Quaternion(0.0, 0.0, 0.0, 1.0),
+            )
+            floor_obs = Obstacle(
+                name="floor",
+                pose=floor_pose,
+                obstacle_type=ObstacleType.BOX,
+                dimensions=(0.6, 1.2, thickness),
+            )
+            self._world_monitor.add_obstacle(floor_obs)
+            logger.info(f"Floor obstacle added at z={fz:.3f}")
 
         for _, (robot_id, _, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
@@ -298,6 +320,7 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         logger.info("Motion cancelled")
         return True
 
+    @rpc
     @skill
     def reset(self) -> str:
         """Reset the robot module to IDLE state, clearing any fault.
@@ -898,6 +921,22 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         logger.warning(f"Trajectory execution timed out after {timeout}s")
         return False
 
+    def _lift_if_low(self, robot_name: RobotName | None = None, min_z: float = 0.05) -> str | None:
+        """If the end-effector is below *min_z*, plan and execute a short lift.
+
+        Returns None on success (or if already above threshold), error string on failure.
+        """
+        ee = self.get_ee_pose(robot_name)
+        if ee is None or ee.position.z >= min_z:
+            return None
+
+        lift_z = min_z + 0.05
+        logger.info(f"EE z={ee.position.z:.3f} < {min_z}, lifting to z={lift_z:.3f}")
+        lift_pose = Pose(Vector3(ee.position.x, ee.position.y, lift_z), ee.orientation)
+        if not self.plan_to_pose(lift_pose, robot_name):
+            return f"Error: Failed to plan lift from z={ee.position.z:.3f}"
+        return self._preview_execute_wait(robot_name)
+
     def _preview_execute_wait(
         self, robot_name: RobotName | None = None, preview_duration: float = 0.5
     ) -> str | None:
@@ -1004,6 +1043,11 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
 
         pose = Pose(Vector3(x, y, z), orientation)
 
+        # If EE is low, lift up first to clear obstacles
+        err = self._lift_if_low(robot_name)
+        if err:
+            return err
+
         if not self.plan_to_pose(pose, robot_name):
             return f"Error: Planning failed — pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision"
 
@@ -1092,6 +1136,33 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         """
         if self._init_joints is None:
             return "Error: No init joints captured — robot may not have reported joint state yet"
+
+        # Lift if EE is low before moving to init
+        err = self._lift_if_low(robot_name)
+        if err:
+            return err
+
+        # Move through a safe waypoint: 10cm above and 5cm in front of init pose.
+        # This avoids direct paths through the workspace that could collide with objects.
+        robot = self._get_robot(robot_name)
+        if robot is not None and self._world_monitor is not None:
+            _, robot_id, _, _ = robot
+            init_ee = self._world_monitor.get_ee_pose(robot_id, joint_state=self._init_joints)
+            if init_ee is not None:
+                wp = Pose(
+                    Vector3(
+                        init_ee.position.x + 0.05,
+                        init_ee.position.y,
+                        init_ee.position.z + 0.10,
+                    ),
+                    init_ee.orientation,
+                )
+                if self.plan_to_pose(wp, robot_name):
+                    err = self._preview_execute_wait(robot_name)
+                    if err:
+                        return err
+                else:
+                    logger.warning("Safe waypoint unreachable, going directly to init")
 
         logger.info(
             f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in self._init_joints.position)}]..."

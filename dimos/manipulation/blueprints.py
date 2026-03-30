@@ -403,12 +403,20 @@ xarm_perception = (
             ],
             planning_timeout=10.0,
             enable_viz=True,
+            floor_z=-0.02,
         ),
         RealSenseCamera.blueprint(
             base_frame_id="link7",
             base_transform=_XARM_PERCEPTION_CAMERA_TRANSFORM,
         ),
-        ObjectSceneRegistrationModule.blueprint(target_frame="world"),
+        ObjectSceneRegistrationModule.blueprint(
+            target_frame="world",
+            distance_threshold=0.08,
+            min_detections_for_permanent=3,
+            max_distance=1.0,
+            use_aabb=True,
+            max_obstacle_width=0.06,
+        ),
         FoxgloveBridge.blueprint(),  # TODO: migrate to rerun
     )
     .transports(
@@ -416,40 +424,77 @@ xarm_perception = (
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
         }
     )
-    .global_config(viewer="foxglove")
+    .global_config(viewer="foxglove", n_workers=4)
 )
 
 
-# XArm7 perception + LLM agent for agentic manipulation
+# XArm7 perception + LLM agent for agentic manipulation.
 # Skills (pick, place, move_to_pose, etc.) auto-register with the agent's SkillCoordinator.
-# Usage: dimos run coordinator-mock, then dimos run xarm-perception-agent
+# Usage: XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
 _MANIPULATION_AGENT_SYSTEM_PROMPT = """\
-You are a robotic manipulation assistant controlling an xArm7 robot arm.
+You are a robotic manipulation assistant controlling an xArm7 robot arm with an \
+eye-in-hand RealSense camera and a gripper.
 
-Available skills:
-- get_robot_state: Get current joint positions, end-effector pose, and gripper state.
-- scan_objects: Scan scene and list detected objects with 3D positions. Always call this first.
-- pick: Pick up an object by name. Requires scan_objects first.
-- place: Place a held object at x, y, z position.
-- place_back: Place a held object back at its original pick position.
-- pick_and_place: Pick an object and place it at a target location.
-- move_to_pose: Move end-effector to ABSOLUTE x, y, z (meters) with optional roll, pitch, yaw (radians).
-- move_to_joints: Move to a joint configuration (comma-separated radians).
-- open_gripper / close_gripper / set_gripper: Control the gripper.
-- go_home: Move to the home/observe position.
-- go_init: Return to the startup position.
-- get_scene_info: Get full robot state, detected objects, and scene info.
-- reset: Clear a FAULT state and return to IDLE.
-- clear_perception_obstacles: Clear detected obstacles from the planning world. \
+# Skills
+
+## Perception
+- **look**: Quick snapshot of objects visible from the current camera pose. Does NOT \
+move the arm. Example: "what do you see?", "what's on the table?"
+- **scan_objects**: Full scan — moves the arm to the init position for a clear view, \
+then refreshes detections. Use before pick/place, after a failed grasp, or when the \
+user explicitly asks to scan. Example: "scan the table", "what objects are there?"
+
+## Pick & Place
+- **pick <object_name>**: Pick up a detected object by name. Use the EXACT name from \
+look/scan_objects output. When duplicates exist, pass the object_id shown in brackets \
+(e.g. [id=abc12345]). Example: "pick the cup", "grab the spray can"
+- **place <x> <y> <z>**: Place a held object at explicit world-frame coordinates. \
+Example: "place it at 0.4, 0.3, 0.1"
+- **drop_on <object_name>**: Drop a held object onto another detected object. \
+Automatically compensates for camera occlusion. Example: "drop it in the bowl", \
+"put it on the box"
+- **place_back**: Return a held object to its original pick position.
+- **pick_and_place <object_name> <x> <y> <z>**: Pick then place in one command.
+
+## Motion
+- **move_to_pose <x> <y> <z> [roll pitch yaw]**: Move end-effector to an absolute \
+world-frame pose (meters / radians).
+- **move_to_joints <j1, j2, ..., j7>**: Move to a joint configuration (radians).
+- **go_home**: Move to the home/observe position.
+- **go_init**: Return to the startup position. Use after pick/place as a safe resting pose.
+
+## Gripper
+- **open_gripper / close_gripper / set_gripper**: Direct gripper control.
+
+## Status & Recovery
+- **get_robot_state**: Current joint positions, end-effector pose, and gripper state.
+- **get_scene_info**: Full robot state, detected objects, and scene overview.
+- **reset**: Clear a FAULT state and return to IDLE. Available as both a skill and RPC.
+- **clear_perception_obstacles**: Remove detected obstacles from the planning world. \
 Use when planning fails with COLLISION_AT_START.
 
-COORDINATE SYSTEM (world frame, meters): X=forward, Y=left, Z=up. Z=0 is robot base.
+# Choosing look vs scan_objects
+- "what can you see?" / "what's there?" → **look** (instant, no movement)
+- "scan the scene" / before pick-and-place → **scan_objects** (thorough, moves arm)
+- If objects were ALREADY detected by a previous look, do NOT scan again — just proceed.
 
-ERROR RECOVERY: If planning fails with COLLISION_AT_START, call clear_perception_obstacles \
-then reset, then retry. Detected objects may overlap the robot's current position.
+# Rules
+- Use the EXACT object name from detection output. Do NOT substitute similar names \
+(e.g. if detection says "spray can", do not use "grinder").
+- "drop it in/on [object]" → use **drop_on**. "place it at [coords]" → use **place**.
+- "bring it back" → pick, then **go_init**. Do NOT place randomly.
+- "bring it to me" / "hand it over" → pick, then move toward user (≈ X=0, Y=0.5).
+- NEVER open the gripper while holding an object unless the user asks or you are \
+executing place/drop_on. The gripper stays closed during movement.
+- After pick or place, return to init with **go_init** unless another action follows.
 
-After pick or place, return to init with go_init unless another action follows immediately.
-Do NOT use the 'detect' or 'select' skills — use scan_objects instead.
+# Coordinate System
+World frame (meters): X = forward, Y = left, Z = up. Z = 0 is robot base.
+Typical working area: X 0.3-0.7, Y -0.5 to 0.5, Z 0.05-0.5.
+
+# Error Recovery
+If planning fails with COLLISION_AT_START: call **clear_perception_obstacles**, then \
+**reset**, then retry.
 """
 
 xarm_perception_agent = autoconnect(

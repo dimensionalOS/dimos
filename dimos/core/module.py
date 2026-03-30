@@ -22,14 +22,16 @@ import threading
 from typing import (
     TYPE_CHECKING,
     Any,
+    ClassVar,
+    Literal,
     Protocol,
     get_args,
     get_origin,
     get_type_hints,
-    overload,
 )
 
 from langchain_core.tools import tool
+from pydantic import Field
 from reactivex.disposable import CompositeDisposable
 
 from dimos.core.core import T, rpc
@@ -37,10 +39,9 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import extract_module_info
 from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import Resource
-from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteOut, Transport
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
-from dimos.protocol.rpc.spec import RPCSpec
+from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.protocol.tf.tf import LCMTF, TFSpec
 from dimos.utils import colors
@@ -77,8 +78,13 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
         return loop, thr
 
 
+Deployment = Literal["python", "docker"]
+
+
 class ModuleConfig(BaseConfig):
     rpc_transport: type[RPCSpec] = LCMRPC
+    default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT
+    rpc_timeouts: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_RPC_TIMEOUTS))
     tf_transport: type[TFSpec] = LCMTF  # type: ignore[type-arg]
     frame_id_prefix: str | None = None
     frame_id: str | None = None
@@ -96,16 +102,18 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
     # This won't type check against the TypeVar, but we need it as the default.
     default_config: type[ModuleConfigT] = ModuleConfig  # type: ignore[assignment]
 
+    # Deployment target. Worker managers declare which deployment type they
+    # handle; the coordinator routes modules accordingly.
+    deployment: ClassVar[Deployment] = "python"
+
     _rpc: RPCSpec | None = None
     _tf: TFSpec[Any] | None = None
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread: threading.Thread | None
     _disposables: CompositeDisposable
-    _bound_rpc_calls: dict[str, RpcCall] = {}
     _module_closed: bool = False
     _module_closed_lock: threading.Lock
-
-    rpc_calls: list[str] = []
+    _loop_thread_timeout: float = 2.0
 
     def __init__(self, config_args: dict[str, Any]):
         super().__init__(**config_args)
@@ -113,7 +121,10 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         self._loop, self._loop_thread = get_loop()
         self._disposables = CompositeDisposable()
         try:
-            self.rpc = self.config.rpc_transport()
+            self.rpc = self.config.rpc_transport(  # type: ignore[call-arg]
+                rpc_timeouts=self.config.rpc_timeouts,
+                default_rpc_timeout=self.config.default_rpc_timeout,
+            )
             self.rpc.serve_module_rpc(self)
             self.rpc.start()  # type: ignore[attr-defined]
         except ValueError:
@@ -130,6 +141,15 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         if self.config.frame_id_prefix:
             return f"{self.config.frame_id_prefix}/{base}"
         return base
+
+    @rpc
+    def build(self) -> None:
+        """Optional build step for heavy one-time work (docker builds, LFS downloads, etc.).
+
+        Called after deploy and stream wiring but before start().
+        Has a very long timeout (24h) so long-running builds don't fail.
+        Default is a no-op — override in subclasses that need a build step.
+        """
 
     @rpc
     def start(self) -> None:
@@ -156,7 +176,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
             if loop_thread.is_alive():
                 if loop:
                     loop.call_soon_threadsafe(loop.stop)
-                loop_thread.join(timeout=2)
+                loop_thread.join(timeout=self._loop_thread_timeout)
             self._loop = None
             self._loop_thread = None
 
@@ -362,32 +382,8 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         return partial(Blueprint.create, self)  # type: ignore[arg-type]
 
     @rpc
-    def get_rpc_method_names(self) -> list[str]:
-        return self.rpc_calls
-
-    @rpc
-    def set_rpc_method(self, method: str, callable: RpcCall) -> None:
-        callable.set_rpc(self.rpc)  # type: ignore[arg-type]
-        self._bound_rpc_calls[method] = callable
-
-    @rpc
     def set_module_ref(self, name: str, module_ref: "RPCClient") -> None:
         setattr(self, name, module_ref)
-
-    @overload
-    def get_rpc_calls(self, method: str) -> RpcCall: ...
-
-    @overload
-    def get_rpc_calls(self, method1: str, method2: str, *methods: str) -> tuple[RpcCall, ...]: ...
-
-    def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall, ...]:  # type: ignore[misc]
-        missing = [m for m in methods if m not in self._bound_rpc_calls]
-        if missing:
-            raise ValueError(
-                f"RPC methods not found. Class: {self.__class__.__name__}, RPC methods: {', '.join(missing)}"
-            )
-        result = tuple(self._bound_rpc_calls[m] for m in methods)
-        return result[0] if len(result) == 1 else result
 
     @rpc
     def get_skills(self) -> list[SkillInfo]:
@@ -459,17 +455,6 @@ class Module(ModuleBase[ModuleConfigT]):
             raise TypeError(f"Output {stream_name} is not a valid stream")
 
         stream._transport = transport
-        return True
-
-    @rpc
-    def configure_stream(self, stream_name: str, topic: str) -> bool:
-        """Configure a stream's transport by topic. Called by DockerModule for stream wiring."""
-        from dimos.core.transport import pLCMTransport
-
-        stream = getattr(self, stream_name, None)
-        if not isinstance(stream, (Out, In)):
-            return False
-        stream._transport = pLCMTransport(topic)
         return True
 
     # called from remote
