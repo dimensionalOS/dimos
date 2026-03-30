@@ -37,8 +37,7 @@ import numpy as np
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 
-from dimos.msgs.sensor_msgs import PointCloud2 as DimosPointCloud2
-
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as DimosPointCloud2
 logger = logging.getLogger(__name__)
 
 # DDS availability check — CycloneDDS is an optional dependency

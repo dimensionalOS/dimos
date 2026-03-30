@@ -37,13 +37,16 @@ import numpy as np
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.Twist import Twist as DimTwist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
 from dimos.msgs.nav_msgs.Odometry import Odometry as DimosOdometry
-from dimos.msgs.sensor_msgs import PointCloud2 as DimosPointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as DimosPointCloud2
 from dimos.msgs.sensor_msgs.Imu import Imu as DimosImu
 from dimos.protocol.pubsub.impl.rospubsub import ROS_AVAILABLE, RawROS, RawROSTopic
 

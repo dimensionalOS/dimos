@@ -26,7 +26,9 @@ import threading
 import time
 from typing import Callable
 
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 logger = logging.getLogger(__name__)
 

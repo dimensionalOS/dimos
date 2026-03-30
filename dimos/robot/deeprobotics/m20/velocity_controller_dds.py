@@ -46,7 +46,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-from dimos.msgs.geometry_msgs import Twist
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

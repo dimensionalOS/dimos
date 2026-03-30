@@ -23,7 +23,9 @@ import time
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.base import NavigationState
 from dimos.robot.deeprobotics.protocol import GaitType
 from dimos.utils.logging_config import setup_logger

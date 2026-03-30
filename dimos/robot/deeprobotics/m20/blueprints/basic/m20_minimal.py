@@ -21,7 +21,7 @@ from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.robot.deeprobotics.m20.connection import m20_connection
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis

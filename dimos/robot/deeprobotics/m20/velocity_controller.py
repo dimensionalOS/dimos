@@ -33,8 +33,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from dimos.msgs.geometry_msgs import Twist
-
+from dimos.msgs.geometry_msgs.Twist import Twist
 from ..protocol import M20Protocol
 
 logger = logging.getLogger(__name__)
