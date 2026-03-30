@@ -403,7 +403,10 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
 
     def _on_cmd_vel(self, twist: Twist) -> None:
         """Route Twist commands from the navigation stack to velocity controller."""
-        self._velocity_ctrl.set_twist(twist)
+        if hasattr(self._velocity_ctrl, 'set_twist'):
+            self._velocity_ctrl.set_twist(twist)
+        else:
+            self._velocity_ctrl.send(twist)
 
         # Feed target velocities into dead-reckoning odometry (Regular Mode only).
         # In Navigation Mode, /ODOM provides real odometry so this is skipped.
