@@ -42,15 +42,15 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.msgs.geometry_msgs import (
-    PoseStamped,
-    Quaternion,
-    Transform,
-    Twist,
-    Vector3,
-)
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Odometry import Odometry as OdometryMsg
-from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.spec.perception import IMU as IMUSpec, Lidar as LidarSpec, Odometry as OdometrySpec
 
@@ -135,9 +135,9 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
     _velocity_ctrl: M20VelocityController
     _global_config: GlobalConfig
     _camera_info: CameraInfo  # required by spec.Camera
-    _camera_info_thread: "Thread | None" = None
+    _camera_info_thread: Thread | None = None
     _camera_info_running: bool = False
-    _latest_video_frame: "Image | None" = None
+    _latest_video_frame: Image | None = None
 
     def __init__(
         self,
@@ -510,7 +510,7 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
         return True
 
     @skill
-    def observe(self) -> "Image | None":
+    def observe(self) -> Image | None:
         """Returns the latest video frame from the robot camera.
 
         Use this skill for any visual world queries.
