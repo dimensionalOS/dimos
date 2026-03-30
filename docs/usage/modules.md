@@ -11,6 +11,12 @@ Some examples of modules are:
 
 Below is an example of a structure for controlling a robot. Black blocks represent modules, and colored lines are connections and message types. It's okay if this doesn't make sense now. It will by the end of this document.
 
+> **Prerequisite:** Blueprint visualization (both SVG export and the Rerun Graph tab) requires Graphviz:
+> ```bash
+> sudo apt install graphviz   # Ubuntu/Debian
+> brew install graphviz        # macOS
+> ```
+
 ```python output=assets/go2_nav.svg
 from dimos.core.introspection import to_svg
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import nav
