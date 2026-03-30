@@ -272,15 +272,21 @@ class TestNonClickMessages:
         mod.start()
         _wait_for_server(_TEST_PORT)
 
-        received: list[Any] = []
-        mod.clicked_point.subscribe(received.append)
+        clicks: list[Any] = []
+        twists: list[Any] = []
+        twist_done = threading.Event()
+        mod.clicked_point.subscribe(clicks.append)
+        mod.tele_cmd_vel.subscribe(_collect(twists, twist_done))
 
         with MockViewerPublisher(f"ws://127.0.0.1:{_TEST_PORT}/ws") as pub:
             pub.send_heartbeat(9999)
+            # Send a canary twist so we know the server processed everything
+            pub.send_stop()
             pub.flush()
 
+        twist_done.wait(timeout=2.0)
         mod.stop()
-        assert received == []
+        assert clicks == []
 
     def test_twist_does_not_publish_clicked_point(self) -> None:
         """Twist messages must not trigger a clicked_point publish."""
@@ -288,15 +294,19 @@ class TestNonClickMessages:
         mod.start()
         _wait_for_server(_TEST_PORT)
 
-        received: list[Any] = []
-        mod.clicked_point.subscribe(received.append)
+        clicks: list[Any] = []
+        twists: list[Any] = []
+        twist_done = threading.Event()
+        mod.clicked_point.subscribe(clicks.append)
+        mod.tele_cmd_vel.subscribe(_collect(twists, twist_done))
 
         with MockViewerPublisher(f"ws://127.0.0.1:{_TEST_PORT}/ws") as pub:
             pub.send_twist(0.5, 0.0, 0.0, 0.0, 0.0, 0.8)
             pub.flush()
 
+        twist_done.wait(timeout=2.0)
         mod.stop()
-        assert received == []
+        assert clicks == []
 
     def test_stop_does_not_publish_clicked_point(self) -> None:
         """Stop messages must not trigger a clicked_point publish."""
@@ -304,15 +314,19 @@ class TestNonClickMessages:
         mod.start()
         _wait_for_server(_TEST_PORT)
 
-        received: list[Any] = []
-        mod.clicked_point.subscribe(received.append)
+        clicks: list[Any] = []
+        twists: list[Any] = []
+        twist_done = threading.Event()
+        mod.clicked_point.subscribe(clicks.append)
+        mod.tele_cmd_vel.subscribe(_collect(twists, twist_done))
 
         with MockViewerPublisher(f"ws://127.0.0.1:{_TEST_PORT}/ws") as pub:
             pub.send_stop()
             pub.flush()
 
+        twist_done.wait(timeout=2.0)
         mod.stop()
-        assert received == []
+        assert clicks == []
 
     def test_twist_publishes_on_tele_cmd_vel(self) -> None:
         """Twist messages publish a Twist on the tele_cmd_vel stream."""
@@ -356,6 +370,54 @@ class TestNonClickMessages:
         assert len(received) == 1
         tw = received[0]
         assert tw.is_zero()
+
+    def test_twist_publishes_stop_explore_cmd_on_first_twist(self) -> None:
+        """First twist publishes Bool(data=True) on stop_explore_cmd; stop resets."""
+        mod = _make_module()
+        mod.start()
+        _wait_for_server(_TEST_PORT)
+
+        explore_cmds: list[Any] = []
+        twists: list[Any] = []
+        first_done = threading.Event()
+        mod.stop_explore_cmd.subscribe(_collect(explore_cmds, first_done))
+
+        with MockViewerPublisher(f"ws://127.0.0.1:{_TEST_PORT}/ws") as pub:
+            pub.send_twist(0.5, 0.0, 0.0, 0.0, 0.0, 0.0)
+            pub.flush()
+
+            first_done.wait(timeout=2.0)
+            assert len(explore_cmds) == 1
+            assert explore_cmds[0].data is True
+
+            # Second twist within same connection should NOT publish another stop_explore_cmd
+            twist_done = threading.Event()
+            mod.tele_cmd_vel.subscribe(_collect(twists, twist_done))
+
+            pub.send_twist(0.3, 0.0, 0.0, 0.0, 0.0, 0.0)
+            pub.flush()
+
+            twist_done.wait(timeout=2.0)
+            assert len(explore_cmds) == 1  # still just the first one
+
+            # After stop + new twist within same connection, stop_explore_cmd should fire again
+            second_done = threading.Event()
+
+            def _on_second(msg: Any) -> None:
+                explore_cmds.append(msg)
+                if len(explore_cmds) >= 2:
+                    second_done.set()
+
+            mod.stop_explore_cmd.subscribe(_on_second)
+
+            pub.send_stop()
+            pub.send_twist(0.1, 0.0, 0.0, 0.0, 0.0, 0.0)
+            pub.flush()
+
+            second_done.wait(timeout=2.0)
+
+        mod.stop()
+        assert len(explore_cmds) >= 2
 
     def test_invalid_json_does_not_crash(self) -> None:
         """Malformed JSON is silently dropped; server stays alive."""

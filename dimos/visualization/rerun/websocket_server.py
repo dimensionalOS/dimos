@@ -112,7 +112,10 @@ class RerunWebSocketServer(Module[Config]):
         asyncio.set_event_loop(self._ws_loop)
         try:
             self._ws_loop.run_until_complete(self._serve())
+        except Exception:
+            logger.error("RerunWebSocketServer failed to start", exc_info=True)
         finally:
+            self._server_ready.set()  # unblock stop() even on failure
             self._ws_loop.close()
 
     async def _serve(self) -> None:
@@ -146,6 +149,8 @@ class RerunWebSocketServer(Module[Config]):
                 self._dispatch(raw)
         except websockets.ConnectionClosed as exc:
             logger.debug(f"RerunWebSocketServer: client {addr} disconnected ({exc})")
+        finally:
+            self._teleop_active = False
 
     def _dispatch(self, raw: str | bytes) -> None:
         try:
