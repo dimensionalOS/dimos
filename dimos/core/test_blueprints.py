@@ -503,7 +503,7 @@ def test_disabled_module_ref_gets_noop_proxy() -> None:
         Mod2.blueprint(),
     ).disabled_modules(Calculator1)
 
-    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
+    coordinator = blueprint_set.build(_BUILD_WITHOUT_RERUN.copy())
 
     try:
         mod2 = coordinator.get_instance(Mod2)

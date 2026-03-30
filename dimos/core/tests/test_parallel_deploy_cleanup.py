@@ -50,9 +50,9 @@ class TestWorkerManagerDockerPartialFailure:
 
         mock_docker_module_cls.side_effect = fake_constructor
 
-        FakeA = type("A", (), {})
-        FakeB = type("B", (), {})
-        FakeC = type("C", (), {})
+        FakeA = type("A", (), {"name": "A"})
+        FakeB = type("B", (), {"name": "B"})
+        FakeC = type("C", (), {"name": "C"})
 
         with pytest.raises(ExceptionGroup, match="safe_thread_map failed") as exc_info:
             WorkerManagerDocker(g=GlobalConfig()).deploy_parallel(
@@ -60,7 +60,8 @@ class TestWorkerManagerDockerPartialFailure:
                     (FakeA, (), {}),
                     (FakeB, (), {}),
                     (FakeC, (), {}),
-                ]
+                ],
+                {},
             )
 
         assert len(exc_info.value.exceptions) == 1
@@ -88,9 +89,9 @@ class TestWorkerManagerDockerPartialFailure:
 
         mock_docker_module_cls.side_effect = fake_constructor
 
-        FakeA = type("A", (), {})
-        FakeB = type("B", (), {})
-        FakeC = type("C", (), {})
+        FakeA = type("A", (), {"name": "A"})
+        FakeB = type("B", (), {"name": "B"})
+        FakeC = type("C", (), {"name": "C"})
 
         with pytest.raises(ExceptionGroup, match="safe_thread_map failed") as exc_info:
             WorkerManagerDocker(g=GlobalConfig()).deploy_parallel(
@@ -98,7 +99,8 @@ class TestWorkerManagerDockerPartialFailure:
                     (FakeA, (), {}),
                     (FakeB, (), {}),
                     (FakeC, (), {}),
-                ]
+                ],
+                {},
             )
 
         assert len(exc_info.value.exceptions) == 2
@@ -119,16 +121,17 @@ class TestWorkerManagerDockerPartialFailure:
 
         mock_docker_module_cls.side_effect = fake_constructor
 
-        FakeA = type("A", (), {})
-        FakeB = type("B", (), {})
-        FakeC = type("C", (), {})
+        FakeA = type("A", (), {"name": "A"})
+        FakeB = type("B", (), {"name": "B"})
+        FakeC = type("C", (), {"name": "C"})
 
         results = WorkerManagerDocker(g=GlobalConfig()).deploy_parallel(
             [
                 (FakeA, (), {}),
                 (FakeB, (), {}),
                 (FakeC, (), {}),
-            ]
+            ],
+            {},
         )
 
         assert len(results) == 3
@@ -151,12 +154,12 @@ class TestWorkerManagerDockerPartialFailure:
 
         mock_docker_module_cls.side_effect = fake_constructor
 
-        FakeA = type("A", (), {})
-        FakeB = type("B", (), {})
+        FakeA = type("A", (), {"name": "A"})
+        FakeB = type("B", (), {"name": "B"})
 
         with pytest.raises(ExceptionGroup, match="safe_thread_map failed"):
             WorkerManagerDocker(g=GlobalConfig()).deploy_parallel(
-                [(FakeA, (), {}), (FakeB, (), {})]
+                [(FakeA, (), {}), (FakeB, (), {})], {}
             )
 
         # stop was attempted despite it raising
@@ -187,9 +190,9 @@ class TestWorkerManagerPartialFailure:
         for w in mock_workers:
             w.deploy_module = fake_deploy_module
 
-        FakeA = type("A", (), {})
-        FakeB = type("B", (), {})
-        FakeC = type("C", (), {})
+        FakeA = type("A", (), {"name": "A"})
+        FakeB = type("B", (), {"name": "B"})
+        FakeC = type("C", (), {"name": "C"})
 
         with patch("dimos.core.worker_manager.RPCClient"):
             with pytest.raises(ExceptionGroup, match="safe_thread_map failed"):
@@ -198,7 +201,8 @@ class TestWorkerManagerPartialFailure:
                         (FakeA, (), {}),
                         (FakeB, (), {}),
                         (FakeC, (), {}),
-                    ]
+                    ],
+                    {},
                 )
 
         # Workers must have been shut down
