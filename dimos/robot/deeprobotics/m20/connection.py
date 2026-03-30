@@ -510,7 +510,7 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
         return True
 
     @skill
-    def observe(self) -> Image | None:
+    def observe(self) -> "Image | None":
         """Returns the latest video frame from the robot camera.
 
         Use this skill for any visual world queries.
