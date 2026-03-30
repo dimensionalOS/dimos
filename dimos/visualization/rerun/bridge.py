@@ -139,7 +139,7 @@ def _default_blueprint() -> Blueprint:
             origin="world",
             background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
             line_grid=rrb.LineGrid3D(
-                plane=rr.components.Plane3D.XY.with_distance(0.2),
+                plane=rr.components.Plane3D.XY.with_distance(0.5),
             ),
         ),
     )
