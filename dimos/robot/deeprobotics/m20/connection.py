@@ -410,7 +410,8 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
 
         # Feed target velocities into dead-reckoning odometry (Regular Mode only).
         # In Navigation Mode, /ODOM provides real odometry so this is skipped.
-        if self._odometry:
+        # DDS controller doesn't have .state (it publishes directly to /NAV_CMD).
+        if self._odometry and hasattr(self._velocity_ctrl, 'state'):
             with self._velocity_ctrl._lock:
                 self._odometry.update_velocity(
                     self._velocity_ctrl.state.target_linear_x,
