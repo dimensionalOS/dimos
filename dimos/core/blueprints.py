@@ -265,7 +265,7 @@ class Blueprint:
             type_entries = []
             for conn_type, modules in modules_by_type.items():
                 for module in modules:
-                    type_str = f"{conn_type.__module__}.{conn_type.__name__}"
+                    type_str = f"{conn_type.__module__}.{conn_type.__name__}" if hasattr(conn_type, "__module__") else str(conn_type)
                     module_str = module.__name__
                     type_entries.append((type_str, module_str))
             if len(type_entries) >= 2:
