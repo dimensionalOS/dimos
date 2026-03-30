@@ -467,7 +467,34 @@ class Blueprint:
         module_coordinator.build_all_modules()
         module_coordinator.start_all_modules()
 
+        self._log_blueprint_graph(module_coordinator)
+
         return module_coordinator
+
+    def _log_blueprint_graph(self, module_coordinator: ModuleCoordinator) -> None:
+        """Log the module graph to Rerun if a RerunBridgeModule is active."""
+        from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+        if not any(bp.module is RerunBridgeModule for bp in self._active_blueprints):
+            return
+
+        import shutil
+
+        if not shutil.which("dot"):
+            logger.info(
+                "graphviz not found, skipping blueprint graph. Install: sudo apt install graphviz"
+            )
+            return
+
+        try:
+            from dimos.core.introspection.blueprint.dot import render
+
+            dot_code = render(self)
+            module_names = [bp.module.__name__ for bp in self._active_blueprints]
+            bridge = module_coordinator.get_instance(RerunBridgeModule)  # type: ignore[arg-type]
+            bridge.log_blueprint_graph(dot_code, module_names)
+        except Exception:
+            logger.error("Failed to log blueprint graph to Rerun", exc_info=True)
 
 
 def autoconnect(*blueprints: Blueprint) -> Blueprint:
