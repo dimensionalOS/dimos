@@ -422,6 +422,14 @@ class Blueprint:
         if not any(bp.module is RerunBridgeModule for bp in self._active_blueprints):
             return
 
+        import shutil
+
+        if not shutil.which("dot"):
+            logger.info(
+                "graphviz not found, skipping blueprint graph. Install: sudo apt install graphviz"
+            )
+            return
+
         try:
             from dimos.core.introspection.blueprint.dot import render
 
