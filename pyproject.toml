@@ -38,7 +38,14 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Scientific/Engineering :: Visualization",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
 ]
@@ -92,6 +99,16 @@ dimos = "dimos.robot.cli.dimos:main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"
 foxglove-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
 rerun-bridge = "dimos.visualization.rerun.bridge:app"
+lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
+humancli = "dimos.utils.cli.human.humanclianim:main"
+doclinks = "dimos.utils.docs.doclinks:main"
+dtop = "dimos.utils.cli.dtop:main"
+
+[project.urls]
+Homepage = "https://dimensionalos.com"
+Repository = "https://github.com/dimensionalOS/dimos"
+Issues = "https://github.com/dimensionalOS/dimos/issues"
+Changelog = "https://github.com/dimensionalOS/dimos/releases"
 
 # -----------------------
 # Optional Dependencies (Extras)
@@ -111,8 +128,6 @@ sim = [
 
 # 🔹 Visualization
 visualization = [
-    "rerun-sdk>=0.20.0",
-    "dimos-viewer>=0.30.0a4",
 ]
 
 # 🔹 AI / LLM stack
@@ -149,8 +164,9 @@ perception = [
 
 # 🔹 Robotics manipulation
 manipulation = [
-    "drake>=1.40.0",
-    "pyrealsense2",
+    "drake==1.45.0; sys_platform == 'darwin' and platform_machine != 'aarch64'",
+    "drake>=1.40.0; sys_platform != 'darwin' and platform_machine != 'aarch64'",
+    "pyrealsense2; sys_platform != 'darwin'",
     "matplotlib>=3.7.1",
 ]
 
@@ -162,10 +178,43 @@ unitree = [
 
 # 🔹 Developer tools
 dev = [
-    "pytest",
-    "mypy",
-    "ruff",
-    "pre-commit",
+    "ruff==0.14.3",
+    "mypy==1.19.0",
+    "pre_commit==4.2.0",
+    "pytest==8.3.5",
+    "pytest-asyncio==0.26.0",
+    "pytest-mock==3.15.0",
+    "pytest-env==1.1.5",
+    "pytest-timeout==2.4.0",
+    "coverage>=7.0",
+    "requests-mock==1.12.1",
+    "terminaltexteffects==0.12.2",
+    "watchdog>=3.0.0",
+    "md-babel-py==1.1.1",
+    "python-lsp-server[all]==1.14.0",
+    "python-lsp-ruff==2.3.0",
+    "lxml-stubs>=0.5.1,<1",
+    "pandas-stubs>=2.3.2.250926,<3",
+    "scipy-stubs>=1.15.0",
+    "types-PySocks>=1.7.1.20251001,<2",
+    "types-PyYAML>=6.0.12.20250915,<7",
+    "types-colorama>=0.4.15.20250801,<1",
+    "types-defusedxml>=0.7.0.20250822,<1",
+    "types-gevent>=25.4.0.20250915,<26",
+    "types-greenlet>=3.2.0.20250915,<4",
+    "types-jmespath>=1.0.2.20250809,<2",
+    "types-requests>=2.32.4.20260107,<3",
+    "types-jsonschema>=4.25.1.20251009,<5",
+    "types-networkx>=3.5.0.20251001,<4",
+    "types-protobuf>=6.32.1.20250918,<7",
+    "types-psutil>=7.2.2.20260130,<8",
+    "types-psycopg2>=2.9.21.20251012",
+    "types-pytz>=2025.2.0.20250809,<2026",
+    "types-simplejson>=3.20.0.20250822,<4",
+    "types-tabulate>=0.9.0.20241207,<1",
+    "types-tensorflow>=2.18.0.20251008,<3",
+    "types-tqdm>=4.67.0.20250809,<5",
+    "py-spy",
 ]
 
 # 🔹 AI convenience bundle
@@ -189,9 +238,88 @@ full = [
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.lint]
+extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH"]
+ignore = [
+    "A001", "A002", "B008", "B017", "B019", "B024", "B026", "B904", "C901", "E402", "E501",
+    "E721", "E722", "E741", "F811", "F821", "N801", "N802", "N803", "N806", "N817", "N999",
+    "RUF003", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "UP007", "TC001", "TC002", "TC003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"dimos/models/Detic/*" = ["ALL"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dimos"]
+combine-as-imports = true
+force-sort-within-sections = true
+
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-base-classes = ["dimos.core.module.Module"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
+incremental = true
+warn_unused_ignores = false
+explicit_package_bases = true
+exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/conftest.py*"
+
+[[tool.mypy.overrides]]
+module = [
+    "annotation_protocol",
+    "cyclonedds",
+    "cyclonedds.*",
+    "dimos_lcm.*",
+    "etils",
+    "geometry_msgs.*",
+    "lazy_loader",
+    "mujoco",
+    "mujoco_playground.*",
+    "nav_msgs.*",
+    "open_clip",
+    "pinocchio",
+    "piper_sdk.*",
+    "plotext",
+    "plum.*",
+    "portal",
+    "psutil",
+    "pycuda",
+    "pycuda.*",
+    "pydrake",
+    "pydrake.*",
+    "pyzed",
+    "pyzed.*",
+    "rclpy.*",
+    "sam2.*",
+    "scipy",
+    "scipy.*",
+    "sensor_msgs.*",
+    "sqlite_vec",
+    "std_msgs.*",
+    "tf2_msgs.*",
+    "torchreid",
+    "turbojpeg",
+    "ultralytics.*",
+    "unitree_webrtc_connect.*",
+    "xarm.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["dimos.rxpy_backpressure", "dimos.rxpy_backpressure.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["pydrake", "pydrake.*"]
+follow_imports = "skip"
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
+env = [
+  "GOOGLE_MAPS_API_KEY=AIzafake_google_key",
+  "PYTHONWARNINGS=ignore:cupyx.jit.rawkernel is experimental:FutureWarning",
+]
+addopts = "-s -v -r a -p no:warnings -p no:launch_testing -p no:launch_ros --import-mode=importlib --color=yes -m 'not (tool or slow or mujoco)'"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

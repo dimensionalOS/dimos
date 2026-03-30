@@ -600,7 +600,7 @@ prompt_install_mode() {
 
 prompt_extras() {
     [[ -n "$EXTRAS" ]] && return
-    if [[ "$INSTALL_MODE" == "dev" ]]; then EXTRAS="all"; info "developer mode: all extras (except dds)"; return; fi
+    if [[ "$INSTALL_MODE" == "dev" ]]; then EXTRAS="all"; info "developer mode: all extras"; return; fi
 
     local -a platform_sel=() feature_sel=()
     local _platforms _features
@@ -765,9 +765,9 @@ do_install_dev() {
     printf "\n"
     info "next step: create .venv and install all Python dependencies"
     if [[ "$USE_NIX" == "1" ]]; then
-        dim "  will run: ${CYAN}nix develop --command bash -c \"uv sync --all-extras --no-extra dds\"${RESET}"
+        dim "  will run: ${CYAN}nix develop --command bash -c \"uv sync --all-extras\"${RESET}"
     else
-        dim "  will run: ${CYAN}cd ${dir} && uv sync --all-extras --no-extra dds${RESET}"
+        dim "  will run: ${CYAN}cd ${dir} && uv sync --all-extras${RESET}"
     fi
     dim "  this creates a .venv and installs ~430 packages (may take several minutes)"
     printf "\n"
@@ -778,9 +778,9 @@ do_install_dev() {
         dim "  to install later, run:"
         dim "    cd ${dir}"
         if [[ "$USE_NIX" == "1" ]]; then
-            dim "    nix develop --command bash -c \"uv sync --all-extras --no-extra dds\""
+            dim "    nix develop --command bash -c \"uv sync --all-extras\""
         else
-            dim "    uv sync --all-extras --no-extra dds"
+            dim "    uv sync --all-extras"
         fi
         ok "repository cloned to ${dir}"
         return
@@ -788,11 +788,11 @@ do_install_dev() {
 
     if [[ "$USE_NIX" == "1" ]]; then
         verify_nix_develop "$dir"
-        if [[ "$DRY_RUN" == "1" ]]; then dim "[dry-run] nix develop + uv sync --all-extras --no-extra dds"
-        else (cd "$dir" && nix develop --command bash -c "set -euo pipefail && uv sync --all-extras --no-extra dds"); fi
+        if [[ "$DRY_RUN" == "1" ]]; then dim "[dry-run] nix develop + uv sync --all-extras"
+        else (cd "$dir" && nix develop --command bash -c "set -euo pipefail && uv sync --all-extras"); fi
     else
-        if [[ "$DRY_RUN" == "1" ]]; then dim "[dry-run] uv sync --all-extras --no-extra dds"
-        else pushd "$dir" >/dev/null && uv sync --all-extras --no-extra dds && popd >/dev/null; fi
+        if [[ "$DRY_RUN" == "1" ]]; then dim "[dry-run] uv sync --all-extras"
+        else pushd "$dir" >/dev/null && uv sync --all-extras && popd >/dev/null; fi
     fi
     ok "developer environment ready in ${dir}"
 }

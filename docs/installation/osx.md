@@ -125,8 +125,8 @@ export GIT_LFS_SKIP_SMUDGE=1
 git clone -b dev https://github.com/dimensionalOS/dimos.git
 cd dimos
 
-# Project lockfile + all optional groups except DDS (DDS needs separate uv extra).
-uv sync --all-extras --no-extra dds
+# Project lockfile + all optional groups.
+uv sync --all-extras
 ```
 
 ## Type checking
