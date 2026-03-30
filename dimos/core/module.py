@@ -28,7 +28,6 @@ from typing import (
     get_args,
     get_origin,
     get_type_hints,
-    overload,
 )
 
 from langchain_core.tools import tool
@@ -40,7 +39,6 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import extract_module_info
 from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import Resource
-from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteOut, Transport
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
@@ -113,12 +111,9 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread: threading.Thread | None
     _disposables: CompositeDisposable
-    _bound_rpc_calls: dict[str, RpcCall] = {}
     _module_closed: bool = False
     _module_closed_lock: threading.Lock
     _loop_thread_timeout: float = 2.0
-
-    rpc_calls: list[str] = []
 
     def __init__(self, config_args: dict[str, Any]):
         super().__init__(**config_args)
@@ -382,32 +377,8 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         return partial(Blueprint.create, self)  # type: ignore[arg-type]
 
     @rpc
-    def get_rpc_method_names(self) -> list[str]:
-        return self.rpc_calls
-
-    @rpc
-    def set_rpc_method(self, method: str, callable: RpcCall) -> None:
-        callable.set_rpc(self.rpc)  # type: ignore[arg-type]
-        self._bound_rpc_calls[method] = callable
-
-    @rpc
     def set_module_ref(self, name: str, module_ref: "RPCClient") -> None:
         setattr(self, name, module_ref)
-
-    @overload
-    def get_rpc_calls(self, method: str) -> RpcCall: ...
-
-    @overload
-    def get_rpc_calls(self, method1: str, method2: str, *methods: str) -> tuple[RpcCall, ...]: ...
-
-    def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall, ...]:  # type: ignore[misc]
-        missing = [m for m in methods if m not in self._bound_rpc_calls]
-        if missing:
-            raise ValueError(
-                f"RPC methods not found. Class: {self.__class__.__name__}, RPC methods: {', '.join(missing)}"
-            )
-        result = tuple(self._bound_rpc_calls[m] for m in methods)
-        return result[0] if len(result) == 1 else result
 
     @rpc
     def get_skills(self) -> list[SkillInfo]:

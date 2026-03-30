@@ -23,14 +23,15 @@ from dimos.core._test_future_annotations_helper import (
 )
 from dimos.core.blueprints import (
     Blueprint,
+    ModuleRef,
     StreamRef,
     _BlueprintAtom,
+    _DisabledModuleProxy,
     autoconnect,
 )
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.module_coordinator import ModuleCoordinator
-from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image
@@ -89,18 +90,11 @@ class ModuleB(Module):
     data2: In[Data2]
     data3: Out[Data3]
 
-    _module_a_get_name: callable = None
-
-    @rpc
-    def set_ModuleA_get_name(self, callable: RpcCall) -> None:
-        self._module_a_get_name = callable
-        self._module_a_get_name.set_rpc(self.rpc)
+    module_a: ModuleA
 
     @rpc
     def what_is_as_name(self) -> str:
-        if self._module_a_get_name is None:
-            return "ModuleA.get_name not set"
-        return self._module_a_get_name()
+        return self.module_a.get_name()
 
 
 class ModuleC(Module):
@@ -140,7 +134,7 @@ def test_autoconnect() -> None:
                     StreamRef(name="data2", type=Data2, direction="in"),
                     StreamRef(name="data3", type=Data3, direction="out"),
                 ),
-                module_refs=(),
+                module_refs=(ModuleRef(name="module_a", spec=ModuleA),),
                 kwargs={},
             ),
         )
@@ -483,6 +477,26 @@ def test_disabled_modules_are_skipped_during_build() -> None:
         assert coordinator.get_instance(ModuleB) is not None
 
         assert coordinator.get_instance(ModuleC) is None
+    finally:
+        coordinator.stop()
+
+
+@pytest.mark.slow
+def test_disabled_module_ref_gets_noop_proxy() -> None:
+    blueprint_set = autoconnect(
+        Calculator1.blueprint(),
+        Mod2.blueprint(),
+    ).disabled_modules(Calculator1)
+
+    coordinator = blueprint_set.build(**_BUILD_WITHOUT_RERUN)
+
+    try:
+        mod2 = coordinator.get_instance(Mod2)
+        assert mod2 is not None
+        # The proxy should be a _DisabledModuleProxy, not a real Calculator.
+        assert isinstance(mod2.calc, _DisabledModuleProxy)
+        # Calling methods on it should return None (no-op).
+        assert mod2.calc.compute1(1, 2) is None
     finally:
         coordinator.stop()
 

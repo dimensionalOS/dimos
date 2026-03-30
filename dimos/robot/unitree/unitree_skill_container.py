@@ -28,6 +28,8 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.base import NavigationState
+from dimos.navigation.navigation_spec import NavigationInterfaceSpec
+from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -192,13 +194,8 @@ _UNITREE_COMMANDS = {
 class UnitreeSkillContainer(Module):
     """Container for Unitree Go2 robot skills using the new framework."""
 
-    rpc_calls: list[str] = [
-        "NavigationInterface.set_goal",
-        "NavigationInterface.get_state",
-        "NavigationInterface.is_goal_reached",
-        "NavigationInterface.cancel_goal",
-        "GO2Connection.publish_request",
-    ]
+    _navigation: NavigationInterfaceSpec
+    _connection: GO2ConnectionSpec
 
     @rpc
     def start(self) -> None:
@@ -236,33 +233,23 @@ class UnitreeSkillContainer(Module):
         if tf is None:
             return "Failed to get the position of the robot."
 
-        try:
-            set_goal_rpc, get_state_rpc, is_goal_reached_rpc = self.get_rpc_calls(
-                "NavigationInterface.set_goal",
-                "NavigationInterface.get_state",
-                "NavigationInterface.is_goal_reached",
-            )
-        except Exception:
-            logger.error("Navigation module not connected properly")
-            return "Failed to connect to navigation module."
-
         # TODO: Improve this. This is not a nice way to do it. I should
         # subscribe to arrival/cancellation events instead.
 
-        set_goal_rpc(self._generate_new_goal(tf.to_pose(), forward, left, degrees))
+        self._navigation.set_goal(self._generate_new_goal(tf.to_pose(), forward, left, degrees))
 
         time.sleep(1.0)
 
         start_time = time.monotonic()
         timeout = 100.0
-        while get_state_rpc() == NavigationState.FOLLOWING_PATH:
+        while self._navigation.get_state() == NavigationState.FOLLOWING_PATH:
             if time.monotonic() - start_time > timeout:
                 return "Navigation timed out"
             time.sleep(0.1)
 
         time.sleep(1.0)
 
-        if not is_goal_reached_rpc():
+        if not self._navigation.is_goal_reached():
             return "Navigation was cancelled or failed"
         else:
             return "Navigation goal reached"
@@ -298,12 +285,6 @@ class UnitreeSkillContainer(Module):
 
     @skill
     def execute_sport_command(self, command_name: str) -> str:
-        try:
-            publish_request = self.get_rpc_calls("GO2Connection.publish_request")
-        except Exception:
-            logger.error("GO2Connection not connected properly")
-            return "Failed to connect to GO2Connection."
-
         if command_name not in _UNITREE_COMMANDS:
             suggestions = difflib.get_close_matches(
                 command_name, _UNITREE_COMMANDS.keys(), n=3, cutoff=0.6
@@ -313,7 +294,7 @@ class UnitreeSkillContainer(Module):
         id_, _ = _UNITREE_COMMANDS[command_name]
 
         try:
-            publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": id_})
+            self._connection.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": id_})
             return f"'{command_name}' command executed successfully."
         except Exception as e:
             logger.error(f"Failed to execute {command_name}: {e}")
