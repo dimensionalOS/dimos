@@ -512,7 +512,7 @@ xarm_perception_agent = autoconnect(
 # The engine is created lazily when the adapter connects / camera starts.
 
 from dimos.control.blueprints._hardware import XARM7_SIM_PATH, sim_xarm7
-from dimos.simulation.manipulators.camera import MujocoCamera
+from dimos.simulation.sensors.mujoco_camera import MujocoCamera
 from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
 
 xarm_perception_sim = autoconnect(

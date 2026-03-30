@@ -33,8 +33,8 @@ from dimos.simulation.engines.mujoco_engine import (
     get_or_create_engine,
     unregister_engine,
 )
-from dimos.simulation.manipulators.camera import MujocoCamera
 from dimos.simulation.manipulators.test_sim_adapter import _patch_mujoco_engine
+from dimos.simulation.sensors.mujoco_camera import MujocoCamera
 
 ARM_DOF = 7
 
@@ -223,7 +223,7 @@ class TestMujocoCameraLifecycle:
         cam = camera_with_mock_engine
         cam._engine.connected = False  # thread will wait, won't spin
         # Patch rx.interval to avoid spawning scheduler threads that leak
-        with patch("dimos.simulation.manipulators.camera.rx.interval", return_value=MagicMock()):
+        with patch("dimos.simulation.sensors.mujoco_camera.rx.interval", return_value=MagicMock()):
             cam.start()
             assert cam._thread is not None
             assert cam._thread.is_alive()
@@ -233,7 +233,7 @@ class TestMujocoCameraLifecycle:
     def test_stop_sets_event(self, camera_with_mock_engine: MujocoCamera):
         cam = camera_with_mock_engine
         cam._engine.connected = False
-        with patch("dimos.simulation.manipulators.camera.rx.interval", return_value=MagicMock()):
+        with patch("dimos.simulation.sensors.mujoco_camera.rx.interval", return_value=MagicMock()):
             cam.start()
             cam.stop()
         assert cam._stop_event.is_set()
