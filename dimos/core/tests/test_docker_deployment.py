@@ -101,7 +101,7 @@ class TestModuleCoordinatorDockerRouting:
         specs = [
             (FakeDockerModule, (), {}),
         ]
-        results = dimos_cluster.deploy_parallel(specs)
+        results = dimos_cluster.deploy_parallel(specs, {})
 
         mock_proxy_cls.assert_called_once()
         assert results[0] is mock_dm

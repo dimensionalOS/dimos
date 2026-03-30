@@ -40,12 +40,14 @@ def test_blueprint_arg_help():
     # List output produces better diff in pytest error output.
     assert output.split("\n") == [
         "    testmodulea:",
+        "      * testmodulea.default_rpc_timeout: float (default: 120.0)",
         "      * testmodulea.frame_id_prefix: str | None (default: None)",
         "      * testmodulea.frame_id: str | None (default: None)",
         "      * testmodulea.min_interval_sec: float (default: 0.1)",
         "      * testmodulea.entity_prefix: str (default: world)",
         "      * testmodulea.viewer_mode: typing.Literal['native', 'web', 'connect', 'none'] (default: native)",
         "    testmoduleb:",
+        "      * testmoduleb.default_rpc_timeout: float (default: 120.0)",
         "      * testmoduleb.frame_id_prefix: str | None (default: None)",
         "      * testmoduleb.frame_id: str | None (default: None)",
         "      * testmoduleb.memory_limit: str (default: 25%)",
@@ -79,12 +81,14 @@ def test_blueprint_arg_help_extra_args():
     # List output produces better diff in pytest error output.
     assert output.split("\n") == [
         "    testmodulea:",
+        "      * testmodulea.default_rpc_timeout: float (default: 120.0)",
         "      * testmodulea.frame_id_prefix: str | None (default: foo)",
         "      * testmodulea.frame_id: str | None (default: None)",
         "      * testmodulea.min_interval_sec: float (default: 0.1)",
         "      * testmodulea.entity_prefix: str (default: world)",
         "      * testmodulea.viewer_mode: typing.Literal['native', 'web', 'connect', 'none'] (default: web)",
         "    testmoduleb:",
+        "      * testmoduleb.default_rpc_timeout: float (default: 120.0)",
         "      * testmoduleb.frame_id_prefix: str | None (default: None)",
         "      * testmoduleb.frame_id: str | None (default: None)",
         "      * testmoduleb.memory_limit: str (default: 25%)",
@@ -107,6 +111,7 @@ def test_blueprint_arg_help_required():
     output = arg_help(blueprint.config(), blueprint)
     assert output.split("\n") == [
         "    testmodule:",
+        "      * testmodule.default_rpc_timeout: float (default: 120.0)",
         "      * testmodule.frame_id_prefix: str | None (default: None)",
         "      * testmodule.frame_id: str | None (default: None)",
         "      * [Required] testmodule.foo: int",
