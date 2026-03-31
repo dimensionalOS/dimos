@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Generator
+import time
 from typing import Any
 
 import pytest
@@ -37,6 +38,7 @@ _ISOLATED_LCM_URL = "udpm://239.255.76.98:7698?ttl=0"
 def lcm_pub_sub_base() -> Generator[LCMPubSubBase, None, None]:
     lcm = LCMPubSubBase(url=_ISOLATED_LCM_URL)
     lcm.start()
+    time.sleep(0.05)  # let the handler thread enter the LCM loop
     yield lcm
     lcm.stop()
 
@@ -45,6 +47,7 @@ def lcm_pub_sub_base() -> Generator[LCMPubSubBase, None, None]:
 def pickle_lcm() -> Generator[PickleLCM, None, None]:
     lcm = PickleLCM(url=_ISOLATED_LCM_URL)
     lcm.start()
+    time.sleep(0.05)  # let the handler thread enter the LCM loop
     yield lcm
     lcm.stop()
 
@@ -53,6 +56,7 @@ def pickle_lcm() -> Generator[PickleLCM, None, None]:
 def lcm() -> Generator[LCM, None, None]:
     lcm = LCM(url=_ISOLATED_LCM_URL)
     lcm.start()
+    time.sleep(0.05)  # let the handler thread enter the LCM loop
     yield lcm
     lcm.stop()
 

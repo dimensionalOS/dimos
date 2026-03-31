@@ -32,8 +32,7 @@ from pathlib import Path
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
@@ -46,6 +45,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.robot.catalog.ufactory import xarm7 as _catalog_xarm7
 from dimos.robot.foxglove_bridge import FoxgloveBridge  # TODO: migrate to rerun
 from dimos.utils.data import get_data
 
@@ -307,9 +307,11 @@ dual_xarm6_planner = ManipulationModule.blueprint(
 
 # Single XArm7 planner + mock coordinator (standalone, no external coordinator needed)
 # Usage: dimos run xarm7-planner-coordinator
+_xarm7_cfg = _catalog_xarm7(name="arm")
+
 xarm7_planner_coordinator = autoconnect(
     ManipulationModule.blueprint(
-        robots=[_make_xarm7_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
+        robots=[_xarm7_cfg.to_robot_model_config()],
         planning_timeout=10.0,
         enable_viz=True,
     ),
@@ -317,22 +319,8 @@ xarm7_planner_coordinator = autoconnect(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
-        hardware=[
-            HardwareComponent(
-                hardware_id="arm",
-                hardware_type=HardwareType.MANIPULATOR,
-                joints=make_joints("arm", 7),
-                adapter_type="mock",
-            ),
-        ],
-        tasks=[
-            TaskConfig(
-                name="traj_arm",
-                type="trajectory",
-                joint_names=[f"arm_joint{i + 1}" for i in range(7)],
-                priority=10,
-            ),
-        ],
+        hardware=[_xarm7_cfg.to_hardware_component()],
+        tasks=[_xarm7_cfg.to_task_config()],
     ),
 ).transports(
     {
