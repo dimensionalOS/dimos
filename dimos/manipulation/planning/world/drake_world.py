@@ -315,7 +315,18 @@ class DrakeWorld(WorldSpec):
                 np.array(config.joint_limits_upper),
             )
 
-        # Default to ±π
+        # Query Drake plant if finalized (limits from URDF/MJCF)
+        if self._finalized:
+            robot_data = self._robots[robot_id]
+            lower = []
+            upper = []
+            for joint_name in config.joint_names:
+                joint = self._plant.GetJointByName(joint_name, robot_data.model_instance)
+                lower.append(joint.position_lower_limits()[0])
+                upper.append(joint.position_upper_limits()[0])
+            return (np.array(lower), np.array(upper))
+
+        # Pre-finalization fallback
         n_joints = len(config.joint_names)
         return (
             np.full(n_joints, -np.pi),
