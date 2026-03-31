@@ -100,13 +100,10 @@ class PointCloud2(Timestamped):
         # Remove non-picklable objects
         del state["_pcd_tensor"]
         state["_pcd_legacy_cache"] = None
-        # Remove cached_property entries that hold Open3D C++ objects
-        for key in (
-            "axis_aligned_bounding_box",
-            "oriented_bounding_box",
-            "bounding_box_dimensions",
-        ):
-            state.pop(key, None)
+        # Remove all cached_property entries
+        for key in list(state):
+            if isinstance(getattr(type(self), key, None), functools.cached_property):
+                del state[key]
         return state
 
     def __setstate__(self, state: dict[str, object]) -> None:
