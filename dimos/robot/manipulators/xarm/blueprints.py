@@ -23,51 +23,42 @@ Usage:
     dimos run keyboard-teleop-xarm7
 """
 
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.manipulation.blueprints import (
-    _make_xarm6_config,
-    _make_xarm7_config,
-)
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.utils.data import LfsPath
 
-_XARM6_MODEL_PATH = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
-_XARM7_MODEL_PATH = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
+_xarm6_cfg = _catalog_xarm6(name="arm", add_gripper=False)
+_xarm7_cfg = _catalog_xarm7(name="arm", add_gripper=False)
+
+# Pre-built URDFs for Pinocchio FK in the teleop UI (xacro not supported by Pinocchio)
+_XARM6_FK_MODEL = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
+_XARM7_FK_MODEL = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
 
 # XArm6 mock sim + keyboard teleop + Drake visualization
 keyboard_teleop_xarm6 = autoconnect(
-    KeyboardTeleopModule.blueprint(model_path=_XARM6_MODEL_PATH, ee_joint_id=6),
+    KeyboardTeleopModule.blueprint(model_path=str(_XARM6_FK_MODEL), ee_joint_id=_xarm6_cfg.dof),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
-        hardware=[
-            HardwareComponent(
-                hardware_id="arm",
-                hardware_type=HardwareType.MANIPULATOR,
-                joints=make_joints("arm", 6),
-                adapter_type="mock",
-            ),
-        ],
+        hardware=[_xarm6_cfg.to_hardware_component()],
         tasks=[
-            TaskConfig(
-                name="cartesian_ik_arm",
-                type="cartesian_ik",
-                joint_names=[f"arm_joint{i + 1}" for i in range(6)],
-                priority=10,
-                model_path=_XARM6_MODEL_PATH,
-                ee_joint_id=6,
+            _xarm6_cfg.to_task_config(
+                task_type="cartesian_ik",
+                task_name="cartesian_ik_arm",
+                model_path=_XARM6_FK_MODEL,
+                ee_joint_id=_xarm6_cfg.dof,
             ),
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_make_xarm6_config(name="arm", joint_prefix="arm_", add_gripper=False)],
+        robots=[_xarm6_cfg.to_robot_model_config()],
         enable_viz=True,
     ),
 ).transports(
@@ -81,32 +72,23 @@ keyboard_teleop_xarm6 = autoconnect(
 
 # XArm7 mock sim + keyboard teleop + Drake visualization
 keyboard_teleop_xarm7 = autoconnect(
-    KeyboardTeleopModule.blueprint(model_path=_XARM7_MODEL_PATH, ee_joint_id=7),
+    KeyboardTeleopModule.blueprint(model_path=str(_XARM7_FK_MODEL), ee_joint_id=_xarm7_cfg.dof),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
-        hardware=[
-            HardwareComponent(
-                hardware_id="arm",
-                hardware_type=HardwareType.MANIPULATOR,
-                joints=make_joints("arm", 7),
-                adapter_type="mock",
-            ),
-        ],
+        hardware=[_xarm7_cfg.to_hardware_component()],
         tasks=[
-            TaskConfig(
-                name="cartesian_ik_arm",
-                type="cartesian_ik",
-                joint_names=[f"arm_joint{i + 1}" for i in range(7)],
-                priority=10,
-                model_path=_XARM7_MODEL_PATH,
-                ee_joint_id=7,
+            _xarm7_cfg.to_task_config(
+                task_type="cartesian_ik",
+                task_name="cartesian_ik_arm",
+                model_path=_XARM7_FK_MODEL,
+                ee_joint_id=_xarm7_cfg.dof,
             ),
         ],
     ),
     ManipulationModule.blueprint(
-        robots=[_make_xarm7_config(name="arm", joint_prefix="arm_", add_gripper=False)],
+        robots=[_xarm7_cfg.to_robot_model_config()],
         enable_viz=True,
     ),
 ).transports(

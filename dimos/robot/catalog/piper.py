@@ -58,7 +58,7 @@ def piper(
         "adapter_type": adapter_type,
         "address": address,
         "joint_names": [f"joint{i}" for i in range(1, 7)],
-        "base_link": "arm_base",
+        "base_link": "base_link",
         "home_joints": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         "base_pose": [0, y_offset, 0, 0, 0, 0, 1],
         "package_paths": {
