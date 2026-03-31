@@ -24,26 +24,18 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+from dimos.simulation.conftest import _patch_mujoco_engine
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,
     MujocoEngine,
-    _clear_registry,
     _engine_registry,
     get_or_create_engine,
     unregister_engine,
 )
-from dimos.simulation.manipulators.test_sim_adapter import _patch_mujoco_engine
 from dimos.simulation.sensors.mujoco_camera import MujocoCamera
 
 ARM_DOF = 7
-
-
-@pytest.fixture(autouse=True)
-def clean_registry():
-    _clear_registry()
-    yield
-    _clear_registry()
 
 
 def _make_camera_frame(
@@ -84,7 +76,6 @@ def camera_with_mock_engine(mock_engine: MagicMock):
     cam.stop()
 
 
-@pytest.mark.mujoco
 class TestEngineRegistry:
     def test_creates_new(self):
         patches = _patch_mujoco_engine(ARM_DOF)
@@ -164,7 +155,6 @@ class TestEngineRegistry:
                 p.stop()
 
 
-@pytest.mark.mujoco
 class TestCameraIntrinsics:
     def test_fovy_45(self, camera_with_mock_engine: MujocoCamera):
         cam = camera_with_mock_engine
@@ -209,7 +199,6 @@ class TestCameraIntrinsics:
         assert info.frame_id == "wrist_camera_color_optical_frame"
 
 
-@pytest.mark.mujoco
 class TestMujocoCameraLifecycle:
     def test_start_no_engine_raises(self):
         cam = MujocoCamera(camera_name="cam", address="")
@@ -249,7 +238,6 @@ class TestMujocoCameraLifecycle:
         cam.stop()
 
 
-@pytest.mark.mujoco
 class TestTFPublishing:
     def test_publish_tf_correct_frames(self, camera_with_mock_engine: MujocoCamera):
         cam = camera_with_mock_engine
