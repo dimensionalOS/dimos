@@ -155,20 +155,10 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
         fovy_rad = math.radians(fovy_deg)
         fy = h / (2.0 * math.tan(fovy_rad / 2.0))
         fx = fy  # square pixels
-        cx = w / 2.0
-        cy = h / 2.0
 
-        K = [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]
-        P = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
-        D = [0.0, 0.0, 0.0, 0.0, 0.0]
-
-        self._camera_info_base = CameraInfo(
-            height=h,
-            width=w,
-            distortion_model="plumb_bob",
-            D=D,
-            K=K,
-            P=P,
+        self._camera_info_base = CameraInfo.from_intrinsics(
+            fx=fx, fy=fy, cx=w / 2.0, cy=h / 2.0,
+            width=w, height=h,
             frame_id=self._color_optical_frame,
         )
 

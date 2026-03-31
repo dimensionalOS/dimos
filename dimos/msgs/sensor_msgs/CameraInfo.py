@@ -90,6 +90,38 @@ class CameraInfo(Timestamped):
         self.roi_width = 0
         self.roi_do_rectify = False
 
+    @classmethod
+    def from_intrinsics(
+        cls,
+        fx: float,
+        fy: float,
+        cx: float,
+        cy: float,
+        width: int,
+        height: int,
+        frame_id: str = "",
+    ) -> CameraInfo:
+        """Create CameraInfo from pinhole intrinsics (no distortion).
+
+        Args:
+            fx: Focal length x (pixels)
+            fy: Focal length y (pixels)
+            cx: Principal point x (pixels)
+            cy: Principal point y (pixels)
+            width: Image width
+            height: Image height
+            frame_id: Frame ID
+        """
+        return cls(
+            height=height,
+            width=width,
+            distortion_model="plumb_bob",
+            D=[0.0, 0.0, 0.0, 0.0, 0.0],
+            K=[fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
+            P=[fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
+            frame_id=frame_id,
+        )
+
     def with_ts(self, ts: float) -> CameraInfo:
         """Return a copy of this CameraInfo with the given timestamp.
 
