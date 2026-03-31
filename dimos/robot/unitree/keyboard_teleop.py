@@ -19,6 +19,7 @@ from typing import Any
 
 import pygame
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
@@ -71,7 +72,7 @@ class KeyboardTeleop(Module):
 
         if self._thread is None:
             raise RuntimeError("Cannot stop: thread was never started")
-        self._thread.join(2)
+        self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 

@@ -34,6 +34,7 @@ from reactivex import Observable
 from reactivex.abc import ObserverBase, SchedulerBase
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -192,7 +193,7 @@ class MujocoConnection:
         # Wait for threads to finish
         for thread in self._stream_threads:
             if thread.is_alive():
-                thread.join(timeout=2.0)
+                thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
                 if thread.is_alive():
                     logger.warning(f"Stream thread {thread.name} did not stop gracefully")
 

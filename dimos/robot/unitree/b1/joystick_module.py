@@ -25,6 +25,7 @@ os.environ["SDL_VIDEODRIVER"] = "x11"
 
 import time
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
@@ -86,7 +87,7 @@ class JoystickModule(Module):
         )
         self.twist_out.publish(stop_twist_stamped)
 
-        self._thread.join(2)
+        self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 

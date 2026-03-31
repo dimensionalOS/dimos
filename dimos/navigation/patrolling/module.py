@@ -19,6 +19,7 @@ from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
@@ -139,5 +140,5 @@ class PatrollingModule(Module):
             self.goal_request.publish(pose)
         with self._patrol_lock:
             if self._patrol_thread is not None:
-                self._patrol_thread.join()
+                self._patrol_thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
                 self._patrol_thread = None
