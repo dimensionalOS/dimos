@@ -240,10 +240,10 @@ class RobotConfig(BaseModel):
         from dimos.control.coordinator import TaskConfig
 
         return TaskConfig(
-            name=task_name or self.coordinator_task_name,
-            type=task_type or self.task_type,
+            name=task_name if task_name is not None else self.coordinator_task_name,
+            type=task_type if task_type is not None else self.task_type,
             joint_names=self.coordinator_joint_names,
-            priority=priority or self.task_priority,
+            priority=priority if priority is not None else self.task_priority,
             **task_kwargs,
         )
 

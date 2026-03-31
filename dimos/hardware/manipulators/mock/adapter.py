@@ -50,7 +50,7 @@ class MockAdapter:
         self, dof: int = 6, initial_positions: list[float] | None = None, **_: object
     ) -> None:
         self._dof = dof
-        self._positions = list(initial_positions) if initial_positions else [0.0] * dof
+        self._positions = list(initial_positions) if initial_positions is not None else [0.0] * dof
         self._velocities = [0.0] * dof
         self._efforts = [0.0] * dof
         self._enabled = False

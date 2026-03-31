@@ -236,21 +236,29 @@ class DrakeWorld(WorldSpec):
         if not original_path.exists():
             raise FileNotFoundError(f"Robot model not found: {original_path}")
 
-        prepared_path = prepare_urdf_for_drake(
-            urdf_path=original_path,
-            package_paths=config.package_paths,
-            xacro_args=config.xacro_args,
-            convert_meshes=config.auto_convert_meshes,
-        )
-        prepared_path_obj = Path(prepared_path)
-        logger.info(f"Using prepared model: {prepared_path_obj}")
-
-        # Register package paths
-        if config.package_paths:
-            for pkg_name, pkg_path in config.package_paths.items():
-                self._parser.package_map().Add(pkg_name, Path(pkg_path))
+        if original_path.suffix == ".xml":
+            # MJCF — pass directly to Drake (detects format from .xml extension)
+            prepared_path_obj = original_path
         else:
-            self._parser.package_map().Add(f"{config.name}_description", prepared_path_obj.parent)
+            # URDF/xacro — preprocess (xacro expansion, mesh conversion, package URI resolution)
+            prepared_path = prepare_urdf_for_drake(
+                urdf_path=original_path,
+                package_paths=config.package_paths,
+                xacro_args=config.xacro_args,
+                convert_meshes=config.auto_convert_meshes,
+            )
+            prepared_path_obj = Path(prepared_path)
+
+            # Register package paths (not applicable to MJCF)
+            if config.package_paths:
+                for pkg_name, pkg_path in config.package_paths.items():
+                    self._parser.package_map().Add(pkg_name, Path(pkg_path))
+            else:
+                self._parser.package_map().Add(
+                    f"{config.name}_description", prepared_path_obj.parent
+                )
+
+        logger.info(f"Using prepared model: {prepared_path_obj}")
 
         model_instances = self._parser.AddModels(prepared_path_obj)
         if not model_instances:
@@ -322,8 +330,16 @@ class DrakeWorld(WorldSpec):
             upper = []
             for joint_name in config.joint_names:
                 joint = self._plant.GetJointByName(joint_name, robot_data.model_instance)
-                lower.append(joint.position_lower_limits()[0])
-                upper.append(joint.position_upper_limits()[0])
+                lower_val = joint.position_lower_limits()[0]
+                upper_val = joint.position_upper_limits()[0]
+                if not np.isfinite(lower_val) or not np.isfinite(upper_val):
+                    logger.warning(
+                        "Joint '%s' has no limits in model; falling back to ±π", joint_name
+                    )
+                    lower_val = -np.pi if not np.isfinite(lower_val) else lower_val
+                    upper_val = np.pi if not np.isfinite(upper_val) else upper_val
+                lower.append(lower_val)
+                upper.append(upper_val)
             return (np.array(lower), np.array(upper))
 
         # Pre-finalization fallback
