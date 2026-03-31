@@ -21,48 +21,25 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from dimos.hardware.manipulators.sim.adapter import SimMujocoAdapter, register
-from dimos.simulation.conftest import ARM_DOF, _patch_mujoco_engine
+from dimos.simulation.conftest import ARM_DOF
 
 
 class TestSimMujocoAdapter:
     """Tests for SimMujocoAdapter with and without gripper."""
 
     @pytest.fixture
-    def adapter_with_gripper(self):
+    def adapter_with_gripper(self, patched_mujoco_engine_with_gripper):
         """SimMujocoAdapter with ARM_DOF arm joints + 1 gripper joint."""
-        patches = _patch_mujoco_engine(ARM_DOF + 1)
-        for p in patches:
-            p.start()
-        try:
-            adapter = SimMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml", headless=True)
-        finally:
-            for p in patches:
-                p.stop()
-        return adapter
+        return SimMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml", headless=True)
 
     @pytest.fixture
-    def adapter_no_gripper(self):
+    def adapter_no_gripper(self, patched_mujoco_engine):
         """SimMujocoAdapter with ARM_DOF arm joints, no gripper."""
-        patches = _patch_mujoco_engine(ARM_DOF)
-        for p in patches:
-            p.start()
-        try:
-            adapter = SimMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml", headless=True)
-        finally:
-            for p in patches:
-                p.stop()
-        return adapter
+        return SimMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml", headless=True)
 
-    def test_address_required(self):
-        patches = _patch_mujoco_engine(ARM_DOF)
-        for p in patches:
-            p.start()
-        try:
-            with pytest.raises(ValueError, match="address"):
-                SimMujocoAdapter(dof=ARM_DOF, address=None)
-        finally:
-            for p in patches:
-                p.stop()
+    def test_address_required(self, patched_mujoco_engine):
+        with pytest.raises(ValueError, match="address"):
+            SimMujocoAdapter(dof=ARM_DOF, address=None)
 
     def test_gripper_detected(self, adapter_with_gripper):
         assert adapter_with_gripper._gripper_idx == ARM_DOF

@@ -102,3 +102,30 @@ def clean_engine_registry():
     _clear_registry()
     yield
     _clear_registry()
+
+
+@pytest.fixture
+def patched_mujoco_engine():
+    """Start MuJoCo engine patches for the test, stop on teardown.
+
+    Usage:
+        def test_something(patched_mujoco_engine):
+            engine = get_or_create_engine(config_path=Path("/fake/scene.xml"))
+    """
+    patches = _patch_mujoco_engine(ARM_DOF)
+    for p in patches:
+        p.start()
+    yield
+    for p in patches:
+        p.stop()
+
+
+@pytest.fixture
+def patched_mujoco_engine_with_gripper():
+    """Same as patched_mujoco_engine but with ARM_DOF+1 joints (gripper)."""
+    patches = _patch_mujoco_engine(ARM_DOF + 1)
+    for p in patches:
+        p.start()
+    yield
+    for p in patches:
+        p.stop()

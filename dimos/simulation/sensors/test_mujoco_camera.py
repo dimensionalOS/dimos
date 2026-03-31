@@ -24,7 +24,6 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from dimos.simulation.conftest import _patch_mujoco_engine
 from dimos.simulation.engines.mujoco_engine import (
     CameraConfig,
     CameraFrame,
@@ -77,82 +76,47 @@ def camera_with_mock_engine(mock_engine: MagicMock):
 
 
 class TestEngineRegistry:
-    def test_creates_new(self):
-        patches = _patch_mujoco_engine(ARM_DOF)
-        for p in patches:
-            p.start()
-        try:
-            engine = get_or_create_engine(config_path=Path("/fake/scene.xml"), headless=True)
-            assert engine is not None
-            assert len(_engine_registry) == 1
-        finally:
-            for p in patches:
-                p.stop()
+    def test_creates_new(self, patched_mujoco_engine):
+        engine = get_or_create_engine(config_path=Path("/fake/scene.xml"), headless=True)
+        assert engine is not None
+        assert len(_engine_registry) == 1
 
-    def test_returns_same_instance(self):
-        patches = _patch_mujoco_engine(ARM_DOF)
-        for p in patches:
-            p.start()
-        try:
-            e1 = get_or_create_engine(config_path=Path("/fake/scene.xml"), headless=True)
-            e2 = get_or_create_engine(config_path=Path("/fake/scene.xml"), headless=True)
-            assert e1 is e2
-            assert len(_engine_registry) == 1
-        finally:
-            for p in patches:
-                p.stop()
+    def test_returns_same_instance(self, patched_mujoco_engine):
+        e1 = get_or_create_engine(config_path=Path("/fake/scene.xml"), headless=True)
+        e2 = get_or_create_engine(config_path=Path("/fake/scene.xml"), headless=True)
+        assert e1 is e2
+        assert len(_engine_registry) == 1
 
-    def test_merges_new_cameras(self):
-        patches = _patch_mujoco_engine(ARM_DOF)
-        for p in patches:
-            p.start()
-        try:
-            e1 = get_or_create_engine(
-                config_path=Path("/fake/scene.xml"),
-                cameras=[CameraConfig(name="cam_a")],
-            )
-            get_or_create_engine(
-                config_path=Path("/fake/scene.xml"),
-                cameras=[CameraConfig(name="cam_b")],
-            )
-            names = {c.name for c in e1._camera_configs}
-            assert names == {"cam_a", "cam_b"}
-        finally:
-            for p in patches:
-                p.stop()
+    def test_merges_new_cameras(self, patched_mujoco_engine):
+        e1 = get_or_create_engine(
+            config_path=Path("/fake/scene.xml"),
+            cameras=[CameraConfig(name="cam_a")],
+        )
+        get_or_create_engine(
+            config_path=Path("/fake/scene.xml"),
+            cameras=[CameraConfig(name="cam_b")],
+        )
+        names = {c.name for c in e1._camera_configs}
+        assert names == {"cam_a", "cam_b"}
 
-    def test_deduplicates_cameras(self):
-        patches = _patch_mujoco_engine(ARM_DOF)
-        for p in patches:
-            p.start()
-        try:
-            get_or_create_engine(
-                config_path=Path("/fake/scene.xml"),
-                cameras=[CameraConfig(name="cam_a")],
-            )
-            get_or_create_engine(
-                config_path=Path("/fake/scene.xml"),
-                cameras=[CameraConfig(name="cam_a")],
-            )
-            engine = get_or_create_engine(config_path=Path("/fake/scene.xml"))
-            cam_names = [c.name for c in engine._camera_configs]
-            assert cam_names.count("cam_a") == 1
-        finally:
-            for p in patches:
-                p.stop()
+    def test_deduplicates_cameras(self, patched_mujoco_engine):
+        get_or_create_engine(
+            config_path=Path("/fake/scene.xml"),
+            cameras=[CameraConfig(name="cam_a")],
+        )
+        get_or_create_engine(
+            config_path=Path("/fake/scene.xml"),
+            cameras=[CameraConfig(name="cam_a")],
+        )
+        engine = get_or_create_engine(config_path=Path("/fake/scene.xml"))
+        cam_names = [c.name for c in engine._camera_configs]
+        assert cam_names.count("cam_a") == 1
 
-    def test_unregister_removes(self):
-        patches = _patch_mujoco_engine(ARM_DOF)
-        for p in patches:
-            p.start()
-        try:
-            engine = get_or_create_engine(config_path=Path("/fake/scene.xml"))
-            assert len(_engine_registry) == 1
-            unregister_engine(engine)
-            assert len(_engine_registry) == 0
-        finally:
-            for p in patches:
-                p.stop()
+    def test_unregister_removes(self, patched_mujoco_engine):
+        engine = get_or_create_engine(config_path=Path("/fake/scene.xml"))
+        assert len(_engine_registry) == 1
+        unregister_engine(engine)
+        assert len(_engine_registry) == 0
 
 
 class TestCameraIntrinsics:
