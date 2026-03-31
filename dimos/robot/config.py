@@ -227,7 +227,7 @@ class RobotConfig(BaseModel):
         task_name: str | None = None,
         priority: int | None = None,
         **task_kwargs: Any,
-    ) -> "TaskConfig":
+    ) -> TaskConfig:
         """Generate TaskConfig for ControlCoordinator.
 
         Args:
