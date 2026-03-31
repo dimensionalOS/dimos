@@ -77,7 +77,7 @@ class Point:
 
     msg: GeoPoint | GeoPose
     color: str = "#e74c3c"
-    radius: float = 0.2
+    radius: float = 0.05
     label: str | None = None
 
 
@@ -148,6 +148,7 @@ SceneElement = Union[
     Polyline,
     Text,
     "OccupancyGrid",  # pass-through, rendered as base map raster
+    "PointCloud2",  # pass-through, rerun renders full 3D, SVG collapses to occupancy grid
     "EmbeddedObservation",  # pass-through, renderer decides presentation
 ]
 
@@ -173,7 +174,7 @@ class Markers:
     ts: list[float]
     values: list[float]
     color: str = "#e74c3c"
-    radius: float = 3.0
+    radius: float = 0.5
     label: str | None = None
 
 

@@ -41,6 +41,7 @@ from dimos.memory2.vis.type import (
     Text,
 )
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
     from dimos.memory2.vis.drawing2d.drawing2d import Drawing2D
@@ -322,6 +323,10 @@ def _render_element(el: SceneElement, vt: ViewTransform) -> str:
         return _render_text(el, vt)
     elif isinstance(el, OccupancyGrid):
         return _render_occupancy_grid(el, vt)
+    elif isinstance(el, PointCloud2):
+        from dimos.mapping.pointclouds.occupancy import general_occupancy
+
+        return _render_occupancy_grid(general_occupancy(el), vt)
     elif isinstance(el, EmbeddedObservation):
         return _render_arrow(Arrow(msg=el.pose_stamped), vt)
     else:

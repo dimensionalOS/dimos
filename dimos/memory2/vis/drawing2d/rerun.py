@@ -23,6 +23,7 @@ from dimos.memory2.type.observation import EmbeddedObservation
 from dimos.memory2.vis.color import hex_to_rgb
 from dimos.memory2.vis.type import Arrow, Box3D, Camera, Point, Polyline, Pose, Text
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 if TYPE_CHECKING:
     from dimos.memory2.vis.drawing2d.drawing2d import Drawing2D
@@ -44,6 +45,7 @@ def render(drawing: Drawing2D, app_id: str = "drawing2d", spawn: bool = True) ->
     polylines: list[Polyline] = []
     texts: list[Text] = []
     grids: list[OccupancyGrid] = []
+    pointclouds: list[PointCloud2] = []
     embedded_obs: list[EmbeddedObservation[Any]] = []
 
     for el in drawing.elements:
@@ -65,6 +67,8 @@ def render(drawing: Drawing2D, app_id: str = "drawing2d", spawn: bool = True) ->
             texts.append(el)
         elif isinstance(el, OccupancyGrid):
             grids.append(el)
+        elif isinstance(el, PointCloud2):
+            pointclouds.append(el)
 
     # Build and send blueprint
     has_images = any(c.image is not None for c in cameras) or any(
@@ -75,6 +79,9 @@ def render(drawing: Drawing2D, app_id: str = "drawing2d", spawn: bool = True) ->
             origin="scene",
             name="Scene",
             background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
+            line_grid=rrb.LineGrid3D(
+                plane=rr.components.Plane3D.XY.with_distance(0.5),
+            ),
         )
     ]
     if has_images:
@@ -90,13 +97,17 @@ def render(drawing: Drawing2D, app_id: str = "drawing2d", spawn: bool = True) ->
         for i, el in enumerate(grids):
             rr.log(f"scene/map/{i}", el.to_rerun(), static=True)
 
+    if pointclouds:
+        for i, el in enumerate(pointclouds):
+            rr.log(f"scene/pointcloud/{i}", el.to_rerun(), static=True)
+
     if points:
         rr.log(
             "scene/points",
             rr.Points3D(
-                positions=[[p.msg.x, p.msg.y, 0] for p in points],
+                positions=[[p.msg.x, p.msg.y, p.msg.z] for p in points],
                 colors=[hex_to_rgb(p.color) for p in points],
-                radii=[max(p.radius, 0.1) for p in points],
+                radii=[max(p.radius, 0.05) for p in points],
                 labels=[p.label or "" for p in points] if any(p.label for p in points) else None,
             ),
             static=True,

@@ -40,6 +40,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path as NavPath
 from dimos.msgs.protocol import DimosMsg
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
 
 
@@ -95,6 +96,8 @@ class Drawing2D:
         elif isinstance(msg, NavPath):
             self._elements.append(Polyline(msg=msg, **kwargs))
         elif isinstance(msg, OccupancyGrid):
+            self._elements.append(msg)
+        elif isinstance(msg, PointCloud2):
             self._elements.append(msg)
         elif isinstance(msg, Detection3D):
             self._elements.append(
