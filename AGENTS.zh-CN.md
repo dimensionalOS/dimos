@@ -277,7 +277,7 @@ my_skill_container = MySkillContainer.blueprint
 | Go2（默认） | `dimos/agents/system_prompt.py` | `SYSTEM_PROMPT` |
 | G1 人形机器人 | `dimos/robot/unitree/g1/system_prompt.py` | `G1_SYSTEM_PROMPT` |
 
-传入机器人特定提示词：`McpClient.blueprint(system_prompt=G1_SYSTEM_PROMPT)`。默认提示词针对 Go2；在 G1 上使用会导致技能幻觉。
+传入机器人特定提示词：`agent(system_prompt=G1_SYSTEM_PROMPT)`。默认提示词针对 Go2；在 G1 上使用会导致技能幻觉。
 
 ### RPC 连接
 
