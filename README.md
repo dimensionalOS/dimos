@@ -17,6 +17,8 @@
 
 <big><big>
 
+**English** | [中文](README.zh-CN.md)
+
 [Hardware](#hardware) •
 [Installation](#installation) •
 [Agent CLI & MCP](#agent-cli-and-mcp) •
