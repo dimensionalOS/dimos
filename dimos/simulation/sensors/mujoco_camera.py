@@ -21,9 +21,9 @@ Renders RGB + depth from a named camera in a shared MujocoEngine.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
 from pydantic import Field
@@ -157,8 +157,12 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
         fx = fy  # square pixels
 
         self._camera_info_base = CameraInfo.from_intrinsics(
-            fx=fx, fy=fy, cx=w / 2.0, cy=h / 2.0,
-            width=w, height=h,
+            fx=fx,
+            fy=fy,
+            cx=w / 2.0,
+            cy=h / 2.0,
+            width=w,
+            height=h,
             frame_id=self._color_optical_frame,
         )
 
