@@ -79,7 +79,7 @@ def mock_engine() -> MagicMock:
 @pytest.fixture
 def camera_with_mock_engine(mock_engine: MagicMock):
     cam = MujocoCamera(camera_name="wrist_camera")
-    cam.set_engine(mock_engine)
+    cam._engine = mock_engine
     yield cam
     cam.stop()
 
@@ -182,7 +182,7 @@ class TestCameraIntrinsics:
     def test_fovy_90(self, mock_engine: MagicMock):
         mock_engine.get_camera_fovy.return_value = 90.0
         cam = MujocoCamera(camera_name="wrist_camera")
-        cam.set_engine(mock_engine)
+        cam._engine = mock_engine
         cam._build_camera_info()
         info = cam._camera_info_base
         assert info is not None
@@ -194,7 +194,7 @@ class TestCameraIntrinsics:
     def test_unknown_camera(self, mock_engine: MagicMock):
         mock_engine.get_camera_fovy.return_value = None
         cam = MujocoCamera(camera_name="nonexistent")
-        cam.set_engine(mock_engine)
+        cam._engine = mock_engine
         cam._build_camera_info()
         assert cam._camera_info_base is None
         cam.stop()

@@ -89,8 +89,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
     be used as a drop-in replacement in manipulation blueprints.
 
     The engine is resolved automatically from the registry via ``address``
-    (the same MJCF path used by the sim_mujoco adapter). Alternatively,
-    call ``set_engine()`` before ``start()``.
+    (the same MJCF path used by the sim_mujoco adapter).
     """
 
     color_image: Out[Image]
@@ -107,10 +106,6 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._camera_info_base: CameraInfo | None = None
-
-    def set_engine(self, engine: MujocoEngine) -> None:
-        """Inject the shared MujocoEngine reference."""
-        self._engine = engine
 
     @property
     def _camera_link(self) -> str:
