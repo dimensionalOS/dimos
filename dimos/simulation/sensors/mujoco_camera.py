@@ -23,6 +23,8 @@ from __future__ import annotations
 import math
 import threading
 import time
+from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 import reactivex as rx
@@ -100,8 +102,8 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
 
     default_config = MujocoCameraConfig
 
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._engine: MujocoEngine | None = None
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -145,7 +147,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
             return
         fovy_deg = self._engine.get_camera_fovy(self.config.camera_name)
         if fovy_deg is None:
-            logger.error(f"Camera '{self.config.camera_name}' not found in MJCF")
+            logger.error("Camera not found in MJCF", camera_name=self.config.camera_name)
             return
 
         h = self.config.height
@@ -173,8 +175,6 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
     @rpc
     def start(self) -> None:
         if self._engine is None and self.config.address:
-            from pathlib import Path
-
             self._engine = get_or_create_engine(
                 config_path=Path(self.config.address),
                 headless=self.config.headless,
@@ -204,7 +204,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
             if cam_cfg.name not in existing_names:
                 self._engine._camera_configs.append(cam_cfg)
 
-        logger.info(f"MujocoCamera: engine resolved, connected={self._engine.connected}")
+        logger.info("MujocoCamera engine resolved", connected=self._engine.connected)
 
         self._build_camera_info()
 
@@ -217,7 +217,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
         self._disposables.add(
             rx.interval(interval_sec).subscribe(
                 on_next=lambda _: self._publish_camera_info(),
-                on_error=lambda e: logger.error(f"CameraInfo publish error: {e}"),
+                on_error=lambda e: logger.error("CameraInfo publish error", error=e),
             )
         )
 
@@ -227,7 +227,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
             self._disposables.add(
                 backpressure(rx.interval(pc_interval)).subscribe(
                     on_next=lambda _: self._generate_pointcloud(),
-                    on_error=lambda e: logger.error(f"Pointcloud error: {e}"),
+                    on_error=lambda e: logger.error("Pointcloud error", error=e),
                 )
             )
 
@@ -246,7 +246,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
         last_timestamp = 0.0
         published_count = 0
 
-        logger.info(f"MujocoCamera publish loop started (camera={self.config.camera_name})")
+        logger.info("MujocoCamera publish loop started", camera=self.config.camera_name)
 
         # Wait for engine to connect (adapter may not have started yet)
         deadline = time.monotonic() + 30.0
@@ -300,8 +300,9 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
                 published_count += 1
                 if published_count == 1:
                     logger.info(
-                        f"MujocoCamera: first frame published "
-                        f"(rgb={frame.rgb.shape}, depth={frame.depth.shape})"
+                        "MujocoCamera first frame published",
+                        rgb_shape=frame.rgb.shape,
+                        depth_shape=frame.depth.shape,
                     )
 
                 # Rate limit
@@ -310,7 +311,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
                 if sleep_time > 0:
                     time.sleep(sleep_time)
             except Exception as e:
-                logger.error(f"MujocoCamera publish error: {e}")
+                logger.error("MujocoCamera publish error", error=e)
                 time.sleep(1.0)
 
     def _publish_camera_info(self) -> None:
@@ -400,7 +401,7 @@ class MujocoCamera(DepthCameraHardware, Module[MujocoCameraConfig], perception.D
             pcd = pcd.voxel_downsample(0.005)
             self.pointcloud.publish(pcd)
         except Exception as e:
-            logger.error(f"Pointcloud generation error: {e}")
+            logger.error("Pointcloud generation error", error=e)
 
 
 __all__ = ["MujocoCamera", "MujocoCameraConfig"]
