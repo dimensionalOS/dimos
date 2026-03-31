@@ -17,8 +17,6 @@
 
 <big><big>
 
-[English](README.md) | **中文**
-
 [硬件](#硬件) •
 [安装](#安装) •
 [Agent CLI 与 MCP](#agent-cli-与-mcp) •
@@ -26,6 +24,8 @@
 [开发](#开发)
 
 ⚠️ **预发布测试版** ⚠️
+
+[English](README.md) | **中文**
 
 </big></big>
 
