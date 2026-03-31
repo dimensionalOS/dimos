@@ -30,9 +30,9 @@ from dimos.utils.change_detect import Glob, PathEntry
 class TerrainAnalysisConfig(NativeModuleConfig):
     """Config for the terrain analysis native module."""
 
-    cwd: str | None = "cpp"
+    cwd: str | None = "."
     executable: str = "result/bin/terrain_analysis"
-    build_command: str | None = "nix build . -o result"
+    build_command: str | None = "nix build github:dimensionalOS/dimos-terrain-analysis/v0.1.0 --no-write-lock-file"
     rebuild_on_change: list[PathEntry] | None = [
         "main.cpp",
         Glob("../../common/*.hpp"),

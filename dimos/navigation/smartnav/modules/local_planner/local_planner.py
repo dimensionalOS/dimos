@@ -41,9 +41,9 @@ def _default_paths_dir() -> str:
 class LocalPlannerConfig(NativeModuleConfig):
     """Config for the local planner native module."""
 
-    cwd: str | None = "cpp"
+    cwd: str | None = "."
     executable: str = "result/bin/local_planner"
-    build_command: str | None = "nix build . -o result"
+    build_command: str | None = "nix build github:dimensionalOS/dimos-local-planner/v0.1.1 --no-write-lock-file"
     rebuild_on_change: list[PathEntry] | None = [
         "main.cpp",
         Glob("../../common/*.hpp"),

@@ -32,9 +32,9 @@ from dimos.utils.change_detect import Glob, PathEntry
 class FarPlannerConfig(NativeModuleConfig):
     """Config for the FAR planner native module."""
 
-    cwd: str | None = "cpp"
+    cwd: str | None = "."
     executable: str = "result/bin/far_planner"
-    build_command: str | None = "nix build . -o result"
+    build_command: str | None = "nix build github:dimensionalOS/dimos-far-planner/v0.1.0 --no-write-lock-file"
     rebuild_on_change: list[PathEntry] | None = [
         "main.cpp",
         Glob("../../common/*.hpp"),

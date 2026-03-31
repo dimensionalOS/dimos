@@ -31,9 +31,9 @@ from dimos.utils.change_detect import Glob, PathEntry
 class PathFollowerConfig(NativeModuleConfig):
     """Config for the path follower native module."""
 
-    cwd: str | None = "cpp"
+    cwd: str | None = "."
     executable: str = "result/bin/path_follower"
-    build_command: str | None = "nix build . -o result"
+    build_command: str | None = "nix build github:dimensionalOS/dimos-path-follower/v0.1.0 --no-write-lock-file"
     rebuild_on_change: list[PathEntry] | None = [
         "main.cpp",
         Glob("../../common/*.hpp"),

@@ -62,7 +62,7 @@ class TestFarPlannerModule:
 
 
 @pytest.mark.skipif(
-    not Path(__file__).resolve().parent.joinpath("cpp", "result", "bin").exists(),
+    not Path(__file__).resolve().parent.joinpath("result", "bin").exists(),
     reason="Native binary not built (run nix build first)",
 )
 class TestPathResolution:

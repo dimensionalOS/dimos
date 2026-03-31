@@ -33,9 +33,9 @@ from dimos.utils.change_detect import Glob, PathEntry
 class AriseSLAMConfig(NativeModuleConfig):
     """Config for the AriseSLAM native module."""
 
-    cwd: str | None = "cpp"
+    cwd: str | None = "."
     executable: str = "result/bin/arise_slam"
-    build_command: str | None = "nix build . -o result"
+    build_command: str | None = "nix build github:dimensionalOS/dimos-arise-slam/v0.1.0 --no-write-lock-file"
     rebuild_on_change: list[PathEntry] | None = [
         "main.cpp",
         Glob("../../common/*.hpp"),
