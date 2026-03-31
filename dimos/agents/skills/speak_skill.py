@@ -46,7 +46,7 @@ class SpeakSkill(Module):
         with self._bg_threads_lock:
             threads = list(self._bg_threads)
         for t in threads:
-            t.join(timeout=10.0)
+            t.join(timeout=2.0)
         if self._tts_node:
             self._tts_node.dispose()
             self._tts_node = None
@@ -85,6 +85,7 @@ class SpeakSkill(Module):
         try:
             self._speak_blocking(text)
         finally:
+            # Remove this thread from the list of background threads when done
             with self._bg_threads_lock:
                 self._bg_threads = [
                     t for t in self._bg_threads if t is not threading.current_thread()

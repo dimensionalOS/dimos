@@ -37,7 +37,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.patrolling.routers.patrol_router import PatrolRouter
 from dimos.agents.skills.speak_skill_spec import SpeakSkillSpec
@@ -45,6 +45,7 @@ from dimos.navigation.replanning_a_star.module_spec import ReplanningAStarPlanne
 from dimos.navigation.visual_servoing.visual_servoing_2d import VisualServoing2D
 from dimos.perception.common.utils import draw_bounding_box
 from dimos.utils.logging_config import setup_logger
+from dimos.navigation.patrolling.constants import EXTRA_CLEARANCE
 
 if TYPE_CHECKING:
     from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
@@ -73,6 +74,7 @@ _SKELETON_CONNECTIONS = [
 ]
 
 _KP_CONF_THRESHOLD = 0.3
+_ANTI_BUSY_LOOP_TIMEOUT = 0.01
 
 
 def _draw_skeleton(
@@ -205,7 +207,9 @@ class SecurityModule(Module[SecurityModuleConfig]):
         self._router.reset()
 
         self._planner_spec.set_replanning_enabled(False)
-        self._planner_spec.set_safe_goal_clearance(self.config.g.robot_rotation_diameter / 2 + 0.2)
+        self._planner_spec.set_safe_goal_clearance(
+            self.config.g.robot_rotation_diameter / 2 + EXTRA_CLEARANCE
+        )
 
         self._stop_event.clear()
         self._has_active_goal = False
@@ -283,7 +287,7 @@ class SecurityModule(Module[SecurityModuleConfig]):
         with self._lock:
             image = self._latest_image
         if image is None:
-            self._stop_event.wait(timeout=0.01)
+            self._stop_event.wait(timeout=_ANTI_BUSY_LOOP_TIMEOUT)
             return
 
         best = self._find_best_person(image)
@@ -322,7 +326,7 @@ class SecurityModule(Module[SecurityModuleConfig]):
             latest_image = self._latest_image
 
         if latest_image is None:
-            self._stop_event.wait(timeout=0.01)
+            self._stop_event.wait(timeout=_ANTI_BUSY_LOOP_TIMEOUT)
             return
 
         detections = self._tracker.process_image(latest_image)
@@ -343,7 +347,7 @@ class SecurityModule(Module[SecurityModuleConfig]):
         if hasattr(best, "mask") and best.mask is not None:
             mask_bool = best.mask > 0
             green = np.zeros_like(overlay)
-            green[:, :] = (0, 255, 0) if latest_image.format == ImageFormat.BGR else (0, 128, 0)
+            green[:, :] = (0, 255, 0)
             overlay[mask_bool] = cv2.addWeighted(overlay[mask_bool], 0.6, green[mask_bool], 0.4, 0)
 
         # Run pose estimation on the tracked frame and draw skeleton
@@ -396,6 +400,6 @@ class SecurityModule(Module[SecurityModuleConfig]):
         with self._lock:
             thread = self._main_thread
         if thread is not None:
-            thread.join(timeout=5.0)
+            thread.join(timeout=2.0)
             with self._lock:
                 self._main_thread = None

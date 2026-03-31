@@ -209,7 +209,7 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
             self.text_queue.clear()
 
         if self.processing_thread and self.processing_thread.is_alive():
-            self.processing_thread.join(timeout=30.0)
+            self.processing_thread.join(timeout=2.0)
 
         if self.subscription:
             self.subscription.dispose()
