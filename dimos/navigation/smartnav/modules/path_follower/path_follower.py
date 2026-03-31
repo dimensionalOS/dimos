@@ -34,12 +34,6 @@ class PathFollowerConfig(NativeModuleConfig):
     cwd: str | None = "."
     executable: str = "result/bin/path_follower"
     build_command: str | None = "nix build github:dimensionalOS/dimos-module-path-follower/v0.1.0 --no-write-lock-file"
-    rebuild_on_change: list[PathEntry] | None = [
-        "main.cpp",
-        Glob("../../common/*.hpp"),
-        "CMakeLists.txt",
-        "flake.nix",
-    ]
 
     # Pure pursuit parameters
     look_ahead_distance: float = 0.5

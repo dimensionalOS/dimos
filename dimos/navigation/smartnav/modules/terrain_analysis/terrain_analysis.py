@@ -33,12 +33,6 @@ class TerrainAnalysisConfig(NativeModuleConfig):
     cwd: str | None = "."
     executable: str = "result/bin/terrain_analysis"
     build_command: str | None = "nix build github:dimensionalOS/dimos-module-terrain-analysis/v0.1.0 --no-write-lock-file"
-    rebuild_on_change: list[PathEntry] | None = [
-        "main.cpp",
-        Glob("../../common/*.hpp"),
-        "CMakeLists.txt",
-        "flake.nix",
-    ]
 
     # Terrain analysis parameters
     sensor_range: float = 20.0

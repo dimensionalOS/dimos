@@ -34,12 +34,6 @@ class TarePlannerConfig(NativeModuleConfig):
     cwd: str | None = "."
     executable: str = "result/bin/tare_planner"
     build_command: str | None = "nix build github:dimensionalOS/dimos-module-tare-planner/v0.1.0 --no-write-lock-file"
-    rebuild_on_change: list[PathEntry] | None = [
-        "main.cpp",
-        Glob("../../common/*.hpp"),
-        "CMakeLists.txt",
-        "flake.nix",
-    ]
 
     # Exploration parameters
     exploration_range: float = 20.0

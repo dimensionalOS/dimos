@@ -44,12 +44,6 @@ class LocalPlannerConfig(NativeModuleConfig):
     cwd: str | None = "."
     executable: str = "result/bin/local_planner"
     build_command: str | None = "nix build github:dimensionalOS/dimos-module-local-planner/v0.1.1 --no-write-lock-file"
-    rebuild_on_change: list[PathEntry] | None = [
-        "main.cpp",
-        Glob("../../common/*.hpp"),
-        "CMakeLists.txt",
-        "flake.nix",
-    ]
 
     # Path data directory (auto-resolved from LFS)
     paths_dir: str = ""

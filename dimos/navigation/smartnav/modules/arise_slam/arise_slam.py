@@ -36,12 +36,6 @@ class AriseSLAMConfig(NativeModuleConfig):
     cwd: str | None = "."
     executable: str = "result/bin/arise_slam"
     build_command: str | None = "nix build github:dimensionalOS/dimos-module-arise-slam/v0.1.0 --no-write-lock-file"
-    rebuild_on_change: list[PathEntry] | None = [
-        "main.cpp",
-        Glob("../../common/*.hpp"),
-        "flake.nix",
-        "CMakeLists.txt",
-    ]
 
     # Feature extraction
     edge_threshold: float = 1.0
