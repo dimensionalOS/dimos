@@ -22,6 +22,16 @@ HardwareId = str
 JointName = str
 TaskName = str
 
+def split_joint_name(joint_name: str) -> tuple[str, str]:
+    """Split a coordinator joint name into (hardware_id, suffix).
+
+    Example: "left_arm/joint1" -> ("left_arm", "joint1")
+    """
+    parts = joint_name.split("/", 1)
+    if len(parts) != 2:
+        raise ValueError(f"Joint name '{joint_name}' missing separator '/'")
+    return parts[0], parts[1]
+
 
 def split_joint_name(joint_name: str) -> tuple[str, str]:
     """Split a coordinator joint name into (hardware_id, suffix).
@@ -134,58 +144,6 @@ def make_twist_base_joints(
         if s not in TWIST_SUFFIX_MAP:
             raise ValueError(f"Unknown twist suffix '{s}'. Valid: {list(TWIST_SUFFIX_MAP)}")
     return [f"{hardware_id}/{s}" for s in suffixes]
-
-
-_HUMANOID_29DOF_JOINTS = [
-    # Left leg (0-5)
-    "left_hip_pitch",
-    "left_hip_roll",
-    "left_hip_yaw",
-    "left_knee",
-    "left_ankle_pitch",
-    "left_ankle_roll",
-    # Right leg (6-11)
-    "right_hip_pitch",
-    "right_hip_roll",
-    "right_hip_yaw",
-    "right_knee",
-    "right_ankle_pitch",
-    "right_ankle_roll",
-    # Waist (12-14)
-    "waist_yaw",
-    "waist_roll",
-    "waist_pitch",
-    # Left arm (15-21)
-    "left_shoulder_pitch",
-    "left_shoulder_roll",
-    "left_shoulder_yaw",
-    "left_elbow",
-    "left_wrist_roll",
-    "left_wrist_pitch",
-    "left_wrist_yaw",
-    # Right arm (22-28)
-    "right_shoulder_pitch",
-    "right_shoulder_roll",
-    "right_shoulder_yaw",
-    "right_elbow",
-    "right_wrist_roll",
-    "right_wrist_pitch",
-    "right_wrist_yaw",
-]
-
-
-def make_humanoid_joints(hardware_id: HardwareId) -> list[JointName]:
-    """Create joint names for a 29-DOF humanoid.
-
-    Covers 6-DOF legs, 3-DOF waist, and 7-DOF arms.
-
-    Args:
-        hardware_id: The hardware identifier (e.g., "g1")
-
-    Returns:
-        List of 29 joint names like ["g1/left_hip_pitch", ..., "g1/right_wrist_yaw"]
-    """
-    return [f"{hardware_id}/{j}" for j in _HUMANOID_29DOF_JOINTS]
 
 
 __all__ = [
