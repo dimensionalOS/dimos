@@ -29,12 +29,23 @@ from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.core.global_config import global_config
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.utils.data import LfsPath
 
-_xarm6_cfg = _catalog_xarm6(name="arm", add_gripper=False)
-_xarm7_cfg = _catalog_xarm7(name="arm", add_gripper=False)
+_xarm6_cfg = _catalog_xarm6(
+    name="arm",
+    add_gripper=False,
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip or None,
+)
+_xarm7_cfg = _catalog_xarm7(
+    name="arm",
+    add_gripper=False,
+    adapter_type="xarm" if global_config.xarm7_ip else "mock",
+    address=global_config.xarm7_ip or None,
+)
 
 # Pre-built URDFs for Pinocchio FK in the teleop UI (xacro not supported by Pinocchio)
 _XARM6_FK_MODEL = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
