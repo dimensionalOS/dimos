@@ -28,8 +28,7 @@ if TYPE_CHECKING:
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec, is_module_type
 from dimos.core.module_coordinator import ModuleCoordinator
-from dimos.core.stream import In, Out
-from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
+from dimos.core.stream import In, Out, PubSubTransport
 from dimos.spec.utils import Spec, is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -201,6 +200,11 @@ class Blueprint:
         transport = self.transport_map.get((name, stream_type), None)
         if transport:
             return transport
+
+        from dimos.core.transport import (
+            LCMTransport,
+            pLCMTransport,
+        )  # deferred to avoid pulling in Image/cv2/rerun
 
         use_pickled = getattr(stream_type, "lcm_encode", None) is None
         topic = f"/{name}" if self._is_name_unique(name) else f"/{short_id()}"

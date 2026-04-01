@@ -21,9 +21,8 @@ from typing import (
     TypeVar,
 )
 
-from dimos.core.stream import In, Out, Stream, Transport
+from dimos.core.stream import In, Out, PubSubTransport, Stream
 from dimos.msgs.protocol import DimosMsg
-from dimos.utils import colors
 
 try:
     import cyclonedds as _cyclonedds  # noqa: F401
@@ -32,8 +31,7 @@ try:
 except ImportError:
     DDS_AVAILABLE = False
 
-from dimos.protocol.pubsub.impl.jpeg_shm import JpegSharedMemory
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
 
@@ -61,20 +59,6 @@ T = TypeVar("T")  # type: ignore[misc]
 #
 # a web camera rtsp stream for Image, audio stream from mic, etc
 # http binary streams, tcp connections etc
-
-
-class PubSubTransport(Transport[T]):
-    topic: Any
-
-    def __init__(self, topic: Any) -> None:
-        self.topic = topic
-
-    def __str__(self) -> str:
-        return (
-            colors.green(f"{self.__class__.__name__}(")
-            + colors.blue(self.topic)
-            + colors.green(")")
-        )
 
 
 class pLCMTransport(PubSubTransport[T]):
@@ -142,6 +126,10 @@ class LCMTransport(PubSubTransport[T]):
 
 class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
     def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        from dimos.protocol.pubsub.impl.jpeg_lcm import (
+            JpegLCM,
+        )  # ~330ms: deferred to avoid pulling in Image/cv2/rerun
+
         self.lcm = JpegLCM(**kwargs)  # type: ignore[assignment]
         super().__init__(topic, type)
 
@@ -222,6 +210,10 @@ class JpegShmTransport(PubSubTransport[T]):
 
     def __init__(self, topic: str, quality: int = 75, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(topic)
+        from dimos.protocol.pubsub.impl.jpeg_shm import (
+            JpegSharedMemory,
+        )  # deferred to avoid pulling in Image/cv2/rerun
+
         self.shm = JpegSharedMemory(quality=quality, **kwargs)
         self.quality = quality
 
