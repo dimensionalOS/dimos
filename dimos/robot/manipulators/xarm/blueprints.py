@@ -30,9 +30,13 @@ from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
+from dimos.robot.catalog.ufactory import (
+    XARM6_FK_MODEL,
+    XARM7_FK_MODEL,
+    xarm6 as _catalog_xarm6,
+    xarm7 as _catalog_xarm7,
+)
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
-from dimos.utils.data import LfsPath
 
 _xarm6_cfg = _catalog_xarm6(
     name="arm",
@@ -47,13 +51,9 @@ _xarm7_cfg = _catalog_xarm7(
     address=global_config.xarm7_ip or None,
 )
 
-# Pre-built URDFs for Pinocchio FK in the teleop UI (xacro not supported by Pinocchio)
-_XARM6_FK_MODEL = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
-_XARM7_FK_MODEL = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
-
 # XArm6 mock sim + keyboard teleop + Drake visualization
 keyboard_teleop_xarm6 = autoconnect(
-    KeyboardTeleopModule.blueprint(model_path=str(_XARM6_FK_MODEL), ee_joint_id=_xarm6_cfg.dof),
+    KeyboardTeleopModule.blueprint(model_path=str(XARM6_FK_MODEL), ee_joint_id=_xarm6_cfg.dof),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
@@ -63,7 +63,7 @@ keyboard_teleop_xarm6 = autoconnect(
             _xarm6_cfg.to_task_config(
                 task_type="cartesian_ik",
                 task_name="cartesian_ik_arm",
-                model_path=_XARM6_FK_MODEL,
+                model_path=XARM6_FK_MODEL,
                 ee_joint_id=_xarm6_cfg.dof,
             ),
         ],
@@ -83,7 +83,7 @@ keyboard_teleop_xarm6 = autoconnect(
 
 # XArm7 mock sim + keyboard teleop + Drake visualization
 keyboard_teleop_xarm7 = autoconnect(
-    KeyboardTeleopModule.blueprint(model_path=str(_XARM7_FK_MODEL), ee_joint_id=_xarm7_cfg.dof),
+    KeyboardTeleopModule.blueprint(model_path=str(XARM7_FK_MODEL), ee_joint_id=_xarm7_cfg.dof),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
@@ -93,7 +93,7 @@ keyboard_teleop_xarm7 = autoconnect(
             _xarm7_cfg.to_task_config(
                 task_type="cartesian_ik",
                 task_name="cartesian_ik_arm",
-                model_path=_XARM7_FK_MODEL,
+                model_path=XARM7_FK_MODEL,
                 ee_joint_id=_xarm7_cfg.dof,
             ),
         ],

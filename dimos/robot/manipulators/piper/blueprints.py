@@ -28,18 +28,14 @@ from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.robot.catalog.piper import piper as _catalog_piper
+from dimos.robot.catalog.piper import PIPER_FK_MODEL, piper as _catalog_piper
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
-from dimos.utils.data import LfsPath
 
 _piper_cfg = _catalog_piper(name="arm")
 
-# Pre-built MJCF for Pinocchio FK in the teleop UI (xacro not supported by Pinocchio)
-_PIPER_FK_MODEL = LfsPath("piper_description/mujoco_model/piper_no_gripper_description.xml")
-
 # Piper 6-DOF mock sim + keyboard teleop + Drake visualization
 keyboard_teleop_piper = autoconnect(
-    KeyboardTeleopModule.blueprint(model_path=str(_PIPER_FK_MODEL), ee_joint_id=_piper_cfg.dof),
+    KeyboardTeleopModule.blueprint(model_path=str(PIPER_FK_MODEL), ee_joint_id=_piper_cfg.dof),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
@@ -49,7 +45,7 @@ keyboard_teleop_piper = autoconnect(
             _piper_cfg.to_task_config(
                 task_type="cartesian_ik",
                 task_name="cartesian_ik_arm",
-                model_path=_PIPER_FK_MODEL,
+                model_path=PIPER_FK_MODEL,
                 ee_joint_id=_piper_cfg.dof,
             ),
         ],
