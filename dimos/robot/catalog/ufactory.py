@@ -91,7 +91,7 @@ def xarm7(
         "collision_exclusion_pairs": XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
         "tf_extra_links": tf_extra_links or [],
     }
-    if global_config.simulation:
+    if global_config.simulation and adapter_type == "mock":
         defaults.update(adapter_type="sim_mujoco", address=str(XARM7_SIM_PATH))
         defaults.setdefault("adapter_kwargs", {})["headless"] = False
 
@@ -138,7 +138,7 @@ def xarm6(
         "collision_exclusion_pairs": XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
         "tf_extra_links": tf_extra_links or [],
     }
-    if global_config.simulation:
+    if global_config.simulation and adapter_type == "mock":
         defaults.update(adapter_type="sim_mujoco", address=str(XARM6_SIM_PATH))
         defaults.setdefault("adapter_kwargs", {})["headless"] = False
 

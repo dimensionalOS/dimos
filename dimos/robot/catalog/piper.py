@@ -76,7 +76,7 @@ def piper(
         "auto_convert_meshes": True,
         "collision_exclusion_pairs": PIPER_GRIPPER_COLLISION_EXCLUSIONS,
     }
-    if global_config.simulation:
+    if global_config.simulation and adapter_type == "mock":
         defaults.update(adapter_type="sim_mujoco", address=str(PIPER_SIM_PATH))
         defaults.setdefault("adapter_kwargs", {})["headless"] = False
 
