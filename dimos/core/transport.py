@@ -21,7 +21,7 @@ from typing import (
     TypeVar,
 )
 
-from dimos.core.stream import In, Out, PubSubTransport, Stream
+from dimos.core.stream import In, Out, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
 
 try:
@@ -59,6 +59,20 @@ T = TypeVar("T")  # type: ignore[misc]
 #
 # a web camera rtsp stream for Image, audio stream from mic, etc
 # http binary streams, tcp connections etc
+
+
+class PubSubTransport(Transport[T]):
+    topic: Any
+
+    def __init__(self, topic: Any) -> None:
+        self.topic = topic
+
+    def __str__(self) -> str:
+        return (
+            colors.green(f"{self.__class__.__name__}(")
+            + colors.blue(self.topic)
+            + colors.green(")")
+        )
 
 
 class pLCMTransport(PubSubTransport[T]):

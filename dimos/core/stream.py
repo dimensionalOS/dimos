@@ -267,17 +267,3 @@ class RemoteIn(RemoteStream[T]):
     def transport(self, value: Transport[T]) -> None:
         self.owner.set_transport(self.name, value).result()  # type: ignore[union-attr]
         self._transport = value
-
-
-class PubSubTransport(Transport[T]):
-    topic: Any
-
-    def __init__(self, topic: Any) -> None:
-        self.topic = topic
-
-    def __str__(self) -> str:
-        return (
-            colors.green(f"{self.__class__.__name__}(")
-            + colors.blue(self.topic)
-            + colors.green(")")
-        )

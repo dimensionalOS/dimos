@@ -28,7 +28,8 @@ if TYPE_CHECKING:
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec, is_module_type
 from dimos.core.module_coordinator import ModuleCoordinator
-from dimos.core.stream import In, Out, PubSubTransport
+from dimos.core.stream import In, Out
+from dimos.core.transport import PubSubTransport
 from dimos.spec.utils import Spec, is_spec, spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
