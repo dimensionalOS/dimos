@@ -29,7 +29,11 @@ _DEPTH_MAX_WIDTH = 640
 
 
 class DepthEstimator:
-    """Runs depth estimation in a background thread, always processing only the latest image."""
+    """
+    Runs depth estimation in a background thread, always processing only the latest image.
+
+    Only intended for visualization (human consumption only).
+    """
 
     def __init__(self, publish: Callable[[Image], None], device: str | None = None) -> None:
         self._publish = publish

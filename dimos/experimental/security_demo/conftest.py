@@ -47,6 +47,7 @@ def security_module(mocker):
     mocker.patch("dimos.experimental.security_demo.security_module._create_visual_servo")
     mocker.patch("dimos.experimental.security_demo.security_module.YoloPersonDetector")
     mocker.patch("dimos.experimental.security_demo.security_module.EdgeTAMProcessor")
+    mocker.patch("dimos.experimental.security_demo.security_module.DepthEstimator")
 
     module = SecurityModule(camera_info=CameraInfo())
 
