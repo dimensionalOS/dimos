@@ -23,6 +23,7 @@ from typing import (
 
 from dimos.core.stream import In, Out, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
+from dimos.utils import colors
 
 try:
     import cyclonedds as _cyclonedds  # noqa: F401
