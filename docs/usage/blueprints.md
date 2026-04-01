@@ -1,6 +1,6 @@
 # Blueprints
 
-Blueprints (`_BlueprintAtom`) are instructions for how to initialize a `Module`.
+Blueprints (`BlueprintAtom`) are instructions for how to initialize a `Module`.
 
 You don't typically want to run a single module, so multiple blueprints are handled together in `Blueprint`.
 
