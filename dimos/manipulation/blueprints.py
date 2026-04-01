@@ -70,7 +70,7 @@ def _make_base_pose(
     )
 
 
-def _get_xarm_urdf_path() -> Path:
+def _get_xarm_model_path() -> Path:
     """Get path to xarm URDF."""
     return get_data("xarm_description") / "urdf/xarm_device.urdf.xacro"
 
@@ -80,7 +80,7 @@ def _get_xarm_package_paths() -> dict[str, Path]:
     return {"xarm_description": get_data("xarm_description")}
 
 
-def _get_piper_urdf_path() -> Path:
+def _get_piper_model_path() -> Path:
     """Get path to piper URDF."""
     return get_data("piper_description") / "urdf/piper_description.xacro"
 
@@ -157,7 +157,7 @@ def _make_xarm6_config(
 
     return RobotModelConfig(
         name=name,
-        urdf_path=_get_xarm_urdf_path(),
+        model_path=_get_xarm_model_path(),
         base_pose=_make_base_pose(y=y_offset),
         joint_names=joint_names,
         end_effector_link="link_tcp" if add_gripper else "link6",
@@ -212,7 +212,7 @@ def _make_xarm7_config(
 
     return RobotModelConfig(
         name=name,
-        urdf_path=_get_xarm_urdf_path(),
+        model_path=_get_xarm_model_path(),
         base_pose=_make_base_pose(y=y_offset, z=z_offset, pitch=pitch),
         joint_names=joint_names,
         end_effector_link="link_tcp" if add_gripper else "link7",
@@ -256,7 +256,7 @@ def _make_piper_config(
 
     return RobotModelConfig(
         name=name,
-        urdf_path=_get_piper_urdf_path(),
+        model_path=_get_piper_model_path(),
         base_pose=_make_base_pose(y=y_offset),
         joint_names=joint_names,
         end_effector_link="gripper_base",  # End of arm, before gripper fingers
