@@ -46,9 +46,7 @@ coordinator_dual_mock = ControlCoordinator.blueprint(
 )
 
 # Dual XArm (XArm7 left, XArm6 right)
-_xarm7_left = _catalog_xarm7(
-    name="left_arm", adapter_type="xarm", address=global_config.xarm7_ip
-)
+_xarm7_left = _catalog_xarm7(name="left_arm", adapter_type="xarm", address=global_config.xarm7_ip)
 _xarm6_right = _catalog_xarm6(
     name="right_arm", adapter_type="xarm", address=global_config.xarm6_ip, add_gripper=False
 )
@@ -69,9 +67,7 @@ coordinator_dual_xarm = ControlCoordinator.blueprint(
 _xarm6_dual = _catalog_xarm6(
     name="xarm_arm", adapter_type="xarm", address=global_config.xarm6_ip, add_gripper=False
 )
-_piper_dual = _catalog_piper(
-    name="piper_arm", adapter_type="piper", address=global_config.can_port
-)
+_piper_dual = _catalog_piper(name="piper_arm", adapter_type="piper", address=global_config.can_port)
 
 coordinator_piper_xarm = ControlCoordinator.blueprint(
     hardware=[_xarm6_dual.to_hardware_component(), _piper_dual.to_hardware_component()],

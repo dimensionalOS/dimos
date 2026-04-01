@@ -44,6 +44,7 @@ def _mock_twist_base(hw_id: str = "base") -> HardwareComponent:
         adapter_type="mock_twist_base",
     )
 
+
 # Mock holonomic twist base (3-DOF: vx, vy, wz)
 coordinator_mock_twist_base = ControlCoordinator.blueprint(
     hardware=[_mock_twist_base()],

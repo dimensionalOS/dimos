@@ -45,7 +45,6 @@ from dimos.perception.object_scene_registration import ObjectSceneRegistrationMo
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
 from dimos.robot.foxglove_bridge import FoxgloveBridge  # TODO: migrate to rerun
 
-
 # Single XArm6 planner (standalone, no coordinator)
 _xarm6_planner_cfg = _catalog_xarm6(name="arm")
 

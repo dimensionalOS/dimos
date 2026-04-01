@@ -25,11 +25,11 @@ Usage:
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
-from dimos.core.global_config import global_config
 from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
 from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 from dimos.utils.data import LfsPath
