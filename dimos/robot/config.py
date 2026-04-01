@@ -151,12 +151,14 @@ class RobotConfig(BaseModel):
 
     @property
     def coordinator_joint_names(self) -> list[str]:
+        self._ensure_parsed()  # ensure joint_prefix is set
         if not self.joint_prefix:
             return list(self.resolved_joint_names)
         return [f"{self.joint_prefix}{j}" for j in self.resolved_joint_names]
 
     @property
     def joint_name_mapping(self) -> dict[str, str]:
+        self._ensure_parsed()  # ensure joint_prefix is set
         if not self.joint_prefix:
             return {}
         return {f"{self.joint_prefix}{j}": j for j in self.resolved_joint_names}
