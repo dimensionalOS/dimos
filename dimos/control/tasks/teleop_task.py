@@ -70,7 +70,7 @@ class TeleopIKTaskConfig:
         timeout: If no command received for this many seconds, go inactive (0 = never)
         max_joint_delta_deg: Maximum allowed joint change per tick (safety limit)
         hand: "left" or "right" — which controller's primary button to listen to
-        gripper_joint: Optional joint name for the gripper (e.g. "arm_gripper").
+        gripper_joint: Optional joint name for the gripper (e.g. "arm/gripper").
         gripper_open_pos: Gripper position (adapter units) at trigger value 0.0 (no press).
         gripper_closed_pos: Gripper position (adapter units) at trigger value 1.0 (full press).
     """

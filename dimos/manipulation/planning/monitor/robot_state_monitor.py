@@ -80,7 +80,7 @@ class RobotStateMonitor:
             robot_id: ID of the robot to monitor
             joint_names: Ordered list of joint names for this robot (URDF names)
             joint_name_mapping: Maps coordinator joint names to URDF joint names.
-                Example: {"left_joint1": "joint1"} means messages with "left_joint1"
+                Example: {"left/joint1": "joint1"} means messages with "left/joint1"
                 will be mapped to URDF "joint1". If None, names must match exactly.
             timeout: Timeout for waiting for initial state (seconds)
         """
