@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import cv2
 import numpy as np
-import torch
 from dimos_lcm.std_msgs import String, Bool
 from reactivex.disposable import Disposable
 
@@ -159,9 +158,7 @@ class SecurityModule(Module[SecurityModuleConfig]):
         self._detector = YoloPersonDetector()
         self._tracker = EdgeTAMProcessor()
 
-        self._depth_estimator: DepthEstimator | None = None
-        if torch.cuda.is_available():
-            self._depth_estimator = DepthEstimator(self.depth_image.publish)
+        self._depth_estimator = DepthEstimator(self.depth_image.publish)
 
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -182,14 +179,12 @@ class SecurityModule(Module[SecurityModuleConfig]):
         self._disposables.add(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
         self._disposables.add(Disposable(self.color_image.subscribe(self._on_color_image)))
 
-        if self._depth_estimator is not None:
-            self._depth_estimator.start()
+        self._depth_estimator.start()
 
     @rpc
     def stop(self) -> None:
         self._stop_security_patrol_internal()
-        if self._depth_estimator is not None:
-            self._depth_estimator.stop()
+        self._depth_estimator.stop()
         self._detector.stop()
         self._tracker.stop()
         super().stop()
@@ -241,8 +236,7 @@ class SecurityModule(Module[SecurityModuleConfig]):
     def _on_color_image(self, image: Image) -> None:
         with self._lock:
             self._latest_image = image
-        if self._depth_estimator is not None:
-            self._depth_estimator.submit(image)
+        self._depth_estimator.submit(image)
 
     def _main_loop(self) -> None:
         self._transition_to("PATROLLING")
