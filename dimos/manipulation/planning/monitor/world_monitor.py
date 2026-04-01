@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.manipulation.planning.factory import create_world
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
-from dimos.manipulation.planning.monitor.world_state_monitor import WorldStateMonitor
+from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -61,7 +61,7 @@ class WorldMonitor:
         self._world: WorldSpec = create_world(backend=backend, enable_viz=enable_viz, **kwargs)
         self._lock = threading.RLock()
         self._robot_joints: dict[WorldRobotID, list[str]] = {}
-        self._state_monitors: dict[WorldRobotID, WorldStateMonitor] = {}
+        self._state_monitors: dict[WorldRobotID, RobotStateMonitor] = {}
         self._obstacle_monitor: WorldObstacleMonitor | None = None
         self._viz_thread: threading.Thread | None = None
         self._viz_stop_event = threading.Event()
@@ -139,7 +139,7 @@ class WorldMonitor:
             if joint_name_mapping is None and config.joint_name_mapping:
                 joint_name_mapping = config.joint_name_mapping
 
-            monitor = WorldStateMonitor(
+            monitor = RobotStateMonitor(
                 world=self._world,
                 lock=self._lock,
                 robot_id=robot_id,
@@ -480,7 +480,7 @@ class WorldMonitor:
         """Get underlying WorldSpec. Not thread-safe for modifications."""
         return self._world
 
-    def get_state_monitor(self, robot_id: str) -> WorldStateMonitor | None:
+    def get_state_monitor(self, robot_id: str) -> RobotStateMonitor | None:
         """Get state monitor for a robot (may be None)."""
         return self._state_monitors.get(robot_id)
 
