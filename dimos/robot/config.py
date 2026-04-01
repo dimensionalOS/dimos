@@ -101,7 +101,7 @@ class RobotConfig(BaseModel):
     def _ensure_prefix(self) -> None:
         """Ensure joint_prefix is set (no model parsing needed)."""
         if self.joint_prefix is None:
-            self.joint_prefix = f"{self.name}_"
+            self.joint_prefix = f"{self.name}/"
 
     def _ensure_parsed(self) -> ModelDescription:
         """Parse model lazily on first access."""
