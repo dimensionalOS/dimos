@@ -181,7 +181,7 @@ class RobotConfig(BaseModel):
 
         return RobotModelConfig(
             name=self.name,
-            urdf_path=self.model_path,
+            model_path=self.model_path,
             base_pose=base_pose,
             joint_names=self.resolved_joint_names,
             end_effector_link=self.end_effector_link,
@@ -221,13 +221,30 @@ class RobotConfig(BaseModel):
             adapter_kwargs=adapter_kwargs,
         )
 
-    def to_task_config(self) -> TaskConfig:
-        """Generate TaskConfig for ControlCoordinator."""
+    def to_task_config(
+        self,
+        task_type: str | None = None,
+        task_name: str | None = None,
+        priority: int | None = None,
+        **task_kwargs: Any,
+    ) -> TaskConfig:
+        """Generate TaskConfig for ControlCoordinator.
+
+        Args:
+            task_type: Override task type (default: self.task_type).
+            task_name: Override task name (default: self.coordinator_task_name).
+            priority: Override priority (default: self.task_priority).
+            **task_kwargs: Extra fields passed to TaskConfig (e.g., model_path,
+                ee_joint_id, hand, gripper_joint, gripper_open_pos, gripper_closed_pos).
+        """
+        from dimos.control.coordinator import TaskConfig
+
         return TaskConfig(
-            name=self.coordinator_task_name,
-            type=self.task_type,
+            name=task_name if task_name is not None else self.coordinator_task_name,
+            type=task_type if task_type is not None else self.task_type,
             joint_names=self.coordinator_joint_names,
-            priority=self.task_priority,
+            priority=priority if priority is not None else self.task_priority,
+            **task_kwargs,
         )
 
 
