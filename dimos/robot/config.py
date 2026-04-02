@@ -218,6 +218,7 @@ class RobotConfig(BaseModel):
 
     def to_hardware_component(self) -> HardwareComponent:
         """Generate HardwareComponent for ControlCoordinator."""
+        self._ensure_prefix()
         gripper_joints: list[str] = []
         if self.gripper and self.gripper.joints:
             gripper_joints = [f"{self.joint_prefix}{j}" for j in self.gripper.joints]
