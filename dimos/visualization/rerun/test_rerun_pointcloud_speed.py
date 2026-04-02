@@ -16,6 +16,10 @@
 
 Iterates lidar frames one by one, builds the map incrementally,
 and logs each update to Rerun to measure real-world throughput.
+
+Compares two approaches:
+  - LUT colors: compute 400k×3 uint8 color array, pass as colors=
+  - class_ids: compute 400k uint16 class IDs, viewer resolves colors via AnnotationContext
 """
 
 import time
@@ -47,14 +51,32 @@ def _turbo_colors(points):
     return _LUT[idx]
 
 
+def _turbo_class_ids(points):
+    z = points[:, 2]
+    return ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint16)
+
+
 def test_rerun_pointcloud_viz():
     """Replay lidar → VoxelGridMapper → Rerun, frame by frame."""
     mapper = VoxelGridMapper(publish_interval=-1, voxel_size=VOXEL_SIZE)
 
     rr.init("pointcloud_replay", spawn=True)
 
+    # Register turbo colormap as AnnotationContext (viewer-side color resolution)
+    rr.log(
+        "/",
+        rr.AnnotationContext([
+            rr.datatypes.ClassDescription(
+                info=rr.datatypes.AnnotationInfo(id=i, color=_LUT[i].tolist())
+            )
+            for i in range(256)
+        ]),
+        static=True,
+    )
+
     half = VOXEL_SIZE / 2
-    frame_times = []
+    lut_times = []
+    cid_times = []
 
     for i, frame in enumerate(TimedSensorReplay("unitree_go2_bigoffice/lidar").iterate()):
         mapper.add_frame(frame)
@@ -64,31 +86,45 @@ def test_rerun_pointcloud_viz():
         if len(points) == 0:
             continue
 
-        start = time.perf_counter()
+        # Benchmark LUT colors (don't log, just time)
+        t0 = time.perf_counter()
         colors = _turbo_colors(points)
-        archetype = rr.Boxes3D(
+        rr.Boxes3D(
             centers=points,
             half_sizes=[half, half, half],
             colors=colors,
             fill_mode="solid",
         )
-        rr.log("world/global_map", archetype)
-        elapsed = time.perf_counter() - start
+        lut_ms = (time.perf_counter() - t0) * 1000
 
-        frame_times.append((len(points), elapsed * 1000))
+        # Benchmark class_ids (log this one to viewer)
+        t0 = time.perf_counter()
+        class_ids = _turbo_class_ids(points)
+        archetype = rr.Boxes3D(
+            centers=points,
+            half_sizes=[half, half, half],
+            class_ids=class_ids,
+            fill_mode="solid",
+        )
+        rr.log("world/global_map", archetype)
+        cid_ms = (time.perf_counter() - t0) * 1000
+
+        lut_times.append((len(points), lut_ms))
+        cid_times.append((len(points), cid_ms))
 
         if i % 50 == 0:
-            print(f"frame {i}: {len(points):,} pts → {elapsed * 1000:.1f} ms")
+            print(f"frame {i}: {len(points):,} pts → lut={lut_ms:.1f}ms  class_ids={cid_ms:.1f}ms")
 
     mapper.stop()
 
     # Summary
-    pts, ms = zip(*frame_times, strict=False)
+    _, lut_ms_all = zip(*lut_times, strict=False)
+    pts, cid_ms_all = zip(*cid_times, strict=False)
     print("\n--- Summary ---")
-    print(f"Frames: {len(frame_times)}")
+    print(f"Frames: {len(cid_times)}")
     print(f"Max points: {max(pts):,}")
-    print(f"Avg convert+log: {np.mean(ms):.1f} ms")
-    print(f"Max convert+log: {max(ms):.1f} ms")
-    print(f"Theoretical max Hz: {1000 / max(ms):.1f}")
+    print(f"LUT colors   — avg: {np.mean(lut_ms_all):.1f}ms  max: {max(lut_ms_all):.1f}ms")
+    print(f"class_ids    — avg: {np.mean(cid_ms_all):.1f}ms  max: {max(cid_ms_all):.1f}ms")
+    print(f"Speedup: {np.mean(lut_ms_all) / np.mean(cid_ms_all):.1f}x")
 
     input("\nPress Enter to close Rerun viewer...")
