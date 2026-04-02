@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 from dimos.core.global_config import global_config
-from dimos.robot.config import RobotConfig
+from dimos.robot.config import GripperConfig, RobotConfig
 from dimos.utils.data import LfsPath
 
 # Pre-built URDFs for Pinocchio FK (xacro not supported by Pinocchio)
@@ -90,6 +90,15 @@ def xarm7(
         "auto_convert_meshes": True,
         "collision_exclusion_pairs": XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
         "tf_extra_links": tf_extra_links or [],
+        "gripper": GripperConfig(
+            type="xarm",
+            joints=["gripper"],
+            collision_exclusions=XARM_GRIPPER_COLLISION_EXCLUSIONS,
+            open_position=0.85,
+            close_position=0.0,
+        )
+        if add_gripper
+        else None,
     }
     if global_config.simulation and adapter_type == "mock":
         defaults.update(adapter_type="sim_mujoco", address=str(XARM7_SIM_PATH))
@@ -137,6 +146,15 @@ def xarm6(
         "auto_convert_meshes": True,
         "collision_exclusion_pairs": XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
         "tf_extra_links": tf_extra_links or [],
+        "gripper": GripperConfig(
+            type="xarm",
+            joints=["gripper"],
+            collision_exclusions=XARM_GRIPPER_COLLISION_EXCLUSIONS,
+            open_position=0.85,
+            close_position=0.0,
+        )
+        if add_gripper
+        else None,
     }
     if global_config.simulation and adapter_type == "mock":
         defaults.update(adapter_type="sim_mujoco", address=str(XARM6_SIM_PATH))
