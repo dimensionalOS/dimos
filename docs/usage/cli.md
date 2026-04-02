@@ -320,6 +320,14 @@ rerun-bridge
 
 Also available as `dimos rerun-bridge`.
 
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--memory-limit` | `25%` | Memory limit for Rerun viewer (e.g., `4GB`, `16GB`, `25%`) |
+| `--rerun-open` | `native` | How to open Rerun: `native`, `web`, `both`, `none` |
+| `--rerun-web` / `--no-rerun-web` | `--rerun-web` | Enable/Disable Rerun web server |
+
 ---
 
 ## File Locations

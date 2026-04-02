@@ -64,15 +64,19 @@ def vis_module(
                 RerunWebSocketServer.blueprint(),
                 WebsocketVisModule.blueprint(),
             )
-        case "rerun" | "rerun-web" | "rerun-connect":
+        case "rerun":
+            from dimos.core.global_config import global_config
             from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-            from dimos.visualization.rerun.bridge import _BACKEND_TO_MODE, RerunBridgeModule
+            from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-            rerun_config = {**rerun_config}
+            rerun_config = {**rerun_config}  # copy (avoid mutation)
             rerun_config.setdefault("pubsubs", [LCM()])
-            viewer_mode = _BACKEND_TO_MODE.get(viewer_backend, "native")
+            rerun_config.setdefault("rerun_open", global_config.rerun_open)
+            rerun_config.setdefault("rerun_web", global_config.rerun_web)
             return autoconnect(
-                RerunBridgeModule.blueprint(viewer_mode=viewer_mode, **rerun_config),
+                RerunBridgeModule.blueprint(
+                    **rerun_config,
+                ),
                 RerunWebSocketServer.blueprint(),
                 WebsocketVisModule.blueprint(),
             )

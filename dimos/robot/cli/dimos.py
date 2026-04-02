@@ -551,17 +551,33 @@ def send(
 
 @main.command(name="rerun-bridge")
 def rerun_bridge_cmd(
-    viewer_mode: str = typer.Option(
-        "native", help="Viewer mode: native (desktop), web (browser), none (headless)"
-    ),
     memory_limit: str = typer.Option(
         "25%", help="Memory limit for Rerun viewer (e.g., '4GB', '16GB', '25%')"
     ),
+    rerun_open: str = typer.Option("native", help="How to open Rerun: native, web, both, none"),
+    rerun_web: bool = typer.Option(
+        True, "--rerun-web/--no-rerun-web", help="Enable/Disable Rerun web server"
+    ),
 ) -> None:
     """Launch the Rerun visualization bridge."""
-    from dimos.visualization.rerun.bridge import run_bridge
+    import signal
 
-    run_bridge(viewer_mode=viewer_mode, memory_limit=memory_limit)
+    from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+    from dimos.protocol.service.lcmservice import autoconf
+    from dimos.visualization.rerun.bridge import RerunBridgeModule
+
+    autoconf(check_only=True)
+
+    bridge = RerunBridgeModule(
+        memory_limit=memory_limit,
+        rerun_open=rerun_open,
+        rerun_web=rerun_web,
+        pubsubs=[LCM()],
+    )
+    bridge.start()
+
+    signal.signal(signal.SIGINT, lambda *_: bridge.stop())
+    signal.pause()
 
 
 if __name__ == "__main__":
