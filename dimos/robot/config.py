@@ -189,13 +189,17 @@ class RobotConfig(BaseModel):
         if self.gripper:
             exclusions.extend(self.gripper.collision_exclusions)
 
+        # Use direct fields when available to avoid triggering model parsing at import time
+        joint_names = self.joint_names if self.joint_names is not None else self.resolved_joint_names
+        base_link = self.base_link if self.base_link is not None else self.resolved_base_link
+
         return RobotModelConfig(
             name=self.name,
             model_path=self.model_path,
             base_pose=base_pose,
-            joint_names=self.resolved_joint_names,
+            joint_names=joint_names,
             end_effector_link=self.end_effector_link,
-            base_link=self.resolved_base_link,
+            base_link=base_link,
             package_paths=self.package_paths,
             xacro_args=self.xacro_args,
             collision_exclusion_pairs=exclusions,
