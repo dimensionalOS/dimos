@@ -28,7 +28,12 @@ from dimos.msgs.nav_msgs.Path import Path
 
 
 class PathFollowerConfig(NativeModuleConfig):
-    """Config for the path follower native module."""
+    """Config for the path follower native module.
+
+    Field names map to C++ CLI args via snake_case → camelCase conversion
+    (e.g. ``autonomy_mode`` → ``--autonomyMode``).
+    Fields with ``None`` default are omitted from the CLI.
+    """
 
     cwd: str | None = "."
     executable: str = "result/bin/path_follower"
@@ -36,16 +41,38 @@ class PathFollowerConfig(NativeModuleConfig):
         "nix build github:dimensionalOS/dimos-module-path-follower/v0.1.0 --no-write-lock-file"
     )
 
-    # Pure pursuit parameters
+    # --- Pure pursuit parameters ---
+
+    # Look-ahead distance for the pure pursuit controller (m).
     look_ahead_distance: float = 0.5
+    # Maximum velocity the follower will command (m/s).
     max_speed: float = 2.0
+    # Maximum yaw rate for turning (rad/s).
     max_yaw_rate: float = 1.5
 
-    # Goal tolerance
+    # --- Goal ---
+
+    # Distance from goal at which the follower considers it reached (m).
     goal_tolerance: float = 0.3
 
-    # Vehicle config
+    # --- Vehicle ---
+
+    # Vehicle kinematics model: "omniDir" for mecanum, "standard" for ackermann.
     vehicle_config: str = "omniDir"
+
+    # --- Mode flags ---
+
+    # Enable fully autonomous path-following mode.
+    autonomy_mode: bool | None = None
+    # Velocity cap during autonomous navigation (m/s).
+    autonomy_speed: float | None = None
+
+    # --- Acceleration / slowdown ---
+
+    # Maximum linear acceleration (m/s²).
+    max_accel: float | None = None
+    # Distance threshold below which the follower begins slowing down (m).
+    slow_dwn_dis_thre: float | None = None
 
 
 class PathFollower(NativeModule):

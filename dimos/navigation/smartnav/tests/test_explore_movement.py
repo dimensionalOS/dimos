@@ -280,12 +280,8 @@ def test_explore_produces_movement():
         MockVehicle.blueprint(),
         SensorScanGeneration.blueprint(),
         TerrainAnalysis.blueprint(),
-        LocalPlanner.blueprint(
-            extra_args=["--autonomyMode", "true"],
-        ),
-        PathFollower.blueprint(
-            extra_args=["--autonomyMode", "true"],
-        ),
+        LocalPlanner.blueprint(autonomy_mode=True),
+        PathFollower.blueprint(autonomy_mode=True),
         TarePlanner.blueprint(),
     )
 

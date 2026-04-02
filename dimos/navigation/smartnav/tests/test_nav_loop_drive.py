@@ -191,28 +191,16 @@ def test_multi_waypoint_loop():
         SensorScanGeneration.blueprint(),
         TerrainAnalysis.blueprint(),
         LocalPlanner.blueprint(
-            extra_args=[
-                "--autonomyMode",
-                "true",
-                "--maxSpeed",
-                "2.0",
-                "--autonomySpeed",
-                "2.0",
-            ]
+            autonomy_mode=True,
+            max_speed=2.0,
+            autonomy_speed=2.0,
         ),
         PathFollower.blueprint(
-            extra_args=[
-                "--autonomyMode",
-                "true",
-                "--maxSpeed",
-                "2.0",
-                "--autonomySpeed",
-                "2.0",
-                "--maxAccel",
-                "4.0",
-                "--slowDwnDisThre",
-                "0.2",
-            ]
+            autonomy_mode=True,
+            max_speed=2.0,
+            autonomy_speed=2.0,
+            max_accel=4.0,
+            slow_dwn_dis_thre=0.2,
         ),
     )
     coord = blueprint.build()

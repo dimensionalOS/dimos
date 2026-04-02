@@ -38,7 +38,12 @@ def _default_paths_dir() -> str:
 
 
 class LocalPlannerConfig(NativeModuleConfig):
-    """Config for the local planner native module."""
+    """Config for the local planner native module.
+
+    Field names map to C++ CLI args via snake_case → camelCase conversion
+    (e.g. ``autonomy_mode`` → ``--autonomyMode``).
+    Fields with ``None`` default are omitted from the CLI.
+    """
 
     cwd: str | None = "."
     executable: str = "result/bin/local_planner"
@@ -54,19 +59,39 @@ class LocalPlannerConfig(NativeModuleConfig):
         if not self.paths_dir:
             self.paths_dir = _default_paths_dir()
 
-    # Vehicle config
-    vehicle_config: str = "omniDir"  # "omniDir" for mecanum, "standard" for ackermann
+    # Vehicle config: "omniDir" for mecanum, "standard" for ackermann.
+    vehicle_config: str = "omniDir"
 
-    # Speed limits
+    # --- Speed limits ---
+
+    # Maximum velocity the planner will command (m/s).
     max_speed: float = 2.0
+    # Velocity cap during autonomous navigation (m/s).
     autonomy_speed: float = 1.0
 
-    # Obstacle detection
-    obstacle_height_threshold: float = 0.15
+    # --- Mode flags ---
 
-    # Goal parameters
+    # Enable fully autonomous waypoint-following mode.
+    autonomy_mode: bool | None = None
+    # Use terrain analysis cost map for obstacle avoidance.
+    use_terrain_analysis: bool | None = None
+
+    # --- Obstacle detection ---
+
+    # Points higher than this above ground are classified as obstacles (m).
+    obstacle_height_thre: float = 0.15
+    # Height-band filter: maximum z relative to robot (m).
+    max_rel_z: float | None = None
+    # Height-band filter: minimum z relative to robot (m).
+    min_rel_z: float | None = None
+
+    # --- Goal parameters ---
+
+    # Minimum clearance around goal position for path planning (m).
     goal_clearance: float = 0.5
+    # Goal x-coordinate in local frame (m).
     goal_x: float = 0.0
+    # Goal y-coordinate in local frame (m).
     goal_y: float = 0.0
 
 

@@ -163,8 +163,8 @@ def test_full_nav_closed_loop():
         MockSensor.blueprint(),
         SensorScanGeneration.blueprint(),
         TerrainAnalysis.blueprint(),
-        LocalPlanner.blueprint(extra_args=["--autonomyMode", "true"]),
-        PathFollower.blueprint(extra_args=["--autonomyMode", "true"]),
+        LocalPlanner.blueprint(autonomy_mode=True),
+        PathFollower.blueprint(autonomy_mode=True),
     )
 
     coordinator = blueprint.build()

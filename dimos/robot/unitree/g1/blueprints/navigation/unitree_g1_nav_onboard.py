@@ -139,44 +139,42 @@ unitree_g1_nav_onboard = (
         ),
         # SensorScanGeneration.blueprint(),
         TerrainAnalysis.blueprint(
-            extra_args=[
-                # Input filtering
-                "--scanVoxelSize", "0.15",          # input point downsampling (m) — default 0.05, increased to reduce terrain_map density
-                # Voxel grid
-                "--terrainVoxelSize", "1.0",         # grid cell size (m)
-                "--terrainVoxelHalfWidth", "10",     # grid radius in cells (→ 21×21)
-                # Obstacle/ground classification
-                "--obstacleHeightThre", "0.2",       # above this = hard obstacle (m)
-                "--groundHeightThre", "0.1",         # below this = ground for cost mode (m)
-                "--vehicleHeight", "1.2",            # ignore points above this (m)
-                "--minRelZ", "-1.5",                 # height filter min relative to robot (m)
-                "--maxRelZ", "1.5",                  # height filter max relative to robot (m)
-                "--useSorting", "true",              # quantile-based ground estimation
-                "--quantileZ", "0.25",               # ground height quantile
-                # Decay and clearing
-                "--decayTime", "2.0",                # point persistence (s)
-                "--noDecayDis", "1.5",               # no-decay radius around robot (m) — default 4.0, reduced to prevent unbounded growth when stationary
-                "--clearingDis", "8.0",              # dynamic clearing distance (m)
-                "--clearDyObs", "true",              # clear dynamic obstacles
-                "--noDataObstacle", "false",         # treat unseen voxels as obstacles
-                "--noDataBlockSkipNum", "0",         # skip N blocks with no data
-                "--minBlockPointNum", "10",          # min points per block for classification
-                # Voxel culling
-                "--voxelPointUpdateThre", "30",      # reprocess voxel after N points (default 100)
-                "--voxelTimeUpdateThre", "2.0",      # cull voxel after N seconds
-                # Dynamic obstacle filtering
-                "--minDyObsDis", "0.14",             # min distance for dynamic obstacle detection (m)
-                "--absDyObsRelZThre", "0.2",         # z threshold for dynamic obstacles (m)
-                "--minDyObsVFOV", "-55.0",           # min vertical FOV for dynamic obs (deg)
-                "--maxDyObsVFOV", "10.0",            # max vertical FOV for dynamic obs (deg)
-                "--minDyObsPointNum", "1",           # min points for dynamic obstacle
-                "--minOutOfFovPointNum", "20",       # min out-of-FOV points
-                # Ground lift limits
-                "--considerDrop", "false",           # consider terrain drops
-                "--limitGroundLift", "false",        # limit ground plane lift
-                "--maxGroundLift", "0.15",           # max ground lift (m)
-                "--disRatioZ", "0.2",                # distance-to-z ratio for filtering
-            ]
+            # Input filtering
+            scan_voxel_size=0.15,          # input point downsampling (m) — default 0.05, increased to reduce terrain_map density
+            # Voxel grid
+            terrain_voxel_size=1.0,        # grid cell size (m)
+            terrain_voxel_half_width=10,   # grid radius in cells (→ 21×21)
+            # Obstacle/ground classification
+            obstacle_height_thre=0.2,      # above this = hard obstacle (m)
+            ground_height_thre=0.1,        # below this = ground for cost mode (m)
+            vehicle_height=1.2,            # ignore points above this (m)
+            min_rel_z=-1.5,                # height filter min relative to robot (m)
+            max_rel_z=1.5,                 # height filter max relative to robot (m)
+            use_sorting=True,              # quantile-based ground estimation
+            quantile_z=0.25,               # ground height quantile
+            # Decay and clearing
+            decay_time=2.0,                # point persistence (s)
+            no_decay_dis=1.5,              # no-decay radius around robot (m) — default 4.0, reduced to prevent unbounded growth when stationary
+            clearing_dis=8.0,              # dynamic clearing distance (m)
+            clear_dy_obs=True,             # clear dynamic obstacles
+            no_data_obstacle=False,        # treat unseen voxels as obstacles
+            no_data_block_skip_num=0,      # skip N blocks with no data
+            min_block_point_num=10,        # min points per block for classification
+            # Voxel culling
+            voxel_point_update_thre=30,    # reprocess voxel after N points (default 100)
+            voxel_time_update_thre=2.0,    # cull voxel after N seconds
+            # Dynamic obstacle filtering
+            min_dy_obs_dis=0.14,           # min distance for dynamic obstacle detection (m)
+            abs_dy_obs_rel_z_thre=0.2,     # z threshold for dynamic obstacles (m)
+            min_dy_obs_vfov=-55.0,         # min vertical FOV for dynamic obs (deg)
+            max_dy_obs_vfov=10.0,          # max vertical FOV for dynamic obs (deg)
+            min_dy_obs_point_num=1,        # min points for dynamic obstacle
+            min_out_of_fov_point_num=20,   # min out-of-FOV points
+            # Ground lift limits
+            consider_drop=False,           # consider terrain drops
+            limit_ground_lift=False,       # limit ground plane lift
+            max_ground_lift=0.15,          # max ground lift (m)
+            dis_ratio_z=0.2,              # distance-to-z ratio for filtering
         ),
         TerrainMapExt.blueprint(
             voxel_size=0.4,      # meters per voxel (coarser than local terrain)
@@ -189,36 +187,20 @@ unitree_g1_nav_onboard = (
             visibility_range=25.0,
         ),
         LocalPlanner.blueprint(
-            extra_args=[
-                "--autonomyMode",
-                "true",
-                "--useTerrainAnalysis",
-                "true",
-                "--maxSpeed",
-                "1.0",
-                "--autonomySpeed",
-                "1.0",
-                "--obstacleHeightThre",
-                "0.2",
-                "--maxRelZ",
-                "1.5",
-                "--minRelZ",
-                "-1.5",
-            ]
+            autonomy_mode=True,
+            use_terrain_analysis=True,
+            max_speed=1.0,
+            autonomy_speed=1.0,
+            obstacle_height_thre=0.2,
+            max_rel_z=1.5,
+            min_rel_z=-1.5,
         ),
         PathFollower.blueprint(
-            extra_args=[
-                "--autonomyMode",
-                "true",
-                "--maxSpeed",
-                "1.0",
-                "--autonomySpeed",
-                "1.0",
-                "--maxAccel",
-                "2.0",
-                "--slowDwnDisThre",
-                "0.2",
-            ]
+            autonomy_mode=True,
+            max_speed=1.0,
+            autonomy_speed=1.0,
+            max_accel=2.0,
+            slow_dwn_dis_thre=0.2,
         ),
         PGO.blueprint(),
         ClickToGoal.blueprint(),
