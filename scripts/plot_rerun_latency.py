@@ -44,7 +44,7 @@ def load_csv(path: str) -> list[dict]:
     for row in reader:
         row["wall_time"] = float(row["wall_time"])
         for m in ALL_METRICS:
-            row[m] = float(row[m])
+            row[m] = float(row.get(m, 0))
         try:
             row["n_points"] = int(row["n_points"]) if row.get("n_points", "").strip() else None
         except ValueError:
@@ -93,23 +93,38 @@ def plot_metrics_vs_time(groups: dict, t0: float, metrics: list[str], out: Path)
     save(fig, out)
 
 
-def plot_metrics_vs_points(pc2_groups: dict, metrics: list[str], out: Path) -> None:
+def plot_metrics_vs_points(groups: dict, metrics: list[str], out: Path) -> None:
+    """Plot all entities' latency vs global_map voxel count.
+
+    Uses the global_map point count as the X axis — interpolated by wall_time
+    so every entity gets a voxel count even if it doesn't have n_points.
+    """
+    # Build a time→n_points lookup from global_map
+    gmap_key = next((e for e in groups if e.endswith("global_map")), None)
+    if not gmap_key:
+        return
+    gmap_rows = groups[gmap_key]
+    gmap_ts = [r["wall_time"] for r in gmap_rows if r["n_points"] is not None]
+    gmap_pts = [r["n_points"] for r in gmap_rows if r["n_points"] is not None]
+    if not gmap_ts:
+        return
+
     n = len(metrics)
     fig, axes = plt.subplots(n, 1, figsize=(14, 3.5 * n), sharex=True)
     if n == 1:
         axes = [axes]
     for ax, metric in zip(axes, metrics, strict=False):
-        for entity, rows in sorted(pc2_groups.items()):
-            pts = [(r["n_points"], r[metric]) for r in rows if r["n_points"] is not None]
-            if not pts:
-                continue
-            x, y = zip(*pts, strict=False)
-            ax.scatter(x, y, label=entity.split("/")[-1], alpha=0.4, s=10)
+        for entity, rows in sorted(groups.items()):
+            # Interpolate voxel count for each row's wall_time
+            t_arr = [r["wall_time"] for r in rows]
+            v_arr = [r[metric] for r in rows]
+            pts_interp = np.interp(t_arr, gmap_ts, gmap_pts)
+            ax.scatter(pts_interp, v_arr, label=entity.split("/")[-1], alpha=0.4, s=10)
         ax.set_ylabel(METRIC_LABELS[metric])
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper left", fontsize=7)
-    axes[0].set_title("Latency Metrics vs Point Count")
-    axes[-1].set_xlabel("Point count")
+    axes[0].set_title("Latency Metrics vs Voxel Count (all entities)")
+    axes[-1].set_xlabel("Global map voxel count")
     fig.tight_layout()
     save(fig, out)
 
@@ -128,6 +143,7 @@ def plot_points_vs_time(pc2_groups: dict, t0: float, out: Path) -> None:
     ax.legend()
     ax.grid(True, alpha=0.3)
     save(fig, out)
+
 
 
 def plot_boxplot_comparison(csv_paths: list[Path], out: Path) -> None:
@@ -247,8 +263,9 @@ def main() -> None:
 
     plot_metrics_vs_time(groups, t0, metrics, out_dir / "1_latency_vs_time.png")
 
+    plot_metrics_vs_points(groups, metrics, out_dir / "2_latency_vs_points.png")
+
     if pc2_groups:
-        plot_metrics_vs_points(pc2_groups, metrics, out_dir / "2_latency_vs_points.png")
         plot_points_vs_time(pc2_groups, t0, out_dir / "3_points_vs_time.png")
 
     print("Done.")

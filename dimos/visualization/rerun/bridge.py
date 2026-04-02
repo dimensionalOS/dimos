@@ -30,7 +30,13 @@ from typing import (
     runtime_checkable,
 )
 
+import time
+from datetime import datetime
+from pathlib import Path
+
 from reactivex.disposable import Disposable
+import rerun as rr
+import rerun.blueprint as rrb
 from rerun._baseclasses import Archetype
 from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
@@ -38,6 +44,7 @@ import typer
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, register_colormap_annotation
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
@@ -128,7 +135,6 @@ def _hex_to_rgba(hex_color: str) -> int:
 
 def _with_graph_tab(bp: Blueprint) -> Blueprint:
     """Add a Graph tab alongside the existing viewer layout without changing it."""
-    import rerun.blueprint as rrb
 
     root = bp.root_container
     return rrb.Blueprint(
@@ -144,9 +150,6 @@ def _with_graph_tab(bp: Blueprint) -> Blueprint:
 
 def _default_blueprint() -> Blueprint:
     """Default blueprint with black background and raised grid."""
-    import rerun as rr
-    import rerun.blueprint as rrb
-
     return rrb.Blueprint(
         rrb.Spatial3DView(
             origin="world",
@@ -267,30 +270,53 @@ class RerunBridgeModule(Module[Config]):
 
     def _on_message(self, msg: Any, topic: Any) -> None:
         """Handle incoming message - log to rerun."""
-        import rerun as rr
 
+        cb_enter = time.time()
         entity_path: str = self._get_entity_path(topic)
 
+        msg_ts = getattr(msg, "ts", None)
+        queue_ms = (cb_enter - msg_ts) * 1000 if (msg_ts and msg_ts > 1e9) else 0
+
         # apply visual overrides (including final_convert which handles .to_rerun())
+        t0 = time.monotonic()
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
+        convert_ms = (time.monotonic() - t0) * 1000
 
         if not rerun_data:
             return
 
         # TFMessage for example returns list of (entity_path, archetype) tuples
+        t0 = time.monotonic()
         if is_rerun_multi(rerun_data):
             for path, archetype in rerun_data:
                 rr.log(path, archetype)
         else:
             rr.log(entity_path, cast("Archetype", rerun_data))
+        log_ms = (time.monotonic() - t0) * 1000
+
+        if self._debug_csv is not None:
+
+            n_points = len(msg) if isinstance(msg, PointCloud2) else ""
+            self._debug_csv.write(
+                f"{time.time():.3f},{entity_path},"
+                f"{queue_ms:.1f},{convert_ms:.1f},{log_ms:.1f},{n_points}\n"
+            )
 
     @rpc
     def start(self) -> None:
-        import rerun as rr
 
         super().start()
 
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
+
+        # Latency CSV log
+        log_dir = Path(__file__).resolve().parents[3] / "data" / "rerun_logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        ts_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        log_path = log_dir / f"{ts_str}_rerun_latency.csv"
+        self._debug_csv = open(log_path, "w")
+        self._debug_csv.write("wall_time,entity,queue_ms,convert_ms,rr_log_ms,n_points\n")
+        logger.info(f"Latency log → {log_path}")
 
         # Initialize and spawn Rerun viewer
         rr.init("dimos")
@@ -322,6 +348,9 @@ class RerunBridgeModule(Module[Config]):
         if self.config.blueprint:
             rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
 
+        # Register colormap for viewer-side color resolution (PointCloud2 class_ids)
+        register_colormap_annotation("turbo")
+
         # Start pubsubs and subscribe to all messages
         for pubsub in self.config.pubsubs:
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
@@ -338,7 +367,6 @@ class RerunBridgeModule(Module[Config]):
         self._log_static()
 
     def _log_static(self) -> None:
-        import rerun as rr
 
         for entity_path, factory in self.config.static.items():
             data = factory(rr)
@@ -359,7 +387,6 @@ class RerunBridgeModule(Module[Config]):
             dot_code: The DOT-format graph (from ``introspection.blueprint.dot.render``).
             module_names: List of module class names (to distinguish modules from channels).
         """
-        import rerun as rr
 
         try:
             result = subprocess.run(
@@ -416,6 +443,11 @@ class RerunBridgeModule(Module[Config]):
 
     @rpc
     def stop(self) -> None:
+        if self._debug_csv is not None:
+            log_path = self._debug_csv.name
+            self._debug_csv.close()
+            self._debug_csv = None
+            logger.info(f"Latency log saved to {log_path}")
         super().stop()
 
 
