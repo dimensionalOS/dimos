@@ -342,10 +342,12 @@ class RerunBridgeModule(Module[Config]):
             try:
                 import rerun_bindings
 
+                # Use --connect so the viewer connects to the bridge's gRPC
+                # server rather than starting its own (which would conflict).
                 rerun_bindings.spawn(
-                    port=RERUN_GRPC_PORT,
                     executable_name="dimos-viewer",
                     memory_limit=self.config.memory_limit,
+                    extra_args=["--connect", server_uri],
                 )
                 spawned = True
             except ImportError:
@@ -360,6 +362,7 @@ class RerunBridgeModule(Module[Config]):
             if not spawned:
                 try:
                     rr.spawn(connect=True, memory_limit=self.config.memory_limit)
+                    spawned = True
                 except (RuntimeError, FileNotFoundError):
                     logger.warning(
                         "Rerun native viewer not available (headless?). "
@@ -367,10 +370,15 @@ class RerunBridgeModule(Module[Config]):
                         "accessible via rerun-connect or rerun-web.",
                         exc_info=True,
                     )
+        
         # web
         open_web = self.config.rerun_open == "web" or self.config.rerun_open == "both"
         if open_web or self.config.rerun_web:
             rr.serve_web_viewer(connect_to=server_uri, open_browser=open_web)
+        
+        # printout
+        if self.config.rerun_open == "none" or (self.config.rerun_open == "native" and not spawned):
+            self._log_connect_hints(grpc_port)
 
         # setup blueprint
         if self.config.blueprint:
@@ -390,6 +398,33 @@ class RerunBridgeModule(Module[Config]):
                 self._disposables.add(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
         self._log_static()
+
+    def _log_connect_hints(self, grpc_port: int) -> None:
+        """Log CLI commands for connecting a viewer to this bridge."""
+        import socket
+
+        from dimos.utils.generic import get_local_ips
+
+        local_ips = get_local_ips()
+        hostname = socket.gethostname()
+        connect_url = f"rerun+http://127.0.0.1:{grpc_port}/proxy"
+
+        lines = [
+            "",
+            "=" * 60,
+            "Rerun gRPC server running (no viewer opened)",
+            "",
+            "Connect a viewer:",
+            f"  dimos-viewer --connect {connect_url}",
+        ]
+        for ip, iface in local_ips:
+            lines.append(f"  dimos-viewer --connect rerun+http://{ip}:{grpc_port}/proxy  # {iface}")
+        lines.append("")
+        lines.append(f"  hostname: {hostname}")
+        lines.append("=" * 60)
+        lines.append("")
+
+        logger.info("\n".join(lines))
 
     def _log_static(self) -> None:
         import rerun as rr
