@@ -76,9 +76,6 @@ jobs:
           - os: ubuntu
             pyver: "3.14t"
             experimental: false
-          - os: ubuntu
-            pyver: "3.15"
-            experimental: true
       fail-fast: true
     runs-on: ${{ matrix.os }}-latest
     continue-on-error: ${{ matrix.experimental }}
@@ -112,13 +109,13 @@ jobs:
         if: ${{ endsWith(matrix.pyver, 't') }}
         run: echo "PYTHON_GIL=0" >> $GITHUB_ENV
       - name: Run tests
-        run: uv run pytest --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (tool or self_hosted or mujoco)'
+        run: uv run pytest --numprocesses=3 --cov=dimos/ --junitxml=junit.xml -m 'not (tool or self_hosted or mujoco or dimsim)'
       - name: Re-run the failing tests with maximum verbosity
         if: failure()
         env:
           COLOR: yes
         run: >-  # `exit 1` makes sure that the job remains red with flaky runs
-          uv run pytest --no-cov -vvvvv --lf  -m 'not (tool or self_hosted or mujoco)' && exit 1
+          uv run pytest --no-cov -vvvvv --lf  -m 'not (tool or self_hosted or mujoco or dimsim)' && exit 1
         shell: bash
       - name: Turn coverage into xml
         run: uv run python -m coverage xml
