@@ -35,7 +35,7 @@ _piper_cfg = _catalog_piper(name="arm")
 
 # Piper 6-DOF mock sim + keyboard teleop + Drake visualization
 keyboard_teleop_piper = autoconnect(
-    KeyboardTeleopModule.blueprint(model_path=str(PIPER_FK_MODEL), ee_joint_id=_piper_cfg.dof),
+    KeyboardTeleopModule.blueprint(model_path=PIPER_FK_MODEL, ee_joint_id=_piper_cfg.dof),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
