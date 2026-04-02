@@ -264,7 +264,16 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
 
                 # Build per-robot sub-message (coordinator namespace)
                 sub_positions = [msg.position[idx] for idx in indices]  # type: ignore[index]
-                sub_msg = JointState(name=list(coord_names), position=sub_positions)
+                sub_velocities = (
+                    [msg.velocity[idx] for idx in indices]  # type: ignore[index]
+                    if msg.velocity and len(msg.velocity) == len(msg.name)
+                    else []
+                )
+                sub_msg = JointState(
+                    name=list(coord_names),
+                    position=sub_positions,
+                    velocity=sub_velocities,
+                )
 
                 # Route to specific monitor
                 self._world_monitor.on_joint_state(sub_msg, robot_id=robot_id)
