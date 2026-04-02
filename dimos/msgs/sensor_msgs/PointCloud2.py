@@ -56,9 +56,11 @@ class PointCloud2(Timestamped):
         pointcloud: o3d.geometry.PointCloud | o3d.t.geometry.PointCloud | None = None,
         frame_id: str = "world",
         ts: float | None = None,
+        voxelized: bool = False,
     ) -> None:
         self.ts = ts  # type: ignore[assignment]
         self.frame_id = frame_id
+        self.voxelized = voxelized
 
         # Store internally as tensor pointcloud for speed
         if pointcloud is None:
@@ -660,11 +662,12 @@ class PointCloud2(Timestamped):
         elif mode == "boxes":
             box_size = size if size is not None else voxel_size
             half = box_size / 2
-            # Snap points to voxel grid centers so boxes tile properly
-            points = np.floor(points / box_size) * box_size + half
-            points, unique_idx = np.unique(points, axis=0, return_index=True)
-            if point_colors is not None and isinstance(point_colors, np.ndarray):
-                point_colors = point_colors[unique_idx]
+            if not self.voxelized:
+                # Snap points to voxel grid centers so boxes tile properly
+                points = np.floor(points / box_size) * box_size + half
+                points, unique_idx = np.unique(points, axis=0, return_index=True)
+                if point_colors is not None and isinstance(point_colors, np.ndarray):
+                    point_colors = point_colors[unique_idx]
             return rr.Boxes3D(
                 centers=points,
                 half_sizes=[half, half, half],
