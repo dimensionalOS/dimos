@@ -370,12 +370,12 @@ class RerunBridgeModule(Module[Config]):
                         "accessible via rerun-connect or rerun-web.",
                         exc_info=True,
                     )
-        
+
         # web
         open_web = self.config.rerun_open == "web" or self.config.rerun_open == "both"
         if open_web or self.config.rerun_web:
             rr.serve_web_viewer(connect_to=server_uri, open_browser=open_web)
-        
+
         # printout
         if self.config.rerun_open == "none" or (self.config.rerun_open == "native" and not spawned):
             self._log_connect_hints(grpc_port)
