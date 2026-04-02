@@ -20,7 +20,6 @@ from collections.abc import Callable
 from dataclasses import field
 from functools import lru_cache
 import subprocess
-import time
 from typing import (
     Any,
     Literal,
@@ -39,19 +38,10 @@ import typer
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.utils.logging_config import setup_logger
-
-# Message types with large payloads that need rate-limiting.
-# Image (~1 MB/frame at 30 fps) and PointCloud2 (~600-800 KB/frame)
-# cause viewer OOM if logged at full rate.  Light messages
-# (Path, PointStamped, Twist, TF, EntityMarkers …) pass through
-# unthrottled so navigation overlays and user input are never dropped.
-_HEAVY_MSG_TYPES: tuple[type, ...] = (Image, PointCloud2)
 
 RERUN_GRPC_PORT = 9876
 RERUN_WEB_PORT = 9090
@@ -194,12 +184,15 @@ class Config(ModuleConfig):
     # Static items logged once after start. Maps entity_path -> callable(rr) returning Archetype
     static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
-    min_interval_sec: float = 0.1  # Rate-limit per entity path (default: 10 Hz max)
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
     viewer_mode: ViewerMode = field(default_factory=_resolve_viewer_mode)
     connect_url: str = "rerun+http://127.0.0.1:9877/proxy"
     memory_limit: str = "25%"
+
+    # Entity paths to log with static=True (replaces previous data instead of appending).
+    # Use for entities that publish full snapshots each time (e.g. global_map).
+    static_entities: list[str] = field(default_factory=list)
 
     # Blueprint factory: callable(rrb) -> Blueprint for viewer layout configuration
     # Set to None to disable default blueprint
@@ -276,24 +269,11 @@ class RerunBridgeModule(Module[Config]):
         """Handle incoming message - log to rerun."""
         import rerun as rr
 
-        # convert a potentially complex topic object into an str rerun entity path
         entity_path: str = self._get_entity_path(topic)
-
-        # Rate-limit heavy data types to prevent viewer memory exhaustion.
-        # High-bandwidth streams (e.g. 30fps camera, lidar) would otherwise
-        # flood the viewer faster than it can evict, causing OOM.  Light
-        # messages (Path, PointStamped, TF, etc.) pass through unthrottled.
-        if self.config.min_interval_sec > 0 and isinstance(msg, _HEAVY_MSG_TYPES):
-            now = time.monotonic()
-            last = self._last_log.get(entity_path, 0.0)
-            if now - last < self.config.min_interval_sec:
-                return
-            self._last_log[entity_path] = now
 
         # apply visual overrides (including final_convert which handles .to_rerun())
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
 
-        # converters can also suppress logging by returning None
         if not rerun_data:
             return
 
@@ -310,7 +290,6 @@ class RerunBridgeModule(Module[Config]):
 
         super().start()
 
-        self._last_log: dict[str, float] = {}
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
 
         # Initialize and spawn Rerun viewer

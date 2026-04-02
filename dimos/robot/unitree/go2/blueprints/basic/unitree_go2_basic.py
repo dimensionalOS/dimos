@@ -49,7 +49,7 @@ def _convert_camera_info(camera_info: Any) -> Any:
 
 
 def _convert_global_map(grid: Any) -> Any:
-    return grid.to_rerun(voxel_size=0.1, mode="boxes")
+    return grid.to_rerun(voxel_size=0.05, mode="boxes")
 
 
 def _convert_navigation_costmap(grid: Any) -> Any:
