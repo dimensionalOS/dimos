@@ -18,7 +18,7 @@ Iterates lidar frames one by one, builds the map incrementally,
 and logs each update to Rerun to measure real-world throughput.
 
 Compares two approaches:
-  - LUT colors: compute 400k×3 uint8 color array, pass as colors=
+  - LUT colors: compute 400k x 3 uint8 color array, pass as colors=
   - class_ids: compute 400k uint16 class IDs, viewer resolves colors via AnnotationContext
 """
 
@@ -65,12 +65,14 @@ def test_rerun_pointcloud_viz():
     # Register turbo colormap as AnnotationContext (viewer-side color resolution)
     rr.log(
         "/",
-        rr.AnnotationContext([
-            rr.datatypes.ClassDescription(
-                info=rr.datatypes.AnnotationInfo(id=i, color=_LUT[i].tolist())
-            )
-            for i in range(256)
-        ]),
+        rr.AnnotationContext(
+            [
+                rr.datatypes.ClassDescription(
+                    info=rr.datatypes.AnnotationInfo(id=i, color=_LUT[i].tolist())
+                )
+                for i in range(256)
+            ]
+        ),
         static=True,
     )
 

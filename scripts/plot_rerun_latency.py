@@ -145,7 +145,6 @@ def plot_points_vs_time(pc2_groups: dict, t0: float, out: Path) -> None:
     save(fig, out)
 
 
-
 def plot_boxplot_comparison(csv_paths: list[Path], out: Path) -> None:
     """Boxplot comparing all entities across all CSVs for convert_ms and rr_log_ms."""
     # Load all CSVs, use only convert_ms and rr_log_ms (safe for both replay and hardware)

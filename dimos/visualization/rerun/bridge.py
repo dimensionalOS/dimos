@@ -18,8 +18,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import field
+from datetime import datetime
 from functools import lru_cache
+from pathlib import Path
 import subprocess
+import time
 from typing import (
     Any,
     Literal,
@@ -30,14 +33,10 @@ from typing import (
     runtime_checkable,
 )
 
-import time
-from datetime import datetime
-from pathlib import Path
-
 from reactivex.disposable import Disposable
 import rerun as rr
-import rerun.blueprint as rrb
 from rerun._baseclasses import Archetype
+import rerun.blueprint as rrb
 from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
 import typer
@@ -295,7 +294,6 @@ class RerunBridgeModule(Module[Config]):
         log_ms = (time.monotonic() - t0) * 1000
 
         if self._debug_csv is not None:
-
             n_points = len(msg) if isinstance(msg, PointCloud2) else ""
             self._debug_csv.write(
                 f"{time.time():.3f},{entity_path},"
@@ -304,7 +302,6 @@ class RerunBridgeModule(Module[Config]):
 
     @rpc
     def start(self) -> None:
-
         super().start()
 
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
@@ -367,7 +364,6 @@ class RerunBridgeModule(Module[Config]):
         self._log_static()
 
     def _log_static(self) -> None:
-
         for entity_path, factory in self.config.static.items():
             data = factory(rr)
             if isinstance(data, list):

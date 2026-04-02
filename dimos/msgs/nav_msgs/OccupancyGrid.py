@@ -497,7 +497,9 @@ class OccupancyGrid(Timestamped):
 
         # Apply cost_range filter — set out-of-range cells to background
         if cost_range is not None:
-            out_of_range = ((self.grid < cost_range[0]) | (self.grid > cost_range[1])) & (self.grid != -1)
+            out_of_range = ((self.grid < cost_range[0]) | (self.grid > cost_range[1])) & (
+                self.grid != -1
+            )
             if np.any(out_of_range):
                 bg_rgb = [0, 0, 0]
                 if background is not None:

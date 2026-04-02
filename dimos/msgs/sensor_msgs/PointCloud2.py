@@ -55,7 +55,6 @@ def _get_colormap_lut(name: str) -> np.ndarray:
     return (cmap(t)[:, :3] * 255).astype(np.uint8)
 
 
-
 def _colormap_class_ids(points: np.ndarray) -> np.ndarray:
     """Quantize Z height to 0-255 class IDs for viewer-side color resolution."""
     z = points[:, 2]
@@ -69,12 +68,14 @@ def register_colormap_annotation(name: str = "turbo") -> None:
     lut = _get_colormap_lut(name)
     rr.log(
         "/",
-        rr.AnnotationContext([
-            rr.datatypes.ClassDescription(
-                info=rr.datatypes.AnnotationInfo(id=i, color=lut[i].tolist())
-            )
-            for i in range(256)
-        ]),
+        rr.AnnotationContext(
+            [
+                rr.datatypes.ClassDescription(
+                    info=rr.datatypes.AnnotationInfo(id=i, color=lut[i].tolist())
+                )
+                for i in range(256)
+            ]
+        ),
         static=True,
     )
 
