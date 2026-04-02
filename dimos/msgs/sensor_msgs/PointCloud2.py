@@ -55,12 +55,28 @@ def _get_colormap_lut(name: str) -> np.ndarray:
     return (cmap(t)[:, :3] * 255).astype(np.uint8)
 
 
-def _apply_colormap_lut(points: np.ndarray, name: str = "turbo") -> np.ndarray:
-    """Color points by Z height using a pre-built LUT. ~5ms for 400k points."""
-    lut = _get_colormap_lut(name)
+
+def _colormap_class_ids(points: np.ndarray) -> np.ndarray:
+    """Quantize Z height to 0-255 class IDs for viewer-side color resolution."""
     z = points[:, 2]
-    idx = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
-    return lut[idx]
+    return ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint16)
+
+
+def register_colormap_annotation(name: str = "turbo") -> None:
+    """Register a colormap as AnnotationContext so Rerun resolves colors viewer-side."""
+    import rerun as rr
+
+    lut = _get_colormap_lut(name)
+    rr.log(
+        "/",
+        rr.AnnotationContext([
+            rr.datatypes.ClassDescription(
+                info=rr.datatypes.AnnotationInfo(id=i, color=lut[i].tolist())
+            )
+            for i in range(256)
+        ]),
+        static=True,
+    )
 
 
 # TODO: encode/decode need to be updated to work with full spectrum of pointcloud2 fields
@@ -383,6 +399,14 @@ class PointCloud2(Timestamped):
         colors = np.asarray(self.pointcloud.colors) if self.pointcloud.has_colors() else None
         return points, colors
 
+    def points_f32(self) -> np.ndarray:
+        """Get positions as float32 numpy array, bypassing legacy float64 conversion."""
+        self._ensure_tensor_initialized()
+        if "positions" in self._pcd_tensor.point:
+            arr = self._pcd_tensor.point["positions"].numpy()
+            return arr.astype(np.float32) if arr.dtype != np.float32 else arr
+        return np.zeros((0, 3), dtype=np.float32)
+
     @functools.cached_property
     def axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
         """Get axis-aligned bounding box of the point cloud."""
@@ -652,16 +676,18 @@ class PointCloud2(Timestamped):
         """
         import rerun as rr
 
-        points, _ = self.as_numpy()
+        points = self.points_f32()
         if len(points) == 0:
             return rr.Points3D([]) if mode != "boxes" else rr.Boxes3D(centers=[])
 
         if colors is None and colormap is None:
             colormap = "turbo"  # Default colormap if no colors provided
-        # Determine colors — use fast LUT for height colormaps
+        # Use class_ids for colormaps (viewer-side resolution, ~3x faster)
+        # Fall back to explicit colors when provided
+        class_ids = None
         point_colors = None
         if colormap is not None:
-            point_colors = _apply_colormap_lut(points, colormap)
+            class_ids = _colormap_class_ids(points)
         elif colors is not None:
             point_colors = colors
 
@@ -669,6 +695,7 @@ class PointCloud2(Timestamped):
             return rr.Points3D(
                 positions=points,
                 colors=point_colors,
+                class_ids=class_ids,
             )
         elif mode == "boxes":
             box_size = size if size is not None else voxel_size
@@ -677,6 +704,7 @@ class PointCloud2(Timestamped):
                 centers=points,
                 half_sizes=[half, half, half],
                 colors=point_colors,
+                class_ids=class_ids,
                 fill_mode=fill_mode,  # type: ignore[arg-type]
             )
         else:
