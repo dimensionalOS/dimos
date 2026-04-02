@@ -33,6 +33,8 @@ import sys
 import time
 from typing import Any
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+
 
 def find_git_root() -> Path | None:
     """Find the git repository root from current directory."""
@@ -724,7 +726,7 @@ def main() -> None:
                 time.sleep(1)
         except KeyboardInterrupt:
             observer.stop()
-        observer.join()
+        observer.join(DEFAULT_THREAD_JOIN_TIMEOUT)
         return
 
     # Normal mode

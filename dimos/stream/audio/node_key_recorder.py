@@ -22,6 +22,7 @@ import numpy as np
 from reactivex import Observable
 from reactivex.subject import ReplaySubject, Subject
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.stream.audio.base import AbstractAudioTransform, AudioEvent
 from dimos.utils.logging_config import setup_logger
 
@@ -128,7 +129,7 @@ class KeyRecorder(AbstractAudioTransform):
         # Stop input monitoring thread
         self._running = False
         if self._input_thread.is_alive():
-            self._input_thread.join(1.0)
+            self._input_thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
 
     def _input_monitor(self) -> None:
         """Monitor for key presses to toggle recording."""
