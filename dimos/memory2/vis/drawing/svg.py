@@ -14,7 +14,9 @@
 
 """SVG renderer for Drawing2D.
 
-Top-down XY projection (Z ignored). World Y-up → SVG Y-down.
+Top-down XY projection (Z ignored). Renders in world coordinates with Y-flip.
+The SVG viewBox is computed from actual rendered content, so all element types
+automatically contribute to the viewport bounds.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from dataclasses import dataclass
 import io
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 from PIL import Image as PILImage
@@ -48,200 +50,175 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class ViewTransform:
-    """Maps world XY coordinates to SVG pixel coordinates with Y-flip."""
+class Bounds:
+    """Accumulates world-space bounding box during rendering."""
 
-    wx_min: float
-    wx_max: float
-    wy_min: float
-    wy_max: float
-    svg_width: float
-    svg_height: float
+    xmin: float = float("inf")
+    xmax: float = float("-inf")
+    ymin: float = float("inf")
+    ymax: float = float("-inf")
 
-    @classmethod
-    def from_elements(
-        cls, elements: list[SceneElement], width_px: float = 800, padding: float = 0.5
-    ) -> ViewTransform:
-        xs: list[float] = []
-        ys: list[float] = []
-        for el in elements:
-            _collect_bounds(el, xs, ys)
+    def include(self, x: float, y: float) -> None:
+        self.xmin = min(self.xmin, x)
+        self.xmax = max(self.xmax, x)
+        self.ymin = min(self.ymin, y)
+        self.ymax = max(self.ymax, y)
 
-        if not xs or not ys:
-            return cls(0, 1, 0, 1, width_px, width_px)
+    @property
+    def empty(self) -> bool:
+        return self.xmin > self.xmax
 
-        xmin, xmax = min(xs) - padding, max(xs) + padding
-        ymin, ymax = min(ys) - padding, max(ys) + padding
+    @property
+    def width(self) -> float:
+        return max(self.xmax - self.xmin, 1.0)
 
-        world_w = xmax - xmin or 1.0
-        world_h = ymax - ymin or 1.0
-        aspect = world_h / world_w
-        svg_h = width_px * aspect
-
-        return cls(xmin, xmax, ymin, ymax, width_px, svg_h)
-
-    def w2s(self, wx: float, wy: float) -> tuple[float, float]:
-        """World (x, y) → SVG (sx, sy) with Y-flip."""
-        sx = (wx - self.wx_min) / (self.wx_max - self.wx_min) * self.svg_width
-        sy = (1 - (wy - self.wy_min) / (self.wy_max - self.wy_min)) * self.svg_height
-        return sx, sy
-
-    def scale(self, world_dist: float) -> float:
-        """Convert a world-space distance to SVG pixels."""
-        return world_dist / (self.wx_max - self.wx_min) * self.svg_width
+    @property
+    def height(self) -> float:
+        return max(self.ymax - self.ymin, 1.0)
 
 
-def _collect_bounds(el: Any, xs: list[float], ys: list[float]) -> None:
-    if isinstance(el, (Pose, Arrow)):
-        xs.append(el.msg.x)
-        ys.append(el.msg.y)
-    elif isinstance(el, Point):
-        xs.append(el.msg.x)
-        ys.append(el.msg.y)
-    elif isinstance(el, Polyline):
-        for p in el.msg.poses:
-            xs.append(p.x)
-            ys.append(p.y)
-    elif isinstance(el, Box3D):
-        cx, cy = el.center.x, el.center.y
-        hw, hh = el.size.x / 2, el.size.y / 2
-        xs.extend([cx - hw, cx + hw])
-        ys.extend([cy - hh, cy + hh])
-    elif isinstance(el, Camera):
-        xs.append(el.pose.x)
-        ys.append(el.pose.y)
-    elif isinstance(el, Text):
-        xs.append(el.position[0])
-        ys.append(el.position[1])
-    elif isinstance(el, Observation):
-        ps = el.pose_stamped
-        xs.append(ps.x)
-        ys.append(ps.y)
-    elif isinstance(el, OccupancyGrid):
-        ox, oy = el.origin.x, el.origin.y
-        xs.extend([ox, ox + el.width * el.resolution])
-        ys.extend([oy, oy + el.height * el.resolution])
+def _y(wy: float) -> float:
+    """Flip Y axis: world Y-up → SVG Y-down."""
+    return -wy
 
 
-def _render_point(el: Point, vt: ViewTransform) -> str:
-    sx, sy = vt.w2s(el.msg.x, el.msg.y)
-    r = max(vt.scale(el.radius), 2)
-    parts = [f'<circle cx="{sx:.1f}" cy="{sy:.1f}" r="{r:.1f}" fill="{el.color}" opacity="0.85"/>']
+# ---------------------------------------------------------------------------
+# Element renderers — all emit world-coordinate SVG and grow Bounds
+# ---------------------------------------------------------------------------
+
+
+def _render_point(el: Point, b: Bounds) -> str:
+    x, y = el.msg.x, _y(el.msg.y)
+    r = el.radius
+    b.include(x - r, y - r)
+    b.include(x + r, y + r)
+    parts = [f'<circle cx="{x:.4f}" cy="{y:.4f}" r="{r:.4f}" fill="{el.color}" opacity="0.85"/>']
     if el.label:
         parts.append(
-            f'<text x="{sx + r + 2:.1f}" y="{sy + 4:.1f}" '
-            f'font-size="11" fill="{el.color}">{_esc(el.label)}</text>'
+            f'<text x="{x + r:.4f}" y="{y:.4f}" '
+            f'font-size="{r * 1.5:.4f}" fill="{el.color}">{_esc(el.label)}</text>'
         )
     return "\n".join(parts)
 
 
-def _render_pose(el: Pose, vt: ViewTransform) -> str:
-    arrow = Arrow(msg=el.msg, length=el.size, color=el.color)
-    parts = [_render_arrow(arrow, vt)]
-
-    if el.label:
-        sx, sy = vt.w2s(el.msg.x, el.msg.y)
-        parts.append(
-            f'<text x="{sx + 6:.1f}" y="{sy + 4:.1f}" '
-            f'font-size="11" fill="{el.color}">{_esc(el.label)}</text>'
-        )
-    return "\n".join(parts)
-
-
-def _render_arrow(el: Arrow, vt: ViewTransform) -> str:
-    sx, sy = vt.w2s(el.msg.x, el.msg.y)
+def _render_arrow(el: Arrow, b: Bounds) -> str:
+    x, y = el.msg.x, _y(el.msg.y)
     yaw = el.msg.yaw
-    arrow_len = vt.scale(el.length)
-    half_base = arrow_len * 0.4
+    length = el.length
+    half_base = length * 0.4
 
     # Tip of the triangle
-    tx = sx + math.cos(yaw) * arrow_len
-    ty = sy - math.sin(yaw) * arrow_len
+    tx = x + math.cos(yaw) * length
+    ty = y - math.sin(yaw) * length  # sin negated for Y-flip
     # Two base corners (perpendicular to yaw)
-    bx1 = sx + math.cos(yaw + math.pi / 2) * half_base
-    by1 = sy - math.sin(yaw + math.pi / 2) * half_base
-    bx2 = sx + math.cos(yaw - math.pi / 2) * half_base
-    by2 = sy - math.sin(yaw - math.pi / 2) * half_base
+    bx1 = x + math.cos(yaw + math.pi / 2) * half_base
+    by1 = y - math.sin(yaw + math.pi / 2) * half_base
+    bx2 = x + math.cos(yaw - math.pi / 2) * half_base
+    by2 = y - math.sin(yaw - math.pi / 2) * half_base
+
+    for px, py in [(x, y), (tx, ty), (bx1, by1), (bx2, by2)]:
+        b.include(px, py)
 
     return (
-        f'<polygon points="{tx:.1f},{ty:.1f} {bx1:.1f},{by1:.1f} {bx2:.1f},{by2:.1f}" '
-        f'fill="none" stroke="{el.color}" stroke-width="1.5" stroke-linejoin="round"/>'
+        f'<polygon points="{tx:.4f},{ty:.4f} {bx1:.4f},{by1:.4f} {bx2:.4f},{by2:.4f}" '
+        f'fill="none" stroke="{el.color}" stroke-width="{length * 0.08:.4f}" stroke-linejoin="round"/>'
     )
 
 
-def _render_polyline(el: Polyline, vt: ViewTransform) -> str:
-    pts = " ".join(f"{vt.w2s(p.x, p.y)[0]:.1f},{vt.w2s(p.x, p.y)[1]:.1f}" for p in el.msg.poses)
-    sw = max(vt.scale(el.width), 1)
+def _render_pose(el: Pose, b: Bounds) -> str:
+    arrow = Arrow(msg=el.msg, length=el.size, color=el.color)
+    parts = [_render_arrow(arrow, b)]
+    if el.label:
+        x, y = el.msg.x, _y(el.msg.y)
+        parts.append(
+            f'<text x="{x + el.size * 0.5:.4f}" y="{y:.4f}" '
+            f'font-size="{el.size * 0.8:.4f}" fill="{el.color}">{_esc(el.label)}</text>'
+        )
+    return "\n".join(parts)
+
+
+def _render_polyline(el: Polyline, b: Bounds) -> str:
+    pts = []
+    for p in el.msg.poses:
+        x, y = p.x, _y(p.y)
+        b.include(x, y)
+        pts.append(f"{x:.4f},{y:.4f}")
     return (
-        f'<polyline points="{pts}" fill="none" '
-        f'stroke="{el.color}" stroke-width="{sw:.1f}" stroke-linejoin="round"/>'
+        f'<polyline points="{" ".join(pts)}" fill="none" '
+        f'stroke="{el.color}" stroke-width="{el.width:.4f}" stroke-linejoin="round"/>'
     )
 
 
-def _render_box3d(el: Box3D, vt: ViewTransform) -> str:
+def _render_box3d(el: Box3D, b: Bounds) -> str:
     cx, cy = el.center.x, el.center.y
     hw, hh = el.size.x / 2, el.size.y / 2
-    sx1, sy1 = vt.w2s(cx - hw, cy + hh)  # top-left in world → SVG
-    sx2, sy2 = vt.w2s(cx + hw, cy - hh)  # bottom-right in world → SVG
-    w = abs(sx2 - sx1)
-    h = abs(sy2 - sy1)
-    x = min(sx1, sx2)
-    y = min(sy1, sy2)
+    # Top-left in world → SVG
+    x = cx - hw
+    y = _y(cy + hh)
+    w = el.size.x
+    h = el.size.y
+    b.include(x, y)
+    b.include(x + w, y + h)
     parts = [
-        f'<rect x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" '
-        f'fill="none" stroke="{el.color}" stroke-width="2"/>'
+        f'<rect x="{x:.4f}" y="{y:.4f}" width="{w:.4f}" height="{h:.4f}" '
+        f'fill="none" stroke="{el.color}" stroke-width="{min(w, h) * 0.04:.4f}"/>'
     ]
     if el.label:
         parts.append(
-            f'<text x="{x + 3:.1f}" y="{y - 3:.1f}" '
-            f'font-size="11" fill="{el.color}">{_esc(el.label)}</text>'
+            f'<text x="{x:.4f}" y="{y - h * 0.05:.4f}" '
+            f'font-size="{h * 0.3:.4f}" fill="{el.color}">{_esc(el.label)}</text>'
         )
     return "\n".join(parts)
 
 
-def _render_camera(el: Camera, vt: ViewTransform) -> str:
-    sx, sy = vt.w2s(el.pose.x, el.pose.y)
+def _render_camera(el: Camera, b: Bounds) -> str:
+    x, y = el.pose.x, _y(el.pose.y)
     yaw = el.pose.yaw
 
     if el.camera_info and el.camera_info.K[4] > 0:
-        # FOV wedge
         fy = el.camera_info.K[4]
         fov_y = 2 * math.atan(el.camera_info.height / (2 * fy))
         fov_half = fov_y / 2
-        wedge_len = vt.scale(0.8)
+        wedge_len = 0.8
 
         a1 = yaw + fov_half
         a2 = yaw - fov_half
-        x1 = sx + math.cos(a1) * wedge_len
-        y1 = sy - math.sin(a1) * wedge_len
-        x2 = sx + math.cos(a2) * wedge_len
-        y2 = sy - math.sin(a2) * wedge_len
+        x1 = x + math.cos(a1) * wedge_len
+        y1 = y - math.sin(a1) * wedge_len
+        x2 = x + math.cos(a2) * wedge_len
+        y2 = y - math.sin(a2) * wedge_len
+
+        for px, py in [(x, y), (x1, y1), (x2, y2)]:
+            b.include(px, py)
 
         parts = [
-            f'<polygon points="{sx:.1f},{sy:.1f} {x1:.1f},{y1:.1f} {x2:.1f},{y2:.1f}" '
-            f'fill="none" stroke="{el.color}" stroke-width="1.5"/>'
+            f'<polygon points="{x:.4f},{y:.4f} {x1:.4f},{y1:.4f} {x2:.4f},{y2:.4f}" '
+            f'fill="none" stroke="{el.color}" stroke-width="0.03"/>'
         ]
     else:
-        # No intrinsics: just a dot
-        parts = [f'<circle cx="{sx:.1f}" cy="{sy:.1f}" r="5" fill="{el.color}" opacity="0.8"/>']
+        r = 0.15
+        b.include(x - r, y - r)
+        b.include(x + r, y + r)
+        parts = [f'<circle cx="{x:.4f}" cy="{y:.4f}" r="{r:.4f}" fill="{el.color}" opacity="0.8"/>']
 
     if el.label:
         parts.append(
-            f'<text x="{sx + 6:.1f}" y="{sy + 4:.1f}" '
-            f'font-size="11" fill="{el.color}">{_esc(el.label)}</text>'
+            f'<text x="{x + 0.2:.4f}" y="{y:.4f}" '
+            f'font-size="0.3" fill="{el.color}">{_esc(el.label)}</text>'
         )
     return "\n".join(parts)
 
 
-def _render_text(el: Text, vt: ViewTransform) -> str:
-    sx, sy = vt.w2s(el.position[0], el.position[1])
+def _render_text(el: Text, b: Bounds) -> str:
+    x, y = el.position[0], _y(el.position[1])
+    b.include(x, y)
     return (
-        f'<text x="{sx:.1f}" y="{sy:.1f}" '
-        f'font-size="{el.font_size}" fill="{el.color}">{_esc(el.text)}</text>'
+        f'<text x="{x:.4f}" y="{y:.4f}" '
+        f'font-size="{el.font_size:.4f}" fill="{el.color}">{_esc(el.text)}</text>'
     )
 
 
-def _render_occupancy_grid(el: OccupancyGrid, vt: ViewTransform) -> str:
+def _render_occupancy_grid(el: OccupancyGrid, b: Bounds) -> str:
     if el.grid.size == 0:
         return ""
 
@@ -255,21 +232,50 @@ def _render_occupancy_grid(el: OccupancyGrid, vt: ViewTransform) -> str:
     world_w = el.width * el.resolution
     world_h = el.height * el.resolution
 
-    sx, sy = vt.w2s(ox, oy + world_h)  # top-left in world → SVG
-    sw = vt.scale(world_w)
-    sh = vt.scale(world_h)
+    # SVG top-left: world top-left with Y-flip
+    sx = ox
+    sy = _y(oy + world_h)
+
+    b.include(sx, sy)
+    b.include(sx + world_w, sy + world_h)
 
     return (
-        f'<image x="{sx:.1f}" y="{sy:.1f}" width="{sw:.1f}" height="{sh:.1f}" '
+        f'<image x="{sx:.4f}" y="{sy:.4f}" width="{world_w:.4f}" height="{world_h:.4f}" '
         f'href="data:image/png;base64,{b64}" image-rendering="pixelated"/>'
     )
 
 
-_ARROWHEAD_MARKER = (
-    '<defs><marker id="ah" markerWidth="8" markerHeight="6" '
-    'refX="8" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" '
-    'fill="none" stroke="context-stroke" stroke-width="1"/></marker></defs>'
-)
+# ---------------------------------------------------------------------------
+# Dispatch + top-level render
+# ---------------------------------------------------------------------------
+
+
+def _render_element(el: SceneElement, b: Bounds) -> str:
+    if isinstance(el, Point):
+        return _render_point(el, b)
+    elif isinstance(el, Pose):
+        return _render_pose(el, b)
+    elif isinstance(el, Arrow):
+        return _render_arrow(el, b)
+    elif isinstance(el, Polyline):
+        return _render_polyline(el, b)
+    elif isinstance(el, Box3D):
+        return _render_box3d(el, b)
+    elif isinstance(el, Camera):
+        return _render_camera(el, b)
+    elif isinstance(el, Text):
+        return _render_text(el, b)
+    elif isinstance(el, OccupancyGrid):
+        return _render_occupancy_grid(el, b)
+    elif isinstance(el, PointCloud2):
+        from dimos.mapping.occupancy.inflation import simple_inflate
+        from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
+
+        return _render_occupancy_grid(simple_inflate(height_cost_occupancy(el), 0.05), b)
+    elif isinstance(el, Observation):
+        return _render_arrow(Arrow(msg=el.pose_stamped), b)
+    else:
+        return f"<!-- unsupported: {type(el).__name__} -->"
 
 
 def render(
@@ -279,21 +285,31 @@ def render(
     padding: float = 0.5,
 ) -> str:
     """Render a Drawing2D to an SVG string, optionally writing to *path*."""
-    elements = drawing.elements
-    vt = ViewTransform.from_elements(elements, width_px=width_px, padding=padding)
+    b = Bounds()
+    fragments: list[str] = []
+
+    for el in drawing.elements:
+        fragments.append(_render_element(el, b))
+
+    if b.empty:
+        b.include(0, 0)
+        b.include(1, 1)
+
+    b.xmin -= padding
+    b.xmax += padding
+    b.ymin -= padding
+    b.ymax += padding
+
+    aspect = b.height / b.width
+    svg_h = width_px * aspect
 
     parts: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'width="{vt.svg_width:.0f}" height="{vt.svg_height:.0f}" '
-        f'viewBox="0 0 {vt.svg_width:.0f} {vt.svg_height:.0f}" '
+        f'width="{width_px:.0f}" height="{svg_h:.0f}" '
+        f'viewBox="{b.xmin:.4f} {b.ymin:.4f} {b.width:.4f} {b.height:.4f}" '
         f'style="background:#f8f8f8">',
-        _ARROWHEAD_MARKER,
     ]
-
-    # Render in insertion order (z-index = add order)
-    for el in elements:
-        parts.append(_render_element(el, vt))
-
+    parts.extend(fragments)
     parts.append("</svg>")
     svg = "\n".join(parts)
 
@@ -303,44 +319,6 @@ def render(
     return svg
 
 
-def _render_element(el: SceneElement, vt: ViewTransform) -> str:
-    if isinstance(el, Point):
-        return _render_point(el, vt)
-    elif isinstance(el, Pose):
-        return _render_pose(el, vt)
-    elif isinstance(el, Arrow):
-        return _render_arrow(el, vt)
-    elif isinstance(el, Polyline):
-        return _render_polyline(el, vt)
-    elif isinstance(el, Box3D):
-        return _render_box3d(el, vt)
-    elif isinstance(el, Camera):
-        return _render_camera(el, vt)
-    elif isinstance(el, Text):
-        return _render_text(el, vt)
-    elif isinstance(el, OccupancyGrid):
-        return _render_occupancy_grid(el, vt)
-    elif isinstance(el, PointCloud2):
-        from dimos.mapping.occupancy.inflation import simple_inflate
-        from dimos.mapping.pointclouds.occupancy import (
-            height_cost_occupancy,
-        )
-
-        # occupancy_grid = simple_inflate(general_occupancy(el), 0.05)
-        occupancy_grid = simple_inflate(height_cost_occupancy(el), 0.05)
-        return _render_occupancy_grid(occupancy_grid, vt)
-    elif isinstance(el, Observation):
-        return _render_arrow(Arrow(msg=el.pose_stamped), vt)
-    else:
-        return f"<!-- unsupported: {type(el).__name__} -->"
-
-
 def _esc(s: str) -> str:
     """Escape text for SVG XML."""
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def _esc(s: str) -> str:
-    """Escape text for SVG XML."""
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
