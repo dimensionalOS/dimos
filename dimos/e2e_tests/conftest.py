@@ -69,8 +69,10 @@ def follow_points(lcm_spy: LcmSpy):
 def start_blueprint() -> Iterator[Callable[[str], DimosCliCall]]:
     dimos_robot_call = DimosCliCall()
 
-    def set_name_and_start(*demo_args: str) -> DimosCliCall:
+    def set_name_and_start(*demo_args: str, simulator: str | None = None) -> DimosCliCall:
         dimos_robot_call.demo_args = list(demo_args)
+        if simulator is not None:
+            dimos_robot_call.simulator = simulator
         dimos_robot_call.start()
         return dimos_robot_call
 

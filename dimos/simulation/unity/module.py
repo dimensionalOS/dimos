@@ -580,17 +580,15 @@ class UnityBridgeModule(Module):
         # Use the same intrinsics as rerun_static_pinhole (120° HFOV pinhole
         # approximation of the cylindrical panorama).
         self.camera_info.publish(
-            CameraInfo(
-                height=height,
+            CameraInfo.from_intrinsics(
+                fx=_CAM_FX,
+                fy=_CAM_FY,
+                cx=_CAM_CX,
+                cy=_CAM_CY,
                 width=width,
-                distortion_model="plumb_bob",
-                D=[0.0, 0.0, 0.0, 0.0, 0.0],
-                K=[_CAM_FX, 0.0, _CAM_CX, 0.0, _CAM_FY, _CAM_CY, 0.0, 0.0, 1.0],
-                R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-                P=[_CAM_FX, 0.0, _CAM_CX, 0.0, 0.0, _CAM_FY, _CAM_CY, 0.0, 0.0, 0.0, 1.0, 0.0],
+                height=height,
                 frame_id="camera",
-                ts=ts,
-            )
+            ).with_ts(ts)
         )
 
     def _send_to_unity(self, topic: str, data: bytes) -> None:
