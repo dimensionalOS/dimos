@@ -22,8 +22,8 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.manipulation.planning.factory import create_world
-from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
+from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger

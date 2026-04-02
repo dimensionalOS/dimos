@@ -22,6 +22,7 @@ HardwareId = str
 JointName = str
 TaskName = str
 
+
 def split_joint_name(joint_name: str) -> tuple[str, str]:
     """Split a coordinator joint name into (hardware_id, suffix).
 

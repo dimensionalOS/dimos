@@ -619,7 +619,9 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             "coordinator_task_name": config.coordinator_task_name,
             "home_joints": config.home_joints,
             "pre_grasp_offset": config.pre_grasp_offset,
-            "init_joints": list(init.position) if (init := self._init_joints.get(robot_name)) else None,
+            "init_joints": list(init.position)
+            if (init := self._init_joints.get(robot_name))
+            else None,
         }
 
     @rpc

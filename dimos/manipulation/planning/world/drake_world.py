@@ -210,10 +210,15 @@ class DrakeWorld(WorldSpec):
 
             resolved_path = config.model_path.resolve()
             pose_key = tuple(
-                [config.base_pose.position.x, config.base_pose.position.y,
-                 config.base_pose.position.z, config.base_pose.orientation.x,
-                 config.base_pose.orientation.y, config.base_pose.orientation.z,
-                 config.base_pose.orientation.w]
+                [
+                    config.base_pose.position.x,
+                    config.base_pose.position.y,
+                    config.base_pose.position.z,
+                    config.base_pose.orientation.x,
+                    config.base_pose.orientation.y,
+                    config.base_pose.orientation.z,
+                    config.base_pose.orientation.w,
+                ]
             )
             cache_key = (resolved_path, pose_key)
             existing_instance = self._loaded_models.get(cache_key)
