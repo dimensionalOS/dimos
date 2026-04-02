@@ -26,6 +26,7 @@ from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.navigation.patrolling.constants import EXTRA_CLEARANCE
 from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.patrolling.routers.patrol_router import PatrolRouter
 from dimos.navigation.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
@@ -84,7 +85,7 @@ class PatrollingModule(Module):
                 return "Patrol is already running. Use `stop_patrol` to stop."
             self._planner_spec.set_replanning_enabled(False)
             self._planner_spec.set_safe_goal_clearance(
-                self._global_config.robot_rotation_diameter / 2 + 0.2
+                self._global_config.robot_rotation_diameter / 2 + EXTRA_CLEARANCE
             )
             self._stop_event.clear()
             self._patrol_thread = threading.Thread(

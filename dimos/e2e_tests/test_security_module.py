@@ -15,6 +15,7 @@
 from collections.abc import Callable
 import time
 
+from dimos_lcm.std_msgs import String
 import pytest
 
 from dimos.e2e_tests.conf_types import StartPersonTrack
@@ -25,7 +26,7 @@ from dimos.e2e_tests.lcm_spy import LcmSpy
 @pytest.mark.skipif_in_ci
 @pytest.mark.skipif_no_openai
 @pytest.mark.mujoco
-def test_patrol_and_follow(
+def test_security_module(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[[str], DimosCliCall],
     human_input: Callable[[str], None],
@@ -35,18 +36,22 @@ def test_patrol_and_follow(
     start_blueprint(
         "--mujoco-start-pos",
         "-10.75 -6.78",
+        "--mujoco-camera-position",
+        "-0.797 0.007  0.468 26.825 88.998 -70.321",
         "--nerf-speed",
-        "0.5",
+        "0.8",
+        "--dtop",
         "run",
         "--disable",
         "spatial-memory",
-        "unitree-go2-agentic",
+        "unitree-go2-security",
     )
 
     lcm_spy.save_topic("/rpc/McpClient/on_system_modules/res")
+    lcm_spy.save_topic("/security_state#std_msgs.String")
     lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res", timeout=120.0)
 
-    time.sleep(5)
+    time.sleep(2)
 
     explore_office()
 
@@ -57,7 +62,16 @@ def test_patrol_and_follow(
         ]
     )
     human_input(
-        "patrol around until you find a man wearing beige pants and when you do, start following him"
+        "start the security patrol. Just call start_security_patrol. Do not ask me anything."
     )
 
-    time.sleep(120)
+    def predicate(s: String) -> bool:
+        return s.data == "FOLLOWING"
+
+    lcm_spy.wait_for_message_result(
+        "/security_state#std_msgs.String",
+        String,
+        predicate,
+        "Failed to transition to FOLLOWING.",
+        360,
+    )
