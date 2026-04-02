@@ -1,14 +1,28 @@
 #!/usr/bin/env python3
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Generate latency graphs from Rerun bridge CSV logs.
 
 Usage:
     python scripts/plot_rerun_latency.py data/rerun_logs/<timestamp>_rerun_latency.csv
 """
 
-import csv
-import sys
 from collections import defaultdict
+import csv
 from pathlib import Path
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -65,7 +79,7 @@ def plot_metrics_vs_time(groups: dict, t0: float, metrics: list[str], out: Path)
     fig, axes = plt.subplots(n, 1, figsize=(16, 3.5 * n), sharex=True)
     if n == 1:
         axes = [axes]
-    for ax, metric in zip(axes, metrics):
+    for ax, metric in zip(axes, metrics, strict=False):
         for entity, rows in sorted(groups.items()):
             t = [r["wall_time"] - t0 for r in rows]
             v = [r[metric] for r in rows]
@@ -84,12 +98,12 @@ def plot_metrics_vs_points(pc2_groups: dict, metrics: list[str], out: Path) -> N
     fig, axes = plt.subplots(n, 1, figsize=(14, 3.5 * n), sharex=True)
     if n == 1:
         axes = [axes]
-    for ax, metric in zip(axes, metrics):
+    for ax, metric in zip(axes, metrics, strict=False):
         for entity, rows in sorted(pc2_groups.items()):
             pts = [(r["n_points"], r[metric]) for r in rows if r["n_points"] is not None]
             if not pts:
                 continue
-            x, y = zip(*pts)
+            x, y = zip(*pts, strict=False)
             ax.scatter(x, y, label=entity.split("/")[-1], alpha=0.4, s=10)
         ax.set_ylabel(METRIC_LABELS[metric])
         ax.grid(True, alpha=0.3)
@@ -106,7 +120,7 @@ def plot_points_vs_time(pc2_groups: dict, t0: float, out: Path) -> None:
         pts = [(r["wall_time"] - t0, r["n_points"]) for r in rows if r["n_points"] is not None]
         if not pts:
             continue
-        t, n = zip(*pts)
+        t, n = zip(*pts, strict=False)
         ax.plot(t, n, label=entity.split("/")[-1], alpha=0.7, linewidth=0.8)
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Point count")
@@ -142,11 +156,13 @@ def plot_boxplot_comparison(csv_paths: list[Path], out: Path) -> None:
     n_csvs = len(labels)
     colors = plt.cm.tab10(np.linspace(0, 1, n_csvs))
 
-    fig, axes = plt.subplots(len(metrics), 1, figsize=(max(16, len(entities) * n_csvs * 0.6), 5 * len(metrics)))
+    fig, axes = plt.subplots(
+        len(metrics), 1, figsize=(max(16, len(entities) * n_csvs * 0.6), 5 * len(metrics))
+    )
     if len(metrics) == 1:
         axes = [axes]
 
-    for ax, metric in zip(axes, metrics):
+    for ax, metric in zip(axes, metrics, strict=False):
         positions = []
         box_data = []
         tick_positions = []
@@ -164,8 +180,10 @@ def plot_boxplot_comparison(csv_paths: list[Path], out: Path) -> None:
                     box_data.append(vals)
                     color_list.append(colors[j])
 
-        bp = ax.boxplot(box_data, positions=positions, widths=0.7, showfliers=False, patch_artist=True)
-        for patch, color in zip(bp["boxes"], color_list):
+        bp = ax.boxplot(
+            box_data, positions=positions, widths=0.7, showfliers=False, patch_artist=True
+        )
+        for patch, color in zip(bp["boxes"], color_list, strict=False):
             patch.set_facecolor(color)
             patch.set_alpha(0.7)
 
@@ -175,7 +193,7 @@ def plot_boxplot_comparison(csv_paths: list[Path], out: Path) -> None:
         ax.grid(True, alpha=0.3, axis="y")
 
         # Add mean markers
-        for pos, vals in zip(positions, box_data):
+        for pos, vals in zip(positions, box_data, strict=False):
             mean_val = np.mean(vals)
             ax.plot(pos, mean_val, "D", color="black", markersize=4, zorder=5)
 
@@ -190,8 +208,8 @@ def plot_boxplot_comparison(csv_paths: list[Path], out: Path) -> None:
 def main() -> None:
     if len(sys.argv) < 2:
         print(f"Usage: {sys.argv[0]} <csv_path> [csv2 csv3 ...]")
-        print(f"  Single CSV: generates per-run graphs")
-        print(f"  Multiple CSVs: generates comparison boxplot")
+        print("  Single CSV: generates per-run graphs")
+        print("  Multiple CSVs: generates comparison boxplot")
         sys.exit(1)
 
     csv_paths = [Path(p) for p in sys.argv[1:]]
@@ -223,9 +241,7 @@ def main() -> None:
     else:
         metrics = ALL_METRICS
 
-    pc2_groups = {
-        e: rs for e, rs in groups.items() if any(r["n_points"] is not None for r in rs)
-    }
+    pc2_groups = {e: rs for e, rs in groups.items() if any(r["n_points"] is not None for r in rs)}
 
     print("Generating graphs:")
 

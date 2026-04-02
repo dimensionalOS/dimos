@@ -28,12 +28,15 @@ from dimos.utils.testing.replay import TimedSensorReplay
 
 VOXEL_SIZE = 0.05
 
+
 # Build turbo LUT once at import from matplotlib (one-time ~2ms cost)
 def _build_turbo_lut():
     from matplotlib import colormaps
+
     cmap = colormaps["turbo"]
     t = np.linspace(0, 1, 256)
     return (cmap(t)[:, :3] * 255).astype(np.uint8)
+
 
 _LUT = _build_turbo_lut()
 
@@ -80,8 +83,8 @@ def test_rerun_pointcloud_viz():
     mapper.stop()
 
     # Summary
-    pts, ms = zip(*frame_times)
-    print(f"\n--- Summary ---")
+    pts, ms = zip(*frame_times, strict=False)
+    print("\n--- Summary ---")
     print(f"Frames: {len(frame_times)}")
     print(f"Max points: {max(pts):,}")
     print(f"Avg convert+log: {np.mean(ms):.1f} ms")
