@@ -56,11 +56,9 @@ class PointCloud2(Timestamped):
         pointcloud: o3d.geometry.PointCloud | o3d.t.geometry.PointCloud | None = None,
         frame_id: str = "world",
         ts: float | None = None,
-        voxelized: bool = False,
     ) -> None:
         self.ts = ts  # type: ignore[assignment]
         self.frame_id = frame_id
-        self.voxelized = voxelized
 
         # Store internally as tensor pointcloud for speed
         if pointcloud is None:

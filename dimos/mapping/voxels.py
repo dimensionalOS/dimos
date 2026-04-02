@@ -195,7 +195,6 @@ class VoxelGridMapper(Module[Config]):
             ensure_legacy_pcd(self.get_global_pointcloud()),
             frame_id=self.frame_id,
             ts=self._latest_frame_ts if self._latest_frame_ts else time.time(),
-            voxelized=True,
         )
 
     @simple_mcache
