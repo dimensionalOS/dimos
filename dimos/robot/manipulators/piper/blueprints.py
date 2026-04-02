@@ -34,8 +34,8 @@ from dimos.teleop.keyboard.keyboard_teleop_module import KeyboardTeleopModule
 
 _piper_cfg = _catalog_piper(
     name="arm",
-    adapter_type="piper" if global_config.can_port != "can0" else "mock",
-    address=global_config.can_port,
+    adapter_type="piper" if global_config.can_port else "mock",
+    address=global_config.can_port or "can0",
 )
 
 # Piper 6-DOF mock sim + keyboard teleop + Drake visualization
