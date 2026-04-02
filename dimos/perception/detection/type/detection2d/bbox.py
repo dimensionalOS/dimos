@@ -405,3 +405,36 @@ class Detection2DBBox(Detection2D):
             ],
             id=str(self.track_id),
         )
+
+    def project(
+        self,
+        world_pointcloud: PointCloud2,
+        camera_info: CameraInfo,
+        world_to_optical_transform: Transform,
+        filters: list | None = None,
+    ) -> Detection3DPC | None:
+        """Project this 2D detection into 3D using a pointcloud.
+
+        Delegates to existing Detection3DPC.from_2d() — same code path
+        used by DetectionNavigation and PersonFollowSkillContainer.
+
+        Args:
+            world_pointcloud: LiDAR or depth pointcloud in world frame.
+            camera_info: Camera calibration info (LCM CameraInfo).
+            world_to_optical_transform: Transform from world to camera optical frame.
+            filters: Optional pointcloud filters. Defaults to Detection3DPC defaults.
+
+        Returns:
+            Detection3DPC with 3D position, or None if projection fails.
+        """
+        from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
+
+        kwargs: dict = {
+            "det": self,
+            "world_pointcloud": world_pointcloud,
+            "camera_info": camera_info,
+            "world_to_optical_transform": world_to_optical_transform,
+        }
+        if filters is not None:
+            kwargs["filters"] = filters
+        return Detection3DPC.from_2d(**kwargs)

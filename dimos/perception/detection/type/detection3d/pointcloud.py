@@ -336,3 +336,11 @@ class Detection3DPC(Detection3D):
             transform=world_to_optical_transform,
             frame_id=world_pointcloud.frame_id,
         )
+
+    def to_vector(self) -> Vector3:
+        """Get 3D center position as Vector3.
+
+        Convenience alias for .center — enables chaining:
+            detect("person", img).project(cloud, cam, tf).to_vector()
+        """
+        return self.center
