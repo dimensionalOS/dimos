@@ -33,6 +33,9 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
 from dimos.types.timestamped import Timestamped
 
 
+_MAX_RERUN_TEXTURE_SIZE = 256
+
+
 @lru_cache(maxsize=16)
 def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
     """Get a matplotlib colormap by name (cached for performance)."""
@@ -478,38 +481,6 @@ class OccupancyGrid(Timestamped):
 
         return int(self.grid[y, x])
 
-    def _generate_rgba_texture(
-        self,
-        colormap: str | None = None,
-        opacity: float = 1.0,
-        cost_range: tuple[int, int] | None = None,
-        background: str | None = None,
-    ) -> NDArray[np.uint8]:
-        """Generate RGBA texture for the occupancy grid.
-
-        Uses a pre-built 102-entry LUT (cached per config) for fast indexing.
-        Grid values -1..100 map to LUT indices 0..101 via grid + 1.
-        """
-        lut = _build_occupancy_lut(colormap, opacity, background)
-
-        # grid values: -1 (unknown), 0 (free), 1-100 (cost) → LUT index: grid + 1
-        vis = lut[np.clip(self.grid + 1, 0, 101)].reshape(self.height, self.width, 4)
-
-        # Apply cost_range filter — set out-of-range cells to background
-        if cost_range is not None:
-            out_of_range = ((self.grid < cost_range[0]) | (self.grid > cost_range[1])) & (
-                self.grid != -1
-            )
-            if np.any(out_of_range):
-                bg_rgb = [0, 0, 0]
-                if background is not None:
-                    bg = background.lstrip("#")
-                    bg_rgb = [int(bg[i : i + 2], 16) for i in (0, 2, 4)]
-                vis[out_of_range, :3] = bg_rgb
-                vis[out_of_range, 3] = 255
-
-        return vis
-
     def to_rerun(
         self,
         colormap: str | None = None,
@@ -529,8 +500,7 @@ class OccupancyGrid(Timestamped):
             return rr.Mesh3D(vertex_positions=[])
 
         # Downsample grid FIRST, then apply LUT — avoids allocating huge RGBA array
-        # (3000x3000 grid: 91ms full → 0.7ms downsampled)
-        max_tex = 256
+        max_tex = _MAX_RERUN_TEXTURE_SIZE
         grid = self.grid[::-1]  # flip for world coords (view, no copy)
         if grid.shape[0] > max_tex or grid.shape[1] > max_tex:
             step_h = max(1, grid.shape[0] // max_tex)
