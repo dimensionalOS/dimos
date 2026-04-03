@@ -260,7 +260,9 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
                 coord_names = config.get_coordinator_joint_names()
                 indices = [name_to_idx.get(cn) for cn in coord_names]
                 if any(idx is None for idx in indices):
-                    continue  # Not all joints present for this robot
+                    missing = [cn for cn, idx in zip(coord_names, indices) if idx is None]
+                    logger.warning(f"Skipping '{robot_name}': missing joints {missing}")
+                    continue
 
                 # Build per-robot sub-message (coordinator namespace)
                 sub_positions = [msg.position[idx] for idx in indices]  # type: ignore[index]
