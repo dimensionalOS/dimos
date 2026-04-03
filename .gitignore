@@ -77,3 +77,4 @@ CLAUDE.MD
 htmlcov/
 .coverage
 .coverage.*
+.aider*
