@@ -20,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import field
 from functools import lru_cache
 import subprocess
+import time
 from typing import (
     Any,
     Literal,
@@ -183,6 +184,10 @@ class Config(ModuleConfig):
     # Static items logged once after start. Maps entity_path -> callable(rr) returning Archetype
     static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
+    # Per-entity max update rate (Hz). Entities not listed are unthrottled.
+    # Use for heavy entities to prevent viewer backpressure.
+    max_hz: dict[str, float] = field(default_factory=dict)
+
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
     viewer_mode: ViewerMode = field(default_factory=_resolve_viewer_mode)
@@ -265,6 +270,13 @@ class RerunBridgeModule(Module[Config]):
 
         entity_path: str = self._get_entity_path(topic)
 
+        # Throttle entities with a max_hz limit
+        if entity_path in self._min_intervals:
+            now = time.monotonic()
+            if now - self._last_log.get(entity_path, 0.0) < self._min_intervals[entity_path]:
+                return
+            self._last_log[entity_path] = now
+
         # apply visual overrides (including final_convert which handles .to_rerun())
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
 
@@ -283,6 +295,12 @@ class RerunBridgeModule(Module[Config]):
         super().start()
 
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
+
+        # Build throttle lookup: entity_path → min interval in seconds
+        self._last_log: dict[str, float] = {}
+        self._min_intervals: dict[str, float] = {
+            entity: 1.0 / hz for entity, hz in self.config.max_hz.items()
+        }
 
         # Initialize and spawn Rerun viewer
         rr.init("dimos")

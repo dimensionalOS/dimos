@@ -108,6 +108,11 @@ rerun_config = {
         "world/global_map": _convert_global_map,
         "world/navigation_costmap": _convert_navigation_costmap,
     },
+    "max_hz": {
+        "world/global_map": 5,  # publishes at ~7.8 Hz
+        "world/color_image": 10,  # publishes at ~14 Hz
+        "world/global_costmap": 5,  # publishes at ~7.6 Hz
+    },
     # slapping a go2 shaped box on top of tf/base_link
     "static": {
         "world/tf/base_link": _static_base_link,
