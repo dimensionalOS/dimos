@@ -45,6 +45,7 @@ class GlobalConfig(BaseSettings):
     mujoco_start_pos: str = "-1.0, 1.0"
     mujoco_steps_per_frame: int = 7
     robot_model: str | None = None
+    mujoco_robot_xml: str | None = None
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
     planner_strategy: NavigationStrategy = "simple"

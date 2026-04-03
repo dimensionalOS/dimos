@@ -31,7 +31,6 @@ import open3d as o3d  # type: ignore[import-untyped]
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.simulation.mujoco.constants import (
-    DEPTH_CAMERA_FOV,
     LIDAR_FPS,
     LIDAR_RESOLUTION,
     VIDEO_FPS,
@@ -76,8 +75,11 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
     if robot_name == "unitree_go2":
         robot_name = "unitree_go1"
 
+    # Use custom robot XML if specified, otherwise use default for the robot
+    robot_xml_name = config.mujoco_robot_xml or robot_name
+
     controller = MockController(shm)
-    model, data = load_model(controller, robot=robot_name, scene_xml=load_scene_xml(config))
+    model, data = load_model(controller, robot=robot_name, scene_xml=load_scene_xml(config), robot_xml_name=robot_xml_name)
 
     if model is None or data is None:
         raise ValueError("Failed to load MuJoCo model: model or data is None")
@@ -98,13 +100,16 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
     camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
     lidar_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_front_camera")
+    depth_fov = float(model.cam_fovy[lidar_camera_id])
 
     person_position_controller = PersonPositionController(model)
 
+    # Detect available depth cameras from the model XML
     lidar_left_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_left_camera")
     lidar_right_camera_id = mujoco.mj_name2id(
         model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_right_camera"
     )
+    multi_cam = lidar_left_camera_id >= 0 and lidar_right_camera_id >= 0
 
     shm.signal_ready()
 
@@ -116,11 +121,12 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         depth_renderer = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
         depth_renderer.enable_depth_rendering()
 
-        depth_left_renderer = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
-        depth_left_renderer.enable_depth_rendering()
+        if multi_cam:
+            depth_left_renderer = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
+            depth_left_renderer.enable_depth_rendering()
 
-        depth_right_renderer = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
-        depth_right_renderer.enable_depth_rendering()
+            depth_right_renderer = mujoco.Renderer(model, height=camera_size[1], width=camera_size[0])
+            depth_right_renderer.enable_depth_rendering()
 
         scene_option = mujoco.MjvOption()
 
@@ -162,45 +168,49 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
             # Lidar/depth rendering
             if current_time - last_lidar_time >= lidar_interval:
-                # Render all depth cameras
                 depth_renderer.update_scene(data, camera=lidar_camera_id, scene_option=scene_option)
                 depth_front = depth_renderer.render()
 
-                depth_left_renderer.update_scene(
-                    data, camera=lidar_left_camera_id, scene_option=scene_option
-                )
-                depth_left = depth_left_renderer.render()
-
-                depth_right_renderer.update_scene(
-                    data, camera=lidar_right_camera_id, scene_option=scene_option
-                )
-                depth_right = depth_right_renderer.render()
-
-                shm.write_depth(depth_front, depth_left, depth_right)
-
-                # Process depth images into lidar message
-                all_points = []
+                # Build camera list based on available cameras
                 cameras_data = [
                     (
                         depth_front,
                         data.cam_xpos[lidar_camera_id],
                         data.cam_xmat[lidar_camera_id].reshape(3, 3),
                     ),
-                    (
+                ]
+
+                if multi_cam:
+                    depth_left_renderer.update_scene(
+                        data, camera=lidar_left_camera_id, scene_option=scene_option
+                    )
+                    depth_left = depth_left_renderer.render()
+
+                    depth_right_renderer.update_scene(
+                        data, camera=lidar_right_camera_id, scene_option=scene_option
+                    )
+                    depth_right = depth_right_renderer.render()
+
+                    shm.write_depth(depth_front, depth_left, depth_right)
+
+                    cameras_data.append((
                         depth_left,
                         data.cam_xpos[lidar_left_camera_id],
                         data.cam_xmat[lidar_left_camera_id].reshape(3, 3),
-                    ),
-                    (
+                    ))
+                    cameras_data.append((
                         depth_right,
                         data.cam_xpos[lidar_right_camera_id],
                         data.cam_xmat[lidar_right_camera_id].reshape(3, 3),
-                    ),
-                ]
+                    ))
+                else:
+                    shm.write_depth(depth_front, np.zeros(1), np.zeros(1))
 
+                # Process depth images into lidar message
+                all_points = []
                 for depth_image, camera_pos, camera_mat in cameras_data:
                     points = depth_image_to_point_cloud(
-                        depth_image, camera_pos, camera_mat, fov_degrees=DEPTH_CAMERA_FOV
+                        depth_image, camera_pos, camera_mat, fov_degrees=depth_fov
                     )
                     if points.size > 0:
                         all_points.append(points)
