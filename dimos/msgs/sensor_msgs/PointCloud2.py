@@ -648,7 +648,6 @@ class PointCloud2(Timestamped):
     def to_rerun(
         self,
         voxel_size: float = 0.05,
-        colormap: str | None = None,
         colors: list[int] | None = None,
         mode: str = "points",
         size: float | None = None,
@@ -659,8 +658,9 @@ class PointCloud2(Timestamped):
 
         Args:
             voxel_size: size for visualization
-            colormap: Optional colormap name (e.g., "turbo", "viridis") to color by height
-            colors: Optional RGB color [r, g, b] for all points (0-255)
+            colors: Optional RGB color [r, g, b] for all points (0-255).
+                If None, uses height-based turbo colormap via class_ids
+                (requires register_colormap_annotation() called once).
             mode: "points" for raw points, "boxes" for cubes (default), or "spheres" for sized spheres
             size: Box size for mode="boxes" (e.g., voxel_size). Defaults to radii*2.
             fill_mode: Fill mode for boxes - "solid", "majorwireframe", or "densewireframe"
@@ -675,17 +675,15 @@ class PointCloud2(Timestamped):
         if len(points) == 0:
             return rr.Points3D([]) if mode != "boxes" else rr.Boxes3D(centers=[])
 
-        if colors is None and colormap is None:
-            colormap = "turbo"  # Default colormap if no colors provided
-        # Use class_ids for colormaps (viewer resolves colors via AnnotationContext)
+        # Use class_ids for height-based colormap (viewer resolves colors via AnnotationContext)
         # Fall back to explicit colors when provided
         class_ids = None
         point_colors = None
-        if colormap is not None:
+        if colors is not None:
+            point_colors = colors
+        else:
             z = points[:, 2]
             class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
-        elif colors is not None:
-            point_colors = colors
 
         if mode == "points":
             return rr.Points3D(
