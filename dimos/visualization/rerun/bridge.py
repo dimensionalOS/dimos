@@ -268,7 +268,6 @@ class RerunBridgeModule(Module[Config]):
     def _on_message(self, msg: Any, topic: Any) -> None:
         """Handle incoming message - log to rerun."""
 
-        cb_enter = time.time()
         entity_path: str = self._get_entity_path(topic)
 
         # Throttle entities with a max_hz limit
@@ -278,52 +277,24 @@ class RerunBridgeModule(Module[Config]):
                 return
             self._last_log[entity_path] = now
 
-        msg_ts = getattr(msg, "ts", None)
-        queue_ms = (cb_enter - msg_ts) * 1000 if (msg_ts and msg_ts > 1e9) else 0
-
         # apply visual overrides (including final_convert which handles .to_rerun())
-        t0 = time.monotonic()
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
-        convert_ms = (time.monotonic() - t0) * 1000
 
         if not rerun_data:
             return
 
         # TFMessage for example returns list of (entity_path, archetype) tuples
-        t0 = time.monotonic()
         if is_rerun_multi(rerun_data):
             for path, archetype in rerun_data:
                 rr.log(path, archetype)
         else:
             rr.log(entity_path, cast("Archetype", rerun_data))
-        log_ms = (time.monotonic() - t0) * 1000
-
-        if self._debug_csv is not None:
-            from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-            n_points = len(msg) if isinstance(msg, PointCloud2) else ""
-            self._debug_csv.write(
-                f"{time.time():.3f},{entity_path},"
-                f"{queue_ms:.1f},{convert_ms:.1f},{log_ms:.1f},{n_points}\n"
-            )
 
     @rpc
     def start(self) -> None:
         super().start()
 
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
-
-        # Latency CSV log (remove before committing)
-        from datetime import datetime
-        from pathlib import Path
-
-        log_dir = Path(__file__).resolve().parents[3] / "data" / "rerun_logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        ts_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        log_path = log_dir / f"{ts_str}_rerun_latency.csv"
-        self._debug_csv = open(log_path, "w")
-        self._debug_csv.write("wall_time,entity,queue_ms,convert_ms,rr_log_ms,n_points\n")
-        logger.info(f"Latency log → {log_path}")
 
         # Build throttle lookup: entity_path → min interval in seconds
         self._last_log: dict[str, float] = {}
@@ -455,11 +426,6 @@ class RerunBridgeModule(Module[Config]):
 
     @rpc
     def stop(self) -> None:
-        if self._debug_csv is not None:
-            log_path = self._debug_csv.name
-            self._debug_csv.close()
-            self._debug_csv = None
-            logger.info(f"Latency log saved to {log_path}")
         super().stop()
 
 
