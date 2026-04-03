@@ -155,7 +155,7 @@ class TestPortConflicts:
         assert conflict is None
 
 
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 
 def _mock_coordinator(manager_health: list[bool] | None = None) -> ModuleCoordinator:

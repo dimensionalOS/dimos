@@ -32,10 +32,11 @@ Example usage::
         cmd_vel: In[Twist]
 
     # Works with autoconnect, remappings, etc.
-    autoconnect(
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    ModuleCoordinator.build(autoconnect(
         MyCppModule.blueprint(),
         SomeConsumer.blueprint(),
-    ).build().loop()
+    )).loop()
 """
 
 from __future__ import annotations

@@ -189,6 +189,7 @@ class McpServer(Module):
 
     @rpc
     def on_system_modules(self, modules: list[RPCClient]) -> None:
+        # TODO: this is a bit hacky, also not thread-safe
         assert self.rpc is not None
         app.state.skills = [
             skill_info for module in modules for skill_info in (module.get_skills() or [])

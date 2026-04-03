@@ -20,12 +20,13 @@ Outputs registered (world-frame) point clouds and odometry with covariance.
 Usage::
 
     from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-    from dimos.core.blueprints import autoconnect
+    from dimos.core.coordination.blueprints import autoconnect
 
-    autoconnect(
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    ModuleCoordinator.build(autoconnect(
         FastLio2.blueprint(host_ip="192.168.1.5"),
         SomeConsumer.blueprint(),
-    ).build().loop()
+    )).loop()
 """
 
 from __future__ import annotations

@@ -14,7 +14,7 @@
 
 """Tests for NativeModule: blueprint wiring, topic collection, CLI arg generation.
 
-Every test launches the real native_echo.py subprocess via blueprint.build().
+Every test launches the real native_echo.py subprocess via ModuleCoordinator.build(blueprint).
 The echo script writes received CLI args to a temp file for assertions.
 """
 
@@ -24,10 +24,10 @@ import time
 
 import pytest
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.native_module import LogFormat, NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
@@ -153,7 +153,7 @@ def test_autoconnect(args_file: str) -> None:
         },
     )
 
-    coordinator = blueprint.global_config(viewer="none").build()
+    coordinator = ModuleCoordinator.build(blueprint.global_config(viewer="none"))
     try:
         # Validate blueprint wiring: all modules deployed
         native = coordinator.get_instance(StubNativeModule)  # type: ignore[type-var]

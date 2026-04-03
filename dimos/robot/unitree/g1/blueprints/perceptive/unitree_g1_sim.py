@@ -15,7 +15,7 @@
 
 """G1 sim stack with perception and memory."""
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic_sim import unitree_g1_basic_sim
 from dimos.robot.unitree.g1.blueprints.perceptive._perception_and_memory import (
     _perception_and_memory,

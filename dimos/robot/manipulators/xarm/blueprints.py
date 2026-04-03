@@ -24,7 +24,7 @@ Usage:
 """
 
 from dimos.control.coordinator import ControlCoordinator
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.manipulation.manipulation_module import ManipulationModule

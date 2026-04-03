@@ -23,9 +23,9 @@ from dimos_lcm.foxglove_bridge import (
 )
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:

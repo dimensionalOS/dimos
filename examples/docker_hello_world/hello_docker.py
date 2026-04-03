@@ -38,7 +38,8 @@ import time
 
 from reactivex.disposable import Disposable
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.docker_module import DockerModuleConfig
 from dimos.core.module import Module
@@ -114,10 +115,12 @@ class PromptModule(Module):
 
 
 if __name__ == "__main__":
-    coordinator = autoconnect(
-        PromptModule.blueprint(),
-        HelloDockerModule.blueprint(greeting_prefix="Howdy"),
-    ).build()
+    coordinator = ModuleCoordinator.build(
+        autoconnect(
+            PromptModule.blueprint(),
+            HelloDockerModule.blueprint(greeting_prefix="Howdy"),
+        )
+    )
 
     # Get module proxies
     prompt_mod = coordinator.get_instance(PromptModule)

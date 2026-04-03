@@ -47,7 +47,7 @@ from dimos.utils import colors
 from dimos.utils.generic import classproperty
 
 if TYPE_CHECKING:
-    from dimos.core.blueprints import Blueprint
+    from dimos.core.coordination.blueprints import Blueprint
     from dimos.core.introspection.module.info import ModuleInfo
     from dimos.core.rpc_client import RPCClient
 
@@ -371,7 +371,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
     @classproperty
     def blueprint(self) -> _BlueprintPartial:
         # Here to prevent circular imports.
-        from dimos.core.blueprints import Blueprint
+        from dimos.core.coordination.blueprints import Blueprint
 
         return partial(Blueprint.create, self)  # type: ignore[arg-type]
 

@@ -18,7 +18,7 @@ import platform
 from typing import Any
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
 from dimos.msgs.sensor_msgs.Image import Image

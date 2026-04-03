@@ -23,7 +23,7 @@ Uses standard Twist interface for velocity commands.
 import logging
 import os
 
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.resource import Resource
 from dimos.core.transport import LCMTransport, ROSTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped

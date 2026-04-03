@@ -187,7 +187,8 @@ class McpClient(Module[McpClientConfig]):
                 tools=tools,
                 system_prompt=self.config.system_prompt,
             )
-            self._thread.start()
+            if not self._thread.is_alive():
+                self._thread.start()
 
     @rpc
     def stop(self) -> None:

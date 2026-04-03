@@ -15,7 +15,7 @@
 
 """Agentic G1 sim stack."""
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.g1.blueprints.agentic._agentic_skills import _agentic_skills
 from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1_sim import unitree_g1_sim
 

@@ -24,9 +24,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from dimos.core.coordination.worker_manager_docker import WorkerManagerDocker
+from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig
-from dimos.core.worker_manager import WorkerManager
-from dimos.core.worker_manager_docker import WorkerManagerDocker
 from dimos.utils.safe_thread_map import ExceptionGroup
 
 
@@ -167,7 +167,7 @@ class TestWorkerManagerPartialFailure:
     """WorkerManager.deploy_parallel must shut down workers when a deploy fails."""
 
     def test_middle_module_fails_cleans_up_siblings(self):
-        manager = WorkerManager(g=GlobalConfig(n_workers=2))
+        manager = WorkerManagerPython(g=GlobalConfig(n_workers=2))
 
         mock_workers = [MagicMock(name=f"Worker{i}") for i in range(2)]
         for w in mock_workers:
@@ -191,7 +191,7 @@ class TestWorkerManagerPartialFailure:
         FakeB = type("B", (), {})
         FakeC = type("C", (), {})
 
-        with patch("dimos.core.worker_manager.RPCClient"):
+        with patch("dimos.core.coordination.worker_manager_python.RPCClient"):
             with pytest.raises(ExceptionGroup, match="safe_thread_map failed"):
                 manager.deploy_parallel(
                     [
