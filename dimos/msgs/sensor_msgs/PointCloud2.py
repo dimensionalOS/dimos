@@ -52,7 +52,7 @@ def _get_colormap_lut(name: str) -> np.ndarray:
     """Build a 256-entry uint8 LUT from a matplotlib colormap (one-time cost)."""
     cmap = _get_matplotlib_cmap(name)
     t = np.linspace(0, 1, 256)
-    return (cmap(t)[:, :3] * 255).astype(np.uint8)
+    return (cmap(t)[:, :3] * 255).astype(np.uint8)  # type: ignore[no-any-return]
 
 
 def register_colormap_annotation(name: str = "turbo") -> None:
@@ -399,7 +399,7 @@ class PointCloud2(Timestamped):
         self._ensure_tensor_initialized()
         if "positions" in self._pcd_tensor.point:
             arr = self._pcd_tensor.point["positions"].numpy()
-            return arr.astype(np.float32) if arr.dtype != np.float32 else arr
+            return arr.astype(np.float32) if arr.dtype != np.float32 else arr  # type: ignore[no-any-return]
         return np.zeros((0, 3), dtype=np.float32)
 
     @functools.cached_property
