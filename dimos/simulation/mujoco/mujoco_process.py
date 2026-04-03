@@ -100,6 +100,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
 
     camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
     lidar_camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "lidar_front_camera")
+    if lidar_camera_id < 0:
+        raise ValueError("lidar_front_camera not found in the model XML")
     depth_fov = float(model.cam_fovy[lidar_camera_id])
 
     person_position_controller = PersonPositionController(model)
@@ -204,9 +206,12 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
                         data.cam_xmat[lidar_right_camera_id].reshape(3, 3),
                     ))
                 else:
-                    shm.write_depth(depth_front, np.zeros(1), np.zeros(1))
+                    _empty = np.zeros((VIDEO_HEIGHT, VIDEO_WIDTH), dtype=np.float32)
+                    shm.write_depth(depth_front, _empty, _empty)
 
                 # Process depth images into lidar message
+                # NOTE: depth_fov is read from lidar_front_camera and applied to all cameras.
+                # If per-camera FOV support is needed, read model.cam_fovy per camera_id.
                 all_points = []
                 for depth_image, camera_pos, camera_mat in cameras_data:
                     points = depth_image_to_point_cloud(
