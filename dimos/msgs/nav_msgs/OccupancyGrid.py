@@ -32,8 +32,6 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
 from dimos.types.timestamped import Timestamped
 
-_MAX_RERUN_TEXTURE_SIZE = 256
-
 
 @lru_cache(maxsize=16)
 def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
@@ -498,8 +496,8 @@ class OccupancyGrid(Timestamped):
         if self.grid.size == 0:
             return rr.Mesh3D(vertex_positions=[])
 
-        # Downsample grid FIRST, then apply LUT — avoids allocating huge RGBA array
-        max_tex = _MAX_RERUN_TEXTURE_SIZE
+        # Downsample grid before LUT to avoid allocating huge RGBA array
+        max_tex = 256
         grid = self.grid[::-1]  # flip for world coords (view, no copy)
         if grid.shape[0] > max_tex or grid.shape[1] > max_tex:
             step_h = max(1, grid.shape[0] // max_tex)

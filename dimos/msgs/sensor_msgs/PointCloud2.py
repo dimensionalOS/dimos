@@ -55,12 +55,6 @@ def _get_colormap_lut(name: str) -> np.ndarray:
     return (cmap(t)[:, :3] * 255).astype(np.uint8)
 
 
-def _colormap_class_ids(points: np.ndarray) -> np.ndarray:
-    """Quantize Z height to 0-255 class IDs for viewer-side color resolution."""
-    z = points[:, 2]
-    return ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint16)
-
-
 def register_colormap_annotation(name: str = "turbo") -> None:
     """Register a colormap as AnnotationContext so Rerun resolves colors viewer-side."""
     import rerun as rr
@@ -683,12 +677,13 @@ class PointCloud2(Timestamped):
 
         if colors is None and colormap is None:
             colormap = "turbo"  # Default colormap if no colors provided
-        # Use class_ids for colormaps (viewer-side resolution, ~3x faster)
+        # Use class_ids for colormaps (viewer resolves colors via AnnotationContext)
         # Fall back to explicit colors when provided
         class_ids = None
         point_colors = None
         if colormap is not None:
-            class_ids = _colormap_class_ids(points)
+            z = points[:, 2]
+            class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
         elif colors is not None:
             point_colors = colors
 
