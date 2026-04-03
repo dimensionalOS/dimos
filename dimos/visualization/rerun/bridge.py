@@ -299,7 +299,7 @@ class RerunBridgeModule(Module[Config]):
         # Build throttle lookup: entity_path → min interval in seconds
         self._last_log: dict[str, float] = {}
         self._min_intervals: dict[str, float] = {
-            entity: 1.0 / hz for entity, hz in self.config.max_hz.items()
+            entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
         }
 
         # Initialize and spawn Rerun viewer
