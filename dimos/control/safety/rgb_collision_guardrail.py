@@ -17,9 +17,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from threading import Condition, Event, Thread
 import time
-from typing import Any
+from typing import Any, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from reactivex.disposable import Disposable
 
 from dimos.control.safety.guardrail_policy import (
@@ -27,7 +27,8 @@ from dimos.control.safety.guardrail_policy import (
     GuardrailHealth,
     GuardrailPolicy,
     GuardrailState,
-    PassThroughGuardrailPolicy,
+    OpticalFlowMagnitudeGuardrailPolicy,
+    OpticalFlowMagnitudePolicyConfig,
 )
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -43,13 +44,59 @@ logger = setup_logger()
 
 
 class RGBCollisionGuardrailConfig(ModuleConfig):
+    # Scheduling
     guarded_output_publish_hz: float = Field(default=10.0, gt=0.0)
     risk_evaluation_hz: float = Field(default=10.0, gt=0.0)
+
+    # Freshness and fail-closed behavior
     command_timeout_s: float = Field(default=0.25, gt=0.0)
     image_timeout_s: float = Field(default=0.25, gt=0.0)
     risk_timeout_s: float = Field(default=0.25, gt=0.0)
     fail_closed_on_missing_image: bool = True
     publish_zero_on_stop: bool = True
+
+    # Motion gating
+    forward_motion_deadband_mps: float = Field(default=0.05, ge=0.0)
+    clamp_forward_speed_mps: float = Field(default=0.1, ge=0.0)
+
+    # Forward ROI geometry
+    flow_downsample_width_px: int = Field(default=160, ge=32)
+    forward_roi_top_fraction: float = Field(default=0.45, ge=0.0, le=1.0)
+    forward_roi_bottom_fraction: float = Field(default=0.95, ge=0.0, le=1.0)
+    forward_roi_width_fraction: float = Field(default=0.5, gt=0.0, le=1.0)
+
+    # Image-quality checks
+    low_texture_variance_threshold: float = Field(default=150.0, ge=0.0)
+    occlusion_dark_pixel_threshold: int = Field(default=20, ge=0, le=255)
+    occlusion_bright_pixel_threshold: int = Field(default=235, ge=0, le=255)
+    occlusion_extreme_fraction_threshold: float = Field(default=0.9, ge=0.0, le=1.0)
+
+    # Flow thresholds and hysteresis
+    caution_flow_magnitude_threshold: float = Field(default=0.8, ge=0.0)
+    stop_flow_magnitude_threshold: float = Field(default=1.5, ge=0.0)
+    caution_frame_count: int = Field(default=2, ge=1)
+    stop_frame_count: int = Field(default=2, ge=1)
+    clear_frame_count: int = Field(default=3, ge=1)
+
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> Self:
+        if self.forward_roi_top_fraction >= self.forward_roi_bottom_fraction:
+            raise ValueError(
+                "forward_roi_top_fraction must be less than forward_roi_bottom_fraction"
+            )
+
+        if self.occlusion_dark_pixel_threshold >= self.occlusion_bright_pixel_threshold:
+            raise ValueError(
+                "occlusion_dark_pixel_threshold must be less than occlusion_bright_pixel_threshold"
+            )
+
+        if self.caution_flow_magnitude_threshold > self.stop_flow_magnitude_threshold:
+            raise ValueError(
+                "caution_flow_magnitude_threshold must be less than or equal to "
+                "stop_flow_magnitude_threshold"
+            )
+
+        return self
 
 
 @dataclass
@@ -98,8 +145,27 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
         self._runtime_state = _GuardrailRuntimeState()
         self._stop_event = Event()
         self._thread = None
-        # TODO: Replace placeholder policy with RGB optical-flow guardrail logic.
-        self._policy = PassThroughGuardrailPolicy()
+        self._policy = self._build_policy()
+
+    def _build_policy(self) -> GuardrailPolicy:
+        policy_config = OpticalFlowMagnitudePolicyConfig(
+            forward_motion_deadband_mps=self.config.forward_motion_deadband_mps,
+            clamp_forward_speed_mps=self.config.clamp_forward_speed_mps,
+            flow_downsample_width_px=self.config.flow_downsample_width_px,
+            forward_roi_top_fraction=self.config.forward_roi_top_fraction,
+            forward_roi_bottom_fraction=self.config.forward_roi_bottom_fraction,
+            forward_roi_width_fraction=self.config.forward_roi_width_fraction,
+            low_texture_variance_threshold=self.config.low_texture_variance_threshold,
+            occlusion_dark_pixel_threshold=self.config.occlusion_dark_pixel_threshold,
+            occlusion_bright_pixel_threshold=self.config.occlusion_bright_pixel_threshold,
+            occlusion_extreme_fraction_threshold=self.config.occlusion_extreme_fraction_threshold,
+            caution_flow_magnitude_threshold=self.config.caution_flow_magnitude_threshold,
+            stop_flow_magnitude_threshold=self.config.stop_flow_magnitude_threshold,
+            caution_frame_count=self.config.caution_frame_count,
+            stop_frame_count=self.config.stop_frame_count,
+            clear_frame_count=self.config.clear_frame_count,
+        )
+        return OpticalFlowMagnitudeGuardrailPolicy(policy_config)
 
     @rpc
     def start(self) -> None:
@@ -249,14 +315,11 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
 
     def _build_health_locked(self, now: float) -> GuardrailHealth:
         """Build a health snapshot from the current cached inputs."""
-        # TODO: Populate these from image-quality checks.
         return GuardrailHealth(
             has_previous_frame=self._runtime_state.previous_image is not None,
             image_fresh=self._is_image_fresh_locked(now),
             cmd_fresh=self._is_cmd_fresh_locked(now),
             risk_fresh=self._is_risk_fresh_locked(now),
-            low_texture=False,
-            occluded=False,
         )
 
     def _resolved_cmd_for_latest_locked(self, now: float) -> Twist:
