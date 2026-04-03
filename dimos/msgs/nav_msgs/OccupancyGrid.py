@@ -32,7 +32,6 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
 from dimos.types.timestamped import Timestamped
 
-
 _MAX_RERUN_TEXTURE_SIZE = 256
 
 
