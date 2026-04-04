@@ -42,6 +42,7 @@ class GuardrailHealth:
     image_fresh: bool
     cmd_fresh: bool
     risk_fresh: bool
+    frame_pair_fresh: bool
 
 
 @dataclass
@@ -76,6 +77,7 @@ class OpticalFlowMagnitudePolicyConfig:
     caution_frame_count: int
     stop_frame_count: int
     clear_frame_count: int
+    stop_release_frame_count: int
 
 
 class GuardrailPolicy(Protocol):
@@ -107,6 +109,7 @@ class OpticalFlowMagnitudeGuardrailPolicy(GuardrailPolicy):
         self._caution_hits = 0
         self._stop_hits = 0
         self._clear_hits = 0
+        self._below_stop_hits = 0
 
     def evaluate(
         self,
@@ -132,9 +135,17 @@ class OpticalFlowMagnitudeGuardrailPolicy(GuardrailPolicy):
                 publish_immediately=True,
             )
 
+        if not health.frame_pair_fresh:
+            self._reset_hysteresis()
+            return self._zero_decision(
+                GuardrailState.SENSOR_DEGRADED,
+                "frame_pair_stale",
+                risk_score=1.0,
+                publish_immediately=True,
+            )
+
         forward_speed = float(incoming_cmd_vel.linear.x)
         if forward_speed <= self._config.forward_motion_deadband_mps:
-            self._reset_hysteresis()
             return self._pass_decision(incoming_cmd_vel, "forward_guard_inactive", 0.0)
 
         previous_gray, current_gray = self._prepare_gray_pair(previous_image, current_image)
@@ -149,27 +160,19 @@ class OpticalFlowMagnitudeGuardrailPolicy(GuardrailPolicy):
                 publish_immediately=True,
             )
 
-        if self._is_occluded(current_roi):
+        quality_failure_reason = self._quality_failure_reason(previous_roi, current_roi)
+        if quality_failure_reason is not None:
             self._reset_hysteresis()
             return self._zero_decision(
                 GuardrailState.SENSOR_DEGRADED,
-                "forward_roi_occluded",
-                risk_score=1.0,
-                publish_immediately=True,
-            )
-
-        if self._is_low_texture(current_roi):
-            self._reset_hysteresis()
-            return self._zero_decision(
-                GuardrailState.SENSOR_DEGRADED,
-                "forward_roi_low_texture",
+                quality_failure_reason,
                 risk_score=1.0,
                 publish_immediately=True,
             )
 
         mean_flow_magnitude = self._mean_flow_magnitude(previous_roi, current_roi)
         next_state = self._next_state(mean_flow_magnitude)
-        self._active_state = next_state
+        self._hysteresis_state = next_state
 
         if next_state == GuardrailState.STOP_LATCHED:
             return self._stop_forward_decision(
@@ -215,7 +218,7 @@ class OpticalFlowMagnitudeGuardrailPolicy(GuardrailPolicy):
     def _to_resized_gray(self, image: Image) -> GrayImage:
         gray = cast("GrayImage", image.to_grayscale().data)
         if gray.dtype != np.uint8:
-            gray = cv2.convertScaleAbs(gray)  # type: ignore[call-overload]
+            gray = cast("GrayImage", cv2.convertScaleAbs(gray))
 
         height, width = gray.shape[:2]
         if width <= 0 or height <= 0:
@@ -246,6 +249,25 @@ class OpticalFlowMagnitudeGuardrailPolicy(GuardrailPolicy):
             np.ascontiguousarray(previous_gray[y0:y1, x0:x1]),
             np.ascontiguousarray(current_gray[y0:y1, x0:x1]),
         )
+
+    def _quality_failure_reason(
+        self,
+        previous_roi: GrayImage,
+        current_roi: GrayImage,
+    ) -> str | None:
+        if self._is_occluded(previous_roi):
+            return "previous_roi_occluded"
+
+        if self._is_occluded(current_roi):
+            return "current_roi_occluded"
+
+        if self._is_low_texture(previous_roi):
+            return "previous_roi_low_texture"
+
+        if self._is_low_texture(current_roi):
+            return "current_roi_low_texture"
+
+        return None
 
     def _forward_roi_bounds(self, *, width: int, height: int) -> tuple[int, int, int, int]:
         roi_width = max(round(width * self._config.forward_roi_width_fraction), 2)
@@ -287,35 +309,46 @@ class OpticalFlowMagnitudeGuardrailPolicy(GuardrailPolicy):
     def _next_state(self, mean_flow_magnitude: float) -> GuardrailState:
         if mean_flow_magnitude >= self._config.stop_flow_magnitude_threshold:
             self._stop_hits += 1
-            # Stop-level flow is also caution-level flow. This lets us clamp
-            # first when stop evidence has not yet met its own persistence rule.
             self._caution_hits += 1
+            self._below_stop_hits = 0
             self._clear_hits = 0
         elif mean_flow_magnitude >= self._config.caution_flow_magnitude_threshold:
             self._stop_hits = 0
             self._caution_hits += 1
+            self._below_stop_hits += 1
             self._clear_hits = 0
         else:
             self._stop_hits = 0
             self._caution_hits = 0
+            self._below_stop_hits += 1
             self._clear_hits += 1
 
         if self._hysteresis_state == GuardrailState.STOP_LATCHED:
             if self._stop_hits >= self._config.stop_frame_count:
                 return GuardrailState.STOP_LATCHED
+
+            if self._below_stop_hits < self._config.stop_release_frame_count:
+                return GuardrailState.STOP_LATCHED
+
             if self._clear_hits >= self._config.clear_frame_count:
                 return GuardrailState.PASS
+
             return GuardrailState.CLAMP
 
         if self._hysteresis_state == GuardrailState.CLAMP:
             if self._stop_hits >= self._config.stop_frame_count:
                 return GuardrailState.STOP_LATCHED
+
             if self._clear_hits >= self._config.clear_frame_count:
                 return GuardrailState.PASS
+
             return GuardrailState.CLAMP
 
         if self._stop_hits >= self._config.stop_frame_count:
             return GuardrailState.STOP_LATCHED
+
+        if self._stop_hits > 0:
+            return GuardrailState.CLAMP
 
         if self._caution_hits >= self._config.caution_frame_count:
             return GuardrailState.CLAMP
@@ -323,10 +356,10 @@ class OpticalFlowMagnitudeGuardrailPolicy(GuardrailPolicy):
         return GuardrailState.PASS
 
     def _reset_hysteresis(self) -> None:
-        """Reset internal clamp/stop evidence without changing module output state."""
         self._hysteresis_state = GuardrailState.PASS
         self._caution_hits = 0
         self._stop_hits = 0
+        self._below_stop_hits = 0
         self._clear_hits = 0
 
     def _pass_decision(

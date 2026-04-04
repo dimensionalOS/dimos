@@ -54,6 +54,7 @@ class RGBCollisionGuardrailConfig(ModuleConfig):
     risk_timeout_s: float = Field(default=0.25, gt=0.0)
     fail_closed_on_missing_image: bool = True
     publish_zero_on_stop: bool = True
+    frame_pair_max_gap_s: float = Field(default=0.2, gt=0.0)
 
     # Motion gating
     forward_motion_deadband_mps: float = Field(default=0.05, ge=0.0)
@@ -77,6 +78,7 @@ class RGBCollisionGuardrailConfig(ModuleConfig):
     caution_frame_count: int = Field(default=2, ge=1)
     stop_frame_count: int = Field(default=2, ge=1)
     clear_frame_count: int = Field(default=3, ge=1)
+    stop_release_frame_count: int = Field(default=2, ge=1)
 
     @model_validator(mode="after")
     def validate_thresholds(self) -> Self:
@@ -114,6 +116,8 @@ class _GuardrailRuntimeState:
     pending_cmd_update: bool = False
     pending_decision_publish: bool = False
     state: GuardrailState = GuardrailState.INIT
+    image_generation: int = 0
+    last_evaluated_image_generation: int = -1
 
 
 @dataclass(frozen=True)
@@ -164,6 +168,7 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
             caution_frame_count=self.config.caution_frame_count,
             stop_frame_count=self.config.stop_frame_count,
             clear_frame_count=self.config.clear_frame_count,
+            stop_release_frame_count=self.config.stop_release_frame_count,
         )
         return OpticalFlowMagnitudeGuardrailPolicy(policy_config)
 
@@ -187,6 +192,16 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
         )
         self._thread.start()
 
+        logger.info(
+            "RGB guardrail started",
+            risk_evaluation_hz=self.config.risk_evaluation_hz,
+            guarded_output_publish_hz=self.config.guarded_output_publish_hz,
+            command_timeout_s=self.config.command_timeout_s,
+            image_timeout_s=self.config.image_timeout_s,
+            risk_timeout_s=self.config.risk_timeout_s,
+            frame_pair_max_gap_s=self.config.frame_pair_max_gap_s,
+        )
+
     @rpc
     def stop(self) -> None:
         self._stop_event.set()
@@ -198,8 +213,14 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
 
         if self._thread is not None:
             self._thread.join(timeout=_THREAD_JOIN_TIMEOUT_S)
+            if self._thread.is_alive():
+                logger.warning(
+                    "RGB guardrail worker thread did not stop within timeout",
+                    timeout_s=_THREAD_JOIN_TIMEOUT_S,
+                )
             self._thread = None
 
+        logger.info("RGB guardrail stopped")
         super().stop()
 
     def _on_color_image(self, image: Image) -> None:
@@ -209,6 +230,7 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
             self._runtime_state.previous_image_time = self._runtime_state.latest_image_time
             self._runtime_state.latest_image = image
             self._runtime_state.latest_image_time = now
+            self._runtime_state.image_generation += 1
             self._condition.notify()
 
     def _on_incoming_cmd_vel(self, cmd_vel: Twist) -> None:
@@ -247,7 +269,10 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
                         health=risk_input.health,
                     )
                 except Exception:
-                    logger.exception("RGB guardrail policy evaluation failed")
+                    logger.exception(
+                        "RGB guardrail policy evaluation failed",
+                        state=self._runtime_state.state.value,
+                    )
                     policy_decision = self._build_sensor_degraded_decision(
                         "policy_evaluation_failed"
                     )
@@ -289,11 +314,17 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
         return 1.0 / self.config.risk_evaluation_hz
 
     def _should_recompute_risk_locked(self, now: float) -> bool:
-        """Return True when the next scheduled risk evaluation is due."""
         next_risk_time = self._runtime_state.next_risk_time
-        if next_risk_time is None:
-            return True
-        return now >= next_risk_time
+        if next_risk_time is not None and now < next_risk_time:
+            return False
+
+        if self._runtime_state.previous_image is None:
+            return False
+
+        return (
+            self._runtime_state.image_generation
+            != self._runtime_state.last_evaluated_image_generation
+        )
 
     def _is_cmd_fresh_locked(self, now: float) -> bool:
         latest_cmd_time = self._runtime_state.latest_cmd_time
@@ -307,6 +338,13 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
             return False
         return (now - latest_image_time) <= self.config.image_timeout_s
 
+    def _is_frame_pair_fresh_locked(self) -> bool:
+        previous_image_time = self._runtime_state.previous_image_time
+        latest_image_time = self._runtime_state.latest_image_time
+        if previous_image_time is None or latest_image_time is None:
+            return False
+        return (latest_image_time - previous_image_time) <= self.config.frame_pair_max_gap_s
+
     def _is_risk_fresh_locked(self, now: float) -> bool:
         last_risk_time = self._runtime_state.last_risk_time
         if last_risk_time is None:
@@ -314,16 +352,15 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
         return (now - last_risk_time) <= self.config.risk_timeout_s
 
     def _build_health_locked(self, now: float) -> GuardrailHealth:
-        """Build a health snapshot from the current cached inputs."""
         return GuardrailHealth(
             has_previous_frame=self._runtime_state.previous_image is not None,
             image_fresh=self._is_image_fresh_locked(now),
             cmd_fresh=self._is_cmd_fresh_locked(now),
             risk_fresh=self._is_risk_fresh_locked(now),
+            frame_pair_fresh=self._is_frame_pair_fresh_locked(),
         )
 
     def _resolved_cmd_for_latest_locked(self, now: float) -> Twist:
-        """Resolve the command to publish for the latest cached upstream input."""
         latest_cmd_vel = self._runtime_state.latest_cmd_vel
         if latest_cmd_vel is None:
             return Twist.zero()
@@ -341,7 +378,6 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
         return last_decision.cmd_vel
 
     def _take_risk_evaluation_input_locked(self, now: float) -> _RiskEvaluationInput | None:
-        """Capture a consistent snapshot for policy evaluation and advance the risk deadline."""
         previous_image = self._runtime_state.previous_image
         current_image = self._runtime_state.latest_image
         incoming_cmd_vel = self._runtime_state.latest_cmd_vel
@@ -350,6 +386,8 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
 
         if previous_image is None or current_image is None or incoming_cmd_vel is None:
             return None
+
+        self._runtime_state.last_evaluated_image_generation = self._runtime_state.image_generation
 
         return _RiskEvaluationInput(
             previous_image=previous_image,
@@ -391,7 +429,6 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
             )
 
     def _consume_publish_cmd_locked(self, now: float) -> Twist | None:
-        """Consume and return the next command that should be published, if any."""
         if self._runtime_state.pending_decision_publish:
             self._runtime_state.pending_decision_publish = False
             return self._resolved_cmd_for_latest_locked(now)
@@ -412,7 +449,6 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
         return None
 
     def _should_republish_non_pass_output_locked(self, now: float) -> bool:
-        """Return True when a non-pass output should be republished on heartbeat."""
         last_decision = self._runtime_state.last_decision
         if last_decision is None:
             return False
@@ -427,7 +463,6 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
         return (now - last_publish_time) >= self._guarded_output_publish_period_s()
 
     def _next_wakeup_timeout_locked(self) -> float:
-        """Compute the next worker wakeup timeout from pending work and deadlines."""
         now = time.monotonic()
 
         if self._runtime_state.pending_cmd_update or self._runtime_state.pending_decision_publish:
@@ -513,6 +548,9 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
 
         if not self._is_image_fresh_locked(now):
             return self._build_sensor_degraded_decision("image_stale")
+
+        if not self._is_frame_pair_fresh_locked():
+            return self._build_sensor_degraded_decision("frame_pair_stale")
 
         if self._runtime_state.last_risk_time is None:
             return self._build_init_decision("waiting_for_first_risk_evaluation")
