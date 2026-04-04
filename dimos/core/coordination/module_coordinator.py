@@ -255,7 +255,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
 
         # Scale worker pool.
         n_extra = int(blueprint.global_config_overrides.get("n_workers", 0))
-        python_wm: WorkerManagerPython = self._managers["python"]  # type: ignore[assignment]
+        python_wm = cast("WorkerManagerPython", self._managers["python"])
         if n_extra:
             python_wm.add_workers(n_extra)
         if not python_wm.workers and blueprint.active_blueprints:

@@ -441,97 +441,68 @@ def test_module_ref_remap_ambiguous() -> None:
         coordinator.stop()
 
 
-def _dynamic_coordinator() -> ModuleCoordinator:
-    """Create a coordinator with 0 initial workers (for load_blueprint tests)."""
-    return ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none"))
-
-
 @pytest.mark.slow
-def test_load_blueprint_basic() -> None:
+def test_load_blueprint_basic(dynamic_coordinator) -> None:
     """load_blueprint deploys, wires and starts modules the same way build() does."""
-    mc = _dynamic_coordinator()
-    mc.start()
+    bp = autoconnect(ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint())
+    dynamic_coordinator.load_blueprint(bp)
 
-    try:
-        bp = autoconnect(ModuleA.blueprint(), ModuleB.blueprint(), ModuleC.blueprint())
-        mc.load_blueprint(bp)
+    assert dynamic_coordinator.get_instance(ModuleA) is not None
+    assert dynamic_coordinator.get_instance(ModuleB) is not None
+    assert dynamic_coordinator.get_instance(ModuleC) is not None
 
-        assert mc.get_instance(ModuleA) is not None
-        assert mc.get_instance(ModuleB) is not None
-        assert mc.get_instance(ModuleC) is not None
+    a = dynamic_coordinator.get_instance(ModuleA)
+    b = dynamic_coordinator.get_instance(ModuleB)
+    c = dynamic_coordinator.get_instance(ModuleC)
 
-        a = mc.get_instance(ModuleA)
-        b = mc.get_instance(ModuleB)
-        c = mc.get_instance(ModuleC)
+    # Streams wired.
+    assert a.data1.transport is not None
+    assert b.data1.transport is not None
+    assert a.data1.transport.topic == b.data1.transport.topic
+    assert b.data3.transport.topic == c.data3.transport.topic
 
-        # Streams wired.
-        assert a.data1.transport is not None
-        assert b.data1.transport is not None
-        assert a.data1.transport.topic == b.data1.transport.topic
-        assert b.data3.transport.topic == c.data3.transport.topic
-
-        # Module ref wired.
-        assert b.what_is_as_name() == "A, Module A"
-    finally:
-        mc.stop()
+    # Module ref wired.
+    assert b.what_is_as_name() == "A, Module A"
 
 
 @pytest.mark.slow
-def test_load_blueprint_twice() -> None:
+def test_load_blueprint_twice(dynamic_coordinator) -> None:
     """Two sequential load_blueprint calls share transports for matching streams."""
-    mc = _dynamic_coordinator()
-    mc.start()
+    dynamic_coordinator.load_blueprint(ModuleA.blueprint())
+    dynamic_coordinator.load_blueprint(autoconnect(ModuleB.blueprint(), ModuleC.blueprint()))
 
-    try:
-        mc.load_blueprint(ModuleA.blueprint())
-        mc.load_blueprint(autoconnect(ModuleB.blueprint(), ModuleC.blueprint()))
+    a = dynamic_coordinator.get_instance(ModuleA)
+    b = dynamic_coordinator.get_instance(ModuleB)
+    c = dynamic_coordinator.get_instance(ModuleC)
 
-        a = mc.get_instance(ModuleA)
-        b = mc.get_instance(ModuleB)
-        c = mc.get_instance(ModuleC)
+    assert a is not None
+    assert b is not None
+    assert c is not None
 
-        assert a is not None
-        assert b is not None
-        assert c is not None
-
-        # A's Out[Data1] and B's In[Data1] should share a transport.
-        assert a.data1.transport.topic == b.data1.transport.topic
-        assert a.data2.transport.topic == b.data2.transport.topic
-        assert b.data3.transport.topic == c.data3.transport.topic
-    finally:
-        mc.stop()
+    # A's Out[Data1] and B's In[Data1] should share a transport.
+    assert a.data1.transport.topic == b.data1.transport.topic
+    assert a.data2.transport.topic == b.data2.transport.topic
+    assert b.data3.transport.topic == c.data3.transport.topic
 
 
 @pytest.mark.slow
-def test_load_module_convenience() -> None:
+def test_load_module_convenience(dynamic_coordinator) -> None:
     """load_module is a shorthand for load_blueprint(cls.blueprint())."""
-    mc = _dynamic_coordinator()
-    mc.start()
-
-    try:
-        mc.load_module(ModuleA)
-        assert mc.get_instance(ModuleA) is not None
-        assert mc.get_instance(ModuleA).data1.transport is not None
-    finally:
-        mc.stop()
+    dynamic_coordinator.load_module(ModuleA)
+    assert dynamic_coordinator.get_instance(ModuleA) is not None
+    assert dynamic_coordinator.get_instance(ModuleA).data1.transport is not None
 
 
 @pytest.mark.slow
-def test_load_blueprint_module_ref_to_existing() -> None:
+def test_load_blueprint_module_ref_to_existing(dynamic_coordinator) -> None:
     """A module loaded in a second blueprint can reference one from the first."""
-    mc = _dynamic_coordinator()
-    mc.start()
+    dynamic_coordinator.load_blueprint(Calculator1.blueprint())
+    dynamic_coordinator.load_blueprint(Mod2.blueprint())
 
-    try:
-        mc.load_blueprint(Calculator1.blueprint())
-        mc.load_blueprint(Mod2.blueprint())
-
-        mod2 = mc.get_instance(Mod2)
-        assert mod2 is not None
-        assert mod2.calc.compute1(2, 3) == 5
-        assert mod2.calc.compute2(1.5, 2.5) == 4.0
-    finally:
-        mc.stop()
+    mod2 = dynamic_coordinator.get_instance(Mod2)
+    assert mod2 is not None
+    assert mod2.calc.compute1(2, 3) == 5
+    assert mod2.calc.compute2(1.5, 2.5) == 4.0
 
 
 def test_load_blueprint_conflict_with_existing() -> None:
@@ -549,20 +520,11 @@ def test_load_blueprint_conflict_with_existing() -> None:
 
 
 @pytest.mark.slow
-def test_load_blueprint_duplicate_module_raises() -> None:
+def test_load_blueprint_duplicate_module_raises(dynamic_coordinator) -> None:
     """Loading a module that is already deployed raises ValueError."""
-    mc = _dynamic_coordinator()
-    mc.start()
-
-    try:
-        mc.load_blueprint(ModuleA.blueprint())
-        with pytest.raises(ValueError, match="already deployed"):
-            mc.load_blueprint(ModuleA.blueprint())
-    finally:
-        mc.stop()
-
-
-# -- Optional module refs --
+    dynamic_coordinator.load_blueprint(ModuleA.blueprint())
+    with pytest.raises(ValueError, match="already deployed"):
+        dynamic_coordinator.load_blueprint(ModuleA.blueprint())
 
 
 class ModWithOptionalRef(Module):
@@ -593,7 +555,7 @@ def build_coordinator():
 
 @pytest.fixture
 def dynamic_coordinator():
-    mc = _dynamic_coordinator()
+    mc = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none"))
     mc.start()
     yield mc
     mc.stop()
@@ -623,18 +585,12 @@ def test_optional_module_ref_without_provider(build_coordinator) -> None:
     assert mod is not None
 
 
-# -- load_blueprint auto-scaling --
-
-
 @pytest.mark.slow
 def test_load_blueprint_auto_scales_empty_pool(dynamic_coordinator) -> None:
     """A coordinator with 0 initial workers auto-adds workers on load_blueprint."""
     dynamic_coordinator.load_blueprint(ModuleA.blueprint())
     assert dynamic_coordinator.get_instance(ModuleA) is not None
     assert dynamic_coordinator.get_instance(ModuleA).data1.transport is not None
-
-
-# -- requirement checks --
 
 
 def test_check_requirements_failure(mocker) -> None:
