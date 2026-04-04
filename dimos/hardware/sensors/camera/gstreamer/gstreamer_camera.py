@@ -22,6 +22,7 @@ from typing import Any
 
 import numpy as np
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
@@ -112,7 +113,7 @@ class GstreamerCameraModule(Module[Config]):
 
         # Only join the thread if we're not calling from within it
         if self.main_loop_thread and self.main_loop_thread != threading.current_thread():
-            self.main_loop_thread.join(timeout=2.0)
+            self.main_loop_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 

@@ -25,6 +25,7 @@ from dimos_lcm.std_msgs import String
 import numpy as np
 from numpy.typing import NDArray
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
@@ -371,7 +372,7 @@ class DroneTrackingModule(Module):
         """Stop tracking and clean up."""
         self._tracking_active = False
         if self._tracking_thread and self._tracking_thread.is_alive():
-            self._tracking_thread.join(timeout=1)
+            self._tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         # Send stop command via LCM
         if self.cmd_vel.transport:

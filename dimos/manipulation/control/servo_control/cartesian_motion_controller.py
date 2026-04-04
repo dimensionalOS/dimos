@@ -31,6 +31,7 @@ import threading
 import time
 from typing import Any
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -236,7 +237,7 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
 
         # Wait for control thread
         if self._control_thread and self._control_thread.is_alive():
-            self._control_thread.join(timeout=2.0)
+            self._control_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
         logger.info("CartesianMotionController stopped")

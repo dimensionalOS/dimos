@@ -20,6 +20,7 @@ from contextlib import contextmanager
 import threading
 from typing import TYPE_CHECKING, Any
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.manipulation.planning.factory import create_world
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
 from dimos.manipulation.planning.monitor.world_state_monitor import WorldStateMonitor
@@ -453,7 +454,7 @@ class WorldMonitor:
             return
 
         self._viz_stop_event.set()
-        self._viz_thread.join(timeout=1.0)
+        self._viz_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if self._viz_thread.is_alive():
             logger.warning("Visualization thread did not stop cleanly")
         self._viz_thread = None

@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,24 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
-
-# Video/Camera constants
-VIDEO_WIDTH = 640
-VIDEO_HEIGHT = 360
-VIDEO_CAMERA_FOV = 45  # MuJoCo default FOV for head_camera (degrees)
-DEPTH_CAMERA_FOV = 160
-
-# Depth camera range/filtering constants
-MAX_RANGE = 3
-MIN_RANGE = 0.2
-MAX_HEIGHT = 1.2
-
-# Lidar constants
-LIDAR_RESOLUTION = 0.05
-
-# Simulation timing constants
-VIDEO_FPS = 20
-LIDAR_FPS = 2
-
-LAUNCHER_PATH = Path(__file__).parent / "mujoco_process.py"
+EXTRA_CLEARANCE = 0.2
