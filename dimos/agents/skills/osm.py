@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+from typing import Any
+
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
 from dimos.core.stream import In
@@ -31,8 +33,8 @@ class OsmSkill(Module):
 
     gps_location: In[LatLon]
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._latest_location = None
         self._current_location_map = CurrentLocationMap(QwenVlModel())
 

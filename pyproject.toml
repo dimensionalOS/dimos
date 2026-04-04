@@ -67,7 +67,7 @@ dependencies = [
     "structlog>=25.5.0,<26",
     "colorlog==6.9.0",
     # Core Msgs
-    "opencv-python",
+    "opencv-contrib-python==4.10.0.84",
     "open3d-unofficial-arm; platform_system == 'Linux' and platform_machine == 'aarch64'",
     "open3d>=0.18.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
     # CLI
@@ -322,7 +322,7 @@ docker = [
     "pydantic-settings>=2.11.0,<3",
     "typer>=0.19.2,<1",
     "requests>=2.28",
-    "opencv-python-headless",
+    "opencv-contrib-python==4.10.0.84",
     "lcm",
     "sortedcontainers",
     "PyTurboJPEG",

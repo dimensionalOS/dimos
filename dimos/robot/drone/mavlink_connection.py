@@ -17,6 +17,7 @@
 
 import functools
 import logging
+import math
 import time
 from typing import Any
 
@@ -67,6 +68,7 @@ class MavlinkConnection:
 
         # Flag to prevent concurrent fly_to commands
         self.flying_to_target = False
+        self._last_move_twist_log_time: float = 0.0
 
     def connect(self) -> bool:
         """Connect to drone via MAVLink."""
@@ -142,6 +144,9 @@ class MavlinkConnection:
             elif msg_type == "ATTITUDE":
                 self._publish_odom()
 
+            elif msg_type == "LOCAL_POSITION_NED":
+                self._publish_odom()
+
             self.telemetry[msg_type] = msg_dict
 
             self._publish_telemetry()
@@ -178,11 +183,17 @@ class MavlinkConnection:
         current_time = time.time()
         dt = current_time - self._last_update
 
-        # Get position data from GLOBAL_POSITION_INT
+        local_ned = self.telemetry.get("LOCAL_POSITION_NED", {})
         pos_data = self.telemetry.get("GLOBAL_POSITION_INT", {})
 
+        if not self.outdoor and local_ned:
+            # NED → world: x North, -y East→West, -z Down→Up
+            self._position["x"] = local_ned.get("x", self._position["x"])
+            self._position["y"] = -local_ned.get("y", -self._position["y"])
+            self._position["z"] = -local_ned.get("z", -self._position["z"])
+
         # Outdoor mode: Use GPS coordinates
-        if self.outdoor and pos_data:
+        elif self.outdoor and pos_data:
             lat = pos_data.get("lat", 0)  # Already in degrees from update_telemetry
             lon = pos_data.get("lon", 0)  # Already in degrees from update_telemetry
 
@@ -212,13 +223,13 @@ class MavlinkConnection:
             self._position["x"] += vx * dt  # North → X (forward)
             self._position["y"] += -vy * dt  # East → -Y (right in ROS, Y points left/West)
 
-        # Altitude handling (same for both modes)
-        if "ALTITUDE" in self.telemetry:
-            self._position["z"] = self.telemetry["ALTITUDE"].get("altitude_relative", 0)
-        elif pos_data:
-            self._position["z"] = pos_data.get(
-                "relative_alt", 0
-            )  # Already in m from update_telemetry
+        if not (not self.outdoor and local_ned):
+            if "ALTITUDE" in self.telemetry:
+                self._position["z"] = self.telemetry["ALTITUDE"].get("altitude_relative", 0)
+            elif pos_data:
+                self._position["z"] = pos_data.get(
+                    "relative_alt", 0
+                )  # Already in m from update_telemetry
 
         self._last_update = current_time
 
@@ -336,11 +347,71 @@ class MavlinkConnection:
 
         return True
 
+    def move_by_distance_body_m(
+        self,
+        forward_m: float,
+        right_m: float = 0.0,
+        down_m: float = 0.0,
+        speed: float = 0.3,
+    ) -> bool:
+        """Move by body-frame displacement in meters.
+
+        If LOCAL_POSITION_NED and ATTITUDE are present, applies offset in local NED via
+        set_position_target. Otherwise uses timed forward body velocity (same mapping as move).
+
+        Body axes match move() / Vector3: x right, y forward, z down.
+
+        Args:
+            forward_m: Forward/backward distance (m); positive = forward.
+            right_m: Right/left distance (m); positive = right.
+            down_m: Down distance (m); positive = down (NED).
+            speed: Forward speed (m/s) for velocity fallback when local position is missing.
+
+        Returns:
+            True if a command was sent or displacement was zero; False if invalid or rejected.
+        """
+        if not self.connected:
+            return False
+
+        if abs(forward_m) < 0.01 and abs(right_m) < 0.01 and abs(down_m) < 0.01:
+            return True
+
+        local = self.telemetry.get("LOCAL_POSITION_NED")
+        if (
+            local
+            and isinstance(local, dict)
+            and all(k in local for k in ("x", "y", "z"))
+        ):
+            yaw = float(self.telemetry.get("ATTITUDE", {}).get("yaw", 0.0))
+            c, s = math.cos(yaw), math.sin(yaw)
+            d_n = forward_m * c - right_m * s
+            d_e = forward_m * s + right_m * c
+            d_d = down_m
+            x = float(local["x"]) + d_n
+            y = float(local["y"]) + d_e
+            z = float(local["z"]) + d_d
+            return self.set_position_target(x, y, z, 0.0, 0.0, 0.0)
+
+        if abs(right_m) >= 0.01 or abs(down_m) >= 0.01:
+            logger.warning(
+                "move_by_distance_body_m: LOCAL_POSITION_NED required for lateral/vertical "
+                "displacement; forward-only velocity fallback available"
+            )
+            if abs(forward_m) < 0.01:
+                return False
+
+        duration = abs(forward_m) / max(0.01, speed)
+        fwd_vel = speed if forward_m >= 0 else -speed
+        return self.move(Vector3(0.0, fwd_vel, 0.0), duration)
+
     def move_twist(self, twist: Twist, duration: float = 0.0, lock_altitude: bool = True) -> bool:
         """Move using ROS-style Twist commands.
 
+        Sent in body frame (MAV_FRAME_BODY_NED): x forward, y right, z down; yaw_rate
+        positive = turn right. Used by follow and other velocity-based control.
+
         Args:
-            twist: Twist message with linear velocities (angular.z ignored for now)
+            twist: Twist message with linear velocities and angular.z (yaw_rate, rad/s)
             duration: How long to move (0 = single command)
             lock_altitude: If True, ignore Z velocity and maintain current altitude
 
@@ -353,54 +424,96 @@ class MavlinkConnection:
         # Extract velocities
         forward = twist.linear.x  # m/s forward (body frame)
         right = twist.linear.y  # m/s right (body frame)
-        down = 0.0 if lock_altitude else -twist.linear.z  # Lock altitude by default
+        # Body NED: positive z = down. Controller vz positive = descend.
+        down = 0.0 if lock_altitude else twist.linear.z
+        yaw_rate = twist.angular.z  # rad/s
+
+        # type_mask: use vx,vy,vz and yaw_rate; ignore position, accel, force, yaw
+        mask_vel = 0b0000111111000111
+        mask_use_yaw_rate = mask_vel & ~mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+
+        now = time.time()
+        if now - self._last_move_twist_log_time >= 0.5:
+            self._last_move_twist_log_time = now
+            logger.info(
+                "ardupilot SET_POSITION_TARGET_LOCAL_NED: vx=%.3f vy=%.3f vz=%.3f (body m/s) yaw_rate=%.3f (rad/s)",
+                forward, right, down, yaw_rate,
+            )
 
         if duration > 0:
-            # Send velocity for duration
             end_time = time.time() + duration
             while time.time() < end_time:
                 self.mavlink.mav.set_position_target_local_ned_send(
-                    0,  # time_boot_ms
+                    0,
                     self.mavlink.target_system,
                     self.mavlink.target_component,
-                    mavutil.mavlink.MAV_FRAME_BODY_NED,  # Body frame for strafing
-                    0b0000111111000111,  # type_mask - velocities only, no rotation
+                    mavutil.mavlink.MAV_FRAME_BODY_NED,
+                    mask_use_yaw_rate,
+                    0, 0, 0,
+                    forward, right, down,
+                    0, 0, 0,
                     0,
-                    0,
-                    0,  # positions (ignored)
-                    forward,
-                    right,
-                    down,  # velocities in m/s
-                    0,
-                    0,
-                    0,  # accelerations (ignored)
-                    0,
-                    0,  # yaw, yaw_rate (ignored)
+                    yaw_rate,
                 )
-                time.sleep(0.05)  # 20Hz
-            # Send stop command
+                time.sleep(0.05)
             self.stop()
         else:
-            # Send single command for continuous movement
             self.mavlink.mav.set_position_target_local_ned_send(
-                0,  # time_boot_ms
+                0,
                 self.mavlink.target_system,
                 self.mavlink.target_component,
-                mavutil.mavlink.MAV_FRAME_BODY_NED,  # Body frame for strafing
-                0b0000111111000111,  # type_mask - velocities only, no rotation
+                mavutil.mavlink.MAV_FRAME_BODY_NED,
+                mask_use_yaw_rate,
+                0, 0, 0,
+                forward, right, down,
+                0, 0, 0,
                 0,
-                0,
-                0,  # positions (ignored)
-                forward,
-                right,
-                down,  # velocities in m/s
-                0,
-                0,
-                0,  # accelerations (ignored)
-                0,
-                0,  # yaw, yaw_rate (ignored)
+                yaw_rate,
             )
 
+        return True
+
+    def set_position_target(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        vx_ff: float = 0.0,
+        vy_ff: float = 0.0,
+        vz_ff: float = 0.0,
+    ) -> bool:
+        """Send position target in local NED with optional velocity feedforward.
+
+        Uses SET_POSITION_TARGET_LOCAL_NED with position + velocity (type_mask
+        ignores accel, force, yaw). Frame: MAV_FRAME_LOCAL_NED (x North, y East, z Down).
+        """
+        if not self.connected:
+            return False
+        mask = (
+            mavutil.mavlink.POSITION_TARGET_TYPEMASK_AX_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_AY_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_AZ_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_IGNORE
+            | mavutil.mavlink.POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE
+        )
+        self.mavlink.mav.set_position_target_local_ned_send(
+            0,
+            self.mavlink.target_system,
+            self.mavlink.target_component,
+            mavutil.mavlink.MAV_FRAME_LOCAL_NED,
+            mask,
+            x,
+            y,
+            z,
+            vx_ff,
+            vy_ff,
+            vz_ff,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
         return True
 
     def stop(self) -> bool:
@@ -452,42 +565,22 @@ class MavlinkConnection:
         while time.time() - start_time < timeout:
             loop_count += 1
 
-            # Don't call update_telemetry - let background thread handle it
-            # Just read the current telemetry which should be continuously updated
+            # Prefer ATTITUDE.yaw (radians) - available in SITL/Gazebo. Fallback: GLOBAL_POSITION_INT.hdg (degrees).
+            current_heading_deg = None
+            if "ATTITUDE" in self.telemetry:
+                yaw_rad = self.telemetry["ATTITUDE"].get("yaw", 0)
+                current_heading_deg = math.degrees(yaw_rad)
+            if current_heading_deg is None and "GLOBAL_POSITION_INT" in self.telemetry:
+                raw_hdg = self.telemetry["GLOBAL_POSITION_INT"].get("hdg", 0)
+                current_heading_deg = raw_hdg / 100.0 if raw_hdg > 360 else raw_hdg
 
-            if "GLOBAL_POSITION_INT" not in self.telemetry:
-                logger.warning("No GLOBAL_POSITION_INT in telemetry dict")
+            if current_heading_deg is None:
+                logger.warning("No ATTITUDE or GLOBAL_POSITION_INT for heading in rotate_to")
                 time.sleep(0.1)
                 continue
 
-            # Debug: Log what's in telemetry
-            gps_telem = self.telemetry["GLOBAL_POSITION_INT"]
-
-            # Get current heading - check if already converted or still in centidegrees
-            raw_hdg = gps_telem.get("hdg", 0)
-
-            # Debug logging to figure out the issue
-            if loop_count % 5 == 0:  # Log every 5th iteration
-                logger.info(f"DEBUG TELEMETRY: raw hdg={raw_hdg}, type={type(raw_hdg)}")
-                logger.info(f"DEBUG TELEMETRY keys: {list(gps_telem.keys())[:5]}")  # First 5 keys
-
-                # Check if hdg is already converted (should be < 360 if in degrees, > 360 if in centidegrees)
-                if raw_hdg > 360:
-                    logger.info(f"HDG appears to be in centidegrees: {raw_hdg}")
-                    current_heading_deg = raw_hdg / 100.0
-                else:
-                    logger.info(f"HDG appears to be in degrees already: {raw_hdg}")
-                    current_heading_deg = raw_hdg
-            else:
-                # Normal conversion
-                if raw_hdg > 360:
-                    current_heading_deg = raw_hdg / 100.0
-                else:
-                    current_heading_deg = raw_hdg
-
             # Normalize to 0-360
-            if current_heading_deg > 360:
-                current_heading_deg = current_heading_deg % 360
+            current_heading_deg = current_heading_deg % 360
 
             # Calculate heading error (shortest angular distance)
             heading_error = target_heading_deg - current_heading_deg

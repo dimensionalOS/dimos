@@ -15,7 +15,6 @@
 
 """DimOS module wrapper for drone connection."""
 
-from collections.abc import Generator
 import json
 import threading
 import time
@@ -37,6 +36,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
+from dimos.robot.drone.gazebo_video_stream import GazeboVideoStream
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.utils.logging_config import setup_logger
 
@@ -53,6 +53,7 @@ def _add_disposable(composite: CompositeDisposable, item: Disposable | Any) -> N
 class Config(ModuleConfig):
     connection_string: str = "udp:0.0.0.0:14550"
     video_port: int = 5600
+    video_source: str = "dji"
     outdoor: bool = False
 
 
@@ -93,13 +94,14 @@ class DroneConnectionModule(Module[Config]):
         """
         super().__init__(**kwargs)
         self.connection: MavlinkConnection | None = None
-        self.video_stream: DJIDroneVideoStream | None = None
+        self.video_stream: DJIDroneVideoStream | GazeboVideoStream | None = None
         self._latest_video_frame = None
         self._latest_telemetry = None
         self._latest_status = None
         self._latest_status_lock = threading.RLock()
         self._running = False
         self._telemetry_thread: threading.Thread | None = None
+        self._last_twist_log_time: float = 0.0
 
     @rpc
     def start(self) -> None:
@@ -117,7 +119,10 @@ class DroneConnectionModule(Module[Config]):
             )
             self.connection.connect()
 
-            self.video_stream = DJIDroneVideoStream(port=self.config.video_port)
+            if self.config.video_source == "gazebo":
+                self.video_stream = GazeboVideoStream(port=self.config.video_port)
+            else:
+                self.video_stream = DJIDroneVideoStream(port=self.config.video_port)
 
         if not self.connection.connected:
             logger.error("Failed to connect to drone")
@@ -272,16 +277,90 @@ class DroneConnectionModule(Module[Config]):
 
     @skill
     def move(self, x: float = 0.0, y: float = 0.0, z: float = 0.0, duration: float = 0.0) -> None:
-        """Send movement command to drone.
+        """Send velocity command (MAV_FRAME_BODY_NED via SET_POSITION_TARGET_LOCAL_NED).
+
+        Use for continuous or manual velocity. Tracking uses move_twist, not this.
 
         Args:
-            x: Velocity in x (forward) in m/s
-            y: Velocity in y (left) in m/s
-            z: Velocity in z (up) in m/s
-            duration: How long to move (0 = continuous)
+            x: Body right velocity in m/s.
+            y: Forward velocity in m/s.
+            z: Down velocity in m/s (positive = descend; negative = climb).
+            duration: How long to move (0 = continuous).
         """
         if self.connection:
             self.connection.move(Vector3(x, y, z), duration)
+
+    @skill
+    def move_by_distance(
+        self,
+        forward_m: float = 0.0,
+        right_m: float = 0.0,
+        down_m: float = 0.0,
+        speed: float = 0.3,
+    ) -> str:
+        """Move by body-frame displacement in meters.
+
+        Prefers a local NED position setpoint when telemetry allows; otherwise timed forward
+        velocity. For absolute NED coordinates use go_to_position. For follow/track use
+        follow_object (velocity via move_twist), not this.
+
+        Args:
+            forward_m: Forward/backward distance (m); positive = forward.
+            right_m: Right/left distance (m); positive = right.
+            down_m: Down distance (m); positive = down (NED).
+            speed: Fallback forward speed (m/s) when local position is unavailable.
+
+        Returns:
+            Status message for the agent.
+        """
+        if not self.connection:
+            return "Failed: no connection."
+        ok = self.connection.move_by_distance_body_m(forward_m, right_m, down_m, speed)
+        if ok:
+            return (
+                f"move_by_distance applied: forward={forward_m}m right={right_m}m down={down_m}m "
+                "(local NED setpoint if available, else forward velocity fallback)."
+            )
+        return (
+            "Failed move_by_distance (e.g. lateral/vertical without LOCAL_POSITION_NED, or FC rejected)."
+        )
+
+    @skill
+    def go_to_position(
+        self, x: float, y: float, z: float,
+        vx_ff: float = 0.0, vy_ff: float = 0.0, vz_ff: float = 0.0,
+    ) -> bool:
+        """Send position target in local NED with optional velocity feedforward.
+
+        Args:
+            x: North position in meters (local NED).
+            y: East position in meters (local NED).
+            z: Down position in meters (negative = up).
+            vx_ff: Velocity feedforward North (m/s). Optional.
+            vy_ff: Velocity feedforward East (m/s). Optional.
+            vz_ff: Velocity feedforward Down (m/s). Optional.
+
+        Returns:
+            True if position target sent successfully
+        """
+        if self.connection:
+            return self.connection.set_position_target(x, y, z, vx_ff, vy_ff, vz_ff)
+        return False
+
+    @skill
+    def rotate_to(self, heading_deg: float, timeout: float = 60.0) -> bool:
+        """Rotate drone to a specific heading (yaw control).
+
+        Args:
+            heading_deg: Target heading in degrees (0–360, 0=North, 90=East).
+            timeout: Max time to rotate in seconds.
+
+        Returns:
+            True if rotation completed successfully
+        """
+        if self.connection:
+            return self.connection.rotate_to(heading_deg, timeout)
+        return False
 
     @skill
     def takeoff(self, altitude: float = 3.0) -> bool:
@@ -388,49 +467,44 @@ class DroneConnectionModule(Module[Config]):
 
     @skill
     def follow_object(
-        self, object_description: str, duration: float = 120.0
-    ) -> Generator[str, None, None]:
-        """Follow an object with visual servoing.
+        self, object_description: str, duration: float = 0.0
+    ) -> str:
+        """Follow an object with visual servoing (velocity via move_twist, not position setpoints).
 
         Example:
 
-            follow_object(object_description="red car", duration=120)
+            follow_object(object_description="red car", duration=0)  # 0 = track until stop_follow
 
         Args:
             object_description (str): A short and clear description of the object.
-            duration (float, optional): How long to track for. Defaults to 120.0.
+            duration (float, optional): Max tracking time in seconds; 0 = until stop_follow. Defaults to 0.
         """
         msg = {"object_description": object_description, "duration": duration}
         self.follow_object_cmd.publish(String(json.dumps(msg)))
 
-        yield "Started trying to track. First, trying to find the object."
-
+        # Poll for initial tracking result (found / not found / timeout)
         start_time = time.time()
+        timeout = 30.0 if duration <= 0 else min(duration, 30.0)
 
-        started_tracking = False
-
-        while time.time() - start_time < duration:
-            time.sleep(0.01)
+        while time.time() - start_time < timeout:
+            time.sleep(0.1)
             with self._latest_status_lock:
                 if not self._latest_status:
                     continue
                 match self._latest_status.get("status"):
                     case "not_found" | "failed":
-                        yield f"The '{object_description}' object has not been found. Stopped tracking."
-                        break
+                        return f"The '{object_description}' object has not been found. Stopped tracking."
                     case "tracking":
-                        # Only return tracking once.
-                        if not started_tracking:
-                            started_tracking = True
-                            yield f"The '{object_description}' object is now being followed."
+                        return (
+                            f"Now following '{object_description}'."
+                            + (" Run stop_follow to stop." if duration <= 0 else f" For up to {duration}s.")
+                        )
                     case "lost":
-                        yield f"The '{object_description}' object has been lost. Stopped tracking."
-                        break
+                        return f"The '{object_description}' object was lost. Stopped tracking."
                     case "stopped":
-                        yield f"Tracking '{object_description}' has stopped."
-                        break
-        else:
-            yield f"Stopped tracking '{object_description}'"
+                        return f"Tracking '{object_description}' has stopped."
+
+        return f"Started tracking command for '{object_description}'. No status update yet."
 
     def _on_move_twist(self, msg: Twist) -> None:
         """Handle Twist movement commands from tracking/navigation.
@@ -439,8 +513,14 @@ class DroneConnectionModule(Module[Config]):
             msg: Twist message with linear and angular velocities
         """
         if self.connection:
-            # Use move_twist to properly handle Twist messages
-            self.connection.move_twist(msg, duration=0, lock_altitude=True)
+            now = time.time()
+            if now - self._last_twist_log_time >= 0.5:
+                self._last_twist_log_time = now
+                logger.info(
+                    "follow→ardupilot: linear x=%.3f y=%.3f z=%.3f yaw_rate=%.3f (m/s, rad/s)",
+                    msg.linear.x, msg.linear.y, msg.linear.z, msg.angular.z,
+                )
+            self.connection.move_twist(msg, duration=0, lock_altitude=False)
 
     def _on_gps_goal(self, cmd: LatLon) -> None:
         if self._latest_telemetry is None or self.connection is None:

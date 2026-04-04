@@ -446,7 +446,7 @@ class SpatialMemory(Module[SpatialConfig]):
         return self.vector_db.query_by_embedding(embedding, limit)
 
     @rpc
-    def query_by_text(self, text: str, limit: int = 5) -> list[dict]:  # type: ignore[type-arg]
+    def query_by_text(self, text: str, limit: int = 5) -> list[dict[str, Any]]:
         """
         Query the vector database for images matching the provided text description.
 

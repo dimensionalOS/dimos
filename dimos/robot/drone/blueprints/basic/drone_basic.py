@@ -20,6 +20,7 @@ from typing import Any
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.robot.drone.camera_module import DroneCameraModule
 from dimos.robot.drone.connection_module import DroneConnectionModule
@@ -44,7 +45,7 @@ def _drone_rerun_blueprint() -> Any:
 
     return rrb.Blueprint(
         rrb.Horizontal(
-            rrb.Spatial2DView(origin="world/video", name="Camera"),
+            rrb.Spatial2DView(origin="world/color_image", name="Camera"),
             rrb.Spatial3DView(
                 origin="world",
                 name="3D",
@@ -95,6 +96,25 @@ drone_basic = autoconnect(
     WebsocketVisModule.blueprint(),
 )
 
+drone_basic_gazebo = autoconnect(
+    _vis,
+    DroneConnectionModule.blueprint(
+        connection_string=connection_string,
+        video_port=video_port,
+        video_source="gazebo",
+        outdoor=False,
+    ),
+    DroneCameraModule.blueprint(camera_intrinsics=[1000.0, 1000.0, 960.0, 540.0]),
+    WebsocketVisModule.blueprint(),
+)
+
+drone_basic_gazebo_spatial = autoconnect(
+    drone_basic_gazebo,
+    SpatialMemory.blueprint(),
+)
+
 __all__ = [
     "drone_basic",
+    "drone_basic_gazebo",
+    "drone_basic_gazebo_spatial",
 ]
