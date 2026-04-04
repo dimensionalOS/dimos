@@ -20,14 +20,14 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 
 from dimos_lcm.vision_msgs import Detection2DArray
 
-from dimos.msgs.foxglove_msgs import ImageAnnotations
-from dimos.msgs.std_msgs import Header
+from dimos.msgs.foxglove_msgs.ImageAnnotations import ImageAnnotations
+from dimos.msgs.std_msgs.Header import Header
 from dimos.perception.detection.type.utils import TableStr
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    from dimos.msgs.sensor_msgs import Image
+    from dimos.msgs.sensor_msgs.Image import Image
     from dimos.perception.detection.type.detection2d.base import Detection2D
 
     T = TypeVar("T", bound=Detection2D)

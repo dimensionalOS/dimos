@@ -14,7 +14,7 @@
 
 import math
 
-from dimos.mapping.types import LatLon
+from dimos.mapping.models import LatLon
 
 
 def distance_in_meters(location1: LatLon, location2: LatLon) -> float:

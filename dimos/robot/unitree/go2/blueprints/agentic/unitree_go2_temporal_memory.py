@@ -15,14 +15,17 @@
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.perception.experimental.temporal_memory import TemporalMemoryConfig, temporal_memory
+from dimos.perception.experimental.temporal_memory.temporal_memory import (
+    TemporalMemory,
+    TemporalMemoryConfig,
+)
 from dimos.robot.unitree.go2.blueprints.agentic.unitree_go2_agentic import unitree_go2_agentic
 
 # This module is imported lazily by `get_by_name()` in the CLI run command,
 # AFTER global_config.update() has applied CLI flags like --new-memory.
 unitree_go2_temporal_memory = autoconnect(
     unitree_go2_agentic,
-    temporal_memory(config=TemporalMemoryConfig(new_memory=global_config.new_memory)),
+    TemporalMemory.blueprint(config=TemporalMemoryConfig(new_memory=global_config.new_memory)),
 )
 
 __all__ = ["unitree_go2_temporal_memory"]

@@ -24,33 +24,32 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from enum import Enum
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+from pydantic import Field
+
 from dimos.agents.annotation import skill
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.manipulation.planning import (
-    JointPath,
+from dimos.manipulation.planning.factory import create_kinematics, create_planner
+from dimos.manipulation.planning.monitor.world_monitor import WorldMonitor
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import JointPath, Obstacle, RobotName, WorldRobotID
+from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec
+from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
     JointTrajectoryGenerator,
-    KinematicsSpec,
-    Obstacle,
-    ObstacleType,
-    PlannerSpec,
-    RobotModelConfig,
-    RobotName,
-    WorldRobotID,
-    create_kinematics,
-    create_planner,
 )
-from dimos.manipulation.planning.monitor import WorldMonitor
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
-from dimos.msgs.sensor_msgs import JointState
-from dimos.msgs.trajectory_msgs import JointTrajectory
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -82,18 +81,21 @@ class ManipulationState(Enum):
     FAULT = 4
 
 
-@dataclass
 class ManipulationModuleConfig(ModuleConfig):
     """Configuration for ManipulationModule."""
 
-    robots: list[RobotModelConfig] = field(default_factory=list)
+    robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
     enable_viz: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
+    # Floor plane Z height (meters). When set, a box obstacle is added at startup
+    # to prevent the planner from routing trajectories below this height.
+    # Set to None to disable.
+    floor_z: float | None = None
 
 
-class ManipulationModule(Module):
+class ManipulationModule(Module[ManipulationModuleConfig]):
     """Base motion planning module with ControlCoordinator execution.
 
     - @rpc: Low-level building blocks (plan, execute, gripper)
@@ -104,14 +106,11 @@ class ManipulationModule(Module):
 
     default_config = ManipulationModuleConfig
 
-    # Type annotation for the config attribute (mypy uses this)
-    config: ManipulationModuleConfig
-
     # Input: Joint state from coordinator (for world sync)
     joint_state: In[JointState]
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
         # State machine
         self._state = ManipulationState.IDLE
@@ -175,6 +174,23 @@ class ManipulationModule(Module):
             self._robots[robot_config.name] = (robot_id, robot_config, traj_gen)
 
         self._world_monitor.finalize()
+
+        # Add floor obstacle to prevent trajectories below the table surface
+        if self.config.floor_z is not None:
+            fz = self.config.floor_z
+            thickness = 0.2
+            floor_pose = Pose(
+                Vector3(0.7, 0.0, fz - thickness / 2),
+                Quaternion(0.0, 0.0, 0.0, 1.0),
+            )
+            floor_obs = Obstacle(
+                name="floor",
+                pose=floor_pose,
+                obstacle_type=ObstacleType.BOX,
+                dimensions=(0.6, 1.2, thickness),
+            )
+            self._world_monitor.add_obstacle(floor_obs)
+            logger.info(f"Floor obstacle added at z={fz:.3f}")
 
         for _, (robot_id, _, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
@@ -251,7 +267,7 @@ class ManipulationModule(Module):
 
     def _tf_publish_loop(self) -> None:
         """Publish TF transforms at 10Hz for EE and extra links."""
-        from dimos.msgs.geometry_msgs import Transform
+        from dimos.msgs.geometry_msgs.Transform import Transform
 
         period = 0.1  # 10Hz
         while not self._tf_stop_event.is_set():
@@ -282,10 +298,6 @@ class ManipulationModule(Module):
 
             self._tf_stop_event.wait(period)
 
-    # =========================================================================
-    # RPC Methods
-    # =========================================================================
-
     @rpc
     def get_state(self) -> str:
         """Get current manipulation state name."""
@@ -309,6 +321,7 @@ class ManipulationModule(Module):
         logger.info("Motion cancelled")
         return True
 
+    @rpc
     @skill
     def reset(self) -> str:
         """Reset the robot module to IDLE state, clearing any fault.
@@ -359,10 +372,6 @@ class ManipulationModule(Module):
             joint_state = JointState(name=config.joint_names, position=joints)
             return self._world_monitor.is_state_valid(robot_id, joint_state)
         return False
-
-    # =========================================================================
-    # Plan/Preview/Execute Workflow RPC Methods
-    # =========================================================================
 
     def _begin_planning(
         self, robot_name: RobotName | None = None
@@ -418,7 +427,7 @@ class ManipulationModule(Module):
             return self._fail("No joint state")
 
         # Convert Pose to PoseStamped for the IK solver
-        from dimos.msgs.geometry_msgs import PoseStamped
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         target_pose = PoseStamped(
             frame_id="world",
@@ -634,10 +643,6 @@ class ManipulationModule(Module):
         )
         return True
 
-    # =========================================================================
-    # Coordinator Integration RPC Methods
-    # =========================================================================
-
     def _get_coordinator_client(self) -> RPCClient | None:
         """Get or create coordinator RPC client (lazy init)."""
         if not any(
@@ -766,7 +771,7 @@ class ManipulationModule(Module):
             return ""
 
         # Import PoseStamped here to avoid circular imports
-        from dimos.msgs.geometry_msgs import PoseStamped
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
         obstacle = Obstacle(
             name=name,
@@ -783,10 +788,6 @@ class ManipulationModule(Module):
         if self._world_monitor is None:
             return False
         return self._world_monitor.remove_obstacle(obstacle_id)
-
-    # =========================================================================
-    # Gripper Methods
-    # =========================================================================
 
     def _get_gripper_hardware_id(self, robot_name: RobotName | None = None) -> str | None:
         """Get gripper hardware ID for a robot."""
@@ -860,10 +861,6 @@ class ManipulationModule(Module):
             return "Gripper closed"
         return "Error: Failed to close gripper"
 
-    # =========================================================================
-    # Skill Helpers (internal)
-    # =========================================================================
-
     def _wait_for_trajectory_completion(
         self, robot_name: RobotName | None = None, timeout: float = 60.0, poll_interval: float = 0.2
     ) -> bool:
@@ -925,6 +922,22 @@ class ManipulationModule(Module):
         logger.warning(f"Trajectory execution timed out after {timeout}s")
         return False
 
+    def _lift_if_low(self, robot_name: RobotName | None = None, min_z: float = 0.05) -> str | None:
+        """If the end-effector is below *min_z*, plan and execute a short lift.
+
+        Returns None on success (or if already above threshold), error string on failure.
+        """
+        ee = self.get_ee_pose(robot_name)
+        if ee is None or ee.position.z >= min_z:
+            return None
+
+        lift_z = min_z + 0.05
+        logger.info(f"EE z={ee.position.z:.3f} < {min_z}, lifting to z={lift_z:.3f}")
+        lift_pose = Pose(Vector3(ee.position.x, ee.position.y, lift_z), ee.orientation)
+        if not self.plan_to_pose(lift_pose, robot_name):
+            return f"Error: Failed to plan lift from z={ee.position.z:.3f}"
+        return self._preview_execute_wait(robot_name)
+
     def _preview_execute_wait(
         self, robot_name: RobotName | None = None, preview_duration: float = 0.5
     ) -> str | None:
@@ -947,10 +960,6 @@ class ManipulationModule(Module):
             return "Error: Trajectory execution timed out"
 
         return None
-
-    # =========================================================================
-    # Short-Horizon Skills — Single-step actions
-    # =========================================================================
 
     @skill
     def get_robot_state(self, robot_name: str | None = None) -> str:
@@ -1034,6 +1043,11 @@ class ManipulationModule(Module):
                 orientation = Quaternion.from_euler(Vector3(roll or 0.0, pitch or 0.0, yaw or 0.0))
 
         pose = Pose(Vector3(x, y, z), orientation)
+
+        # If EE is low, lift up first to clear obstacles
+        err = self._lift_if_low(robot_name)
+        if err:
+            return err
 
         if not self.plan_to_pose(pose, robot_name):
             return f"Error: Planning failed — pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision"
@@ -1124,6 +1138,33 @@ class ManipulationModule(Module):
         if self._init_joints is None:
             return "Error: No init joints captured — robot may not have reported joint state yet"
 
+        # Lift if EE is low before moving to init
+        err = self._lift_if_low(robot_name)
+        if err:
+            return err
+
+        # Move through a safe waypoint: 10cm above and 5cm in front of init pose.
+        # This avoids direct paths through the workspace that could collide with objects.
+        robot = self._get_robot(robot_name)
+        if robot is not None and self._world_monitor is not None:
+            _, robot_id, _, _ = robot
+            init_ee = self._world_monitor.get_ee_pose(robot_id, joint_state=self._init_joints)
+            if init_ee is not None:
+                wp = Pose(
+                    Vector3(
+                        init_ee.position.x + 0.05,
+                        init_ee.position.y,
+                        init_ee.position.z + 0.10,
+                    ),
+                    init_ee.orientation,
+                )
+                if self.plan_to_pose(wp, robot_name):
+                    err = self._preview_execute_wait(robot_name)
+                    if err:
+                        return err
+                else:
+                    logger.warning("Safe waypoint unreachable, going directly to init")
+
         logger.info(
             f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in self._init_joints.position)}]..."
         )
@@ -1136,10 +1177,6 @@ class ManipulationModule(Module):
 
         return "Reached init position"
 
-    # =========================================================================
-    # Lifecycle
-    # =========================================================================
-
     @rpc
     def stop(self) -> None:
         """Stop the manipulation module."""
@@ -1148,7 +1185,7 @@ class ManipulationModule(Module):
         # Stop TF thread
         if self._tf_thread is not None:
             self._tf_stop_event.set()
-            self._tf_thread.join(timeout=1.0)
+            self._tf_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._tf_thread = None
 
         # Stop world monitor (includes visualization thread)
@@ -1156,7 +1193,3 @@ class ManipulationModule(Module):
             self._world_monitor.stop_all_monitors()
 
         super().stop()
-
-
-# Expose blueprint for declarative composition
-manipulation_module = ManipulationModule.blueprint

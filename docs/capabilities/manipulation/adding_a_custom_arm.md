@@ -116,9 +116,6 @@ class YourArmAdapter:
         self._sdk: YourArmSDK | None = None
         self._control_mode: ControlMode = ControlMode.POSITION
 
-    # =========================================================================
-    # Connection
-    # =========================================================================
 
     def connect(self) -> bool:
         """Connect to hardware. Returns True on success."""
@@ -144,9 +141,6 @@ class YourArmAdapter:
         """Check if connected."""
         return self._sdk is not None and self._sdk.is_alive()
 
-    # =========================================================================
-    # Info
-    # =========================================================================
 
     def get_info(self) -> ManipulatorInfo:
         """Get manipulator info (vendor, model, DOF)."""
@@ -173,9 +167,6 @@ class YourArmAdapter:
             velocity_max=[math.pi] * self._dof,          # rad/s
         )
 
-    # =========================================================================
-    # Control Mode
-    # =========================================================================
 
     def set_control_mode(self, mode: ControlMode) -> bool:
         """Set control mode.
@@ -206,9 +197,6 @@ class YourArmAdapter:
         """Get current control mode."""
         return self._control_mode
 
-    # =========================================================================
-    # State Reading
-    # =========================================================================
 
     def read_joint_positions(self) -> list[float]:
         """Read current joint positions in radians.
@@ -262,9 +250,6 @@ class YourArmAdapter:
             return 0, ""
         return code, f"YourArm error {code}"
 
-    # =========================================================================
-    # Motion Control (Joint Space)
-    # =========================================================================
 
     def write_joint_positions(
         self,
@@ -300,9 +285,6 @@ class YourArmAdapter:
             return False
         return self._sdk.emergency_stop()
 
-    # =========================================================================
-    # Servo Control
-    # =========================================================================
 
     def write_enable(self, enable: bool) -> bool:
         """Enable or disable servos."""
@@ -322,10 +304,6 @@ class YourArmAdapter:
             return False
         return self._sdk.clear_errors()
 
-    # =========================================================================
-    # Optional: Cartesian Control
-    # Return None/False if not supported by your arm.
-    # =========================================================================
 
     def read_cartesian_position(self) -> dict[str, float] | None:
         """Read end-effector pose.
@@ -343,9 +321,6 @@ class YourArmAdapter:
         """Command end-effector pose. Return False if not supported."""
         return False
 
-    # =========================================================================
-    # Optional: Gripper
-    # =========================================================================
 
     def read_gripper_position(self) -> float | None:
         """Read gripper position in meters. Return None if no gripper."""
@@ -355,9 +330,6 @@ class YourArmAdapter:
         """Command gripper position in meters. Return False if no gripper."""
         return False
 
-    # =========================================================================
-    # Optional: Force/Torque Sensor
-    # =========================================================================
 
     def read_force_torque(self) -> list[float] | None:
         """Read F/T sensor data [fx, fy, fz, tx, ty, tz]. None if no sensor."""
@@ -466,16 +438,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import TaskConfig, control_coordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import JointState
 
-# =============================================================================
-# Coordinator Blueprints
-# =============================================================================
 
 # YourArm (6-DOF) — real hardware
-coordinator_yourarm = control_coordinator(
+coordinator_yourarm = ControlCoordinator.blueprint(
     tick_rate=100.0,                    # Control loop frequency (Hz)
     publish_joint_state=True,           # Publish aggregated joint state
     joint_state_frame_id="coordinator",
@@ -568,7 +537,7 @@ def _make_yourarm_config(
 
     return RobotModelConfig(
         name=name,
-        urdf_path=_YOURARM_URDF_PATH,
+        model_path=_YOURARM_URDF_PATH,
         base_pose=_make_base_pose(y=y_offset),
         joint_names=joint_names,
         end_effector_link="link6",      # Last link in your URDF's kinematic chain
@@ -589,9 +558,6 @@ def _make_yourarm_config(
 Add this to your `dimos/robot/yourarm/blueprints.py` alongside the coordinator blueprint:
 
 ```python
-# =============================================================================
-# Planner Blueprints (requires URDF)
-# =============================================================================
 
 yourarm_planner = manipulation_module(
     robots=[_make_yourarm_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
@@ -608,7 +574,7 @@ yourarm_planner = manipulation_module(
 
 | Field | Description |
 |-------|-------------|
-| `urdf_path` | Path to `.urdf` or `.xacro` file |
+| `model_path` | Path to `.urdf` or `.xacro` file |
 | `joint_names` | Ordered list of controlled joints (must match URDF) |
 | `end_effector_link` | Link to use as the end-effector for IK |
 | `base_link` | Root link of the robot model |

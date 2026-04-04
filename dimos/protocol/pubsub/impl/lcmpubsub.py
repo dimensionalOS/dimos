@@ -14,25 +14,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 import re
-from typing import TYPE_CHECKING, Any
+import threading
+from typing import Any
 
+from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.encoders import (
-    JpegEncoderMixin,
     LCMEncoderMixin,
     PickleEncoderMixin,
 )
 from dimos.protocol.pubsub.patterns import Glob
 from dimos.protocol.pubsub.spec import AllPubSub
-from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf
+from dimos.protocol.service.lcmservice import LCMService, autoconf
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-    import threading
-
-    from dimos.msgs import DimosMsg
 
 logger = setup_logger()
 
@@ -66,7 +62,7 @@ class Topic:
         Channel format: /topic#module.ClassName
         Falls back to default_lcm_type if type cannot be parsed.
         """
-        from dimos.msgs import resolve_msg_type
+        from dimos.msgs.helpers import resolve_msg_type
 
         if "#" not in channel:
             return Topic(topic=channel, lcm_type=default_lcm_type)
@@ -83,7 +79,6 @@ class LCMPubSubBase(LCMService, AllPubSub[Topic, Any]):
     RegexSubscribable directly without needing discovery-based fallback.
     """
 
-    default_config = LCMConfig
     _stop_event: threading.Event
     _thread: threading.Thread | None
 
@@ -153,16 +148,9 @@ class PickleLCM(  # type: ignore[misc]
 ): ...
 
 
-class JpegLCM(  # type: ignore[misc]
-    JpegEncoderMixin,  # type: ignore[type-arg]
-    LCMPubSubBase,
-): ...
-
-
 __all__ = [
     "LCM",
     "Glob",
-    "JpegLCM",
     "LCMEncoderMixin",
     "LCMPubSubBase",
     "PickleLCM",

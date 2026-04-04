@@ -15,13 +15,13 @@
 from dimos.core.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.mapping.voxels import VoxelGridMapper
-from dimos.visualization.rerun.bridge import rerun_bridge
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 voxel_size = 0.05
 
 mid360_fastlio = autoconnect(
     FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=-1),
-    rerun_bridge(
+    RerunBridgeModule.blueprint(
         visual_override={
             "world/lidar": lambda grid: grid.to_rerun(voxel_size=voxel_size, mode="boxes"),
         }
@@ -31,7 +31,7 @@ mid360_fastlio = autoconnect(
 mid360_fastlio_voxels = autoconnect(
     FastLio2.blueprint(),
     VoxelGridMapper.blueprint(publish_interval=1.0, voxel_size=voxel_size, carve_columns=False),
-    rerun_bridge(
+    RerunBridgeModule.blueprint(
         visual_override={
             "world/global_map": lambda grid: grid.to_rerun(voxel_size=voxel_size, mode="boxes"),
             "world/lidar": None,
@@ -41,7 +41,7 @@ mid360_fastlio_voxels = autoconnect(
 
 mid360_fastlio_voxels_native = autoconnect(
     FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=3.0),
-    rerun_bridge(
+    RerunBridgeModule.blueprint(
         visual_override={
             "world/lidar": None,
             "world/global_map": lambda grid: grid.to_rerun(voxel_size=voxel_size, mode="boxes"),

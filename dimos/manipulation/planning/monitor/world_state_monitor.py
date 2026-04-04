@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from dimos.manipulation.planning.spec import WorldSpec
+    from dimos.manipulation.planning.spec.protocols import WorldSpec
 
 logger = setup_logger()
 

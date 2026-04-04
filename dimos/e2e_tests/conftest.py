@@ -22,9 +22,11 @@ from dimos.core.transport import pLCMTransport
 from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.std_msgs.Bool import Bool
+from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
 from dimos.simulation.mujoco.person_on_track import PersonTrackPublisher
 
 
@@ -115,3 +117,38 @@ def start_person_track() -> Generator[StartPersonTrack, None, None]:
         thread.join(timeout=1.0)
     if publisher is not None:
         publisher.stop()
+
+
+@pytest.fixture
+def direct_cmd_vel_explorer() -> Generator[PersonTrackPublisher, None, None]:
+    explorer = DirectCmdVelExplorer()
+    explorer.start()
+    yield explorer
+    explorer.stop()
+
+
+@pytest.fixture
+def explore_office(
+    direct_cmd_vel_explorer: DirectCmdVelExplorer,
+) -> Callable[[], None]:
+    points = [
+        (0, -7.07),
+        (-4.16, -7.07),
+        (-4.45, 1.10),
+        (-6.72, 2.87),
+        (-1.78, 3.01),
+        (-1.54, 5.74),
+        (3.88, 6.16),
+        (2.16, 9.36),
+        (4.70, 3.87),
+        (4.67, -7.15),
+        (4.57, -4.19),
+        (-0.84, -2.78),
+        (-4.71, 1.17),
+        (4.30, 0.87),
+    ]
+
+    def explore() -> None:
+        direct_cmd_vel_explorer.follow_points(points)
+
+    return explore

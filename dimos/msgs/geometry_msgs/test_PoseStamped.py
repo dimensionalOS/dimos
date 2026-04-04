@@ -15,7 +15,7 @@
 import pickle
 import time
 
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
 def test_lcm_encode_decode() -> None:

@@ -16,8 +16,8 @@
 from dimos.agents.annotation import skill
 from dimos.core.module import Module
 from dimos.core.stream import In
+from dimos.mapping.models import LatLon
 from dimos.mapping.osm.current_location_map import CurrentLocationMap
-from dimos.mapping.types import LatLon
 from dimos.mapping.utils.distance import distance_in_meters
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.utils.logging_config import setup_logger
@@ -78,8 +78,3 @@ class OsmSkill(Module):
         distance = int(distance_in_meters(latlon, self._latest_location))  # type: ignore[arg-type]
 
         return f"{context}. It's at position latitude={latlon.lat}, longitude={latlon.lon}. It is {distance} meters away."
-
-
-osm_skill = OsmSkill.blueprint
-
-__all__ = ["OsmSkill", "osm_skill"]

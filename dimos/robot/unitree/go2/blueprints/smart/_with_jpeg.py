@@ -14,7 +14,7 @@
 # limitations under the License.
 
 from dimos.core.transport import JpegLcmTransport
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
 _with_jpeglcm = unitree_go2.transports(

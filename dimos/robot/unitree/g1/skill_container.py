@@ -22,7 +22,9 @@ import difflib
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs import Twist, Vector3
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.robot.unitree.g1.connection_spec import G1ConnectionSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -62,10 +64,7 @@ _MODE_COMMANDS: dict[str, tuple[int, str]] = {
 
 
 class UnitreeG1SkillContainer(Module):
-    rpc_calls: list[str] = [
-        "G1ConnectionBase.move",
-        "G1ConnectionBase.publish_request",
-    ]
+    _connection: G1ConnectionSpec
 
     @rpc
     def start(self) -> None:
@@ -90,9 +89,8 @@ class UnitreeG1SkillContainer(Module):
             duration: How long to move (seconds)
         """
 
-        move_rpc = self.get_rpc_calls("G1ConnectionBase.move")
         twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
-        move_rpc(twist, duration=duration)
+        self._connection.move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 
     @skill
@@ -110,8 +108,6 @@ class UnitreeG1SkillContainer(Module):
         topic: str,
         command_name: str,
     ) -> str:
-        publish_request_rpc = self.get_rpc_calls("G1ConnectionBase.publish_request")
-
         if command_name not in command_dict:
             suggestions = difflib.get_close_matches(
                 command_name, command_dict.keys(), n=3, cutoff=0.6
@@ -121,7 +117,7 @@ class UnitreeG1SkillContainer(Module):
         id_, _ = command_dict[command_name]
 
         try:
-            publish_request_rpc(topic, {"api_id": api_id, "parameter": {"data": id_}})
+            self._connection.publish_request(topic, {"api_id": api_id, "parameter": {"data": id_}})
             return f"'{command_name}' command executed successfully."
         except Exception as e:
             logger.error(f"Failed to execute {command_name}: {e}")
@@ -157,7 +153,3 @@ Here are all the command names and what they do.
 
 {_mode_commands}
 """
-
-g1_skills = UnitreeG1SkillContainer.blueprint
-
-__all__ = ["UnitreeG1SkillContainer", "g1_skills"]

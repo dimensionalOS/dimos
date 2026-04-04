@@ -31,6 +31,8 @@ class SpeakSkill(Module):
     _tts_node: OpenAITTSNode | None = None
     _audio_output: SounddeviceAudioOutput | None = None
     _audio_lock: threading.Lock = threading.Lock()
+    _bg_threads: list[threading.Thread] = []
+    _bg_threads_lock: threading.Lock = threading.Lock()
 
     @rpc
     def start(self) -> None:
@@ -41,6 +43,10 @@ class SpeakSkill(Module):
 
     @rpc
     def stop(self) -> None:
+        with self._bg_threads_lock:
+            threads = list(self._bg_threads)
+        for t in threads:
+            t.join(timeout=2.0)
         if self._tts_node:
             self._tts_node.dispose()
             self._tts_node = None
@@ -50,7 +56,7 @@ class SpeakSkill(Module):
         super().stop()
 
     @skill
-    def speak(self, text: str) -> str:
+    def speak(self, text: str, blocking: bool = True) -> str:
         """Speak text out loud through the robot's speakers.
 
         USE THIS TOOL AS OFTEN AS NEEDED. People can't normally see what you say in text, but can hear what you speak.
@@ -64,8 +70,33 @@ class SpeakSkill(Module):
         if self._tts_node is None:
             return "Error: TTS not initialized"
 
+        if not blocking:
+            thread = threading.Thread(
+                target=self._speak_bg, args=(text,), daemon=True, name="SpeakSkill-bg"
+            )
+            with self._bg_threads_lock:
+                self._bg_threads.append(thread)
+            thread.start()
+            return f"Speaking (non-blocking): {text}"
+
+        return self._speak_blocking(text)
+
+    def _speak_bg(self, text: str) -> None:
+        try:
+            self._speak_blocking(text)
+        finally:
+            # Remove this thread from the list of background threads when done
+            with self._bg_threads_lock:
+                self._bg_threads = [
+                    t for t in self._bg_threads if t is not threading.current_thread()
+                ]
+
+    def _speak_blocking(self, text: str) -> str:
         # Use lock to prevent simultaneous speech
         with self._audio_lock:
+            if self._tts_node is None:
+                return "Error: TTS not initialized"
+
             text_subject: Subject[str] = Subject()
             audio_complete = threading.Event()
             self._tts_node.consume_text(text_subject)
@@ -97,8 +128,3 @@ class SpeakSkill(Module):
             subscription.dispose()
 
             return f"Spoke: {text}"
-
-
-speak_skill = SpeakSkill.blueprint
-
-__all__ = ["SpeakSkill", "speak_skill"]

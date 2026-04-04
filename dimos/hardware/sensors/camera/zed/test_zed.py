@@ -13,14 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
+from dimos.hardware.sensors.camera.zed import compat as zed
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 
 
+@pytest.mark.skipif(not zed.HAS_ZED_SDK, reason="ZED SDK not installed")
 def test_zed_import_and_calibration_access() -> None:
     """Test that zed module can be imported and calibrations accessed."""
-    # Import zed module from camera
-    from dimos.hardware.sensors.camera import zed
-
     # Test that CameraInfo is accessible
     assert hasattr(zed, "CameraInfo")
 

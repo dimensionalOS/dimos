@@ -15,16 +15,17 @@
 from __future__ import annotations
 
 import atexit
-from dataclasses import dataclass, field
 import threading
 import time
 from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
+from pydantic import Field
 import reactivex as rx
 from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
@@ -35,8 +36,10 @@ from dimos.hardware.sensors.camera.spec import (
     DepthCameraConfig,
     DepthCameraHardware,
 )
-from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import CameraInfo
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.foxglove_bridge import FoxgloveBridge
@@ -55,14 +58,13 @@ def default_base_transform() -> Transform:
     )
 
 
-@dataclass
 class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     width: int = 848
     height: int = 480
     fps: int = 15
     camera_name: str = "camera"
     base_frame_id: str = "base_link"
-    base_transform: Transform | None = field(default_factory=default_base_transform)
+    base_transform: Transform | None = Field(default_factory=default_base_transform)
     align_depth_to_color: bool = True
     enable_depth: bool = True
     enable_pointcloud: bool = False
@@ -71,14 +73,13 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     serial_number: str | None = None
 
 
-class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
+class RealSenseCamera(DepthCameraHardware, Module[RealSenseCameraConfig], perception.DepthCamera):
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
 
-    config: RealSenseCameraConfig
     default_config = RealSenseCameraConfig
 
     @property
@@ -419,7 +420,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
         # Now join the thread (should exit quickly since pipeline is stopped)
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             if self._thread.is_alive():
                 # Force thread termination by clearing reference
                 self._thread = None
@@ -445,7 +446,7 @@ class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
 
 
 def main() -> None:
-    dimos = ModuleCoordinator(n=2)
+    dimos = ModuleCoordinator()
     dimos.start()
 
     camera = dimos.deploy(RealSenseCamera, enable_pointcloud=True, pointcloud_fps=5.0)  # type: ignore[type-var]
@@ -479,8 +480,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-realsense_camera = RealSenseCamera.blueprint
-
-__all__ = ["RealSenseCamera", "RealSenseCameraConfig", "realsense_camera"]

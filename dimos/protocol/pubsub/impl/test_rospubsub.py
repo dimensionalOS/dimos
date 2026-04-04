@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections.abc import Generator
-import threading
 
 from dimos_lcm.geometry_msgs import PointStamped
 import numpy as np
@@ -28,7 +27,8 @@ from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 # Add msg_name to LCM PointStamped for testing nested message conversion
 PointStamped.msg_name = "geometry_msgs.PointStamped"
 from dimos.utils.data import get_data
-from dimos.utils.testing import TimedSensorReplay
+from dimos.utils.testing.collector import CallbackCollector
+from dimos.utils.testing.replay import TimedSensorReplay
 
 
 def ros_node():
@@ -57,20 +57,14 @@ def test_basic_conversion(publisher, subscriber):
     Simple flat dimos.msgs type with no nesting (just x/y/z floats).
     """
     topic = ROSTopic("/test_ros_topic", Vector3)
+    collector = CallbackCollector(1)
 
-    received = []
-    event = threading.Event()
-
-    def callback(msg, t):
-        received.append(msg)
-        event.set()
-
-    subscriber.subscribe(topic, callback)
+    subscriber.subscribe(topic, collector)
     publisher.publish(topic, Vector3(1.0, 2.0, 3.0))
 
-    assert event.wait(timeout=2.0), "No message received"
-    assert len(received) == 1
-    msg = received[0]
+    collector.wait()
+    assert len(collector.results) == 1
+    msg = collector.results[0][0]
     assert msg.x == 1.0
     assert msg.y == 2.0
     assert msg.z == 3.0
@@ -95,21 +89,15 @@ def test_pointcloud2_pubsub(publisher, subscriber):
     assert len(original) > 0, "Loaded empty pointcloud"
 
     topic = ROSTopic("/test_pointcloud2", PointCloud2)
+    collector = CallbackCollector(1, timeout=5.0)
 
-    received = []
-    event = threading.Event()
-
-    def callback(msg, t):
-        received.append(msg)
-        event.set()
-
-    subscriber.subscribe(topic, callback)
+    subscriber.subscribe(topic, collector)
     publisher.publish(topic, original)
 
-    assert event.wait(timeout=5.0), "No PointCloud2 message received"
-    assert len(received) == 1
+    collector.wait()
+    assert len(collector.results) == 1
 
-    converted = received[0]
+    converted = collector.results[0][0]
 
     # Verify point cloud data is preserved
     original_points, _ = original.as_numpy()
@@ -147,20 +135,14 @@ def test_pointcloud2_empty_pubsub(publisher, subscriber):
     )
 
     topic = ROSTopic("/test_empty_pointcloud", PointCloud2)
+    collector = CallbackCollector(1)
 
-    received = []
-    event = threading.Event()
-
-    def callback(msg, t):
-        received.append(msg)
-        event.set()
-
-    subscriber.subscribe(topic, callback)
+    subscriber.subscribe(topic, collector)
     publisher.publish(topic, original)
 
-    assert event.wait(timeout=2.0), "No empty PointCloud2 message received"
-    assert len(received) == 1
-    assert len(received[0]) == 0
+    collector.wait()
+    assert len(collector.results) == 1
+    assert len(collector.results[0][0]) == 0
 
 
 @pytest.mark.skipif_no_ros
@@ -178,21 +160,15 @@ def test_posestamped_pubsub(publisher, subscriber):
     )
 
     topic = ROSTopic("/test_posestamped", PoseStamped)
+    collector = CallbackCollector(1)
 
-    received = []
-    event = threading.Event()
-
-    def callback(msg, t):
-        received.append(msg)
-        event.set()
-
-    subscriber.subscribe(topic, callback)
+    subscriber.subscribe(topic, collector)
     publisher.publish(topic, original)
 
-    assert event.wait(timeout=2.0), "No PoseStamped message received"
-    assert len(received) == 1
+    collector.wait()
+    assert len(collector.results) == 1
 
-    converted = received[0]
+    converted = collector.results[0][0]
 
     # Verify all fields preserved
     assert converted.frame_id == original.frame_id
@@ -220,21 +196,15 @@ def test_pointstamped_pubsub(publisher, subscriber):
     original.point.z = 3.5
 
     topic = ROSTopic("/test_pointstamped", PointStamped)
+    collector = CallbackCollector(1)
 
-    received = []
-    event = threading.Event()
-
-    def callback(msg, t):
-        received.append(msg)
-        event.set()
-
-    subscriber.subscribe(topic, callback)
+    subscriber.subscribe(topic, collector)
     publisher.publish(topic, original)
 
-    assert event.wait(timeout=2.0), "No PointStamped message received"
-    assert len(received) == 1
+    collector.wait()
+    assert len(collector.results) == 1
 
-    converted = received[0]
+    converted = collector.results[0][0]
 
     # Verify nested header fields are preserved
     assert converted.header.frame_id == original.header.frame_id
@@ -260,21 +230,15 @@ def test_twist_pubsub(publisher, subscriber):
     )
 
     topic = ROSTopic("/test_twist", Twist)
+    collector = CallbackCollector(1)
 
-    received = []
-    event = threading.Event()
-
-    def callback(msg, t):
-        received.append(msg)
-        event.set()
-
-    subscriber.subscribe(topic, callback)
+    subscriber.subscribe(topic, collector)
     publisher.publish(topic, original)
 
-    assert event.wait(timeout=2.0), "No Twist message received"
-    assert len(received) == 1
+    collector.wait()
+    assert len(collector.results) == 1
 
-    converted = received[0]
+    converted = collector.results[0][0]
 
     # Verify linear velocity preserved
     assert converted.linear.x == original.linear.x

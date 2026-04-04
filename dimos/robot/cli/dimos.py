@@ -177,9 +177,8 @@ def run(
             coordinator.stop()
             raise typer.Exit(1)
 
-        n_workers = coordinator.n_workers
         n_modules = coordinator.n_modules
-        typer.echo(f"✓ All modules started ({n_modules} modules, {n_workers} workers)")
+        typer.echo(f"✓ All modules started ({n_modules} modules)")
         typer.echo("✓ Health check passed")
         typer.echo("✓ DimOS running in background\n")
         typer.echo(f"  Run ID:    {run_id}")

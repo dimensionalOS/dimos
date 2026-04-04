@@ -28,7 +28,8 @@ import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
 
-from dimos.msgs.geometry_msgs import Transform, Vector3
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
@@ -99,6 +100,9 @@ class PointCloud2(Timestamped):
         # Remove non-picklable objects
         del state["_pcd_tensor"]
         state["_pcd_legacy_cache"] = None
+        # Remove cached_property entries that hold unpicklable Open3D types
+        state.pop("oriented_bounding_box", None)
+        state.pop("axis_aligned_bounding_box", None)
         return state
 
     def __setstate__(self, state: dict[str, object]) -> None:

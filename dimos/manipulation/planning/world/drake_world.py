@@ -25,14 +25,10 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from dimos.manipulation.planning.spec import (
-    JointPath,
-    Obstacle,
-    ObstacleType,
-    RobotModelConfig,
-    WorldRobotID,
-    WorldSpec,
-)
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.manipulation.planning.spec.enums import ObstacleType
+from dimos.manipulation.planning.spec.models import JointPath, Obstacle, WorldRobotID
+from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.mesh_utils import prepare_urdf_for_drake
 from dimos.utils.logging_config import setup_logger
 
@@ -41,8 +37,9 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-from dimos.msgs.geometry_msgs import PoseStamped, Transform
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.JointState import JointState
 
 try:
     from pydrake.geometry import (  # type: ignore[import-not-found]
@@ -123,8 +120,6 @@ class _ThreadSafeMeshcat:
         if current_thread() is self._thread:
             return fn(*args, **kwargs)
         return self._executor.submit(fn, *args, **kwargs).result()
-
-    # --- Meshcat proxies ---
 
     def SetObject(self, *args: Any, **kwargs: Any) -> Any:
         return self._call(self._inner.SetObject, *args, **kwargs)
@@ -207,7 +202,7 @@ class DrakeWorld(WorldSpec):
             self._robot_counter += 1
             robot_id = f"robot_{self._robot_counter}"
 
-            model_instance = self._load_urdf(config)
+            model_instance = self._load_model(config)
             self._weld_base_if_needed(config, model_instance)
             self._validate_joints(config, model_instance)
 
@@ -219,7 +214,7 @@ class DrakeWorld(WorldSpec):
             # Load a second copy of the URDF as the preview (yellow ghost) robot
             preview_model_instance = None
             if self._enable_viz:
-                preview_model_instance = self._load_urdf(config)
+                preview_model_instance = self._load_model(config)
                 self._weld_base_if_needed(config, preview_model_instance)
 
             self._robots[robot_id] = _RobotData(
@@ -235,31 +230,39 @@ class DrakeWorld(WorldSpec):
             logger.info(f"Added robot '{robot_id}' ({config.name})")
             return robot_id
 
-    def _load_urdf(self, config: RobotModelConfig) -> Any:
-        """Load URDF/xacro and return model instance."""
-        original_path = config.urdf_path.resolve()
+    def _load_model(self, config: RobotModelConfig) -> Any:
+        """Load robot model (URDF/xacro/MJCF) and return model instance."""
+        original_path = config.model_path.resolve()
         if not original_path.exists():
-            raise FileNotFoundError(f"URDF/xacro not found: {original_path}")
+            raise FileNotFoundError(f"Robot model not found: {original_path}")
 
-        urdf_path = prepare_urdf_for_drake(
-            urdf_path=original_path,
-            package_paths=config.package_paths,
-            xacro_args=config.xacro_args,
-            convert_meshes=config.auto_convert_meshes,
-        )
-        urdf_path_obj = Path(urdf_path)
-        logger.info(f"Using prepared URDF: {urdf_path_obj}")
-
-        # Register package paths
-        if config.package_paths:
-            for pkg_name, pkg_path in config.package_paths.items():
-                self._parser.package_map().Add(pkg_name, Path(pkg_path))
+        if original_path.suffix == ".xml":
+            # MJCF — pass directly to Drake (detects format from .xml extension)
+            prepared_path_obj = original_path
         else:
-            self._parser.package_map().Add(f"{config.name}_description", urdf_path_obj.parent)
+            # URDF/xacro — preprocess (xacro expansion, mesh conversion, package URI resolution)
+            prepared_path = prepare_urdf_for_drake(
+                urdf_path=original_path,
+                package_paths=config.package_paths,
+                xacro_args=config.xacro_args,
+                convert_meshes=config.auto_convert_meshes,
+            )
+            prepared_path_obj = Path(prepared_path)
 
-        model_instances = self._parser.AddModels(urdf_path_obj)
+            # Register package paths (not applicable to MJCF)
+            if config.package_paths:
+                for pkg_name, pkg_path in config.package_paths.items():
+                    self._parser.package_map().Add(pkg_name, Path(pkg_path))
+            else:
+                self._parser.package_map().Add(
+                    f"{config.name}_description", prepared_path_obj.parent
+                )
+
+        logger.info(f"Using prepared model: {prepared_path_obj}")
+
+        model_instances = self._parser.AddModels(prepared_path_obj)
         if not model_instances:
-            raise ValueError(f"Failed to parse URDF: {urdf_path}")
+            raise ValueError(f"Failed to parse model: {prepared_path}")
         return model_instances[0]
 
     def _weld_base_if_needed(self, config: RobotModelConfig, model_instance: Any) -> None:
@@ -320,14 +323,33 @@ class DrakeWorld(WorldSpec):
                 np.array(config.joint_limits_upper),
             )
 
-        # Default to ±π
+        # Query Drake plant if finalized (limits from URDF/MJCF)
+        if self._finalized:
+            robot_data = self._robots[robot_id]
+            lower = []
+            upper = []
+            for joint_name in config.joint_names:
+                joint = self._plant.GetJointByName(joint_name, robot_data.model_instance)
+                lower_val = joint.position_lower_limits()[0]
+                upper_val = joint.position_upper_limits()[0]
+                if not np.isfinite(lower_val) or not np.isfinite(upper_val):
+                    logger.warning(
+                        "Joint '%s' has no limits in model; falling back to ±π", joint_name
+                    )
+                    lower_val = -np.pi if not np.isfinite(lower_val) else lower_val
+                    upper_val = np.pi if not np.isfinite(upper_val) else upper_val
+                lower.append(lower_val)
+                upper.append(upper_val)
+            return (np.array(lower), np.array(upper))
+
+        # Pre-finalization fallback
         n_joints = len(config.joint_names)
         return (
             np.full(n_joints, -np.pi),
             np.full(n_joints, np.pi),
         )
 
-    # ============= Obstacle Management =============
+    # Obstacle Management
 
     def add_obstacle(self, obstacle: Obstacle) -> str:
         """Add an obstacle to the world."""
@@ -536,7 +558,12 @@ class DrakeWorld(WorldSpec):
             for obs_id in obstacle_ids:
                 self.remove_obstacle(obs_id)
 
-    # ============= Preview Robot Setup =============
+    def get_obstacles(self) -> list[Obstacle]:
+        """Get all obstacles currently in the world."""
+        with self._lock:
+            return [data.obstacle for data in self._obstacles.values()]
+
+    # Preview Robot Setup
 
     def _set_preview_colors(self) -> None:
         """Set all preview robot visual geometries to yellow/semi-transparent."""
@@ -565,7 +592,7 @@ class DrakeWorld(WorldSpec):
                 for geom_id in self._plant.GetCollisionGeometriesForBody(body):
                     self._scene_graph.RemoveRole(source_id, geom_id, Role.kProximity)
 
-    # ============= Lifecycle =============
+    # Lifecycle
 
     def finalize(self) -> None:
         """Finalize world - locks robot topology, enables collision checking."""
@@ -636,6 +663,12 @@ class DrakeWorld(WorldSpec):
                 self._scene_graph, self._live_context
             )
 
+            # Set home pose for robots that have one configured
+            for robot_data in self._robots.values():
+                if robot_data.config.home_joints is not None:
+                    home = np.array(robot_data.config.home_joints, dtype=np.float64)
+                    self._set_positions_internal(self._plant_context, robot_data.robot_id, home)
+
             self._finalized = True
             logger.info(f"World finalized with {len(self._robots)} robots")
 
@@ -683,7 +716,7 @@ class DrakeWorld(WorldSpec):
                 )
             )
 
-    # ============= Context Management =============
+    # Context Management
 
     def get_live_context(self) -> Context:
         """Get the live context (mirrors current robot state).
@@ -736,7 +769,7 @@ class DrakeWorld(WorldSpec):
             # Calling ForcedPublish from the LCM callback thread blocks message processing.
             # Visualization can be updated via publish_to_meshcat() from non-callback contexts.
 
-    # ============= State Operations (context-based) =============
+    # State Operations (context-based)
 
     def set_joint_state(
         self, ctx: Context, robot_id: WorldRobotID, joint_state: JointState
@@ -782,7 +815,7 @@ class DrakeWorld(WorldSpec):
         positions = [float(full_positions[idx]) for idx in robot_data.joint_indices]
         return JointState(name=robot_data.config.joint_names, position=positions)
 
-    # ============= Collision Checking (context-based) =============
+    # Collision Checking (context-based)
 
     def is_collision_free(self, ctx: Context, robot_id: WorldRobotID) -> bool:
         """Check if current configuration in context is collision-free."""
@@ -812,7 +845,7 @@ class DrakeWorld(WorldSpec):
 
         return float(min(pair.distance for pair in signed_distance_pairs))
 
-    # ============= Collision Checking (context-free, for planning) =============
+    # Collision Checking (context-free, for planning)
 
     def check_config_collision_free(self, robot_id: WorldRobotID, joint_state: JointState) -> bool:
         """Check if a joint state is collision-free (manages context internally).
@@ -859,7 +892,7 @@ class DrakeWorld(WorldSpec):
 
         return True
 
-    # ============= Forward Kinematics (context-based) =============
+    # Forward Kinematics (context-based)
 
     def get_ee_pose(self, ctx: Context, robot_id: WorldRobotID) -> PoseStamped:
         """Get end-effector pose."""
@@ -944,7 +977,7 @@ class DrakeWorld(WorldSpec):
 
         return J_reordered
 
-    # ============= Visualization =============
+    # Visualization
 
     def get_visualization_url(self) -> str | None:
         """Get visualization URL if enabled."""
@@ -1029,7 +1062,7 @@ class DrakeWorld(WorldSpec):
         if self._meshcat is not None:
             self._meshcat.close()
 
-    # ============= Direct Access (use with caution) =============
+    # Direct Access (use with caution)
 
     @property
     def plant(self) -> MultibodyPlant:

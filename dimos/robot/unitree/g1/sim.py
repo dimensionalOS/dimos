@@ -16,53 +16,49 @@
 import threading
 from threading import Thread
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from pydantic import Field
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
+from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import (
-    PoseStamped,
-    Quaternion,
-    Transform,
-    Twist,
-    Vector3,
-)
-from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.g1.connection import G1ConnectionBase
+from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.robot.unitree.type.odometry import Odometry as SimOdometry
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
 logger = setup_logger()
 
 
-class G1SimConnection(G1ConnectionBase):
+class G1SimConfig(ModuleConfig):
+    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
+
+
+class G1SimConnection(G1ConnectionBase[G1SimConfig]):
+    default_config = G1SimConfig
+
     cmd_vel: In[Twist]
     lidar: Out[PointCloud2]
     odom: Out[PoseStamped]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
-    ip: str | None
-    _global_config: GlobalConfig
+    connection: MujocoConnection | None = None
     _camera_info_thread: Thread | None = None
 
-    def __init__(
-        self,
-        ip: str | None = None,
-        cfg: GlobalConfig = global_config,
-        *args: Any,
-        **kwargs: Any,
-    ) -> None:
-        self._global_config = cfg
-        self.ip = ip if ip is not None else self._global_config.robot_ip
-        self.connection: MujocoConnection | None = None
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._stop_event = threading.Event()
-        super().__init__(*args, **kwargs)
 
     @rpc
     def start(self) -> None:
@@ -70,7 +66,7 @@ class G1SimConnection(G1ConnectionBase):
 
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
-        self.connection = MujocoConnection(self._global_config)
+        self.connection = MujocoConnection(self.config.g)
         assert self.connection is not None
         self.connection.start()
 
@@ -91,7 +87,7 @@ class G1SimConnection(G1ConnectionBase):
         assert self.connection is not None
         self.connection.stop()
         if self._camera_info_thread and self._camera_info_thread.is_alive():
-            self._camera_info_thread.join(timeout=1.0)
+            self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
     def _publish_camera_info_loop(self) -> None:
@@ -153,9 +149,3 @@ class G1SimConnection(G1ConnectionBase):
         logger.info(f"Publishing request to topic: {topic} with data: {data}")
         assert self.connection is not None
         return self.connection.publish_request(topic, data)
-
-
-g1_sim_connection = G1SimConnection.blueprint
-
-
-__all__ = ["G1SimConnection", "g1_sim_connection"]

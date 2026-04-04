@@ -35,7 +35,7 @@ Trapezoidal Profile:
 
 from typing import Protocol
 
-from dimos.msgs.trajectory_msgs import JointTrajectory
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 
 
 class JointTrajectoryGeneratorSpec(Protocol):

@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 import time
+from typing import Any
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
@@ -23,18 +23,16 @@ from reactivex.disposable import Disposable
 from reactivex.subject import Subject
 
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.utils.decorators import simple_mcache
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
 
-@dataclass
 class Config(ModuleConfig):
     frame_id: str = "world"
     # -1 never publishes, 0 publishes on every frame, >0 publishes at interval in seconds
@@ -45,16 +43,14 @@ class Config(ModuleConfig):
     carve_columns: bool = True
 
 
-class VoxelGridMapper(Module):
+class VoxelGridMapper(Module[Config]):
     default_config = Config
-    config: Config
 
     lidar: In[PointCloud2]
     global_map: Out[PointCloud2]
 
-    def __init__(self, cfg: GlobalConfig = global_config, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._global_config = cfg
 
         dev = (
             o3c.Device(self.config.device)
@@ -245,6 +241,3 @@ def ensure_legacy_pcd(
     )
 
     return pcd_any.to_legacy()
-
-
-voxel_mapper = VoxelGridMapper.blueprint

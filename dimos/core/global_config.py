@@ -17,8 +17,7 @@ from typing import Literal, TypeAlias
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from dimos.mapping.occupancy.path_map import NavigationStrategy
-from dimos.models.vl.create import VlModelName
+from dimos.models.vl.types import VlModelName
 
 ViewerBackend: TypeAlias = Literal["rerun", "rerun-web", "rerun-connect", "foxglove", "none"]
 
@@ -30,6 +29,9 @@ def _get_all_numbers(s: str) -> list[float]:
 class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
     robot_ips: str | None = None
+    xarm7_ip: str | None = None
+    xarm6_ip: str | None = None
+    can_port: str = "can0"
     simulation: bool = False
     replay: bool = False
     replay_dir: str = "go2_sf_office"
@@ -48,10 +50,10 @@ class GlobalConfig(BaseSettings):
     mujoco_robot_xml: str | None = None
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
-    planner_strategy: NavigationStrategy = "simple"
+    nerf_speed: float = 1.0
     planner_robot_speed: float | None = None
     mcp_port: int = 9990
-    mcp_host: str = "0.0.0.0"
+    mcp_host: str = "127.0.0.1"
     dtop: bool = False
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"

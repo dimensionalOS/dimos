@@ -18,7 +18,6 @@ Every test launches the real native_echo.py subprocess via blueprint.build().
 The echo script writes received CLI args to a temp file for assertions.
 """
 
-from dataclasses import dataclass
 import json
 from pathlib import Path
 import time
@@ -59,7 +58,6 @@ def read_json_file(path: str) -> dict[str, str]:
     return result
 
 
-@dataclass(kw_only=True)
 class StubNativeConfig(NativeModuleConfig):
     executable: str = _ECHO
     log_format: LogFormat = LogFormat.TEXT
@@ -108,6 +106,13 @@ def test_process_crash_triggers_stop() -> None:
             break
 
     assert mod._process is None, f"Watchdog did not clean up after process {pid} died"
+
+    # Wait for background threads (run_forever, _lcm_loop, _watch_process) to finish
+    # after the watchdog-triggered stop(). Without this, monitor_threads catches them.
+    time.sleep(0.5)
+
+    # Ensure all threads (LCM transport, event loop) are cleaned up
+    mod.stop()
 
 
 @pytest.mark.slow

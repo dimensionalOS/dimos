@@ -23,7 +23,10 @@ from typing import Any
 from pymavlink import mavutil  # type: ignore[import-not-found, import-untyped]
 from reactivex import Subject
 
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Twist, Vector3
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(level=logging.INFO)
@@ -1028,7 +1031,7 @@ class FakeMavlinkConnection(MavlinkConnection):
         class FakeMavlink:
             def __init__(self) -> None:
                 from dimos.utils.data import get_data
-                from dimos.utils.testing import TimedSensorReplay
+                from dimos.utils.testing.replay import TimedSensorReplay
 
                 get_data("drone")
 

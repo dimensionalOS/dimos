@@ -28,7 +28,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
 from dimos.types.timestamped import Timestamped
 
 

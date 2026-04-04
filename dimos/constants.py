@@ -32,3 +32,6 @@ DEFAULT_CAPACITY_DEPTH_IMAGE = 1280 * 720 * 4
 
 # From https://github.com/lcm-proj/lcm.git
 LCM_MAX_CHANNEL_NAME_LENGTH = 63
+
+# Default timeout (seconds) for thread.join() during shutdown.
+DEFAULT_THREAD_JOIN_TIMEOUT = 2.0

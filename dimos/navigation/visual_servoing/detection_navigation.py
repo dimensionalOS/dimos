@@ -15,11 +15,15 @@
 from dimos_lcm.sensor_msgs import CameraInfo as DimosLcmCameraInfo
 import numpy as np
 
-from dimos.msgs.geometry_msgs import Transform, Twist, Vector3
-from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
-from dimos.perception.detection.type.detection3d import Detection3DPC
-from dimos.protocol.tf import LCMTF
+from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
+from dimos.protocol.tf.tf import LCMTF
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

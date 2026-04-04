@@ -15,7 +15,7 @@
 try:
     from geometry_msgs.msg import Vector3  # type: ignore[attr-defined]
 except ImportError:
-    from dimos.msgs.geometry_msgs import Vector3
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 try:
     from geometry_msgs.msg import (  # type: ignore[attr-defined]

@@ -15,41 +15,43 @@
 import asyncio
 import os
 import time
+from typing import Any
 
 import pytest
 from reactivex import operators as ops
 
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import Transform
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.testing import TimedSensorReplay
+from dimos.utils.testing.replay import TimedSensorReplay
 
 logger = setup_logger()
 
 
-class VideoReplayModule(Module):
+class VideoReplayConfig(ModuleConfig):
+    video_path: str
+
+
+class VideoReplayModule(Module[VideoReplayConfig]):
     """Module that replays video data from TimedSensorReplay."""
 
+    default_config = VideoReplayConfig
     video_out: Out[Image]
-
-    def __init__(self, video_path: str) -> None:
-        super().__init__()
-        self.video_path = video_path
-        self._subscription = None
+    _subscription = None
 
     @rpc
     def start(self) -> None:
         """Start replaying video data."""
         # Use TimedSensorReplay to replay video frames
-        video_replay = TimedSensorReplay(self.video_path, autocast=Image.from_numpy)
+        video_replay = TimedSensorReplay(self.config.video_path, autocast=Image.from_numpy)
 
         # Subscribe to the replay stream and publish to LCM
         self._subscription = (
@@ -75,7 +77,7 @@ class VideoReplayModule(Module):
 class OdometryReplayModule(Module):
     """Module that replays odometry data and publishes to the tf system."""
 
-    def __init__(self, odom_path: str) -> None:
+    def __init__(self, odom_path: str, **kwargs: Any) -> None:
         super().__init__()
         self.odom_path = odom_path
         self._subscription = None
@@ -133,11 +135,11 @@ async def test_spatial_memory_module_with_replay(dimos, tmp_path):
 
     # Deploy modules
     # Video replay module
-    video_module = dimos.deploy(VideoReplayModule, video_path)
+    video_module = dimos.deploy(VideoReplayModule, video_path=video_path)
     video_module.video_out.transport = LCMTransport("/test_video", Image)
 
     # Odometry replay module (publishes to tf system directly)
-    odom_module = dimos.deploy(OdometryReplayModule, odom_path)
+    odom_module = dimos.deploy(OdometryReplayModule, odom_path=odom_path)
 
     # Spatial memory module
     spatial_memory = dimos.deploy(

@@ -14,7 +14,6 @@
 
 from collections.abc import Generator
 from contextlib import contextmanager
-import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -28,9 +27,9 @@ from omegaconf import OmegaConf  # type: ignore[import-not-found]
 from PIL import Image as PILImage
 import torch
 
-from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.detectors.types import Detector
-from dimos.perception.detection.type import ImageDetections2D
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.detectors.base import Detector
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.seg import Detection2DSeg
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -38,7 +37,6 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-os.environ['TQDM_DISABLE'] = '1'
 
 logger = setup_logger()
 
@@ -87,6 +85,10 @@ class EdgeTAMProcessor(Detector):
             cfg.model._target_ = "sam2.sam2_video_predictor.SAM2VideoPredictor"
 
         self._predictor = instantiate(cfg.model, _recursive_=True)
+
+        # Suppress the per-frame "propagate in video" tqdm bar from sam2
+        import sam2.sam2_video_predictor as _svp
+        _svp.tqdm = lambda iterable, *a, **kw: iterable
 
         ckpt_path = str(get_data("models_edgetam") / "edgetam.pt")
 

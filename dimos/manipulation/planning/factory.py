@@ -19,11 +19,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from dimos.manipulation.planning.spec import (
-        KinematicsSpec,
-        PlannerSpec,
-        WorldSpec,
-    )
+    from dimos.manipulation.planning.spec.protocols import KinematicsSpec, PlannerSpec, WorldSpec
 
 
 def create_world(

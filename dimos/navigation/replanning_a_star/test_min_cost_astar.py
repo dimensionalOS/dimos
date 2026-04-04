@@ -59,6 +59,54 @@ def test_astar_corner(costmap_three_paths) -> None:
     np.testing.assert_array_equal(actual.data, expected.data)
 
 
+def test_astar_unknown_penalty_blocks_unknown_cells(costmap) -> None:
+    """With unknown_penalty=1.0, unknown cells should be untraversable."""
+    # Create a grid with a corridor of free cells and unknown cells surrounding it.
+    # Place start and goal such that the shortest path would go through unknown cells
+    # but with penalty=1.0 it should either avoid them or return None.
+    grid = np.full((100, 100), -1, dtype=np.int8)  # All unknown
+    # Carve a U-shaped free corridor: left column, bottom row, right column
+    grid[10:90, 10] = 0  # left column
+    grid[89, 10:90] = 0  # bottom row
+    grid[10:90, 89] = 0  # right column
+    og = OccupancyGrid(grid, resolution=0.1)
+
+    start = og.grid_to_world((10, 10))
+    goal = og.grid_to_world((89, 10))
+
+    for use_cpp in [False, True]:
+        path = min_cost_astar(og, goal, start, unknown_penalty=1.0, use_cpp=use_cpp)
+        if path is None:
+            # No path through unknown is also acceptable
+            continue
+        # Verify no path cell lands on an unknown cell
+        for pose in path.poses:
+            gp = og.world_to_grid((pose.position.x, pose.position.y))
+            gx, gy = round(gp.x), round(gp.y)
+            if 0 <= gx < 100 and 0 <= gy < 100:
+                assert grid[gy, gx] != -1, (
+                    f"Path traverses unknown cell at grid ({gx}, {gy}), use_cpp={use_cpp}"
+                )
+
+
+def test_astar_unknown_penalty_allows_with_low_penalty(costmap) -> None:
+    """With unknown_penalty < 1.0, unknown cells should be traversable."""
+    grid = np.full((50, 50), -1, dtype=np.int8)  # All unknown
+    grid[5, 5] = 0  # start cell free
+    grid[45, 45] = 0  # goal cell free
+    og = OccupancyGrid(grid, resolution=0.1)
+
+    start = og.grid_to_world((5, 5))
+    goal = og.grid_to_world((45, 45))
+
+    for use_cpp in [False, True]:
+        path = min_cost_astar(og, goal, start, unknown_penalty=0.5, use_cpp=use_cpp)
+        assert path is not None, (
+            f"Should find path through unknown with penalty=0.5, use_cpp={use_cpp}"
+        )
+        assert len(path.poses) > 0
+
+
 def test_astar_python_and_cpp(costmap) -> None:
     start = Vector3(4.0, 2.0, 0)
     goal = Vector3(6.15, 10.0)

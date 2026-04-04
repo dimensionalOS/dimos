@@ -18,53 +18,61 @@ NavBot class for navigation-related functionality.
 Encapsulates ROS transport and topic remapping for Unitree robots.
 """
 
-from dataclasses import dataclass, field
 import logging
 import threading
 import time
+from typing import Any
 
+from pydantic import Field
 from reactivex import operators as ops
 from reactivex.subject import Subject
 
-from dimos import spec
 from dimos.agents.annotation import skill
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, ROSTransport
-from dimos.msgs.geometry_msgs import (
-    PoseStamped,
-    Quaternion,
-    Transform,
-    Twist,
-    TwistStamped,
-    Vector3,
-)
-from dimos.msgs.nav_msgs import Path
-from dimos.msgs.sensor_msgs import Joy, PointCloud2
-from dimos.msgs.std_msgs import Bool, Int8
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.sensor_msgs.Joy import Joy
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.Int8 import Int8
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.base import NavigationInterface, NavigationState
+from dimos.spec.control import LocalPlanner
+from dimos.spec.mapping import GlobalPointcloud
+from dimos.spec.nav import Nav
+from dimos.spec.perception import Pointcloud
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 
 logger = setup_logger(level=logging.INFO)
 
 
-@dataclass
 class Config(ModuleConfig):
     local_pointcloud_freq: float = 2.0
     global_map_freq: float = 1.0
-    sensor_to_base_link_transform: Transform = field(
+    sensor_to_base_link_transform: Transform = Field(
         default_factory=lambda: Transform(frame_id="sensor", child_frame_id="base_link")
     )
 
 
 class ROSNav(
-    Module, NavigationInterface, spec.Nav, spec.GlobalPointcloud, spec.Pointcloud, spec.LocalPlanner
+    Module[Config],
+    NavigationInterface,
+    Nav,
+    GlobalPointcloud,
+    Pointcloud,
+    LocalPlanner,
 ):
-    config: Config
     default_config = Config
 
     # Existing ports (default LCM/pSHM transport)
@@ -106,8 +114,8 @@ class ROSNav(
     _current_goal: PoseStamped | None = None
     _goal_reached: bool = False
 
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
         # Initialize RxPY Subjects for streaming data
         self._local_pointcloud_subject = Subject()
@@ -309,7 +317,7 @@ class ROSNav(
         if self._navigation_thread and self._navigation_thread.is_alive():
             logger.warning("Previous navigation still running, cancelling")
             self.stop_navigation()
-            self._navigation_thread.join(timeout=1.0)
+            self._navigation_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         self._navigation_thread = threading.Thread(
             target=self._navigate_to_goal_async,
@@ -374,9 +382,6 @@ class ROSNav(
             super().stop()
 
 
-ros_nav = ROSNav.blueprint
-
-
 def deploy(dimos: ModuleCoordinator):  # type: ignore[no-untyped-def]
     nav = dimos.deploy(ROSNav)  # type: ignore[attr-defined]
 
@@ -405,6 +410,3 @@ def deploy(dimos: ModuleCoordinator):  # type: ignore[no-untyped-def]
 
     nav.start()
     return nav
-
-
-__all__ = ["ROSNav", "deploy", "ros_nav"]

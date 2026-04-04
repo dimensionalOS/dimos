@@ -26,13 +26,12 @@ from dimos.manipulation.manipulation_module import (
     ManipulationModule,
     ManipulationState,
 )
-from dimos.manipulation.planning.spec import RobotModelConfig
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint
-
-# =============================================================================
-# Fixtures
-# =============================================================================
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
 
 @pytest.fixture
@@ -40,7 +39,7 @@ def robot_config():
     """Create a robot config for testing."""
     return RobotModelConfig(
         name="test_arm",
-        urdf_path=Path("/path/to/robot.urdf"),
+        model_path=Path("/path/to/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         end_effector_link="link_tcp",
@@ -56,7 +55,7 @@ def robot_config_with_mapping():
     """Create a robot config with joint name mapping (dual-arm scenario)."""
     return RobotModelConfig(
         name="left_arm",
-        urdf_path=Path("/path/to/robot.urdf"),
+        model_path=Path("/path/to/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         end_effector_link="link_tcp",
@@ -101,11 +100,6 @@ def _make_module():
         module._kinematics = None
         module._coordinator_client = None
         return module
-
-
-# =============================================================================
-# Test State Machine
-# =============================================================================
 
 
 class TestStateMachine:
@@ -167,11 +161,6 @@ class TestStateMachine:
         assert module._begin_planning() is None
 
 
-# =============================================================================
-# Test Robot Selection
-# =============================================================================
-
-
 class TestRobotSelection:
     """Test robot selection logic."""
 
@@ -201,11 +190,6 @@ class TestRobotSelection:
         assert result[0] == "left"
 
 
-# =============================================================================
-# Test Joint Name Translation (for coordinator integration)
-# =============================================================================
-
-
 class TestJointNameTranslation:
     """Test trajectory joint name translation for coordinator."""
 
@@ -227,11 +211,6 @@ class TestJointNameTranslation:
         assert len(result.points) == 2  # Points preserved
 
 
-# =============================================================================
-# Test Execute Method
-# =============================================================================
-
-
 class TestExecute:
     """Test coordinator execution."""
 
@@ -248,7 +227,7 @@ class TestExecute:
         module = _make_module()
         config_no_task = RobotModelConfig(
             name="arm",
-            urdf_path=Path("/path"),
+            model_path=Path("/path"),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["j1"],
             end_effector_link="ee",
@@ -286,11 +265,6 @@ class TestExecute:
 
         assert module.execute() is False
         assert module._state == ManipulationState.FAULT
-
-
-# =============================================================================
-# Test RobotModelConfig Mapping Helpers
-# =============================================================================
 
 
 class TestRobotModelConfigMapping:

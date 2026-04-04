@@ -30,9 +30,12 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.utils.logging_config import setup_logger
 
+from .temporal_utils.parsers import parse_batch_distance_response
+from .temporal_utils.prompts import build_batch_distance_estimation_prompt
+
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel
-    from dimos.msgs.sensor_msgs import Image
+    from dimos.msgs.sensor_msgs.Image import Image
 
 logger = setup_logger()
 
@@ -122,7 +125,7 @@ class EntityGraphDB:
 
         conn.commit()
 
-    # ==================== Entity Operations ====================
+    # Entity Operations
 
     def upsert_entity(
         self,
@@ -216,7 +219,7 @@ class EntityGraphDB:
             for row in cursor.fetchall()
         ]
 
-    # ==================== Relation Operations ====================
+    # Relation Operations
 
     def add_relation(
         self,
@@ -290,7 +293,7 @@ class EntityGraphDB:
             for row in cursor.fetchall()
         ]
 
-    # ==================== Distance Operations ====================
+    # Distance Operations
 
     def add_distance(
         self,
@@ -424,7 +427,7 @@ class EntityGraphDB:
             for row in cursor.fetchall()
         ]
 
-    # ==================== Neighborhood Query ====================
+    # Neighborhood Query
 
     def get_entity_neighborhood(
         self,
@@ -471,7 +474,7 @@ class EntityGraphDB:
             "num_hops": max_hops,
         }
 
-    # ==================== Stats / Summary ====================
+    # Stats / Summary
 
     def get_stats(self) -> dict[str, Any]:
         conn = self._get_connection()
@@ -491,7 +494,7 @@ class EntityGraphDB:
             "recent_relations": self.get_recent_relations(limit=recent_relations_limit),
         }
 
-    # ==================== Bulk Save ====================
+    # Bulk Save
 
     def save_window_data(
         self,
@@ -557,14 +560,13 @@ class EntityGraphDB:
         self,
         parsed: dict[str, Any],
         frame_image: Image,
-        vlm: VlModel,
+        vlm: VlModel[Any],
         timestamp_s: float,
         max_distance_pairs: int = 5,
     ) -> None:
         """Estimate distances between entities using VLM and save to database."""
         if not frame_image:
             return
-        from . import temporal_utils as tu
 
         enriched_entities: list[dict[str, Any]] = []
         for entity in parsed.get("new_entities", []):
@@ -593,8 +595,8 @@ class EntityGraphDB:
         if not pairs:
             return
         try:
-            response = vlm.query(frame_image, tu.build_batch_distance_estimation_prompt(pairs))
-            for r in tu.parse_batch_distance_response(response, pairs):
+            response = vlm.query(frame_image, build_batch_distance_estimation_prompt(pairs))
+            for r in parse_batch_distance_response(response, pairs):
                 if r["category"] in ("near", "medium", "far"):
                     self.add_distance(
                         entity_a_id=r["entity_a_id"],
@@ -608,7 +610,7 @@ class EntityGraphDB:
         except Exception as e:
             logger.warning(f"Failed to estimate distances: {e}", exc_info=True)
 
-    # ==================== Lifecycle ====================
+    # Lifecycle
 
     def commit(self) -> None:
         if hasattr(self._local, "conn"):

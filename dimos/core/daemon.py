@@ -31,10 +31,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-# ---------------------------------------------------------------------------
-# Health check (delegates to ModuleCoordinator.health_check)
-# ---------------------------------------------------------------------------
-
 
 def health_check(coordinator: ModuleCoordinator) -> bool:
     """Verify all coordinator workers are alive after build.
@@ -43,11 +39,6 @@ def health_check(coordinator: ModuleCoordinator) -> bool:
         Use ``coordinator.health_check()`` directly.
     """
     return coordinator.health_check()
-
-
-# ---------------------------------------------------------------------------
-# Daemonize (double-fork)
-# ---------------------------------------------------------------------------
 
 
 def daemonize(log_dir: Path) -> None:
@@ -81,11 +72,6 @@ def daemonize(log_dir: Path) -> None:
     os.dup2(devnull.fileno(), sys.stdout.fileno())
     os.dup2(devnull.fileno(), sys.stderr.fileno())
     devnull.close()
-
-
-# ---------------------------------------------------------------------------
-# Signal handler for clean shutdown
-# ---------------------------------------------------------------------------
 
 
 def install_signal_handlers(entry: RunEntry, coordinator: ModuleCoordinator) -> None:

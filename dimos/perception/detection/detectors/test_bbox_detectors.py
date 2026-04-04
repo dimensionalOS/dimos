@@ -17,8 +17,9 @@ import pytest
 from reactivex.disposable import CompositeDisposable
 
 from dimos.core.transport import LCMTransport
-from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.type import Detection2D, ImageDetections2D
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.type.detection2d.base import Detection2D
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 
 
 @pytest.fixture(params=["bbox_detector", "person_detector", "yoloe_detector"], scope="session")

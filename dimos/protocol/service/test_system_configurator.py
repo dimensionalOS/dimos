@@ -19,60 +19,39 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dimos.protocol.service.system_configurator import (
+from dimos.protocol.service.system_configurator.base import (
+    SystemConfigurator,
+    _read_sysctl_int,
+    _write_sysctl_int,
+    configure_system,
+)
+from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
+from dimos.protocol.service.system_configurator.lcm import (
     IDEAL_RMEM_SIZE,
     BufferConfiguratorLinux,
     BufferConfiguratorMacOS,
-    ClockSyncConfigurator,
     MaxFileConfiguratorMacOS,
     MulticastConfiguratorLinux,
     MulticastConfiguratorMacOS,
-    SystemConfigurator,
-    configure_system,
-    sudo_run,
 )
-from dimos.protocol.service.system_configurator.base import (
-    _is_root_user,
-    _read_sysctl_int,
-    _write_sysctl_int,
-)
+from dimos.utils import prompt
 
-# ----------------------------- Helper function tests -----------------------------
-
-
-class TestIsRootUser:
-    def test_is_root_when_euid_is_zero(self) -> None:
-        # Clear the cache before testing
-        _is_root_user.cache_clear()
-        with patch("os.geteuid", return_value=0):
-            assert _is_root_user() is True
-
-    def test_is_not_root_when_euid_is_nonzero(self) -> None:
-        _is_root_user.cache_clear()
-        with patch("os.geteuid", return_value=1000):
-            assert _is_root_user() is False
-
-    def test_returns_false_when_geteuid_not_available(self) -> None:
-        _is_root_user.cache_clear()
-        with patch("os.geteuid", side_effect=AttributeError):
-            assert _is_root_user() is False
+# Helper function tests
 
 
 class TestSudoRun:
     def test_runs_without_sudo_when_root(self) -> None:
-        _is_root_user.cache_clear()
         with patch("os.geteuid", return_value=0):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
-                sudo_run("echo", "hello", check=True)
+                prompt.sudo_run("echo", "hello", check=True)
                 mock_run.assert_called_once_with(["echo", "hello"], check=True)
 
     def test_runs_with_sudo_when_not_root(self) -> None:
-        _is_root_user.cache_clear()
         with patch("os.geteuid", return_value=1000):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
-                sudo_run("echo", "hello", check=True)
+                prompt.sudo_run("echo", "hello", check=True)
                 mock_run.assert_called_once_with(["sudo", "echo", "hello"], check=True)
 
 
@@ -109,7 +88,6 @@ class TestReadSysctlInt:
 
 class TestWriteSysctlInt:
     def test_calls_sudo_run_with_correct_args(self) -> None:
-        _is_root_user.cache_clear()
         with patch("os.geteuid", return_value=1000):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
@@ -122,7 +100,7 @@ class TestWriteSysctlInt:
                 )
 
 
-# ----------------------------- configure_system tests -----------------------------
+# configure_system tests
 
 
 class MockConfigurator(SystemConfigurator):
@@ -168,25 +146,25 @@ class TestConfigureSystem:
 
     def test_prompts_user_and_fixes_on_yes(self, mocker) -> None:
         mock_check = MockConfigurator(passes=False)
-        mocker.patch("typer.confirm", return_value=True)
+        mocker.patch("dimos.utils.prompt.confirm", return_value=True)
         configure_system([mock_check])
         assert mock_check.fix_called
 
     def test_does_not_fix_on_no(self, mocker) -> None:
         mock_check = MockConfigurator(passes=False)
-        mocker.patch("typer.confirm", return_value=False)
+        mocker.patch("dimos.utils.prompt.confirm", return_value=False)
         configure_system([mock_check])
         assert not mock_check.fix_called
 
     def test_exits_on_no_with_critical_check(self, mocker) -> None:
         mock_check = MockConfigurator(passes=False, is_critical=True)
-        mocker.patch("typer.confirm", return_value=False)
+        mocker.patch("dimos.utils.prompt.confirm", return_value=False)
         with pytest.raises(SystemExit) as exc_info:
             configure_system([mock_check])
         assert exc_info.value.code == 1
 
 
-# ----------------------------- MulticastConfiguratorLinux tests -----------------------------
+# MulticastConfiguratorLinux tests
 
 
 class TestMulticastConfiguratorLinux:
@@ -248,7 +226,6 @@ class TestMulticastConfiguratorLinux:
         assert "ip route add 224.0.0.0/4 dev lo" in explanation
 
     def test_fix_runs_needed_commands(self) -> None:
-        _is_root_user.cache_clear()
         configurator = MulticastConfiguratorLinux()
         configurator.loopback_ok = False
         configurator.route_ok = False
@@ -259,7 +236,7 @@ class TestMulticastConfiguratorLinux:
                 assert mock_run.call_count == 2
 
 
-# ----------------------------- MulticastConfiguratorMacOS tests -----------------------------
+# MulticastConfiguratorMacOS tests
 
 
 class TestMulticastConfiguratorMacOS:
@@ -292,7 +269,6 @@ class TestMulticastConfiguratorMacOS:
         assert "route add -net 224.0.0.0/4 -interface lo0" in explanation
 
     def test_fix_runs_route_command(self) -> None:
-        _is_root_user.cache_clear()
         configurator = MulticastConfiguratorMacOS()
         with patch("os.geteuid", return_value=0):
             with patch("subprocess.run") as mock_run:
@@ -311,7 +287,7 @@ class TestMulticastConfiguratorMacOS:
                 assert "224.0.0.0/4" in add_args
 
 
-# ----------------------------- BufferConfiguratorLinux tests -----------------------------
+# BufferConfiguratorLinux tests
 
 
 class TestBufferConfiguratorLinux:
@@ -354,7 +330,7 @@ class TestBufferConfiguratorLinux:
             mock_write.assert_called_once_with("net.core.rmem_max", IDEAL_RMEM_SIZE)
 
 
-# ----------------------------- BufferConfiguratorMacOS tests -----------------------------
+# BufferConfiguratorMacOS tests
 
 
 class TestBufferConfiguratorMacOS:
@@ -398,7 +374,7 @@ class TestBufferConfiguratorMacOS:
             )
 
 
-# ----------------------------- MaxFileConfiguratorMacOS tests -----------------------------
+# MaxFileConfiguratorMacOS tests
 
 
 class TestMaxFileConfiguratorMacOS:
@@ -464,7 +440,6 @@ class TestMaxFileConfiguratorMacOS:
             mock_setrlimit.assert_not_called()
 
     def test_fix_uses_launchctl_when_hard_limit_low(self) -> None:
-        _is_root_user.cache_clear()
         configurator = MaxFileConfiguratorMacOS(target=65536)
         configurator.current_soft = 256
         configurator.current_hard = 10240
@@ -489,7 +464,7 @@ class TestMaxFileConfiguratorMacOS:
                 configurator.fix()
 
 
-# ----------------------------- ClockSyncConfigurator tests -----------------------------
+# ClockSyncConfigurator tests
 
 
 class TestClockSyncConfigurator:
@@ -594,7 +569,6 @@ class TestClockSyncConfigurator:
         assert configurator.explanation() is None
 
     def test_fix_on_linux_with_ntpdate(self) -> None:
-        _is_root_user.cache_clear()
         configurator = ClockSyncConfigurator()
         with (
             patch(
@@ -615,7 +589,6 @@ class TestClockSyncConfigurator:
             assert "ntpdate" in mock_run.call_args_list[0][0][0]
 
     def test_fix_on_linux_sntp_fallback(self) -> None:
-        _is_root_user.cache_clear()
         configurator = ClockSyncConfigurator()
         with (
             patch(
@@ -636,7 +609,6 @@ class TestClockSyncConfigurator:
             assert "sntp" in mock_run.call_args_list[0][0][0]
 
     def test_fix_on_linux_date_fallback(self) -> None:
-        _is_root_user.cache_clear()
         configurator = ClockSyncConfigurator()
         configurator._offset = 1.0
         with (
@@ -658,7 +630,6 @@ class TestClockSyncConfigurator:
             assert "date" in mock_run.call_args_list[0][0][0]
 
     def test_fix_on_macos(self) -> None:
-        _is_root_user.cache_clear()
         configurator = ClockSyncConfigurator()
         with (
             patch(

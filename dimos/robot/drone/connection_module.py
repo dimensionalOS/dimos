@@ -25,12 +25,17 @@ from dimos_lcm.std_msgs import String
 from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.agents.annotation import skill
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.module import Module
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.mapping.types import LatLon
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
-from dimos.msgs.sensor_msgs import Image
+from dimos.mapping.models import LatLon
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
 from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.utils.logging_config import setup_logger
@@ -45,8 +50,16 @@ def _add_disposable(composite: CompositeDisposable, item: Disposable | Any) -> N
         composite.add(Disposable(item))
 
 
-class DroneConnectionModule(Module):
+class Config(ModuleConfig):
+    connection_string: str = "udp:0.0.0.0:14550"
+    video_port: int = 5600
+    outdoor: bool = False
+
+
+class DroneConnectionModule(Module[Config]):
     """Module that handles drone sensor data and movement commands."""
+
+    default_config = Config
 
     # Inputs
     movecmd: In[Vector3]
@@ -62,9 +75,6 @@ class DroneConnectionModule(Module):
     video: Out[Image]
     follow_object_cmd: Out[Any]
 
-    # Parameters
-    connection_string: str
-
     # Internal state
     _odom: PoseStamped | None = None
     _status: dict[str, Any] = {}
@@ -73,14 +83,7 @@ class DroneConnectionModule(Module):
     _latest_status: dict[str, Any] | None = None
     _latest_status_lock: threading.RLock
 
-    def __init__(
-        self,
-        connection_string: str = "udp:0.0.0.0:14550",
-        video_port: int = 5600,
-        outdoor: bool = False,
-        *args: Any,
-        **kwargs: Any,
-    ) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize drone connection module.
 
         Args:
@@ -88,9 +91,7 @@ class DroneConnectionModule(Module):
             video_port: UDP port for video stream
             outdoor: Use GPS only mode (no velocity integration)
         """
-        self.connection_string = connection_string
-        self.video_port = video_port
-        self.outdoor = outdoor
+        super().__init__(**kwargs)
         self.connection: MavlinkConnection | None = None
         self.video_stream: DJIDroneVideoStream | None = None
         self._latest_video_frame = None
@@ -99,23 +100,24 @@ class DroneConnectionModule(Module):
         self._latest_status_lock = threading.RLock()
         self._running = False
         self._telemetry_thread: threading.Thread | None = None
-        Module.__init__(self, *args, **kwargs)
 
     @rpc
     def start(self) -> None:
         """Start the connection and subscribe to sensor streams."""
         # Check for replay mode
-        if self.connection_string == "replay":
+        if self.config.connection_string == "replay":
             from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
             from dimos.robot.drone.mavlink_connection import FakeMavlinkConnection
 
             self.connection = FakeMavlinkConnection("replay")
-            self.video_stream = FakeDJIVideoStream(port=self.video_port)
+            self.video_stream = FakeDJIVideoStream(port=self.config.video_port)
         else:
-            self.connection = MavlinkConnection(self.connection_string, outdoor=self.outdoor)
+            self.connection = MavlinkConnection(
+                self.config.connection_string, outdoor=self.config.outdoor
+            )
             self.connection.connect()
 
-            self.video_stream = DJIDroneVideoStream(port=self.video_port)
+            self.video_stream = DJIDroneVideoStream(port=self.config.video_port)
 
         if not self.connection.connected:
             logger.error("Failed to connect to drone")
@@ -458,7 +460,7 @@ class DroneConnectionModule(Module):
 
         # Wait for telemetry thread to finish
         if self._telemetry_thread and self._telemetry_thread.is_alive():
-            self._telemetry_thread.join(timeout=2.0)
+            self._telemetry_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         # Stop video stream
         if self.video_stream:

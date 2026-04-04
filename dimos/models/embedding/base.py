@@ -15,9 +15,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 import numpy as np
 import torch
@@ -26,17 +25,15 @@ from dimos.models.base import HuggingFaceModelConfig, LocalModelConfig
 from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
-    from dimos.msgs.sensor_msgs import Image
+    from dimos.msgs.sensor_msgs.Image import Image
 
 
-@dataclass
 class EmbeddingModelConfig(LocalModelConfig):
     """Base config for embedding models."""
 
     normalize: bool = True
 
 
-@dataclass
 class HuggingFaceEmbeddingModelConfig(HuggingFaceModelConfig):
     """Base config for HuggingFace-based embedding models."""
 
@@ -95,21 +92,29 @@ class EmbeddingModel(ABC):
 
     device: str
 
+    @overload
+    def embed(self, image: Image, /) -> Embedding: ...
+    @overload
+    def embed(self, *images: Image) -> list[Embedding]: ...
     @abstractmethod
     def embed(self, *images: Image) -> Embedding | list[Embedding]:
-        """
-        Embed one or more images.
+        """Embed one or more images.
+
         Returns single Embedding if one image, list if multiple.
         """
-        pass
+        ...
 
+    @overload
+    def embed_text(self, text: str, /) -> Embedding: ...
+    @overload
+    def embed_text(self, *texts: str) -> list[Embedding]: ...
     @abstractmethod
     def embed_text(self, *texts: str) -> Embedding | list[Embedding]:
-        """
-        Embed one or more text strings.
+        """Embed one or more text strings.
+
         Returns single Embedding if one text, list if multiple.
         """
-        pass
+        ...
 
     def compare_one_to_many(self, query: Embedding, candidates: list[Embedding]) -> torch.Tensor:
         """
