@@ -269,9 +269,12 @@ class RGBCollisionGuardrail(Module[RGBCollisionGuardrailConfig]):
                         health=risk_input.health,
                     )
                 except Exception:
+                    with self._condition:
+                        _logged_state = self._runtime_state.state.value
+
                     logger.exception(
                         "RGB guardrail policy evaluation failed",
-                        state=self._runtime_state.state.value,
+                        state=_logged_state,
                     )
                     policy_decision = self._build_sensor_degraded_decision(
                         "policy_evaluation_failed"

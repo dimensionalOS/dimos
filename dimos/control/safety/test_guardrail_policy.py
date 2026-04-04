@@ -23,6 +23,9 @@ from dimos.control.safety.guardrail_policy import (
     OpticalFlowMagnitudeGuardrailPolicy,
     OpticalFlowMagnitudePolicyConfig,
 )
+from dimos.control.safety.test_utils import (
+    _textured_gray_image,
+)
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
@@ -80,12 +83,6 @@ def _fresh_health(
         risk_fresh=True,
         frame_pair_fresh=frame_pair_fresh,
     )
-
-
-def _textured_gray_image(*, width: int = 160, height: int = 120, shift_x: int = 0) -> Image:
-    yy, xx = np.indices((height, width))
-    pattern = ((xx * 7 + yy * 11 + shift_x * 13) % 256).astype(np.uint8)
-    return Image.from_numpy(pattern, format=ImageFormat.GRAY)
 
 
 def _uniform_gray_image(value: int, *, width: int = 160, height: int = 120) -> Image:
