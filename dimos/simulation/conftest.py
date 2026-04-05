@@ -22,7 +22,6 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from dimos.simulation.engines.mujoco_engine import _clear_registry
 from dimos.simulation.utils.xml_parser import JointMapping
 
 ARM_DOF = 7
@@ -96,21 +95,13 @@ def _patch_mujoco_engine(n_joints: int = ARM_DOF):
     return patches
 
 
-@pytest.fixture(autouse=True)
-def clean_engine_registry():
-    """Clear the engine registry before and after each simulation test."""
-    _clear_registry()
-    yield
-    _clear_registry()
-
-
 @pytest.fixture
 def patched_mujoco_engine():
     """Start MuJoCo engine patches for the test, stop on teardown.
 
     Usage:
         def test_something(patched_mujoco_engine):
-            engine = get_or_create_engine(config_path=Path("/fake/scene.xml"))
+            engine = MujocoEngine(config_path=Path("/fake/scene.xml"), headless=True)
     """
     patches = _patch_mujoco_engine(ARM_DOF)
     for p in patches:

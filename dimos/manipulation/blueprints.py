@@ -494,14 +494,14 @@ xarm_perception_agent = autoconnect(
 )
 
 
-# Sim perception: MuJoCo camera replaces RealSense for sim-based pick-and-place
-# Both the sim adapter and camera resolve the same MujocoEngine via the registry
-# (keyed by MJCF path), so they share physics state.
-# The engine is created lazily when the adapter connects / camera starts.
+# Sim perception: MujocoSimModule owns the MujocoEngine and publishes both
+# camera streams (replacing the old MujocoCamera) and joint state via shared
+# memory. The sim_xarm7 hardware component resolves to ShmMujocoAdapter, which
+# attaches to the same SHM by MJCF path — no globals, no cross-process sharing.
 
 from dimos.control.blueprints._hardware import XARM7_SIM_PATH, sim_xarm7
 from dimos.control.coordinator import TaskConfig as TaskConfig
-from dimos.simulation.sensors.mujoco_camera import MujocoCamera
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
 
 xarm_perception_sim = autoconnect(
@@ -521,8 +521,10 @@ xarm_perception_sim = autoconnect(
         planning_timeout=10.0,
         enable_viz=True,
     ),
-    MujocoCamera.blueprint(
+    MujocoSimModule.blueprint(
         address=str(XARM7_SIM_PATH),
+        headless=False,
+        dof=7,
         camera_name="wrist_camera",
         base_frame_id="link7",
     ),

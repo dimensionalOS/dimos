@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 import threading
@@ -35,6 +36,9 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs.JointState import JointState
 
 logger = setup_logger()
+
+# Step hook signature: called with the engine instance inside the sim thread.
+StepHook = Callable[["MujocoEngine"], None]
 
 
 @dataclass
@@ -71,57 +75,6 @@ class _CameraRendererState:
     last_render_time: float = 0.0
 
 
-_engine_registry: dict[str, MujocoEngine] = {}
-_engine_registry_lock = threading.Lock()
-
-
-def get_or_create_engine(
-    config_path: Path,
-    headless: bool = True,
-    cameras: list[CameraConfig] | None = None,
-) -> MujocoEngine:
-    """Return the shared MujocoEngine for *config_path*, creating one if needed.
-
-    If an engine already exists for the resolved path and *cameras* are supplied,
-    any **new** camera configs are appended (idempotent by name).
-    """
-    key = str(config_path.resolve())
-    with _engine_registry_lock:
-        if key in _engine_registry:
-            engine = _engine_registry[key]
-            if engine._headless != headless:
-                logger.warning(
-                    f"get_or_create_engine: ignoring headless={headless} — "
-                    f"existing engine for '{key}' was created with headless={engine._headless}"
-                )
-            # Merge new camera configs (by name), guarded against sim-thread iteration
-            if cameras:
-                with engine._camera_lock:
-                    existing_names = {c.name for c in engine._camera_configs}
-                    for cam in cameras:
-                        if cam.name not in existing_names:
-                            engine._camera_configs.append(cam)
-            return engine
-
-        engine = MujocoEngine(config_path=config_path, headless=headless, cameras=cameras)
-        _engine_registry[key] = engine
-        return engine
-
-
-def unregister_engine(engine: MujocoEngine) -> None:
-    """Remove an engine from the registry (called on disconnect)."""
-    with _engine_registry_lock:
-        keys_to_remove = [k for k, v in _engine_registry.items() if v is engine]
-        for k in keys_to_remove:
-            del _engine_registry[k]
-
-
-def _clear_registry() -> None:
-    """Clear the engine registry (for test teardown only)."""
-    with _engine_registry_lock:
-        _engine_registry.clear()
-
-
 class MujocoEngine(SimulationEngine):
     """
     MuJoCo simulation engine.
@@ -136,8 +89,18 @@ class MujocoEngine(SimulationEngine):
         config_path: Path,
         headless: bool,
         cameras: list[CameraConfig] | None = None,
+        on_before_step: StepHook | None = None,
+        on_after_step: StepHook | None = None,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
+        # Optional observer callbacks invoked inside the sim thread.
+        # ``on_before_step`` runs before ``_apply_control`` (use it to pull
+        # commands into the engine); ``on_after_step`` runs after
+        # ``_update_joint_state`` (use it to publish joint state to an
+        # external sink, e.g. shared memory). The engine treats these as
+        # opaque callables and has no knowledge of what they do.
+        self._on_before_step: StepHook | None = on_before_step
+        self._on_after_step: StepHook | None = on_after_step
 
         xml_path = self._resolve_xml_path(config_path)
         self._model = mujoco.MjModel.from_xml_path(str(xml_path))
@@ -265,7 +228,6 @@ class MujocoEngine(SimulationEngine):
             if self._sim_thread and self._sim_thread.is_alive():
                 self._sim_thread.join(timeout=2.0)
             self._sim_thread = None
-            unregister_engine(self)
             return True
         except Exception as e:
             logger.error(f"{self.__class__.__name__}: disconnect() failed: {e}")
@@ -341,11 +303,21 @@ class MujocoEngine(SimulationEngine):
 
         def _step_once(sync_viewer: bool) -> None:
             loop_start = time.time()
+            if self._on_before_step is not None:
+                try:
+                    self._on_before_step(self)
+                except Exception as exc:
+                    logger.error(f"on_before_step failed: {exc}")
             self._apply_control()
             mujoco.mj_step(self._model, self._data)
             if sync_viewer:
                 m_viewer.sync()
             self._update_joint_state()
+            if self._on_after_step is not None:
+                try:
+                    self._on_after_step(self)
+                except Exception as exc:
+                    logger.error(f"on_after_step failed: {exc}")
             self._render_cameras(loop_start, cam_renderers)
 
             elapsed = time.time() - loop_start
@@ -511,6 +483,5 @@ __all__ = [
     "CameraConfig",
     "CameraFrame",
     "MujocoEngine",
-    "get_or_create_engine",
-    "unregister_engine",
+    "StepHook",
 ]
