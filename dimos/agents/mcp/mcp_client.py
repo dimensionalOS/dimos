@@ -47,7 +47,6 @@ class McpClientConfig(ModuleConfig):
 
 
 class McpClient(Module[McpClientConfig]):
-    default_config = McpClientConfig
     agent: Out[BaseMessage]
     human_input: In[str]
     agent_idle: Out[bool]

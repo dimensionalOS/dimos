@@ -32,8 +32,6 @@ class Config(ModuleConfig):
 
 
 class AgentTestRunner(Module[Config]):
-    default_config = Config
-
     agent_spec: AgentSpec
     agent: In[BaseMessage]
     agent_idle: In[bool]

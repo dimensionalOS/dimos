@@ -60,8 +60,6 @@ class Go2FleetConnection(GO2Connection[FleetConnectionConfig]):
     (move, standup, liedown, publish_request).
     """
 
-    default_config = FleetConnectionConfig
-
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._extra_ips = self.config.ips[1:]

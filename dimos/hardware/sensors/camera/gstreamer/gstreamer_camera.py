@@ -55,8 +55,6 @@ class Config(ModuleConfig):
 class GstreamerCameraModule(Module[Config]):
     """Module that captures frames from a remote camera using GStreamer TCP with absolute timestamps."""
 
-    default_config = Config
-
     video: Out[Image]
 
     def __init__(self, **kwargs: Any) -> None:

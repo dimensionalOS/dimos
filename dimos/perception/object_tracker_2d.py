@@ -56,8 +56,6 @@ class ObjectTracker2D(Module[ObjectTracker2DConfig]):
     detection2darray: Out[Detection2DArray]
     tracked_overlay: Out[Image]  # Visualization output
 
-    default_config = ObjectTracker2DConfig
-
     def __init__(self, **kwargs: Any) -> None:
         """Initialize 2D object tracking module using OpenCV's CSRT tracker."""
         super().__init__(**kwargs)

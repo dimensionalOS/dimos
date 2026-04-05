@@ -36,14 +36,12 @@ class SubjectNotifierConfig(NotifierConfig):
     pass
 
 
-class SubjectNotifier(Notifier[T]):
+class SubjectNotifier(Notifier[T, SubjectNotifierConfig]):
     """In-memory fan-out notifier for same-process live notification.
 
     Thread-safe.  ``notify()`` copies the subscriber list under the lock,
     then iterates outside the lock to avoid deadlocks with slow consumers.
     """
-
-    default_config = SubjectNotifierConfig
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

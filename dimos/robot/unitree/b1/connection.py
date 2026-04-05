@@ -64,8 +64,6 @@ class B1ConnectionModule(Module[B1ConnectionConfig]):
     internally converts to B1Command format, and sends UDP packets at 50Hz.
     """
 
-    default_config = B1ConnectionConfig
-
     # LCM ports (inter-module communication)
     cmd_vel: In[TwistStamped]
     mode_cmd: In[Int32]

@@ -39,8 +39,6 @@ class Config(ModuleConfig):
 
 
 class CostMapper(Module[Config]):
-    default_config = Config
-
     global_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
 

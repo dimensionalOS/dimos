@@ -49,7 +49,6 @@ _SPATIAL_MEMORY_DIR = _MEMORY_DIR / "spatial_memory"
 _DB_PATH = _SPATIAL_MEMORY_DIR / "chromadb_data"
 _VISUAL_MEMORY_PATH = _SPATIAL_MEMORY_DIR / "visual_memory.pkl"
 
-
 logger = setup_logger()
 
 
@@ -78,8 +77,6 @@ class SpatialMemory(Module[SpatialConfig]):
     for later retrieval via RPC calls. It also maintains a list of named
     robot locations that can be queried by name.
     """
-
-    default_config = SpatialConfig
 
     # LCM inputs
     color_image: In[Image]

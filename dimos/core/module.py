@@ -98,9 +98,6 @@ class _BlueprintPartial(Protocol):
 
 
 class ModuleBase(Configurable[ModuleConfigT], Resource):
-    # This won't type check against the TypeVar, but we need it as the default.
-    default_config: type[ModuleConfigT] = ModuleConfig  # type: ignore[assignment]
-
     # Deployment target. Worker managers declare which deployment type they
     # handle; the coordinator routes modules accordingly.
     deployment: ClassVar[Deployment] = "python"

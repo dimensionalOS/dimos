@@ -41,7 +41,7 @@ class SqliteVectorStoreConfig(VectorStoreConfig):
         return self
 
 
-class SqliteVectorStore(VectorStore):
+class SqliteVectorStore(VectorStore[SqliteVectorStoreConfig]):
     """Vector store backed by sqlite-vec's vec0 virtual tables.
 
     Creates one virtual table per stream: ``"{stream}_vec"``.
@@ -53,7 +53,6 @@ class SqliteVectorStore(VectorStore):
     - ``SqliteVectorStore(path="file.db")`` — opens and owns its own connection.
     """
 
-    default_config = SqliteVectorStoreConfig
     config: SqliteVectorStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:

@@ -67,8 +67,6 @@ _LCM_LOOP_TIMEOUT = 50
 # and runs its handle loop in a thread
 # higher order stuff is done by pubsub/impl/lcmpubsub.py
 class LCMService(Service[_Config]):
-    default_config = LCMConfig  # type: ignore[assignment]
-
     l: lcm_mod.LCM | None
     _stop_event: threading.Event
     _l_lock: threading.Lock

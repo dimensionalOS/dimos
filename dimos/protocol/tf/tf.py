@@ -254,8 +254,6 @@ _PubSubConfig = TypeVar("_PubSubConfig", bound=PubSubTFConfig)
 
 
 class PubSubTF(MultiTBuffer, TFSpec[_PubSubConfig]):
-    default_config: type[_PubSubConfig] = PubSubTFConfig  # type: ignore[assignment]
-
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         TFSpec.__init__(self, **kwargs)
         MultiTBuffer.__init__(self, self.config.buffer_size)
@@ -339,7 +337,7 @@ class LCMPubsubConfig(PubSubTFConfig):
 
 
 class LCMTF(PubSubTF[LCMPubsubConfig]):
-    default_config = LCMPubsubConfig
+    pass
 
 
 TF = LCMTF

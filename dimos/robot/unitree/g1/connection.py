@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -68,8 +67,6 @@ class G1ConnectionBase(Module[_Config], ABC):
 
 
 class G1Connection(G1ConnectionBase[G1Config]):
-    default_config = G1Config
-
     cmd_vel: In[Twist]
     connection: UnitreeWebRTCConnection | None = None
 

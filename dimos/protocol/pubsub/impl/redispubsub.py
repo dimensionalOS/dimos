@@ -38,8 +38,6 @@ class RedisConfig(BaseConfig):
 class Redis(PubSub[str, Any], Service[RedisConfig]):
     """Redis-based pub/sub implementation."""
 
-    default_config = RedisConfig
-
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
 

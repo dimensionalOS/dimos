@@ -17,6 +17,8 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any
 
+from typing_extensions import TypeVar
+
 from dimos.core.resource import CompositeResource
 from dimos.memory2.registry import qual
 from dimos.protocol.service.spec import BaseConfig, Configurable
@@ -26,14 +28,15 @@ class BlobStoreConfig(BaseConfig):
     pass
 
 
-class BlobStore(Configurable[BlobStoreConfig], CompositeResource):
+BlobStoreConfigT = TypeVar("BlobStoreConfigT", bound=BlobStoreConfig, default=BlobStoreConfig)
+
+
+class BlobStore(Configurable[BlobStoreConfigT], CompositeResource):
     """Persistent storage for encoded payload blobs.
 
     Separates payload data from metadata indexing so that large blobs
     (images, point clouds) don't penalize metadata queries.
     """
-
-    default_config: type[BlobStoreConfig] = BlobStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)

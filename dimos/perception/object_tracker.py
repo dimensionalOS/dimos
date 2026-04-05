@@ -72,8 +72,6 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
     detection3darray: Out[Detection3DArray]
     tracked_overlay: Out[Image]  # Visualization output
 
-    default_config = ObjectTrackingConfig
-
     def __init__(self, **kwargs: Any) -> None:
         """
         Initialize an object tracking module using OpenCV's CSRT tracker with ORB re-ID.

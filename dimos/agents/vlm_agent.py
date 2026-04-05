@@ -38,8 +38,6 @@ class VLMAgentConfig(ModuleConfig):
 class VLMAgent(Module[VLMAgentConfig]):
     """Stream-first agent for vision queries with optional RPC access."""
 
-    default_config = VLMAgentConfig
-
     color_image: In[Image]
     query_stream: In[HumanMessage]
     answer_stream: Out[AIMessage]

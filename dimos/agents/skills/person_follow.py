@@ -60,8 +60,6 @@ class PersonFollowSkillContainer(Module[Config]):
     - Does not do obstacle avoidance; assumes a clear path.
     """
 
-    default_config = Config
-
     color_image: In[Image]
     global_map: In[PointCloud2]
     cmd_vel: Out[Twist]

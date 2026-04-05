@@ -44,7 +44,6 @@ class FakeDockerConfig(DockerModuleConfig):
 
 
 class FakeDockerModule(Module["FakeDockerConfig"]):
-    default_config = FakeDockerConfig
     deployment = "docker"
     output: Out[str]
 

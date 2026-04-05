@@ -17,6 +17,8 @@ import threading
 import time
 from typing import Any
 
+from typing_extensions import TypeVar
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 from dimos.utils.human import human_bytes
@@ -103,8 +105,10 @@ class LCMSpyConfig(LCMConfig):
     topic_history_window: float = 60.0
 
 
-class LCMSpy(LCMService[LCMSpyConfig], Topic):
-    default_config = LCMSpyConfig
+LCMSpyConfigT = TypeVar("LCMSpyConfigT", bound=LCMSpyConfig, default=LCMSpyConfig)
+
+
+class LCMSpy(LCMService[LCMSpyConfigT], Topic):
     topic = dict[str, Topic]
     graph_log_window: float = 1.0
     topic_class: type[Topic] = Topic
@@ -154,9 +158,7 @@ class GraphLCMSpyConfig(LCMSpyConfig):
     graph_log_window: float = 1.0
 
 
-class GraphLCMSpy(LCMSpy, GraphTopic):
-    default_config = GraphLCMSpyConfig
-
+class GraphLCMSpy(LCMSpy[GraphLCMSpyConfig], GraphTopic):
     graph_log_thread: threading.Thread | None = None
     graph_log_stop_event: threading.Event = threading.Event()
     topic_class: type[Topic] = GraphTopic

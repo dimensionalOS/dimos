@@ -43,7 +43,6 @@ class VideoReplayConfig(ModuleConfig):
 class VideoReplayModule(Module[VideoReplayConfig]):
     """Module that replays video data from TimedSensorReplay."""
 
-    default_config = VideoReplayConfig
     video_out: Out[Image]
     _subscription = None
 

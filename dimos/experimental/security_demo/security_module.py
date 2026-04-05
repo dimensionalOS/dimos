@@ -51,7 +51,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-
 # COCO skeleton connections for drawing
 _SKELETON_CONNECTIONS = [
     (0, 1),
@@ -132,8 +131,6 @@ class SecurityModule(Module[SecurityModuleConfig]):
     Manages the full patrol-detect-follow state machine internally,
     eliminating agent round-trips between separate modules.
     """
-
-    default_config = SecurityModuleConfig
 
     odom: In[PoseStamped]
     global_costmap: In[OccupancyGrid]

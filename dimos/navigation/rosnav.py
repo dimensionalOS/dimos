@@ -73,8 +73,6 @@ class ROSNav(
     Pointcloud,
     LocalPlanner,
 ):
-    default_config = Config
-
     # Existing ports (default LCM/pSHM transport)
     goal_req: In[PoseStamped]
 

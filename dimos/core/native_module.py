@@ -130,7 +130,6 @@ class NativeModule(Module[_NativeConfig]):
     LCM topics directly.  On ``stop()``, the process receives SIGTERM.
     """
 
-    default_config: type[_NativeConfig] = NativeModuleConfig  # type: ignore[assignment]
     _process: subprocess.Popen[bytes] | None = None
     _watchdog: threading.Thread | None = None
     _stopping: bool = False

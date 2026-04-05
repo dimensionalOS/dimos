@@ -84,7 +84,6 @@ class Mid360(NativeModule[Mid360Config], perception.Lidar, perception.IMU):
     """
 
     config: Mid360Config
-    default_config = Mid360Config
 
     lidar: Out[PointCloud2]
     imu: Out[Imu]

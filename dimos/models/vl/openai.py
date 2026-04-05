@@ -11,14 +11,11 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-
 class OpenAIVlModelConfig(VlModelConfig):
     model_name: str = "gpt-4o-mini"
     api_key: str | None = None
 
-
 class OpenAIVlModel(VlModel[OpenAIVlModelConfig]):
-    default_config = OpenAIVlModelConfig
 
     @cached_property
     def _client(self) -> OpenAI:

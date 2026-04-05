@@ -15,7 +15,9 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic
+
+from typing_extensions import TypeVar
 
 from dimos.core.resource import CompositeResource
 from dimos.memory2.registry import qual
@@ -28,20 +30,23 @@ if TYPE_CHECKING:
     from dimos.memory2.type.observation import Observation
 
 T = TypeVar("T")
+ObservationStoreConfigT = TypeVar(
+    "ObservationStoreConfigT", bound="ObservationStoreConfig", default="ObservationStoreConfig"
+)
 
 
 class ObservationStoreConfig(BaseConfig):
     pass
 
 
-class ObservationStore(Configurable[ObservationStoreConfig], CompositeResource, Generic[T]):
+class ObservationStore(
+    Configurable[ObservationStoreConfigT], CompositeResource, Generic[T, ObservationStoreConfigT]
+):
     """Core metadata storage and query engine for observations.
 
     Handles only observation metadata storage, query pushdown, and count.
     Blob/vector/live orchestration is handled by the concrete Backend class.
     """
-
-    default_config: type[ObservationStoreConfig] = ObservationStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)

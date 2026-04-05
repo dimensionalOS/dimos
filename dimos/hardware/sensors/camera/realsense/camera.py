@@ -80,8 +80,6 @@ class RealSenseCamera(DepthCameraHardware, Module[RealSenseCameraConfig], percep
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
 
-    default_config = RealSenseCameraConfig
-
     @property
     def _camera_link(self) -> str:
         return f"{self.config.camera_name}_link"

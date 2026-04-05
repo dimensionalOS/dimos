@@ -73,8 +73,6 @@ class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
                               FAULT ──reset()──► IDLE
     """
 
-    default_config = JointTrajectoryControllerConfig
-
     # Input topics
     joint_state: In[JointState] = None  # type: ignore[assignment]  # Feedback from arm driver
     robot_state: In[RobotState] = None  # type: ignore[assignment]  # Robot status from arm driver

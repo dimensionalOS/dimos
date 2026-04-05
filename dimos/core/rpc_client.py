@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from dimos.core.coordination.python_worker import MethodCallProxy
 from dimos.core.stream import RemoteStream
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
-from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
+from dimos.protocol.rpc.spec import RPCSpec
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -95,11 +95,7 @@ class ModuleProxyProtocol(Protocol):
 
 class RPCClient:
     def __init__(self, actor_instance, actor_class) -> None:  # type: ignore[no-untyped-def]
-        default_config = getattr(actor_class, "default_config", None)
-        self.rpc = LCMRPC(
-            rpc_timeouts=getattr(default_config, "rpc_timeouts", dict(DEFAULT_RPC_TIMEOUTS)),
-            default_rpc_timeout=getattr(default_config, "default_rpc_timeout", DEFAULT_RPC_TIMEOUT),
-        )
+        self.rpc = LCMRPC()
         self.actor_class = actor_class
         self.remote_name = actor_class.__name__
         self.actor_instance = actor_instance

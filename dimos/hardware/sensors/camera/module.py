@@ -55,7 +55,6 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
 
-    default_config = CameraModuleConfig
     hardware: CameraHardware[Any]
     _latest_image: Image | None = None
 

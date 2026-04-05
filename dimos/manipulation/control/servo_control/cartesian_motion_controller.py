@@ -99,8 +99,6 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
     provides IK/FK RPC methods and JointState/RobotState outputs.
     """
 
-    default_config = CartesianMotionControllerConfig
-
     _arm_driver: ArmDriverSpec
 
     # Input topics (initialized by Module base class)

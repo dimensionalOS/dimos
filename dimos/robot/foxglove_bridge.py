@@ -45,7 +45,6 @@ class FoxgloveConfig(ModuleConfig):
 class FoxgloveBridge(Module[FoxgloveConfig]):
     _thread: threading.Thread
     _loop: asyncio.AbstractEventLoop
-    default_config = FoxgloveConfig
 
     @rpc
     def start(self) -> None:

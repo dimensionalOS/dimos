@@ -37,10 +37,9 @@ class SqliteStoreConfig(StoreConfig):
     page_size: int = 256
 
 
-class SqliteStore(Store):
+class SqliteStore(Store[SqliteStoreConfig]):
     """Store backed by a SQLite database file."""
 
-    default_config = SqliteStoreConfig
     config: SqliteStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:

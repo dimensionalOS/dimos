@@ -37,7 +37,7 @@ class SqliteBlobStoreConfig(BlobStoreConfig):
         return self
 
 
-class SqliteBlobStore(BlobStore):
+class SqliteBlobStore(BlobStore[SqliteBlobStoreConfig]):
     """Stores blobs in a separate SQLite table per stream.
 
     Table layout per stream::
@@ -55,7 +55,6 @@ class SqliteBlobStore(BlobStore):
     Does NOT commit; the caller (typically Backend) is responsible for commits.
     """
 
-    default_config = SqliteBlobStoreConfig
     config: SqliteBlobStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:

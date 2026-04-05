@@ -66,8 +66,6 @@ class PhoneTeleopModule(Module[PhoneTeleopConfig]):
         - twist_output: TwistStamped (velocity command for robot)
     """
 
-    default_config = PhoneTeleopConfig
-
     # Output: velocity command to robot
     twist_output: Out[TwistStamped]
 

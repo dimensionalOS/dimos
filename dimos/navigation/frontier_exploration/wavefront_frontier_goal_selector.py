@@ -107,8 +107,6 @@ class WavefrontFrontierExplorer(Module[WavefrontConfig]):
         - goal_request: Exploration goals sent to the navigator
     """
 
-    default_config = WavefrontConfig
-
     # LCM inputs
     global_costmap: In[OccupancyGrid]
     odom: In[PoseStamped]

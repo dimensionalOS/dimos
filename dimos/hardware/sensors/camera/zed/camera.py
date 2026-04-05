@@ -85,8 +85,6 @@ class ZEDCamera(DepthCameraHardware, Module[ZEDCameraConfig], perception.DepthCa
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
 
-    default_config = ZEDCameraConfig
-
     @property
     def _camera_link(self) -> str:
         return f"{self.config.camera_name}_link"
@@ -526,6 +524,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 
 ZEDModule = ZEDCamera

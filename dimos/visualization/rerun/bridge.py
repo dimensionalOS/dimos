@@ -68,7 +68,6 @@ RERUN_WEB_PORT = 9090
 #
 # as well as pubsubs={} to specify which protocols to listen to.
 
-
 # TODO better TF processing
 #
 # this is rerun bridge specific, rerun has a specific (better) way of handling TFs
@@ -91,7 +90,6 @@ RERUN_WEB_PORT = 9090
 #
 # In order to solve this, bridge needs to own it's own tf service
 # and render it's tf tree into correct rerun entity paths
-
 
 logger = setup_logger()
 
@@ -214,8 +212,6 @@ class RerunBridgeModule(Module[Config]):
         # All messages with to_rerun() are now logged to Rerun
         bridge.stop()
     """
-
-    default_config = Config
 
     GV_SCALE = 100.0  # graphviz inches to rerun screen units
     MODULE_RADIUS = 30.0

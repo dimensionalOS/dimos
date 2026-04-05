@@ -80,7 +80,6 @@ _LFS_ASSET = "unity_sim_x86"
 # connection and drops it.
 _BRIDGE_READ_TIMEOUT = 30.0
 
-
 # TCP protocol helpers
 
 
@@ -217,7 +216,6 @@ _CAM_FY = _CAM_FX
 _CAM_CX = _CAM_WIDTH / 2.0
 _CAM_CY = _CAM_HEIGHT / 2.0
 
-
 # Module
 
 
@@ -233,8 +231,6 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
         semantic_image (Out[Image]): Semantic segmentation from Unity.
         camera_info (Out[CameraInfo]): Camera intrinsics.
     """
-
-    default_config = UnityBridgeConfig
 
     cmd_vel: In[Twist]
     terrain_map: In[PointCloud2]

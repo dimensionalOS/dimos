@@ -91,8 +91,6 @@ class QuestTeleopModule(Module[_Config]):
         - buttons: Buttons (button states for both controllers)
     """
 
-    default_config = QuestTeleopConfig  # type: ignore[assignment]
-
     # Outputs: delta poses for each controller
     left_controller_output: Out[PoseStamped]
     right_controller_output: Out[PoseStamped]

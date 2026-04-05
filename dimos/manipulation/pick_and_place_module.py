@@ -85,7 +85,7 @@ class PickAndPlaceModuleConfig(ManipulationModuleConfig):
     )
 
 
-class PickAndPlaceModule(ManipulationModule):
+class PickAndPlaceModule(ManipulationModule[PickAndPlaceModuleConfig]):
     """Manipulation module with perception integration and pick-and-place skills.
 
     Extends ManipulationModule with:
@@ -93,8 +93,6 @@ class PickAndPlaceModule(ManipulationModule):
     - @rpc: generate_grasps (GraspGen Docker), refresh_obstacles, perception status
     - @skill: pick, place, place_back, pick_and_place, scan_objects, get_scene_info
     """
-
-    default_config = PickAndPlaceModuleConfig
 
     # Type annotation for the config attribute (mypy uses this)
     config: PickAndPlaceModuleConfig

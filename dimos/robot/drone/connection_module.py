@@ -59,8 +59,6 @@ class Config(ModuleConfig):
 class DroneConnectionModule(Module[Config]):
     """Module that handles drone sensor data and movement commands."""
 
-    default_config = Config
-
     # Inputs
     movecmd: In[Vector3]
     movecmd_twist: In[Twist]  # Twist commands from tracking/navigation

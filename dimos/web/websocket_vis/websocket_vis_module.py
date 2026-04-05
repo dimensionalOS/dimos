@@ -91,8 +91,6 @@ class WebsocketVisModule(Module[WebsocketConfig]):
         - click_goal: Goal position from user clicks
     """
 
-    default_config = WebsocketConfig
-
     # LCM inputs
     odom: In[PoseStamped]
     gps_location: In[LatLon]

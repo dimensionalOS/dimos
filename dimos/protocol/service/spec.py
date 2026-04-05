@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from abc import ABC
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, get_args
 
 from pydantic import BaseModel
 
@@ -27,10 +27,30 @@ ConfigT = TypeVar("ConfigT", bound=BaseConfig)
 
 
 class Configurable(Generic[ConfigT]):
-    default_config: type[ConfigT]
+    config: ConfigT
+
+    @classmethod
+    def _resolve_config_type(cls) -> type[Any]:
+        """Walk the MRO to find the concrete config type from generic params.
+
+        Returns the first concrete BaseConfig subclass found, or the first
+        TypeVar default — whichever comes first in MRO order.
+        """
+        for mrocls in cls.__mro__:
+            for base in getattr(mrocls, "__orig_bases__", ()):
+                args = get_args(base)
+                if not args:
+                    continue
+                arg = args[0]
+                if isinstance(arg, type) and issubclass(arg, BaseConfig):
+                    return arg
+                default = getattr(arg, "__default__", None)
+                if isinstance(default, type) and issubclass(default, BaseConfig):
+                    return default
+        raise TypeError(f"{cls.__name__} has no concrete config type in its generic bases")
 
     def __init__(self, **kwargs: Any) -> None:
-        self.config = self.default_config(**kwargs)
+        self.config = self._resolve_config_type()(**kwargs)
 
 
 class Service(Configurable[ConfigT], ABC):

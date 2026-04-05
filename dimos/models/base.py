@@ -19,6 +19,8 @@ from __future__ import annotations
 from functools import cached_property
 from typing import Annotated, Any
 
+from typing_extensions import TypeVar
+
 import torch
 
 from dimos.core.resource import Resource
@@ -27,15 +29,15 @@ from dimos.protocol.service.spec import BaseConfig, Configurable
 # Device string type - 'cuda', 'cpu', 'cuda:0', 'cuda:1', etc.
 DeviceType = Annotated[str, "Device identifier (e.g., 'cuda', 'cpu', 'cuda:0')"]
 
-
 class LocalModelConfig(BaseConfig):
     device: DeviceType = "cuda" if torch.cuda.is_available() else "cpu"
     dtype: torch.dtype = torch.float32
     warmup: bool = False
     autostart: bool = False
 
+LocalModelConfigT = TypeVar("LocalModelConfigT", bound=LocalModelConfig, default=LocalModelConfig)
 
-class LocalModel(Resource, Configurable[LocalModelConfig]):
+class LocalModel(Resource, Configurable[LocalModelConfigT]):
     """Base class for all local GPU/CPU models.
 
     Implements Resource interface for lifecycle management.
@@ -48,7 +50,6 @@ class LocalModel(Resource, Configurable[LocalModelConfig]):
         - stop() for custom cleanup logic
     """
 
-    default_config = LocalModelConfig
     config: LocalModelConfig
 
     def __init__(self, **kwargs: object) -> None:
@@ -124,14 +125,14 @@ class LocalModel(Resource, Configurable[LocalModelConfig]):
             except Exception:
                 pass
 
-
 class HuggingFaceModelConfig(LocalModelConfig):
     model_name: str = ""
     trust_remote_code: bool = True
     dtype: torch.dtype = torch.float16
 
+HuggingFaceModelConfigT = TypeVar("HuggingFaceModelConfigT", bound=HuggingFaceModelConfig, default=HuggingFaceModelConfig)
 
-class HuggingFaceModel(LocalModel):
+class HuggingFaceModel(LocalModel[HuggingFaceModelConfigT]):
     """Base class for HuggingFace transformers-based models.
 
     Provides common patterns for loading models from the HuggingFace Hub
@@ -144,7 +145,6 @@ class HuggingFaceModel(LocalModel):
         - _model: @cached_property for custom model loading
     """
 
-    default_config = HuggingFaceModelConfig
     config: HuggingFaceModelConfig
     _model_class: Any = None  # e.g., AutoModelForCausalLM
 

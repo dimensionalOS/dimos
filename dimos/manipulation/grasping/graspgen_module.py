@@ -62,7 +62,6 @@ class GraspGenConfig(DockerModuleConfig):
 
 
 class GraspGenModule(Module[GraspGenConfig]):
-    default_config = GraspGenConfig
     deployment = "docker"
     grasps: Out[PoseArray]
     _sampler = None

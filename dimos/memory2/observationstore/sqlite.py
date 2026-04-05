@@ -241,7 +241,7 @@ class SqliteObservationStoreConfig(ObservationStoreConfig):
         return self
 
 
-class SqliteObservationStore(ObservationStore[T]):
+class SqliteObservationStore(ObservationStore[T, SqliteObservationStoreConfig]):
     """SQLite-backed metadata store for a single stream (table).
 
     Handles only metadata storage and query pushdown.
@@ -253,7 +253,6 @@ class SqliteObservationStore(ObservationStore[T]):
     - ``SqliteObservationStore(path="file.db", name="x", codec=...)`` — opens and owns its own connection.
     """
 
-    default_config = SqliteObservationStoreConfig
     config: SqliteObservationStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:

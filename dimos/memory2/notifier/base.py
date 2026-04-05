@@ -15,7 +15,9 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic
+
+from typing_extensions import TypeVar
 
 from dimos.memory2.registry import qual
 from dimos.protocol.service.spec import BaseConfig, Configurable
@@ -27,13 +29,14 @@ if TYPE_CHECKING:
     from dimos.memory2.type.observation import Observation
 
 T = TypeVar("T")
+NotifierConfigT = TypeVar("NotifierConfigT", bound="NotifierConfig", default="NotifierConfig")
 
 
 class NotifierConfig(BaseConfig):
     pass
 
 
-class Notifier(Configurable[NotifierConfig], Generic[T]):
+class Notifier(Configurable[NotifierConfigT], Generic[T, NotifierConfigT]):
     """Push-notification for live observation delivery.
 
     Decouples the notification mechanism from storage.  The built-in
@@ -41,8 +44,6 @@ class Notifier(Configurable[NotifierConfig], Generic[T]):
     config).  External implementations (Redis pub/sub, Postgres
     LISTEN/NOTIFY, inotify) can be injected for cross-process use.
     """
-
-    default_config: type[NotifierConfig] = NotifierConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)

@@ -76,8 +76,6 @@ class KeyboardTeleopModule(Module[KeyboardTeleopConfig]):
     Publishes absolute EE PoseStamped commands for CartesianIKTask.
     """
 
-    default_config = KeyboardTeleopConfig
-
     cartesian_command: Out[PoseStamped]
 
     _stop_event: threading.Event

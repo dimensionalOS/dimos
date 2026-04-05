@@ -25,7 +25,7 @@ class FileBlobStoreConfig(BlobStoreConfig):
     root: str
 
 
-class FileBlobStore(BlobStore):
+class FileBlobStore(BlobStore[FileBlobStoreConfig]):
     """Stores blobs as files on disk, one directory per stream.
 
     Layout::
@@ -33,7 +33,6 @@ class FileBlobStore(BlobStore):
         {root}/{stream}/{key}.bin
     """
 
-    default_config = FileBlobStoreConfig
     config: FileBlobStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:

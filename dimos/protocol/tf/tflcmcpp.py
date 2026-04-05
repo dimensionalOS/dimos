@@ -37,8 +37,6 @@ class TFLCM(TFSpec[Config], LCMService[Config]):
     for each module.
     """
 
-    default_config = Config
-
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
 

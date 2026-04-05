@@ -127,7 +127,6 @@ class FastLio2(
         global_map (Out[PointCloud2]): Global voxel map (optional, enable via map_freq > 0).
     """
 
-    default_config = FastLio2Config
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
     global_map: Out[PointCloud2]

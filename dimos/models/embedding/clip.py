@@ -26,16 +26,13 @@ from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
 from dimos.msgs.sensor_msgs.Image import Image
 
-
 class CLIPModelConfig(HuggingFaceEmbeddingModelConfig):
     model_name: str = "openai/clip-vit-base-patch32"
     dtype: torch.dtype = torch.float32
 
-
 class CLIPModel(EmbeddingModel, HuggingFaceModel):
     """CLIP embedding model for vision-language re-identification."""
 
-    default_config = CLIPModelConfig
     config: CLIPModelConfig
     _model_class = HFCLIPModel
 

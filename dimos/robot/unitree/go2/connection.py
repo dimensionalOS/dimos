@@ -185,8 +185,6 @@ _Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
 
 
 class GO2Connection(Module[_Config], Camera, Pointcloud):
-    default_config = ConnectionConfig  # type: ignore[assignment]
-
     cmd_vel: In[Twist]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]

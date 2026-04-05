@@ -51,8 +51,6 @@ class TwistTeleopModule(QuestTeleopModule[TwistTeleopConfig]):
         - buttons: Buttons (inherited)
     """
 
-    default_config = TwistTeleopConfig
-
     left_twist: Out[TwistStamped]
     right_twist: Out[TwistStamped]
 
@@ -97,8 +95,6 @@ class ArmTeleopModule(QuestTeleopModule[ArmTeleopConfig]):
         - right_controller_output: PoseStamped (inherited)
         - buttons: Buttons (inherited)
     """
-
-    default_config = ArmTeleopConfig
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

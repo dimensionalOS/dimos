@@ -60,7 +60,6 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-
 logger = setup_logger()
 
 
@@ -160,7 +159,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     buttons: In[Buttons]
 
     config: ControlCoordinatorConfig
-    default_config = ControlCoordinatorConfig
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

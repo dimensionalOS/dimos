@@ -111,8 +111,6 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
     periodic window analysis.
     """
 
-    default_config = TemporalMemoryConfig
-
     color_image: In[Image]
     odom: In[PoseStamped]
     entity_markers: Out[EntityMarkers]

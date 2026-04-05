@@ -45,8 +45,6 @@ class DDSConfig(BaseConfig):
 
 
 class DDSService(Service[DDSConfig]):
-    default_config = DDSConfig
-
     def start(self) -> None:
         """Start the DDS service."""
         domain_id = self.config.domain_id

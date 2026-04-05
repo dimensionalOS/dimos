@@ -53,8 +53,6 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
     camera_info: Out[CameraInfo]
     pose: Out[PoseStamped]
 
-    default_config = FakeZEDModuleConfig
-
     def __init__(self, **kwargs: Any) -> None:
         """
         Initialize FakeZEDModule with recording path.

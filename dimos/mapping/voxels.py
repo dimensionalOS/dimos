@@ -44,8 +44,6 @@ class Config(ModuleConfig):
 
 
 class VoxelGridMapper(Module[Config]):
-    default_config = Config
-
     lidar: In[PointCloud2]
     global_map: Out[PointCloud2]
 

@@ -36,8 +36,6 @@ class Config(ModuleConfig):
 class BBoxNavigationModule(Module[Config]):
     """Minimal module that converts 2D bbox center to navigation goals."""
 
-    default_config = Config
-
     detection2d: In[Detection2DArray]
     camera_info: In[CameraInfo]
     goal_request: Out[PoseStamped]
