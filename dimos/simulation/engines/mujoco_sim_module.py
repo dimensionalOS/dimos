@@ -238,7 +238,7 @@ class MujocoSimModule(
         self._disposables.add(
             rx.interval(interval_sec).subscribe(
                 on_next=lambda _: self._publish_camera_info(),
-                on_error=lambda e: logger.error(f"CameraInfo publish error: {e}"),
+                on_error=lambda e: logger.error("CameraInfo publish error", error=str(e)),
             )
         )
 
@@ -248,7 +248,7 @@ class MujocoSimModule(
             self._disposables.add(
                 backpressure(rx.interval(pc_interval)).subscribe(
                     on_next=lambda _: self._generate_pointcloud(),
-                    on_error=lambda e: logger.error(f"Pointcloud error: {e}"),
+                    on_error=lambda e: logger.error("Pointcloud error", error=str(e)),
                 )
             )
 
@@ -270,14 +270,14 @@ class MujocoSimModule(
             try:
                 self._engine.disconnect()
             except Exception as exc:
-                logger.error(f"MujocoSimModule: engine.disconnect() failed: {exc}")
+                logger.error("engine.disconnect() failed", error=str(exc))
             self._engine = None
         if self._shm is not None:
             try:
                 self._shm.signal_stop()
                 self._shm.cleanup()
             except Exception as exc:
-                logger.error(f"MujocoSimModule: SHM cleanup failed: {exc}")
+                logger.error("SHM cleanup failed", error=str(exc))
             self._shm = None
         self._camera_info_base = None
         super().stop()
@@ -345,7 +345,7 @@ class MujocoSimModule(
             return
         fovy_deg = self._engine.get_camera_fovy(self.config.camera_name)
         if fovy_deg is None:
-            logger.error(f"Camera not found in MJCF: {self.config.camera_name}")
+            logger.error("Camera not found in MJCF", camera_name=self.config.camera_name)
             return
         h = self.config.height
         w = self.config.width
@@ -424,7 +424,7 @@ class MujocoSimModule(
                 if sleep_time > 0:
                     time.sleep(sleep_time)
             except Exception as exc:
-                logger.error(f"MujocoSimModule publish error: {exc}")
+                logger.error("MujocoSimModule publish error", error=str(exc))
                 time.sleep(1.0)
 
     def _publish_camera_info(self) -> None:
@@ -509,7 +509,7 @@ class MujocoSimModule(
             pcd = pcd.voxel_downsample(0.005)
             self.pointcloud.publish(pcd)
         except Exception as exc:
-            logger.error(f"Pointcloud generation error: {exc}")
+            logger.error("Pointcloud generation error", error=str(exc))
 
 
 # Silence unused-import warning: these are re-exported for test/debug use.

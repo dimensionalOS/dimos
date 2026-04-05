@@ -202,7 +202,7 @@ class MujocoEngine(SimulationEngine):
 
     def connect(self) -> bool:
         try:
-            logger.info(f"{self.__class__.__name__}: connect()")
+            logger.info("connect()", cls=self.__class__.__name__)
             with self._lock:
                 self._connected = True
                 self._stop_event.clear()
@@ -216,12 +216,12 @@ class MujocoEngine(SimulationEngine):
                 self._sim_thread.start()
             return True
         except Exception as e:
-            logger.error(f"{self.__class__.__name__}: connect() failed: {e}")
+            logger.error("connect() failed", cls=self.__class__.__name__, error=str(e))
             return False
 
     def disconnect(self) -> bool:
         try:
-            logger.info(f"{self.__class__.__name__}: disconnect()")
+            logger.info("disconnect()", cls=self.__class__.__name__)
             with self._lock:
                 self._connected = False
             self._stop_event.set()
@@ -230,7 +230,7 @@ class MujocoEngine(SimulationEngine):
             self._sim_thread = None
             return True
         except Exception as e:
-            logger.error(f"{self.__class__.__name__}: disconnect() failed: {e}")
+            logger.error("disconnect() failed", cls=self.__class__.__name__, error=str(e))
             return False
 
     def _init_new_cameras(self, cam_renderers: dict[str, _CameraRendererState]) -> None:
@@ -245,7 +245,7 @@ class MujocoEngine(SimulationEngine):
                 continue
             cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, cfg.name)
             if cam_id < 0:
-                logger.warning(f"Camera '{cfg.name}' not found in MJCF, skipping")
+                logger.warning("Camera not found in MJCF, skipping", camera_name=cfg.name)
                 continue
             rgb_renderer = mujoco.Renderer(self._model, height=cfg.height, width=cfg.width)
             depth_renderer = mujoco.Renderer(self._model, height=cfg.height, width=cfg.width)
@@ -259,7 +259,11 @@ class MujocoEngine(SimulationEngine):
                 interval=interval,
             )
             logger.info(
-                f"Camera '{cfg.name}' renderer created ({cfg.width}x{cfg.height} @ {cfg.fps}fps)"
+                "Camera renderer created",
+                camera_name=cfg.name,
+                width=cfg.width,
+                height=cfg.height,
+                fps=cfg.fps,
             )
 
     def _render_cameras(self, now: float, cam_renderers: dict[str, _CameraRendererState]) -> None:
@@ -294,7 +298,7 @@ class MujocoEngine(SimulationEngine):
             state.depth_renderer.close()
 
     def _sim_loop(self) -> None:
-        logger.info(f"{self.__class__.__name__}: sim loop started")
+        logger.info("sim loop started", cls=self.__class__.__name__)
         dt = 1.0 / self._control_frequency
 
         # Camera renderers — created in sim thread (MuJoCo thread-safety).
@@ -307,7 +311,7 @@ class MujocoEngine(SimulationEngine):
                 try:
                     self._on_before_step(self)
                 except Exception as exc:
-                    logger.error(f"on_before_step failed: {exc}")
+                    logger.error("on_before_step failed", error=str(exc))
             self._apply_control()
             mujoco.mj_step(self._model, self._data)
             if sync_viewer:
@@ -317,7 +321,7 @@ class MujocoEngine(SimulationEngine):
                 try:
                     self._on_after_step(self)
                 except Exception as exc:
-                    logger.error(f"on_after_step failed: {exc}")
+                    logger.error("on_after_step failed", error=str(exc))
             self._render_cameras(loop_start, cam_renderers)
 
             elapsed = time.time() - loop_start
@@ -336,7 +340,7 @@ class MujocoEngine(SimulationEngine):
                     _step_once(sync_viewer=True)
 
         self._close_cam_renderers(cam_renderers)
-        logger.info(f"{self.__class__.__name__}: sim loop stopped")
+        logger.info("sim loop stopped", cls=self.__class__.__name__)
 
     @property
     def connected(self) -> bool:
