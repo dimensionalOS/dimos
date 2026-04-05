@@ -247,12 +247,16 @@ class ManipShmWriter:
         for shm in self.shm.as_list():
             try:
                 shm.close()
-            except Exception:
-                pass
+            except FileNotFoundError:
+                pass  # already detached
+            except OSError as exc:
+                logger.warning("SHM close failed", name=shm.name, error=str(exc))
             try:
                 shm.unlink()
-            except Exception:
-                pass
+            except FileNotFoundError:
+                pass  # already unlinked (e.g. cleanup called twice)
+            except OSError as exc:
+                logger.warning("SHM unlink failed", name=shm.name, error=str(exc))
 
     # ---------------- helpers ------------------------------------
 
@@ -337,8 +341,10 @@ class ManipShmReader:
         for shm in self.shm.as_list():
             try:
                 shm.close()
-            except Exception:
-                pass
+            except FileNotFoundError:
+                pass  # already detached
+            except OSError as exc:
+                logger.warning("SHM close failed", name=shm.name, error=str(exc))
 
     # ---------------- helpers ------------------------------------
 
