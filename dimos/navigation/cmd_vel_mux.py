@@ -79,8 +79,8 @@ class CmdVelMux(Module[CmdVelMuxConfig]):
 
     @rpc
     def start(self) -> None:
-        self.nav_cmd_vel._transport.subscribe(self._on_nav)
-        self.tele_cmd_vel._transport.subscribe(self._on_teleop)
+        self.nav_cmd_vel.subscribe(self._on_nav)
+        self.tele_cmd_vel.subscribe(self._on_teleop)
 
     @rpc
     def stop(self) -> None:
@@ -94,7 +94,7 @@ class CmdVelMux(Module[CmdVelMuxConfig]):
         with self._lock:
             if self._teleop_active:
                 return
-        self.cmd_vel._transport.publish(msg)
+        self.cmd_vel.publish(msg)
 
     def _on_teleop(self, msg: Twist) -> None:
         was_active: bool
@@ -114,7 +114,7 @@ class CmdVelMux(Module[CmdVelMuxConfig]):
             self.stop_movement.publish(Bool(data=True))
             logger.info("Teleop active — published stop_movement")
 
-        self.cmd_vel._transport.publish(msg)
+        self.cmd_vel.publish(msg)
 
     def _end_teleop(self) -> None:
         with self._lock:
