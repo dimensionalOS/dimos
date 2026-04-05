@@ -16,9 +16,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
-
-from dimos.protocol.service.spec import BaseConfig, Service
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -63,35 +61,3 @@ def bridge(
 
     # Bridge all messages from pubsub1 to pubsub2
     return pubsub1.subscribe_all(pass_msg)
-
-
-class BridgeConfig(BaseConfig, Generic[TopicFrom, TopicTo, MsgFrom, MsgTo]):
-    """Configuration for a one-way bridge."""
-
-    source: AllPubSub[TopicFrom, MsgFrom]
-    destination: PubSub[TopicTo, MsgTo]
-    translator: Translator[TopicFrom, TopicTo, MsgFrom, MsgTo]
-    subscribe_topic: TopicFrom | None = None
-
-
-class Bridge(Service, Generic[TopicFrom, TopicTo, MsgFrom, MsgTo]):
-    """Service that bridges messages from one pubsub to another."""
-
-    config: BridgeConfig[TopicFrom, TopicTo, MsgFrom, MsgTo]
-
-    _unsubscribe: Callable[[], None] | None = None
-
-    def start(self) -> None:
-        super().start()
-        self._unsubscribe = bridge(
-            self.config.source,
-            self.config.destination,
-            self.config.translator,
-            self.config.subscribe_topic,
-        )
-
-    def stop(self) -> None:
-        if self._unsubscribe:
-            self._unsubscribe()
-            self._unsubscribe = None
-        super().stop()
