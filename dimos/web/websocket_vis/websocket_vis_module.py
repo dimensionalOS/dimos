@@ -72,7 +72,7 @@ class WebsocketConfig(ModuleConfig):
     port: int = 7779
 
 
-class WebsocketVisModule(Module[WebsocketConfig]):
+class WebsocketVisModule(Module):
     """
     WebSocket-based visualization module for real-time navigation data.
 
@@ -90,6 +90,8 @@ class WebsocketVisModule(Module[WebsocketConfig]):
     Outputs:
         - click_goal: Goal position from user clicks
     """
+
+    config: WebsocketConfig
 
     # LCM inputs
     odom: In[PoseStamped]

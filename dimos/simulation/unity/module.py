@@ -219,7 +219,7 @@ _CAM_CY = _CAM_HEIGHT / 2.0
 # Module
 
 
-class UnityBridgeModule(Module[UnityBridgeConfig]):
+class UnityBridgeModule(Module):
     """TCP bridge to the Unity simulator with kinematic odometry integration.
 
     Ports:
@@ -231,6 +231,8 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
         semantic_image (Out[Image]): Semantic segmentation from Unity.
         camera_info (Out[CameraInfo]): Camera intrinsics.
     """
+
+    config: UnityBridgeConfig
 
     cmd_vel: In[Twist]
     terrain_map: In[PointCloud2]

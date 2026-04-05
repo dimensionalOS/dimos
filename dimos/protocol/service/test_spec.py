@@ -14,17 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Configurable auto-resolves config type from generic params.
+# Configurable resolves config type from the `config` annotation.
 #
-# Generic chain (TypeVars pass through, concrete params resolve at init):
-#
-#   Configurable[T]  →  Service[T]  →  DBService[T]  →  ProdDBService
-#                                           ↑                  ↑
-#                                      T bound=DBConfig   [ProdDBConfig]
-
-from typing import TypeVar
-
-import pytest
+#   Configurable  →  Service  →  DBService  →  ProdDBService
+#        ↑               ↑            ↑              ↑
+#   config:BaseConfig  (inherits)  config:DBConfig  config:ProdDBConfig
 
 from dimos.protocol.service.spec import BaseConfig, Service
 
@@ -38,11 +32,8 @@ class ProdDBConfig(DBConfig):
     pool_size: int = 20
 
 
-T = TypeVar("T", bound=DBConfig)
-
-
-class DBService(Service[T]):
-    """Generic — subclasses concretize with their own config."""
+class DBService(Service):
+    config: DBConfig
 
     def start(self) -> None:
         super().start()
@@ -51,12 +42,12 @@ class DBService(Service[T]):
         super().stop()
 
 
-class ProdDBService(DBService[ProdDBConfig]):
-    """Concretizes T → ProdDBConfig."""
+class ProdDBService(DBService):
+    config: ProdDBConfig
 
 
-class LocalDBService(DBService[DBConfig]):
-    """Concretizes T → DBConfig."""
+class LocalDBService(DBService):
+    """Inherits DBConfig from DBService."""
 
 
 def test_instantiate_with_defaults() -> None:
@@ -85,28 +76,3 @@ def test_plain_subclass_inherits_config() -> None:
 
     svc = StagingDBService()
     assert isinstance(svc.config, DBConfig)
-
-
-def test_typevar_default_fallback() -> None:
-    """Unparameterized subclass falls back to TypeVar default."""
-    from typing_extensions import TypeVar as ExtTypeVar
-
-    U = ExtTypeVar("U", bound=DBConfig, default=DBConfig)
-
-    class GenericService(Service[U]):
-        def start(self) -> None:
-            super().start()
-
-        def stop(self) -> None:
-            super().stop()
-
-    class PlainChild(GenericService):
-        pass
-
-    svc = PlainChild()
-    assert isinstance(svc.config, DBConfig)
-
-
-def test_no_concrete_config_raises() -> None:
-    with pytest.raises(TypeError, match="no concrete config type"):
-        DBService()

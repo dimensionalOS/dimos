@@ -42,10 +42,12 @@ class FakeZEDModuleConfig(ModuleConfig):
     frame_id: str = "zed_camera"
 
 
-class FakeZEDModule(Module[FakeZEDModuleConfig]):
+class FakeZEDModule(Module):
     """
     Fake ZED module that replays recorded data instead of real camera.
     """
+
+    config: FakeZEDModuleConfig
 
     # Define LCM outputs (same as ZEDModule)
     color_image: Out[Image]

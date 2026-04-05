@@ -241,7 +241,7 @@ class SqliteObservationStoreConfig(ObservationStoreConfig):
         return self
 
 
-class SqliteObservationStore(ObservationStore[T, SqliteObservationStoreConfig]):
+class SqliteObservationStore(ObservationStore[T]):
     """SQLite-backed metadata store for a single stream (table).
 
     Handles only metadata storage and query pushdown.

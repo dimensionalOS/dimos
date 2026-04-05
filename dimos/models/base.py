@@ -19,8 +19,6 @@ from __future__ import annotations
 from functools import cached_property
 from typing import Annotated, Any
 
-from typing_extensions import TypeVar
-
 import torch
 
 from dimos.core.resource import Resource
@@ -35,9 +33,7 @@ class LocalModelConfig(BaseConfig):
     warmup: bool = False
     autostart: bool = False
 
-LocalModelConfigT = TypeVar("LocalModelConfigT", bound=LocalModelConfig, default=LocalModelConfig)
-
-class LocalModel(Resource, Configurable[LocalModelConfigT]):
+class LocalModel(Resource, Configurable):
     """Base class for all local GPU/CPU models.
 
     Implements Resource interface for lifecycle management.
@@ -130,9 +126,7 @@ class HuggingFaceModelConfig(LocalModelConfig):
     trust_remote_code: bool = True
     dtype: torch.dtype = torch.float16
 
-HuggingFaceModelConfigT = TypeVar("HuggingFaceModelConfigT", bound=HuggingFaceModelConfig, default=HuggingFaceModelConfig)
-
-class HuggingFaceModel(LocalModel[HuggingFaceModelConfigT]):
+class HuggingFaceModel(LocalModel):
     """Base class for HuggingFace transformers-based models.
 
     Provides common patterns for loading models from the HuggingFace Hub

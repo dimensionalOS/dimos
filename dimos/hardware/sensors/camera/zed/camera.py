@@ -78,7 +78,8 @@ class ZEDCameraConfig(ModuleConfig, DepthCameraConfig):
     world_frame: str = "world"
 
 
-class ZEDCamera(DepthCameraHardware, Module[ZEDCameraConfig], perception.DepthCamera):
+class ZEDCamera(DepthCameraHardware, Module, perception.DepthCamera):
+    config: ZEDCameraConfig
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]

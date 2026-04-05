@@ -14,7 +14,8 @@ class QwenVlModelConfig(VlModelConfig):
     model_name: str = "qwen2.5-vl-72b-instruct"
     api_key: str | None = None
 
-class QwenVlModel(VlModel[QwenVlModelConfig]):
+class QwenVlModel(VlModel):
+    config: QwenVlModelConfig
 
     @cached_property
     def _client(self) -> OpenAI:

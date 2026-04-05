@@ -116,7 +116,7 @@ class NativeModuleConfig(ModuleConfig):
 _NativeConfig = TypeVar("_NativeConfig", bound=NativeModuleConfig, default=NativeModuleConfig)
 
 
-class NativeModule(Module[_NativeConfig]):
+class NativeModule(Module):
     """Module that wraps a native executable as a managed subprocess.
 
     Subclass this, declare In/Out ports, and set ``default_config`` to a
@@ -129,6 +129,8 @@ class NativeModule(Module[_NativeConfig]):
     The native process should parse these args and pub/sub on the given
     LCM topics directly.  On ``stop()``, the process receives SIGTERM.
     """
+
+    config: NativeModuleConfig
 
     _process: subprocess.Popen[bytes] | None = None
     _watchdog: threading.Thread | None = None

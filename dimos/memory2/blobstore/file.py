@@ -25,7 +25,7 @@ class FileBlobStoreConfig(BlobStoreConfig):
     root: str
 
 
-class FileBlobStore(BlobStore[FileBlobStoreConfig]):
+class FileBlobStore(BlobStore):
     """Stores blobs as files on disk, one directory per stream.
 
     Layout::

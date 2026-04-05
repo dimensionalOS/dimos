@@ -43,7 +43,8 @@ class Config(ModuleConfig):
     carve_columns: bool = True
 
 
-class VoxelGridMapper(Module[Config]):
+class VoxelGridMapper(Module):
+    config: Config
     lidar: In[PointCloud2]
     global_map: Out[PointCloud2]
 

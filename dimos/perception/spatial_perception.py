@@ -68,7 +68,7 @@ class SpatialConfig(ModuleConfig):
     visual_memory: VisualMemory | None = None  # Optional VisualMemory instance for storing images
 
 
-class SpatialMemory(Module[SpatialConfig]):
+class SpatialMemory(Module):
     """
     A Dimos module for building and querying Robot spatial memory.
 
@@ -77,6 +77,8 @@ class SpatialMemory(Module[SpatialConfig]):
     for later retrieval via RPC calls. It also maintains a list of named
     robot locations that can be queried by name.
     """
+
+    config: SpatialConfig
 
     # LCM inputs
     color_image: In[Image]

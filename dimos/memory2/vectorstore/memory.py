@@ -26,12 +26,14 @@ class MemoryVectorStoreConfig(VectorStoreConfig):
     pass
 
 
-class MemoryVectorStore(VectorStore[MemoryVectorStoreConfig]):
+class MemoryVectorStore(VectorStore):
     """In-memory brute-force vector store for testing.
 
     Stores embeddings in a dict keyed by ``(stream, observation_id)``.
     Search computes cosine similarity against all vectors in the stream.
     """
+
+    config: MemoryVectorStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

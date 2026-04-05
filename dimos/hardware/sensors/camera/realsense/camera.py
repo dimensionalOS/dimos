@@ -73,7 +73,8 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     serial_number: str | None = None
 
 
-class RealSenseCamera(DepthCameraHardware, Module[RealSenseCameraConfig], perception.DepthCamera):
+class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
+    config: RealSenseCameraConfig
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]

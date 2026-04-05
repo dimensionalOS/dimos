@@ -44,7 +44,9 @@ class DDSConfig(BaseConfig):
     qos: Qos | None = None
 
 
-class DDSService(Service[DDSConfig]):
+class DDSService(Service):
+    config: DDSConfig
+
     def start(self) -> None:
         """Start the DDS service."""
         domain_id = self.config.domain_id

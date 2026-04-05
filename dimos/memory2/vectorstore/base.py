@@ -17,8 +17,6 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import TYPE_CHECKING, Any
 
-from typing_extensions import TypeVar
-
 from dimos.core.resource import CompositeResource
 from dimos.memory2.registry import qual
 from dimos.protocol.service.spec import BaseConfig, Configurable
@@ -31,12 +29,7 @@ class VectorStoreConfig(BaseConfig):
     pass
 
 
-VectorStoreConfigT = TypeVar(
-    "VectorStoreConfigT", bound=VectorStoreConfig, default=VectorStoreConfig
-)
-
-
-class VectorStore(Configurable[VectorStoreConfigT], CompositeResource):
+class VectorStore(Configurable, CompositeResource):
     """Pluggable storage and ANN index for embedding vectors.
 
     Separates vector indexing from metadata so backends can swap
@@ -46,6 +39,8 @@ class VectorStore(Configurable[VectorStoreConfigT], CompositeResource):
     by ``(stream, observation_id)``.  Vector index creation is lazy — the
     first ``put`` for a stream determines dimensionality.
     """
+
+    config: VectorStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)

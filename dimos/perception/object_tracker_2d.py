@@ -48,8 +48,10 @@ class ObjectTracker2DConfig(ModuleConfig):
     frame_id: str = "camera_link"
 
 
-class ObjectTracker2D(Module[ObjectTracker2DConfig]):
+class ObjectTracker2D(Module):
     """Pure 2D object tracking module using OpenCV's CSRT tracker."""
+
+    config: ObjectTracker2DConfig
 
     color_image: In[Image]
 

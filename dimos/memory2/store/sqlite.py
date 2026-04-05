@@ -37,7 +37,7 @@ class SqliteStoreConfig(StoreConfig):
     page_size: int = 256
 
 
-class SqliteStore(Store[SqliteStoreConfig]):
+class SqliteStore(Store):
     """Store backed by a SQLite database file."""
 
     config: SqliteStoreConfig

@@ -50,7 +50,7 @@ class Config(ModuleConfig):
     use_3d_navigation: bool = False
 
 
-class PersonFollowSkillContainer(Module[Config]):
+class PersonFollowSkillContainer(Module):
     """Skill container for following a person.
 
     This skill uses:
@@ -59,6 +59,8 @@ class PersonFollowSkillContainer(Module[Config]):
     - Visual servoing OR 3D navigation to control robot movement towards the person.
     - Does not do obstacle avoidance; assumes a clear path.
     """
+
+    config: Config
 
     color_image: In[Image]
     global_map: In[PointCloud2]
@@ -73,7 +75,7 @@ class PersonFollowSkillContainer(Module[Config]):
         super().__init__(**kwargs)
         self._latest_image: Image | None = None
         self._latest_pointcloud: PointCloud2 | None = None
-        self._vl_model: VlModel[Any] = create("qwen")
+        self._vl_model: VlModel = create("qwen")
         self._tracker: EdgeTAMProcessor | None = None
         self._thread: Thread | None = None
         self._should_stop: Event = Event()

@@ -38,7 +38,7 @@ class TwistTeleopConfig(QuestTeleopConfig):
 
 
 # Example implementation to show how to extend QuestTeleopModule for different teleop behaviors and outputs.
-class TwistTeleopModule(QuestTeleopModule[TwistTeleopConfig]):
+class TwistTeleopModule(QuestTeleopModule):
     """Quest teleop that outputs TwistStamped instead of PoseStamped.
 
     Config:
@@ -50,6 +50,8 @@ class TwistTeleopModule(QuestTeleopModule[TwistTeleopConfig]):
         - right_twist: TwistStamped (linear + angular velocity)
         - buttons: Buttons (inherited)
     """
+
+    config: TwistTeleopConfig
 
     left_twist: Out[TwistStamped]
     right_twist: Out[TwistStamped]
@@ -80,7 +82,7 @@ class ArmTeleopConfig(QuestTeleopConfig):
     task_names: dict[str, str] = Field(default_factory=dict)
 
 
-class ArmTeleopModule(QuestTeleopModule[ArmTeleopConfig]):
+class ArmTeleopModule(QuestTeleopModule):
     """Quest teleop with per-hand press-and-hold engage and task name routing.
 
     Each controller's primary button (X for left, A for right)
@@ -95,6 +97,8 @@ class ArmTeleopModule(QuestTeleopModule[ArmTeleopConfig]):
         - right_controller_output: PoseStamped (inherited)
         - buttons: Buttons (inherited)
     """
+
+    config: ArmTeleopConfig
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

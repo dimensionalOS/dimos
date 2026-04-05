@@ -38,7 +38,8 @@ class Config(ModuleConfig):
     config: OccupancyConfig = Field(default_factory=HeightCostConfig)
 
 
-class CostMapper(Module[Config]):
+class CostMapper(Module):
+    config: Config
     global_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
 

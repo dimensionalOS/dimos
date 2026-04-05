@@ -44,7 +44,8 @@ class G1SimConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
 
 
-class G1SimConnection(G1ConnectionBase[G1SimConfig]):
+class G1SimConnection(G1ConnectionBase):
+    config: G1SimConfig
     cmd_vel: In[Twist]
     lidar: Out[PointCloud2]
     odom: Out[PoseStamped]

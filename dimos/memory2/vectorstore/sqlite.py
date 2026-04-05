@@ -41,7 +41,7 @@ class SqliteVectorStoreConfig(VectorStoreConfig):
         return self
 
 
-class SqliteVectorStore(VectorStore[SqliteVectorStoreConfig]):
+class SqliteVectorStore(VectorStore):
     """Vector store backed by sqlite-vec's vec0 virtual tables.
 
     Creates one virtual table per stream: ``"{stream}_vec"``.

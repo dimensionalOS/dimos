@@ -32,7 +32,7 @@ class ListObservationStoreConfig(ObservationStoreConfig):
     name: str = "<memory>"
 
 
-class ListObservationStore(ObservationStore[T, ListObservationStoreConfig]):
+class ListObservationStore(ObservationStore[T]):
     """In-memory metadata store for experimentation. Thread-safe."""
 
     config: ListObservationStoreConfig

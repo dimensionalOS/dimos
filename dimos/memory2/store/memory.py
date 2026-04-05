@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.memory2.store.base import Store, StoreConfig
+from dimos.memory2.store.base import Store
 
 
-class MemoryStore(Store[StoreConfig]):
+class MemoryStore(Store):
     """In-memory store for experimentation."""
 
     pass

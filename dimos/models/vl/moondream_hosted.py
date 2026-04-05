@@ -15,7 +15,8 @@ from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 class Config(VlModelConfig):
     api_key: str | None = None
 
-class MoondreamHostedVlModel(VlModel[Config]):
+class MoondreamHostedVlModel(VlModel):
+    config: Config
 
     @cached_property
     def _client(self) -> md.vl:

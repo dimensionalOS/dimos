@@ -46,7 +46,8 @@ class SpatialEmbedding(SpatialEntry):
     embedding: Embedding
 
 
-class EmbeddingMemory(Module[Config]):
+class EmbeddingMemory(Module):
+    config: Config
     color_image: In[Image]
     global_costmap: In[OccupancyGrid]
 

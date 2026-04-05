@@ -59,8 +59,10 @@ class ObjectTrackingConfig(ModuleConfig):
     reid_fail_tolerance: int = 5
 
 
-class ObjectTracking(Module[ObjectTrackingConfig]):
+class ObjectTracking(Module):
     """Module for object tracking with LCM input/output."""
+
+    config: ObjectTrackingConfig
 
     # LCM inputs
     color_image: In[Image]

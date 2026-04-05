@@ -66,7 +66,8 @@ class StubNativeConfig(NativeModuleConfig):
     some_param: float = 1.5
 
 
-class StubNativeModule(NativeModule[StubNativeConfig]):
+class StubNativeModule(NativeModule):
+    config: StubNativeConfig
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
     cmd_vel: In[Twist]

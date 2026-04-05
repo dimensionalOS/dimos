@@ -197,7 +197,7 @@ class Config(ModuleConfig):
     blueprint: BlueprintFactory | None = _default_blueprint
 
 
-class RerunBridgeModule(Module[Config]):
+class RerunBridgeModule(Module):
     """Bridge that logs messages from pubsubs to Rerun.
 
     Spawns its own Rerun viewer and subscribes to all topics on each provided
@@ -212,6 +212,8 @@ class RerunBridgeModule(Module[Config]):
         # All messages with to_rerun() are now logged to Rerun
         bridge.stop()
     """
+
+    config: Config
 
     GV_SCALE = 100.0  # graphviz inches to rerun screen units
     MODULE_RADIUS = 30.0

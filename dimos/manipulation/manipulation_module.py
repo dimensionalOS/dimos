@@ -30,7 +30,6 @@ import time
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pydantic import Field
-from typing_extensions import TypeVar
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -82,13 +81,6 @@ class ManipulationState(Enum):
     FAULT = 4
 
 
-ManipulationModuleConfigT = TypeVar(
-    "ManipulationModuleConfigT",
-    bound="ManipulationModuleConfig",
-    default="ManipulationModuleConfig",
-)
-
-
 class ManipulationModuleConfig(ModuleConfig):
     """Configuration for ManipulationModule."""
 
@@ -103,7 +95,7 @@ class ManipulationModuleConfig(ModuleConfig):
     floor_z: float | None = None
 
 
-class ManipulationModule(Module[ManipulationModuleConfigT]):
+class ManipulationModule(Module):
     """Base motion planning module with ControlCoordinator execution.
 
     - @rpc: Low-level building blocks (plan, execute, gripper)
@@ -111,6 +103,8 @@ class ManipulationModule(Module[ManipulationModuleConfigT]):
 
     Subclass PickAndPlaceModule adds perception integration and long-horizon skills.
     """
+
+    config: ManipulationModuleConfig
 
     # Input: Joint state from coordinator (for world sync)
     joint_state: In[JointState]

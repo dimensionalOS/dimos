@@ -24,7 +24,8 @@ class MoondreamConfig(HuggingFaceModelConfig, VlModelConfig):
     dtype: torch.dtype = torch.bfloat16
     auto_resize: tuple[int, int] | None = MOONDREAM_DEFAULT_AUTO_RESIZE
 
-class MoondreamVlModel(HuggingFaceModel, VlModel[MoondreamConfig]):
+class MoondreamVlModel(HuggingFaceModel, VlModel):
+    config: MoondreamConfig
     _model_class = AutoModelForCausalLM
 
     @cached_property

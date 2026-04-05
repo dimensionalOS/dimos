@@ -96,7 +96,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
 
     def deploy(
         self,
-        module_class: type[ModuleBase[Any]],
+        module_class: type[ModuleBase],
         global_config: GlobalConfig = global_config,
         **kwargs: Any,
     ) -> ModuleProxy:
@@ -291,7 +291,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
             if hasattr(module, "on_system_modules"):
                 module.on_system_modules(all_modules)
 
-    def load_module(self, module_class: type[ModuleBase[Any]], **kwargs: Any) -> None:
+    def load_module(self, module_class: type[ModuleBase], **kwargs: Any) -> None:
         self.load_blueprint(module_class.blueprint(**kwargs))
 
     def loop(self) -> None:

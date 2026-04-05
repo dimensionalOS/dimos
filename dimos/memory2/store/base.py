@@ -14,9 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
-
-from typing_extensions import TypeVar
+from typing import Any, TypeVar, cast
 
 from dimos.core.resource import CompositeResource
 from dimos.memory2.backend import Backend
@@ -31,7 +29,6 @@ from dimos.memory2.vectorstore.base import VectorStore
 from dimos.protocol.service.spec import BaseConfig, Configurable
 
 T = TypeVar("T")
-StoreConfigT = TypeVar("StoreConfigT", bound="StoreConfig", default="StoreConfig")
 
 
 class StreamAccessor:
@@ -80,11 +77,13 @@ class StoreConfig(BaseConfig):
     eager_blobs: bool = False
 
 
-class Store(Configurable[StoreConfigT], CompositeResource):
+class Store(Configurable, CompositeResource):
     """Top-level entry point — wraps a storage location (file, URL, etc.).
 
     Store directly manages streams. No Session layer.
     """
+
+    config: StoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)

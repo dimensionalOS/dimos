@@ -37,7 +37,7 @@ class SqliteBlobStoreConfig(BlobStoreConfig):
         return self
 
 
-class SqliteBlobStore(BlobStore[SqliteBlobStoreConfig]):
+class SqliteBlobStore(BlobStore):
     """Stores blobs in a separate SQLite table per stream.
 
     Table layout per stream::

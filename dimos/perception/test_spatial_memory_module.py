@@ -40,8 +40,10 @@ class VideoReplayConfig(ModuleConfig):
     video_path: str
 
 
-class VideoReplayModule(Module[VideoReplayConfig]):
+class VideoReplayModule(Module):
     """Module that replays video data from TimedSensorReplay."""
+
+    config: VideoReplayConfig
 
     video_out: Out[Image]
     _subscription = None

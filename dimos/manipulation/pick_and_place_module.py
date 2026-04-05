@@ -85,7 +85,7 @@ class PickAndPlaceModuleConfig(ManipulationModuleConfig):
     )
 
 
-class PickAndPlaceModule(ManipulationModule[PickAndPlaceModuleConfig]):
+class PickAndPlaceModule(ManipulationModule):
     """Manipulation module with perception integration and pick-and-place skills.
 
     Extends ManipulationModule with:
@@ -94,7 +94,6 @@ class PickAndPlaceModule(ManipulationModule[PickAndPlaceModuleConfig]):
     - @skill: pick, place, place_back, pick_and_place, scan_objects, get_scene_info
     """
 
-    # Type annotation for the config attribute (mypy uses this)
     config: PickAndPlaceModuleConfig
 
     # Input: Objects from perception (for obstacle integration)
