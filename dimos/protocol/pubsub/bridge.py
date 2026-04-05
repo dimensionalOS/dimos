@@ -74,7 +74,7 @@ class BridgeConfig(BaseConfig, Generic[TopicFrom, TopicTo, MsgFrom, MsgTo]):
     subscribe_topic: TopicFrom | None = None
 
 
-class Bridge(Service):
+class Bridge(Service, Generic[TopicFrom, TopicTo, MsgFrom, MsgTo]):
     """Service that bridges messages from one pubsub to another."""
 
     config: BridgeConfig[TopicFrom, TopicTo, MsgFrom, MsgTo]

@@ -65,10 +65,12 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     def __init__(
         self,
         *args: Any,
-        rpc_timeouts: dict[str, float] = DEFAULT_RPC_TIMEOUTS,
+        rpc_timeouts: dict[str, float] | None = None,
         default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT,
         **kwargs: Any,
     ) -> None:
+        if rpc_timeouts is None:
+            rpc_timeouts = dict(DEFAULT_RPC_TIMEOUTS)
         super().__init__(*args, **kwargs)
         self.rpc_timeouts = dict(rpc_timeouts)
         self.default_rpc_timeout = default_rpc_timeout
@@ -300,10 +302,12 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 class LCMRPC(PubSubRPCMixin[Topic, Any], PickleLCM):
     def __init__(
         self,
-        rpc_timeouts: dict[str, float] = DEFAULT_RPC_TIMEOUTS,
+        rpc_timeouts: dict[str, float] | None = None,
         default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT,
         **kwargs: Any,
     ) -> None:
+        if rpc_timeouts is None:
+            rpc_timeouts = dict(DEFAULT_RPC_TIMEOUTS)
         PickleLCM.__init__(self, **kwargs)
         PubSubRPCMixin.__init__(
             self, rpc_timeouts=rpc_timeouts, default_rpc_timeout=default_rpc_timeout, **kwargs
@@ -320,11 +324,13 @@ class LCMRPC(PubSubRPCMixin[Topic, Any], PickleLCM):
 class ShmRPC(PubSubRPCMixin[str, Any], PickleSharedMemory):
     def __init__(
         self,
-        rpc_timeouts: dict[str, float] = DEFAULT_RPC_TIMEOUTS,
+        rpc_timeouts: dict[str, float] | None = None,
         default_rpc_timeout: float = DEFAULT_RPC_TIMEOUT,
         prefer: str = "cpu",
         **kwargs: Any,
     ) -> None:
+        if rpc_timeouts is None:
+            rpc_timeouts = dict(DEFAULT_RPC_TIMEOUTS)
         PickleSharedMemory.__init__(self, prefer=prefer, **kwargs)
         PubSubRPCMixin.__init__(
             self, rpc_timeouts=rpc_timeouts, default_rpc_timeout=default_rpc_timeout, **kwargs
