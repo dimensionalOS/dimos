@@ -63,7 +63,7 @@ class ImageEmbeddingProvider:
     def _initialize_model(self):  # type: ignore[no-untyped-def]
         """Initialize the specified embedding model."""
         try:
-            import onnxruntime as ort  # type: ignore[import-untyped]
+            import onnxruntime as ort  # type: ignore[import-untyped,import-not-found]
             import torch  # noqa: F401
             from transformers import (  # type: ignore[import-untyped]
                 AutoFeatureExtractor,

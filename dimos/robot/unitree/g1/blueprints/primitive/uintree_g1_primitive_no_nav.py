@@ -19,7 +19,7 @@ from typing import Any
 
 from dimos_lcm.sensor_msgs import CameraInfo
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule  # type: ignore[attr-defined]
@@ -88,7 +88,7 @@ def _g1_rerun_blueprint() -> Any:
                 name="3D",
                 background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
                 line_grid=rrb.LineGrid3D(
-                    plane=rr.components.Plane3D.XY.with_distance(0.2),
+                    plane=rr.components.Plane3D.XY.with_distance(0.5),
                 ),
             ),
             column_shares=[1, 2],

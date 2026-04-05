@@ -20,13 +20,9 @@ from typing import (
     TypeVar,
 )
 
-from dimos.core.o3dpickle import register_picklers
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-# injects pickling system into o3d
-register_picklers()
 T = TypeVar("T")
 
 from typing import ParamSpec, TypeVar

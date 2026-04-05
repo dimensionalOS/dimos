@@ -21,18 +21,33 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.blueprints._hardware import mock_arm, mock_twist_base
-from dimos.control.components import make_twist_base_joints
+from dimos.control.components import (
+    HardwareComponent,
+    HardwareType,
+    make_twist_base_joints,
+)
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.catalog.ufactory import xarm7 as _catalog_xarm7
 
 _base_joints = make_twist_base_joints("base")
 
+
+def _mock_twist_base(hw_id: str = "base") -> HardwareComponent:
+    """Mock holonomic twist base (3-DOF: vx, vy, wz)."""
+    return HardwareComponent(
+        hardware_id=hw_id,
+        hardware_type=HardwareType.BASE,
+        joints=make_twist_base_joints(hw_id),
+        adapter_type="mock_twist_base",
+    )
+
+
 # Mock holonomic twist base (3-DOF: vx, vy, wz)
 coordinator_mock_twist_base = ControlCoordinator.blueprint(
-    hardware=[mock_twist_base()],
+    hardware=[_mock_twist_base()],
     tasks=[
         TaskConfig(
             name="vel_base",
@@ -49,15 +64,12 @@ coordinator_mock_twist_base = ControlCoordinator.blueprint(
 )
 
 # Mock arm (7-DOF) + mock holonomic base (3-DOF)
+_mock_arm_cfg = _catalog_xarm7(name="arm")
+
 coordinator_mobile_manip_mock = ControlCoordinator.blueprint(
-    hardware=[mock_arm(), mock_twist_base()],
+    hardware=[_mock_arm_cfg.to_hardware_component(), _mock_twist_base()],
     tasks=[
-        TaskConfig(
-            name="traj_arm",
-            type="trajectory",
-            joint_names=[f"arm_joint{i + 1}" for i in range(7)],
-            priority=10,
-        ),
+        _mock_arm_cfg.to_task_config(task_name="traj_arm"),
         TaskConfig(
             name="vel_base",
             type="velocity",

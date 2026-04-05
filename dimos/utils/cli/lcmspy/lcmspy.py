@@ -17,6 +17,7 @@ import threading
 import time
 from typing import Any
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 from dimos.utils.human import human_bytes
 
@@ -182,7 +183,7 @@ class GraphLCMSpy(LCMSpy, GraphTopic):
         """Stop the graph logging and LCM spy"""
         self.graph_log_stop_event.set()
         if self.graph_log_thread and self.graph_log_thread.is_alive():
-            self.graph_log_thread.join(timeout=1.0)
+            self.graph_log_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
 

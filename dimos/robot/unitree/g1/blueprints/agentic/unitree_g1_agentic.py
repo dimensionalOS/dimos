@@ -15,7 +15,7 @@
 
 """Full G1 stack with agentic skills."""
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.g1.blueprints.agentic._agentic_skills import _agentic_skills
 from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1 import unitree_g1
 

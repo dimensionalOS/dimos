@@ -28,9 +28,10 @@ from reactivex import operators as ops
 from reactivex.subject import Subject
 
 from dimos.agents.annotation import skill
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, ROSTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -316,7 +317,7 @@ class ROSNav(
         if self._navigation_thread and self._navigation_thread.is_alive():
             logger.warning("Previous navigation still running, cancelling")
             self.stop_navigation()
-            self._navigation_thread.join(timeout=1.0)
+            self._navigation_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         self._navigation_thread = threading.Thread(
             target=self._navigate_to_goal_async,

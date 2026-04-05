@@ -32,6 +32,7 @@ import numpy as np
 from numpy.typing import NDArray
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -104,7 +105,7 @@ class ObjectTracker2D(Module[ObjectTracker2DConfig]):
         self.stop_track()
         if self.tracking_thread and self.tracking_thread.is_alive():
             self.stop_tracking_event.set()
-            self.tracking_thread.join(timeout=2.0)
+            self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 
@@ -194,7 +195,7 @@ class ObjectTracker2D(Module[ObjectTracker2DConfig]):
         if self.tracking_thread and self.tracking_thread.is_alive():
             if threading.current_thread() != self.tracking_thread:
                 self.stop_tracking_event.set()
-                self.tracking_thread.join(timeout=1.0)
+                self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
                 self.tracking_thread = None
             else:
                 self.stop_tracking_event.set()

@@ -48,6 +48,7 @@ import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -309,9 +310,9 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
     def stop(self) -> None:
         self._running.clear()
         if self._sim_thread:
-            self._sim_thread.join(timeout=2.0)
+            self._sim_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if self._unity_thread:
-            self._unity_thread.join(timeout=2.0)
+            self._unity_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         with self._state_lock:
             proc = self._unity_process
             self._unity_process = None
@@ -513,7 +514,7 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
                     self._handle_unity_message(dest, data)
         finally:
             halt.set()
-            sender.join(timeout=2.0)
+            sender.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
     def _unity_sender(self, sock: socket.socket, halt: threading.Event) -> None:
         while not halt.is_set():

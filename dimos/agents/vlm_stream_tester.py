@@ -18,6 +18,8 @@ import time
 from langchain_core.messages import AIMessage, HumanMessage
 from reactivex.disposable import Disposable
 
+from dimos.agents.vlm_agent_spec import VLMAgentSpec
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
@@ -34,9 +36,7 @@ class VlmStreamTester(Module):
     query_stream: Out[HumanMessage]
     answer_stream: In[AIMessage]
 
-    rpc_calls: list[str] = [
-        "VLMAgent.query_image",
-    ]
+    _vlm_agent: VLMAgentSpec
 
     def __init__(  # type: ignore[no-untyped-def]
         self,
@@ -72,7 +72,7 @@ class VlmStreamTester(Module):
     def stop(self) -> None:
         self._stop_event.set()
         if self._worker and self._worker.is_alive():
-            self._worker.join(timeout=1.0)
+            self._worker.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
     def _on_image(self, image: Image) -> None:
@@ -135,13 +135,6 @@ class VlmStreamTester(Module):
             time.sleep(self._query_interval_s)
 
     def _run_rpc_queries(self) -> None:
-        rpc_query = None
-        try:
-            rpc_query = self.get_rpc_calls("VLMAgent.query_image")
-        except Exception as exc:
-            logger.warning("RPC query_image lookup failed", error=str(exc))
-            return
-
         for idx in range(self._num_queries):
             if self._stop_event.is_set():
                 break
@@ -161,7 +154,7 @@ class VlmStreamTester(Module):
 
             logger.info("Sending RPC query", index=idx + 1, total=self._num_queries)
             try:
-                response = rpc_query(
+                response = self._vlm_agent.query_image(
                     self._latest_image,
                     f"{self._prompt} (rpc query {idx + 1}/{self._num_queries})",
                 )

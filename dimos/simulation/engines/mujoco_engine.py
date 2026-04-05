@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 import mujoco
 import mujoco.viewer as viewer  # type: ignore[import-untyped,import-not-found]
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.simulation.engines.base import SimulationEngine
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
@@ -166,7 +167,7 @@ class MujocoEngine(SimulationEngine):
                 self._connected = False
             self._stop_event.set()
             if self._sim_thread and self._sim_thread.is_alive():
-                self._sim_thread.join(timeout=2.0)
+                self._sim_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._sim_thread = None
             return True
         except Exception as e:

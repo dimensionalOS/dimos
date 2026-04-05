@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import threading
 from typing import Any
 
 import numpy as np
@@ -61,7 +62,8 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         self.dtype = dtype
 
         self._stream = None
-        self._running = False
+        self._stream_lock = threading.Lock()
+        self._running = threading.Event()
         self._subscription = None
         self.audio_observable = None
 
@@ -87,7 +89,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
                 dtype=self.dtype,
             )
             self._stream.start()  # type: ignore[attr-defined]
-            self._running = True
+            self._running.set()
 
             logger.info(
                 f"Started audio output: {self.sample_rate}Hz, "
@@ -122,20 +124,21 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
     def stop(self) -> None:
         """Stop audio output and clean up resources."""
         logger.info("Stopping audio output")
-        self._running = False
+        self._running.clear()
 
         if self._subscription:
             self._subscription.dispose()
             self._subscription = None
 
-        if self._stream:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+        with self._stream_lock:
+            if self._stream:
+                self._stream.stop()
+                self._stream.close()
+                self._stream = None
 
     def _play_audio_event(self, audio_event) -> None:  # type: ignore[no-untyped-def]
         """Play audio from an AudioEvent."""
-        if not self._running or not self._stream:
+        if not self._running.is_set():
             return
 
         try:
@@ -146,8 +149,9 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
                 elif self.dtype == np.int16:
                     audio_event = audio_event.to_int16()
 
-            # Write audio data to the stream
-            self._stream.write(audio_event.data)
+            with self._stream_lock:
+                if self._stream:
+                    self._stream.write(audio_event.data)
         except Exception as e:
             logger.error(f"Error playing audio: {e}")
 
@@ -158,11 +162,12 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
     def _handle_completion(self) -> None:
         """Handle completion of the observable."""
         logger.info("Audio observable completed")
-        self._running = False
-        if self._stream:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+        self._running.clear()
+        with self._stream_lock:
+            if self._stream:
+                self._stream.stop()
+                self._stream.close()
+                self._stream = None
 
     def get_available_devices(self) -> list[dict[str, Any]]:
         """Get a list of available audio output devices."""

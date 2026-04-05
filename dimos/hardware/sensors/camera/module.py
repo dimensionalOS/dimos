@@ -20,7 +20,7 @@ from pydantic import Field
 import reactivex as rx
 
 from dimos.agents.annotation import skill
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out

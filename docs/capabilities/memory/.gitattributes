@@ -1,0 +1,7 @@
+assets/color_image.svg filter=lfs diff=lfs merge=lfs -text
+assets/embedding.svg filter=lfs diff=lfs merge=lfs -text
+assets/embedding_focused.svg filter=lfs diff=lfs merge=lfs -text
+assets/imageposes.svg filter=lfs diff=lfs merge=lfs -text
+assets/speed.svg filter=lfs diff=lfs merge=lfs -text
+assets/brightness.svg filter=lfs diff=lfs merge=lfs -text
+assets/grid.png filter=lfs diff=lfs merge=lfs -text

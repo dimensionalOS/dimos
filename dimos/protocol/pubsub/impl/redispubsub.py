@@ -23,6 +23,7 @@ from typing import Any
 from pydantic import Field
 import redis  # type: ignore[import-not-found]
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.spec import BaseConfig, Service
 
@@ -167,7 +168,7 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
         self._running = False
 
         if self._listener_thread and self._listener_thread.is_alive():
-            self._listener_thread.join(timeout=1.0)
+            self._listener_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         if self._pubsub:
             try:

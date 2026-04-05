@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import reactivex as rx
 import reactivex.operators as ops
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.transport import pLCMTransport
@@ -80,7 +81,7 @@ class WebInput(Module):
         if self._web_interface:
             self._web_interface.shutdown()
         if self._thread:
-            self._thread.join(timeout=1.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if self._human_transport:
             self._human_transport.lcm.stop()
         super().stop()

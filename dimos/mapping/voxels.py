@@ -155,8 +155,10 @@ class VoxelGrid:
         self._check_disposed()
         assert self.vbg is not None
         voxel_coords, _ = self.vbg.voxel_coordinates_and_flattened_indices()
-        pts = voxel_coords + (self._voxel_size * 0.5)
-        out = o3d.t.geometry.PointCloud(device=self._dev)
+        # Move to CPU immediately to avoid holding a large duplicate on GPU.
+        cpu = o3c.Device("CPU:0")
+        pts = voxel_coords.to(cpu) + (self.config.voxel_size * 0.5)
+        out = o3d.t.geometry.PointCloud(device=cpu)
         out.point["positions"] = pts
         return out
 

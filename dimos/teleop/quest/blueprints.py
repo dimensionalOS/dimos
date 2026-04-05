@@ -21,7 +21,7 @@ from dimos.control.blueprints.teleop import (
     coordinator_teleop_xarm6,
     coordinator_teleop_xarm7,
 )
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.teleop.quest.quest_extensions import ArmTeleopModule
