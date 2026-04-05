@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.lidar.livox.ports import (
@@ -87,6 +88,14 @@ class Mid360(NativeModule, perception.Lidar, perception.IMU):
 
     lidar: Out[PointCloud2]
     imu: Out[Imu]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
 
 # Verify protocol port compliance (mypy will flag missing ports)

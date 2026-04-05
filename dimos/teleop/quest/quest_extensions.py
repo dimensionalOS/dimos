@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import Field
 
+from dimos.core.core import rpc
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -55,6 +56,14 @@ class TwistTeleopModule(QuestTeleopModule):
 
     left_twist: Out[TwistStamped]
     right_twist: Out[TwistStamped]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Convert PoseStamped to TwistStamped, apply scaling, and publish."""
@@ -99,6 +108,14 @@ class ArmTeleopModule(QuestTeleopModule):
     """
 
     config: ArmTeleopConfig
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

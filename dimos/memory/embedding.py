@@ -94,6 +94,10 @@ class EmbeddingMemory(Module):
             embedding=embedding,
         )
 
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
     def _store_spatial_entry(self, spatial_embedding: SpatialEmbedding) -> SpatialEmbedding:
         return spatial_embedding
 
