@@ -30,7 +30,6 @@ path, so no name exchange is required.
 
 from __future__ import annotations
 
-import logging
 import math
 import time
 from typing import TYPE_CHECKING, Any
@@ -44,10 +43,13 @@ from dimos.simulation.engines.mujoco_shm import (
     ManipShmReader,
     shm_key_from_path,
 )
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.hardware.manipulators.registry import AdapterRegistry
 
+
+logger = setup_logger()
 
 _READY_WAIT_TIMEOUT_S = 60.0
 _READY_WAIT_POLL_S = 0.1
@@ -71,7 +73,6 @@ class ShmMujocoAdapter:
     ) -> None:
         if address is None:
             raise ValueError("address (MJCF XML path) is required for sim_mujoco adapter")
-        self.logger = logging.getLogger(self.__class__.__name__)
         self._dof = dof
         self._address = address
         self._hardware_id = hardware_id
@@ -83,49 +84,55 @@ class ShmMujocoAdapter:
         self._error_code = 0
         self._error_message = ""
         self._has_gripper = False
+        self._effort_mode_warned = False
 
     # ---------------- connection ---------------------------------
 
     def connect(self) -> bool:
-        try:
-            # Attach to SHM. If the sim module hasn't created the buffers yet,
-            # retry for a short window — module startup ordering is not
-            # strictly guaranteed, only that they're both in the same blueprint.
-            deadline = time.monotonic() + _ATTACH_RETRY_TIMEOUT_S
-            while True:
-                try:
-                    self._shm = ManipShmReader(self._shm_key)
-                    break
-                except FileNotFoundError:
-                    if time.monotonic() > deadline:
-                        self.logger.error(
-                            f"ShmMujocoAdapter: SHM buffers not found for {self._address} "
-                            f"(key={self._shm_key}) after {_ATTACH_RETRY_TIMEOUT_S}s"
-                        )
-                        return False
-                    time.sleep(_ATTACH_RETRY_POLL_S)
-
-            # Wait for sim module to signal ready.
-            deadline = time.monotonic() + _READY_WAIT_TIMEOUT_S
-            while not self._shm.is_ready():
+        # Attach to SHM. If the sim module hasn't created the buffers yet,
+        # retry for a short window — module startup ordering is not
+        # strictly guaranteed, only that they're both in the same blueprint.
+        # Only the ManipShmReader construction is wrapped, since that's the
+        # only call here with a recoverable failure mode (buffers not yet
+        # created). Everything below that point either succeeds or raises
+        # a real bug that shouldn't be silently swallowed.
+        deadline = time.monotonic() + _ATTACH_RETRY_TIMEOUT_S
+        while True:
+            try:
+                self._shm = ManipShmReader(self._shm_key)
+                break
+            except FileNotFoundError:
                 if time.monotonic() > deadline:
-                    self.logger.error(
-                        f"ShmMujocoAdapter: sim module not ready after {_READY_WAIT_TIMEOUT_S}s"
+                    logger.error(
+                        "SHM buffers not found",
+                        address=self._address,
+                        shm_key=self._shm_key,
+                        timeout_s=_ATTACH_RETRY_TIMEOUT_S,
                     )
                     return False
-                time.sleep(_READY_WAIT_POLL_S)
+                time.sleep(_ATTACH_RETRY_POLL_S)
 
-            num_joints = self._shm.num_joints()
-            self._has_gripper = num_joints > self._dof
-            self._connected = True
-            self._servos_enabled = True
-            self.logger.info(
-                f"ShmMujocoAdapter connected (dof={self._dof}, gripper={self._has_gripper})"
-            )
-            return True
-        except Exception as exc:
-            self.logger.error(f"ShmMujocoAdapter: connect() failed: {exc}")
-            return False
+        # Wait for sim module to signal ready.
+        deadline = time.monotonic() + _READY_WAIT_TIMEOUT_S
+        while not self._shm.is_ready():
+            if time.monotonic() > deadline:
+                logger.error(
+                    "sim module not ready",
+                    timeout_s=_READY_WAIT_TIMEOUT_S,
+                )
+                return False
+            time.sleep(_READY_WAIT_POLL_S)
+
+        num_joints = self._shm.num_joints()
+        self._has_gripper = num_joints > self._dof
+        self._connected = True
+        self._servos_enabled = True
+        logger.info(
+            "ShmMujocoAdapter connected",
+            dof=self._dof,
+            gripper=self._has_gripper,
+        )
+        return True
 
     def disconnect(self) -> None:
         try:
@@ -215,6 +222,14 @@ class ShmMujocoAdapter:
 
     def write_joint_efforts(self, efforts: list[float]) -> bool:
         # Effort mode not exposed via SHM yet; caller can fall back to position.
+        # Log once per adapter instance so the caller sees feedback without
+        # spamming the log each tick.
+        if not self._effort_mode_warned:
+            logger.warning(
+                "write_joint_efforts not supported by sim adapter; ignoring and returning False",
+                dof=self._dof,
+            )
+            self._effort_mode_warned = True
         return False
 
     def write_stop(self) -> bool:

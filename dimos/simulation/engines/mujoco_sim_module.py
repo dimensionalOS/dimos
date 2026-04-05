@@ -53,14 +53,11 @@ from dimos.simulation.engines.mujoco_engine import (
     MujocoEngine,
 )
 from dimos.simulation.engines.mujoco_shm import (
-    CMD_MODE_POSITION,
-    CMD_MODE_VELOCITY,
     ManipShmWriter,
     shm_key_from_path,
 )
 from dimos.spec import perception
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.reactive import backpressure
 
 logger = setup_logger()
 
@@ -158,11 +155,17 @@ class MujocoSimModule(
 
     @rpc
     def get_color_camera_info(self) -> CameraInfo | None:
-        return self._camera_info_base
+        # Return a fresh copy — callers must not be able to mutate our
+        # cached intrinsics, and the color/depth getters must not alias.
+        if self._camera_info_base is None:
+            return None
+        return self._camera_info_base.with_ts(time.time())
 
     @rpc
     def get_depth_camera_info(self) -> CameraInfo | None:
-        return self._camera_info_base
+        if self._camera_info_base is None:
+            return None
+        return self._camera_info_base.with_ts(time.time())
 
     @rpc
     def get_depth_scale(self) -> float:
@@ -246,7 +249,7 @@ class MujocoSimModule(
         if self.config.enable_pointcloud and self.config.enable_depth:
             pc_interval = 1.0 / self.config.pointcloud_fps
             self._disposables.add(
-                backpressure(rx.interval(pc_interval)).subscribe(
+                rx.interval(pc_interval).subscribe(
                     on_next=lambda _: self._generate_pointcloud(),
                     on_error=lambda e: logger.error("Pointcloud error", error=str(e)),
                 )
@@ -266,21 +269,37 @@ class MujocoSimModule(
         if self._publish_thread and self._publish_thread.is_alive():
             self._publish_thread.join(timeout=2.0)
         self._publish_thread = None
+
+        # Collect teardown failures across both halves (engine + SHM) so that
+        # a failure in the first doesn't skip the second. Only clear the
+        # corresponding ``self._*`` reference if teardown actually succeeded
+        # — silently nulling on failure would let the next ``start()`` run on
+        # top of a half-torn-down state and mask the real bug.
+        errors: list[tuple[str, BaseException]] = []
         if self._engine is not None:
             try:
                 self._engine.disconnect()
+                self._engine = None
             except Exception as exc:
                 logger.error("engine.disconnect() failed", error=str(exc))
-            self._engine = None
+                errors.append(("engine.disconnect", exc))
         if self._shm is not None:
             try:
                 self._shm.signal_stop()
                 self._shm.cleanup()
+                self._shm = None
             except Exception as exc:
                 logger.error("SHM cleanup failed", error=str(exc))
-            self._shm = None
+                errors.append(("shm.cleanup", exc))
+
         self._camera_info_base = None
         super().stop()
+
+        if errors:
+            # Surface the first failure so the operator sees it. Subsequent
+            # ones are already logged above.
+            op, exc = errors[0]
+            raise RuntimeError(f"MujocoSimModule.stop() failed during {op}: {exc}") from exc
 
     # ---------------- SHM <-> engine hooks -----------------------
 
@@ -363,18 +382,32 @@ class MujocoSimModule(
         )
 
     def _publish_loop(self) -> None:
-        """Poll engine for rendered frames and publish at configured FPS."""
+        """Poll engine for rendered frames and publish at configured FPS.
+
+        Threading note: this loop reads ``self._engine`` without a lock. The
+        safety invariant is enforced by ``stop()``, which sets
+        ``self._stop_event`` *before* it joins this thread and only clears
+        ``self._engine`` *after* the join returns. So while this loop is
+        live, either ``_stop_event`` is unset (and ``_engine`` is guaranteed
+        non-None by construction in ``start()``), or ``_stop_event`` is set
+        and the next iteration will exit. The ``self._engine is not None``
+        guards below are belt-and-suspenders, not the real correctness
+        argument — don't rely on them if you reorder ``stop()``.
+        """
+        # Capture engine locally once up front. This makes the invariant
+        # explicit to the reader and removes the "is this racing with stop?"
+        # question from every subsequent access.
+        engine = self._engine
+        if engine is None:
+            return
+
         interval = 1.0 / self.config.fps
         last_timestamp = 0.0
         published_count = 0
 
         # Wait for engine to actually be connected (sim thread may take a tick).
         deadline = time.monotonic() + 30.0
-        while (
-            not self._stop_event.is_set()
-            and self._engine is not None
-            and not self._engine.connected
-        ):
+        while not self._stop_event.is_set() and not engine.connected:
             if time.monotonic() > deadline:
                 logger.error("MujocoSimModule: timed out waiting for engine to connect")
                 return
@@ -383,49 +416,59 @@ class MujocoSimModule(
         if self._stop_event.is_set():
             return
 
-        while not self._stop_event.is_set() and self._engine is not None:
+        while not self._stop_event.is_set():
+            # Only MuJoCo's rendering path (``read_camera``) is known to raise
+            # transient RuntimeErrors — everything else in this loop is our
+            # own code and a raise there is a real bug we want to see. We
+            # catch narrowly around the render call, not the whole body.
             try:
-                frame = self._engine.read_camera(self.config.camera_name)
-                if frame is None or frame.timestamp <= last_timestamp:
-                    self._stop_event.wait(timeout=interval * 0.5)
-                    continue
-                last_timestamp = frame.timestamp
-                ts = time.time()
+                frame = engine.read_camera(self.config.camera_name)
+            except RuntimeError as exc:
+                logger.error(
+                    "MuJoCo render failed; stopping publish loop",
+                    camera_name=self.config.camera_name,
+                    error=str(exc),
+                    exc_info=True,
+                )
+                return
 
-                color_img = Image(
-                    data=frame.rgb,
-                    format=ImageFormat.RGB,
+            if frame is None or frame.timestamp <= last_timestamp:
+                self._stop_event.wait(timeout=interval * 0.5)
+                continue
+            last_timestamp = frame.timestamp
+            ts = time.time()
+
+            color_img = Image(
+                data=frame.rgb,
+                format=ImageFormat.RGB,
+                frame_id=self._color_optical_frame,
+                ts=ts,
+            )
+            self.color_image.publish(color_img)
+
+            if self.config.enable_depth:
+                depth_img = Image(
+                    data=frame.depth,
+                    format=ImageFormat.DEPTH,
                     frame_id=self._color_optical_frame,
                     ts=ts,
                 )
-                self.color_image.publish(color_img)
+                self.depth_image.publish(depth_img)
 
-                if self.config.enable_depth:
-                    depth_img = Image(
-                        data=frame.depth,
-                        format=ImageFormat.DEPTH,
-                        frame_id=self._color_optical_frame,
-                        ts=ts,
-                    )
-                    self.depth_image.publish(depth_img)
+            self._publish_tf(ts, frame)
 
-                self._publish_tf(ts, frame)
+            published_count += 1
+            if published_count == 1:
+                logger.info(
+                    "MujocoSimModule first frame published",
+                    rgb_shape=frame.rgb.shape,
+                    depth_shape=frame.depth.shape,
+                )
 
-                published_count += 1
-                if published_count == 1:
-                    logger.info(
-                        "MujocoSimModule first frame published",
-                        rgb_shape=frame.rgb.shape,
-                        depth_shape=frame.depth.shape,
-                    )
-
-                elapsed = time.time() - ts
-                sleep_time = interval - elapsed
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-            except Exception as exc:
-                logger.error("MujocoSimModule publish error", error=str(exc))
-                time.sleep(1.0)
+            elapsed = time.time() - ts
+            sleep_time = interval - elapsed
+            if sleep_time > 0:
+                time.sleep(sleep_time)
 
     def _publish_camera_info(self) -> None:
         base = self._camera_info_base
@@ -510,10 +553,6 @@ class MujocoSimModule(
             self.pointcloud.publish(pcd)
         except Exception as exc:
             logger.error("Pointcloud generation error", error=str(exc))
-
-
-# Silence unused-import warning: these are re-exported for test/debug use.
-_ = (CMD_MODE_POSITION, CMD_MODE_VELOCITY)
 
 
 __all__ = ["MujocoSimModule", "MujocoSimModuleConfig"]

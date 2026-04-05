@@ -127,13 +127,17 @@ class ManipShmSet:
     def create(cls, key: str) -> ManipShmSet:
         """Create new SHM buffers with deterministic names derived from *key*.
 
-        If stale buffers from a prior run exist, unlink them first.
+        If stale buffers from a prior run exist, unlink them first. The stale
+        probe uses ``_unregister`` because that handle is transient — we never
+        owned it and must not let the tracker think we did. The create-side
+        handle, by contrast, *must* stay registered with ``resource_tracker``
+        so that ``shm.unlink()`` in ``cleanup()`` matches up cleanly.
         """
         buffers: dict[str, SharedMemory] = {}
         for buffer_name, size in _shm_sizes.items():
             name = _buffer_name(key, buffer_name)
             try:
-                stale = SharedMemory(name=name)
+                stale = _unregister(SharedMemory(name=name))
                 stale.close()
                 try:
                     stale.unlink()

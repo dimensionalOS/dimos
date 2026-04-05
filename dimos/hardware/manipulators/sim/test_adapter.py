@@ -21,6 +21,7 @@ import uuid
 
 import pytest
 
+import dimos.hardware.manipulators.sim.adapter as adapter_mod
 from dimos.hardware.manipulators.sim.adapter import ShmMujocoAdapter, register
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorAdapter
 from dimos.simulation.engines.mujoco_shm import ManipShmWriter
@@ -40,8 +41,6 @@ def writer(shm_key, monkeypatch):
     We monkey-patch ``shm_key_from_path`` so the adapter under test resolves
     to our fixture's key regardless of the address string.
     """
-    import dimos.hardware.manipulators.sim.adapter as adapter_mod
-
     monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
     w = ManipShmWriter(shm_key)
     w.signal_ready(num_joints=ARM_DOF)
@@ -51,8 +50,6 @@ def writer(shm_key, monkeypatch):
 
 @pytest.fixture
 def writer_with_gripper(shm_key, monkeypatch):
-    import dimos.hardware.manipulators.sim.adapter as adapter_mod
-
     monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
     w = ManipShmWriter(shm_key)
     w.signal_ready(num_joints=ARM_DOF + 1)
@@ -177,8 +174,6 @@ class TestGripper:
 class TestConnect:
     def test_connect_before_sim_ready_times_out(self, shm_key, monkeypatch):
         """If sim module never signals ready, connect() returns False after timeout."""
-        import dimos.hardware.manipulators.sim.adapter as adapter_mod
-
         monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
         # Shrink timeouts so the test runs fast.
         monkeypatch.setattr(adapter_mod, "_READY_WAIT_TIMEOUT_S", 0.2)
@@ -194,8 +189,6 @@ class TestConnect:
 
     def test_connect_waits_for_shm(self, shm_key, monkeypatch):
         """If SHM buffers don't exist yet, connect() retries briefly."""
-        import dimos.hardware.manipulators.sim.adapter as adapter_mod
-
         monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
         monkeypatch.setattr(adapter_mod, "_ATTACH_RETRY_TIMEOUT_S", 0.2)
         monkeypatch.setattr(adapter_mod, "_ATTACH_RETRY_POLL_S", 0.02)
