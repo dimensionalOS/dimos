@@ -74,13 +74,8 @@ def _default_identity_transform() -> Transform:
 class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
     """Configuration for the unified MuJoCo simulation module."""
 
-    # MJCF path — also used as the SHM key so the adapter can discover the
-    # shared memory region without RPC.
     address: str = ""
     headless: bool = False
-    # Number of arm joints (excluding gripper). If the engine exposes more
-    # joints than ``dof``, the extra joint at index ``dof`` is treated as a
-    # gripper and its commands get scaled from joint-space into actuator ctrl.
     dof: int = 7
 
     # Camera config (matches former MujocoCameraConfig).
@@ -129,8 +124,6 @@ class MujocoSimModule(
         self._publish_thread: threading.Thread | None = None
         self._camera_info_base: CameraInfo | None = None
 
-    # ---------------- frame id helpers ---------------------------
-
     @property
     def _camera_link(self) -> str:
         return f"{self.config.camera_name}_link"
@@ -151,12 +144,8 @@ class MujocoSimModule(
     def _depth_optical_frame(self) -> str:
         return f"{self.config.camera_name}_depth_optical_frame"
 
-    # ---------------- RPC spec methods ---------------------------
-
     @rpc
     def get_color_camera_info(self) -> CameraInfo | None:
-        # Return a fresh copy — callers must not be able to mutate our
-        # cached intrinsics, and the color/depth getters must not alias.
         if self._camera_info_base is None:
             return None
         return self._camera_info_base.with_ts(time.time())
@@ -170,8 +159,6 @@ class MujocoSimModule(
     @rpc
     def get_depth_scale(self) -> float:
         return 1.0
-
-    # ---------------- lifecycle ----------------------------------
 
     @rpc
     def start(self) -> None:
@@ -220,16 +207,11 @@ class MujocoSimModule(
         if not self._engine.connect():
             raise RuntimeError("MujocoSimModule: engine.connect() failed")
 
-        # Publish num_joints + ready so the adapter can proceed past its
-        # ready-wait in connect(). Use the engine's full joint count (arm +
-        # gripper if present) so the adapter can detect the gripper via
-        # ``num_joints > dof``.
         self._shm.signal_ready(num_joints=len(joint_names))
 
         # Camera intrinsics.
         self._build_camera_info()
 
-        # Camera publish thread (same pattern as former MujocoCamera).
         self._stop_event.clear()
         self._publish_thread = threading.Thread(
             target=self._publish_loop, daemon=True, name="MujocoSimPublish"
@@ -270,11 +252,6 @@ class MujocoSimModule(
             self._publish_thread.join(timeout=2.0)
         self._publish_thread = None
 
-        # Collect teardown failures across both halves (engine + SHM) so that
-        # a failure in the first doesn't skip the second. Only clear the
-        # corresponding ``self._*`` reference if teardown actually succeeded
-        # — silently nulling on failure would let the next ``start()`` run on
-        # top of a half-torn-down state and mask the real bug.
         errors: list[tuple[str, BaseException]] = []
         if self._engine is not None:
             try:
@@ -296,8 +273,6 @@ class MujocoSimModule(
         super().stop()
 
         if errors:
-            # Surface the first failure so the operator sees it. Subsequent
-            # ones are already logged above.
             op, exc = errors[0]
             raise RuntimeError(f"MujocoSimModule.stop() failed during {op}: {exc}") from exc
 
@@ -318,8 +293,6 @@ class MujocoSimModule(
         if vel_cmd is not None:
             engine.write_joint_command(JointState(velocity=vel_cmd.tolist()))
 
-        # Gripper: adapter writes raw joint-space position; sim module scales
-        # into actuator ctrl range before setting the target.
         if self._gripper_idx is not None:
             gripper_cmd = shm.read_gripper_command()
             if gripper_cmd is not None:
@@ -342,13 +315,7 @@ class MujocoSimModule(
                 shm.write_gripper_state(positions[self._gripper_idx])
 
     def _gripper_joint_to_ctrl(self, joint_position: float) -> float:
-        """Map joint-space gripper position to actuator control value.
-
-        The high-level API uses ``position ∈ [jlo, jhi]`` where ``jlo`` is
-        closed and ``jhi`` is open (e.g. xArm: 0.0 closed, 0.85 open). The
-        MJCF actuator ``ctrl`` range is inverted on xArm-style grippers
-        (0 open, 255 closed). We map ``jlo → chi`` and ``jhi → clo``.
-        """
+        """Map joint-space gripper position to actuator control value."""
         jlo, jhi = self._gripper_joint_range
         clo, chi = self._gripper_ctrl_range
         clamped = max(jlo, min(jhi, joint_position))
@@ -382,21 +349,7 @@ class MujocoSimModule(
         )
 
     def _publish_loop(self) -> None:
-        """Poll engine for rendered frames and publish at configured FPS.
-
-        Threading note: this loop reads ``self._engine`` without a lock. The
-        safety invariant is enforced by ``stop()``, which sets
-        ``self._stop_event`` *before* it joins this thread and only clears
-        ``self._engine`` *after* the join returns. So while this loop is
-        live, either ``_stop_event`` is unset (and ``_engine`` is guaranteed
-        non-None by construction in ``start()``), or ``_stop_event`` is set
-        and the next iteration will exit. The ``self._engine is not None``
-        guards below are belt-and-suspenders, not the real correctness
-        argument — don't rely on them if you reorder ``stop()``.
-        """
-        # Capture engine locally once up front. This makes the invariant
-        # explicit to the reader and removes the "is this racing with stop?"
-        # question from every subsequent access.
+        """Poll engine for rendered frames and publish at configured FPS."""
         engine = self._engine
         if engine is None:
             return
@@ -417,10 +370,6 @@ class MujocoSimModule(
             return
 
         while not self._stop_event.is_set():
-            # Only MuJoCo's rendering path (``read_camera``) is known to raise
-            # transient RuntimeErrors — everything else in this loop is our
-            # own code and a raise there is a real bug we want to see. We
-            # catch narrowly around the render call, not the whole body.
             try:
                 frame = engine.read_camera(self.config.camera_name)
             except RuntimeError as exc:

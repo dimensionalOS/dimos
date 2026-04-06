@@ -42,7 +42,6 @@ logger = setup_logger()
 
 # Upper bound on joint count per sim. Arms + gripper are typically <= 10.
 MAX_JOINTS = 16
-
 _FLOAT_BYTES = 8  # float64
 _INT32_BYTES = 4
 
@@ -125,14 +124,7 @@ class ManipShmSet:
 
     @classmethod
     def create(cls, key: str) -> ManipShmSet:
-        """Create new SHM buffers with deterministic names derived from *key*.
-
-        If stale buffers from a prior run exist, unlink them first. The stale
-        probe uses ``_unregister`` because that handle is transient — we never
-        owned it and must not let the tracker think we did. The create-side
-        handle, by contrast, *must* stay registered with ``resource_tracker``
-        so that ``shm.unlink()`` in ``cleanup()`` matches up cleanly.
-        """
+        """Create new SHM buffers with deterministic names derived from *key*"""
         buffers: dict[str, SharedMemory] = {}
         for buffer_name, size in _shm_sizes.items():
             name = _buffer_name(key, buffer_name)
@@ -164,7 +156,6 @@ class ManipShmSet:
 
 class ManipShmWriter:
     """Sim-side handle: writes joint state, reads command targets.
-
     Owned by ``MujocoSimModule``. Creates the SHM buffers on init and
     unlinks them on cleanup.
     """
@@ -179,8 +170,6 @@ class ManipShmWriter:
         # Zero everything.
         for buf in self.shm.as_list():
             np.ndarray((buf.size,), dtype=np.uint8, buffer=buf.buf)[:] = 0
-
-    # ---------------- joint state (sim -> adapter) ----------------
 
     def write_joint_state(
         self,

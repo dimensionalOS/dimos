@@ -13,19 +13,7 @@
 # limitations under the License.
 
 """Shared-memory adapter for MuJoCo-based manipulator simulation.
-
-This adapter is the hot-path counterpart to :class:`MujocoSimModule`. The sim
-module owns the physics engine and publishes joint state to SHM; this adapter
-(which lives inside ``ControlCoordinator``'s process) reads from and writes to
-the same SHM buffers.
-
-Why SHM instead of RPC? The coordinator's tick loop calls the adapter
-synchronously at 100Hz — ~4 calls per tick (positions, velocities, efforts,
-command). LCM RPC latency (~1-5ms per call) would blow the 10ms budget. SHM
-reads are sub-microsecond.
-
-Discovery is keyless: both sides derive the SHM buffer names from the MJCF
-path, so no name exchange is required.
+this adapter reads from and writes to the same SHM buffers.
 """
 
 from __future__ import annotations
@@ -86,16 +74,7 @@ class ShmMujocoAdapter:
         self._has_gripper = False
         self._effort_mode_warned = False
 
-    # ---------------- connection ---------------------------------
-
     def connect(self) -> bool:
-        # Attach to SHM. If the sim module hasn't created the buffers yet,
-        # retry for a short window — module startup ordering is not
-        # strictly guaranteed, only that they're both in the same blueprint.
-        # Only the ManipShmReader construction is wrapped, since that's the
-        # only call here with a recoverable failure mode (buffers not yet
-        # created). Everything below that point either succeeds or raises
-        # a real bug that shouldn't be silently swallowed.
         deadline = time.monotonic() + _ATTACH_RETRY_TIMEOUT_S
         while True:
             try:
@@ -116,10 +95,7 @@ class ShmMujocoAdapter:
         deadline = time.monotonic() + _READY_WAIT_TIMEOUT_S
         while not self._shm.is_ready():
             if time.monotonic() > deadline:
-                logger.error(
-                    "sim module not ready",
-                    timeout_s=_READY_WAIT_TIMEOUT_S,
-                )
+                logger.error("sim module not ready", timeout_s=_READY_WAIT_TIMEOUT_S)
                 return False
             time.sleep(_READY_WAIT_POLL_S)
 
@@ -127,11 +103,7 @@ class ShmMujocoAdapter:
         self._has_gripper = num_joints > self._dof
         self._connected = True
         self._servos_enabled = True
-        logger.info(
-            "ShmMujocoAdapter connected",
-            dof=self._dof,
-            gripper=self._has_gripper,
-        )
+        logger.info("ShmMujocoAdapter connected", dof=self._dof, gripper=self._has_gripper)
         return True
 
     def disconnect(self) -> None:
@@ -144,8 +116,6 @@ class ShmMujocoAdapter:
 
     def is_connected(self) -> bool:
         return self._connected and self._shm is not None
-
-    # ---------------- info ---------------------------------------
 
     def get_info(self) -> ManipulatorInfo:
         return ManipulatorInfo(
@@ -169,16 +139,12 @@ class ShmMujocoAdapter:
             velocity_max=[max_vel_rad] * self._dof,
         )
 
-    # ---------------- control mode -------------------------------
-
     def set_control_mode(self, mode: ControlMode) -> bool:
         self._control_mode = mode
         return True
 
     def get_control_mode(self) -> ControlMode:
         return self._control_mode
-
-    # ---------------- read state (SHM -> caller) -----------------
 
     def read_joint_positions(self) -> list[float]:
         if self._shm is None:
@@ -204,8 +170,6 @@ class ShmMujocoAdapter:
     def read_error(self) -> tuple[int, str]:
         return self._error_code, self._error_message
 
-    # ---------------- write commands (caller -> SHM) -------------
-
     def write_joint_positions(self, positions: list[float], velocity: float = 1.0) -> bool:
         if not self._servos_enabled or self._shm is None:
             return False
@@ -222,8 +186,6 @@ class ShmMujocoAdapter:
 
     def write_joint_efforts(self, efforts: list[float]) -> bool:
         # Effort mode not exposed via SHM yet; caller can fall back to position.
-        # Log once per adapter instance so the caller sees feedback without
-        # spamming the log each tick.
         if not self._effort_mode_warned:
             logger.warning(
                 "write_joint_efforts not supported by sim adapter; ignoring and returning False",
@@ -252,7 +214,7 @@ class ShmMujocoAdapter:
         self._error_message = ""
         return True
 
-    # ---------------- cartesian (not supported) ------------------
+    # ---------------- cartesian (not supported yet) ------------------
 
     def read_cartesian_position(self) -> dict[str, float] | None:
         return None
@@ -270,7 +232,6 @@ class ShmMujocoAdapter:
     def write_gripper_position(self, position: float) -> bool:
         if not self._has_gripper or self._shm is None:
             return False
-        # Raw joint-space position; sim module handles the joint->ctrl scaling.
         self._shm.write_gripper_command(position)
         return True
 

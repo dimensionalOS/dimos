@@ -43,8 +43,6 @@ StepHook = Callable[["MujocoEngine"], None]
 
 @dataclass
 class CameraConfig:
-    """Configuration for a camera to be rendered inside the sim loop."""
-
     name: str
     width: int = 640
     height: int = 480
@@ -53,8 +51,6 @@ class CameraConfig:
 
 @dataclass
 class CameraFrame:
-    """Thread-safe container for a rendered camera frame."""
-
     rgb: NDArray[np.uint8]
     depth: NDArray[np.float32]
     cam_pos: NDArray[np.float64]
@@ -65,8 +61,6 @@ class CameraFrame:
 
 @dataclass
 class _CameraRendererState:
-    """Mutable state for a single camera renderer (sim-thread only)."""
-
     cfg: CameraConfig
     cam_id: int
     rgb_renderer: mujoco.Renderer
@@ -93,12 +87,6 @@ class MujocoEngine(SimulationEngine):
         on_after_step: StepHook | None = None,
     ) -> None:
         super().__init__(config_path=config_path, headless=headless)
-        # Optional observer callbacks invoked inside the sim thread.
-        # ``on_before_step`` runs before ``_apply_control`` (use it to pull
-        # commands into the engine); ``on_after_step`` runs after
-        # ``_update_joint_state`` (use it to publish joint state to an
-        # external sink, e.g. shared memory). The engine treats these as
-        # opaque callables and has no knowledge of what they do.
         self._on_before_step: StepHook | None = on_before_step
         self._on_after_step: StepHook | None = on_after_step
 
@@ -233,16 +221,10 @@ class MujocoEngine(SimulationEngine):
             logger.error("disconnect() failed", cls=self.__class__.__name__, error=str(e))
             return False
 
-    def _init_new_cameras(self, cam_renderers: dict[str, _CameraRendererState]) -> None:
-        """Create renderers for any camera configs not yet initialized.
-
-        Must be called from the sim thread (MuJoCo thread-safety).
-        """
-        with self._camera_lock:
-            configs_snapshot = list(self._camera_configs)
-        for cfg in configs_snapshot:
-            if cfg.name in cam_renderers:
-                continue
+    def _init_cameras(self) -> dict[str, _CameraRendererState]:
+        """Create renderers for all configured cameras"""
+        cam_renderers: dict[str, _CameraRendererState] = {}
+        for cfg in self._camera_configs:
             cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, cfg.name)
             if cam_id < 0:
                 logger.warning("Camera not found in MJCF, skipping", camera_name=cfg.name)
@@ -258,17 +240,10 @@ class MujocoEngine(SimulationEngine):
                 depth_renderer=depth_renderer,
                 interval=interval,
             )
-            logger.info(
-                "Camera renderer created",
-                camera_name=cfg.name,
-                width=cfg.width,
-                height=cfg.height,
-                fps=cfg.fps,
-            )
+        return cam_renderers
 
     def _render_cameras(self, now: float, cam_renderers: dict[str, _CameraRendererState]) -> None:
         """Render all due cameras and store frames. Must be called from sim thread."""
-        self._init_new_cameras(cam_renderers)
         for state in cam_renderers.values():
             if now - state.last_render_time < state.interval:
                 continue
@@ -301,9 +276,8 @@ class MujocoEngine(SimulationEngine):
         logger.info("sim loop started", cls=self.__class__.__name__)
         dt = 1.0 / self._control_frequency
 
-        # Camera renderers — created in sim thread (MuJoCo thread-safety).
-        # Checked each tick so cameras added after connect() are picked up.
-        cam_renderers: dict[str, _CameraRendererState] = {}
+        # Camera renderers: created once in the sim thread
+        cam_renderers = self._init_cameras()
 
         def _step_once(sync_viewer: bool) -> None:
             loop_start = time.time()

@@ -495,9 +495,9 @@ xarm_perception_agent = autoconnect(
 
 
 # Sim perception: MujocoSimModule owns the MujocoEngine and publishes both
-# camera streams (replacing the old MujocoCamera) and joint state via shared
-# memory. The sim_xarm7 hardware component resolves to ShmMujocoAdapter, which
-# attaches to the same SHM by MJCF path — no globals, no cross-process sharing.
+# camera streams and joint state via shared memory.
+# The sim_xarm7 hardware component resolves to ShmMujocoAdapter, which
+# attaches to the same SHM by MJCF path
 
 from dimos.control.blueprints._hardware import XARM7_SIM_PATH, sim_xarm7
 from dimos.control.coordinator import TaskConfig as TaskConfig
