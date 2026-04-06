@@ -264,28 +264,26 @@ xarm_perception_agent = autoconnect(
 
 # Sim perception: MujocoSimModule owns the MujocoEngine and publishes both
 # camera streams and joint state via shared memory.
-# The sim_xarm7 hardware component resolves to ShmMujocoAdapter, which
-# attaches to the same SHM by MJCF path
+# ShmMujocoAdapter attaches to the same SHM buffers by MJCF path.
 
-from dimos.control.blueprints._hardware import XARM7_SIM_PATH, sim_xarm7
-from dimos.control.coordinator import TaskConfig as TaskConfig
+from dimos.robot.catalog.ufactory import XARM7_SIM_PATH
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
 from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
 
+_xarm7_sim_cfg = _catalog_xarm7(
+    name="arm",
+    adapter_type="sim_mujoco",
+    address=str(XARM7_SIM_PATH),
+    add_gripper=True,
+    pitch=math.radians(45),
+    tf_extra_links=["link7"],
+    home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0],
+    pre_grasp_offset=0.05,
+)
+
 xarm_perception_sim = autoconnect(
     PickAndPlaceModule.blueprint(
-        robots=[
-            _make_xarm7_config(
-                "arm",
-                joint_prefix="arm_",
-                coordinator_task="traj_arm",
-                add_gripper=True,
-                gripper_hardware_id="arm",
-                tf_extra_links=["link7"],
-                pre_grasp_offset=0.05,
-                home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0],
-            ),
-        ],
+        robots=[_xarm7_sim_cfg.to_robot_model_config()],
         planning_timeout=10.0,
         enable_viz=True,
     ),
@@ -301,15 +299,8 @@ xarm_perception_sim = autoconnect(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
-        hardware=[sim_xarm7("arm", headless=False, gripper=True)],
-        tasks=[
-            TaskConfig(
-                name="traj_arm",
-                type="trajectory",
-                joint_names=[f"arm_joint{i + 1}" for i in range(7)],
-                priority=10,
-            ),
-        ],
+        hardware=[_xarm7_sim_cfg.to_hardware_component()],
+        tasks=[_xarm7_sim_cfg.to_task_config()],
     ),
     RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode()),
 ).transports(
