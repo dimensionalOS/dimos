@@ -39,6 +39,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
+from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 
 # Message types with large payloads that need rate-limiting.
