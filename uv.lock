@@ -1972,6 +1972,41 @@ unitree = [
     { name = "unitree-webrtc-connect-leshy" },
     { name = "uvicorn" },
 ]
+unitree-dds = [
+    { name = "anthropic" },
+    { name = "bitsandbytes", marker = "sys_platform == 'linux'" },
+    { name = "cyclonedds" },
+    { name = "fastapi" },
+    { name = "ffmpeg-python" },
+    { name = "filterpy" },
+    { name = "hydra-core" },
+    { name = "langchain" },
+    { name = "langchain-chroma" },
+    { name = "langchain-core" },
+    { name = "langchain-huggingface" },
+    { name = "langchain-ollama" },
+    { name = "langchain-openai" },
+    { name = "langchain-text-splitters" },
+    { name = "lap" },
+    { name = "moondream" },
+    { name = "mujoco" },
+    { name = "ollama" },
+    { name = "omegaconf" },
+    { name = "openai" },
+    { name = "openai-whisper" },
+    { name = "pillow" },
+    { name = "playground" },
+    { name = "pygame" },
+    { name = "rerun-sdk" },
+    { name = "sounddevice" },
+    { name = "soundfile" },
+    { name = "sse-starlette" },
+    { name = "transformers", extra = ["torch"] },
+    { name = "ultralytics" },
+    { name = "unitree-sdk2py-dimos" },
+    { name = "unitree-webrtc-connect-leshy" },
+    { name = "uvicorn" },
+]
 visualization = [
     { name = "dimos-viewer" },
     { name = "rerun-sdk" },
@@ -1997,9 +2032,11 @@ requires-dist = [
     { name = "ctransformers", extras = ["cuda"], marker = "extra == 'cuda'", specifier = "==0.2.27" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
+    { name = "cyclonedds", marker = "extra == 'unitree-dds'", specifier = ">=0.10.5" },
     { name = "dimos", extras = ["agents", "web", "perception", "visualization", "sim"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["dev"], marker = "extra == 'dds'" },
+    { name = "dimos", extras = ["unitree"], marker = "extra == 'unitree-dds'" },
     { name = "dimos-lcm" },
     { name = "dimos-lcm", marker = "extra == 'docker'" },
     { name = "dimos-viewer", specifier = ">=0.30.0a2" },
@@ -2143,6 +2180,7 @@ requires-dist = [
     { name = "types-tqdm", marker = "extra == 'dev'", specifier = ">=4.67.0.20250809,<5" },
     { name = "typing-extensions", marker = "python_full_version < '3.11'", specifier = ">=4.0" },
     { name = "ultralytics", marker = "extra == 'perception'", specifier = ">=8.3.70" },
+    { name = "unitree-sdk2py-dimos", marker = "extra == 'unitree-dds'", specifier = ">=1.0.2" },
     { name = "unitree-webrtc-connect-leshy", marker = "extra == 'unitree'", specifier = ">=2.0.7" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34.0" },
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=3.0.0" },
@@ -2152,7 +2190,7 @@ requires-dist = [
     { name = "xformers", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = ">=0.0.20" },
     { name = "yapf", marker = "extra == 'misc'", specifier = "==0.40.2" },
 ]
-provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "manipulation", "cpu", "cuda", "dev", "psql", "sim", "drone", "dds", "docker", "base"]
+provides-extras = ["misc", "visualization", "agents", "web", "perception", "unitree", "unitree-dds", "manipulation", "cpu", "cuda", "dev", "psql", "sim", "drone", "dds", "docker", "base"]
 
 [[package]]
 name = "dimos-lcm"
@@ -10300,6 +10338,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1f/63/21a32e1facfeee245dbdfb7b4669faf7a36ff7c00b50987932bdab126f4b/ultralytics_thop-2.0.18.tar.gz", hash = "sha256:21103bcd39cc9928477dc3d9374561749b66a1781b35f46256c8d8c4ac01d9cf", size = 34557, upload-time = "2025-10-29T16:58:13.526Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7f/c7/fb42228bb05473d248c110218ffb8b1ad2f76728ed8699856e5af21112ad/ultralytics_thop-2.0.18-py3-none-any.whl", hash = "sha256:2bb44851ad224b116c3995b02dd5e474a5ccf00acf237fe0edb9e1506ede04ec", size = 28941, upload-time = "2025-10-29T16:58:12.093Z" },
+]
+
+[[package]]
+name = "unitree-sdk2py-dimos"
+version = "1.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cyclonedds" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "opencv-python" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c4/1e/4f334dc2cd11c31c9726bb8535e956ec07e795c2d8778c691585dc11567b/unitree_sdk2py_dimos-1.0.2.tar.gz", hash = "sha256:904644326ec35216a705a036b7d321ef6014c0774b9aba0790c770930909cbe2", size = 39585, upload-time = "2026-02-28T03:45:26.981Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9a/4a/bee19c51a83ecb71a824c11db64c97986125218d0ec7896a5ac7c900eb82/unitree_sdk2py_dimos-1.0.2-py3-none-any.whl", hash = "sha256:7dc80bc1a9ec3e08ba7b8d1613f52b017ca6d437863325c4a2ad95616585df65", size = 90521, upload-time = "2026-02-28T03:45:25.603Z" },
 ]
 
 [[package]]
