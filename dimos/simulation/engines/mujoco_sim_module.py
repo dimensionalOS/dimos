@@ -273,8 +273,8 @@ class MujocoSimModule(
         super().stop()
 
         if errors:
-            op, exc = errors[0]
-            raise RuntimeError(f"MujocoSimModule.stop() failed during {op}: {exc}") from exc
+            op, err = errors[0]
+            raise RuntimeError(f"MujocoSimModule.stop() failed during {op}: {err}") from err
 
     # ---------------- SHM <-> engine hooks -----------------------
 
