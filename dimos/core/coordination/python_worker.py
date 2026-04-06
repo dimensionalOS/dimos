@@ -143,7 +143,7 @@ _worker_ids = SequentialIds()
 _module_ids = SequentialIds()
 
 
-class Worker:
+class PythonWorker:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._modules: dict[int, Actor] = {}

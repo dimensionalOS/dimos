@@ -18,7 +18,7 @@ from typing import NoReturn
 
 import typer
 
-from dimos.core.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 
 all_names = sorted(set(all_blueprints.keys()) | set(all_modules.keys()))

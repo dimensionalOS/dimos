@@ -33,6 +33,7 @@ import threading
 import time
 from typing import Any
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -151,7 +152,7 @@ class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
         self._stop_event.set()
 
         if self._exec_thread and self._exec_thread.is_alive():
-            self._exec_thread.join(timeout=2.0)
+            self._exec_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
         logger.info("JointTrajectoryController stopped")

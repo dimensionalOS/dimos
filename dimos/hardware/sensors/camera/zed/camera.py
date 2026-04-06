@@ -23,9 +23,10 @@ from pydantic import Field
 import pyzed.sl as sl
 import reactivex as rx
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
@@ -462,7 +463,7 @@ class ZEDCamera(DepthCameraHardware, Module[ZEDCameraConfig], perception.DepthCa
             self._zed = None
 
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             if self._thread.is_alive():
                 self._thread = None
 

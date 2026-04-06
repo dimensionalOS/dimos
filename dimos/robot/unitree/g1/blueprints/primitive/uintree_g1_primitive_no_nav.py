@@ -19,7 +19,7 @@ from typing import Any
 
 from dimos_lcm.sensor_msgs import CameraInfo
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import CameraModule  # type: ignore[attr-defined]

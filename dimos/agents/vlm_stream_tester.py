@@ -18,6 +18,7 @@ import time
 from langchain_core.messages import AIMessage, HumanMessage
 
 from dimos.agents.vlm_agent_spec import VLMAgentSpec
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
@@ -70,7 +71,7 @@ class VlmStreamTester(Module):
     def stop(self) -> None:
         self._stop_event.set()
         if self._worker and self._worker.is_alive():
-            self._worker.join(timeout=1.0)
+            self._worker.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
     def _on_image(self, image: Image) -> None:

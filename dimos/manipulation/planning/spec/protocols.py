@@ -94,6 +94,10 @@ class WorldSpec(Protocol):
         """Remove all obstacles."""
         ...
 
+    def get_obstacles(self) -> list[Obstacle]:
+        """Get all obstacles currently in the world."""
+        ...
+
     # Lifecycle
     def finalize(self) -> None:
         """Finalize the world. Must be called after adding robots."""

@@ -65,7 +65,7 @@ from dimos.manipulation.planning.spec import RobotModelConfig
 
 config = RobotModelConfig(
     name="xarm7",
-    urdf_path=Path("/path/to/xarm7.urdf"),
+    model_path=Path("/path/to/xarm7.urdf"),
     base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
     joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
     end_effector_link="link7",
@@ -91,7 +91,7 @@ module.execute()  # Sends to coordinator
 | Field | Description |
 |-------|-------------|
 | `name` | Robot identifier |
-| `urdf_path` | Path to URDF/XACRO file |
+| `model_path` | Path to URDF/XACRO file |
 | `base_pose` | PoseStamped for robot base in world frame |
 | `joint_names` | Joint names in URDF |
 | `end_effector_link` | EE link name |

@@ -118,7 +118,8 @@ def run(
     """Start a robot blueprint"""
     logger.info("Starting DimOS")
 
-    from dimos.core.blueprints import autoconnect
+    from dimos.core.coordination.blueprints import autoconnect
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.core.run_registry import (
         LOG_BASE_DIR,
         RunEntry,
@@ -163,7 +164,7 @@ def run(
         disabled_classes = tuple(get_module_by_name(name).blueprints[0].module for name in disable)
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
-    coordinator = blueprint.build(cli_config_overrides=cli_config_overrides)
+    coordinator = ModuleCoordinator.build(blueprint, cli_config_overrides=cli_config_overrides)
 
     if daemon:
         from dimos.core.daemon import (
