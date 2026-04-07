@@ -342,6 +342,7 @@ class WebsocketVisModule(Module[WebsocketConfig]):
 
         @self.sio.event  # type: ignore[untyped-decorator]
         async def move_command(sid: str, data: dict[str, Any]) -> None:
+            logger.info(f"move_command received: linear.x={data.get('linear', {}).get('x', 0):.2f}")
             # Publish Twist if transport is configured
             if self.cmd_vel and self.cmd_vel.transport:
                 twist = Twist(

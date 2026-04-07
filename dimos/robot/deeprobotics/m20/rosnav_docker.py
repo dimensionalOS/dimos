@@ -39,6 +39,7 @@ class M20ROSNavConfig(ROSNavConfig):
 
     # Don't try to build from Dockerfile — image is pre-built via deploy.sh push
     docker_file: None = None
+    docker_reconnect_container: bool = True  # Reconnect to existing container on restart
 
     # M20 entrypoint starts ros2_pub (drdds bridge) before the base entrypoint
     docker_entrypoint: str = "/usr/local/bin/m20_entrypoint.sh"
