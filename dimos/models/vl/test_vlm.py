@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 @pytest.mark.slow
 @pytest.mark.skipif_in_ci
 def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> None:
-    if model_class is MoondreamHostedVlModel and 'MOONDREAM_API_KEY' not in os.environ:
+    if model_class is MoondreamHostedVlModel and "MOONDREAM_API_KEY" not in os.environ:
         pytest.skip("Need MOONDREAM_API_KEY to run")
 
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
@@ -110,7 +110,7 @@ def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> N
 def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> None:
     """Test VLM point detection capabilities."""
 
-    if model_class is MoondreamHostedVlModel and 'MOONDREAM_API_KEY' not in os.environ:
+    if model_class is MoondreamHostedVlModel and "MOONDREAM_API_KEY" not in os.environ:
         pytest.skip("Need MOONDREAM_API_KEY to run")
 
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()

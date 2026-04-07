@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from pydantic import Field
 from reactivex.disposable import Disposable
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
@@ -112,9 +112,6 @@ class G1Connection(G1ConnectionBase[G1Config]):
         return self.connection.publish_request(topic, data)  # type: ignore[no-any-return]
 
 
-g1_connection = G1Connection.blueprint
-
-
 def deploy(dimos: ModuleCoordinator, ip: str, local_planner: LocalPlanner) -> "ModuleProxy":
     connection = dimos.deploy(G1Connection, ip=ip)
     connection.cmd_vel.connect(local_planner.cmd_vel)
@@ -122,4 +119,4 @@ def deploy(dimos: ModuleCoordinator, ip: str, local_planner: LocalPlanner) -> "M
     return connection
 
 
-__all__ = ["G1Connection", "G1ConnectionBase", "deploy", "g1_connection"]
+__all__ = ["G1Connection", "G1ConnectionBase", "deploy"]

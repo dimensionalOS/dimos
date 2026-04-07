@@ -23,6 +23,9 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -62,10 +65,11 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     goal_request: In[PoseStamped]
     clicked_point: In[PointStamped]
     target: In[PoseStamped]
+    stop_movement: In[Bool]
 
     goal_reached: Out[Bool]
     navigation_state: Out[String]  # TODO: set it
-    cmd_vel: Out[Twist]
+    nav_cmd_vel: Out[Twist]
     path: Out[Path]
     navigation_costmap: Out[OccupancyGrid]
 
@@ -96,9 +100,12 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
             )
         )
 
+        if self.stop_movement.transport is not None:
+            self._disposables.add(Disposable(self.stop_movement.subscribe(self._on_stop_movement)))
+
         self._disposables.add(self._planner.path.subscribe(self.path.publish))
 
-        self._disposables.add(self._planner.cmd_vel.subscribe(self.cmd_vel.publish))
+        self._disposables.add(self._planner.cmd_vel.subscribe(self.nav_cmd_vel.publish))
 
         self._disposables.add(self._planner.goal_reached.subscribe(self.goal_reached.publish))
 
@@ -115,6 +122,11 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         self._planner.stop()
 
         super().stop()
+
+    def _on_stop_movement(self, msg: Bool) -> None:
+        if msg.data:
+            logger.info("ReplanningAStarPlanner: stop_movement received, cancelling goal")
+            self.cancel_goal()
 
     @rpc
     def set_goal(self, goal: PoseStamped) -> bool:

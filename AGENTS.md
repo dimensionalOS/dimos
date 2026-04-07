@@ -303,8 +303,6 @@ class MySkillContainer(Module):
 
 If multiple modules match the spec, use `.remappings()` to resolve. Source: `dimos/spec/utils.py`, `dimos/core/blueprints.py`.
 
-**Legacy**: existing skill containers use `rpc_calls: list[str]` + `get_rpc_calls("ClassName.method")`. This still works but wiring failures are silent and only surface at runtime. Don't use it in new code.
-
 ### Adding a New Skill
 
 1. Pick the right container (robot-specific or `dimos/agents/skills/`).

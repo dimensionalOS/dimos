@@ -18,7 +18,7 @@ from typing import NoReturn
 
 import typer
 
-from dimos.core.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 
 all_names = sorted(set(all_blueprints.keys()) | set(all_modules.keys()))
@@ -45,9 +45,9 @@ def get_blueprint_by_name(name: str) -> Blueprint:
 def get_module_by_name(name: str) -> Blueprint:
     if name not in all_modules:
         _fail_unknown(name, list(all_modules.keys()))
-    attr_name = name.replace("-", "_")
-    python_module = __import__(all_modules[name], fromlist=[attr_name])
-    return getattr(python_module, attr_name)()  # type: ignore[no-any-return]
+    module_path, class_name = all_modules[name].rsplit(".", 1)
+    python_module = __import__(module_path, fromlist=[class_name])
+    return getattr(python_module, class_name).blueprint()  # type: ignore[no-any-return]
 
 
 def get_by_name(name: str) -> Blueprint:

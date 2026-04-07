@@ -54,7 +54,6 @@ DimOS connects via WebRTC, starts the ROS navigation stack, and opens the comman
 | **VoxelGridMapper** | Builds a 3D voxel map using column-carving (CUDA accelerated) |
 | **CostMapper** | Converts 3D map → 2D costmap via terrain slope analysis |
 | **WavefrontFrontierExplorer** | Autonomous exploration of unmapped areas |
-| **ROSNav** | ROS 2 navigation integration for path planning |
 | **RerunBridge** | 3D visualization in browser |
 | **WebsocketVis** | Command center at localhost:7779 |
 

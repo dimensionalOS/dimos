@@ -91,7 +91,7 @@ def test_tf_main() -> None:
     broadcaster.publish(world_to_robot)
     broadcaster.publish(world_to_charger)
     # Give time for the message to propagate
-    time.sleep(0.05)
+    time.sleep(0.2)
 
     # Verify frames are available
     frames = querier.get_frames()
@@ -109,7 +109,7 @@ def test_tf_main() -> None:
 
     broadcaster.publish(robot_to_sensor)
 
-    time.sleep(0.05)
+    time.sleep(0.2)
 
     # we can now query (from a separate process given we use querier) the transform tree
     chain_transform = querier.get("world", "sensor")
@@ -154,7 +154,7 @@ def test_tf_main() -> None:
     print(broadcaster)
 
     # Give time for the message to propagate
-    time.sleep(0.05)
+    time.sleep(0.2)
 
     # we know where the object is in the world frame now
     world_object = broadcaster.get("world", "random_object")

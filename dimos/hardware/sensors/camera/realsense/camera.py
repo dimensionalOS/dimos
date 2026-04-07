@@ -25,9 +25,10 @@ from pydantic import Field
 import reactivex as rx
 from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.spec import (
@@ -419,7 +420,7 @@ class RealSenseCamera(DepthCameraHardware, Module[RealSenseCameraConfig], percep
 
         # Now join the thread (should exit quickly since pipeline is stopped)
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             if self._thread.is_alive():
                 # Force thread termination by clearing reference
                 self._thread = None

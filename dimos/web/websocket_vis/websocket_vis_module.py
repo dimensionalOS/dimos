@@ -45,6 +45,7 @@ _COMMAND_CENTER_DIR = (
     FilePath(__file__).parent.parent / "command-center-extension" / "dist-standalone"
 )
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -103,7 +104,7 @@ class WebsocketVisModule(Module[WebsocketConfig]):
     gps_goal: Out[LatLon]
     explore_cmd: Out[Bool]
     stop_explore_cmd: Out[Bool]
-    cmd_vel: Out[Twist]
+    tele_cmd_vel: Out[Twist]
     movecmd_stamped: Out[TwistStamped]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -158,7 +159,7 @@ class WebsocketVisModule(Module[WebsocketConfig]):
 
         # Auto-open browser only for rerun-web (dashboard with Rerun iframe + command center)
         # For rerun and foxglove, users access the command center manually if needed
-        if self.config.g.viewer == "rerun-web":
+        if self.config.g.viewer == "rerun-web":  # type: ignore[comparison-overlap]
             url = f"http://localhost:{self.config.port}/"
             logger.info(f"Dimensional Command Center: {url}")
 
@@ -197,11 +198,11 @@ class WebsocketVisModule(Module[WebsocketConfig]):
             logger.warning(f"Failed to subscribe to path: {e}")
 
         transport = getattr(self.global_costmap, "_transport", "MISSING")
-        logger.info(f"[DEBUG] global_costmap transport before subscribe: {transport}")
+        logger.debug(f"[DEBUG] global_costmap transport before subscribe: {transport}")
         try:
             unsub = self.global_costmap.subscribe(self._on_global_costmap)
             self._disposables.add(Disposable(unsub))
-            logger.info(f"[DEBUG] Subscribed to global_costmap OK, transport={transport}")
+            logger.debug(f"[DEBUG] Subscribed to global_costmap OK, transport={transport}")
         except Exception as e:
             logger.warning(f"Failed to subscribe to global_costmap: {e}", exc_info=True)
 
@@ -221,16 +222,20 @@ class WebsocketVisModule(Module[WebsocketConfig]):
             async def _disconnect_all() -> None:
                 await self.sio.disconnect()
 
-            asyncio.run_coroutine_threadsafe(_disconnect_all(), self._broadcast_loop)
+            fut = asyncio.run_coroutine_threadsafe(_disconnect_all(), self._broadcast_loop)
+            try:
+                fut.result(timeout=2.0)
+            except Exception:
+                pass
 
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
             self._broadcast_loop.call_soon_threadsafe(self._broadcast_loop.stop)
 
         if self._broadcast_thread and self._broadcast_thread.is_alive():
-            self._broadcast_thread.join(timeout=1.0)
+            self._broadcast_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         if self._uvicorn_server_thread and self._uvicorn_server_thread.is_alive():
-            self._uvicorn_server_thread.join(timeout=2.0)
+            self._uvicorn_server_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 
@@ -247,7 +252,7 @@ class WebsocketVisModule(Module[WebsocketConfig]):
         async def serve_index(request):  # type: ignore[no-untyped-def]
             """Serve appropriate HTML based on viewer mode."""
             # If running native Rerun, redirect to standalone command center
-            if self.config.g.viewer != "rerun-web":
+            if self.config.g.viewer != "rerun-web":  # type: ignore[comparison-overlap]
                 return RedirectResponse(url="/command-center")
 
             # Otherwise serve full dashboard with Rerun iframe
@@ -342,16 +347,15 @@ class WebsocketVisModule(Module[WebsocketConfig]):
 
         @self.sio.event  # type: ignore[untyped-decorator]
         async def move_command(sid: str, data: dict[str, Any]) -> None:
-            logger.info(f"move_command received: linear.x={data.get('linear', {}).get('x', 0):.2f}")
             # Publish Twist if transport is configured
-            if self.cmd_vel and self.cmd_vel.transport:
+            if self.tele_cmd_vel and self.tele_cmd_vel.transport:
                 twist = Twist(
                     linear=Vector3(data["linear"]["x"], data["linear"]["y"], data["linear"]["z"]),
                     angular=Vector3(
                         data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]
                     ),
                 )
-                self.cmd_vel.publish(twist)
+                self.tele_cmd_vel.publish(twist)
 
             # Publish TwistStamped if transport is configured
             if self.movecmd_stamped and self.movecmd_stamped.transport:

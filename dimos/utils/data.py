@@ -327,9 +327,10 @@ class LfsPath(type(Path())):  # type: ignore[misc]
         """Return filesystem path, downloading from LFS if needed."""
         return str(self._ensure_downloaded())
 
-    def __truediv__(self, other: object) -> Path:
-        """Path division operator - returns resolved path."""
-        return self._ensure_downloaded() / other  # type: ignore[operator, return-value]
+    def __truediv__(self, other: object) -> "LfsPath":
+        """Path division operator - returns a new lazy LfsPath (no download)."""
+        filename = object.__getattribute__(self, "_lfs_filename")
+        return LfsPath(f"{filename}/{other}")
 
     def __rtruediv__(self, other: object) -> Path:
         """Reverse path division operator."""

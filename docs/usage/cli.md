@@ -22,7 +22,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--n-workers` | INT | `2` | Number of forkserver workers |
 | `--memory-limit` | TEXT | `auto` | Rerun viewer memory limit |
 | `--mcp-port` | INT | `9990` | MCP server port |
-| `--mcp-host` | TEXT | `0.0.0.0` | MCP server bind address |
+| `--mcp-host` | TEXT | `127.0.0.1` | MCP server bind address |
 | `--dtop` / `--no-dtop` | bool | `False` | Enable live resource monitor overlay |
 | `--obstacle-avoidance` / `--no-obstacle-avoidance` | bool | `True` | Enable obstacle avoidance |
 | `--detection-model` | `qwen\|moondream` | `moondream` | Vision model for object detection |
@@ -319,6 +319,14 @@ rerun-bridge
 ```
 
 Also available as `dimos rerun-bridge`.
+
+**Options:**
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--memory-limit` | `25%` | Memory limit for Rerun viewer (e.g., `4GB`, `16GB`, `25%`) |
+| `--rerun-open` | `native` | How to open Rerun: `native`, `web`, `both`, `none` |
+| `--rerun-web` / `--no-rerun-web` | `--rerun-web` | Enable/Disable Rerun web server |
 
 ---
 

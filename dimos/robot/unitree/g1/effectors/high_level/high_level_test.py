@@ -296,7 +296,8 @@ class TestDdsSdkMove:
         mod.loco_client.Move.assert_called_once_with(0.5, 0, 0.1, continous_move=True)
         # Timer should have been started
         assert mod._stop_timer is not None
-        mod._stop_timer.cancel()  # cleanup
+        mod._stop_timer.cancel()
+        mod._stop_timer.join()  # wait for thread to finish
 
     def test_move_exception(self) -> None:
         mod = _make_dds_module()

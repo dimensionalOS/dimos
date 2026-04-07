@@ -18,7 +18,7 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
 )
 from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate  # type: ignore[import-untyped]
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2

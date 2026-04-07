@@ -46,8 +46,8 @@ def _drake_available() -> bool:
 def _xarm_urdf_available() -> bool:
     try:
         desc_path = get_data("xarm_description")
-        urdf_path = desc_path / "urdf/xarm_device.urdf.xacro"
-        return urdf_path.exists()
+        model_path = desc_path / "urdf/xarm_device.urdf.xacro"
+        return model_path.exists()
     except Exception:
         return False
 
@@ -57,7 +57,7 @@ def _get_xarm7_config() -> RobotModelConfig:
     desc_path = get_data("xarm_description")
     return RobotModelConfig(
         name="test_arm",
-        urdf_path=desc_path / "urdf/xarm_device.urdf.xacro",
+        model_path=desc_path / "urdf/xarm_device.urdf.xacro",
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
         end_effector_link="link7",

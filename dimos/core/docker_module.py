@@ -26,11 +26,11 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.core.module import ModuleConfig
+from dimos.core.module import ModuleBase, ModuleConfig
 from dimos.core.rpc_client import ModuleProxyProtocol, RpcCall
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.utils.logging_config import setup_logger
-from dimos.visualization.rerun.bridge import RERUN_GRPC_PORT, RERUN_WEB_PORT
+from dimos.visualization.constants import RERUN_GRPC_PORT, RERUN_WEB_PORT
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -110,16 +110,6 @@ class DockerModuleConfig(ModuleConfig):
     docker_bin: str = "docker"
 
 
-def is_docker_module(module_class: type) -> bool:
-    """Check if a module class should run in Docker based on its default_config."""
-    default_config = getattr(module_class, "default_config", None)
-    return (
-        default_config is not None
-        and isinstance(default_config, type)
-        and issubclass(default_config, DockerModuleConfig)
-    )
-
-
 class DockerModuleProxy(ModuleProxyProtocol):
     """
     Host-side handle for a module running inside Docker.
@@ -135,7 +125,7 @@ class DockerModuleProxy(ModuleProxyProtocol):
 
     config: DockerModuleConfig
 
-    def __init__(self, module_class: type[Module], *args: Any, **kwargs: Any) -> None:
+    def __init__(self, module_class: type[ModuleBase], *args: Any, **kwargs: Any) -> None:
         config_class = getattr(module_class, "default_config", DockerModuleConfig)
         if not issubclass(config_class, DockerModuleConfig):
             raise TypeError(
@@ -164,9 +154,7 @@ class DockerModuleProxy(ModuleProxyProtocol):
             default_rpc_timeout=self.config.default_rpc_timeout,
         )
         self.rpcs = set(module_class.rpcs.keys())  # type: ignore[attr-defined]
-        self.rpc_calls: list[str] = getattr(module_class, "rpc_calls", [])
         self._unsub_fns: list[Callable[[], None]] = []
-        self._bound_rpc_calls: dict[str, RpcCall] = {}
 
     def build(self) -> None:
         """Build/pull docker image, launch container, wait for RPC readiness.
@@ -228,26 +216,6 @@ class DockerModuleProxy(ModuleProxyProtocol):
                 self._cleanup()
             raise
 
-    def get_rpc_method_names(self) -> list[str]:
-        return self.rpc_calls
-
-    def set_rpc_method(self, method: str, callable: RpcCall) -> None:
-        callable.set_rpc(self.rpc)
-        self._bound_rpc_calls[method] = callable
-        # Forward to container — Module.set_rpc_method unpickles the RpcCall
-        # and wires it with the container's own LCMRPC
-        self.rpc.call_sync(
-            f"{self.remote_name}/set_rpc_method",
-            ([method, callable], {}),
-        )
-
-    def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall, ...]:
-        missing = set(methods) - self._bound_rpc_calls.keys()
-        if missing:
-            raise ValueError(f"RPC methods not found: {missing}")
-        calls = tuple(self._bound_rpc_calls[m] for m in methods)
-        return calls[0] if len(calls) == 1 else calls
-
     def start(self) -> None:
         """Invoke the remote module's start() RPC."""
         try:
@@ -294,6 +262,9 @@ class DockerModuleProxy(ModuleProxyProtocol):
             "image": cfg.docker_image,
             "running": self._running.is_set() and _is_container_running(cfg, self._container_name),
         }
+
+    def is_running(self) -> bool:
+        return self._running.is_set() and _is_container_running(self.config, self._container_name)
 
     def tail_logs(self, n: int = 200) -> str:
         return _tail_logs(self.config, self._container_name, n=n)
@@ -469,7 +440,7 @@ class DockerModuleProxy(ModuleProxyProtocol):
 
             try:
                 self.rpc.call_sync(
-                    f"{self.remote_name}/get_rpc_method_names",
+                    f"{self.remote_name}/get_skills",
                     ([], {}),
                     rpc_timeout=3.0,  # short timeout for polling readiness
                 )
@@ -719,5 +690,4 @@ __all__ = [
     "DockerModuleProxy",
     "build_image",
     "image_exists",
-    "is_docker_module",
 ]

@@ -24,6 +24,7 @@ from turbojpeg import TurboJPEG
 
 from dimos.agents.agent_spec import AgentSpec
 from dimos.agents.annotation import skill
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -182,7 +183,7 @@ class PersonFollowSkillContainer(Module[Config]):
         self.cmd_vel.publish(Twist.zero())
 
         if self._thread is not None:
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._thread = None
 
         return "Stopped following."

@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
 import numpy as np
 from plum import dispatch
-from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
@@ -156,7 +155,11 @@ class Quaternion(LCMQuaternion):  # type: ignore[misc]
         Returns:
             Quaternion representation
         """
-        rotation = R.from_matrix(matrix)
+        from scipy.spatial.transform import (
+            Rotation,  # type: ignore[import-untyped]  # ~330ms: deferred to avoid startup cost
+        )
+
+        rotation = Rotation.from_matrix(matrix)
         quat = rotation.as_quat()  # Returns [x, y, z, w]
         return cls(quat[0], quat[1], quat[2], quat[3])
 
@@ -167,8 +170,12 @@ class Quaternion(LCMQuaternion):  # type: ignore[misc]
             Vector3: Euler angles as (roll, pitch, yaw) in radians
         """
         # Use scipy for accurate quaternion to euler conversion
+        from scipy.spatial.transform import (
+            Rotation,  # type: ignore[import-untyped]  # ~330ms: deferred to avoid startup cost
+        )
+
         quat = [self.x, self.y, self.z, self.w]
-        rotation = R.from_quat(quat)
+        rotation = Rotation.from_quat(quat)
         euler_angles = rotation.as_euler("xyz")  # roll, pitch, yaw
 
         return Vector3(euler_angles[0], euler_angles[1], euler_angles[2])

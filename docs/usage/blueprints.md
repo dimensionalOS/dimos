@@ -290,6 +290,20 @@ class ModuleB(Module):
         print(self.device.get_time())
 ```
 
+### Optional module references
+
+If a dependency might not be present in every blueprint, annotate it as `SomeSpec | None = None`. The blueprint will try to resolve it but won't raise if no matching module is found:
+
+```python session=blueprint-ex3
+class ModuleC(Module):
+    device: AnyModuleWithGetTime | None = None
+
+    def maybe_get_time(self) -> str:
+        if self.device is None:
+            return "No clock available"
+        return self.device.get_time()
+```
+
 ## Defining skills
 
 Skills are methods on a `Module` decorated with `@skill`. The agent automatically discovers all skills from launched modules at startup.

@@ -63,6 +63,7 @@ dependencies = [
     "annotation-protocol>=1.4.0",
     "lazy_loader",
     "plum-dispatch==2.5.7",
+    "xxhash>=3.0.0",
     # Logging
     "structlog>=25.5.0,<26",
     "colorlog==6.9.0",
@@ -294,6 +295,10 @@ sim = [
     "pygame>=2.6.1",
 ]
 
+navigation = [
+    "gtsam-extended>=4.3a1.post1",
+]
+
 # NOTE: jetson-jp6-cuda126 extra is disabled due to 404 errors from wheel URLs
 # The pypi.jetson-ai-lab.io URLs are currently unavailable. Update with working URLs when available.
 # jetson-jp6-cuda126 = [
@@ -337,6 +342,9 @@ docker = [
 base = [
     "dimos[agents,web,perception,visualization,sim]",
 ]
+
+[tool.uv]
+override-dependencies = ["pytest==8.3.5"]
 
 [tool.ruff]
 line-length = 100
@@ -419,6 +427,8 @@ module = [
     "sqlite_vec",
     "std_msgs.*",
     "tf2_msgs.*",
+    "transformers",
+    "transformers.*",
     "torchreid",
     "turbojpeg",
     "ultralytics.*",
@@ -463,4 +473,6 @@ ignore = [
     "dimos/dashboard/dimos.rbl",
     "dimos/web/dimos_interface/themes.json",
     "dimos/manipulation/manipulation_module.py",
+    "dimos/navigation/smart_nav/modules/*/main.cpp",
+    "dimos/navigation/smart_nav/common/*.hpp",
 ]

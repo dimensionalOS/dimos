@@ -47,6 +47,16 @@ def blame_authors(filepath):
     return authors
 
 
+AUTHOR_ALIASES = {
+    "s": "spomichter",
+    "stash": "spomichter",
+}
+
+
+def resolve_author(name):
+    return AUTHOR_ALIASES.get(name, name)
+
+
 def main():
     repo_root = get_repo_root()
 
@@ -76,6 +86,7 @@ def main():
         covered_lines = set(data.lines(abs_path) or [])
 
         for line_no, author in authors.items():
+            author = resolve_author(author)
             stats[author]["total"] += 1
             if line_no in covered_lines:
                 stats[author]["covered"] += 1
@@ -84,8 +95,9 @@ def main():
         print("No coverage data with git blame information found.", file=sys.stderr)
         sys.exit(1)
 
+    MIN_LINES = 300
     sorted_authors = sorted(
-        stats.items(),
+        ((a, s) for a, s in stats.items() if s["total"] >= MIN_LINES),
         key=lambda x: x[1]["covered"] / x[1]["total"] if x[1]["total"] else 0,
         reverse=True,
     )

@@ -21,9 +21,11 @@ from collections.abc import Callable
 import functools
 import json
 import os
+from pathlib import Path
 import pickle
 import subprocess
 import sys
+import sysconfig
 import threading
 import time
 from typing import Any, TypeVar
@@ -35,6 +37,7 @@ from reactivex import Observable
 from reactivex.abc import ObserverBase, SchedulerBase
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -126,36 +129,23 @@ class MujocoConnection:
 
         # Launch the subprocess
         try:
-            # mjpython must be used macOS (because of launch_passive inside mujoco_process.py)
+            # mjpython must be used on macOS (because of launch_passive inside mujoco_process.py).
+            # It needs libpython on the dylib search path; uv-installed Pythons
+            # use @rpath which doesn't always resolve inside venvs, so we
+            # point DYLD_LIBRARY_PATH at the real libpython directory.
             executable = sys.executable if sys.platform != "darwin" else "mjpython"
-
-            # Set MUJOCO_GL=egl so that mujoco.Renderer uses EGL for offscreen
-            # rendering (camera/lidar sensor data) even when no display is available.
-            # The interactive viewer window (viewer.launch_passive) still uses GLFW
-            # and will gracefully fall back to headless mode if GLFW/display is absent.
-            #
-            # Also preload static-TLS libraries (libgomp, torch's libc10) via
-            # LD_PRELOAD so they are registered in the TLS block before any other
-            # libraries fill it up — avoiding the "cannot allocate memory in static
-            # TLS block" error at import time.
-            preload_candidates = [
-                "/lib/aarch64-linux-gnu/libgomp.so.1",
-                "/usr/lib/aarch64-linux-gnu/libgomp.so.1",
-            ]
-            existing_preloads = [p for p in preload_candidates if os.path.exists(p)]
-            ld_preload_parts = os.environ.get("LD_PRELOAD", "").split(":") if os.environ.get("LD_PRELOAD") else []
-            ld_preload = ":".join(filter(None, ld_preload_parts + existing_preloads))
-
-            subprocess_env = {
-                **os.environ,
-                "MUJOCO_GL": os.environ.get("MUJOCO_GL", "egl"),
-                **({"LD_PRELOAD": ld_preload} if ld_preload else {}),
-            }
+            env = os.environ.copy()
+            if sys.platform == "darwin":
+                # on some systems mujoco looks in the wrong place for shared libraries. So we force it look in the right place
+                libdir = Path(sysconfig.get_config_var("LIBDIR") or "")
+                if libdir.is_dir():
+                    existing = env.get("DYLD_LIBRARY_PATH", "")
+                    env["DYLD_LIBRARY_PATH"] = f"{libdir}:{existing}" if existing else str(libdir)
 
             self.process = subprocess.Popen(
                 [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
-                env=subprocess_env,
                 stderr=subprocess.PIPE,
+                env=env,
             )
 
         except Exception as e:
@@ -217,7 +207,7 @@ class MujocoConnection:
         # Wait for threads to finish
         for thread in self._stream_threads:
             if thread.is_alive():
-                thread.join(timeout=2.0)
+                thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
                 if thread.is_alive():
                     logger.warning(f"Stream thread {thread.name} did not stop gracefully")
 

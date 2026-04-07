@@ -16,12 +16,13 @@
 
 Usage::
     from dimos.hardware.sensors.lidar.livox.module import Mid360
-    from dimos.core.blueprints import autoconnect
+    from dimos.core.coordination.blueprints import autoconnect
 
-    autoconnect(
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    ModuleCoordinator.build(autoconnect(
         Mid360.blueprint(host_ip="192.168.1.5"),
         SomeConsumer.blueprint(),
-    ).build().loop()
+    )).loop()
 """
 
 from __future__ import annotations

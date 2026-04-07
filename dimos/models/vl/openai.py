@@ -30,7 +30,9 @@ class OpenAIVlModel(VlModel[OpenAIVlModelConfig]):
 
         return OpenAI(api_key=api_key)
 
-    def query(self, image: Image | np.ndarray, query: str, response_format: dict | None = None, **kwargs) -> str:  # type: ignore[override, type-arg, no-untyped-def]
+    def query(
+        self, image: Image | np.ndarray, query: str, response_format: dict | None = None, **kwargs
+    ) -> str:  # type: ignore[override, type-arg, no-untyped-def]
         if isinstance(image, np.ndarray):
             import warnings
 
@@ -71,7 +73,11 @@ class OpenAIVlModel(VlModel[OpenAIVlModelConfig]):
         return response.choices[0].message.content  # type: ignore[return-value,no-any-return]
 
     def query_batch(
-        self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs: Any
+        self,
+        images: list[Image],
+        query: str,
+        response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> list[str]:  # type: ignore[override]
         """Query VLM with multiple images using a single API call."""
         if not images:
@@ -80,7 +86,9 @@ class OpenAIVlModel(VlModel[OpenAIVlModelConfig]):
         content: list[dict[str, Any]] = [
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"},
+                "image_url": {
+                    "url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"
+                },
             }
             for img in images
         ]
@@ -100,4 +108,3 @@ class OpenAIVlModel(VlModel[OpenAIVlModelConfig]):
         """Release the OpenAI client."""
         if "_client" in self.__dict__:
             del self.__dict__["_client"]
-

@@ -19,6 +19,7 @@ from typing import Any
 
 import pygame
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
@@ -32,10 +33,10 @@ os.environ["SDL_VIDEODRIVER"] = "x11"
 class KeyboardTeleop(Module):
     """Pygame-based keyboard control module.
 
-    Outputs standard Twist messages on /cmd_vel for velocity control.
+    Outputs standard Twist messages on /tele_cmd_vel for velocity control.
     """
 
-    cmd_vel: Out[Twist]  # Standard velocity commands
+    tele_cmd_vel: Out[Twist]  # Standard velocity commands
 
     _stop_event: threading.Event
     _keys_held: set[int] | None = None
@@ -65,13 +66,13 @@ class KeyboardTeleop(Module):
         stop_twist = Twist()
         stop_twist.linear = Vector3(0, 0, 0)
         stop_twist.angular = Vector3(0, 0, 0)
-        self.cmd_vel.publish(stop_twist)
+        self.tele_cmd_vel.publish(stop_twist)
 
         self._stop_event.set()
 
         if self._thread is None:
             raise RuntimeError("Cannot stop: thread was never started")
-        self._thread.join(2)
+        self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 
@@ -98,7 +99,7 @@ class KeyboardTeleop(Module):
                         stop_twist = Twist()
                         stop_twist.linear = Vector3(0, 0, 0)
                         stop_twist.angular = Vector3(0, 0, 0)
-                        self.cmd_vel.publish(stop_twist)
+                        self.tele_cmd_vel.publish(stop_twist)
                         print("EMERGENCY STOP!")
                     elif event.key == pygame.K_ESCAPE:
                         # ESC quits
@@ -142,7 +143,7 @@ class KeyboardTeleop(Module):
             twist.angular.z *= speed_multiplier
 
             # Always publish twist at 50Hz
-            self.cmd_vel.publish(twist)
+            self.tele_cmd_vel.publish(twist)
 
             self._update_display(twist)
 

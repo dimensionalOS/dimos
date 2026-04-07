@@ -30,8 +30,8 @@ import time
 
 from reactivex.disposable import Disposable
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import JpegLcmTransport, LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image

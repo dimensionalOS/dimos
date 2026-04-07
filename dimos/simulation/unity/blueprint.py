@@ -25,10 +25,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.simulation.unity.module import UnityBridgeModule
-from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 
 def _rerun_blueprint() -> Any:
@@ -57,5 +57,5 @@ rerun_config = {
 
 unity_sim = autoconnect(
     UnityBridgeModule.blueprint(),
-    RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode(), **rerun_config),
+    RerunBridgeModule.blueprint(**rerun_config),
 )

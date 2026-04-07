@@ -19,7 +19,7 @@ from typing import Any
 
 from dimos_lcm.sensor_msgs import CameraInfo
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.module import camera_module  # type: ignore[attr-defined]
@@ -40,7 +40,9 @@ from dimos.msgs.std_msgs.Bool import Bool
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.visualization.vis_module import vis_module
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 
 def _convert_camera_info(camera_info: Any) -> Any:
@@ -76,12 +78,20 @@ def _static_base_link(rr: Any) -> list[Any]:
 
 def _g1_rerun_blueprint() -> Any:
     """Split layout: camera feed + 3D world view side by side."""
+    import rerun as rr
     import rerun.blueprint as rrb
 
     return rrb.Blueprint(
         rrb.Horizontal(
             rrb.Spatial2DView(origin="world/color_image", name="Camera"),
-            rrb.Spatial3DView(origin="world", name="3D"),
+            rrb.Spatial3DView(
+                origin="world",
+                name="3D",
+                background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
+                line_grid=rrb.LineGrid3D(
+                    plane=rr.components.Plane3D.XY.with_distance(0.5),
+                ),
+            ),
             column_shares=[1, 2],
         ),
     )
@@ -89,6 +99,7 @@ def _g1_rerun_blueprint() -> Any:
 
 rerun_config = {
     "blueprint": _g1_rerun_blueprint,
+    "pubsubs": [LCM()],
     "visual_override": {
         "world/camera_info": _convert_camera_info,
         "world/global_map": _convert_global_map,
@@ -99,7 +110,7 @@ rerun_config = {
     },
 }
 
-_with_vis = vis_module(global_config.viewer, rerun_config=rerun_config)
+_with_vis = vis_module(viewer_backend=global_config.viewer, rerun_config=rerun_config)
 
 
 def _create_webcam() -> Webcam:
@@ -134,6 +145,8 @@ uintree_g1_primitive_no_nav = (
         VoxelGridMapper.blueprint(voxel_size=0.1),
         CostMapper.blueprint(),
         WavefrontFrontierExplorer.blueprint(),
+        # Visualization
+        WebsocketVisModule.blueprint(),
     )
     .global_config(n_workers=4, robot_model="unitree_g1")
     .transports(
@@ -142,7 +155,6 @@ uintree_g1_primitive_no_nav = (
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
             # State estimation from ROS
             ("state_estimation", Odometry): LCMTransport("/state_estimation", Odometry),
-            # Odometry output from ROSNavigationModule
             ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
             # Navigation module topics from nav_bot
             ("goal_req", PoseStamped): LCMTransport("/goal_req", PoseStamped),

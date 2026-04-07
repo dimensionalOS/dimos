@@ -20,8 +20,9 @@ from pydantic import Field
 import reactivex as rx
 
 from dimos.agents.annotation import skill
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import CameraHardware
@@ -120,5 +121,5 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
 
 demo_camera = autoconnect(
     CameraModule.blueprint(),
-    vis_module("rerun"),
+    vis_module(viewer_backend=global_config.viewer),
 )

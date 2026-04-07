@@ -73,7 +73,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 camera_demo = autoconnect(
     CameraModule.blueprint(),
     RerunBridgeModule.blueprint(
-        viewer_mode="native", # native (desktop), web (browser), none (headless)
+        rerun_open="native", # native, web, both, none
     ),
 )
 

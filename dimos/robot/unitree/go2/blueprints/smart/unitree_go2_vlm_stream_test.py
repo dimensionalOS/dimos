@@ -15,7 +15,7 @@
 
 from dimos.agents.vlm_agent import VLMAgent
 from dimos.agents.vlm_stream_tester import VlmStreamTester
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
 unitree_go2_vlm_stream_test = autoconnect(

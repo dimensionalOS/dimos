@@ -24,7 +24,7 @@ when one output fans out to multiple consumers:
 from collections import defaultdict
 from enum import Enum, auto
 
-from dimos.core.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.introspection.utils import (
     GROUP_COLORS,
     TYPE_COLORS,

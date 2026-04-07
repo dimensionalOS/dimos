@@ -155,7 +155,7 @@ class TestPortConflicts:
         assert conflict is None
 
 
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 
 def _mock_coordinator(manager_health: list[bool] | None = None) -> ModuleCoordinator:
@@ -164,14 +164,14 @@ def _mock_coordinator(manager_health: list[bool] | None = None) -> ModuleCoordin
     # Bind the real health_check method so it runs actual logic
     coord.health_check = ModuleCoordinator.health_check.__get__(coord)
     if manager_health is not None:
-        managers = []
-        for healthy in manager_health:
+        managers: dict[str, mock.MagicMock] = {}
+        for i, healthy in enumerate(manager_health):
             m = mock.MagicMock()
             m.health_check.return_value = healthy
-            managers.append(m)
+            managers[str(i)] = m
         coord._managers = managers
     else:
-        coord._managers = []
+        coord._managers = {}
     return coord
 
 

@@ -13,37 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Agentic G1 ROSNav Unity sim stack: perception + LLM agent with full skill set.
+"""Agentic G1 sim stack."""
 
-Builds on the ROSNav simulation base and adds spatial memory, object tracking,
-perceive-loop, LLM agent, navigation skills, person following, voice output,
-and a web UI for human input.
-"""
-
-from dimos.agents.agent import Agent
-from dimos.agents.skills.navigation import NavigationSkillContainer
-from dimos.agents.skills.person_follow import PersonFollowSkillContainer
-from dimos.agents.skills.speak_skill import SpeakSkill
-from dimos.agents.web_human_input import WebInput
-from dimos.core.blueprints import autoconnect
-from dimos.perception.object_tracker import ObjectTracking
-from dimos.perception.perceive_loop_skill import PerceiveLoopSkill
-from dimos.perception.spatial_perception import SpatialMemory
-from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1_rosnav_sim import (
-    unitree_g1_rosnav_sim,
-)
-from dimos.robot.unitree.go2.connection import _camera_info_static
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.robot.unitree.g1.blueprints.agentic._agentic_skills import _agentic_skills
+from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1_sim import unitree_g1_sim
 
 unitree_g1_agentic_sim = autoconnect(
-    unitree_g1_rosnav_sim,
-    Agent.blueprint(),
-    NavigationSkillContainer.blueprint(),
-    PersonFollowSkillContainer.blueprint(camera_info=_camera_info_static()),
-    SpatialMemory.blueprint(),
-    ObjectTracking.blueprint(frame_id="camera_link"),
-    PerceiveLoopSkill.blueprint(),
-    WebInput.blueprint(),
-    SpeakSkill.blueprint(),
-).global_config(n_workers=8)
+    unitree_g1_sim,
+    _agentic_skills,
+)
 
 __all__ = ["unitree_g1_agentic_sim"]

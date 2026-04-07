@@ -22,7 +22,7 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_coordinator import (
     unitree_go2_coordinator,
 )
@@ -31,6 +31,10 @@ from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 unitree_go2_webrtc_keyboard_teleop = autoconnect(
     unitree_go2_coordinator,
     KeyboardTeleop.blueprint(),
+).remappings(
+    [
+        (KeyboardTeleop, "tele_cmd_vel", "cmd_vel"),
+    ]
 )
 
 __all__ = ["unitree_go2_webrtc_keyboard_teleop"]

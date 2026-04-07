@@ -36,13 +36,13 @@ SCANNED_EXTENSIONS = {
     ".yaml",
 }
 
-SCANNED_PREFIXES: set[str] = set()
+SCANNED_PREFIXES = {
+    "Dockerfile",
+}
 
 IGNORED_DIRS = {
     ".venv",
-    ".venv2",
     "venv",
-    "env",
     "__pycache__",
     "node_modules",
     ".git",
@@ -52,7 +52,6 @@ IGNORED_DIRS = {
     ".tox",
     # third-party vendored code
     "gtsam",
-    "ros-navigation-autonomy-stack",
 }
 
 # Lines that match section patterns but are actually programmatic / intentional.
@@ -78,7 +77,7 @@ def _is_ignored_dir(dirpath: str) -> bool:
     parts = dirpath.split(os.sep)
     if IGNORED_DIRS.intersection(parts):
         return True
-    # Skip directories with .ignore suffix (e.g. dashboard.ignore/)
+    # Skip directories with .ignore suffix (e.g. logs.ignore/)
     return any(p.endswith(".ignore") for p in parts)
 
 
