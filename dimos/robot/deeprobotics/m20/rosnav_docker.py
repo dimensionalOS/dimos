@@ -27,7 +27,13 @@ from __future__ import annotations
 from dataclasses import field
 from pathlib import Path
 
+import logging
+
+from dimos.core.stream import Out
+from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.navigation.rosnav.rosnav_module import ROSNav, ROSNavConfig
+
+logger = logging.getLogger(__name__)
 
 
 class M20ROSNavConfig(ROSNavConfig):
@@ -86,9 +92,50 @@ class M20ROSNavConfig(ROSNavConfig):
 
 
 class M20ROSNav(ROSNav):
-    """ROSNav module for M20 — runs in dimos-managed Docker container."""
+    """ROSNav module for M20 — runs in dimos-managed Docker container.
+
+    Adds an ``odometry`` output (full Odometry with twist) alongside the
+    inherited ``odom`` (PoseStamped-only). SmartNav modules subscribe to
+    ``odometry: In[Odometry]``, so this bridge is needed.
+    """
 
     default_config = M20ROSNavConfig
+
+    # SmartNav expects Odometry type — parent only outputs PoseStamped
+    odometry: Out[Odometry]
+
+    def _on_ros_odom(self, msg) -> None:  # type: ignore[override]
+        """Extend parent to also publish full Odometry."""
+        super()._on_ros_odom(msg)
+
+        # Build full Odometry from the ROS message (preserves twist + covariance)
+        from dimos.msgs.geometry_msgs.Pose import Pose
+        from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
+        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+        from dimos.msgs.geometry_msgs.Twist import Twist
+        from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
+        from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+        ts = msg.header.stamp.sec + msg.header.stamp.nanosec / 1e9
+        p = msg.pose.pose.position
+        o = msg.pose.pose.orientation
+        lv = msg.twist.twist.linear
+        av = msg.twist.twist.angular
+
+        odom = Odometry(
+            ts=ts,
+            frame_id=msg.header.frame_id,
+            child_frame_id=getattr(msg, "child_frame_id", ""),
+            pose=PoseWithCovariance(
+                Pose(position=Vector3(p.x, p.y, p.z), orientation=Quaternion(o.x, o.y, o.z, o.w)),
+                list(msg.pose.covariance),
+            ),
+            twist=TwistWithCovariance(
+                Twist(linear=Vector3(lv.x, lv.y, lv.z), angular=Vector3(av.x, av.y, av.z)),
+                list(msg.twist.covariance),
+            ),
+        )
+        self.odometry.publish(odom)
 
 
 m20_ros_nav = M20ROSNav.blueprint
