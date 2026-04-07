@@ -59,6 +59,8 @@ class ModuleCoordinator(Resource):
         self._deployed_atoms: dict[type[ModuleBase], _BlueprintAtom] = {}
         self._resolved_module_refs: dict[tuple[type[ModuleBase], str], type[ModuleBase]] = {}
         self._transport_registry: dict[tuple[str, type], PubSubTransport[Any]] = {}
+        self._class_aliases: dict[type[ModuleBase], type[ModuleBase]] = {}
+        self._module_transports: dict[type[ModuleBase], dict[str, PubSubTransport[Any]]] = {}
         self._started = False
 
     def start(self) -> None:
@@ -173,8 +175,11 @@ class ModuleCoordinator(Resource):
 
         self._send_on_system_modules()
 
+    def _resolve_class(self, cls: type[ModuleBase]) -> type[ModuleBase]:
+        return self._class_aliases.get(cls, cls)
+
     def get_instance(self, module: type[ModuleBase]) -> ModuleProxy:
-        return self._deployed_modules.get(module)  # type: ignore[return-value]
+        return self._deployed_modules.get(self._resolve_class(module))  # type: ignore[return-value]
 
     def _send_on_system_modules(self) -> None:
         modules = list(self._deployed_modules.values())
@@ -199,8 +204,9 @@ class ModuleCoordinator(Resource):
                 transport = _get_transport_for(blueprint, remapped_name, stream_type)
             self._transport_registry[key] = transport
             for module, original_name in streams[key]:
-                instance = self.get_instance(module)
-                instance.set_transport(original_name, transport)
+                instance = self.get_instance(module)  # type: ignore[assignment]
+                instance.set_transport(original_name, transport)  # type: ignore[union-attr]
+                self._module_transports.setdefault(module, {})[original_name] = transport
                 logger.info(
                     "Transport",
                     name=remapped_name,
@@ -306,6 +312,7 @@ class ModuleCoordinator(Resource):
         callers that expect the module to come back (e.g. ``restart_module``)
         are responsible for rewiring.
         """
+        module_class = self._resolve_class(module_class)
         if module_class not in self._deployed_modules:
             raise ValueError(f"{module_class.__name__} is not deployed")
         if module_class.deployment != "python":
@@ -336,6 +343,10 @@ class ModuleCoordinator(Resource):
 
         del self._deployed_modules[module_class]
         self._deployed_atoms.pop(module_class, None)
+        self._module_transports.pop(module_class, None)
+        self._class_aliases = {
+            k: v for k, v in self._class_aliases.items() if v is not module_class
+        }
         self._resolved_module_refs = {
             key: target
             for key, target in self._resolved_module_refs.items()
@@ -356,6 +367,7 @@ class ModuleCoordinator(Resource):
         transports, and re-injects the new proxy into every other module that
         held a reference to it.
         """
+        module_class = self._resolve_class(module_class)
         if module_class not in self._deployed_modules:
             raise ValueError(f"{module_class.__name__} is not deployed")
         if module_class.deployment != "python":
@@ -365,6 +377,7 @@ class ModuleCoordinator(Resource):
 
         old_atom = self._deployed_atoms[module_class]
         kwargs = dict(old_atom.kwargs)
+        saved_transports = dict(self._module_transports.get(module_class, {}))
         inbound_refs = [
             (consumer, ref_name)
             for (consumer, ref_name), target in self._resolved_module_refs.items()
@@ -387,6 +400,12 @@ class ModuleCoordinator(Resource):
         else:
             new_class = module_class
 
+        if new_class is not module_class:
+            for old_cls in list(self._class_aliases):
+                if self._class_aliases[old_cls] is module_class:
+                    self._class_aliases[old_cls] = new_class
+            self._class_aliases[module_class] = new_class
+
         python_wm = cast("WorkerManagerPython", self._managers["python"])
         new_proxy = python_wm.deploy_fresh(new_class, self._global_config, kwargs)
         self._deployed_modules[new_class] = new_proxy
@@ -396,13 +415,12 @@ class ModuleCoordinator(Resource):
         self._deployed_atoms[new_class] = new_atom
 
         for stream_ref in new_atom.streams:
-            remapped_name = new_bp.remapping_map.get((new_class, stream_ref.name), stream_ref.name)
-            assert isinstance(remapped_name, str)
-            key = (remapped_name, stream_ref.type)
-            transport = self._transport_registry.get(key)
-            if transport is None:
-                continue
-            new_proxy.set_transport(stream_ref.name, transport)
+            transport = saved_transports.get(stream_ref.name)
+            if transport is not None:
+                new_proxy.set_transport(stream_ref.name, transport)
+        self._module_transports[new_class] = {
+            s.name: t for s in new_atom.streams if (t := saved_transports.get(s.name)) is not None
+        }
 
         for consumer_class, ref_name in inbound_refs:
             consumer_proxy = self._deployed_modules.get(consumer_class)

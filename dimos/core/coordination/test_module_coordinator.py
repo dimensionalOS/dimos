@@ -703,3 +703,96 @@ def test_restart_module_calls_importlib_reload(dynamic_coordinator, mocker) -> N
     mock_reload.assert_called_once()
     reloaded_module = mock_reload.call_args.args[0]
     assert reloaded_module.__name__ == ModuleA.__module__
+
+
+def _mock_reload_producing_new_class(original_class):
+    """Return a reload side-effect that replaces the original class with a fresh copy."""
+    new_class = type(
+        original_class.__name__, original_class.__bases__, dict(original_class.__dict__)
+    )
+    new_class.__module__ = original_class.__module__
+    new_class.__qualname__ = original_class.__qualname__
+
+    def side_effect(mod):
+        setattr(mod, original_class.__name__, new_class)
+        return mod
+
+    return side_effect, new_class
+
+
+@pytest.mark.slow
+def test_get_instance_after_reload_restart(dynamic_coordinator, mocker) -> None:
+    """get_instance with the original class still works after a reload restart."""
+    dynamic_coordinator.load_module(ModuleA)
+
+    side_effect, _new_class = _mock_reload_producing_new_class(ModuleA)
+    mocker.patch(
+        "dimos.core.coordination.module_coordinator.importlib.reload",
+        side_effect=side_effect,
+    )
+
+    new_proxy = dynamic_coordinator.restart_module(ModuleA, reload_source=True)
+
+    assert dynamic_coordinator.get_instance(ModuleA) is new_proxy
+
+
+@pytest.mark.slow
+def test_double_restart_with_reload(dynamic_coordinator, mocker) -> None:
+    """A second restart via the original class works after a reload restart."""
+    dynamic_coordinator.load_module(ModuleA)
+
+    side_effect1, new_class1 = _mock_reload_producing_new_class(ModuleA)
+    mocker.patch(
+        "dimos.core.coordination.module_coordinator.importlib.reload",
+        side_effect=side_effect1,
+    )
+    proxy1 = dynamic_coordinator.restart_module(ModuleA, reload_source=True)
+
+    side_effect2, _new_class2 = _mock_reload_producing_new_class(new_class1)
+    mocker.patch(
+        "dimos.core.coordination.module_coordinator.importlib.reload",
+        side_effect=side_effect2,
+    )
+    proxy2 = dynamic_coordinator.restart_module(ModuleA, reload_source=True)
+
+    assert proxy2 is not proxy1
+    assert dynamic_coordinator.get_instance(ModuleA) is proxy2
+
+
+@pytest.mark.slow
+def test_unload_after_reload_restart(dynamic_coordinator, mocker) -> None:
+    """unload_module with the original class works after a reload restart."""
+    dynamic_coordinator.load_module(ModuleA)
+
+    side_effect, _new_class = _mock_reload_producing_new_class(ModuleA)
+    mocker.patch(
+        "dimos.core.coordination.module_coordinator.importlib.reload",
+        side_effect=side_effect,
+    )
+    dynamic_coordinator.restart_module(ModuleA, reload_source=True)
+
+    dynamic_coordinator.unload_module(ModuleA)
+    assert dynamic_coordinator.get_instance(ModuleA) is None
+
+
+@pytest.mark.slow
+def test_restart_preserves_remapped_streams(dynamic_coordinator) -> None:
+    """Restart reconnects streams that were remapped during initial load."""
+    bp = autoconnect(
+        SourceModule.blueprint(),
+        TargetModule.blueprint(),
+    ).remappings(
+        [(SourceModule, "color_image", "remapped_data")],
+    )
+    dynamic_coordinator.load_blueprint(bp)
+
+    target = dynamic_coordinator.get_instance(TargetModule)
+    registry_before = dynamic_coordinator._transport_registry[("remapped_data", Data1)]
+
+    dynamic_coordinator.restart_module(SourceModule, reload_source=False)
+
+    # The coordinator-side transport object in the registry is unchanged.
+    assert dynamic_coordinator._transport_registry[("remapped_data", Data1)] is registry_before
+    # The restarted proxy sees the same topic as the target.
+    source_after = dynamic_coordinator.get_instance(SourceModule)
+    assert source_after.color_image.transport.topic == target.remapped_data.transport.topic
