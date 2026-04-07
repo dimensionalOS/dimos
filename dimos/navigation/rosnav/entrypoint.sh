@@ -433,10 +433,12 @@ elif [ "$MODE" = "hardware" ]; then
                 robot_config:=${LOCAL_PLANNER_CONFIG} \
                 vehicleHeight:=${VEHICLE_HEIGHT} &
 
-            ros2 launch terrain_analysis terrain_analysis.launch.py &
+            ros2 launch terrain_analysis terrain_analysis.launch.py \
+                robot_config:=${LOCAL_PLANNER_CONFIG} &
 
             ros2 launch terrain_analysis_ext terrain_analysis_ext.launch \
-                checkTerrainConn:=true &
+                checkTerrainConn:=true \
+                robot_config:=${LOCAL_PLANNER_CONFIG} &
 
             wait
         " &

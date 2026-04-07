@@ -62,6 +62,7 @@ class M20ROSNavConfig(ROSNavConfig):
             "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
             "LOCALIZATION_METHOD": "arise_slam",
             "MODE": "hardware",
+            "LOCAL_PLANNER_CONFIG": "m20",
         }
     )
 
