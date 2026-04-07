@@ -239,6 +239,24 @@ Deployed patched nav image (`ghcr.io/aphexcx/m20-nav:latest`) with Finding #11 f
 - `ros2_pub` binary not in new image — copy from `local-with-bridge` tag
 - `ros2 topic hz` / `ros2 topic echo` from `docker exec` fails (Finding #10, DDS discovery broken for exec'd processes)
 
+### Finding #13: End-to-End Pipeline Verified — Costmap Visible (2026-04-06)
+
+Full dimos pipeline running on M20 hardware:
+- dimos manages nav container lifecycle via DockerModuleProxy ✓
+- `docker_reconnect_container=True` enables 30s restarts (vs 5 min with fresh container)
+- Container: ros2_pub → ARISE SLAM → nav planner → dimos RPC server ✓
+- Host: M20Connection + VoxelGridMapper + CostMapper + WebSocket ✓
+- **Costmap visible in command center** at port 7779 ✓
+- Terrain analysis now uses M20 config (was defaulting to Unitree G1)
+- Click-to-goal reaches the planner: "Navigating to goal" logged ✓
+
+**Blocker: cmd_vel not flowing to robot.**
+- WebSocket receives WASD keys (`move_command received: linear.x=0.50`)
+- LCM transport assertion error: `<class 'dimos_lcm.geometry_msgs.Pose.Pose'> not stringified type hint`
+- This prevents ALL inter-worker LCM message delivery for cmd_vel
+- M20Connection._on_cmd_vel never fires → velocity controller gets no commands
+- Root cause: dimos LCM encoder type system incompatibility — needs dimos team input
+
 ### Known Issues
 
 - **Entrypoint `/IMU` check**: waits for `/IMU` via ros2 topic list, but ARISE uses `/bridge/IMU`. See Finding #6.
