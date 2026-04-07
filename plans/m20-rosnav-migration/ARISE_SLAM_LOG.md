@@ -257,20 +257,75 @@ Full dimos pipeline running on M20 hardware:
 - M20Connection._on_cmd_vel never fires → velocity controller gets no commands
 - Root cause: dimos LCM encoder type system incompatibility — needs dimos team input
 
+### Finding #14: ROSNav7 Merge + SmartNav Architecture (2026-04-07)
+
+Merged `upstream/jeff/fix/rosnav7` (776 commits) into our branch. Key addition:
+SmartNav composable navigation stack with CmdVelMux, ClickToGoal, PGO, and
+native C++ planning modules (TerrainAnalysis, LocalPlanner, PathFollower, FarPlanner).
+
+**Architecture decision**: SmartNav's C++ NativeModules require `nix` to build,
+which NOS doesn't have. The ROSNav Docker container already runs the same CMU
+C++ planners. Solution: container handles SLAM + C++ planners, host runs
+Python-only modules (PGO, CmdVelMux, ClickToGoal, RerunBridge).
+
+Blueprint (`m20_smartnav.py`):
+- Container: ARISE SLAM + TerrainAnalysis + LocalPlanner + PathFollower (C++)
+- Host: M20Connection + PGO + CmdVelMux + ClickToGoal + RerunBridge + WebsocketVis (Python)
+- ROSNav bridges container ROS2 topics ↔ dimos LCM streams
+
+**cmd_vel blocker resolved**: CmdVelMux handles teleop vs nav velocity multiplexing
+natively. No more manual LCM transport wiring or beartype assertion errors.
+
+### Finding #15: DockerModuleProxy Transport Ordering Fix (2026-04-07)
+
+`ModuleCoordinator.build()` calls `_connect_streams()` (line 227) before
+`build_all_modules()` (line 230). For `deployment="docker"` modules, this
+means `set_transport()` RPC is called before the container exists → timeout.
+
+**Fix**: Queue transports in `DockerModuleProxy.set_transport()` when
+`_is_built` is not set, replay them after `_wait_for_rpc()` succeeds.
+This is a general fix — affects any module with `deployment="docker"`.
+
+### Finding #16: NOS Python 3.12 Upgrade + gtsam (2026-04-07)
+
+NOS upgraded from Python 3.10 → 3.12 (via `uv python install 3.12`).
+Pre-built `gtsam-extended` aarch64 wheel available for cp312 (not cp310).
+PGO loop closure now available on NOS — critical for CATL multi-floor mapping.
+
+NOS disk cleanup: freed ~9GB (old Docker image 4.5G, old /opt/dimos 7.8G,
+old py310 venv 1.8G). DNS fixed (systemd-resolved was disabled, re-enabled
++ `netplan apply`).
+
+### Finding #17: End-to-End Pipeline with dimos-viewer (2026-04-07)
+
+Full pipeline verified on gogo (M20-770) with dimos-viewer (rerun fork):
+- ARISE SLAM point cloud streaming live in dimos-viewer ✓
+- RerunBridgeModule gRPC server on port 9877 ✓
+- SSH tunnel required (AOS WiFi doesn't route 9877 directly to NOS)
+- dimos-viewer binary: `~/gt/dimos-viewer/target/release/rerun` (jeff/fix/connect branch)
+- Connect: `rerun --connect rerun+http://127.0.0.1:9877/proxy --ws-url ws://127.0.0.1:7779`
+  (with `ssh -f -N -L 9877:10.21.31.106:9877 -L 7779:10.21.31.106:7779 user@10.21.41.1`)
+
+Visible entities: registered_scan, terrain_map, global_pointcloud, odom, path,
+camera_info, color_image, TF (base_link, camera_link, camera_optical).
+
 ### Known Issues
 
 - **Entrypoint `/IMU` check**: waits for `/IMU` via ros2 topic list, but ARISE uses `/bridge/IMU`. See Finding #6.
 - **FAST_LIO fallback remap**: entrypoint remaps `/cloud_registered` → `/registered_scan`, conflicts with rosnav_module's `/cloud_registered` subscription for fastlio mode. Not an issue since ARISE is active.
 - **ros2_pub not baked into nav image**: must build inside container on first start (`colcon build --packages-select drdds_bridge --cmake-args -DBUILD_ROS2_PUB=ON`). Use `docker commit` to persist.
+- **FarPlanner needs nix**: using SimplePlanner or container-side CMU planners instead.
+- **NOS DNS**: systemd-resolved must be enabled; `netplan apply` after reboot if DNS breaks.
 
 ### Next Steps
 
 18. [x] Rebuild nav image with Finding #11 fix (IMU-triggered processing for Velodyne)
 19. [x] Deploy to NOS and verify ARISE produces /state_estimation + /registered_scan
 20. [ ] Test navigation on robot: send a goal, verify robot plans + drives
-21. [ ] Fix foxglove-bridge on arm64 (corrupts /opt/ros/humble/setup.bash)
+21. [ ] Test teleop via CmdVelMux (WASD in command center → robot moves)
 22. [ ] Tune ARISE feature extraction for RSAIRY scan pattern (if needed)
 23. [ ] Phase 2: patch N_SCANS=192 to use native ring values (remove 64-bin remap)
+24. [ ] Pre-build FarPlanner binary for aarch64 (or install nix on NOS)
 
 ---
 
