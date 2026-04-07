@@ -63,6 +63,7 @@ class M20ROSNavConfig(ROSNavConfig):
             "LOCALIZATION_METHOD": "arise_slam",
             "MODE": "hardware",
             "LOCAL_PLANNER_CONFIG": "m20",
+            "ROBOT_CONFIG_PATH": "m20",
         }
     )
 
