@@ -235,17 +235,15 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
     def start(self) -> None:
         super().start()
 
+        # Wire cmd_vel FIRST so keyboard/teleop works even if protocol handshake fails
+        self._velocity_ctrl.start()
+        self._disposables.add(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
+
         try:
             # Connect to M20 and start protocol services (always UDP)
             self._protocol.connect()
             self._protocol.start_heartbeat()
             self._protocol.start_listener(self._on_status_report)
-
-            # Start velocity control loop
-            self._velocity_ctrl.start()
-
-            # Wire cmd_vel input to velocity controller
-            self._disposables.add(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
 
             # Start RTSP camera
             if self._camera:
