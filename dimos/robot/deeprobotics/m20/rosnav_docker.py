@@ -74,10 +74,12 @@ class M20ROSNavConfig(ROSNavConfig):
     use_rviz: bool = False
 
     def model_post_init(self, __context: object) -> None:
-        # No volume mounts — everything is baked into the M20 nav image.
-        # This avoids the 5-min pip install + pybind11 compile on every startup
-        # that happens when the source is volume-mounted over the pre-installed package.
-        self.docker_volumes = []
+        # parents: [0]=m20/ [1]=deeprobotics/ [2]=robot/ [3]=dimos/ [4]=repo_root/
+        repo_root = Path(__file__).parents[4]
+        self.docker_volumes = [
+            # Live dimos source so container-side code stays up-to-date
+            (str(repo_root), "/workspace/dimos", "rw"),
+        ]
 
 
 class M20ROSNav(ROSNav):

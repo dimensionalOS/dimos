@@ -182,10 +182,16 @@ if ! [ -d "/workspace/dimos" ]; then
     exit 1
 fi
 export PYTHONPATH="/workspace/dimos:${PYTHONPATH:-}"
-# start pip install in the background
+# Install dimos if not already importable (skip the 5-min pybind11 compile when possible)
 pip_install_log_path="/tmp/dimos_pip_install.log"
-pip install -e /workspace/dimos &>"$pip_install_log_path" &
-PIP_INSTALL_PID=$!
+if python -c "import dimos" 2>/dev/null; then
+    echo "[entrypoint] dimos already installed, skipping pip install"
+    PIP_INSTALL_PID=""
+else
+    echo "[entrypoint] dimos not installed, running pip install in background..."
+    pip install -e /workspace/dimos &>"$pip_install_log_path" &
+    PIP_INSTALL_PID=$!
+fi
 
 #
 # dds config
@@ -554,8 +560,8 @@ fi
 # start module (when being run from )
 if [ "$#" -gt 0 ]; then
 
-    # make sure pip install went well
-    if ! wait "$PIP_INSTALL_PID"; then
+    # make sure pip install went well (if it was started)
+    if [ -n "$PIP_INSTALL_PID" ] && ! wait "$PIP_INSTALL_PID"; then
         cat "$pip_install_log_path"
         echo "[entrypoint] WARNING: pip install -e failed; see $pip_install_log_path"
         exit 29
