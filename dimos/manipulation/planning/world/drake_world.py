@@ -207,8 +207,8 @@ class DrakeWorld(WorldSpec):
             self._robot_counter += 1
             robot_id = f"robot_{self._robot_counter}"
 
-            resolved_path = config.model_path.resolve()
-            pose_key = tuple(
+            config.model_path.resolve()
+            tuple(
                 [
                     config.base_pose.position.x,
                     config.base_pose.position.y,
