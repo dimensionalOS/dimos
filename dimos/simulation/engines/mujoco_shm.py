@@ -193,8 +193,6 @@ class ManipShmWriter:
         arr[0] = position
         self._increment_seq(SEQ_GRIPPER_STATE)
 
-    # ---------------- commands (adapter -> sim) -------------------
-
     def read_position_command(self, num_joints: int) -> NDArray[np.float64] | None:
         """Return a copy of position targets if a new command arrived since last call."""
         seq = self._get_seq(SEQ_POSITION_CMD)
@@ -223,8 +221,6 @@ class ManipShmWriter:
     def read_command_mode(self) -> int:
         return int(self._control()[CTRL_COMMAND_MODE])
 
-    # ---------------- control / lifecycle -------------------------
-
     def signal_ready(self, num_joints: int) -> None:
         ctrl = self._control()
         ctrl[CTRL_NUM_JOINTS] = num_joints
@@ -250,8 +246,6 @@ class ManipShmWriter:
                 pass  # already unlinked (e.g. cleanup called twice)
             except OSError as exc:
                 logger.warning("SHM unlink failed", name=shm.name, error=str(exc))
-
-    # ---------------- helpers ------------------------------------
 
     def _array(self, buf: SharedMemory, n: int, dtype: Any) -> NDArray[Any]:
         return np.ndarray((n,), dtype=dtype, buffer=buf.buf)
@@ -280,8 +274,6 @@ class ManipShmReader:
     def __init__(self, key: str) -> None:
         self.shm = ManipShmSet.attach(key)
 
-    # ---------------- joint state (sim -> adapter) ----------------
-
     def read_positions(self, num_joints: int) -> list[float]:
         arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.positions.buf)
         return [float(x) for x in arr[:num_joints]]
@@ -297,8 +289,6 @@ class ManipShmReader:
     def read_gripper_position(self) -> float:
         arr = np.ndarray((2,), dtype=np.float64, buffer=self.shm.gripper.buf)
         return float(arr[0])
-
-    # ---------------- commands (adapter -> sim) -------------------
 
     def write_position_command(self, positions: list[float]) -> None:
         n = min(len(positions), MAX_JOINTS)
@@ -319,8 +309,6 @@ class ManipShmReader:
         arr[1] = position
         self._increment_seq(SEQ_GRIPPER_CMD)
 
-    # ---------------- control / lifecycle -------------------------
-
     def is_ready(self) -> bool:
         return bool(self._control()[CTRL_READY] == 1)
 
@@ -338,8 +326,6 @@ class ManipShmReader:
                 pass  # already detached
             except OSError as exc:
                 logger.warning("SHM close failed", name=shm.name, error=str(exc))
-
-    # ---------------- helpers ------------------------------------
 
     def _control(self) -> NDArray[np.int32]:
         return np.ndarray((4,), dtype=np.int32, buffer=self.shm.control.buf)

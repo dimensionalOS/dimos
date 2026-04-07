@@ -214,15 +214,11 @@ class ShmMujocoAdapter:
         self._error_message = ""
         return True
 
-    # ---------------- cartesian (not supported yet) ------------------
-
     def read_cartesian_position(self) -> dict[str, float] | None:
         return None
 
     def write_cartesian_position(self, pose: dict[str, float], velocity: float = 1.0) -> bool:
         return False
-
-    # ---------------- gripper ------------------------------------
 
     def read_gripper_position(self) -> float | None:
         if not self._has_gripper or self._shm is None:

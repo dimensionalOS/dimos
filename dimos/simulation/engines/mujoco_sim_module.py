@@ -276,8 +276,6 @@ class MujocoSimModule(
             op, err = errors[0]
             raise RuntimeError(f"MujocoSimModule.stop() failed during {op}: {err}") from err
 
-    # ---------------- SHM <-> engine hooks -----------------------
-
     def _apply_shm_commands(self, engine: MujocoEngine) -> None:
         """Pre-step hook: pull command targets from SHM into the engine."""
         shm = self._shm
@@ -323,8 +321,6 @@ class MujocoSimModule(
             return clo
         t = (clamped - jlo) / (jhi - jlo)
         return chi - t * (chi - clo)
-
-    # ---------------- camera publishing --------------------------
 
     def _build_camera_info(self) -> None:
         if self._engine is None:
