@@ -13,24 +13,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""M20 SmartNav blueprint — native planning with Docker ARISE SLAM.
+"""M20 navigation blueprint — Docker ARISE SLAM + planners, host Python modules.
 
-Adapts the G1 nav onboard pattern (unitree_g1_nav_onboard.py) for M20:
-- ARISE SLAM runs inside Docker via M20ROSNav (outputs registered_scan + odometry)
-- SmartNav handles all planning natively (terrain analysis, local/global planner,
-  PGO loop closure, click-to-goal, cmd_vel mux)
-- M20Connection sends velocity commands via /NAV_CMD DDS
+The ROSNav Docker container runs C++ modules that need nix (ARISE SLAM,
+TerrainAnalysis, LocalPlanner, PathFollower). The host runs Python-only
+modules (PGO, CmdVelMux, ClickToGoal) that enhance the pipeline.
 
 Data flow:
-    Docker (ARISE SLAM) → registered_scan + odometry
-    → SmartNav (TerrainAnalysis → LocalPlanner → PathFollower → CmdVelMux)
-    → cmd_vel → M20Connection → /NAV_CMD → robot motors
+    Container (ARISE SLAM → TerrainAnalysis → LocalPlanner → PathFollower)
+      → cmd_vel, registered_scan, odometry via ROSNav bridge
+    Host:
+      → PGO (loop closure) → corrected_odometry + global_map
+      → CmdVelMux (nav cmd_vel + teleop) → final cmd_vel
+      → M20Connection → /NAV_CMD → robot motors
 """
 
 from dimos.core.blueprints import autoconnect
-from dimos.navigation.smart_nav.main import smart_nav
+from dimos.navigation.cmd_vel_mux import CmdVelMux
+from dimos.navigation.smart_nav.modules.click_to_goal.click_to_goal import ClickToGoal
+from dimos.navigation.smart_nav.modules.pgo.pgo import PGO
 from dimos.robot.deeprobotics.m20.connection import m20_connection
 from dimos.robot.deeprobotics.m20.rosnav_docker import M20ROSNav, m20_ros_nav
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 m20_smartnav = (
@@ -42,35 +46,21 @@ m20_smartnav = (
             lidar_height=0.47,
         ),
         m20_ros_nav(),
-        smart_nav(
-            vehicle_height=0.47,  # 47cm lidar height in agile stance
-            terrain_analysis={
-                "obstacle_height_threshold": 0.2,
-                "ground_height_threshold": 0.1,
-            },
-            local_planner={
-                "max_speed": 1.0,
-                "autonomy_speed": 1.0,
-                "two_way_drive": False,
-            },
-            path_follower={
-                "max_speed": 1.0,
-                "autonomy_speed": 1.0,
-                "max_acceleration": 2.0,
-                "two_way_drive": False,
-            },
-            far_planner={
-                "sensor_range": 15.0,
-                "is_static_env": False,
-            },
-        ),
+        PGO.blueprint(),
+        ClickToGoal.blueprint(),
+        CmdVelMux.blueprint(),
+        RerunBridgeModule.blueprint(),
         WebsocketVisModule.blueprint(),
     )
     .remappings(
         [
             # ROSNav outputs "lidar" (registered_scan from ARISE);
-            # SmartNav expects "registered_scan"
+            # PGO expects "registered_scan"
             (M20ROSNav, "lidar", "registered_scan"),
+            # ROSNav cmd_vel (from container's planner) → CmdVelMux nav input
+            (M20ROSNav, "cmd_vel", "nav_cmd_vel"),
+            # PGO-corrected odometry for ClickToGoal (globally consistent goals)
+            (ClickToGoal, "odometry", "corrected_odometry"),
         ]
     )
     .global_config(
