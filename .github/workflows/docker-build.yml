@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo chown -R $USER:$USER ${{ github.workspace }} || true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -43,7 +43,7 @@ jobs:
 
       - id: filter
         if: steps.force.outputs.force != 'true'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           base: ${{ github.event.before }}
           filters: |
@@ -143,12 +143,12 @@ jobs:
         run: |
           sudo chown -R $USER:$USER ${{ github.workspace }} || true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Checkout ros-navigation-autonomy-stack
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: dimensionalOS/ros-navigation-autonomy-stack
           ref: fastlio2
