@@ -100,6 +100,7 @@ class M20ROSNav(ROSNav):
     """
 
     default_config = M20ROSNavConfig
+    deployment = "docker"  # Run inside container where rclpy is available
 
     # SmartNav expects Odometry type — parent only outputs PoseStamped
     odometry: Out[Odometry]

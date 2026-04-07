@@ -155,6 +155,7 @@ class DockerModuleProxy(ModuleProxyProtocol):
         )
         self.rpcs = set(module_class.rpcs.keys())  # type: ignore[attr-defined]
         self._unsub_fns: list[Callable[[], None]] = []
+        self._pending_transports: list[tuple[str, Any]] = []
 
     def build(self) -> None:
         """Build/pull docker image, launch container, wait for RPC readiness.
@@ -211,6 +212,11 @@ class DockerModuleProxy(ModuleProxyProtocol):
             # so we poll until the RPC server is reachable before returning.
             self._wait_for_rpc()
             self._is_built.set()
+
+            # Replay transports queued before the container was ready
+            for stream_name, transport in self._pending_transports:
+                self.set_transport(stream_name, transport)
+            self._pending_transports.clear()
         except Exception:
             with suppress(Exception):
                 self._cleanup()
@@ -270,7 +276,14 @@ class DockerModuleProxy(ModuleProxyProtocol):
         return _tail_logs(self.config, self._container_name, n=n)
 
     def set_transport(self, stream_name: str, transport: Any) -> bool:
-        """Forward to the container's Module.set_transport RPC."""
+        """Forward to the container's Module.set_transport RPC.
+
+        If the container isn't built yet, queue the transport and replay
+        it during build() — the coordinator wires streams before build().
+        """
+        if not self._is_built.is_set():
+            self._pending_transports.append((stream_name, transport))
+            return True
         result, _ = self.rpc.call_sync(
             f"{self.remote_name}/set_transport",
             ([stream_name, transport], {}),

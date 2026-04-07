@@ -84,7 +84,10 @@ m20_smartnav = (
 
 
 def main() -> None:
-    m20_smartnav.build().loop()
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+
+    coordinator = ModuleCoordinator.build(m20_smartnav)
+    coordinator.loop()
 
 
 __all__ = ["m20_smartnav"]
