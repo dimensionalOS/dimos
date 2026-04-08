@@ -29,13 +29,20 @@ Data flow:
 """
 
 from dimos.core.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.navigation.cmd_vel_mux import CmdVelMux
+from dimos.navigation.smart_nav.main import smart_nav_rerun_config
 from dimos.navigation.smart_nav.modules.click_to_goal.click_to_goal import ClickToGoal
 from dimos.navigation.smart_nav.modules.pgo.pgo import PGO
+from dimos.robot.deeprobotics.m20.blueprints.rosnav.m20_rerun import (
+    camera_info_override,
+    m20_rerun_blueprint,
+    static_robot,
+)
 from dimos.robot.deeprobotics.m20.connection import m20_connection
 from dimos.robot.deeprobotics.m20.rosnav_docker import M20ROSNav, m20_ros_nav
-from dimos.visualization.rerun.bridge import RerunBridgeModule
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+from dimos.visualization.vis_module import vis_module
+
 
 m20_smartnav = (
     autoconnect(
@@ -49,8 +56,20 @@ m20_smartnav = (
         PGO.blueprint(),
         ClickToGoal.blueprint(),
         CmdVelMux.blueprint(),
-        RerunBridgeModule.blueprint(),
-        WebsocketVisModule.blueprint(),
+        vis_module(
+            viewer_backend=global_config.viewer,
+            rerun_config=smart_nav_rerun_config(
+                {
+                    "blueprint": m20_rerun_blueprint,
+                    "visual_override": {
+                        "world/camera_info": camera_info_override,
+                    },
+                    "static": {
+                        "world/tf/base_link": static_robot,
+                    },
+                }
+            ),
+        ),
     )
     .remappings(
         [
