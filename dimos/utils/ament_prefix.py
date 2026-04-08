@@ -40,7 +40,7 @@ _ament_registered: dict[str, Path] = {}
 
 _has_ament: bool
 try:
-    from ament_index_python.packages import (  # type: ignore[import-not-found]
+    from ament_index_python.packages import (  # type: ignore[import-not-found,import-untyped]
         get_package_share_directory as _ament_get,  # noqa: F401
     )
 
@@ -124,7 +124,7 @@ def process_xacro(path: Path, package_paths: dict[str, Path], xacro_args: dict[s
 
     Uses ament_index_python when available, falls back to patching xacro otherwise.
     """
-    import xacro  # type: ignore[import-not-found,import-untyped]
+    import xacro
 
     ensure_ament_packages(package_paths)
 

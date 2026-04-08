@@ -20,7 +20,7 @@ from typing import overload
 from PIL import Image as PILImage
 import torch
 import torch.nn.functional as functional
-from transformers import CLIPModel as HFCLIPModel, CLIPProcessor  # type: ignore[import-untyped]
+from transformers import CLIPModel as HFCLIPModel, CLIPProcessor
 
 from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig

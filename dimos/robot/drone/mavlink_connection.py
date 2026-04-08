@@ -20,7 +20,7 @@ import logging
 import time
 from typing import Any
 
-from pymavlink import mavutil  # type: ignore[import-not-found, import-untyped]
+from pymavlink import mavutil  # type: ignore[import-untyped]
 from reactivex import Subject
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped

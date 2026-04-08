@@ -392,7 +392,7 @@ class B1ConnectionModule(Module[B1ConnectionConfig]):
 class MockB1ConnectionModule(B1ConnectionModule):
     """Test connection module that prints commands instead of sending UDP."""
 
-    def __init__(self, **kwargs: Any) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize test connection without creating socket."""
         kwargs["test_mode"] = True
         super().__init__(**kwargs)

@@ -27,9 +27,9 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
 
 # Types that can be converted to/from TwistWithCovariance
 TwistWithCovarianceConvertable: TypeAlias = (
-    tuple[Twist | tuple[VectorConvertable, VectorConvertable], list[float] | np.ndarray]  # type: ignore[type-arg]
+    tuple[Twist | tuple[VectorConvertable, VectorConvertable], list[float] | np.ndarray]
     | LCMTwistWithCovariance
-    | dict[str, Twist | tuple[VectorConvertable, VectorConvertable] | list[float] | np.ndarray]  # type: ignore[type-arg]
+    | dict[str, Twist | tuple[VectorConvertable, VectorConvertable] | list[float] | np.ndarray]
 )
 
 
@@ -48,7 +48,7 @@ class TwistWithCovariance(LCMTwistWithCovariance):  # type: ignore[misc]
     def __init__(
         self,
         twist: Twist | tuple[VectorConvertable, VectorConvertable],
-        covariance: list[float] | np.ndarray | None = None,  # type: ignore[type-arg]
+        covariance: list[float] | np.ndarray | None = None,
     ) -> None:
         """Initialize with twist and optional covariance."""
         if isinstance(twist, Twist):
@@ -77,7 +77,7 @@ class TwistWithCovariance(LCMTwistWithCovariance):  # type: ignore[misc]
     @dispatch  # type: ignore[no-redef]
     def __init__(
         self,
-        twist_dict: dict[  # type: ignore[type-arg]
+        twist_dict: dict[
             str, Twist | tuple[VectorConvertable, VectorConvertable] | list[float] | np.ndarray
         ],
     ) -> None:
@@ -98,7 +98,7 @@ class TwistWithCovariance(LCMTwistWithCovariance):  # type: ignore[misc]
     @dispatch  # type: ignore[no-redef]
     def __init__(
         self,
-        twist_tuple: tuple[  # type: ignore[type-arg]
+        twist_tuple: tuple[
             Twist | tuple[VectorConvertable, VectorConvertable], list[float] | np.ndarray
         ],
     ) -> None:
@@ -138,17 +138,17 @@ class TwistWithCovariance(LCMTwistWithCovariance):  # type: ignore[misc]
         return self.twist.angular
 
     @property
-    def covariance_matrix(self) -> np.ndarray:  # type: ignore[type-arg]
+    def covariance_matrix(self) -> np.ndarray:
         """Get covariance as 6x6 matrix."""
-        return self.covariance.reshape(6, 6)  # type: ignore[has-type, no-any-return]
+        return self.covariance.reshape(6, 6)
 
     @covariance_matrix.setter
-    def covariance_matrix(self, value: np.ndarray) -> None:  # type: ignore[type-arg]
+    def covariance_matrix(self, value: np.ndarray) -> None:
         """Set covariance from 6x6 matrix."""
-        self.covariance = np.array(value).reshape(36)  # type: ignore[has-type]
+        self.covariance = np.array(value).reshape(36)
 
     def __repr__(self) -> str:
-        return f"TwistWithCovariance(twist={self.twist!r}, covariance=<{self.covariance.shape[0] if isinstance(self.covariance, np.ndarray) else len(self.covariance)} elements>)"  # type: ignore[has-type]
+        return f"TwistWithCovariance(twist={self.twist!r}, covariance=<{self.covariance.shape[0] if isinstance(self.covariance, np.ndarray) else len(self.covariance)} elements>)"
 
     def __str__(self) -> str:
         return (
@@ -161,7 +161,7 @@ class TwistWithCovariance(LCMTwistWithCovariance):  # type: ignore[misc]
         """Check if two TwistWithCovariance are equal."""
         if not isinstance(other, TwistWithCovariance):
             return False
-        return self.twist == other.twist and np.allclose(self.covariance, other.covariance)  # type: ignore[has-type]
+        return self.twist == other.twist and np.allclose(self.covariance, other.covariance)
 
     def is_zero(self) -> bool:
         """Check if this is a zero twist (no linear or angular velocity)."""
@@ -176,10 +176,10 @@ class TwistWithCovariance(LCMTwistWithCovariance):  # type: ignore[misc]
         lcm_msg = LCMTwistWithCovariance()
         lcm_msg.twist = self.twist
         # LCM expects list, not numpy array
-        if isinstance(self.covariance, np.ndarray):  # type: ignore[has-type]
-            lcm_msg.covariance = self.covariance.tolist()  # type: ignore[has-type]
+        if isinstance(self.covariance, np.ndarray):
+            lcm_msg.covariance = self.covariance.tolist()
         else:
-            lcm_msg.covariance = list(self.covariance)  # type: ignore[has-type]
+            lcm_msg.covariance = list(self.covariance)
         return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod

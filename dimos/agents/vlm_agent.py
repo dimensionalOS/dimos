@@ -52,7 +52,7 @@ class VLMAgent(Module[VLMAgentConfig]):
 
             ensure_ollama_model(self.config.model.removeprefix("ollama:"))
 
-        self._llm: BaseChatModel = init_chat_model(self.config.model)  # type: ignore[assignment]
+        self._llm: BaseChatModel = init_chat_model(self.config.model)
         self._latest_image: Image | None = None
         self._history: list[AIMessage | HumanMessage] = []
         self._system_message = SystemMessage(self.config.system_prompt or SYSTEM_PROMPT)
@@ -92,8 +92,8 @@ class VLMAgent(Module[VLMAgentConfig]):
     def _invoke(self, msg: HumanMessage, **kwargs: Any) -> AIMessage:
         messages = [self._system_message, msg]
         response = self._llm.invoke(messages, **kwargs)
-        self._history.extend([msg, response])  # type: ignore[arg-type]
-        return response  # type: ignore[return-value]
+        self._history.extend([msg, response])
+        return response
 
     def _invoke_image(
         self, image: Image, query: str, response_format: dict[str, Any] | None = None

@@ -57,7 +57,7 @@ class ROSVideoProvider(AbstractVideoProvider):
         self._last_frame_time = None
         self.logger.info("ROSVideoProvider initialized")
 
-    def push_data(self, frame: np.ndarray) -> None:  # type: ignore[type-arg]
+    def push_data(self, frame: np.ndarray) -> None:
         """Push a new frame into the provider.
 
         Args:

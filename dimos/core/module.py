@@ -114,7 +114,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
     _module_closed_lock: threading.Lock
     _loop_thread_timeout: float = 2.0
 
-    def __init__(self, config_args: dict[str, Any]):
+    def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
         self._module_closed_lock = threading.Lock()
         self._loop, self._loop_thread = get_loop()
@@ -418,8 +418,8 @@ class Module(ModuleBase[ModuleConfigT]):
                 if not hasattr(cls, name) or getattr(cls, name) is None:
                     setattr(cls, name, None)
 
-    def __init__(self, **kwargs: Any):
-        self.ref = None  # type: ignore[assignment]
+    def __init__(self, **kwargs: Any) -> None:
+        self.ref = None
 
         try:
             hints = get_type_hints(self.__class__, include_extras=True)

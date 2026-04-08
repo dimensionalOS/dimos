@@ -70,7 +70,7 @@ class EmbeddingIDSystem(IDSystem):
         self.min_embeddings_for_matching = min_embeddings_for_matching
 
         # Track embeddings (list of all embeddings as numpy arrays)
-        self.track_embeddings: dict[int, list[np.ndarray]] = {}  # type: ignore[type-arg]
+        self.track_embeddings: dict[int, list[np.ndarray]] = {}
 
         # Negative constraints (track_ids that co-occurred = different objects)
         self.negative_pairs: dict[int, set[int]] = {}
@@ -130,8 +130,8 @@ class EmbeddingIDSystem(IDSystem):
 
     def _compute_group_similarity(
         self,
-        query_embeddings: list[np.ndarray],  # type: ignore[type-arg]
-        candidate_embeddings: list[np.ndarray],  # type: ignore[type-arg]
+        query_embeddings: list[np.ndarray],
+        candidate_embeddings: list[np.ndarray],
     ) -> float:
         """Compute similarity between two groups of embeddings.
 

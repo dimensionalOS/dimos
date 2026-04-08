@@ -269,7 +269,7 @@ class PubSubTF(MultiTBuffer, TFSpec[_PubSubConfig]):
         else:
             raise ValueError("PubSub configuration is missing")
 
-        if self.config.autostart:  # type: ignore[attr-defined]
+        if self.config.autostart:
             self.start()
 
     def start(self, sub: bool = True) -> None:

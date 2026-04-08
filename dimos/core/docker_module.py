@@ -153,7 +153,7 @@ class DockerModuleProxy(ModuleProxyProtocol):
             rpc_timeouts=self.config.rpc_timeouts,
             default_rpc_timeout=self.config.default_rpc_timeout,
         )
-        self.rpcs = set(module_class.rpcs.keys())  # type: ignore[attr-defined]
+        self.rpcs = set(module_class.rpcs.keys())
         self._unsub_fns: list[Callable[[], None]] = []
 
     def build(self) -> None:

@@ -437,7 +437,7 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             return
         world = self._world_monitor.world
         if hasattr(world, "hide_preview"):
-            world.hide_preview(robot_id)  # type: ignore[attr-defined]
+            world.hide_preview(robot_id)
             world.publish_visualization()
 
     @rpc

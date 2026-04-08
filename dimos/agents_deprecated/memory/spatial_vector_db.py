@@ -113,8 +113,8 @@ class SpatialVectorDB:
     def add_image_vector(
         self,
         vector_id: str,
-        image: np.ndarray,  # type: ignore[type-arg]
-        embedding: np.ndarray,  # type: ignore[type-arg]
+        image: np.ndarray,
+        embedding: np.ndarray,
         metadata: dict[str, Any],
     ) -> None:
         """

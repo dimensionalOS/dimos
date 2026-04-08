@@ -30,7 +30,7 @@ import threading
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
-import pinocchio  # type: ignore[import-untyped]
+import pinocchio
 
 from dimos.control.task import (
     BaseControlTask,

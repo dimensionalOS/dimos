@@ -131,7 +131,7 @@ class LCMSpy(LCMService[LCMSpyConfig], Topic):
                 print(self.config)
                 self.topic[topic] = self.topic_class(  # type: ignore[assignment, call-arg]
                     topic,
-                    history_window=self.config.topic_history_window,  # type: ignore[attr-defined]
+                    history_window=self.config.topic_history_window,
                 )
         self.topic[topic].msg(data)  # type: ignore[attr-defined, type-arg]
 

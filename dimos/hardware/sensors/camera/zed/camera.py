@@ -495,7 +495,7 @@ def main() -> None:
     dimos = ModuleCoordinator()
     dimos.start()
 
-    camera = dimos.deploy(ZEDCamera, enable_pointcloud=True, pointcloud_fps=5.0)  # type: ignore[type-var]
+    camera = dimos.deploy(ZEDCamera, enable_pointcloud=True, pointcloud_fps=5.0)
     foxglove_bridge = FoxgloveBridge()
     foxglove_bridge.start()
 

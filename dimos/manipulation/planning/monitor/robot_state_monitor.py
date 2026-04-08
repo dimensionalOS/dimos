@@ -71,7 +71,7 @@ class RobotStateMonitor:
         joint_names: list[str],
         joint_name_mapping: dict[str, str] | None = None,
         timeout: float = 1.0,
-    ):
+    ) -> None:
         """Create a world state monitor.
 
         Args:

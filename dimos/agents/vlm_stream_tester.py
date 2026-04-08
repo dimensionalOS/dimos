@@ -37,7 +37,7 @@ class VlmStreamTester(Module):
 
     _vlm_agent: VLMAgentSpec
 
-    def __init__(  # type: ignore[no-untyped-def]
+    def __init__(
         self,
         prompt: str = "What do you see?",
         num_queries: int = 10,

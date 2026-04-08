@@ -77,7 +77,7 @@ _ANTI_BUSY_LOOP_TIMEOUT = 0.01
 
 
 def _draw_skeleton(
-    image: np.ndarray,  # type: ignore[type-arg]
+    image: np.ndarray,
     person: Detection2DPerson,
     joint_color: tuple[int, int, int] = (0, 255, 0),
     bone_color: tuple[int, int, int] = (255, 255, 0),

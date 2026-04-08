@@ -143,8 +143,8 @@ class VoxelGridMapper(Module[Config]):
         else:
             self._voxel_hashmap.activate(keys_Nx3)
 
-        self.get_global_pointcloud.invalidate_cache(self)  # type: ignore[attr-defined]
-        self.get_global_pointcloud2.invalidate_cache(self)  # type: ignore[attr-defined]
+        self.get_global_pointcloud.invalidate_cache(self)
+        self.get_global_pointcloud2.invalidate_cache(self)
 
     def _carve_and_insert(self, new_keys: o3c.Tensor) -> None:
         """Column carving: remove all existing voxels sharing (X,Y) with new_keys, then insert."""
