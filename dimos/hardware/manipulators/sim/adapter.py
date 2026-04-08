@@ -96,6 +96,8 @@ class ShmMujocoAdapter:
         while not self._shm.is_ready():
             if time.monotonic() > deadline:
                 logger.error("sim module not ready", timeout_s=_READY_WAIT_TIMEOUT_S)
+                self._shm.cleanup()
+                self._shm = None
                 return False
             time.sleep(_READY_WAIT_POLL_S)
 
