@@ -32,12 +32,6 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
 
-      - name: Cache Python venv
-        uses: actions/cache@v5
-        with:
-          path: .venv
-          key: venv-${{ hashFiles('uv.lock') }}
-
       - name: Install Python dependencies
         run: uv sync --all-extras --no-extra dds --frozen
 
