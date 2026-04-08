@@ -32,8 +32,27 @@ jobs:
         run: |
           git config --global --add safe.directory '*'
 
+      - name: Restore cached venv
+        run: |
+          cache_dir="${GITHUB_WORKSPACE}/../_venv_cache"
+          mkdir -p "$cache_dir"
+          hash=$(sha256sum uv.lock | cut -d' ' -f1)
+          cached="${cache_dir}/venv-${hash}"
+          if [ -d "$cached" ]; then
+            cp -al "$cached" .venv
+            echo "Restored venv from local cache"
+          fi
+          find "$cache_dir" -maxdepth 1 -name 'venv-*' ! -name "venv-${hash}" -exec rm -rf {} + 2>/dev/null || true
+
       - name: Install Python dependencies
         run: uv sync --all-extras --no-extra dds --frozen
+
+      - name: Cache venv locally
+        run: |
+          cache_dir="${GITHUB_WORKSPACE}/../_venv_cache"
+          hash=$(sha256sum uv.lock | cut -d' ' -f1)
+          cached="${cache_dir}/venv-${hash}"
+          [ -d "$cached" ] || cp -al .venv "$cached"
 
       - name: Remove pydrake stubs
         run: |
