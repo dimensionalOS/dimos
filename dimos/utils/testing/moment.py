@@ -52,7 +52,7 @@ class OutputMoment(Generic[T], Resource):
     value: T | None = None
     transport: Transport[T]
 
-    def __init__(self, transport: Transport[T]) -> None:
+    def __init__(self, transport: Transport[T]):
         self.transport = transport
 
     def set(self, value: T) -> None:
