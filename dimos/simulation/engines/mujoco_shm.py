@@ -47,9 +47,11 @@ _INT32_BYTES = 4
 
 _joint_array_size = MAX_JOINTS * _FLOAT_BYTES  # float64 array
 
+# Element counts for control and sequence arrays.
+_NUM_CTRL_FIELDS = 4  # [ready, stop, command_mode, num_joints]
+_NUM_SEQ_COUNTERS = 8  # one per buffer type
+
 # Buffer sizes (in bytes).
-# seq: one int64 counter per buffer type.
-# control: int32 [ready, stop, command_mode, num_joints].
 _shm_sizes = {
     "positions": _joint_array_size,
     "velocities": _joint_array_size,
@@ -57,8 +59,8 @@ _shm_sizes = {
     "position_targets": _joint_array_size,
     "velocity_targets": _joint_array_size,
     "gripper": 2 * _FLOAT_BYTES,  # [gripper_position, gripper_target]
-    "seq": 8 * _FLOAT_BYTES,  # 8 int64 counters
-    "control": 4 * _INT32_BYTES,  # [ready, stop, command_mode, num_joints]
+    "seq": _NUM_SEQ_COUNTERS * _FLOAT_BYTES,  # int64 counters
+    "control": _NUM_CTRL_FIELDS * _INT32_BYTES,  # [ready, stop, command_mode, num_joints]
 }
 
 # Sequence counter indices.
@@ -251,14 +253,14 @@ class ManipShmWriter:
         return np.ndarray((n,), dtype=dtype, buffer=buf.buf)
 
     def _control(self) -> NDArray[np.int32]:
-        return np.ndarray((4,), dtype=np.int32, buffer=self.shm.control.buf)
+        return np.ndarray((_NUM_CTRL_FIELDS,), dtype=np.int32, buffer=self.shm.control.buf)
 
     def _increment_seq(self, index: int) -> None:
-        seq_arr = np.ndarray((8,), dtype=np.int64, buffer=self.shm.seq.buf)
+        seq_arr = np.ndarray((_NUM_SEQ_COUNTERS,), dtype=np.int64, buffer=self.shm.seq.buf)
         seq_arr[index] += 1
 
     def _get_seq(self, index: int) -> int:
-        seq_arr = np.ndarray((8,), dtype=np.int64, buffer=self.shm.seq.buf)
+        seq_arr = np.ndarray((_NUM_SEQ_COUNTERS,), dtype=np.int64, buffer=self.shm.seq.buf)
         return int(seq_arr[index])
 
 
@@ -328,13 +330,13 @@ class ManipShmReader:
                 logger.warning("SHM close failed", name=shm.name, error=str(exc))
 
     def _control(self) -> NDArray[np.int32]:
-        return np.ndarray((4,), dtype=np.int32, buffer=self.shm.control.buf)
+        return np.ndarray((_NUM_CTRL_FIELDS,), dtype=np.int32, buffer=self.shm.control.buf)
 
     def _set_command_mode(self, mode: int) -> None:
         self._control()[CTRL_COMMAND_MODE] = mode
 
     def _increment_seq(self, index: int) -> None:
-        seq_arr = np.ndarray((8,), dtype=np.int64, buffer=self.shm.seq.buf)
+        seq_arr = np.ndarray((_NUM_SEQ_COUNTERS,), dtype=np.int64, buffer=self.shm.seq.buf)
         seq_arr[index] += 1
 
 
