@@ -14,7 +14,7 @@ permissions:
   packages: read
 
 jobs:
-  checks:
+  ci-complete:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     timeout-minutes: 60
     runs-on: [self-hosted, Linux]
