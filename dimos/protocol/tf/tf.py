@@ -329,7 +329,6 @@ class LCMPubsubConfig(PubSubTFConfig):
 
 class LCMTF(PubSubTF):
     config: LCMPubsubConfig
-    pass
 
 
 TF = LCMTF

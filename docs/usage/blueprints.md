@@ -15,8 +15,8 @@ class ConnectionConfig(ModuleConfig):
     arg1: int
     arg2: str = "value"
 
-class ConnectionModule(Module[ConnectionConfig]):
-    default_config = ConnectionConfig
+class ConnectionModule(Module):
+    config: ConnectionConfig
 
 blueprint = Blueprint.create(ConnectionModule, arg1=5, arg2="foo")
 ```
@@ -43,8 +43,8 @@ from dimos.core.blueprints import autoconnect
 class Config(ModuleConfig):
     arg1: int = 42
 
-class Module1(Module[Config]):
-    default_config = Config
+class Module1(Module):
+    config: Config
 
 class Module2(Module):
     ...

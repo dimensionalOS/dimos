@@ -38,6 +38,7 @@ class Config(ModuleConfig):
 
 
 class ReidModule(Module):
+    config: Config
     detections: In[Detection2DArray]
     image: In[Image]
     annotations: Out[ImageAnnotations]
