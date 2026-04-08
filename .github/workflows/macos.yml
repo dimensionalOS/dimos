@@ -41,6 +41,8 @@ jobs:
     if: needs.check-changes.outputs.should-run == 'true'
     runs-on: [self-hosted, macos, arm64]
     timeout-minutes: 60
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v5
         with:
@@ -55,7 +57,10 @@ jobs:
         run: uv python install 3.12
 
       - name: Install system dependencies
-        run: brew install gnu-sed gcc portaudio git-lfs libjpeg-turbo
+        run: |
+          for pkg in gnu-sed gcc portaudio git-lfs libjpeg-turbo; do
+            brew list "$pkg" &>/dev/null || brew install "$pkg"
+          done
 
       - name: Set up git-lfs
         run: |
