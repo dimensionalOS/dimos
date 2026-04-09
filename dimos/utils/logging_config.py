@@ -42,7 +42,7 @@ _RUN_LOG_DIR: Path | None = None
 
 
 def set_run_log_dir(log_dir: str | Path) -> None:
-    """Set per-run log directory. Call BEFORE blueprint.build().
+    """Set per-run log directory. Call BEFORE build(blueprint).
 
     Updates the global path AND migrates any existing FileHandlers on
     stdlib loggers so that logs written after this call go to the new

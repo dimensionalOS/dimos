@@ -30,7 +30,6 @@ from typing import (
     get_type_hints,
 )
 
-from langchain_core.tools import tool
 from pydantic import Field
 from reactivex.disposable import CompositeDisposable
 
@@ -48,7 +47,7 @@ from dimos.utils import colors
 from dimos.utils.generic import classproperty
 
 if TYPE_CHECKING:
-    from dimos.core.blueprints import Blueprint
+    from dimos.core.coordination.blueprints import Blueprint
     from dimos.core.introspection.module.info import ModuleInfo
     from dimos.core.rpc_client import RPCClient
 
@@ -377,7 +376,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
     @classproperty
     def blueprint(self) -> _BlueprintPartial:
         # Here to prevent circular imports.
-        from dimos.core.blueprints import Blueprint
+        from dimos.core.coordination.blueprints import Blueprint
 
         return partial(Blueprint.create, self)  # type: ignore[arg-type]
 
@@ -387,6 +386,8 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
 
     @rpc
     def get_skills(self) -> list[SkillInfo]:
+        from langchain_core.tools import tool  # ~170ms: deferred to avoid CLI startup cost
+
         skills: list[SkillInfo] = []
         for name in dir(self):
             attr = getattr(self, name)

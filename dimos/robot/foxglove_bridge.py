@@ -22,9 +22,10 @@ from dimos_lcm.foxglove_bridge import (
     FoxgloveBridge as LCMFoxgloveBridge,
 )
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -84,7 +85,7 @@ class FoxgloveBridge(Module[FoxgloveConfig]):
     def stop(self) -> None:
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
-            self._thread.join(timeout=2)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 

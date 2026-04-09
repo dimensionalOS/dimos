@@ -24,6 +24,7 @@ from typing import Any
 
 import lcm as lcm_mod
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.protocol.service.system_configurator.base import configure_system
 from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
@@ -142,7 +143,7 @@ class LCMService(Service[_Config]):
         if self._thread is not None:
             # Only join if we're not the LCM thread (avoid "cannot join current thread")
             if threading.current_thread() != self._thread:
-                self._thread.join(timeout=1.0)
+                self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
                 if self._thread.is_alive():
                     logger.warning("LCM thread did not stop cleanly within timeout")
 

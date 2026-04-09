@@ -98,12 +98,16 @@ class RobotConfig(BaseModel):
 
     _parsed: ModelDescription | None = PrivateAttr(default=None)
 
+    def _ensure_prefix(self) -> None:
+        """Ensure joint_prefix is set (no model parsing needed)."""
+        if self.joint_prefix is None:
+            self.joint_prefix = f"{self.name}_"
+
     def _ensure_parsed(self) -> ModelDescription:
         """Parse model lazily on first access."""
         if self._parsed is None:
             self._parsed = parse_model(self.model_path, self.package_paths, self.xacro_args)
-            if self.joint_prefix is None:
-                self.joint_prefix = f"{self.name}_"
+            self._ensure_prefix()
             if self.joint_names is None:
                 self.joint_names = self._parsed.actuated_joint_names
             if self.base_link is None:
@@ -147,19 +151,25 @@ class RobotConfig(BaseModel):
 
     @property
     def dof(self) -> int:
+        if self.joint_names is not None:
+            return len(self.joint_names)
         return len(self.resolved_joint_names)
 
     @property
     def coordinator_joint_names(self) -> list[str]:
+        self._ensure_prefix()
+        names = self.joint_names if self.joint_names is not None else self.resolved_joint_names
         if not self.joint_prefix:
-            return list(self.resolved_joint_names)
-        return [f"{self.joint_prefix}{j}" for j in self.resolved_joint_names]
+            return list(names)
+        return [f"{self.joint_prefix}{j}" for j in names]
 
     @property
     def joint_name_mapping(self) -> dict[str, str]:
+        self._ensure_prefix()
+        names = self.joint_names if self.joint_names is not None else self.resolved_joint_names
         if not self.joint_prefix:
             return {}
-        return {f"{self.joint_prefix}{j}": j for j in self.resolved_joint_names}
+        return {f"{self.joint_prefix}{j}": j for j in names}
 
     @property
     def coordinator_task_name(self) -> str:
@@ -179,13 +189,19 @@ class RobotConfig(BaseModel):
         if self.gripper:
             exclusions.extend(self.gripper.collision_exclusions)
 
+        # Use direct fields when available to avoid triggering model parsing at import time
+        joint_names = (
+            self.joint_names if self.joint_names is not None else self.resolved_joint_names
+        )
+        base_link = self.base_link if self.base_link is not None else self.resolved_base_link
+
         return RobotModelConfig(
             name=self.name,
             model_path=self.model_path,
             base_pose=base_pose,
-            joint_names=self.resolved_joint_names,
+            joint_names=joint_names,
             end_effector_link=self.end_effector_link,
-            base_link=self.resolved_base_link,
+            base_link=base_link,
             package_paths=self.package_paths,
             xacro_args=self.xacro_args,
             collision_exclusion_pairs=exclusions,

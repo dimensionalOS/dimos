@@ -45,6 +45,7 @@ _COMMAND_CENTER_DIR = (
     FilePath(__file__).parent.parent / "command-center-extension" / "dist-standalone"
 )
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -215,10 +216,10 @@ class WebsocketVisModule(Module[WebsocketConfig]):
             self._broadcast_loop.call_soon_threadsafe(self._broadcast_loop.stop)
 
         if self._broadcast_thread and self._broadcast_thread.is_alive():
-            self._broadcast_thread.join(timeout=1.0)
+            self._broadcast_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         if self._uvicorn_server_thread and self._uvicorn_server_thread.is_alive():
-            self._uvicorn_server_thread.join(timeout=2.0)
+            self._uvicorn_server_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 

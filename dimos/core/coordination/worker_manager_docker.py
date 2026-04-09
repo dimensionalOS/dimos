@@ -53,7 +53,7 @@ class WorkerManagerDocker:
         return mod
 
     def deploy_parallel(
-        self, specs: list[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
+        self, specs: Iterable[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
     ) -> list[ModuleProxyProtocol]:
         # inlined to prevent circular dependency
         from dimos.core.docker_module import DockerModuleProxy

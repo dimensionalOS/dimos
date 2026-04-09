@@ -32,26 +32,20 @@ from typing import (
 )
 
 from reactivex.disposable import Disposable
+import rerun as rr
 from rerun._baseclasses import Archetype
+import rerun.blueprint as rrb
 from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
 import typer
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.utils.logging_config import setup_logger
-
-# Message types with large payloads that need rate-limiting.
-# Image (~1 MB/frame at 30 fps) and PointCloud2 (~600-800 KB/frame)
-# cause viewer OOM if logged at full rate.  Light messages
-# (Path, PointStamped, Twist, TF, EntityMarkers …) pass through
-# unthrottled so navigation overlays and user input are never dropped.
-_HEAVY_MSG_TYPES: tuple[type, ...] = (Image, PointCloud2)
 
 RERUN_GRPC_PORT = 9876
 RERUN_WEB_PORT = 9090
@@ -138,7 +132,6 @@ def _hex_to_rgba(hex_color: str) -> int:
 
 def _with_graph_tab(bp: Blueprint) -> Blueprint:
     """Add a Graph tab alongside the existing viewer layout without changing it."""
-    import rerun.blueprint as rrb
 
     root = bp.root_container
     return rrb.Blueprint(
@@ -154,9 +147,6 @@ def _with_graph_tab(bp: Blueprint) -> Blueprint:
 
 def _default_blueprint() -> Blueprint:
     """Default blueprint with black background and raised grid."""
-    import rerun as rr
-    import rerun.blueprint as rrb
-
     return rrb.Blueprint(
         rrb.Spatial3DView(
             origin="world",
@@ -194,7 +184,10 @@ class Config(ModuleConfig):
     # Static items logged once after start. Maps entity_path -> callable(rr) returning Archetype
     static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
-    min_interval_sec: float = 0.1  # Rate-limit per entity path (default: 10 Hz max)
+    # Per-entity max update rate (Hz). Entities not listed are unthrottled.
+    # Use for heavy entities to prevent viewer backpressure.
+    max_hz: dict[str, float] = field(default_factory=dict)
+
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
     viewer_mode: ViewerMode = field(default_factory=_resolve_viewer_mode)
@@ -274,26 +267,19 @@ class RerunBridgeModule(Module[Config]):
 
     def _on_message(self, msg: Any, topic: Any) -> None:
         """Handle incoming message - log to rerun."""
-        import rerun as rr
 
-        # convert a potentially complex topic object into an str rerun entity path
         entity_path: str = self._get_entity_path(topic)
 
-        # Rate-limit heavy data types to prevent viewer memory exhaustion.
-        # High-bandwidth streams (e.g. 30fps camera, lidar) would otherwise
-        # flood the viewer faster than it can evict, causing OOM.  Light
-        # messages (Path, PointStamped, TF, etc.) pass through unthrottled.
-        if self.config.min_interval_sec > 0 and isinstance(msg, _HEAVY_MSG_TYPES):
+        # Throttle entities with a max_hz limit
+        if entity_path in self._min_intervals:
             now = time.monotonic()
-            last = self._last_log.get(entity_path, 0.0)
-            if now - last < self.config.min_interval_sec:
+            if now - self._last_log.get(entity_path, 0.0) < self._min_intervals[entity_path]:
                 return
             self._last_log[entity_path] = now
 
         # apply visual overrides (including final_convert which handles .to_rerun())
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
 
-        # converters can also suppress logging by returning None
         if not rerun_data:
             return
 
@@ -306,12 +292,15 @@ class RerunBridgeModule(Module[Config]):
 
     @rpc
     def start(self) -> None:
-        import rerun as rr
-
         super().start()
 
-        self._last_log: dict[str, float] = {}
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
+
+        # Build throttle lookup: entity_path → min interval in seconds
+        self._last_log: dict[str, float] = {}
+        self._min_intervals: dict[str, float] = {
+            entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
+        }
 
         # Initialize and spawn Rerun viewer
         rr.init("dimos")
@@ -343,6 +332,9 @@ class RerunBridgeModule(Module[Config]):
         if self.config.blueprint:
             rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
 
+        # Register colormap for viewer-side color resolution (PointCloud2 class_ids)
+        register_colormap_annotation("turbo")
+
         # Start pubsubs and subscribe to all messages
         for pubsub in self.config.pubsubs:
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
@@ -359,8 +351,6 @@ class RerunBridgeModule(Module[Config]):
         self._log_static()
 
     def _log_static(self) -> None:
-        import rerun as rr
-
         for entity_path, factory in self.config.static.items():
             data = factory(rr)
             if isinstance(data, list):
@@ -380,7 +370,6 @@ class RerunBridgeModule(Module[Config]):
             dot_code: The DOT-format graph (from ``introspection.blueprint.dot.render``).
             module_names: List of module class names (to distinguish modules from channels).
         """
-        import rerun as rr
 
         try:
             result = subprocess.run(

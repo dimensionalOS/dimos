@@ -18,6 +18,7 @@ import time
 import numpy as np
 from reactivex import Observable, create, disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.stream.audio.abstract import (  # type: ignore[import-not-found, import-untyped]
     AbstractAudioEmitter,
     AudioEvent,
@@ -202,7 +203,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):  # type: ignore[misc]
                 logger.info("Stopping simulated audio")
                 self._running = False
                 if self._thread and self._thread.is_alive():
-                    self._thread.join(timeout=1.0)
+                    self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
             return disposable.Disposable(dispose)
 
