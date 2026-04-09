@@ -66,15 +66,14 @@ class Config(ModuleConfig):
 
 
 class ROSNav(
-    Module[Config],
+    Module,
     NavigationInterface,
     Nav,
     GlobalPointcloud,
     Pointcloud,
     LocalPlanner,
 ):
-    default_config = Config
-
+    config: Config
     # Existing ports (default LCM/pSHM transport)
     goal_req: In[PoseStamped]
 
@@ -132,7 +131,7 @@ class ROSNav(
     def start(self) -> None:
         self._running = True
 
-        self._disposables.add(
+        self.register_disposable(
             self._local_pointcloud_subject.pipe(
                 ops.sample(1.0 / self.config.local_pointcloud_freq),
             ).subscribe(
@@ -141,7 +140,7 @@ class ROSNav(
             )
         )
 
-        self._disposables.add(
+        self.register_disposable(
             self._global_map_subject.pipe(
                 ops.sample(1.0 / self.config.global_map_freq),
             ).subscribe(
@@ -383,7 +382,7 @@ class ROSNav(
 
 
 def deploy(dimos: ModuleCoordinator):  # type: ignore[no-untyped-def]
-    nav = dimos.deploy(ROSNav)  # type: ignore[attr-defined]
+    nav = dimos.deploy(ROSNav)
 
     # Existing ports on LCM transports
     nav.pointcloud.transport = LCMTransport("/lidar", PointCloud2)

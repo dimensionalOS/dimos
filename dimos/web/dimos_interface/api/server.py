@@ -210,7 +210,7 @@ class FastAPIServer(EdgeIO):
             self.text_clients.remove(client_id)
 
     @staticmethod
-    def _decode_audio(raw: bytes) -> tuple[np.ndarray, int]:  # type: ignore[type-arg]
+    def _decode_audio(raw: bytes) -> tuple[np.ndarray, int]:
         """Convert the webm/opus blob sent by the browser into mono 16-kHz PCM."""
         try:
             # Use ffmpeg to convert to 16-kHz mono 16-bit PCM WAV in memory

@@ -50,7 +50,7 @@ class Config(ModuleConfig):
     use_3d_navigation: bool = False
 
 
-class PersonFollowSkillContainer(Module[Config]):
+class PersonFollowSkillContainer(Module):
     """Skill container for following a person.
 
     This skill uses:
@@ -60,7 +60,7 @@ class PersonFollowSkillContainer(Module[Config]):
     - Does not do obstacle avoidance; assumes a clear path.
     """
 
-    default_config = Config
+    config: Config
 
     color_image: In[Image]
     global_map: In[PointCloud2]
@@ -75,7 +75,7 @@ class PersonFollowSkillContainer(Module[Config]):
         super().__init__(**kwargs)
         self._latest_image: Image | None = None
         self._latest_pointcloud: PointCloud2 | None = None
-        self._vl_model: VlModel[Any] = create("qwen")
+        self._vl_model: VlModel = create("qwen")
         self._tracker: EdgeTAMProcessor | None = None
         self._thread: Thread | None = None
         self._should_stop: Event = Event()
@@ -94,9 +94,9 @@ class PersonFollowSkillContainer(Module[Config]):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.color_image.subscribe(self._on_color_image)))
+        self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
         if self.config.use_3d_navigation:
-            self._disposables.add(Disposable(self.global_map.subscribe(self._on_pointcloud)))
+            self.register_disposable(Disposable(self.global_map.subscribe(self._on_pointcloud)))
 
     @rpc
     def stop(self) -> None:

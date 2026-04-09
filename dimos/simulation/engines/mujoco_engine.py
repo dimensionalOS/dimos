@@ -21,7 +21,7 @@ import time
 from typing import TYPE_CHECKING
 
 import mujoco
-import mujoco.viewer as viewer  # type: ignore[import-untyped,import-not-found]
+import mujoco.viewer as viewer  # type: ignore[import-untyped]
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.simulation.engines.base import SimulationEngine

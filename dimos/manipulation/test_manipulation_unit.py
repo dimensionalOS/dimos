@@ -61,9 +61,9 @@ def robot_config_with_mapping():
         end_effector_link="link_tcp",
         base_link="link_base",
         joint_name_mapping={
-            "left_joint1": "joint1",
-            "left_joint2": "joint2",
-            "left_joint3": "joint3",
+            "left/joint1": "joint1",
+            "left/joint2": "joint2",
+            "left/joint3": "joint3",
         },
         coordinator_task_name="traj_left",
     )
@@ -207,7 +207,7 @@ class TestJointNameTranslation:
         result = module._translate_trajectory_to_coordinator(
             simple_trajectory, robot_config_with_mapping
         )
-        assert result.joint_names == ["left_joint1", "left_joint2", "left_joint3"]
+        assert result.joint_names == ["left/joint1", "left/joint2", "left/joint3"]
         assert len(result.points) == 2  # Points preserved
 
 
@@ -275,9 +275,9 @@ class TestRobotModelConfigMapping:
         config = robot_config_with_mapping
 
         # Coordinator -> URDF
-        assert config.get_urdf_joint_name("left_joint1") == "joint1"
+        assert config.get_urdf_joint_name("left/joint1") == "joint1"
         assert config.get_urdf_joint_name("unknown") == "unknown"
 
         # URDF -> Coordinator
-        assert config.get_coordinator_joint_name("joint1") == "left_joint1"
+        assert config.get_coordinator_joint_name("joint1") == "left/joint1"
         assert config.get_coordinator_joint_name("unknown") == "unknown"

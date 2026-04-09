@@ -47,7 +47,7 @@ def session() -> Iterator[SqliteStore]:
 class PoseIndex:
     """Preloaded odom data with O(log n) closest-timestamp lookup."""
 
-    def __init__(self, replay: TimedSensorReplay) -> None:  # type: ignore[type-arg]
+    def __init__(self, replay: TimedSensorReplay) -> None:
         self._timestamps: list[float] = []
         self._data: list[Any] = []
         for ts, data in replay.iterate_ts():
@@ -90,7 +90,7 @@ class TestImportReplay:
     def test_import_video(
         self,
         session: SqliteStore,
-        video_replay: TimedSensorReplay,  # type: ignore[type-arg]
+        video_replay: TimedSensorReplay,
         odom_index: PoseIndex,
     ) -> None:
         with session.stream("color_image", Image) as video:
@@ -108,7 +108,7 @@ class TestImportReplay:
     def test_import_lidar(
         self,
         session: SqliteStore,
-        lidar_replay: TimedSensorReplay,  # type: ignore[type-arg]
+        lidar_replay: TimedSensorReplay,
         odom_index: PoseIndex,
     ) -> None:
         # can also be explicit here
@@ -125,6 +125,31 @@ class TestImportReplay:
         assert count > 0
         assert lidar.count() == count
         print(f"Imported {count} lidar frames")
+
+    def test_embed_and_save(self, session: SqliteStore, clip: CLIPModel) -> None:
+        """Embed video frames at 1Hz and persist to an embedded stream."""
+        video = session.stream("color_image", Image)
+
+        # Clear any prior run so the test is idempotent
+        if "color_image_embedded" in session.list_streams():
+            session.delete_stream("color_image_embedded")
+
+        embedded = session.stream("color_image_embedded", Image)
+
+        # Downsample to 1Hz, then embed
+        pipeline = (
+            video.transform(QualityWindow(lambda img: img.sharpness, window=1.0))
+            .transform(EmbedImages(clip))
+            .save(embedded)
+        )
+
+        count = 0
+        for obs in pipeline:
+            count += 1
+            print(f"  [{count}] ts={obs.ts:.2f} pose={obs.pose}")
+
+        assert count > 0
+        print(f"Embedded {count} frames (1Hz from {video.count()} total)")
 
     def test_query_imported_data(self, session: SqliteStore) -> None:
         video = session.stream("color_image", Image)
@@ -256,37 +281,11 @@ class TestE2EQuery:
         overlap_start = max(v_first, l_first)
         overlap_end = min(v_last, l_last)
         assert overlap_start < overlap_end, "Video and lidar should overlap in time"
-        assert overlap_start < overlap_end, "Video and lidar should overlap in time"
 
 
 @pytest.mark.tool
 class TestEmbedImages:
     """CLIP-embed imported video frames and search by text."""
-
-    def test_embed_and_save(self, session: SqliteStore, clip: CLIPModel) -> None:
-        """Embed video frames at 1Hz and persist to an embedded stream."""
-        video = session.stream("color_image", Image)
-
-        # Clear any prior run so the test is idempotent
-        if "color_image_embedded" in session.list_streams():
-            session.delete_stream("color_image_embedded")
-
-        embedded = session.stream("color_image_embedded", Image)
-
-        # Downsample to 1Hz, then embed
-        pipeline = (
-            video.transform(QualityWindow(lambda img: img.sharpness, window=1.0))
-            .transform(EmbedImages(clip))
-            .save(embedded)
-        )
-
-        count = 0
-        for obs in pipeline:
-            count += 1
-            print(f"  [{count}] ts={obs.ts:.2f} pose={obs.pose}")
-
-        assert count > 0
-        print(f"Embedded {count} frames (1Hz from {video.count()} total)")
 
     def test_search_by_text(self, session: SqliteStore, clip: CLIPModel) -> None:
         """Search embedded frames with a text query."""

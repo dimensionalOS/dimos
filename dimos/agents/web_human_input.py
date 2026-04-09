@@ -65,11 +65,11 @@ class WebInput(Module):
         # Subscribe to both text input sources
         # 1. Direct text from web interface
         unsub = self._web_interface.query_stream.subscribe(self._human_transport.publish)
-        self._disposables.add(unsub)
+        self.register_disposable(unsub)
 
         # 2. Transcribed text from STT
         unsub = stt_node.emit_text().subscribe(self._human_transport.publish)
-        self._disposables.add(unsub)
+        self.register_disposable(unsub)
 
         self._thread = Thread(target=self._web_interface.run, daemon=True)
         self._thread.start()

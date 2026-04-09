@@ -288,7 +288,7 @@ class LfsPath(type(Path())):  # type: ignore[misc]
     def __new__(cls, filename: str | Path) -> "LfsPath":
         # Create instance with a placeholder path to satisfy Path.__new__
         # We use "." as a dummy path that always exists
-        instance: LfsPath = super().__new__(cls, ".")  # type: ignore[call-arg]
+        instance: LfsPath = super().__new__(cls, ".")
         # Store the actual filename as an instance attribute
         object.__setattr__(instance, "_lfs_filename", filename)
         object.__setattr__(instance, "_lfs_resolved_cache", None)
@@ -334,4 +334,4 @@ class LfsPath(type(Path())):  # type: ignore[misc]
 
     def __rtruediv__(self, other: object) -> Path:
         """Reverse path division operator."""
-        return other / self._ensure_downloaded()  # type: ignore[operator, return-value]
+        return other / self._ensure_downloaded()  # type: ignore[operator]

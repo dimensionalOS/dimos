@@ -19,7 +19,7 @@ import math
 
 import numpy as np
 from PIL import Image as PILImage
-import requests  # type: ignore[import-untyped]
+import requests
 
 from dimos.mapping.models import ImageCoord, LatLon
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat

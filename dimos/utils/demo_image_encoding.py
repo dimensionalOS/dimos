@@ -76,7 +76,7 @@ class ReceiverModule(Module):
 
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.image.subscribe(self._on_image)))
+        self.register_disposable(Disposable(self.image.subscribe(self._on_image)))
         self._open_file = open("/tmp/receiver-times", "w")
 
     def stop(self) -> None:

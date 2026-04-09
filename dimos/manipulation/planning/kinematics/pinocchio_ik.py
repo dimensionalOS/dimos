@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.linalg import norm, solve
-import pinocchio  # type: ignore[import-untyped]
+import pinocchio
 
 from dimos.utils.logging_config import setup_logger
 

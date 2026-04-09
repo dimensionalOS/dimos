@@ -1,52 +1,60 @@
-name: docker
+name: docker-build
 on:
   push:
-    branches:
-      - main
-      - dev
-    paths-ignore:
-      - '**.md'
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main, dev]
+    paths:
+      - 'docker/**'
+      - '.github/workflows/docker-build.yml'
+      - '.github/workflows/_docker-build-template.yml'
+  schedule:
+    - cron: '0 4 * * 1' # Weekly Monday 4am UTC for base image security patches
+  workflow_dispatch:
 
 permissions:
   contents: read
   packages: write
-  pull-requests: read
 
 jobs:
   check-changes:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: [self-hosted, Linux]
     outputs:
-      ros:    ${{ steps.filter.outputs.ros }}
-      python: ${{ steps.filter.outputs.python }}
-      dev:    ${{ steps.filter.outputs.dev }}
-      navigation: ${{ steps.filter.outputs.navigation }}
-      tests:  ${{ steps.filter.outputs.tests }}
+      ros:        ${{ steps.force.outputs.force == 'true' && 'true' || steps.filter.outputs.ros }}
+      python:     ${{ steps.force.outputs.force == 'true' && 'true' || steps.filter.outputs.python }}
+      dev:        ${{ steps.force.outputs.force == 'true' && 'true' || steps.filter.outputs.dev }}
+      navigation: ${{ steps.force.outputs.force == 'true' && 'true' || steps.filter.outputs.navigation }}
       branch-tag: ${{ steps.set-tag.outputs.branch_tag }}
     steps:
       - name: Fix permissions
         run: |
           sudo chown -R $USER:$USER ${{ github.workspace }} || true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check if full rebuild
+        id: force
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "force=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "force=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - id: filter
-        uses: dorny/paths-filter@v3
+        if: steps.force.outputs.force != 'true'
+        uses: dorny/paths-filter@v4
         with:
           base: ${{ github.event.before }}
           filters: |
-            # ros and python are (alternative) root images
-            # change to root stuff like docker.yml etc triggers rebuild of those
-            # which cascades into a full rebuild
             ros:
               - .github/workflows/_docker-build-template.yml
-              - .github/workflows/docker.yml
+              - .github/workflows/docker-build.yml
               - docker/ros/**
 
             python:
               - .github/workflows/_docker-build-template.yml
-              - .github/workflows/docker.yml
+              - .github/workflows/docker-build.yml
               - docker/python/**
 
             dev:
@@ -54,13 +62,8 @@ jobs:
 
             navigation:
               - .github/workflows/_docker-build-template.yml
-              - .github/workflows/docker.yml
+              - .github/workflows/docker-build.yml
               - docker/navigation/**
-
-            tests:
-              - dimos/**
-              - pyproject.toml
-              - uv.lock
 
       - name: Determine Branch Tag
         id: set-tag
@@ -77,15 +80,6 @@ jobs:
           esac
           echo "branch tag determined: ${branch_tag}"
           echo branch_tag="${branch_tag}" >> "$GITHUB_OUTPUT"
-
-  # just a debugger
-  inspect-needs:
-    needs: [check-changes, ros]
-    runs-on: dimos-runner-ubuntu-2204
-    if: always()
-    steps:
-      - run: |
-          echo '${{ toJSON(needs) }}'
 
   ros:
     needs: [check-changes]
@@ -149,12 +143,12 @@ jobs:
         run: |
           sudo chown -R $USER:$USER ${{ github.workspace }} || true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Checkout ros-navigation-autonomy-stack
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: dimensionalOS/ros-navigation-autonomy-stack
           ref: fastlio2
@@ -202,48 +196,15 @@ jobs:
       to-image: ghcr.io/dimensionalos/ros-dev:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile: dev
 
-  run-tests:
-    needs: [check-changes, ros-dev]
-    if: ${{
-      always() &&
-      needs.check-changes.result == 'success' &&
-      (needs.check-changes.outputs.tests == 'true' ||
-       needs.check-changes.outputs.ros == 'true' ||
-       needs.check-changes.outputs.python == 'true' ||
-       needs.check-changes.outputs.dev == 'true')
-      }}
-    uses: ./.github/workflows/tests.yml
-    secrets: inherit
-    with:
-      cmd: "_DIMOS_COV=1 coverage run -m pytest --durations=0 -m 'not (tool or mujoco)' && coverage combine && coverage html && coverage report"
-      upload-coverage: true
-      dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
-
-  run-mypy:
-    needs: [check-changes, ros-dev]
-    if: ${{
-      always() &&
-      needs.check-changes.result == 'success' &&
-      (needs.check-changes.outputs.tests == 'true' ||
-       needs.check-changes.outputs.ros == 'true' ||
-       needs.check-changes.outputs.python == 'true' ||
-       needs.check-changes.outputs.dev == 'true')
-      }}
-    uses: ./.github/workflows/tests.yml
-    secrets: inherit
-    with:
-      cmd: "MYPYPATH=/opt/ros/humble/lib/python3.10/site-packages mypy dimos"
-      dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
-
-  ci-complete:
-    needs: [check-changes, ros, python, ros-python, dev, ros-dev, run-tests, run-mypy]
+  build-complete:
+    needs: [check-changes, ros, python, ros-python, dev, ros-dev, navigation]
     runs-on: [self-hosted, Linux]
     if: always()
     steps:
-      - name: CI gate
+      - name: Build gate
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: |
-          echo "❌ One or more CI jobs failed or were cancelled"
+          echo "One or more build jobs failed or were cancelled"
           exit 1
-      - name: CI passed
-        run: echo "✅ All CI checks passed or were intentionally skipped"
+      - name: Build passed
+        run: echo "All build jobs passed or were intentionally skipped"
