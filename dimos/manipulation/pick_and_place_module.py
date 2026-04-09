@@ -94,9 +94,6 @@ class PickAndPlaceModule(ManipulationModule):
     - @skill: pick, place, place_back, pick_and_place, scan_objects, get_scene_info
     """
 
-    default_config = PickAndPlaceModuleConfig
-
-    # Type annotation for the config attribute (mypy uses this)
     config: PickAndPlaceModuleConfig
 
     # Input: Objects from perception (for obstacle integration)

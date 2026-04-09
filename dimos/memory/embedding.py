@@ -46,8 +46,8 @@ class SpatialEmbedding(SpatialEntry):
     embedding: Embedding
 
 
-class EmbeddingMemory(Module[Config]):
-    default_config = Config
+class EmbeddingMemory(Module):
+    config: Config
     color_image: In[Image]
     global_costmap: In[OccupancyGrid]
 
@@ -93,6 +93,10 @@ class EmbeddingMemory(Module[Config]):
             pose=spatial_entry.pose,
             embedding=embedding,
         )
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _store_spatial_entry(self, spatial_embedding: SpatialEmbedding) -> SpatialEmbedding:
         return spatial_embedding

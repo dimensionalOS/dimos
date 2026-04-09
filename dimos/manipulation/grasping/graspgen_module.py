@@ -61,8 +61,8 @@ class GraspGenConfig(DockerModuleConfig):
     visualization_output_path: str = "/tmp/grasp_visualization.json"
 
 
-class GraspGenModule(Module[GraspGenConfig]):
-    default_config = GraspGenConfig
+class GraspGenModule(Module):
+    config: GraspGenConfig
     deployment = "docker"
     grasps: Out[PoseArray]
     _sampler = None

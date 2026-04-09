@@ -43,7 +43,7 @@ class Notifier(Configurable[NotifierConfig], Resource, Generic[T]):
     LISTEN/NOTIFY, inotify) can be injected for cross-process use.
     """
 
-    default_config: type[NotifierConfig] = NotifierConfig
+    config: NotifierConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)

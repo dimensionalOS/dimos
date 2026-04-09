@@ -107,7 +107,7 @@ class ModuleBase(Configurable[ModuleConfigT], CompositeResource):
     deployment: ClassVar[Deployment] = "python"
 
     _rpc: RPCSpec | None = None
-    _tf: TFSpec[Any] | None = None
+    _tf: TFSpec | None = None
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread: threading.Thread | None
     _bound_rpc_calls: dict[str, RpcCall] = {}
@@ -395,7 +395,7 @@ class ModuleBase(Configurable[ModuleConfigT], CompositeResource):
         return skills
 
 
-class Module(ModuleBase[ModuleConfigT]):
+class Module(ModuleBase):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Set class-level None attributes for In/Out type annotations.
 

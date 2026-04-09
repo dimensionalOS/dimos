@@ -253,7 +253,6 @@ class SqliteObservationStore(ObservationStore[T]):
     - ``SqliteObservationStore(path="file.db", name="x", codec=...)`` — opens and owns its own connection.
     """
 
-    default_config = SqliteObservationStoreConfig
     config: SqliteObservationStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:

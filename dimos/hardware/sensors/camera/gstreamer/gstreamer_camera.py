@@ -52,10 +52,10 @@ class Config(ModuleConfig):
     reconnect_interval: float = 5.0
 
 
-class GstreamerCameraModule(Module[Config]):
+class GstreamerCameraModule(Module):
     """Module that captures frames from a remote camera using GStreamer TCP with absolute timestamps."""
 
-    default_config = Config
+    config: Config
 
     video: Out[Image]
 

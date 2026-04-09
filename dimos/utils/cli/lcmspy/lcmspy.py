@@ -103,8 +103,8 @@ class LCMSpyConfig(LCMConfig):
     topic_history_window: float = 60.0
 
 
-class LCMSpy(LCMService[LCMSpyConfig], Topic):
-    default_config = LCMSpyConfig
+class LCMSpy(LCMService, Topic):
+    config: LCMSpyConfig
     topic = dict[str, Topic]
     graph_log_window: float = 1.0
     topic_class: type[Topic] = Topic
@@ -155,8 +155,7 @@ class GraphLCMSpyConfig(LCMSpyConfig):
 
 
 class GraphLCMSpy(LCMSpy, GraphTopic):
-    default_config = GraphLCMSpyConfig
-
+    config: GraphLCMSpyConfig
     graph_log_thread: threading.Thread | None = None
     graph_log_stop_event: threading.Event = threading.Event()
     topic_class: type[Topic] = GraphTopic

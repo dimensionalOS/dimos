@@ -24,7 +24,7 @@ import signal
 import subprocess
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_type_hints
 
 from dimos.core.module import ModuleBase, ModuleConfig
 from dimos.core.rpc_client import ModuleProxyProtocol, RpcCall
@@ -126,10 +126,10 @@ class DockerModuleProxy(ModuleProxyProtocol):
     config: DockerModuleConfig
 
     def __init__(self, module_class: type[ModuleBase], *args: Any, **kwargs: Any) -> None:
-        config_class = getattr(module_class, "default_config", DockerModuleConfig)
+        config_class = get_type_hints(module_class).get("config", DockerModuleConfig)
         if not issubclass(config_class, DockerModuleConfig):
             raise TypeError(
-                f"{module_class.__name__}.default_config must be a DockerModuleConfig subclass, "
+                f"{module_class.__name__} config must be a DockerModuleConfig subclass, "
                 f"got {config_class.__name__}"
             )
         config = config_class(**kwargs)

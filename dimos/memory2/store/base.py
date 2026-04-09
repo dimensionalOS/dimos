@@ -77,13 +77,13 @@ class StoreConfig(BaseConfig):
     eager_blobs: bool = False
 
 
-class Store(Configurable[StoreConfig], CompositeResource):
+class Store(Configurable, CompositeResource):
     """Top-level entry point — wraps a storage location (file, URL, etc.).
 
     Store directly manages streams. No Session layer.
     """
 
-    default_config: type[StoreConfig] = StoreConfig
+    config: StoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)

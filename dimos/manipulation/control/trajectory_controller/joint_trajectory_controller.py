@@ -53,7 +53,7 @@ class JointTrajectoryControllerConfig(ModuleConfig):
     control_frequency: float = 100.0  # Hz - trajectory execution rate
 
 
-class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
+class JointTrajectoryController(Module):
     """
     Joint-space trajectory executor.
 
@@ -73,7 +73,7 @@ class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
                               FAULT ──reset()──► IDLE
     """
 
-    default_config = JointTrajectoryControllerConfig
+    config: JointTrajectoryControllerConfig
 
     # Input topics
     joint_state: In[JointState] = None  # type: ignore[assignment]  # Feedback from arm driver

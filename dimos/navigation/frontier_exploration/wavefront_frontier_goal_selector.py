@@ -92,7 +92,7 @@ class WavefrontConfig(ModuleConfig):
     goal_timeout: float = 15.0
 
 
-class WavefrontFrontierExplorer(Module[WavefrontConfig]):
+class WavefrontFrontierExplorer(Module):
     """
     Wavefront frontier exploration algorithm implementation.
 
@@ -107,7 +107,7 @@ class WavefrontFrontierExplorer(Module[WavefrontConfig]):
         - goal_request: Exploration goals sent to the navigator
     """
 
-    default_config = WavefrontConfig
+    config: WavefrontConfig
 
     # LCM inputs
     global_costmap: In[OccupancyGrid]

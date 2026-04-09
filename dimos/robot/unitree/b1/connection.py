@@ -57,14 +57,14 @@ class B1ConnectionConfig(ModuleConfig):
     test_mode: bool = False
 
 
-class B1ConnectionModule(Module[B1ConnectionConfig]):
+class B1ConnectionModule(Module):
     """UDP connection module for B1 robot with standard Twist interface.
 
     Accepts standard ROS Twist messages on /cmd_vel and mode changes on /b1/mode,
     internally converts to B1Command format, and sends UDP packets at 50Hz.
     """
 
-    default_config = B1ConnectionConfig
+    config: B1ConnectionConfig
 
     # LCM ports (inter-module communication)
     cmd_vel: In[TwistStamped]

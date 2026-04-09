@@ -78,7 +78,7 @@ class QuestTeleopConfig(ModuleConfig):
 _Config = TypeVar("_Config", bound=QuestTeleopConfig)
 
 
-class QuestTeleopModule(Module[_Config]):
+class QuestTeleopModule(Module):
     """Quest Teleoperation Module for Meta Quest controllers.
 
     Receives controller data from the Quest web app via an embedded WebSocket
@@ -91,7 +91,7 @@ class QuestTeleopModule(Module[_Config]):
         - buttons: Buttons (button states for both controllers)
     """
 
-    default_config = QuestTeleopConfig  # type: ignore[assignment]
+    config: QuestTeleopConfig
 
     # Outputs: delta poses for each controller
     left_controller_output: Out[PoseStamped]

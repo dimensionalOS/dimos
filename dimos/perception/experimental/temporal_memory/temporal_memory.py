@@ -67,7 +67,7 @@ class TemporalMemoryConfig(ModuleConfig):
     tune cost / latency / accuracy without touching code.
     """
 
-    vlm: VlModel[Any] | None = None
+    vlm: VlModel | None = None
 
     # Frame processing
     fps: float = 1.0
@@ -104,14 +104,14 @@ class TemporalMemoryConfig(ModuleConfig):
     nearby_distance_meters: float = 5.0
 
 
-class TemporalMemory(Module[TemporalMemoryConfig]):
+class TemporalMemory(Module):
     """Thin orchestrator that wires frames → window accumulator → VLM → state + DB.
 
     Uses RxPY reactive streams for the frame pipeline and ``interval`` for
     periodic window analysis.
     """
 
-    default_config = TemporalMemoryConfig
+    config: TemporalMemoryConfig
 
     color_image: In[Image]
     odom: In[PoseStamped]
@@ -204,7 +204,7 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
         )
 
     @property
-    def vlm(self) -> VlModel[Any]:
+    def vlm(self) -> VlModel:
         if self._vlm_raw is None:
             from dimos.models.vl.openai import OpenAIVlModel
 

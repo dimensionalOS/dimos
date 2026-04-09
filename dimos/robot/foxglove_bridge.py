@@ -42,10 +42,10 @@ class FoxgloveConfig(ModuleConfig):
     jpeg_shm_channels: Sequence[str] = ()
 
 
-class FoxgloveBridge(Module[FoxgloveConfig]):
+class FoxgloveBridge(Module):
+    config: FoxgloveConfig
     _thread: threading.Thread
     _loop: asyncio.AbstractEventLoop
-    default_config = FoxgloveConfig
 
     @rpc
     def start(self) -> None:

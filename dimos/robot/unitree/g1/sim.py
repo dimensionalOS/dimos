@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import threading
 from threading import Thread
 import time
@@ -45,9 +44,8 @@ class G1SimConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
 
 
-class G1SimConnection(G1ConnectionBase[G1SimConfig]):
-    default_config = G1SimConfig
-
+class G1SimConnection(G1ConnectionBase):
+    config: G1SimConfig
     cmd_vel: In[Twist]
     lidar: Out[PointCloud2]
     odom: Out[PoseStamped]

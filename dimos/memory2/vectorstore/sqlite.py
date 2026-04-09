@@ -53,7 +53,6 @@ class SqliteVectorStore(VectorStore):
     - ``SqliteVectorStore(path="file.db")`` — opens and owns its own connection.
     """
 
-    default_config = SqliteVectorStoreConfig
     config: SqliteVectorStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:

@@ -59,8 +59,10 @@ class ObjectTrackingConfig(ModuleConfig):
     reid_fail_tolerance: int = 5
 
 
-class ObjectTracking(Module[ObjectTrackingConfig]):
+class ObjectTracking(Module):
     """Module for object tracking with LCM input/output."""
+
+    config: ObjectTrackingConfig
 
     # LCM inputs
     color_image: In[Image]
@@ -71,8 +73,6 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
     detection2darray: Out[Detection2DArray]
     detection3darray: Out[Detection3DArray]
     tracked_overlay: Out[Image]  # Visualization output
-
-    default_config = ObjectTrackingConfig
 
     def __init__(self, **kwargs: Any) -> None:
         """

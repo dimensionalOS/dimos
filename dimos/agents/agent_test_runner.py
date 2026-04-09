@@ -31,9 +31,8 @@ class Config(ModuleConfig):
     messages: Iterable[BaseMessage]
 
 
-class AgentTestRunner(Module[Config]):
-    default_config = Config
-
+class AgentTestRunner(Module):
+    config: Config
     agent_spec: AgentSpec
     agent: In[BaseMessage]
     agent_idle: In[bool]

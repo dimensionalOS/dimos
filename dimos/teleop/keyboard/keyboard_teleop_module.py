@@ -70,13 +70,13 @@ class KeyboardTeleopConfig(ModuleConfig):
     task_name: str = "cartesian_ik_arm"
 
 
-class KeyboardTeleopModule(Module[KeyboardTeleopConfig]):
+class KeyboardTeleopModule(Module):
     """Pygame-based cartesian keyboard teleop as a DimOS Module.
 
     Publishes absolute EE PoseStamped commands for CartesianIKTask.
     """
 
-    default_config = KeyboardTeleopConfig
+    config: KeyboardTeleopConfig
 
     cartesian_command: Out[PoseStamped]
 

@@ -66,15 +66,14 @@ class Config(ModuleConfig):
 
 
 class ROSNav(
-    Module[Config],
+    Module,
     NavigationInterface,
     Nav,
     GlobalPointcloud,
     Pointcloud,
     LocalPlanner,
 ):
-    default_config = Config
-
+    config: Config
     # Existing ports (default LCM/pSHM transport)
     goal_req: In[PoseStamped]
 

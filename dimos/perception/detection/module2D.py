@@ -53,8 +53,8 @@ class Config(ModuleConfig):
     ] = ()
 
 
-class Detection2DModule(Module[Config]):
-    default_config = Config
+class Detection2DModule(Module):
+    config: Config
     detector: Detector
 
     color_image: In[Image]

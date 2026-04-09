@@ -33,10 +33,10 @@ class Config(ModuleConfig):
     goal_distance: float = 1.0
 
 
-class BBoxNavigationModule(Module[Config]):
+class BBoxNavigationModule(Module):
     """Minimal module that converts 2D bbox center to navigation goals."""
 
-    default_config = Config
+    config: Config
 
     detection2d: In[Detection2DArray]
     camera_info: In[CameraInfo]

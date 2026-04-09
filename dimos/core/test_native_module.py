@@ -67,7 +67,7 @@ class StubNativeConfig(NativeModuleConfig):
 
 
 class StubNativeModule(NativeModule):
-    default_config = StubNativeConfig
+    config: StubNativeConfig
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
     cmd_vel: In[Twist]
@@ -156,7 +156,7 @@ def test_autoconnect(args_file: str) -> None:
     coordinator = ModuleCoordinator.build(blueprint.global_config(viewer="none"))
     try:
         # Validate blueprint wiring: all modules deployed
-        native = coordinator.get_instance(StubNativeModule)
+        native = coordinator.get_instance(StubNativeModule)  # type: ignore[arg-type]
         consumer = coordinator.get_instance(StubConsumer)
         producer = coordinator.get_instance(StubProducer)
         assert native is not None

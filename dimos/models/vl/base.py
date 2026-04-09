@@ -3,7 +3,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import json
 import logging
-import sys
 from typing import Any
 import warnings
 
@@ -17,13 +16,7 @@ from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import retry
 from dimos.utils.llm_utils import extract_json
 
-if sys.version_info < (3, 13):
-    from typing_extensions import TypeVar
-else:
-    from typing import TypeVar
-
 logger = logging.getLogger(__name__)
-
 
 class Captioner(ABC):
     """Interface for models that can generate image captions."""
@@ -54,10 +47,8 @@ class Captioner(ABC):
         """
         return [self.caption(img) for img in images]
 
-
 # Type alias for VLM detection format: [label, x1, y1, x2, y2]
 VlmDetection = tuple[str, float, float, float, float]
-
 
 def vlm_detection_to_detection2d(
     vlm_detection: VlmDetection | list[str | float],
@@ -112,10 +103,8 @@ def vlm_detection_to_detection2d(
         image=image,
     )
 
-
 # Type alias for VLM point format: [label, x, y]
 VlmPoint = tuple[str, float, float]
-
 
 def vlm_point_to_detection2d_point(
     vlm_point: VlmPoint | list[str | float],
@@ -163,18 +152,13 @@ def vlm_point_to_detection2d_point(
         track_id=track_id,
     )
 
-
 class VlModelConfig(BaseConfig):
     """Configuration for VlModel."""
 
     auto_resize: tuple[int, int] | None = None
     """Optional (width, height) tuple. If set, images are resized to fit."""
 
-
-_VlConfig = TypeVar("_VlConfig", bound=VlModelConfig)
-
-
-class VlModel(Captioner, Resource, Configurable[_VlConfig]):
+class VlModel(Captioner, Resource, Configurable):
     """Vision-language model that can answer questions about images.
 
     Inherits from Captioner, providing a default caption() implementation
@@ -183,7 +167,7 @@ class VlModel(Captioner, Resource, Configurable[_VlConfig]):
     Implements Resource interface for lifecycle management.
     """
 
-    default_config: type[_VlConfig] = VlModelConfig  # type: ignore[assignment]
+    config: VlModelConfig
 
     def _prepare_image(self, image: Image) -> tuple[Image, float]:
         """Prepare image for inference, applying any configured transformations.

@@ -43,7 +43,7 @@ class SubjectNotifier(Notifier[T]):
     then iterates outside the lock to avoid deadlocks with slow consumers.
     """
 
-    default_config = SubjectNotifierConfig
+    config: SubjectNotifierConfig
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
