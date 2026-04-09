@@ -47,6 +47,7 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
+from dimos.control.components import split_joint_name
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.rpc_client import RPCClient
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
@@ -157,11 +158,11 @@ class CoordinatorClient:
         # Try to infer hardware_id from task name
         if "_" in task_name:
             suffix = task_name.split("_", 1)[1]  # "traj_left" -> "left"
-            # Try both patterns: exact suffix (e.g., "arm_") and with "_arm" suffix (e.g., "left_arm_")
-            task_joints = [j for j in all_joints if j.startswith(suffix + "_")]
+            # Try both patterns: exact suffix (e.g., "arm/") and with "_arm" suffix (e.g., "left_arm/")
+            task_joints = [j for j in all_joints if j.startswith(suffix + "/")]
             if not task_joints:
                 # Try with "_arm" suffix for dual-arm setups (left -> left_arm)
-                task_joints = [j for j in all_joints if j.startswith(suffix + "_arm_")]
+                task_joints = [j for j in all_joints if j.startswith(suffix + "_arm/")]
         else:
             task_joints = all_joints
 
@@ -272,7 +273,7 @@ def preview_waypoints(waypoints: list[list[float]], joint_names: list[str]) -> N
     print("-" * 70)
 
     # Header with joint names (truncated)
-    headers = [j.split("_")[-1][:6] for j in joint_names]  # e.g., "joint1" -> "joint1"
+    headers = [split_joint_name(j)[1][:6] for j in joint_names]  # e.g., "joint1" -> "joint1"
     header_str = " ".join(f"{h:>7}" for h in headers)
     print(f"  # | {header_str} (degrees)")
     print("-" * 70)
@@ -285,7 +286,7 @@ def preview_waypoints(waypoints: list[list[float]], joint_names: list[str]) -> N
 
 def preview_trajectory(trajectory: JointTrajectory, joint_names: list[str]) -> None:
     """Show generated trajectory preview."""
-    headers = [j.split("_")[-1][:6] for j in joint_names]
+    headers = [split_joint_name(j)[1][:6] for j in joint_names]
     header_str = " ".join(f"{h:>7}" for h in headers)
 
     print("\n" + "=" * 70)

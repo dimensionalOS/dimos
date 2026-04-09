@@ -38,6 +38,7 @@ from dimos.control.components import (
     HardwareType,
     JointName,
     TaskName,
+    split_joint_name,
 )
 from dimos.control.hardware_interface import ConnectedHardware, ConnectedTwistBase
 from dimos.control.task import ControlTask
@@ -536,8 +537,8 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                 if hw.component.hardware_type != HardwareType.BASE:
                     continue
                 for joint_name in hw.joint_names:
-                    # Extract suffix (e.g., "base_vx" → "vx")
-                    suffix = joint_name.rsplit("_", 1)[-1]
+                    # Extract suffix (e.g., "base/vx" → "vx")
+                    _, suffix = split_joint_name(joint_name)
                     mapping = TWIST_SUFFIX_MAP.get(suffix)
                     if mapping is None:
                         continue

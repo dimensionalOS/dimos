@@ -33,6 +33,7 @@ from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -46,7 +47,11 @@ from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _cata
 from dimos.robot.foxglove_bridge import FoxgloveBridge  # TODO: migrate to rerun
 
 # Single XArm6 planner (standalone, no coordinator)
-_xarm6_planner_cfg = _catalog_xarm6(name="arm")
+_xarm6_planner_cfg = _catalog_xarm6(
+    name="arm",
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip,
+)
 
 xarm6_planner_only = ManipulationModule.blueprint(
     robots=[_xarm6_planner_cfg.to_robot_model_config()],
@@ -61,8 +66,18 @@ xarm6_planner_only = ManipulationModule.blueprint(
 
 # Dual XArm6 planner with coordinator integration
 # Usage: Start with coordinator_dual_mock, then plan/execute via RPC
-_left_arm_cfg = _catalog_xarm6(name="left_arm", y_offset=0.5)
-_right_arm_cfg = _catalog_xarm6(name="right_arm", y_offset=-0.5)
+_left_arm_cfg = _catalog_xarm6(
+    name="left_arm",
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip,
+    y_offset=0.5,
+)
+_right_arm_cfg = _catalog_xarm6(
+    name="right_arm",
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip,
+    y_offset=-0.5,
+)
 
 dual_xarm6_planner = ManipulationModule.blueprint(
     robots=[
@@ -78,9 +93,13 @@ dual_xarm6_planner = ManipulationModule.blueprint(
 )
 
 
-# Single XArm7 planner + mock coordinator (standalone, no external coordinator needed)
-# Usage: dimos run xarm7-planner-coordinator
-_xarm7_cfg = _catalog_xarm7(name="arm")
+# Single XArm7 planner + coordinator (uses real hardware when XARM7_IP is set)
+# Usage: XARM7_IP=<ip> dimos run xarm7-planner-coordinator
+_xarm7_cfg = _catalog_xarm7(
+    name="arm",
+    adapter_type="xarm" if global_config.xarm7_ip else "mock",
+    address=global_config.xarm7_ip,
+)
 
 xarm7_planner_coordinator = autoconnect(
     ManipulationModule.blueprint(
@@ -150,6 +169,8 @@ _XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
 
 _xarm7_perception_cfg = _catalog_xarm7(
     name="arm",
+    adapter_type="xarm" if global_config.xarm7_ip else "mock",
+    address=global_config.xarm7_ip,
     pitch=math.radians(45),
     add_gripper=True,
     tf_extra_links=["link7"],
