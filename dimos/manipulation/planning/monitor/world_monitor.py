@@ -56,7 +56,7 @@ class WorldMonitor:
         backend: str = "drake",
         enable_viz: bool = False,
         **kwargs: Any,
-    ):
+    ) -> None:
         self._backend = backend
         self._world: WorldSpec = create_world(backend=backend, enable_viz=enable_viz, **kwargs)
         self._lock = threading.RLock()

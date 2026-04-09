@@ -183,7 +183,7 @@ class Detection3DModule(Detection2DModule):
 
         self.detection_stream_3d = align_timestamped(  # type: ignore[type-var]
             backpressure(self.detection_stream_2d()),
-            self.pointcloud.observable(),  # type: ignore[no-untyped-call]
+            self.pointcloud.observable(),
             match_tolerance=0.25,
             buffer_size=20.0,
         ).pipe(ops.map(detection2d_to_3d))

@@ -240,13 +240,13 @@ class TestReplayMode(unittest.TestCase):
                 mock_conn_instance = MagicMock()
                 mock_conn_instance.connected = True
                 mock_conn_instance.odom_stream.return_value.subscribe = MagicMock(
-                    return_value=lambda: None
+                    return_value=MagicMock()
                 )
                 mock_conn_instance.status_stream.return_value.subscribe = MagicMock(
-                    return_value=lambda: None
+                    return_value=MagicMock()
                 )
                 mock_conn_instance.telemetry_stream.return_value.subscribe = MagicMock(
-                    return_value=lambda: None
+                    return_value=MagicMock()
                 )
                 mock_conn_instance.disconnect = MagicMock()
                 mock_fake_conn.return_value = mock_conn_instance
@@ -255,7 +255,7 @@ class TestReplayMode(unittest.TestCase):
                 mock_video_instance = MagicMock()
                 mock_video_instance.start.return_value = True
                 mock_video_instance.get_stream.return_value.subscribe = MagicMock(
-                    return_value=lambda: None
+                    return_value=MagicMock()
                 )
                 mock_video_instance.stop = MagicMock()
                 mock_fake_video.return_value = mock_video_instance
@@ -264,7 +264,7 @@ class TestReplayMode(unittest.TestCase):
                 module = DroneConnectionModule(connection_string="replay")
                 module.video = MagicMock()
                 module.movecmd = MagicMock()
-                module.movecmd.subscribe = MagicMock(return_value=lambda: None)
+                module.movecmd.subscribe = MagicMock(return_value=MagicMock())
                 module.tf = MagicMock()
 
                 try:
@@ -669,7 +669,7 @@ class TestDronePerception(unittest.TestCase):
         piped_stream = MagicMock()
         piped_captured: list[Image] = []
 
-        def piped_subscribe(callback):  # type: ignore[no-untyped-def]
+        def piped_subscribe(callback):
             for frame in video_frames:
                 img = Image(data=frame, format=ImageFormat.RGB)  # After format fix
                 callback(img)

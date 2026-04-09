@@ -145,12 +145,12 @@ class ReplayConnection(UnitreeWebRTCConnection):
     @simple_mcache
     def lidar_stream(self):  # type: ignore[no-untyped-def]
         lidar_store = TimedSensorReplay(f"{self.dir_name}/lidar")  # type: ignore[var-annotated]
-        return lidar_store.stream(**self.replay_config)  # type: ignore[arg-type]
+        return lidar_store.stream(**self.replay_config)
 
     @simple_mcache
     def odom_stream(self):  # type: ignore[no-untyped-def]
         odom_store = TimedSensorReplay(f"{self.dir_name}/odom")  # type: ignore[var-annotated]
-        return odom_store.stream(**self.replay_config)  # type: ignore[arg-type]
+        return odom_store.stream(**self.replay_config)
 
     # we don't have raw video stream in the data set
     @simple_mcache
@@ -170,8 +170,8 @@ class ReplayConnection(UnitreeWebRTCConnection):
             arr = x.to_ndarray(format="rgb24") if hasattr(x, "to_ndarray") else x
             return Image.from_numpy(arr, format=ImageFormat.RGB, frame_id="camera_optical")
 
-        video_store = TimedSensorReplay(f"{self.dir_name}/video", autocast=_autocast_video)  # type: ignore[var-annotated]
-        return video_store.stream(**self.replay_config)  # type: ignore[arg-type]
+        video_store = TimedSensorReplay(f"{self.dir_name}/video", autocast=_autocast_video)
+        return video_store.stream(**self.replay_config)
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         return True
@@ -184,9 +184,8 @@ class ReplayConnection(UnitreeWebRTCConnection):
 _Config = TypeVar("_Config", bound=ConnectionConfig, default=ConnectionConfig)
 
 
-class GO2Connection(Module[_Config], Camera, Pointcloud):
-    default_config = ConnectionConfig  # type: ignore[assignment]
-
+class GO2Connection(Module, Camera, Pointcloud):
+    config: ConnectionConfig
     cmd_vel: In[Twist]
     pointcloud: Out[PointCloud2]
     odom: Out[PoseStamped]
@@ -238,10 +237,10 @@ class GO2Connection(Module[_Config], Camera, Pointcloud):
             self.color_image.publish(image)
             self._latest_video_frame = image
 
-        self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
-        self._disposables.add(self.connection.odom_stream().subscribe(self._publish_tf))
-        self._disposables.add(self.connection.video_stream().subscribe(onimage))
-        self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
+        self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
+        self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
+        self.register_disposable(self.connection.video_stream().subscribe(onimage))
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
         self._camera_info_thread = Thread(
             target=self.publish_camera_info,

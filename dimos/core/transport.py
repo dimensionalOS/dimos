@@ -39,7 +39,7 @@ from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleShared
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-T = TypeVar("T")  # type: ignore[misc]
+T = TypeVar("T")
 
 # TODO
 # Transports need to be rewritten and simplified,
@@ -136,7 +136,7 @@ class LCMTransport(PubSubTransport[T]):
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
         if not self._started:
             self.start()
-        return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value, arg-type]
+        return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type, return-value]
 
 
 class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]

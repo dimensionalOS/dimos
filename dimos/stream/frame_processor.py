@@ -93,10 +93,10 @@ class FrameProcessor:
 
     def compute_optical_flow(
         self,
-        acc: tuple[np.ndarray, np.ndarray, float | None],  # type: ignore[type-arg]
-        current_frame: np.ndarray,  # type: ignore[type-arg]
+        acc: tuple[np.ndarray, np.ndarray, float | None],
+        current_frame: np.ndarray,
         compute_relevancy: bool = True,
-    ) -> tuple[np.ndarray, np.ndarray, float | None]:  # type: ignore[type-arg]
+    ) -> tuple[np.ndarray, np.ndarray, float | None]:
         """Computes optical flow between consecutive frames.
 
         Uses the Farneback algorithm to compute dense optical flow between the

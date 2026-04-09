@@ -84,7 +84,7 @@ class CartesianMotionControllerConfig(ModuleConfig):
     control_frame: str = "world"  # Frame for target poses (world, base_link, etc.)
 
 
-class CartesianMotionController(Module[CartesianMotionControllerConfig]):
+class CartesianMotionController(Module):
     """
     Hardware-agnostic Cartesian motion controller.
 
@@ -99,7 +99,7 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
     provides IK/FK RPC methods and JointState/RobotState outputs.
     """
 
-    default_config = CartesianMotionControllerConfig
+    config: CartesianMotionControllerConfig
 
     _arm_driver: ArmDriverSpec
 

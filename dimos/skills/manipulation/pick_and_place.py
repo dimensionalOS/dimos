@@ -75,7 +75,7 @@ def parse_qwen_points_response(response: str) -> tuple[tuple[int, int], tuple[in
 
 
 def save_debug_image_with_points(
-    image: np.ndarray,  # type: ignore[type-arg]
+    image: np.ndarray,
     pick_point: tuple[int, int] | None = None,
     place_point: tuple[int, int] | None = None,
     filename_prefix: str = "qwen_debug",
@@ -215,7 +215,7 @@ class PickAndPlace(AbstractRobotSkill):
         """
         super().__init__(robot=robot, **data)
 
-    def _get_camera_frame(self) -> np.ndarray | None:  # type: ignore[type-arg]
+    def _get_camera_frame(self) -> np.ndarray | None:
         """
         Get a single RGB frame from the robot's camera.
 
@@ -238,7 +238,7 @@ class PickAndPlace(AbstractRobotSkill):
 
     def _query_pick_and_place_points(
         self,
-        frame: np.ndarray,  # type: ignore[type-arg]
+        frame: np.ndarray,
     ) -> tuple[tuple[int, int], tuple[int, int]] | None:
         """
         Query Qwen to get both pick and place points in a single query.
@@ -272,7 +272,7 @@ class PickAndPlace(AbstractRobotSkill):
 
     def _query_single_point(
         self,
-        frame: np.ndarray,  # type: ignore[type-arg]
+        frame: np.ndarray,
         query: str,
         point_type: str,
     ) -> tuple[int, int] | None:

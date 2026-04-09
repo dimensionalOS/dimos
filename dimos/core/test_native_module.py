@@ -67,7 +67,7 @@ class StubNativeConfig(NativeModuleConfig):
 
 
 class StubNativeModule(NativeModule):
-    default_config = StubNativeConfig
+    config: StubNativeConfig
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
     cmd_vel: In[Twist]
@@ -117,7 +117,7 @@ def test_process_crash_triggers_stop() -> None:
 
 @pytest.mark.slow
 def test_manual(dimos_cluster: ModuleCoordinator, args_file: str) -> None:
-    native_module = dimos_cluster.deploy(  # type: ignore[attr-defined]
+    native_module = dimos_cluster.deploy(
         StubNativeModule,
         some_param=2.5,
         output_file=args_file,
@@ -156,7 +156,7 @@ def test_autoconnect(args_file: str) -> None:
     coordinator = ModuleCoordinator.build(blueprint.global_config(viewer="none"))
     try:
         # Validate blueprint wiring: all modules deployed
-        native = coordinator.get_instance(StubNativeModule)  # type: ignore[type-var]
+        native = coordinator.get_instance(StubNativeModule)  # type: ignore[arg-type]
         consumer = coordinator.get_instance(StubConsumer)
         producer = coordinator.get_instance(StubProducer)
         assert native is not None

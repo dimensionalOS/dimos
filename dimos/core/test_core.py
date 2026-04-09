@@ -47,7 +47,7 @@ class Navigation(Module):
             self.mov.publish(msg.position)
 
         unsub = self.odometry.subscribe(_odom)
-        self._disposables.add(Disposable(unsub))
+        self.register_disposable(Disposable(unsub))
 
         def _lidar(msg) -> None:
             self.lidar_msg_count += 1
@@ -57,7 +57,7 @@ class Navigation(Module):
                 print("RCV: unknown time", msg)
 
         unsub = self.lidar.subscribe(_lidar)
-        self._disposables.add(Disposable(unsub))
+        self.register_disposable(Disposable(unsub))
 
 
 def test_classmethods() -> None:

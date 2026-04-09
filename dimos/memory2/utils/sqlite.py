@@ -14,12 +14,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import sqlite3
 
 from reactivex.disposable import Disposable
 
 
-def open_sqlite_connection(path: str) -> sqlite3.Connection:
+def open_sqlite_connection(path: str | Path) -> sqlite3.Connection:
     """Open a WAL-mode SQLite connection with sqlite-vec loaded."""
     import sqlite_vec
 
@@ -33,7 +34,7 @@ def open_sqlite_connection(path: str) -> sqlite3.Connection:
 
 
 def open_disposable_sqlite_connection(
-    path: str,
+    path: str | Path,
 ) -> tuple[Disposable, sqlite3.Connection]:
     """Open a WAL-mode SQLite connection and return (disposable, connection).
 

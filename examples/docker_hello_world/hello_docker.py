@@ -59,10 +59,10 @@ class HelloDockerConfig(DockerModuleConfig):
     greeting_prefix: str = "Hello"
 
 
-class HelloDockerModule(Module["HelloDockerConfig"]):
+class HelloDockerModule(Module):
     """A trivial module that runs inside Docker and echoes greetings."""
 
-    default_config = HelloDockerConfig
+    config: HelloDockerConfig
     deployment = "docker"
 
     prompt: In[str]

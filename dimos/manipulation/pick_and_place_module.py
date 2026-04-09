@@ -94,9 +94,6 @@ class PickAndPlaceModule(ManipulationModule):
     - @skill: pick, place, place_back, pick_and_place, scan_objects, get_scene_info
     """
 
-    default_config = PickAndPlaceModuleConfig
-
-    # Type annotation for the config attribute (mypy uses this)
     config: PickAndPlaceModuleConfig
 
     # Input: Objects from perception (for obstacle integration)
@@ -123,7 +120,7 @@ class PickAndPlaceModule(ManipulationModule):
 
         # Subscribe to objects port for perception obstacle integration
         if self.objects is not None:
-            self.objects.observable().subscribe(self._on_objects)  # type: ignore[no-untyped-call]
+            self.objects.observable().subscribe(self._on_objects)
             logger.info("Subscribed to objects port (async)")
 
         # Start obstacle monitor for perception integration

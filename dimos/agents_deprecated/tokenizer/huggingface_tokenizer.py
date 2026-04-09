@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from transformers import AutoTokenizer  # type: ignore[import-untyped]
+from transformers import AutoTokenizer
 
 from dimos.agents_deprecated.tokenizer.base import AbstractTokenizer
 from dimos.utils.logging_config import setup_logger

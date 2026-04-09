@@ -34,14 +34,14 @@ class ObservationStoreConfig(BaseConfig):
     pass
 
 
-class ObservationStore(Configurable[ObservationStoreConfig], CompositeResource, Generic[T]):
+class ObservationStore(Configurable, CompositeResource, Generic[T]):
     """Core metadata storage and query engine for observations.
 
     Handles only observation metadata storage, query pushdown, and count.
     Blob/vector/live orchestration is handled by the concrete Backend class.
     """
 
-    default_config: type[ObservationStoreConfig] = ObservationStoreConfig
+    config: ObservationStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)
