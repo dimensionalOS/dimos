@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -53,7 +53,7 @@ class WorkerManagerDocker:
         return mod
 
     def deploy_parallel(
-        self, specs: Iterable[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
+        self, specs: Sequence[ModuleSpec], blueprint_args: Mapping[str, Mapping[str, Any]]
     ) -> list[ModuleProxyProtocol]:
         # inlined to prevent circular dependency
         from dimos.core.docker_module import DockerModuleProxy

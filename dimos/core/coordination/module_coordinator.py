@@ -35,7 +35,7 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.safe_thread_map import safe_thread_map
 
 if TYPE_CHECKING:
-    from dimos.core.coordination.blueprints import Blueprint, _BlueprintAtom
+    from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
     from dimos.core.rpc_client import ModuleProxy, ModuleProxyProtocol
 
 logger = setup_logger()
@@ -56,7 +56,7 @@ class ModuleCoordinator(Resource):
             cls.deployment_identifier: cls(g=g) for cls in manager_types
         }
         self._deployed_modules = {}
-        self._deployed_atoms: dict[type[ModuleBase], _BlueprintAtom] = {}
+        self._deployed_atoms: dict[type[ModuleBase], BlueprintAtom] = {}
         self._resolved_module_refs: dict[tuple[type[ModuleBase], str], type[ModuleBase]] = {}
         self._transport_registry: dict[tuple[str, type], PubSubTransport[Any]] = {}
         self._class_aliases: dict[type[ModuleBase], type[ModuleBase]] = {}
@@ -253,7 +253,7 @@ class ModuleCoordinator(Resource):
     def load_blueprint(
         self,
         blueprint: Blueprint,
-        cli_config_overrides: Mapping[str, Any] | None = None,
+        blueprint_args: MutableMapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         """Load a blueprint into an already-running coordinator.
 
@@ -266,8 +266,9 @@ class ModuleCoordinator(Resource):
 
         # Apply config overrides.
         self._global_config.update(**dict(blueprint.global_config_overrides))
-        if cli_config_overrides:
-            self._global_config.update(**dict(cli_config_overrides))
+        blueprint_args = blueprint_args or {}
+        if "g" in blueprint_args:
+            self._global_config.update(**blueprint_args.pop("g"))
 
         # Scale worker pool.
         n_extra = int(blueprint.global_config_overrides.get("n_workers", 0))
@@ -291,7 +292,7 @@ class ModuleCoordinator(Resource):
 
         before = set(self._deployed_modules)
 
-        _deploy_all_modules(blueprint, self, self._global_config)
+        _deploy_all_modules(blueprint, self, self._global_config, blueprint_args)
         self._connect_streams(blueprint)
         _connect_module_refs(blueprint, self, existing_modules=before)
 
@@ -303,8 +304,12 @@ class ModuleCoordinator(Resource):
 
         self._send_on_system_modules()
 
-    def load_module(self, module_class: type[ModuleBase], **kwargs: Any) -> None:
-        self.load_blueprint(module_class.blueprint(**kwargs))
+    def load_module(
+        self,
+        module_class: type[ModuleBase],
+        blueprint_args: MutableMapping[str, Mapping[str, Any]] | None = None,
+    ) -> None:
+        self.load_blueprint(module_class.blueprint(**blueprint_args or {}))
 
     def unload_module(self, module_class: type[ModuleBase]) -> None:
         """Stop and tear down a single deployed module.

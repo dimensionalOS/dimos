@@ -164,7 +164,7 @@ class Blueprint:
         return replace(self, disabled_modules_tuple=self.disabled_modules_tuple + modules)
 
     def config(self) -> type:
-        configs = {b.module.name: (b.module.default_config | None, None) for b in self.blueprints}
+        configs = {b.module.name: (b.module.config | None, None) for b in self.blueprints}
         configs["g"] = (GlobalConfig | None, None)
         return create_model("BlueprintConfig", __config__={"extra": "forbid"}, **configs)  # type: ignore[call-overload,no-any-return]
 

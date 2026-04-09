@@ -40,7 +40,7 @@ from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.core.blueprints import Blueprint, BlueprintAtom
+    from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
 
 logger = setup_logger()
 
@@ -256,7 +256,7 @@ def run(
     if cli_config_overrides:
         kwargs["g"] = cli_config_overrides
 
-    coordinator = ModuleCoordinator.build(blueprint, cli_config_overrides=cli_config_overrides)
+    coordinator = ModuleCoordinator.build(blueprint, kwargs)
 
     if daemon:
         from dimos.core.daemon import (
