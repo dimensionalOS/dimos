@@ -83,7 +83,7 @@ class ModuleRef:
 
 
 @dataclass(frozen=True)
-class _BlueprintAtom:
+class BlueprintAtom:
     kwargs: dict[str, Any]
     module: type[ModuleBase[Any]]
     streams: tuple[StreamRef, ...]
@@ -146,7 +146,7 @@ class _BlueprintAtom:
 
 @dataclass(frozen=True)
 class Blueprint:
-    blueprints: tuple[_BlueprintAtom, ...]
+    blueprints: tuple[BlueprintAtom, ...]
     disabled_modules_tuple: tuple[type[ModuleBase], ...] = field(default_factory=tuple)
     transport_map: Mapping[tuple[str, type], PubSubTransport[Any]] = field(
         default_factory=lambda: MappingProxyType({})
@@ -160,7 +160,7 @@ class Blueprint:
 
     @classmethod
     def create(cls, module: type[ModuleBase], **kwargs: Any) -> "Blueprint":
-        blueprint = _BlueprintAtom.create(module, kwargs)
+        blueprint = BlueprintAtom.create(module, kwargs)
         return cls(blueprints=(blueprint,))
 
     def disabled_modules(self, *modules: type[ModuleBase]) -> "Blueprint":
@@ -198,7 +198,7 @@ class Blueprint:
         return replace(self, configurator_checks=self.configurator_checks + tuple(checks))
 
     @cached_property
-    def _active_blueprints(self) -> tuple[_BlueprintAtom, ...]:
+    def _active_blueprints(self) -> tuple[BlueprintAtom, ...]:
         if not self.disabled_modules_tuple:
             return self.blueprints
         disabled = set(self.disabled_modules_tuple)
@@ -535,7 +535,7 @@ def autoconnect(*blueprints: Blueprint) -> Blueprint:
     )
 
 
-def _eliminate_duplicates(blueprints: list[_BlueprintAtom]) -> list[_BlueprintAtom]:
+def _eliminate_duplicates(blueprints: list[BlueprintAtom]) -> list[BlueprintAtom]:
     # The duplicates are eliminated in reverse so that newer blueprints override older ones.
     seen = set()
     unique_blueprints = []

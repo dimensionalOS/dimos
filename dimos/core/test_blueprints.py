@@ -25,9 +25,9 @@ from dimos.core._test_future_annotations_helper import (
 )
 from dimos.core.blueprints import (
     Blueprint,
+    BlueprintAtom,
     ModuleRef,
     StreamRef,
-    _BlueprintAtom,
     _DisabledModuleProxy,
     autoconnect,
 )
@@ -106,7 +106,7 @@ class ModuleC(Module):
 
 
 def test_get_connection_set() -> None:
-    assert _BlueprintAtom.create(CatModule, kwargs={"k": "v"}) == _BlueprintAtom(
+    assert BlueprintAtom.create(CatModule, kwargs={"k": "v"}) == BlueprintAtom(
         module=CatModule,
         streams=(
             StreamRef(name="pet_cat", type=Petting, direction="in"),
@@ -122,7 +122,7 @@ def test_autoconnect() -> None:
 
     assert blueprint_set == Blueprint(
         blueprints=(
-            _BlueprintAtom(
+            BlueprintAtom(
                 module=ModuleA,
                 streams=(
                     StreamRef(name="data1", type=Data1, direction="out"),
@@ -131,7 +131,7 @@ def test_autoconnect() -> None:
                 module_refs=(),
                 kwargs={},
             ),
-            _BlueprintAtom(
+            BlueprintAtom(
                 module=ModuleB,
                 streams=(
                     StreamRef(name="data1", type=Data1, direction="in"),
@@ -340,16 +340,16 @@ def test_future_annotations_support() -> None:
     """Test that modules using `from __future__ import annotations` work correctly.
 
     PEP 563 (future annotations) stores annotations as strings instead of actual types.
-    This test verifies that _BlueprintAtom.create properly resolves string annotations
+    This test verifies that BlueprintAtom.create properly resolves string annotations
     to the actual In/Out types.
     """
 
     # Test that streams are properly extracted from modules with future annotations
-    out_blueprint = _BlueprintAtom.create(FutureModuleOut, kwargs={})
+    out_blueprint = BlueprintAtom.create(FutureModuleOut, kwargs={})
     assert len(out_blueprint.streams) == 1
     assert out_blueprint.streams[0] == StreamRef(name="data", type=FutureData, direction="out")
 
-    in_blueprint = _BlueprintAtom.create(FutureModuleIn, kwargs={})
+    in_blueprint = BlueprintAtom.create(FutureModuleIn, kwargs={})
     assert len(in_blueprint.streams) == 1
     assert in_blueprint.streams[0] == StreamRef(name="data", type=FutureData, direction="in")
 
