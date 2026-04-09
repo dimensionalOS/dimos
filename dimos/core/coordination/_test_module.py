@@ -26,7 +26,7 @@ class AliceModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.greetings.subscribe(self._on_greetings)))
+        self.register_disposable(Disposable(self.greetings.subscribe(self._on_greetings)))
 
     @rpc
     def stop(self) -> None:

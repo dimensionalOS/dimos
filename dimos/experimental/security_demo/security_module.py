@@ -171,12 +171,12 @@ class SecurityModule(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.odom.subscribe(self._on_odom)))
-        self._disposables.add(
+        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+        self.register_disposable(
             Disposable(self.global_costmap.subscribe(self._router.handle_occupancy_grid))
         )
-        self._disposables.add(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
-        self._disposables.add(Disposable(self.color_image.subscribe(self._on_color_image)))
+        self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
+        self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
 
         self._depth_estimator.start()
 
