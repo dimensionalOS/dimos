@@ -237,6 +237,20 @@ class PythonWorker:
         finally:
             self._reserved = max(0, self._reserved - 1)
 
+    def undeploy_module(self, module_id: int) -> None:
+        """Stop and remove a single module from the worker process."""
+        if self._conn is None:
+            raise RuntimeError("Worker process not started")
+
+        with self._lock:
+            self._conn.send({"type": "undeploy_module", "module_id": module_id})
+            response = self._conn.recv()
+
+        if response.get("error"):
+            raise RuntimeError(f"Failed to undeploy module: {response['error']}")
+
+        self._modules.pop(module_id, None)
+
     def suppress_console(self) -> None:
         if self._conn is None:
             return
@@ -365,6 +379,13 @@ def _worker_loop(conn: Connection, instances: dict[int, Any], worker_id: int) ->
                 method = getattr(instances[module_id], request["name"])
                 result = method(*request.get("args", ()), **request.get("kwargs", {}))
                 response["result"] = result
+
+            elif req_type == "undeploy_module":
+                module_id = request["module_id"]
+                instance = instances.pop(module_id, None)
+                if instance is not None:
+                    instance.stop()
+                response["result"] = True
 
             elif req_type == "suppress_console":
                 _suppress_console_output()
