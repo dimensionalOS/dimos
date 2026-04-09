@@ -35,7 +35,6 @@ class ListObservationStoreConfig(ObservationStoreConfig):
 class ListObservationStore(ObservationStore[T]):
     """In-memory metadata store for experimentation. Thread-safe."""
 
-    default_config = ListObservationStoreConfig
     config: ListObservationStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:

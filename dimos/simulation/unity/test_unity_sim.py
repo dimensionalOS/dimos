@@ -126,7 +126,7 @@ def _recv_tcp(sock) -> tuple[str, bytes]:
 
 
 class TestConfig:
-    def test_default_config(self):
+    def test_defaults(self):
         cfg = UnityBridgeConfig()
         assert cfg.unity_port == 10000
         assert cfg.sim_rate == 200.0

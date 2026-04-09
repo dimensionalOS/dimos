@@ -41,9 +41,8 @@ class MapConfig(ModuleConfig):
     max_height: float = 0.5
 
 
-class Map(Module[MapConfig]):
-    default_config = MapConfig
-
+class Map(Module):
+    config: MapConfig
     lidar: In[PointCloud2]
     global_map: Out[PointCloud2]
     global_costmap: Out[OccupancyGrid]

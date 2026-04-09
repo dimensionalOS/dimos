@@ -46,8 +46,8 @@ class McpClientConfig(ModuleConfig):
     mcp_server_url: str = "http://localhost:9990/mcp"
 
 
-class McpClient(Module[McpClientConfig]):
-    default_config = McpClientConfig
+class McpClient(Module):
+    config: McpClientConfig
     agent: Out[BaseMessage]
     human_input: In[str]
     agent_idle: Out[bool]

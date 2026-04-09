@@ -14,7 +14,6 @@
 
 from collections.abc import Callable
 import time
-from typing import Any
 
 from pydantic import Field
 import reactivex as rx
@@ -47,16 +46,16 @@ def default_transform() -> Transform:
 class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
     transform: Transform | None = Field(default_factory=default_transform)
-    hardware: Callable[[], CameraHardware[Any]] | CameraHardware[Any] = Webcam
+    hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
     frequency: float = 0.0  # Hz, 0 means no limit
 
 
-class CameraModule(Module[CameraModuleConfig], perception.Camera):
+class CameraModule(Module, perception.Camera):
+    config: CameraModuleConfig
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
 
-    default_config = CameraModuleConfig
-    hardware: CameraHardware[Any]
+    hardware: CameraHardware
     _latest_image: Image | None = None
 
     @rpc

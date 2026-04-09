@@ -95,7 +95,7 @@ class ManipulationModuleConfig(ModuleConfig):
     floor_z: float | None = None
 
 
-class ManipulationModule(Module[ManipulationModuleConfig]):
+class ManipulationModule(Module):
     """Base motion planning module with ControlCoordinator execution.
 
     - @rpc: Low-level building blocks (plan, execute, gripper)
@@ -104,7 +104,7 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
     Subclass PickAndPlaceModule adds perception integration and long-horizon skills.
     """
 
-    default_config = ManipulationModuleConfig
+    config: ManipulationModuleConfig
 
     # Input: Joint state from coordinator (for world sync)
     joint_state: In[JointState]

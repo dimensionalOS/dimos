@@ -101,7 +101,7 @@ class ModuleCoordinator(Resource):
 
     def deploy(
         self,
-        module_class: type[ModuleBase[Any]],
+        module_class: type[ModuleBase],
         global_config: GlobalConfig = global_config,
         **kwargs: Any,
     ) -> ModuleProxy:
@@ -300,7 +300,7 @@ class ModuleCoordinator(Resource):
 
         self._send_on_system_modules()
 
-    def load_module(self, module_class: type[ModuleBase[Any]], **kwargs: Any) -> None:
+    def load_module(self, module_class: type[ModuleBase], **kwargs: Any) -> None:
         self.load_blueprint(module_class.blueprint(**kwargs))
 
     def unload_module(self, module_class: type[ModuleBase]) -> None:

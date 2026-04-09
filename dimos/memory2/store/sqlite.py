@@ -40,7 +40,6 @@ class SqliteStoreConfig(StoreConfig):
 class SqliteStore(Store):
     """Store backed by a SQLite database file."""
 
-    default_config = SqliteStoreConfig
     config: SqliteStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:

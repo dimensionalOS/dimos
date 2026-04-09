@@ -97,16 +97,14 @@ class _BlueprintPartial(Protocol):
     def __call__(self, **kwargs: Any) -> "Blueprint": ...
 
 
-class ModuleBase(Configurable[ModuleConfigT], Resource):
-    # This won't type check against the TypeVar, but we need it as the default.
-    default_config: type[ModuleConfigT] = ModuleConfig  # type: ignore[assignment]
-
+class ModuleBase(Configurable, Resource):
+    config: ModuleConfig
     # Deployment target. Worker managers declare which deployment type they
     # handle; the coordinator routes modules accordingly.
     deployment: ClassVar[Deployment] = "python"
 
     _rpc: RPCSpec | None = None
-    _tf: TFSpec[Any] | None = None
+    _tf: TFSpec | None = None
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread: threading.Thread | None
     _disposables: CompositeDisposable
@@ -396,7 +394,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         return skills
 
 
-class Module(ModuleBase[ModuleConfigT]):
+class Module(ModuleBase):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Set class-level None attributes for In/Out type annotations.
 

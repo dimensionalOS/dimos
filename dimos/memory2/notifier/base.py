@@ -33,7 +33,7 @@ class NotifierConfig(BaseConfig):
     pass
 
 
-class Notifier(Configurable[NotifierConfig], Generic[T]):
+class Notifier(Configurable, Generic[T]):
     """Push-notification for live observation delivery.
 
     Decouples the notification mechanism from storage.  The built-in
@@ -42,7 +42,7 @@ class Notifier(Configurable[NotifierConfig], Generic[T]):
     LISTEN/NOTIFY, inotify) can be injected for cross-process use.
     """
 
-    default_config: type[NotifierConfig] = NotifierConfig
+    config: NotifierConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)

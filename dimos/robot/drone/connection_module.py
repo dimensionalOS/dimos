@@ -56,10 +56,10 @@ class Config(ModuleConfig):
     outdoor: bool = False
 
 
-class DroneConnectionModule(Module[Config]):
+class DroneConnectionModule(Module):
     """Module that handles drone sensor data and movement commands."""
 
-    default_config = Config
+    config: Config
 
     # Inputs
     movecmd: In[Vector3]

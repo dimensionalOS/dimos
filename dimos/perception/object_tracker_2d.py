@@ -48,15 +48,15 @@ class ObjectTracker2DConfig(ModuleConfig):
     frame_id: str = "camera_link"
 
 
-class ObjectTracker2D(Module[ObjectTracker2DConfig]):
+class ObjectTracker2D(Module):
     """Pure 2D object tracking module using OpenCV's CSRT tracker."""
+
+    config: ObjectTracker2DConfig
 
     color_image: In[Image]
 
     detection2darray: Out[Detection2DArray]
     tracked_overlay: Out[Image]  # Visualization output
-
-    default_config = ObjectTracker2DConfig
 
     def __init__(self, **kwargs: Any) -> None:
         """Initialize 2D object tracking module using OpenCV's CSRT tracker."""

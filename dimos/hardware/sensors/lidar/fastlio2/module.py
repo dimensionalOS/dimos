@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from pydantic.experimental.pipeline import validate_as
 
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.lidar.livox.ports import (
@@ -116,9 +117,7 @@ class FastLio2Config(NativeModuleConfig):
     cli_exclude: frozenset[str] = frozenset({"config"})
 
 
-class FastLio2(
-    NativeModule[FastLio2Config], perception.Lidar, perception.Odometry, mapping.GlobalPointcloud
-):
+class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.GlobalPointcloud):
     """FAST-LIO2 SLAM module with integrated Livox Mid-360 driver.
 
     Ports:
@@ -127,10 +126,19 @@ class FastLio2(
         global_map (Out[PointCloud2]): Global voxel map (optional, enable via map_freq > 0).
     """
 
-    default_config = FastLio2Config
+    config: FastLio2Config
+
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
     global_map: Out[PointCloud2]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
 
 # Verify protocol port compliance (mypy will flag missing ports)

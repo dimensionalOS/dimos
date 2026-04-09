@@ -43,8 +43,8 @@ class FakeDockerConfig(DockerModuleConfig):
     docker_restart_policy: str = "no"
 
 
-class FakeDockerModule(Module["FakeDockerConfig"]):
-    default_config = FakeDockerConfig
+class FakeDockerModule(Module):
+    config: "FakeDockerConfig"
     deployment = "docker"
     output: Out[str]
 

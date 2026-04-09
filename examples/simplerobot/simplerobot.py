@@ -56,12 +56,12 @@ class SimpleRobotConfig(ModuleConfig):
     cmd_timeout: float = 0.5
 
 
-class SimpleRobot(Module[SimpleRobotConfig]):
+class SimpleRobot(Module):
     """A 2D robot that integrates velocity commands into pose."""
 
+    config: SimpleRobotConfig
     cmd_vel: In[Twist]
     pose: Out[PoseStamped]
-    default_config = SimpleRobotConfig
     _pose = Pose()
     _vel = Twist()
     _vel_time = 0.0

@@ -51,7 +51,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-
 # COCO skeleton connections for drawing
 _SKELETON_CONNECTIONS = [
     (0, 1),
@@ -126,14 +125,14 @@ def _create_visual_servo(
     return VisualServoing2D(camera_info, global_config.simulation)
 
 
-class SecurityModule(Module[SecurityModuleConfig]):
+class SecurityModule(Module):
     """Integrated security patrol module.
 
     Manages the full patrol-detect-follow state machine internally,
     eliminating agent round-trips between separate modules.
     """
 
-    default_config = SecurityModuleConfig
+    config: SecurityModuleConfig
 
     odom: In[PoseStamped]
     global_costmap: In[OccupancyGrid]

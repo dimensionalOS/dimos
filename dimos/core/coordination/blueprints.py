@@ -79,12 +79,12 @@ class ModuleRef:
 @dataclass(frozen=True)
 class _BlueprintAtom:
     kwargs: dict[str, Any]
-    module: type[ModuleBase[Any]]
+    module: type[ModuleBase]
     streams: tuple[StreamRef, ...]
     module_refs: tuple[ModuleRef, ...]
 
     @classmethod
-    def create(cls, module: type[ModuleBase[Any]], kwargs: dict[str, Any]) -> Self:
+    def create(cls, module: type[ModuleBase], kwargs: dict[str, Any]) -> Self:
         streams: list[StreamRef] = []
         module_refs: list[ModuleRef] = []
 
@@ -171,9 +171,7 @@ class Blueprint:
 
     def remappings(
         self,
-        remappings: list[
-            tuple[type[ModuleBase[Any]], str, str | type[ModuleBase[Any]] | type[Spec]]
-        ],
+        remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]],
     ) -> "Blueprint":
         remappings_dict = dict(self.remapping_map)
         for module, old, new in remappings:

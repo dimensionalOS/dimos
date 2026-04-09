@@ -61,7 +61,6 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-
 logger = setup_logger()
 
 
@@ -116,7 +115,7 @@ class ControlCoordinatorConfig(ModuleConfig):
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
 
 
-class ControlCoordinator(Module[ControlCoordinatorConfig]):
+class ControlCoordinator(Module):
     """Centralized control coordinator with per-joint arbitration.
 
     Single tick loop that:
@@ -144,6 +143,8 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         >>> orch.start()
     """
 
+    config: ControlCoordinatorConfig
+
     # Output: Aggregated joint state for external consumers
     joint_state: Out[JointState]
 
@@ -159,9 +160,6 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
 
     # Input: Teleop buttons for engage/disengage signaling
     buttons: In[Buttons]
-
-    config: ControlCoordinatorConfig
-    default_config = ControlCoordinatorConfig
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)

@@ -35,10 +35,10 @@ class VLMAgentConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
 
 
-class VLMAgent(Module[VLMAgentConfig]):
+class VLMAgent(Module):
     """Stream-first agent for vision queries with optional RPC access."""
 
-    default_config = VLMAgentConfig
+    config: VLMAgentConfig
 
     color_image: In[Image]
     query_stream: In[HumanMessage]

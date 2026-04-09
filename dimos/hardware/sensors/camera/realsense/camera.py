@@ -73,14 +73,13 @@ class RealSenseCameraConfig(ModuleConfig, DepthCameraConfig):
     serial_number: str | None = None
 
 
-class RealSenseCamera(DepthCameraHardware, Module[RealSenseCameraConfig], perception.DepthCamera):
+class RealSenseCamera(DepthCameraHardware, Module, perception.DepthCamera):
+    config: RealSenseCameraConfig
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
-
-    default_config = RealSenseCameraConfig
 
     @property
     def _camera_link(self) -> str:
