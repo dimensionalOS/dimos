@@ -124,10 +124,12 @@ class TestGraspHeuristics:
 
     def test_grasp_orientation_near_is_top_down(self):
         q = PickAndPlaceModule._grasp_orientation(gx=0.3, gy=0.0, xy_dist=0.3)
-        # Near object: pitch = 180 degrees (top-down), tilt = 0
-        # Quaternion should be valid (norm ~1)
-        norm = (q.x**2 + q.y**2 + q.z**2 + q.w**2) ** 0.5
-        assert abs(norm - 1.0) < 0.01
+        # Near object: pitch = 180° (top-down), tilt = 0, yaw = 0
+        # RPY(0, π, 0) → quaternion (x=0, y=1, z=0, w=0)
+        assert abs(q.x) < 0.01
+        assert abs(q.y - 1.0) < 0.01
+        assert abs(q.z) < 0.01
+        assert abs(q.w) < 0.01
 
     def test_grasp_orientation_far_differs_from_near(self):
         q_near = PickAndPlaceModule._grasp_orientation(gx=0.3, gy=0.0, xy_dist=0.3)
