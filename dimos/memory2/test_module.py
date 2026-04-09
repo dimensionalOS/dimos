@@ -65,10 +65,10 @@ class MethodPipelineConfig(ModuleConfig):
     factor: int = 2
 
 
-class MethodPipelineModule(StreamModule[MethodPipelineConfig]):
+class MethodPipelineModule(StreamModule):
     """Pipeline as a method with access to self.config."""
 
-    default_config = MethodPipelineConfig
+    config: MethodPipelineConfig
 
     def pipeline(self, stream: Stream) -> Stream:
         return stream.transform(Double(factor=self.config.factor))

@@ -32,7 +32,6 @@ class MemoryStore(Store):
     - ``0`` — discard immediately (live-only, no history).
     """
 
-    default_config = MemoryStoreConfig
     config: MemoryStoreConfig
 
     def _create_backend(

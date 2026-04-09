@@ -18,12 +18,12 @@ import inspect
 from typing import Any
 
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfigT
+from dimos.core.module import Module
 from dimos.memory2.store.null import NullStore
 from dimos.memory2.stream import Stream
 
 
-class StreamModule(Module[ModuleConfigT]):
+class StreamModule(Module):
     """Module base class that wires a memory2 stream pipeline.
 
     **Static pipeline**

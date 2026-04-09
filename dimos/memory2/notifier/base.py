@@ -34,7 +34,7 @@ class NotifierConfig(BaseConfig):
     pass
 
 
-class Notifier(Configurable[NotifierConfig], Resource, Generic[T]):
+class Notifier(Configurable, Resource, Generic[T]):
     """Push-notification for live observation delivery.
 
     Decouples the notification mechanism from storage.  The built-in

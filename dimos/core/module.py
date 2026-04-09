@@ -98,9 +98,8 @@ class _BlueprintPartial(Protocol):
     def __call__(self, **kwargs: Any) -> "Blueprint": ...
 
 
-class ModuleBase(Configurable[ModuleConfigT], CompositeResource):
-    # This won't type check against the TypeVar, but we need it as the default.
-    default_config: type[ModuleConfigT] = ModuleConfig  # type: ignore[assignment]
+class ModuleBase(Configurable, CompositeResource):
+    config: ModuleConfig
 
     # Deployment target. Worker managers declare which deployment type they
     # handle; the coordinator routes modules accordingly.
