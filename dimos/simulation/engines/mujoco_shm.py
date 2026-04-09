@@ -52,15 +52,16 @@ _NUM_CTRL_FIELDS = 4  # [ready, stop, command_mode, num_joints]
 _NUM_SEQ_COUNTERS = 8  # one per buffer type
 
 # Buffer sizes (in bytes).
+# Keys are short to stay under macOS PSHMNAMLEN (31 bytes).
 _shm_sizes = {
-    "positions": _joint_array_size,
-    "velocities": _joint_array_size,
-    "efforts": _joint_array_size,
-    "position_targets": _joint_array_size,
-    "velocity_targets": _joint_array_size,
-    "gripper": 2 * _FLOAT_BYTES,  # [gripper_position, gripper_target]
+    "pos": _joint_array_size,
+    "vel": _joint_array_size,
+    "eff": _joint_array_size,
+    "pos_t": _joint_array_size,
+    "vel_t": _joint_array_size,
+    "grp": 2 * _FLOAT_BYTES,  # [gripper_position, gripper_target]
     "seq": _NUM_SEQ_COUNTERS * _FLOAT_BYTES,  # int64 counters
-    "control": _NUM_CTRL_FIELDS * _INT32_BYTES,  # [ready, stop, command_mode, num_joints]
+    "ctl": _NUM_CTRL_FIELDS * _INT32_BYTES,  # [ready, stop, command_mode, num_joints]
 }
 
 # Sequence counter indices.
@@ -82,7 +83,7 @@ CTRL_NUM_JOINTS = 3
 CMD_MODE_POSITION = 0
 CMD_MODE_VELOCITY = 1
 
-_NAME_PREFIX = "dimos_mjmanip"
+_NAME_PREFIX = "dmjm"
 
 
 def shm_key_from_path(config_path: Path | str) -> str:
@@ -115,14 +116,14 @@ def _unregister(shm: SharedMemory) -> SharedMemory:
 class ManipShmSet:
     """Frozen set of named SharedMemory buffers for manipulator IPC."""
 
-    positions: SharedMemory
-    velocities: SharedMemory
-    efforts: SharedMemory
-    position_targets: SharedMemory
-    velocity_targets: SharedMemory
-    gripper: SharedMemory
+    pos: SharedMemory
+    vel: SharedMemory
+    eff: SharedMemory
+    pos_t: SharedMemory
+    vel_t: SharedMemory
+    grp: SharedMemory
     seq: SharedMemory
-    control: SharedMemory
+    ctl: SharedMemory
 
     @classmethod
     def create(cls, key: str) -> ManipShmSet:
@@ -180,9 +181,9 @@ class ManipShmWriter:
         efforts: list[float],
     ) -> None:
         n = min(len(positions), MAX_JOINTS)
-        pos_arr = self._array(self.shm.positions, MAX_JOINTS, np.float64)
-        vel_arr = self._array(self.shm.velocities, MAX_JOINTS, np.float64)
-        eff_arr = self._array(self.shm.efforts, MAX_JOINTS, np.float64)
+        pos_arr = self._array(self.shm.pos, MAX_JOINTS, np.float64)
+        vel_arr = self._array(self.shm.vel, MAX_JOINTS, np.float64)
+        eff_arr = self._array(self.shm.eff, MAX_JOINTS, np.float64)
         pos_arr[:n] = positions[:n]
         vel_arr[:n] = velocities[:n]
         eff_arr[:n] = efforts[:n]
@@ -191,7 +192,7 @@ class ManipShmWriter:
         self._increment_seq(SEQ_EFFORTS)
 
     def write_gripper_state(self, position: float) -> None:
-        arr = self._array(self.shm.gripper, 2, np.float64)
+        arr = self._array(self.shm.grp, 2, np.float64)
         arr[0] = position
         self._increment_seq(SEQ_GRIPPER_STATE)
 
@@ -201,7 +202,7 @@ class ManipShmWriter:
         if seq <= self._last_pos_cmd_seq:
             return None
         self._last_pos_cmd_seq = seq
-        arr = self._array(self.shm.position_targets, MAX_JOINTS, np.float64)
+        arr = self._array(self.shm.pos_t, MAX_JOINTS, np.float64)
         return arr[:num_joints].copy()
 
     def read_velocity_command(self, num_joints: int) -> NDArray[np.float64] | None:
@@ -209,7 +210,7 @@ class ManipShmWriter:
         if seq <= self._last_vel_cmd_seq:
             return None
         self._last_vel_cmd_seq = seq
-        arr = self._array(self.shm.velocity_targets, MAX_JOINTS, np.float64)
+        arr = self._array(self.shm.vel_t, MAX_JOINTS, np.float64)
         return arr[:num_joints].copy()
 
     def read_gripper_command(self) -> float | None:
@@ -217,7 +218,7 @@ class ManipShmWriter:
         if seq <= self._last_gripper_cmd_seq:
             return None
         self._last_gripper_cmd_seq = seq
-        arr = self._array(self.shm.gripper, 2, np.float64)
+        arr = self._array(self.shm.grp, 2, np.float64)
         return float(arr[1])
 
     def read_command_mode(self) -> int:
@@ -253,7 +254,7 @@ class ManipShmWriter:
         return np.ndarray((n,), dtype=dtype, buffer=buf.buf)
 
     def _control(self) -> NDArray[np.int32]:
-        return np.ndarray((_NUM_CTRL_FIELDS,), dtype=np.int32, buffer=self.shm.control.buf)
+        return np.ndarray((_NUM_CTRL_FIELDS,), dtype=np.int32, buffer=self.shm.ctl.buf)
 
     def _increment_seq(self, index: int) -> None:
         seq_arr = np.ndarray((_NUM_SEQ_COUNTERS,), dtype=np.int64, buffer=self.shm.seq.buf)
@@ -277,37 +278,37 @@ class ManipShmReader:
         self.shm = ManipShmSet.attach(key)
 
     def read_positions(self, num_joints: int) -> list[float]:
-        arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.positions.buf)
+        arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.pos.buf)
         return [float(x) for x in arr[:num_joints]]
 
     def read_velocities(self, num_joints: int) -> list[float]:
-        arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.velocities.buf)
+        arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.vel.buf)
         return [float(x) for x in arr[:num_joints]]
 
     def read_efforts(self, num_joints: int) -> list[float]:
-        arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.efforts.buf)
+        arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.eff.buf)
         return [float(x) for x in arr[:num_joints]]
 
     def read_gripper_position(self) -> float:
-        arr = np.ndarray((2,), dtype=np.float64, buffer=self.shm.gripper.buf)
+        arr = np.ndarray((2,), dtype=np.float64, buffer=self.shm.grp.buf)
         return float(arr[0])
 
     def write_position_command(self, positions: list[float]) -> None:
         n = min(len(positions), MAX_JOINTS)
-        arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.position_targets.buf)
+        arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.pos_t.buf)
         arr[:n] = positions[:n]
         self._set_command_mode(CMD_MODE_POSITION)
         self._increment_seq(SEQ_POSITION_CMD)
 
     def write_velocity_command(self, velocities: list[float]) -> None:
         n = min(len(velocities), MAX_JOINTS)
-        arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.velocity_targets.buf)
+        arr = np.ndarray((MAX_JOINTS,), dtype=np.float64, buffer=self.shm.vel_t.buf)
         arr[:n] = velocities[:n]
         self._set_command_mode(CMD_MODE_VELOCITY)
         self._increment_seq(SEQ_VELOCITY_CMD)
 
     def write_gripper_command(self, position: float) -> None:
-        arr = np.ndarray((2,), dtype=np.float64, buffer=self.shm.gripper.buf)
+        arr = np.ndarray((2,), dtype=np.float64, buffer=self.shm.grp.buf)
         arr[1] = position
         self._increment_seq(SEQ_GRIPPER_CMD)
 
@@ -330,7 +331,7 @@ class ManipShmReader:
                 logger.warning("SHM close failed", name=shm.name, error=str(exc))
 
     def _control(self) -> NDArray[np.int32]:
-        return np.ndarray((_NUM_CTRL_FIELDS,), dtype=np.int32, buffer=self.shm.control.buf)
+        return np.ndarray((_NUM_CTRL_FIELDS,), dtype=np.int32, buffer=self.shm.ctl.buf)
 
     def _set_command_mode(self, mode: int) -> None:
         self._control()[CTRL_COMMAND_MODE] = mode
