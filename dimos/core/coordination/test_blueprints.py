@@ -14,9 +14,10 @@
 
 
 import pickle
-from typing import Protocol
+from typing import Protocol, get_type_hints
 
 from pydantic import ValidationError
+import pytest
 
 from dimos.core._test_future_annotations_helper import (
     FutureData,
@@ -128,10 +129,10 @@ def test_config() -> None:
     blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
     config = blueprint.config()
     assert config.model_fields.keys() == {"modulea", "moduleb", "g"}
-    assert config.model_fields["modulea"].annotation == ModuleA.default_config | None
-    assert config.model_fields["moduleb"].annotation == ModuleB.default_config | None
+    assert config.model_fields["modulea"].annotation == get_type_hints(ModuleA)["config"] | None
+    assert config.model_fields["moduleb"].annotation == get_type_hints(ModuleB)["config"] | None
 
-    with pytes.raises(ValidationError, match="invalid_key"):
+    with pytest.raises(ValidationError, match="invalid_key"):
         config(module_a={"invalid_key": 5})
 
 

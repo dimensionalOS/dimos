@@ -165,7 +165,7 @@ class Blueprint:
 
     def config(self) -> type:
         configs = {
-            b.module.name: (get_type_hints(type(b.module))["config"] | None, None)
+            b.module.name: (get_type_hints(b.module)["config"] | None, None)
             for b in self.blueprints
         }
         configs["g"] = (GlobalConfig | None, None)

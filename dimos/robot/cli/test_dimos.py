@@ -25,15 +25,15 @@ def test_blueprint_arg_help():
         entity_prefix: str = "world"
         viewer_mode: Literal["native", "web", "connect", "none"] = "native"
 
-    class TestModuleA(Module[ConfigA]):
-        default_config = ConfigA
+    class TestModuleA(Module):
+        config: ConfigA
 
     class ConfigB(ModuleConfig):
         memory_limit: str = "25%"
         ip: str = "127.0.0.1"
 
-    class TestModuleB(Module[ConfigB]):
-        default_config = ConfigB
+    class TestModuleB(Module):
+        config: ConfigB
 
     blueprint = autoconnect(TestModuleA.blueprint(), TestModuleB.blueprint())
     output = arg_help(blueprint.config(), blueprint)
@@ -65,15 +65,15 @@ def test_blueprint_arg_help_extra_args():
         entity_prefix: str = "world"
         viewer_mode: Literal["native", "web", "connect", "none"] = "native"
 
-    class TestModuleA(Module[ConfigA]):
-        default_config = ConfigA
+    class TestModuleA(Module):
+        config: ConfigA
 
     class ConfigB(ModuleConfig):
         memory_limit: str = "25%"
         ip: str = "127.0.0.1"
 
-    class TestModuleB(Module[ConfigB]):
-        default_config = ConfigB
+    class TestModuleB(Module):
+        config: ConfigB
 
     module_a = TestModuleA.blueprint(frame_id_prefix="foo", viewer_mode="web")
     blueprint = autoconnect(module_a, TestModuleB.blueprint(ip="1.1.1.1"))
@@ -104,8 +104,8 @@ def test_blueprint_arg_help_required():
         foo: int
         spam: str = "eggs"
 
-    class TestModule(Module[Config]):
-        default_config = Config
+    class TestModule(Module):
+        config: Config
 
     blueprint = TestModule.blueprint()
     output = arg_help(blueprint.config(), blueprint)
