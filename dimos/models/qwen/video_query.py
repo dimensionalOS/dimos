@@ -86,7 +86,7 @@ def query_single_frame_observable(
 
 
 def query_single_frame(
-    image: np.ndarray,  # type: ignore[type-arg]
+    image: np.ndarray,
     query: str = "Return the center coordinates of the fridge handle as a tuple (x,y)",
     api_key: str | None = None,
     model_name: str = "qwen2.5-vl-72b-instruct",

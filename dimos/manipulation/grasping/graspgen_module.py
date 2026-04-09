@@ -166,13 +166,13 @@ class GraspGenModule(Module[GraspGenConfig]):
         if self._sampler is None:
             return np.array([]), np.array([])
 
-        from grasp_gen.grasp_server import GraspGenSampler  # type: ignore[import-not-found]
+        from grasp_gen.grasp_server import GraspGenSampler
         from grasp_gen.utils.point_cloud_utils import (  # type: ignore[import-not-found]
             filter_colliding_grasps,
             point_cloud_outlier_removal,
         )
-        import torch  # type: ignore[import-not-found]
-        import trimesh.transformations as tra  # type: ignore[import-not-found]
+        import torch
+        import trimesh.transformations as tra
 
         pc_torch = torch.from_numpy(object_pc)
 

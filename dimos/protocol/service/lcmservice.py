@@ -76,7 +76,7 @@ class LCMService(Service[_Config]):
     _call_thread_pool: ThreadPoolExecutor | None = None
     _call_thread_pool_lock: threading.RLock = threading.RLock()
 
-    def __init__(self, **kwargs: Any) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
         # we support passing an existing LCM instance

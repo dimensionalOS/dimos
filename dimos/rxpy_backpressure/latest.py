@@ -7,14 +7,14 @@ from dimos.rxpy_backpressure.observer import Observer
 
 
 class LatestBackPressureStrategy(Observer):
-    def __init__(self, wrapped_observer: Observer):
+    def __init__(self, wrapped_observer: Observer) -> None:
         self.wrapped_observer: Observer = wrapped_observer
         self.__function_runner = thread_function_runner
         self.__lock: Lock = BooleanLock()
         self.__message_cache: Optional = None
         self.__error_cache: Optional = None
 
-    def on_next(self, message):
+    def on_next(self, message) -> None:
         if self.__lock.is_locked():
             self.__message_cache = message
         else:
@@ -22,7 +22,7 @@ class LatestBackPressureStrategy(Observer):
             self.__function_runner(self, self.__on_next, message)
 
     @staticmethod
-    def __on_next(self, message: any):
+    def __on_next(self, message: any) -> None:
         self.wrapped_observer.on_next(message)
         if self.__message_cache is not None:
             self.__function_runner(self, self.__on_next, self.__message_cache)
@@ -30,7 +30,7 @@ class LatestBackPressureStrategy(Observer):
         else:
             self.__lock.unlock()
 
-    def on_error(self, error: any):
+    def on_error(self, error: any) -> None:
         if self.__lock.is_locked():
             self.__error_cache = error
         else:
@@ -38,7 +38,7 @@ class LatestBackPressureStrategy(Observer):
             self.__function_runner(self, self.__on_error, error)
 
     @staticmethod
-    def __on_error(self, error: any):
+    def __on_error(self, error: any) -> None:
         self.wrapped_observer.on_error(error)
         if self.__error_cache:
             self.__function_runner(self, self.__on_error, self.__error_cache)
@@ -46,7 +46,7 @@ class LatestBackPressureStrategy(Observer):
         else:
             self.__lock.unlock()
 
-    def on_completed(self):
+    def on_completed(self) -> None:
         self.wrapped_observer.on_completed()
 
     def is_locked(self):

@@ -177,7 +177,7 @@ class SpatialMemory(Module[SpatialConfig]):
         self.robot_locations: list[RobotLocation] = []
 
         # Track latest data for processing
-        self._latest_video_frame: np.ndarray | None = None  # type: ignore[type-arg]
+        self._latest_video_frame: np.ndarray | None = None
         self._process_interval = 1
 
         logger.info(f"SpatialMemory initialized with model {self.embedding_model}")
@@ -518,7 +518,7 @@ class SpatialMemory(Module[SpatialConfig]):
             timestamp=time.time(),
         )
 
-        return self.add_robot_location(location)  # type: ignore[no-any-return]
+        return self.add_robot_location(location)
 
     @rpc
     def get_robot_locations(self) -> list[RobotLocation]:
@@ -579,7 +579,7 @@ def deploy(  # type: ignore[no-untyped-def]
     dimos: ModuleCoordinator,
     camera: Camera,
 ):
-    spatial_memory = dimos.deploy(SpatialMemory, db_path="/tmp/spatial_memory_db")  # type: ignore[attr-defined]
+    spatial_memory = dimos.deploy(SpatialMemory, db_path="/tmp/spatial_memory_db")
     spatial_memory.color_image.connect(camera.color_image)
     spatial_memory.start()
     return spatial_memory

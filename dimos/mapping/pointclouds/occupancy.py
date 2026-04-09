@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
 from numba import njit, prange  # type: ignore[import-untyped]
 import numpy as np
-from scipy import ndimage  # type: ignore[import-untyped]
+from scipy import ndimage
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid

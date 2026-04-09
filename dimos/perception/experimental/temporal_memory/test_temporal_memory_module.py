@@ -529,7 +529,7 @@ class VideoReplayModule(Module):
     def start(self) -> None:
         import reactivex
 
-        def emit_frames(observer, scheduler):  # type: ignore[no-untyped-def]
+        def emit_frames(observer, scheduler):
             for i in range(self.num_frames):
                 img = _make_image(value=min(50 + i * 30, 255))  # Varying brightness
                 img.ts = time.time()

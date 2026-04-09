@@ -174,7 +174,7 @@ class ObjectDB:
             if not candidates:
                 return None
 
-            return min(candidates, key=lambda obj: position.distance(obj.center))  # type: ignore[arg-type]
+            return min(candidates, key=lambda obj: position.distance(obj.center))
 
     def clear(self) -> None:
         """Clear all objects from the database."""
@@ -277,7 +277,7 @@ class ObjectDB:
         if not candidates:
             return None
 
-        return min(candidates, key=lambda o: obj.center.distance(o.center))  # type: ignore[union-attr]
+        return min(candidates, key=lambda o: obj.center.distance(o.center))
 
     def _prune_stale_pending(self, now: float) -> None:
         if self._pending_ttl_s <= 0:

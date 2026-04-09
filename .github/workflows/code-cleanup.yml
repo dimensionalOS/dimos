@@ -17,8 +17,8 @@ jobs:
       run: |
         sudo chown -R $USER:$USER ${{ github.workspace }} || true
 
-    - uses: actions/checkout@v3
-    - uses: actions/setup-python@v3
+    - uses: actions/checkout@v5
+    - uses: actions/setup-python@v5
     - uses: astral-sh/setup-uv@v4
     - name: Run pre-commit
       id: pre-commit-first

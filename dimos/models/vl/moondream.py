@@ -5,7 +5,7 @@ import warnings
 import numpy as np
 from PIL import Image as PILImage
 import torch
-from transformers import AutoModelForCausalLM  # type: ignore[import-untyped]
+from transformers import AutoModelForCausalLM
 
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
 from dimos.models.vl.base import VlModel, VlModelConfig
@@ -28,7 +28,7 @@ class MoondreamConfig(HuggingFaceModelConfig, VlModelConfig):
 
 class MoondreamVlModel(HuggingFaceModel, VlModel[MoondreamConfig]):
     _model_class = AutoModelForCausalLM
-    default_config = MoondreamConfig  # type: ignore[assignment]
+    default_config = MoondreamConfig
 
     @cached_property
     def _model(self) -> AutoModelForCausalLM:
@@ -55,7 +55,7 @@ class MoondreamVlModel(HuggingFaceModel, VlModel[MoondreamConfig]):
         rgb_image = image.to_rgb()
         return PILImage.fromarray(rgb_image.data)
 
-    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
+    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def]
         pil_image = self._to_pil(image)
 
         # Query the model

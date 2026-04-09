@@ -383,7 +383,7 @@ class ROSNav(
 
 
 def deploy(dimos: ModuleCoordinator):  # type: ignore[no-untyped-def]
-    nav = dimos.deploy(ROSNav)  # type: ignore[attr-defined]
+    nav = dimos.deploy(ROSNav)
 
     # Existing ports on LCM transports
     nav.pointcloud.transport = LCMTransport("/lidar", PointCloud2)

@@ -23,7 +23,7 @@ import cv2
 import numpy as np
 from pydantic import Field
 import reactivex as rx
-from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
+from scipy.spatial.transform import Rotation
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
@@ -47,7 +47,7 @@ from dimos.spec import perception
 from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
-    import pyrealsense2 as rs  # type: ignore[import-untyped,import-not-found]
+    import pyrealsense2 as rs  # type: ignore[import-not-found,import-untyped]
 
 
 def default_base_transform() -> Transform:
@@ -120,7 +120,7 @@ class RealSenseCamera(DepthCameraHardware, Module[RealSenseCameraConfig], percep
 
     @rpc
     def start(self) -> None:
-        import pyrealsense2 as rs  # type: ignore[import-untyped,import-not-found]
+        import pyrealsense2 as rs
 
         self._pipeline = rs.pipeline()
         config = rs.config()
@@ -188,7 +188,7 @@ class RealSenseCamera(DepthCameraHardware, Module[RealSenseCameraConfig], percep
             self.depth_camera_info.publish(self._depth_camera_info)
 
     def _build_camera_info(self) -> None:
-        import pyrealsense2 as rs  # type: ignore[import-untyped,import-not-found]
+        import pyrealsense2 as rs
 
         if self._profile is None:
             return
@@ -215,7 +215,7 @@ class RealSenseCamera(DepthCameraHardware, Module[RealSenseCameraConfig], percep
                 )
 
     def _intrinsics_to_camera_info(self, intrinsics: rs.intrinsics, frame_id: str) -> CameraInfo:
-        import pyrealsense2 as rs  # type: ignore[import-untyped,import-not-found]
+        import pyrealsense2 as rs
 
         fx, fy = intrinsics.fx, intrinsics.fy
         cx, cy = intrinsics.ppx, intrinsics.ppy
@@ -244,7 +244,7 @@ class RealSenseCamera(DepthCameraHardware, Module[RealSenseCameraConfig], percep
         )
 
     def _get_extrinsics(self) -> None:
-        import pyrealsense2 as rs  # type: ignore[import-untyped,import-not-found]
+        import pyrealsense2 as rs
 
         if self._profile is None or not self.config.enable_depth:
             return
@@ -449,7 +449,7 @@ def main() -> None:
     dimos = ModuleCoordinator()
     dimos.start()
 
-    camera = dimos.deploy(RealSenseCamera, enable_pointcloud=True, pointcloud_fps=5.0)  # type: ignore[type-var]
+    camera = dimos.deploy(RealSenseCamera, enable_pointcloud=True, pointcloud_fps=5.0)
     foxglove_bridge = FoxgloveBridge()
     foxglove_bridge.start()
 

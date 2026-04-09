@@ -49,7 +49,7 @@ class ObservableMixin(Generic[T]):
     def get_next(self, timeout: float = 10.0) -> T:
         try:
             return (  # type: ignore[no-any-return]
-                self.observable()  # type: ignore[no-untyped-call]
+                self.observable()
                 .pipe(ops.first(), *([ops.timeout(timeout)] if timeout is not None else []))
                 .run()
             )
@@ -57,7 +57,7 @@ class ObservableMixin(Generic[T]):
             raise Exception(f"No value received after {timeout} seconds") from e
 
     def hot_latest(self) -> Callable[[], T]:
-        return reactive.getter_streaming(self.observable())  # type: ignore[no-untyped-call]
+        return reactive.getter_streaming(self.observable())
 
     def pure_observable(self) -> Observable[T]:
         def _subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
@@ -242,7 +242,7 @@ class In(Stream[T], ObservableMixin[T]):
         self._transport = value
 
     def connect(self, value: Out[T]) -> None:
-        value.subscribe(self.transport.publish)  # type: ignore[arg-type]
+        value.subscribe(self.transport.publish)
 
     @property
     def state(self) -> State:

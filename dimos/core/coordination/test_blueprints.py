@@ -182,7 +182,7 @@ class CalcSpec(Spec, Protocol):
 
 class ModuleWithOptionalRef(Module):
     data1: In[Data1]
-    calc: CalcSpec | None = None  # type: ignore[assignment]
+    calc: CalcSpec | None = None
 
 
 def test_optional_module_ref_detected() -> None:

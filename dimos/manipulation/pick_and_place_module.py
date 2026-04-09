@@ -123,7 +123,7 @@ class PickAndPlaceModule(ManipulationModule):
 
         # Subscribe to objects port for perception obstacle integration
         if self.objects is not None:
-            self.objects.observable().subscribe(self._on_objects)  # type: ignore[no-untyped-call]
+            self.objects.observable().subscribe(self._on_objects)
             logger.info("Subscribed to objects port (async)")
 
         # Start obstacle monitor for perception integration

@@ -516,7 +516,7 @@ def test_load_blueprint_conflict_with_existing() -> None:
 
     bp = ConflictModule.blueprint()
     with pytest.raises(ValueError, match="data1"):
-        _verify_no_conflicts_with_existing(bp, registry)  # type: ignore[arg-type]
+        _verify_no_conflicts_with_existing(bp, registry)
 
 
 @pytest.mark.slow
@@ -529,7 +529,7 @@ def test_load_blueprint_duplicate_module_raises(dynamic_coordinator) -> None:
 
 class ModWithOptionalRef(Module):
     stream1: In[Image]
-    calc: CalculatorSpec | None = None  # type: ignore[assignment]
+    calc: CalculatorSpec | None = None
 
     @rpc
     def start(self) -> None: ...

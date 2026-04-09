@@ -29,7 +29,7 @@ class MoondreamHostedVlModel(VlModel[Config]):
             )
         return md.vl(api_key=api_key)
 
-    def _to_pil_image(self, image: Image | np.ndarray) -> PILImage.Image:  # type: ignore[type-arg]
+    def _to_pil_image(self, image: Image | np.ndarray) -> PILImage.Image:
         if isinstance(image, np.ndarray):
             warnings.warn(
                 "MoondreamHostedVlModel should receive standard dimos Image type, not a numpy array",
@@ -41,13 +41,13 @@ class MoondreamHostedVlModel(VlModel[Config]):
         rgb_image = image.to_rgb()
         return PILImage.fromarray(rgb_image.data)
 
-    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
+    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def]
         pil_image = self._to_pil_image(image)
 
         result = self._client.query(pil_image, query)
         return result.get("answer", str(result))  # type: ignore[no-any-return]
 
-    def caption(self, image: Image | np.ndarray, length: str = "normal") -> str:  # type: ignore[type-arg]
+    def caption(self, image: Image | np.ndarray, length: str = "normal") -> str:
         """Generate a caption for the image.
 
         Args:
