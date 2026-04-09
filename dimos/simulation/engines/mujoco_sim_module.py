@@ -94,7 +94,7 @@ class MujocoSimModuleConfig(ModuleConfig, DepthCameraConfig):
 
 class MujocoSimModule(
     DepthCameraHardware,
-    Module[MujocoSimModuleConfig],
+    Module,
     perception.DepthCamera,
 ):
     """Single Module that owns a MujocoEngine, publishes camera streams, and
@@ -105,6 +105,7 @@ class MujocoSimModule(
     the adapter is an ordinary ``ManipulatorAdapter``; SHM is its transport.
     """
 
+    config: MujocoSimModuleConfig
     color_image: Out[Image]
     depth_image: Out[Image]
     pointcloud: Out[PointCloud2]
@@ -220,7 +221,7 @@ class MujocoSimModule(
 
         # Periodic camera_info publishing.
         interval_sec = 1.0 / self.config.camera_info_fps
-        self._disposables.add(
+        self.register_disposable(
             rx.interval(interval_sec).subscribe(
                 on_next=lambda _: self._publish_camera_info(),
                 on_error=lambda e: logger.error("CameraInfo publish error", error=str(e)),
@@ -230,7 +231,7 @@ class MujocoSimModule(
         # Optional pointcloud generation.
         if self.config.enable_pointcloud and self.config.enable_depth:
             pc_interval = 1.0 / self.config.pointcloud_fps
-            self._disposables.add(
+            self.register_disposable(
                 rx.interval(pc_interval).subscribe(
                     on_next=lambda _: self._generate_pointcloud(),
                     on_error=lambda e: logger.error("Pointcloud error", error=str(e)),

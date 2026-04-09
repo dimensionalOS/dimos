@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING
 
 import mujoco
 import mujoco.viewer as viewer  # type: ignore[import-untyped]
+import numpy as np
+from numpy.typing import NDArray
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.simulation.engines.base import SimulationEngine
