@@ -194,7 +194,10 @@ class DrakeWorld(WorldSpec):
         self._obstacle_source_id: Any = None
 
     def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
-        """Add a robot to the world. Returns robot_id."""
+        """Add a robot to the world. Returns robot_id.
+
+        Same model_path + base_pose reuses the model instance (e.g. two arms in one URDF).
+        """
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
 
@@ -204,6 +207,7 @@ class DrakeWorld(WorldSpec):
 
             model_instance = self._load_model(config)
             self._weld_base_if_needed(config, model_instance)
+
             self._validate_joints(config, model_instance)
 
             ee_frame = self._plant.GetBodyByName(
@@ -211,7 +215,7 @@ class DrakeWorld(WorldSpec):
             ).body_frame()
             base_frame = self._plant.GetBodyByName(config.base_link, model_instance).body_frame()
 
-            # Load a second copy of the URDF as the preview (yellow ghost) robot
+            # Preview (yellow ghost) — always a separate instance per robot
             preview_model_instance = None
             if self._enable_viz:
                 preview_model_instance = self._load_model(config)
