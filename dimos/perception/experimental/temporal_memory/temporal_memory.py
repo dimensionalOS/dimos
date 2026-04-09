@@ -53,7 +53,7 @@ from .window_analyzer import WindowAnalyzer
 try:
     from .clip_filter import CLIPFrameFilter
 except ImportError:
-    CLIPFrameFilter = type(None)  # type: ignore[misc,assignment]
+    CLIPFrameFilter = type(None)  # type: ignore[assignment, misc]
 
 logger = setup_logger()
 

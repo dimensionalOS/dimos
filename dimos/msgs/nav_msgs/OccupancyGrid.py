@@ -23,7 +23,7 @@ from dimos_lcm.nav_msgs import (
     MapMetaData,
     OccupancyGrid as LCMOccupancyGrid,
 )
-from dimos_lcm.std_msgs import Time as LCMTime  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Time as LCMTime
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image

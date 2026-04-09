@@ -337,14 +337,14 @@ class RerunBridgeModule(Module):
         for pubsub in self.config.pubsubs:
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
             if hasattr(pubsub, "start"):
-                pubsub.start()  # type: ignore[union-attr]
+                pubsub.start()
             unsub = pubsub.subscribe_all(self._on_message)
             self._disposables.add(Disposable(unsub))
 
         # Add pubsub stop as disposable
         for pubsub in self.config.pubsubs:
             if hasattr(pubsub, "stop"):
-                self._disposables.add(Disposable(pubsub.stop))  # type: ignore[union-attr]
+                self._disposables.add(Disposable(pubsub.stop))
 
         self._log_static()
 

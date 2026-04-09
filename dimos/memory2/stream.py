@@ -329,7 +329,7 @@ class Stream(Resource, Generic[T]):
         on_completed: Callable[[], None] | None = None,
     ) -> DisposableBase:
         """Subscribe to this stream as an RxPY Observable."""
-        return self.observable().subscribe(  # type: ignore[call-overload]
+        return self.observable().subscribe(
             on_next=on_next,
             on_error=on_error,
             on_completed=on_completed,

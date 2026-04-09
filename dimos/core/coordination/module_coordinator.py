@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-class ModuleCoordinator(Resource):  # type: ignore[misc]
+class ModuleCoordinator(Resource):
     _managers: dict[str, WorkerManager]
     _global_config: GlobalConfig
     _deployed_modules: dict[type[ModuleBase], ModuleProxyProtocol]
@@ -106,7 +106,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         deployed_module = self._managers[module_class.deployment].deploy(
             module_class, global_config, kwargs
         )
-        self._deployed_modules[module_class] = deployed_module  # type: ignore[assignment]
+        self._deployed_modules[module_class] = deployed_module
         return deployed_module  # type: ignore[return-value]
 
     def deploy_parallel(self, module_specs: list[ModuleSpec]) -> list[ModuleProxy]:
@@ -173,7 +173,7 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
                 module.on_system_modules(modules)
 
     def get_instance(self, module: type[ModuleBase]) -> ModuleProxy:
-        return self._deployed_modules.get(module)  # type: ignore[return-value, no-any-return]
+        return self._deployed_modules.get(module)  # type: ignore[return-value]
 
     def _connect_streams(self, blueprint: Blueprint) -> None:
         streams: dict[tuple[str, type], list[tuple[type, str]]] = defaultdict(list)
@@ -192,8 +192,8 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
                 transport = _get_transport_for(blueprint, remapped_name, stream_type)
             self._transport_registry[key] = transport
             for module, original_name in streams[key]:
-                instance = self.get_instance(module)  # type: ignore[assignment]
-                instance.set_transport(original_name, transport)  # type: ignore[union-attr]
+                instance = self.get_instance(module)
+                instance.set_transport(original_name, transport)
                 logger.info(
                     "Transport",
                     name=remapped_name,
@@ -575,7 +575,7 @@ def _connect_module_refs(
 
     for (base_module, ref_name), target_module in mod_and_mod_ref_to_proxy.items():
         base_instance = module_coordinator.get_instance(base_module)
-        target_instance = module_coordinator.get_instance(target_module)  # type: ignore[type-var,arg-type]
+        target_instance = module_coordinator.get_instance(target_module)  # type: ignore[arg-type]
         setattr(base_instance, ref_name, target_instance)
         base_instance.set_module_ref(ref_name, target_instance)
 

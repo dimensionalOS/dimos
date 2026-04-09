@@ -32,7 +32,7 @@ class MulticastConfiguratorLinux(SystemConfigurator):
     critical = True
     MULTICAST_PREFIX = "224.0.0.0/4"
 
-    def __init__(self, loopback_interface: str = "lo"):
+    def __init__(self, loopback_interface: str = "lo") -> None:
         self.loopback_interface = loopback_interface
 
         self.loopback_ok: bool | None = None
@@ -134,7 +134,7 @@ class MulticastConfiguratorLinux(SystemConfigurator):
 class MulticastConfiguratorMacOS(SystemConfigurator):
     critical = True
 
-    def __init__(self, loopback_interface: str = "lo0"):
+    def __init__(self, loopback_interface: str = "lo0") -> None:
         self.loopback_interface = loopback_interface
         self.add_route_cmd = [
             "route",
@@ -263,7 +263,7 @@ class MaxFileConfiguratorMacOS(SystemConfigurator):
     critical = False
     TARGET_FILE_COUNT_LIMIT = 65536
 
-    def __init__(self, target: int = TARGET_FILE_COUNT_LIMIT):
+    def __init__(self, target: int = TARGET_FILE_COUNT_LIMIT) -> None:
         self.target = target
         self.current_soft: int = 0
         self.current_hard: int = 0

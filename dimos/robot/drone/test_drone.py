@@ -669,7 +669,7 @@ class TestDronePerception(unittest.TestCase):
         piped_stream = MagicMock()
         piped_captured: list[Image] = []
 
-        def piped_subscribe(callback):  # type: ignore[no-untyped-def]
+        def piped_subscribe(callback):
             for frame in video_frames:
                 img = Image(data=frame, format=ImageFormat.RGB)  # After format fix
                 callback(img)

@@ -27,7 +27,7 @@ LidarMessage = PointCloud2
 
 
 class RawLidarPoints(TypedDict):
-    points: np.ndarray  # type: ignore[type-arg]  # Shape (N, 3) array of 3D points [x, y, z]
+    points: np.ndarray  # Shape (N, 3) array of 3D points [x, y, z]
 
 
 class RawLidarData(TypedDict):

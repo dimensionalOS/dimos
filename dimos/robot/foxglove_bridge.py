@@ -100,7 +100,7 @@ def deploy(
             "/lidar#sensor_msgs.PointCloud2",
             "/map#sensor_msgs.PointCloud2",
         ]
-    foxglove_bridge = dimos.deploy(  # type: ignore[attr-defined]
+    foxglove_bridge = dimos.deploy(
         FoxgloveBridge,
         shm_channels=shm_channels,
     )

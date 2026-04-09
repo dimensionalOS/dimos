@@ -59,7 +59,7 @@ def main() -> None:
         logging.getLogger().setLevel(logging.DEBUG)
 
     # Initialize LCM
-    _lcm.autoconf()  # type: ignore[attr-defined]
+    _lcm.autoconf()
 
     # Start dimos
     dimos = ModuleCoordinator()
@@ -67,7 +67,7 @@ def main() -> None:
 
     # Deploy the GStreamer camera module
     logger.info(f"Deploying GStreamer TCP camera module (connecting to {args.host}:{args.port})...")
-    camera = dimos.deploy(  # type: ignore[attr-defined]
+    camera = dimos.deploy(
         GstreamerCameraModule,
         host=args.host,
         port=args.port,

@@ -116,7 +116,7 @@ class BaseAgentModule(BaseAgent, Module):  # type: ignore[misc]
         # Primary AgentMessage input
         if self.message_in and self.message_in.connection is not None:
             try:
-                disposable = self.message_in.observable().subscribe(  # type: ignore[no-untyped-call]
+                disposable = self.message_in.observable().subscribe(
                     lambda msg: self._handle_agent_message(msg)
                 )
                 self._module_disposables.append(disposable)
