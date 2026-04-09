@@ -31,7 +31,6 @@ from typing import (
 )
 
 from pydantic import Field
-from reactivex.disposable import CompositeDisposable
 
 from dimos.core.core import T, rpc
 from dimos.core.global_config import GlobalConfig, global_config
@@ -110,7 +109,6 @@ class ModuleBase(Configurable, CompositeResource):
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread: threading.Thread | None
     _bound_rpc_calls: dict[str, RpcCall] = {}
-    _disposables: CompositeDisposable
     _module_closed: bool = False
     _module_closed_lock: threading.Lock
     _loop_thread_timeout: float = 2.0
