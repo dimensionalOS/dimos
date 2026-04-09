@@ -23,12 +23,14 @@ from reactivex import Subject
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
+from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
-from dimos.msgs.nav_msgs.Path import Path
+from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.base import NavigationState
 from dimos.navigation.replanning_a_star.controllers import Controller, PController
+from dimos.navigation.replanning_a_star.trajectory_controller import TrajectoryController
+from dimos.navigation.replanning_a_star.clearance_monitor import ClearanceMonitor
+from dimos.navigation.replanning_a_star.performance_logger import PerformanceLogger
 from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
 from dimos.navigation.replanning_a_star.path_clearance import PathClearance
 from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
@@ -63,6 +65,8 @@ class LocalPlanner(Resource):
     _navigation_map: NavigationMap
     _goal_tolerance: float
     _controller: Controller
+    _clearance_monitor: ClearanceMonitor
+    _perf_logger: PerformanceLogger
 
     _speed: float = 0.55
     _control_frequency: float = 10
@@ -86,15 +90,15 @@ class LocalPlanner(Resource):
         self._navigation_map = navigation_map
         self._goal_tolerance = goal_tolerance
 
-        speed = self._speed
-        if global_config.nerf_speed < 1.0:
-            speed *= global_config.nerf_speed
-
-        self._controller = PController(
-            self._global_config,
-            speed,
-            self._control_frequency,
+        self._controller = TrajectoryController(
+            global_config=self._global_config,
+            speed=self._speed,
+            control_frequency=self._control_frequency,
         )
+        self._clearance_monitor = ClearanceMonitor(
+            robot_width=self._global_config.robot_width,
+        )
+        self._perf_logger = PerformanceLogger(print_interval=10.0)
 
     def start(self) -> None:
         pass
@@ -113,13 +117,20 @@ class LocalPlanner(Resource):
 
         with self._lock:
             self._path = path
+            self._controller.set_path(path)
             self._path_clearance = PathClearance(self._global_config, self._path)
             self._path_distancer = PathDistancer(self._path)
+            path_len = sum(
+                path.poses[i].position.distance(path.poses[i+1].position)
+                for i in range(len(path.poses)-1)
+            ) if len(path.poses) > 1 else 0.0
+            self._perf_logger.start_episode(path_length=path_len)
             self._pose_index = 0
             self._thread = Thread(target=self._thread_entrypoint, daemon=True)
             self._thread.start()
 
     def stop_planning(self) -> None:
+        self._perf_logger.end_episode(completed=False)       
         self.cmd_vel.on_next(Twist())
         self._stop_planning_event.set()
 
@@ -284,8 +295,57 @@ class LocalPlanner(Resource):
             self._pose_index = closest_index
 
         lookahead_point = path_distancer.find_lookahead_point(closest_index)
+ 
+        # Clearance-aware speed scaling (tight corridors → slow + precise)
+        speed_scale, cte_tolerance = 1.0, 0.10
+        with self._lock:
+            nav_map = self._navigation_map
+        try:
+            speed_scale, cte_tolerance = self._clearance_monitor.update(
+                robot_pos_world=current_pos,
+                costmap=nav_map.binary_costmap,
+            )
+        except Exception:
+            pass  # costmap not yet available — use defaults
 
-        return self._controller.advance(lookahead_point, current_odom)
+        # Feed clearance back to GlobalPlanner for clearance-aware replanning
+        try:
+            self._notify_clearance(self._clearance_monitor.clearance)
+        except Exception:
+            pass
+ 
+        twist = self._controller.advance(
+            lookahead_point, current_odom,
+            speed_scale=speed_scale,
+            cte_tolerance=cte_tolerance,
+        )
+ 
+        # Log performance
+        import math
+        vx, vy = twist.linear.x, twist.linear.y
+        speed = math.sqrt(vx**2 + vy**2)
+        tang = None
+        from dimos.navigation.replanning_a_star.trajectory_controller import _path_tangent
+        import numpy as np
+        try:
+            pts_arr = path_distancer._path
+            tang = _path_tangent(pts_arr, closest_index)
+            norm = np.array([-tang[1], tang[0]])
+            cte  = float(np.dot(current_pos - pts_arr[closest_index], norm))
+        except Exception:
+            cte = 0.0
+        from dimos.utils.trigonometry import angle_diff
+        import math as _math
+        desired_yaw = _math.atan2(tang[1], tang[0]) if tang is not None else 0.0
+        heading_err = angle_diff(desired_yaw, current_odom.orientation.euler[2])
+        target_speed = self._speed * speed_scale
+        self._perf_logger.record(
+            speed=speed, cte=cte, heading_error=heading_err,
+            target_speed=target_speed,
+            clearance=self._clearance_monitor.clearance,
+            mode="path_following",
+        )
+        return twist
 
     def _compute_final_rotation(self) -> Twist:
         with self._lock:
@@ -306,6 +366,15 @@ class LocalPlanner(Resource):
             return Twist()
 
         return self._controller.rotate(yaw_error)
+
+    def set_global_planner_ref(self, planner) -> None:
+        """Called by GlobalPlanner to enable clearance feedback."""
+        self._global_planner_ref = planner
+
+    def _notify_clearance(self, clearance: float) -> None:
+        gp = getattr(self, "_global_planner_ref", None)
+        if gp is not None:
+            gp.handle_clearance_update(clearance)
 
     def _reset_state(self) -> None:
         with self._lock:
