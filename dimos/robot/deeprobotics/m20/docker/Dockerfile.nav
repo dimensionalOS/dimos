@@ -8,18 +8,18 @@
 #   - Patched ARISE launch file (longer lifecycle timers for ARM64)
 #
 # Build:
-#   docker build -t ghcr.io/dimensionalOS/m20-nav:latest \
+#   docker build -t ghcr.io/aphexcx/m20-nav:latest \
 #     -f dimos/robot/deeprobotics/m20/docker/Dockerfile.nav .
 #
 # Run:
 #   docker run --network host --ipc host --privileged \
 #     -v /dev/shm:/dev/shm -v /opt/dimos/src:/workspace/dimos \
 #     -e MODE=hardware -e LOCALIZATION_METHOD=arise_slam \
-#     ghcr.io/dimensionalOS/m20-nav:latest
+#     ghcr.io/aphexcx/m20-nav:latest
 
 # Global build args (must be before first FROM)
 ARG ROS_DISTRO=humble
-ARG BASE_NAV_IMAGE=ghcr.io/dimensionalOS/m20-nav-base:latest
+ARG BASE_NAV_IMAGE=ghcr.io/aphexcx/m20-nav-base:latest
 
 # --- Stage 1: Build ros2_pub against ROS2 Humble ---
 FROM ros:${ROS_DISTRO}-ros-base AS m20-builder

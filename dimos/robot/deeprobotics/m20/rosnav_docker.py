@@ -40,7 +40,7 @@ class M20ROSNavConfig(ROSNavConfig):
     """M20 nav config — dimos manages the container lifecycle."""
 
     # Use the M20 nav image (includes ros2_pub + ARISE configs)
-    docker_image: str = "ghcr.io/dimensionalOS/m20-nav:latest"
+    docker_image: str = "ghcr.io/aphexcx/m20-nav:latest"
     docker_container_name: str = "dimos-nav"
 
     # Don't try to build from Dockerfile — image is pre-built via deploy.sh push
