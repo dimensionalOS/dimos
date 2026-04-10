@@ -10,7 +10,7 @@
 
 This project migrates the DeepRobotics M20 quadruped from a monolithic Docker architecture to the ROSNav host+container pattern already proven on the Unitree G1. Currently, ALL of dimos runs inside a single ROS2 Humble Docker container on the M20's NOS compute board. The target architecture splits this: dimos runs natively on the NOS host (via uv/Python 3.10), while the CMU navigation stack (FASTLIO2, FAR planner, base_autonomy) runs in a separate Humble Docker container managed by DockerModule. This architectural migration is the prerequisite for multi-level autonomous navigation.
 
-The end user for THIS project is the Houmanoids engineering team, operating the robot through the dimos viewer (Rerun fork) and the existing command center. The broader business context is a CATL factory pilot involving patrol and inspection across multiple floors connected by stairs and ramps. However, the CATL-facing product layer (Houdini fleet management integration, Chinese language UI, production SLAs) is a separate epic. This project delivers the robotics infrastructure: reliable single-floor autonomy in Phase 1, relocalization and map persistence in Phase 2, and validated multi-level stair/ramp traversal in Phase 3.
+The end user for THIS project is the Houmanoids engineering team, operating the robot through the dimos viewer (Rerun fork) and the existing command center. The broader business context is a factory pilot involving patrol and inspection across multiple floors connected by stairs and ramps. However, the pilot customer-facing product layer (Houdini fleet management integration, Chinese language UI, production SLAs) is a separate epic. This project delivers the robotics infrastructure: reliable single-floor autonomy in Phase 1, relocalization and map persistence in Phase 2, and validated multi-level stair/ramp traversal in Phase 3.
 
 The M20's key differentiator is quadruped stair-climbing. No wheeled AMR can traverse stairs. This makes the ROSNav migration strategically important: it unlocks a capability class that competitors cannot match, while aligning the M20's software architecture with the proven dimos pattern used across the rest of the fleet.
 
@@ -22,18 +22,18 @@ The M20's key differentiator is quadruped stair-climbing. No wheeled AMR can tra
 - Questions addressed: 147 (all tiers: P0 through P3)
 - Auto-answered from codebase: 95
 - Human decisions (brainstorming dialogue): 52
-- Key insight: project scope is dimos multi-level nav infrastructure, not CATL-facing product
+- Key insight: project scope is dimos multi-level nav infrastructure, not the pilot customer-facing product
 
 ### Key Decisions Table
 
 | # | Question | Answer | How Decided |
 |---|----------|--------|-------------|
-| 2 | What does "multi-floor transition" mean at CATL? | Ramps AND staircases -- continuous traversal. No elevators at CATL, only stairs connecting levels. | Human (site knowledge) |
+| 2 | What does "multi-floor transition" mean at the pilot site? | Ramps AND staircases -- continuous traversal. No elevators at the pilot site, only stairs connecting levels. | Human (site knowledge) |
 | 4 | Does Phase 1 deliver user-visible value? | Yes. Currently ZERO autonomy on M20 (only manual teleop). Phase 1 delivers autonomous single-floor navigation. dimos IS the autonomy layer. | Human (current state clarification) |
 | 5 | Automatic or manual floor transitions? | Continuous traversal (stairs/ramps), not discrete elevator-based switching. No user intervention needed at transition points. | Human (follows from Q2) |
 | 8 | Will existing maps carry over? | No. Start fresh with FASTLIO2. No migration of manufacturer lio_perception maps. | Human (clean break) |
 | 9 | Who is the primary end-user? | Houmanoids engineering team, via dimos viewer (Rerun fork) + command center. | Human |
-| 10 | What job is the robot doing during the pilot? | Patrol + inspection at CATL factory. | Human |
+| 10 | What job is the robot doing during the pilot? | Patrol + inspection at pilot factory. | Human |
 | 12 | What is explicitly NOT being solved? | Fleet management, multi-robot, automated inspection analysis, elevator integration, OTA updates, Chinese language in dimos UI, production SLAs, Houdini integration, command center new features. | Human (scope recalibration) |
 | 14 | Mission completion rate threshold? | Goal is zero-intervention autonomous operation. Achieved iteratively through edge-case fixing during development. | Human |
 | 16 | Acceptable operator interventions per shift? | Zero (target). This is iterative -- fix edge cases as they surface. | Human |
@@ -41,7 +41,7 @@ The M20's key differentiator is quadruped stair-climbing. No wheeled AMR can tra
 | 25 | What is the "factory pilot" in business terms? | Demo / proof of concept. | Human |
 | 28 | Safety/compliance requirements? | Standard e-stop. M20 has hardware e-stop (HES button). | Human |
 | 53 | Where does the monitoring view live? | Dimos viewer (Rerun fork) sufficient for debugging. No command center additions needed. | Human |
-| 64 | Environmental conditions at CATL? | Dust + reflective surfaces. Tuning challenges, not blockers. | Human |
+| 64 | Environmental conditions at the pilot site? | Dust + reflective surfaces. Tuning challenges, not blockers. | Human |
 | 69 | arise_slam porting: research or engineering? | Uncertain difficulty. Phased approach validated. FASTLIO2 for Phase 1, arise_slam is Phase 2 with explicit risk budget. | Human |
 
 ### Deferred Questions
@@ -53,13 +53,13 @@ The following are explicitly deferred to the Houdini integration epic or post-de
 | 13 | AMR competitor benchmarking | Houdini epic (commercial positioning) |
 | 24 | Multi-floor visual representation | Phase 2+ (UI for floor context) |
 | 27 | Uptime SLA | Post-demo (production hardening) |
-| 40 | Chinese language support | Houdini epic (CATL-facing product) |
+| 40 | Chinese language support | Houdini epic (the pilot customer-facing product) |
 | 52 | Shift handoff flow | Post-demo (operational process) |
 | 65 | Promises to pilot stakeholders | Houdini epic (business alignment) |
 | 80 | System update mechanism | Post-demo (OTA is out of scope) |
 | 86 | Multi-user command conflict | Houdini epic (fleet management) |
-| 89 | Training materials | Post-demo (CATL onboarding) |
-| 95 | Role-based information density | Houdini epic (CATL supervisors) |
+| 89 | Training materials | Post-demo (the pilot customer onboarding) |
+| 95 | Role-based information density | Houdini epic (the pilot customer supervisors) |
 | 103 | Patrol route setup | Post-Phase 1 (requires basic nav first) |
 | 128 | Role-based permissions | Houdini epic (multi-user access) |
 
@@ -513,9 +513,9 @@ M20 uses DeepRobotics' proprietary `drdds` DDS implementation alongside standard
 |------|-----------|
 | Fleet management / multi-robot | Houdini integration epic. This project is single-robot infrastructure. |
 | Automated inspection analysis | Capture-only for pilot. Analysis is a separate product feature. |
-| Elevator integration | No elevators at CATL. Only stairs and ramps. |
+| Elevator integration | No elevators at the pilot site. Only stairs and ramps. |
 | OTA updates | deploy.sh manual deployment is sufficient for engineering team. |
-| Chinese language in dimos UI | Handled in Houdini epic (CATL-facing product layer). |
+| Chinese language in dimos UI | Handled in Houdini epic (the pilot customer-facing product layer). |
 | Production SLAs | This is a demo/proof-of-concept. Production hardening is post-demo. |
 | Load/unload automation | Not part of patrol/inspection mission. |
 | Houdini integration | Separate epic. dimos viewer + command center are sufficient for this project. |
@@ -625,7 +625,7 @@ M20 uses DeepRobotics' proprietary `drdds` DDS implementation alongside standard
 - Transport layer: `dimos/core/transport.py`
 
 ### External References
-- M20 official dev guide: `~/gt/houmanoids_www/crew/nell/relay/docs/m20-official-software-development-guide.md`
+- M20 official dev guide: `dimos/robot/deeprobotics/m20/docs/m20-official-software-development-guide.md`
 - rsdriver config (robot): `/opt/robot/share/node_driver/config/config.yaml`
 - lio_perception script (robot): `/opt/robot/share/lio_perception/scripts/lio_ddsnode.sh`
 - FASTLIO2 RoboSense fork: `github.com/RuanJY/robosense_fast_lio`

@@ -32,7 +32,7 @@
 | 8 | Map/waypoint carryover | Addressed | Key Decisions Table: no migration, start fresh with FASTLIO2. |
 | 9 | Primary end-user | Addressed | Key Decisions Table: Houmanoids engineering team. |
 | 10 | Robot job during pilot | Addressed | Key Decisions Table: patrol + inspection. |
-| 11 | In-scope spaces | Partially | CATL factory mentioned but no explicit enumeration of which floors/areas are in-scope for the pilot vs. out-of-bounds. Phase 3 validation is "lab/office" not CATL. |
+| 11 | In-scope spaces | Partially | pilot factory mentioned but no explicit enumeration of which floors/areas are in-scope for the pilot vs. out-of-bounds. Phase 3 validation is "lab/office" not the pilot customer. |
 | 12 | Explicit exclusions | Addressed | Out of Scope table + Key Decisions Table Q12 provide comprehensive exclusion list. |
 | 13 | AMR competitor benchmarking | Deferred | Deferred table: Houdini epic. |
 | 14 | Mission success threshold | Addressed | Zero-intervention target, iterative. |
@@ -222,7 +222,7 @@
 
 4. **DDS cross-domain communication is hand-waved.** The container uses ROS_DOMAIN_ID=42 while rsdriver on AOS uses domain 0. The spec says the container subscribes to `/lidar_points` from rsdriver. But if they are on different DDS domains, discovery will not work. Either the container must use domain 0 for input topics (creating the collision risk it tries to avoid) or rsdriver must multi-publish, or a DDS bridge is needed. Open Question 6 partially acknowledges this but does not flag the domain ID conflict.
 
-5. **No timeline estimates.** The spec has phases and gates but no duration estimates. Phase 1 could take 2 weeks or 2 months. This matters for CATL pilot scheduling.
+5. **No timeline estimates.** The spec has phases and gates but no duration estimates. Phase 1 could take 2 weeks or 2 months. This matters for factory pilot scheduling.
 
 6. **Concurrent rsdriver instances (Open Question 6) is more serious than stated.** Both AOS and GOS publish identical `/lidar_points`. If FASTLIO2 subscribes and receives both, it gets duplicate point clouds at double rate. This could cause SLAM degradation or doubled compute load. This needs resolution before implementation starts, not "during implementation."
 
@@ -254,7 +254,7 @@
 | I6 | **Recovery without SSH.** All recovery actions assume engineering team with terminal access. No UI-accessible recovery buttons. | Q34 (missing), Q47 (missing) | Acceptable for Phase 1 (engineering team is the user), but should be documented as a known limitation. |
 | I7 | **Costmap authority ambiguity.** Host CostMapper and container FAR planner both produce costmaps. Which governs collision avoidance? | Q117 (partial) | Could lead to the robot trusting one costmap while the other shows a collision. |
 | I8 | **Integration test plan.** No end-to-end test procedure from lidar to goal arrival. | Fresh engineering | Cannot validate the full pipeline works without a defined test. |
-| I9 | **No timeline estimates.** Phases have gates but no durations. | Fresh engineering | Cannot schedule CATL pilot without knowing Phase 1 duration. |
+| I9 | **No timeline estimates.** Phases have gates but no durations. | Fresh engineering | Cannot schedule factory pilot without knowing Phase 1 duration. |
 | I10 | **Safety baseline.** No safety metrics defined. No regression criteria. | Q66 (missing), Q67 (missing) | Cannot prove the new system is as safe as the old one. |
 | I11 | **FASTLIO2 mapping workflow.** Technical SLAM is described but not the user-facing procedure for building a first map (drive pattern, validation, save). | Q78 (partial), Q104 (partial) | Operators will not know how to create their first map. |
 

@@ -23,7 +23,7 @@
    Users expect clear, immediate feedback when the robot is "lost" — not silent degradation where it drives into walls.
 
 7. **Will the multi-floor elevator transitions happen automatically, or does the user need to intervene at each floor?**
-   The CATL factory pilot implies multi-floor operation; users will assume the robot handles floor changes without babysitting.
+   The factory pilot implies multi-floor operation; users will assume the robot handles floor changes without babysitting.
 
 8. **What happens if the Docker container running the nav stack crashes mid-mission?**
    Users expect the robot to stop safely and clearly communicate the failure — not continue driving blindly or silently freeze.
@@ -48,7 +48,7 @@
 
 ### User Journey
 
-1. **Who is the primary user deploying this to the CATL factory — a robotics engineer, or a factory floor technician?**
+1. **Who is the primary user deploying this to the pilot factory — a robotics engineer, or a factory floor technician?**
    The skill level of the deployer determines how much the system needs to explain itself and how robust the defaults must be.
 
 2. **What does the user do when they arrive at the factory site with the M20 — what's the first-time setup flow?**
@@ -64,7 +64,7 @@
    Factory operators need a dashboard-level "green light / red light" — not terminal logs.
 
 6. **What happens when the user sends the robot to a goal on a different floor — what do they see and do?**
-   Multi-floor is the headline feature for CATL; the user journey through a floor change must be seamless and visible.
+   Multi-floor is the headline feature for the factory pilot; the user journey through a floor change must be seamless and visible.
 
 7. **What does the user do when the robot gets stuck or behaves unexpectedly?**
    Recovery actions must be obvious and available without SSH access or developer knowledge.
@@ -140,7 +140,7 @@
    If daily operation requires developer skills, the addressable user base shrinks to the engineering team only.
 
 2. **Are status messages and error reports available in languages other than English?**
-   CATL is a Chinese company — factory operators may not read English error messages.
+   The pilot customer is a Chinese company — factory operators may not read English error messages.
 
 3. **Can a colorblind user interpret the web visualization (costmap colors, path colors, status indicators)?**
    Red/green status indicators and heatmap color schemes are common accessibility failures.
@@ -203,13 +203,13 @@
    Showing everything overwhelms; showing too little hides problems. The default layer set determines how quickly operators can assess the situation.
 
 7. **Should Phase 2 multi-floor relocalization expose "current floor" as a first-class concept in the UI, or treat it as metadata?**
-   If the robot transitions between floors in the CATL factory, misidentifying the current floor could send the robot into a wall or off an edge.
+   If the robot transitions between floors in the pilot factory, misidentifying the current floor could send the robot into a wall or off an edge.
 
 8. **How should container lifecycle state (pulling image, starting, ready, crashed, restarting) be presented relative to mission state?**
    The DockerModule introduces startup latency and failure modes invisible in the monolithic setup — these states must be legible without requiring SSH access.
 
-9. **What information density is appropriate for a field engineer at the CATL factory versus a remote developer debugging?**
-   The CATL pilot has non-developer operators; the same data that helps a developer may overwhelm a factory technician.
+9. **What information density is appropriate for a field engineer at the pilot factory versus a remote developer debugging?**
+   The factory pilot has non-developer operators; the same data that helps a developer may overwhelm a factory technician.
 
 10. **Should velocity commands (cmd_vel / NAV_CMD) be shown as raw numbers, a visual vector, or abstracted into "speed: fast/slow/stopped"?**
     Raw values are meaningless to non-roboticists; overly abstracted values hide information a field engineer needs to diagnose jerky motion.
@@ -224,12 +224,12 @@
     Cold start is a real operational moment; if the UI shows a blank map with no explanation, operators will assume the system is broken.
 
 14. **How should goal/waypoint information be structured — single destination, ordered queue, or flexible set?**
-    The CATL pilot likely involves multi-stop routes; the information architecture must support showing where the robot is in a sequence, not just a single goal.
+    The factory pilot likely involves multi-stop routes; the information architecture must support showing where the robot is in a sequence, not just a single goal.
 
 ### 2. Interaction Design
 
 1. **How does an operator start autonomous navigation — a single "go" button, a map tap, a coordinate entry, or a named-location picker?**
-   The input method determines the skill level required; CATL factory workers need something simpler than typing coordinates.
+   The input method determines the skill level required; pilot factory workers need something simpler than typing coordinates.
 
 2. **What is the interaction for switching between Phase 1 (single-floor) and Phase 3 (multi-floor) navigation modes, if both exist simultaneously?**
    If switching is manual, operators can get it wrong; if automatic, the system needs a way to communicate which mode is active and why.
@@ -264,8 +264,8 @@
 12. **What is the interaction for viewing and editing the robot's understanding of the environment (map editing)?**
     If the SLAM map has a phantom wall (lidar reflection), the operator needs to correct it without rebuilding from scratch.
 
-13. **How does an operator set up a repeatable patrol route for the CATL factory?**
-    Multi-stop navigation with saved routes is a core CATL use case; the interaction must support naming, saving, loading, and editing routes.
+13. **How does an operator set up a repeatable patrol route for the pilot factory?**
+    Multi-stop navigation with saved routes is a core the pilot customer use case; the interaction must support naming, saving, loading, and editing routes.
 
 14. **What feedback indicates that the uv/Python 3.10 host process is running correctly on NOS?**
     This is a new runtime dependency; if uv fails silently, dimos never starts, and the operator sees... nothing. The absence of feedback is the worst feedback.
@@ -288,7 +288,7 @@
    The system should warn before catastrophic failure; showing memory usage only after a crash is too late.
 
 6. **What happens when the robot reaches a goal — does it stop, await instructions, proceed to next waypoint, or return home?**
-   Post-goal behavior must match CATL factory workflow; wrong default behavior means the operator must intervene at every stop.
+   Post-goal behavior must match pilot factory workflow; wrong default behavior means the operator must intervene at every stop.
 
 7. **Edge case: Operator sets a goal in an area the robot has not yet mapped. What happens?**
    The system could reject the goal, plan optimistically, or ask the operator to confirm exploration. Each approach has different UX implications.
@@ -302,13 +302,13 @@
 10. **Phase 2 flow: Robot enters elevator, floor changes, relocalization triggers. What does the operator see during the transition?**
     Floor transitions are the highest-risk moment for multi-floor nav; the operator needs to see the system's confidence in its new localization.
 
-11. **What is the flow for a CATL shift handoff — how does one operator transfer the robot's state and context to the next?**
+11. **What is the flow for a the pilot customer shift handoff — how does one operator transfer the robot's state and context to the next?**
     Factory operations run 24/7; the robot's mission state must persist across operator sessions.
 
 12. **What happens if the operator sends a goal while the robot is already navigating to a different goal?**
     Does the new goal replace the old one, queue behind it, or get rejected? The behavior must be predictable and communicated clearly.
 
-13. **What is the flow for the initial SLAM map building session in a new CATL factory section?**
+13. **What is the flow for the initial SLAM map building session in a new pilot factory section?**
     First-time mapping is a distinct workflow from steady-state navigation; it may require manual driving, landmark annotation, or map validation.
 
 14. **Error flow: drdds Python binding fails (ABI mismatch with Python 3.10). What does the operator see?**
@@ -317,7 +317,7 @@
 ### 4. Visual & Layout
 
 1. **Where does the navigation monitoring view live — is it a standalone app, a web dashboard, the existing command center, or a mobile interface?**
-   The CATL factory floor may not have a desktop nearby; the platform choice determines what interactions are feasible.
+   The pilot factory floor may not have a desktop nearby; the platform choice determines what interactions are feasible.
 
 2. **Should the map view be 2D (top-down costmap) or 3D (point cloud), or should the operator toggle between them?**
    2D is simpler for goal setting and path visualization; 3D reveals terrain issues. The default affects cognitive load.
@@ -332,7 +332,7 @@
    E-stop is a safety-critical control; it must never be occluded by modals, scroll position, or screen transitions.
 
 6. **How should multiple floors be represented visually for Phase 2/3 — tabs, a floor picker, a 3D building view?**
-   The CATL factory has multiple floors; the visual metaphor for floor switching affects how quickly operators can understand the robot's location in the building.
+   The pilot factory has multiple floors; the visual metaphor for floor switching affects how quickly operators can understand the robot's location in the building.
 
 7. **Should sensor feeds (camera, lidar visualization) be always visible, or available on demand?**
    NOS has limited bandwidth; streaming camera and lidar visualization simultaneously may degrade navigation performance.
@@ -401,7 +401,7 @@
 
 ### Summary of Key Design Tensions
 
-1. **Simplicity vs. observability**: CATL factory operators need a simple interface; debugging the dual-runtime rosnav architecture requires deep observability. These are opposing forces that may require role-based views.
+1. **Simplicity vs. observability**: pilot factory operators need a simple interface; debugging the dual-runtime rosnav architecture requires deep observability. These are opposing forces that may require role-based views.
 
 2. **Autonomy vs. control**: The robot should handle most situations autonomously, but operators must be able to intervene instantly. The UI must avoid both "too many buttons" and "not enough buttons."
 
@@ -424,7 +424,7 @@ This analysis examines the M20 ROSNav migration from the perspective of a domain
 1. **What precisely does "relocalization" mean in the context of multi-floor factory navigation, and how does it differ from "localization" and "loop closure"?**
    These three terms appear interchangeably in the brief but describe fundamentally different capabilities: localization is continuous pose tracking, loop closure corrects accumulated drift, and relocalization is recovering a global pose from scratch after losing tracking -- each has different failure modes and recovery times.
 
-2. **What is the distinction between "patrol" and "inspection" in the CATL pilot scope, and do they impose different navigation requirements?**
+2. **What is the distinction between "patrol" and "inspection" in the factory pilot scope, and do they impose different navigation requirements?**
    Patrol implies following a fixed route repeatedly (coverage-oriented), while inspection implies navigating to specific points of interest and potentially docking or holding position for sensor acquisition -- these demand very different path planning strategies and success metrics.
 
 3. **What does "multi-floor" actually mean in terms of the building topology -- discrete floors connected by elevators, mezzanines, ramps, loading docks with grade changes, or a combination?**
@@ -454,21 +454,21 @@ This analysis examines the M20 ROSNav migration from the perspective of a domain
 11. **What does "merged lidar" mean geometrically -- are the two RSAIRY lidars providing overlapping coverage, complementary 360-degree coverage, or redundant coverage?**
     Whether the dual lidar setup provides redundancy (safety-critical) or complementary fields of view (capability-critical) determines the severity of single-lidar failure and the sensor fusion strategy.
 
-12. **What is the concept of "geometric degeneracy" in the CATL factory environment, and has anyone characterized it?**
+12. **What is the concept of "geometric degeneracy" in the pilot factory environment, and has anyone characterized it?**
     Long featureless corridors, open warehouses, and repetitive shelf structures cause SLAM degeneracy where the lidar geometry is insufficient to constrain all 6DOF -- this is the most common cause of SLAM failure in factory environments and is not mentioned anywhere in the brief.
 
 13. **What is the distinction between "navigation mode" and "regular mode" from a safety perspective -- are these different safety integrity levels?**
     The M20Connection supports two velocity command paths (DDS NavCmd vs UDP axis commands) with different latency, reliability, and authority characteristics -- the brief does not define which mode the rosnav architecture targets or whether mode switching is part of the operational concept.
 
-14. **What does "autonomous navigation" mean for regulatory purposes in the CATL factory jurisdiction (China)?**
-    China has specific standards for AGVs/AMRs in industrial environments (GB/T 30029, GB/T 20721) that may impose requirements on safety sensor coverage, emergency stop behavior, and maximum speeds that constrain the navigation architecture independently of CATL's preferences.
+14. **What does "autonomous navigation" mean for regulatory purposes in the pilot factory jurisdiction (China)?**
+    China has specific standards for AGVs/AMRs in industrial environments (GB/T 30029, GB/T 20721) that may impose requirements on safety sensor coverage, emergency stop behavior, and maximum speeds that constrain the navigation architecture independently of the customer's preferences.
 
 ### 2. Prior Art
 
 *What existing products do, what conventions users expect, and what has been tried before.*
 
 1. **How do established factory AMR platforms (MiR, OTTO Motors, Geek+, HIK Vision) handle multi-floor navigation, and what is the expected standard?**
-   These platforms have mature multi-floor products with fleet management, elevator integration APIs, and floor-specific map management -- CATL likely benchmarks against these competitors, and our approach must meet or exceed their operational workflow simplicity.
+   These platforms have mature multi-floor products with fleet management, elevator integration APIs, and floor-specific map management -- the pilot customer likely benchmarks against these competitors, and our approach must meet or exceed their operational workflow simplicity.
 
 2. **What is the industry-standard approach to SLAM-to-localization transition in deployed factory robots -- do they use SLAM continuously, or switch to a lighter localization mode after mapping?**
    Most production systems (e.g., Cartographer, Nav2 AMCL) separate the mapping phase from the localization phase, using the SLAM-built map as a fixed reference with a particle filter for localization -- continuously running SLAM in production is computationally expensive and can cause map corruption from dynamic objects.
@@ -489,13 +489,13 @@ This analysis examines the M20 ROSNav migration from the perspective of a domain
    Latency introduced by bridge layers between host and container is a known source of control instability -- teams at Amazon Robotics, Boston Dynamics, and others have documented issues with timestamp synchronization, message ordering, and bandwidth saturation when bridging between DDS domains.
 
 8. **How do Chinese factory AMR competitors (Geek+, HIK Vision, Mushiny) handle the elevator integration problem, and is there a de facto standard API?**
-   Chinese factories often use specific elevator control protocols (e.g., Kone, Mitsubishi, or custom PLC-based APIs) -- if CATL's elevators have an existing integration point used by other robots, we should adopt it rather than inventing a new one.
+   Chinese factories often use specific elevator control protocols (e.g., Kone, Mitsubishi, or custom PLC-based APIs) -- if the customer's elevators have an existing integration point used by other robots, we should adopt it rather than inventing a new one.
 
 9. **What is the track record of the CMU autonomy stack (FAR planner + FASTLIO2) in deployed production environments versus research demos?**
    The CMU stack has impressive demo videos but may not have the robustness features (watchdog timers, graceful degradation, deterministic behavior) required for 24/7 factory operation -- research code often works 95% of the time, but factory robots need 99.9%.
 
 10. **What conventions exist for map format standardization in multi-vendor factory environments?**
-    If CATL already has facility maps in a standard format (CAD, BIM, or a specific AMR fleet management format), we should be able to import these as priors rather than requiring the robot to map from scratch.
+    If the pilot customer already has facility maps in a standard format (CAD, BIM, or a specific AMR fleet management format), we should be able to import these as priors rather than requiring the robot to map from scratch.
 
 11. **How have prior M20 deployments at other facilities (if any) handled the lidar boot-order race condition, and was a permanent fix ever implemented at the firmware level?**
     The entrypoint.sh lidar health recovery is a software workaround for a hardware/firmware timing issue -- knowing whether Deep Robotics has acknowledged this as a bug and plans a firmware fix changes whether we invest in a robust software mitigation or wait for the root cause fix.
@@ -510,7 +510,7 @@ This analysis examines the M20 ROSNav migration from the perspective of a domain
 1. **Is the real problem that lio_perception cannot relocalize, or is it that the entire monolithic architecture cannot be iterated on quickly enough to add new capabilities?**
    The brief conflates two independent motivations: the architectural desire to split host/container (developer velocity) and the capability need for relocalization (business requirement) -- these could be addressed independently, and conflating them doubles the risk surface.
 
-2. **Is "multi-floor navigation" the actual CATL requirement, or is the real requirement "inspection of specific assets on multiple floors" -- which is a much broader problem?**
+2. **Is "multi-floor navigation" the actual the pilot customer requirement, or is the real requirement "inspection of specific assets on multiple floors" -- which is a much broader problem?**
    Navigation is a means to an end; the business value is in what the robot does when it arrives -- if the pilot success depends on inspection quality (camera positioning, sensor readings, anomaly detection), solving navigation alone is necessary but insufficient.
 
 3. **Does Phase 1 (FASTLIO2 replacing lio_perception) actually deliver value to users, or is it purely preparatory infrastructure for Phases 2-3?**
@@ -523,19 +523,19 @@ This analysis examines the M20 ROSNav migration from the perspective of a domain
    If dimos requires Python 3.10 only for type hinting, async features, or dependency versions, it may be cheaper to backport dimos compatibility to 3.8 than to manage a parallel Python installation on a constrained embedded system.
 
 6. **Are we solving the "robot navigates between floors" problem, or the "robot operates as part of a factory logistics system" problem?**
-   Factory logistics requires integration with warehouse management systems (WMS), manufacturing execution systems (MES), and fleet management -- if the CATL pilot expects these integrations, navigation alone will not satisfy them.
+   Factory logistics requires integration with warehouse management systems (WMS), manufacturing execution systems (MES), and fleet management -- if the factory pilot expects these integrations, navigation alone will not satisfy them.
 
 7. **Is the split architecture (host dimos + container nav) solving a deployment problem or creating a new coordination problem?**
    The monolithic container had the virtue of simplicity -- one thing to deploy, one thing to debug; the split architecture introduces failure modes in the bridge layer, version coupling between host and container, and a more complex deployment pipeline.
 
-8. **What are we explicitly NOT solving that CATL might assume we are?**
+8. **What are we explicitly NOT solving that the pilot site might assume we are?**
    The brief should explicitly list exclusions: no elevator API integration (Phase 1-2), no fleet management, no dynamic obstacle prediction, no human-following, no load/unload automation -- unstated assumptions about scope are the primary source of pilot failures.
 
 9. **Is the lidar boot-order problem a symptom of a deeper lack of health monitoring and self-healing infrastructure?**
    The current approach handles one specific failure mode with a bespoke workaround in entrypoint.sh -- but a production system needs a general health monitoring framework that detects and recovers from any sensor degradation, not just this one case.
 
 10. **Does the three-phase plan address the risk that Phase 2 (arise_slam porting) may take significantly longer than expected due to the Livox-to-RoboSense scan pattern differences?**
-    If Phase 2 is on the critical path for the CATL pilot and it turns out to be a research problem rather than an engineering task, the entire pilot timeline is at risk -- we need a fallback plan that delivers multi-floor capability without arise_slam.
+    If Phase 2 is on the critical path for the factory pilot and it turns out to be a research problem rather than an engineering task, the entire pilot timeline is at risk -- we need a fallback plan that delivers multi-floor capability without arise_slam.
 
 11. **Is replacing the entire perception-to-navigation pipeline in one migration the right approach, or should we consider replacing components incrementally?**
     Replacing lio_perception, the planner, the mapping, AND the architecture simultaneously means we cannot isolate which change caused a regression -- an incremental approach (e.g., FASTLIO2 first within the existing monolithic container) would reduce risk.
@@ -554,7 +554,7 @@ This analysis examines the M20 ROSNav migration from the perspective of a domain
    These zones are not part of any floor map; the SLAM system will see geometry that matches no known map and may diverge, crash, or produce wildly incorrect poses.
 
 3. **What is the behavior when factory environmental conditions change -- dust accumulation on lidar lenses, condensation from temperature changes between floors, or steam from manufacturing processes?**
-   Battery manufacturing involves thermal processes; moving between climate-controlled and non-controlled zones can cause rapid condensation on sensors, temporarily blinding the lidar.
+   Industrial manufacturing involves thermal processes; moving between climate-controlled and non-controlled zones can cause rapid condensation on sensors, temporarily blinding the lidar.
 
 4. **How does the system handle dynamic obstacles that are floor-specific -- forklifts on the warehouse floor, people on the office floor, conveyor systems on the manufacturing floor?**
    Each floor may have fundamentally different obstacle dynamics; a cost map tuned for one floor's obstacle density may be inappropriately aggressive or conservative on another.
@@ -565,20 +565,20 @@ This analysis examines the M20 ROSNav migration from the perspective of a domain
 6. **How does the system behave during factory power outages, brownouts, or emergency lighting conditions that change the visual and thermal environment?**
    Power disruptions can cause elevator entrapment, loss of network connectivity, and changes to the environmental geometry (doors closing, barriers deploying) that invalidate the current map.
 
-7. **What are the electromagnetic interference (EMI) considerations in a battery manufacturing facility?**
-   CATL manufactures lithium-ion batteries; the facility may have high EMI from charging stations, welding equipment, or electromagnetic shielding -- this can affect lidar (rare but possible with high-power RF), IMU accuracy, and wireless communication reliability.
+7. **What are the electromagnetic interference (EMI) considerations in a industrial manufacturing facility?**
+   the pilot facility is an industrial manufacturing environment that may have high EMI from charging stations, welding equipment, or electromagnetic shielding -- this can affect lidar (rare but possible with high-power RF), IMU accuracy, and wireless communication reliability.
 
 8. **How does the system handle the "symmetric corridor" problem where the robot faces a T-junction or four-way intersection that is geometrically identical from multiple approach directions?**
    This is a well-known failure mode for lidar-only SLAM; without visual features or odometry constraints, the system can flip its heading estimate by 90 or 180 degrees.
 
 9. **What happens when the robot encounters transparent obstacles (glass walls, plastic curtains, wire mesh) that are invisible to lidar but physically impassable?**
-   Battery manufacturing clean rooms often use glass partitions and plastic strip curtains; the lidar will not detect these, but the robot will collide with them.
+   Industrial manufacturing clean rooms often use glass partitions and plastic strip curtains; the lidar will not detect these, but the robot will collide with them.
 
 10. **How does the system handle floor surfaces with varying friction or compliance (painted floors, metal grating, rubber mats, wet surfaces from cleaning)?**
     The costmap assumes traversability based on geometry, but physical traversability also depends on surface properties that lidar cannot observe -- the robot may plan a path across a freshly mopped surface and lose traction.
 
 11. **What is the contingency for a scenario where the robot's navigation diverges and it enters a restricted or hazardous area of the factory?**
-    Battery manufacturing facilities have zones with chemical hazards, high-voltage equipment, and explosion risk -- a navigation failure that sends the robot into such a zone has safety implications far beyond "the robot is lost."
+    Industrial manufacturing facilities have zones with chemical hazards, high-voltage equipment, and explosion risk -- a navigation failure that sends the robot into such a zone has safety implications far beyond "the robot is lost."
 
 12. **How does the system handle clock drift and time synchronization between the three boards (AOS, GOS, NOS) and the Docker container?**
     SLAM and sensor fusion are critically dependent on precise timestamps; if NTP is not synchronized across all compute boards and the container, sensor data will be fused with incorrect timestamps, causing subtle but dangerous localization errors.
@@ -594,15 +594,15 @@ This analysis examines the M20 ROSNav migration from the perspective of a domain
 *How would we know this succeeded? What does "good" look like? What metrics matter?*
 
 1. **What is the quantitative definition of "successful relocalization" -- position error under X meters, orientation error under Y degrees, achieved within Z seconds?**
-   Without precise thresholds, the team cannot objectively determine whether arise_slam's relocalization performance is sufficient for the CATL pilot.
+   Without precise thresholds, the team cannot objectively determine whether arise_slam's relocalization performance is sufficient for the factory pilot.
 
-2. **What is the target localization accuracy (absolute position error) required for the CATL inspection/patrol use case?**
+2. **What is the target localization accuracy (absolute position error) required for the pilot customer inspection/patrol use case?**
    Patrol (following corridors) may only need meter-level accuracy, while inspection (approaching specific equipment) may need centimeter-level accuracy -- the required accuracy determines whether FASTLIO2 alone is sufficient or whether additional sensors are needed.
 
 3. **What is the maximum acceptable end-to-end latency from obstacle detection to robot stop, and does the split architecture meet it?**
    The bridge layer between host dimos and container nav stack adds latency; if this pushes the total perception-to-action latency beyond the stopping distance at maximum speed, the robot cannot be safely deployed.
 
-4. **What are the minimum uptime and availability requirements for the CATL pilot -- hours per day, days per week, consecutive hours without intervention?**
+4. **What are the minimum uptime and availability requirements for the factory pilot -- hours per day, days per week, consecutive hours without intervention?**
    This determines whether we need hot-restart capability, watchdog-based automatic recovery, or whether daily manual restarts are acceptable.
 
 5. **How will we measure "navigation quality" beyond binary success/failure -- path efficiency, smoothness, jerk, deviation from planned path?**
@@ -626,14 +626,14 @@ This analysis examines the M20 ROSNav migration from the perspective of a domain
 11. **How will we measure whether the new architecture actually improves developer velocity and deployment speed, which is one of the stated motivations?**
     If the rosnav pattern migration does not measurably reduce the time to deploy updates or debug issues compared to the monolithic approach, one of the two core justifications for the migration is invalidated.
 
-12. **What is the success criterion for the CATL pilot that would trigger a decision to proceed to production deployment versus iterate further?**
+12. **What is the success criterion for the factory pilot that would trigger a decision to proceed to production deployment versus iterate further?**
     The go/no-go criteria should be defined before the pilot starts, not after -- otherwise there is a risk of moving goalposts or ambiguous outcomes.
 
 13. **How will we benchmark FASTLIO2's performance against lio_perception on the same factory environment to ensure no regression?**
     Without a controlled comparison using identical sensor data, we cannot objectively claim the new stack is better -- and if it is worse in some dimensions (e.g., CPU usage, accuracy in certain environments), we need to know before committing.
 
-14. **What is the definition of "safe operation" for the CATL environment, and how will we validate it -- through simulation, controlled testing, or directly in the factory?**
-    Safety validation methodology matters because deploying untested autonomy in a battery manufacturing facility has consequences beyond robot damage -- it could trigger regulatory scrutiny of CATL's facility safety certification.
+14. **What is the definition of "safe operation" for the pilot environment, and how will we validate it -- through simulation, controlled testing, or directly in the factory?**
+    Safety validation methodology matters because deploying untested autonomy in a industrial manufacturing facility has consequences beyond robot damage -- it could trigger regulatory scrutiny of the customer's facility safety certification.
 
 15. **How will we measure the system's robustness to environmental change over the duration of the pilot?**
     A system that works on day one but degrades as the factory floor changes is not successful -- we need metrics that track localization quality, navigation success rate, and intervention frequency over the entire pilot duration.

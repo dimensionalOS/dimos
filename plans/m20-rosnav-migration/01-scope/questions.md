@@ -78,7 +78,7 @@ These questions were flagged by all 3 models or address critical impact issues t
 With multiple components booting (host Python, Docker container, FASTLIO2, lidar), operators need one unambiguous "green light" before dispatching the robot.
 *Raised by: Opus, GPT, Gemini*
 
-**2. What does "multi-floor transition" actually mean in the CATL factory — elevator, ramp, manual carry, or a combination?**
+**2. What does "multi-floor transition" actually mean in the pilot factory — elevator, ramp, manual carry, or a combination?**
 The answer determines whether this is a discrete map-switching problem or a continuous 3D traversal problem, fundamentally changing the relocalization architecture and user workflow.
 *Raised by: Opus, GPT, Gemini*
 
@@ -106,7 +106,7 @@ The split architecture creates a scenario where the navigation brain dies while 
 Users who spent hours mapping a facility will be deeply frustrated if they must redo all that work. Renaming or remapping creates immediate confusion.
 *Raised by: Opus, GPT, Gemini*
 
-**9. Who is the primary end-user during the CATL pilot — robotics engineer, factory floor technician, or site manager — and what is their skill level?**
+**9. Who is the primary end-user during the factory pilot — robotics engineer, factory floor technician, or site manager — and what is their skill level?**
 The skill level of the actual user determines information density, terminology, control safety, error message clarity, and how robust defaults must be.
 *Raised by: Opus, GPT, Gemini*
 
@@ -122,8 +122,8 @@ Restricted areas usually matter more operationally than nominal map coverage. Bo
 Unstated assumptions about scope (elevator API integration, fleet management, dynamic obstacle prediction, load/unload automation) are the primary source of pilot failures.
 *Raised by: Opus, GPT, Gemini*
 
-**13. How do established factory AMR platforms (MiR, OTTO, Geek+, HIK Vision) handle multi-floor navigation, and what benchmark does CATL expect?**
-CATL likely benchmarks against competitors with mature multi-floor products. Our approach must meet or exceed their operational workflow simplicity.
+**13. How do established factory AMR platforms (MiR, OTTO, Geek+, HIK Vision) handle multi-floor navigation, and what benchmark does the pilot customer expect?**
+the pilot customer likely benchmarks against competitors with mature multi-floor products. Our approach must meet or exceed their operational workflow simplicity.
 *Raised by: Opus, GPT, Gemini*
 
 **14. What percentage of in-scope missions must complete without human intervention to call the pilot successful?**
@@ -182,7 +182,7 @@ Symptom and root cause point to different scope decisions. Reducing babysitting 
 Demos and production pilots use different stability bars. Factory logistics systems typically target 200+ hours MTBF and sub-5-minute MTTR.
 *Raised by: Opus, GPT, Gemini*
 
-**28. What site-specific safety, compliance, or regulatory requirements govern autonomous movement in the CATL factory?**
+**28. What site-specific safety, compliance, or regulatory requirements govern autonomous movement in the pilot factory?**
 China has specific standards for AGVs/AMRs (GB/T 30029, GB/T 20721). An operationally disallowed workflow is still a failure regardless of technical capability.
 *Raised by: Opus, GPT, Gemini*
 
@@ -237,7 +237,7 @@ If daily operation requires developer skills, the addressable user base shrinks 
 *Raised by: Opus, GPT*
 
 **40. Are status messages and error reports available in Chinese (or languages other than English)?**
-CATL is a Chinese company. Factory operators may not read English error messages. Mixed-language teams are common in industrial sites.
+The pilot customer is a Chinese company. Factory operators may not read English error messages. Mixed-language teams are common in industrial sites.
 *Raised by: Opus, GPT*
 
 **41. Is there an audible or physical indicator when the robot changes state (starts moving, stops, encounters error)?**
@@ -261,7 +261,7 @@ Showing everything overwhelms; showing too little hides problems. The default de
 *Raised by: Opus, Gemini*
 
 **46. How does an operator start autonomous navigation — single "go" button, map tap, coordinate entry, or named-location picker?**
-The input method determines the skill level required. CATL factory workers need something simpler than typing coordinates.
+The input method determines the skill level required. pilot factory workers need something simpler than typing coordinates.
 *Raised by: Opus, GPT*
 
 **47. How does the operator trigger a container restart or system recovery without SSH access?**
@@ -289,7 +289,7 @@ Factory operations run 24/7. The robot's mission state, destination, and active 
 *Raised by: Opus, GPT*
 
 **53. Where does the navigation monitoring view live — standalone web app, existing command center, Foxglove panel, or mobile interface?**
-The CATL factory floor may not have a desktop nearby. The platform choice determines what interactions are feasible and what design system applies.
+The pilot factory floor may not have a desktop nearby. The platform choice determines what interactions are feasible and what design system applies.
 *Raised by: Opus, Gemini*
 
 **54. Should the map view be 2D (top-down costmap), 3D (point cloud), or toggleable — and what is the default?**
@@ -333,7 +333,7 @@ Abnormal recovery is heavily judged in pilots. E-stop while halfway in/out of an
 *Raised by: Opus, Gemini*
 
 **64. What environmental conditions have historically broken robots at this site (dust, steam, reflective surfaces, condensation)?**
-Battery manufacturing involves thermal processes. Moving between climate zones can cause rapid condensation on sensors, temporarily blinding the lidar.
+Industrial manufacturing involves thermal processes. Moving between climate zones can cause rapid condensation on sensors, temporarily blinding the lidar.
 *Raised by: Opus, GPT*
 
 **65. What promises have already been made to pilot stakeholders about autonomy level or timeline?**
@@ -341,7 +341,7 @@ Hidden commitments create scope conflict later. The success bar must be aligned 
 *Raised by: Opus, GPT*
 
 **66. What safety indicators must improve or at least not regress during the pilot?**
-No factory pilot survives if safety perception worsens. Safety validation methodology matters in a battery manufacturing facility.
+No factory pilot survives if safety perception worsens. Safety validation methodology matters in a industrial manufacturing facility.
 *Raised by: Opus, GPT*
 
 **67. What operator-confidence signals will count as success beyond hard metrics?**
@@ -462,7 +462,7 @@ If the robot transitions between floors, misidentifying the current floor could 
 DockerModule introduces startup latency and failure modes invisible in the monolithic setup. These must be legible without SSH.
 *Raised by: Opus*
 
-**95. What information density is appropriate for a field engineer at CATL versus a remote developer debugging?**
+**95. What information density is appropriate for a field engineer at the pilot site versus a remote developer debugging?**
 Non-developer operators may be overwhelmed by the data a developer needs. This may require role-based views.
 *Raised by: Opus, GPT*
 
@@ -479,7 +479,7 @@ Cold start is real. If the UI shows a blank map with no explanation, operators w
 *Raised by: Opus*
 
 **99. How should goal/waypoint information be structured — single destination, ordered queue, or flexible set?**
-The CATL pilot likely involves multi-stop routes. The UI must support showing where the robot is in a sequence.
+The factory pilot likely involves multi-stop routes. The UI must support showing where the robot is in a sequence.
 *Raised by: Opus*
 
 **100. What inputs are required vs. optional when setting a navigation goal, and what are sensible defaults?**
@@ -495,7 +495,7 @@ Without a lightweight feedback mechanism, operators will not bother to report pa
 *Raised by: Opus*
 
 **103. How does an operator set up a repeatable patrol route (naming, saving, loading, editing)?**
-Multi-stop navigation with saved routes is a core CATL use case. The interaction must support route management.
+Multi-stop navigation with saved routes is a core the pilot customer use case. The interaction must support route management.
 *Raised by: Opus*
 
 **104. What is the flow for the initial SLAM map building session in a new factory section?**
@@ -507,7 +507,7 @@ The entrypoint has lidar health recovery logic, but the operator needs to know w
 *Raised by: Opus, Gemini*
 
 **106. What happens when the robot reaches a goal — does it stop, await instructions, proceed to next waypoint, or return home?**
-Post-goal behavior must match CATL factory workflow. Wrong default behavior means the operator must intervene at every stop.
+Post-goal behavior must match pilot factory workflow. Wrong default behavior means the operator must intervene at every stop.
 *Raised by: Opus, GPT*
 
 **107. What visual pattern should indicate planned path versus actual traveled path?**
@@ -643,7 +643,7 @@ The web visualization must be responsive.
 **144. How does the system handle clock drift and time synchronization between the three boards (AOS, GOS, NOS) and the Docker container?**
 *Raised by: Opus*
 
-**145. How does the system handle electromagnetic interference in a battery manufacturing facility?**
+**145. How does the system handle electromagnetic interference in a industrial manufacturing facility?**
 *Raised by: Opus*
 
 **146. What happens when two M20 robots operate on the same floor — can their lidar scans interfere with each other?**

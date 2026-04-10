@@ -44,7 +44,7 @@ Here is an analysis of the M20 ROSNav Migration feature brief from the perspecti
 *Focusing on the user's workflow, emotional state, and the practical realities of operating the robot on a factory floor.*
 
 1. **How clear is the feedback when the robot transitions between floors?**
-   *Why it matters:* During the CATL pilot, an operator needs to know *exactly* when the robot has successfully relocalized on a new floor vs. when it is lost. Ambiguity here stalls the workflow.
+   *Why it matters:* During the factory pilot, an operator needs to know *exactly* when the robot has successfully relocalized on a new floor vs. when it is lost. Ambiguity here stalls the workflow.
 
 2. **If the Python 3.10 installation fails on the host, what error message does the deployment engineer see?**
    *Why it matters:* Deployment engineers are often rushed and working in loud, distracting environments. They need clear, actionable error messages ("Run command X to fix"), not a giant wall of Python stack traces.
@@ -101,12 +101,12 @@ Here is an analysis of the M20 ROSNav Migration feature brief from a Product Des
    *Why it matters:* Displaying raw data from multiple sensors increases cognitive load and UI clutter. We must decide if operators actually need the raw feeds or just the processed output.
 
 4. **Where should the multi-floor relocalization status be displayed in the hierarchy?**
-   *Why it matters:* Since this is a core Phase 2 feature for the CATL factory, it needs a dedicated space so it is easily findable when the robot changes environments.
+   *Why it matters:* Since this is a core Phase 2 feature for the pilot factory, it needs a dedicated space so it is easily findable when the robot changes environments.
 
 5. **How do we surface the difference between "Navigation Mode" and "Regular Mode"?**
    *Why it matters:* These modes represent entirely different capability sets (e.g., full SLAM vs. dead-reckoning). The user must immediately know which capabilities are currently active.
 
-6. **What is the single most critical metric for validating the CATL factory pilot (Phase 3)?**
+6. **What is the single most critical metric for validating the factory pilot (Phase 3)?**
    *Why it matters:* This metric (e.g., successful floor transitions, uptime, or path efficiency) should visually anchor the dashboard during the pilot phase.
 
 7. **Should system resource usage (NOS host RAM/CPU) be visible by default or hidden under a diagnostic tab?**
@@ -193,7 +193,7 @@ Here is an analysis of the M20 ROSNav Migration feature brief from a Product Des
 10. **Describe the flow when the operator needs to switch from autonomous navigation to manual teleoperation (`ros_joy`).**
     *Why it matters:* Smooth handoff flows between autonomy and manual control are vital for safety in tight factory spaces.
 
-11. **What is the onboarding flow for a new operator testing the Phase 3 CATL pilot?**
+11. **What is the onboarding flow for a new operator testing the Phase 3 factory pilot?**
     *Why it matters:* New users need to understand the constraints of the migrated system quickly without reading the technical architecture docs.
 
 ### 4. Visual & Layout
@@ -282,7 +282,7 @@ The focus here is entirely on the operational, business, and human factors of th
 1. **What exactly constitutes a "multi-floor transition" in this specific factory?**
    *Why it matters:* A transition could mean riding a human-operated elevator, using a dedicated freight lift, navigating a physical ramp, or being manually carried by staff. Each scenario dictates a vastly different operational workflow and human-robot interaction model.
 
-2. **How is the "CATL factory pilot" defined in terms of scale and operational footprint?**
+2. **How is the "factory pilot" defined in terms of scale and operational footprint?**
    *Why it matters:* We need to understand the physical size, the number of robots involved, human density in the operating zones, and whether this is a controlled test area or a live production environment.
 
 3. **Who are the primary end-users interacting with the robot during this pilot?**
@@ -312,7 +312,7 @@ The focus here is entirely on the operational, business, and human factors of th
 ### 2. Prior Art
 *Learning from historical deployments, existing products, and established facility norms.*
 
-1. **How do current Automated Guided Vehicles (AGVs) at the CATL facility handle multi-floor transitions?**
+1. **How do current Automated Guided Vehicles (AGVs) at the pilot facility handle multi-floor transitions?**
    *Why it matters:* We must align with or actively improve upon the existing operational expectations for elevator integration so we don't break established factory rhythms.
 
 2. **What have been the most common operational or human-factor failures in previous single-floor deployments of the M20?**
@@ -348,7 +348,7 @@ The focus here is entirely on the operational, business, and human factors of th
 1. **Is the migration to the rosnav pattern driven by a logistics need, or is it solving a symptom of organizational structure?**
    *Why it matters:* If the change is purely to make the software team faster, we must be careful not to accidentally increase the complexity burden on the factory floor operators.
 
-2. **What specific operational problem does the new perception stack (FASTLIO2) solve for the CATL environment?**
+2. **What specific operational problem does the new perception stack (FASTLIO2) solve for the pilot environment?**
    *Why it matters:* Ensures we aren't just swapping algorithms, but actually fixing a domain issue, such as the robot previously getting lost in long, featureless factory aisles.
 
 3. **Are we solving for full 100% autonomy, or an acceptable level of remote-assisted autonomy?**
@@ -414,7 +414,7 @@ The focus here is entirely on the operational, business, and human factors of th
 1. **What is the acceptable maximum time for the robot to successfully relocalize after arriving on a new floor?**
    *Why it matters:* Sets a concrete, measurable KPI for the transition phase that the business can sign off on.
 
-2. **How will CATL stakeholders holistically measure the "success" of this pilot?**
+2. **How will pilot stakeholders holistically measure the "success" of this pilot?**
    *Why it matters:* Is success defined by total autonomous uptime, the raw number of successful multi-floor deliveries, or strictly zero safety incidents?
 
 3. **What is the target reduction in human operator interventions compared to the previous setup?**

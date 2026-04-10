@@ -98,7 +98,7 @@ Based on [context.md](/Users/afik_cohen/gt/dimos/crew/ace/plans/m20-rosnav-migra
 9. What is the handoff flow when one person leaves and another takes over? Why it matters: factory operations often span shifts and roles.
 10. What is the empty-state flow when no robot is connected, no mission exists, or no floor context is available? Why it matters: blank screens are disorienting and expensive in support time.
 11. What is the overloaded-state flow when multiple warnings appear at once? Why it matters: the UI must still point to the single best next action.
-12. What is the pilot-validation flow for proving the system is ready for the CATL trial? Why it matters: product success is not just mission execution, but operator confidence that the system is trial-ready.
+12. What is the pilot-validation flow for proving the system is ready for the pilot customer trial? Why it matters: product success is not just mission execution, but operator confidence that the system is trial-ready.
 
 **Visual & Layout**
 1. Does this belong in an existing operations surface or as its own dedicated screen? Why it matters: new surfaces increase navigation cost and training overhead.
@@ -135,7 +135,7 @@ If you want, I can turn these into a tighter wireframe-ready artifact next: `scr
 Using the codebase context in [context.md](/Users/afik_cohen/gt/dimos/crew/ace/plans/m20-rosnav-migration/01-scope/context.md), these are the domain questions I'd push before treating the brief as sufficiently scoped. They're intentionally non-technical.
 
 **Domain Concepts**
-1. What exactly counts as a "floor" at the CATL site? Why it matters: mezzanines, ramps, split levels, and separate buildings create very different operational expectations.
+1. What exactly counts as a "floor" at the pilot site? Why it matters: mezzanines, ramps, split levels, and separate buildings create very different operational expectations.
 2. What real-world event is "multi-floor relocalization" meant to cover? Why it matters: elevator use, manual carry, restart, or mission resume imply different user needs.
 3. Who is the day-to-day owner of the robot on site? Why it matters: facilities, production, EHS, and robotics teams optimize for different outcomes.
 4. What job is the robot actually doing during the pilot? Why it matters: inspection, transport, patrol, and escort workflows tolerate different failure modes.
@@ -149,7 +149,7 @@ Using the codebase context in [context.md](/Users/afik_cohen/gt/dimos/crew/ace/p
 **Prior Art**
 1. How do comparable AMRs in factories handle multi-floor movement today? Why it matters: this sets a realistic benchmark for stakeholder expectations.
 2. Do incumbent deployments treat floor changes as normal autonomous behavior or supervised exceptions? Why it matters: that distinction prevents overscoping.
-3. What approaches has CATL or the customer already tried for cross-floor operation? Why it matters: repeated failed patterns destroy trust quickly.
+3. What approaches has the pilot customer or the customer already tried for cross-floor operation? Why it matters: repeated failed patterns destroy trust quickly.
 4. Which prior navigation failures were most painful for operators? Why it matters: the brief should target remembered field pain, not abstract capability gaps.
 5. What recovery workflow do operators already consider "normal"? Why it matters: replacing an accepted manual step may not be the highest-value improvement.
 6. How do mature vendors communicate uncertainty or "I need help"? Why it matters: operator trust depends on conventions people already recognize.

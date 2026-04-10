@@ -505,10 +505,10 @@ No data migration needed. This is a clean architectural split:
 - **Decision:** 2-week arise_slam spike — port `arise_slam_mid360` to RoboSense RSAIRY, validate loop closure + relocalization
 - **Go/No-Go:** If arise_slam can't handle RSAIRY scan pattern within 2 weeks, evaluate alternatives (KISS-ICP, hdl_graph_slam)
 
-### Phase 2 → Phase 3 Gate (Multi-Floor for CATL)
+### Phase 2 → Phase 3 Gate (Multi-Floor for the factory pilot)
 - **Criteria:** Relocalization validated (robot reboots, finds itself on saved map), map persistence works, arise_slam stable
 - **Decision:** Stair-climbing gait tested, elevator transition logic validated, multi-floor path planning functional
-- **Go/No-Go:** Must pass all criteria before CATL factory deployment
+- **Go/No-Go:** Must pass all criteria before pilot factory deployment
 
 *These gates are defined in the spec. Separate plans will be created for Phases 2 and 3.*
 

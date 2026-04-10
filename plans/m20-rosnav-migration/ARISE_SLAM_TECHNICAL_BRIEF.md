@@ -1,4 +1,4 @@
-# ARISE SLAM — Technical Brief for CATL Proposal
+# ARISE SLAM — Technical Brief for Factory Pilot Proposal
 
 **Prepared by:** dimos/crew/ace
 **Date:** 2026-03-29
@@ -210,7 +210,7 @@ Website: [cmu-exploration.com](https://www.cmu-exploration.com/)
 
 ---
 
-## 9. Summary for CATL Proposal
+## 9. Summary for Factory Pilot Proposal
 
 **ARISE SLAM provides:**
 - Real-time LiDAR-inertial SLAM based on LOAM (foundational algorithm for modern LiDAR SLAM)
@@ -221,7 +221,7 @@ Website: [cmu-exploration.com](https://www.cmu-exploration.com/)
 - Integration with CMU's proven autonomy stack (FAR Planner, TARE Explorer, terrain analysis)
 - Validated on M20 quadruped with dual 192-channel RoboSense RSAIRY lidars
 
-**For CATL factory deployment:**
+**For pilot factory deployment:**
 - Indoor range of 30m is sufficient for factory floor mapping
 - Relocalization mode enables the robot to resume navigation from saved maps across shifts
 - Conservative 0.3 m/s speed ensures safe operation around equipment and personnel

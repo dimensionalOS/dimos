@@ -1,6 +1,6 @@
 # M20 ARISE SLAM Integration Log
 
-**Goal**: Replace FAST_LIO with ARISE SLAM for M20 autonomous navigation. ARISE supports multi-floor mapping needed for CATL pilot.
+**Goal**: Replace FAST_LIO with ARISE SLAM for M20 autonomous navigation. ARISE supports multi-floor mapping needed for factory pilot.
 
 **Date started**: 2026-03-24
 **Branch**: `integration/m20-rosnav-migration`
@@ -290,7 +290,7 @@ This is a general fix — affects any module with `deployment="docker"`.
 
 NOS upgraded from Python 3.10 → 3.12 (via `uv python install 3.12`).
 Pre-built `gtsam-extended` aarch64 wheel available for cp312 (not cp310).
-PGO loop closure now available on NOS — critical for CATL multi-floor mapping.
+PGO loop closure now available on NOS — critical for the factory pilot multi-floor mapping.
 
 NOS disk cleanup: freed ~9GB (old Docker image 4.5G, old /opt/dimos 7.8G,
 old py310 venv 1.8G). DNS fixed (systemd-resolved was disabled, re-enabled
