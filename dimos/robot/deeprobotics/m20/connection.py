@@ -236,10 +236,7 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
         super().start()
 
         self._velocity_ctrl.start()
-        # Subscribe to cmd_vel — same pattern as G1 connection
-        logger.info(f"cmd_vel transport at start(): {self.cmd_vel.transport}")
         self._disposables.add(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
-        logger.info("cmd_vel subscribed in start()")
 
         try:
             # Connect to M20 and start protocol services (always UDP)
@@ -403,7 +400,7 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
 
     def _on_cmd_vel(self, twist: Twist) -> None:
         """Route Twist commands from the navigation stack to velocity controller."""
-        logger.info(f"_on_cmd_vel: vx={twist.linear.x:.2f} vy={twist.linear.y:.2f} wz={twist.angular.z:.2f}")
+        logger.debug(f"cmd_vel: vx={twist.linear.x:.2f} vy={twist.linear.y:.2f} wz={twist.angular.z:.2f}")
         if hasattr(self._velocity_ctrl, 'set_twist'):
             self._velocity_ctrl.set_twist(twist)
         else:

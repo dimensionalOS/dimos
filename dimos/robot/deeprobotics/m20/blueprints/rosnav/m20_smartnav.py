@@ -47,7 +47,7 @@ from dimos.visualization.vis_module import vis_module
 m20_smartnav = (
     autoconnect(
         m20_connection(
-            ip="10.21.31.103",
+            ip=global_config.robot_ip,
             enable_ros=False,
             enable_lidar=False,
             lidar_height=0.47,
@@ -85,7 +85,7 @@ m20_smartnav = (
     .global_config(
         n_workers=2,
         robot_model="deeprobotics_m20",
-        robot_ip="10.21.31.103",
+        robot_ip="192.168.1.120",
         robot_width=0.45,
         robot_rotation_diameter=0.6,
     )

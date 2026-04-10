@@ -42,7 +42,7 @@ from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 #   ignore_noise=0.05 matched to voxel resolution, can_climb=0.25 (~M20 step limit)
 m20_rosnav = (
     autoconnect(
-        m20_connection(ip="10.21.31.103", enable_ros=False, enable_lidar=False, lidar_height=0.47),
+        m20_connection(enable_ros=False, enable_lidar=False, lidar_height=0.47),
         VoxelGridMapper.blueprint(voxel_size=0.05, publish_interval=1.0, max_height=0.7),
         CostMapper.blueprint(config=HeightCostConfig(
             max_height=0.7,
@@ -57,7 +57,7 @@ m20_rosnav = (
     .global_config(
         n_workers=2,
         robot_model="deeprobotics_m20",
-        robot_ip="10.21.31.103",
+        robot_ip="192.168.1.120",
         robot_width=0.45,
         robot_rotation_diameter=0.6,
     )
