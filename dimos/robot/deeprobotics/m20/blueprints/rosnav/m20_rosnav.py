@@ -57,7 +57,7 @@ m20_rosnav = (
     .global_config(
         n_workers=2,
         robot_model="deeprobotics_m20",
-        robot_ip="192.168.1.120",
+        robot_ip="10.21.31.103",
         robot_width=0.45,
         robot_rotation_diameter=0.6,
     )

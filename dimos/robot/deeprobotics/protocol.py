@@ -84,7 +84,7 @@ class M20Protocol:
     Includes heartbeat management and status response listener.
     """
 
-    def __init__(self, host: str = "192.168.1.120", port: int = 30000):
+    def __init__(self, host: str = "10.21.31.103", port: int = 30000):
         self.host = host
         self.port = port
         self._sock: Optional[socket.socket] = None

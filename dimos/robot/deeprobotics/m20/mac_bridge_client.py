@@ -20,7 +20,7 @@ mac_bridge.py TCP server and reconstructs dimos message types from
 the wire frames.
 
 Usage:
-    client = M20MacBridgeClient("192.168.1.120")
+    client = M20MacBridgeClient("10.21.31.104")
     client.start()
     client.odom_stream().subscribe(lambda pose: print(pose))
     client.publish_nav_cmd(0.5, 0.0, 0.0)

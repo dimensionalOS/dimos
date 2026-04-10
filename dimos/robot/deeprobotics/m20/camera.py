@@ -54,7 +54,7 @@ class M20RTSPCamera:
     """Reads RTSP H.265 video from the M20 and produces an Observable image stream.
 
     Usage:
-        camera = M20RTSPCamera("192.168.1.120")
+        camera = M20RTSPCamera("10.21.31.103")
         camera.start()
         stream = camera.image_stream()
         stream.subscribe(lambda img: ...)
@@ -63,7 +63,7 @@ class M20RTSPCamera:
 
     def __init__(
         self,
-        host: str = "192.168.1.120",
+        host: str = "10.21.31.103",
         rtsp_port: int = 8554,
         stream_path: str = "video1",
         frame_id: str = "camera_optical",
