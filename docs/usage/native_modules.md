@@ -131,7 +131,7 @@ class FastLio2Config(NativeModuleConfig):
 Native modules work with `autoconnect` exactly like Python modules:
 
 ```python skip
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 
 class PointCloudConsumer(Module):
     pointcloud: In[PointCloud2]

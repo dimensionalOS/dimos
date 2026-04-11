@@ -163,7 +163,7 @@ class MyModule(Module):
 Compose modules with `autoconnect()`. Streams auto-connect by `(name, type)` matching.
 
 ```python
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 
 my_blueprint = autoconnect(module_a(), module_b(), module_c())
 ```

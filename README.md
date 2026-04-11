@@ -224,7 +224,7 @@ See below a simple robot connection module that sends streams of continuous `cmd
 
 ```py
 import threading, time, numpy as np
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
@@ -272,7 +272,7 @@ Blueprints can be composed, remapped, and have transports overridden if `autocon
 
 A blueprint example that connects the image stream from a robot to an MCP-backed LLM agent for reasoning and action execution.
 ```py
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree.go2.connection import go2_connection

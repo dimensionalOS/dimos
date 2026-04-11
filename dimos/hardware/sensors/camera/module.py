@@ -111,6 +111,7 @@ class CameraModule(Module, perception.Camera):
             raise RuntimeError("No image received from camera yet.")
         return self._latest_image
 
+    @rpc
     def stop(self) -> None:
         if self.hardware and hasattr(self.hardware, "stop"):
             self.hardware.stop()
