@@ -45,13 +45,16 @@ int main(int argc, char** argv) {
 
     int port = (argc > 1) ? std::atoi(argv[1]) : DEFAULT_PORT;
 
-    // Initialize drdds — local SHM on AOS, where ctrlmcu also runs
+    // Initialize drdds — local SHM on AOS, where ctrlmcu also runs.
+    // Use DrDDSChannel (pub+sub) instead of DrDDSPublisher alone — this is
+    // required for proper DDS endpoint matching (same pattern as drdds_recv).
     std::vector<int> domains = {0};
     DrDDSManager::Init(domains, "nav_cmd_bridge", "nav_cmd_bridge", false, false, false);
 
-    auto* publisher = new DrDDSPublisher<drdds::msg::NavCmdPubSubType>("/NAV_CMD", 0, "");
+    DrDDSChannel<drdds::msg::NavCmdPubSubType> nav_cmd_ch("/NAV_CMD", 0);
+    auto* publisher = nav_cmd_ch.GetPublisher();
     if (!publisher) {
-        fprintf(stderr, "[nav_cmd_bridge] Failed to create /NAV_CMD publisher\n");
+        fprintf(stderr, "[nav_cmd_bridge] Failed to create /NAV_CMD channel\n");
         return 1;
     }
 
