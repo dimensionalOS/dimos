@@ -47,42 +47,48 @@ def rewrite_file(path: Path) -> int:
     return 0
 
 
-def commits_to_check() -> list[str]:
-    """Commits to check, oldest first.
+def check_commits() -> int:
+    """Check every commit in the range pre-commit was invoked over.
 
-    When pre-commit is invoked with `--from-ref/--to-ref` (see code-cleanup.yml
-    for the CI invocation), it exports PRE_COMMIT_FROM_REF / PRE_COMMIT_TO_REF
-    and we walk that range. Otherwise we only inspect HEAD.
+    Locally on `git commit` no range is supplied, so we no-op rather than
+    blocking commits on the state of HEAD — the commit-msg hook is in
+    charge there. In CI, code-cleanup.yml passes `--from-ref/--to-ref` to
+    pre-commit, which exports PRE_COMMIT_FROM_REF / PRE_COMMIT_TO_REF.
     """
     from_ref = os.environ.get("PRE_COMMIT_FROM_REF")
     to_ref = os.environ.get("PRE_COMMIT_TO_REF")
-    if from_ref and to_ref:
-        result = subprocess.run(
+    if not (from_ref and to_ref):
+        return 0
+
+    try:
+        rev_list = subprocess.run(
             ["git", "rev-list", "--reverse", f"{from_ref}..{to_ref}"],
             capture_output=True,
             text=True,
             check=True,
         )
-        return result.stdout.split()
+    except subprocess.CalledProcessError as e:
+        print(
+            f"git rev-list {from_ref}..{to_ref} failed: {e.stderr.strip() or e}",
+            file=sys.stderr,
+        )
+        return 1
 
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return [result.stdout.strip()]
-
-
-def check_commits() -> int:
     failures: list[tuple[str, str]] = []
-    for sha in commits_to_check():
-        msg = subprocess.run(
-            ["git", "log", "-1", "--format=%B", sha],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout
+    for sha in rev_list.stdout.split():
+        try:
+            msg = subprocess.run(
+                ["git", "log", "-1", "--format=%B", sha],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+        except subprocess.CalledProcessError as e:
+            print(
+                f"git log -1 {sha} failed: {e.stderr.strip() or e}",
+                file=sys.stderr,
+            )
+            return 1
         _, matched = filter_text(msg)
         if matched is not None:
             failures.append((sha, matched))
