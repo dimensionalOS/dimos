@@ -10,8 +10,8 @@ body:
         ## System
         <!-- e.g. Ubuntu 24.04, macOS 15.4 -->
 
-        ## Robot (including firmware version)
-        <!-- e.g. Unitree Go2 EDU 1.1.7, or N/A -->
+        ## Robot/Sim/Hardware (including firmware version)
+        <!-- e.g. Unitree Go2 EDU 1.1.7, or Unity sim etc -->
 
         ## Steps to reproduce
 
