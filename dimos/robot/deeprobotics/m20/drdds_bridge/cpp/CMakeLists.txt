@@ -21,19 +21,13 @@ FetchContent_MakeAvailable(dimos_lcm)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LCM REQUIRED lcm)
 
-# SHM transport header (shared with drdds_recv)
-set(DRDDS_BRIDGE_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../../../docker/drdds_bridge/include)
-
-# NativeModule common headers
-set(NATIVE_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../hardware/sensors/lidar/common)
-
 add_executable(drdds_lidar_bridge main.cpp)
 
+# Headers: shm_transport.h and dimos_native_module.hpp in local include/
 target_include_directories(drdds_lidar_bridge PRIVATE
   ${dimos_lcm_SOURCE_DIR}/generated/cpp_lcm_msgs
   ${LCM_INCLUDE_DIRS}
-  ${DRDDS_BRIDGE_INCLUDE}
-  ${NATIVE_COMMON_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_link_libraries(drdds_lidar_bridge PRIVATE
