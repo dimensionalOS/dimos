@@ -50,7 +50,7 @@ class GlobalConfig(BaseSettings):
     planner_strategy: NavigationStrategy = "simple"
     planner_robot_speed: float | None = None
     mcp_port: int = 9990
-    mcp_host: str = "0.0.0.0"
+    mcp_host: str = "127.0.0.1"
     dtop: bool = False
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"
