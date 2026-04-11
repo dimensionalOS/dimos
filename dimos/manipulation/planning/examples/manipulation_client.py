@@ -89,9 +89,12 @@ def plan_pose(
     robot_name: str | None = None,
 ) -> bool:
     """Plan to Cartesian pose. Preserves current orientation if rpy not given."""
-    orientation = Quaternion(0, 0, 0, 1)
     if roll is not None or pitch is not None or yaw is not None:
         orientation = Quaternion.from_euler(Vector3(x=roll or 0, y=pitch or 0, z=yaw or 0))
+    else:
+        # Preserve current EE orientation
+        current = _client.get_ee_pose(robot_name)
+        orientation = current.orientation if current else Quaternion(0, 0, 0, 1)
     target = Pose(position=Vector3(x=x, y=y, z=z), orientation=orientation)
     return _client.plan_to_pose(target, robot_name)
 

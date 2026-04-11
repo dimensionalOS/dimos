@@ -22,8 +22,8 @@ from dimos.protocol.service.system_configurator.base import (
     SystemConfigurator,
     _read_sysctl_int,
     _write_sysctl_int,
-    sudo_run,
 )
+from dimos.utils import prompt
 
 # specific checks: multicast
 
@@ -32,7 +32,7 @@ class MulticastConfiguratorLinux(SystemConfigurator):
     critical = True
     MULTICAST_PREFIX = "224.0.0.0/4"
 
-    def __init__(self, loopback_interface: str = "lo"):
+    def __init__(self, loopback_interface: str = "lo") -> None:
         self.loopback_interface = loopback_interface
 
         self.loopback_ok: bool | None = None
@@ -126,15 +126,15 @@ class MulticastConfiguratorLinux(SystemConfigurator):
 
     def fix(self) -> None:
         if not self.loopback_ok:
-            sudo_run(*self.enable_multicast_cmd, check=True, text=True, capture_output=True)
+            prompt.sudo_run(*self.enable_multicast_cmd, check=True, text=True, capture_output=True)
         if not self.route_ok:
-            sudo_run(*self.add_route_cmd, check=True, text=True, capture_output=True)
+            prompt.sudo_run(*self.add_route_cmd, check=True, text=True, capture_output=True)
 
 
 class MulticastConfiguratorMacOS(SystemConfigurator):
     critical = True
 
-    def __init__(self, loopback_interface: str = "lo0"):
+    def __init__(self, loopback_interface: str = "lo0") -> None:
         self.loopback_interface = loopback_interface
         self.add_route_cmd = [
             "route",
@@ -170,7 +170,7 @@ class MulticastConfiguratorMacOS(SystemConfigurator):
     def fix(self) -> None:
         # Delete any existing 224.0.0.0/4 route (e.g. on en0) before adding on lo0,
         # otherwise `route add` fails with "route already in use"
-        sudo_run(
+        prompt.sudo_run(
             "route",
             "delete",
             "-net",
@@ -179,7 +179,7 @@ class MulticastConfiguratorMacOS(SystemConfigurator):
             text=True,
             capture_output=True,
         )
-        sudo_run(*self.add_route_cmd, check=True, text=True, capture_output=True)
+        prompt.sudo_run(*self.add_route_cmd, check=True, text=True, capture_output=True)
 
 
 # specific checks: buffers
@@ -263,7 +263,7 @@ class MaxFileConfiguratorMacOS(SystemConfigurator):
     critical = False
     TARGET_FILE_COUNT_LIMIT = 65536
 
-    def __init__(self, target: int = TARGET_FILE_COUNT_LIMIT):
+    def __init__(self, target: int = TARGET_FILE_COUNT_LIMIT) -> None:
         self.target = target
         self.current_soft: int = 0
         self.current_hard: int = 0
@@ -312,7 +312,7 @@ class MaxFileConfiguratorMacOS(SystemConfigurator):
         else:
             # Need to raise both soft and hard limits via launchctl
             try:
-                sudo_run(
+                prompt.sudo_run(
                     "launchctl",
                     "limit",
                     "maxfiles",

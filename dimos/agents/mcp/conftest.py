@@ -23,7 +23,8 @@ import pytest
 from dimos.agents.agent_test_runner import AgentTestRunner
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.core.transport import pLCMTransport
 
@@ -80,7 +81,7 @@ def agent_setup(request):
         global_config.update(viewer="none")
 
         nonlocal coordinator
-        coordinator = blueprint.build()
+        coordinator = ModuleCoordinator.build(blueprint)
 
         if not finished_event.wait(60):
             raise TimeoutError("Timed out waiting for agent to finish processing messages.")

@@ -28,6 +28,7 @@ import numpy as np
 from numpy.typing import NDArray
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -58,8 +59,10 @@ class ObjectTrackingConfig(ModuleConfig):
     reid_fail_tolerance: int = 5
 
 
-class ObjectTracking(Module[ObjectTrackingConfig]):
+class ObjectTracking(Module):
     """Module for object tracking with LCM input/output."""
+
+    config: ObjectTrackingConfig
 
     # LCM inputs
     color_image: In[Image]
@@ -70,8 +73,6 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
     detection2darray: Out[Detection2DArray]
     detection3darray: Out[Detection3DArray]
     tracked_overlay: Out[Image]  # Visualization output
-
-    default_config = ObjectTrackingConfig
 
     def __init__(self, **kwargs: Any) -> None:
         """
@@ -105,8 +106,8 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
         self.reid_warmup_frames = 3  # Number of frames before REID starts
 
         self._frame_lock = threading.Lock()
-        self._latest_rgb_frame: np.ndarray | None = None  # type: ignore[type-arg]
-        self._latest_depth_frame: np.ndarray | None = None  # type: ignore[type-arg]
+        self._latest_rgb_frame: np.ndarray | None = None
+        self._latest_depth_frame: np.ndarray | None = None
         self._latest_camera_info: CameraInfo | None = None
 
         # Tracking thread control
@@ -141,13 +142,13 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
 
         # Create aligned observable for RGB and depth
         aligned_frames = align_timestamped(
-            self.color_image.observable(),  # type: ignore[no-untyped-call]
-            self.depth.observable(),  # type: ignore[no-untyped-call]
+            self.color_image.observable(),
+            self.depth.observable(),
             buffer_size=2.0,  # 2 second buffer
             match_tolerance=0.5,  # 500ms tolerance
         )
         unsub = aligned_frames.subscribe(on_aligned_frames)
-        self._disposables.add(unsub)
+        self.register_disposable(unsub)
 
         # Subscribe to camera info stream separately (doesn't need alignment)
         def on_camera_info(camera_info_msg: CameraInfo) -> None:
@@ -162,7 +163,7 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
             ]
 
         unsub = self.camera_info.subscribe(on_camera_info)  # type: ignore[assignment]
-        self._disposables.add(Disposable(unsub))  # type: ignore[arg-type]
+        self.register_disposable(Disposable(unsub))  # type: ignore[arg-type]
 
     @rpc
     def stop(self) -> None:
@@ -171,7 +172,7 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
         self.stop_tracking.set()
 
         if self.tracking_thread and self.tracking_thread.is_alive():
-            self.tracking_thread.join(timeout=2.0)
+            self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 
@@ -333,7 +334,7 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
             # Check if we're being called from within the tracking thread
             if threading.current_thread() != self.tracking_thread:
                 self.stop_tracking.set()
-                self.tracking_thread.join(timeout=1.0)
+                self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
                 self.tracking_thread = None
             else:
                 # If called from within thread, just set the stop flag
@@ -555,9 +556,9 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
                 viz_msg = Image.from_numpy(viz_image)
                 self.tracked_overlay.publish(viz_msg)
 
-    def _draw_reid_matches(self, image: NDArray[np.uint8]) -> NDArray[np.uint8]:  # type: ignore[type-arg]
+    def _draw_reid_matches(self, image: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Draw REID feature matches on the image."""
-        viz_image: NDArray[np.uint8] = image.copy()  # type: ignore[type-arg]
+        viz_image: NDArray[np.uint8] = image.copy()
 
         x1, y1, _x2, _y2 = self.last_roi_bbox  # type: ignore[misc]
 
@@ -599,7 +600,7 @@ class ObjectTracking(Module[ObjectTrackingConfig]):
 
         return viz_image
 
-    def _get_depth_from_bbox(self, bbox: list[int], depth_frame: np.ndarray) -> float | None:  # type: ignore[type-arg]
+    def _get_depth_from_bbox(self, bbox: list[int], depth_frame: np.ndarray) -> float | None:
         """Calculate depth from bbox using the 25th percentile of closest points.
 
         Args:

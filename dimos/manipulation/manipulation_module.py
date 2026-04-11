@@ -24,13 +24,15 @@ Subclass PickAndPlaceModule (pick_and_place_module.py) adds perception integrati
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from enum import Enum
 import threading
 import time
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+from pydantic import Field
+
 from dimos.agents.annotation import skill
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -82,14 +84,18 @@ class ManipulationState(Enum):
 class ManipulationModuleConfig(ModuleConfig):
     """Configuration for ManipulationModule."""
 
-    robots: Iterable[RobotModelConfig] = ()
+    robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
     enable_viz: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
+    # Floor plane Z height (meters). When set, a box obstacle is added at startup
+    # to prevent the planner from routing trajectories below this height.
+    # Set to None to disable.
+    floor_z: float | None = None
 
 
-class ManipulationModule(Module[ManipulationModuleConfig]):
+class ManipulationModule(Module):
     """Base motion planning module with ControlCoordinator execution.
 
     - @rpc: Low-level building blocks (plan, execute, gripper)
@@ -98,7 +104,7 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
     Subclass PickAndPlaceModule adds perception integration and long-horizon skills.
     """
 
-    default_config = ManipulationModuleConfig
+    config: ManipulationModuleConfig
 
     # Input: Joint state from coordinator (for world sync)
     joint_state: In[JointState]
@@ -126,8 +132,8 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         # Coordinator integration (lazy initialized)
         self._coordinator_client: RPCClient | None = None
 
-        # Init joints: captured from first joint state received, used by go_init
-        self._init_joints: JointState | None = None
+        # Init joints: captured from first joint state per robot, used by go_init
+        self._init_joints: dict[RobotName, JointState] = {}
 
         # TF publishing thread
         self._tf_stop_event = threading.Event()
@@ -168,6 +174,23 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             self._robots[robot_config.name] = (robot_id, robot_config, traj_gen)
 
         self._world_monitor.finalize()
+
+        # Add floor obstacle to prevent trajectories below the table surface
+        if self.config.floor_z is not None:
+            fz = self.config.floor_z
+            thickness = 0.2
+            floor_pose = Pose(
+                Vector3(0.7, 0.0, fz - thickness / 2),
+                Quaternion(0.0, 0.0, 0.0, 1.0),
+            )
+            floor_obs = Obstacle(
+                name="floor",
+                pose=floor_pose,
+                obstacle_type=ObstacleType.BOX,
+                dimensions=(0.6, 1.2, thickness),
+            )
+            self._world_monitor.add_obstacle(floor_obs)
+            logger.info(f"Floor obstacle added at z={fz:.3f}")
 
         for _, (robot_id, _, _) in self._robots.items():
             self._world_monitor.start_state_monitor(robot_id)
@@ -221,20 +244,51 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         return (robot_name, robot_id, config, traj_gen)
 
     def _on_joint_state(self, msg: JointState) -> None:
-        """Callback when joint state received from driver."""
-        try:
-            # Forward to world monitor for state synchronization.
-            # Pass robot_id=None to broadcast to all monitors - each monitor
-            # extracts only its robot's joints based on joint_name_mapping.
-            if self._world_monitor is not None:
-                self._world_monitor.on_joint_state(msg, robot_id=None)
+        """Callback when joint state received from driver.
 
-            # Capture initial joint positions on first callback
-            if self._init_joints is None and msg.position:
-                self._init_joints = JointState(name=list(msg.name), position=list(msg.position))
-                logger.info(
-                    f"Init joints captured: [{', '.join(f'{j:.3f}' for j in msg.position)}]"
+        Splits the aggregated JointState by robot using each robot's
+        coordinator joint names, then routes to the correct monitor.
+        """
+        try:
+            if self._world_monitor is None:
+                return
+
+            # Build name → index map once for the whole message
+            name_to_idx = {name: i for i, name in enumerate(msg.name)}
+
+            for robot_name, (robot_id, config, _) in self._robots.items():
+                coord_names = config.get_coordinator_joint_names()
+                indices = [name_to_idx.get(cn) for cn in coord_names]
+                if any(idx is None for idx in indices):
+                    missing = [
+                        cn for cn, idx in zip(coord_names, indices, strict=False) if idx is None
+                    ]
+                    logger.warning(f"Skipping '{robot_name}': missing joints {missing}")
+                    continue
+
+                # Build per-robot sub-message (coordinator namespace)
+                sub_positions = [msg.position[idx] for idx in indices]  # type: ignore[index]
+                sub_velocities = (
+                    [msg.velocity[idx] for idx in indices]  # type: ignore[index]
+                    if msg.velocity and len(msg.velocity) == len(msg.name)
+                    else []
                 )
+                sub_msg = JointState(
+                    name=list(coord_names),
+                    position=sub_positions,
+                    velocity=sub_velocities,
+                )
+
+                # Route to specific monitor
+                self._world_monitor.on_joint_state(sub_msg, robot_id=robot_id)
+
+                # Capture per-robot init joints on first receipt
+                if robot_name not in self._init_joints:
+                    self._init_joints[robot_name] = sub_msg
+                    logger.info(
+                        f"Init joints captured for '{robot_name}': "
+                        f"[{', '.join(f'{j:.3f}' for j in sub_positions)}]"
+                    )
 
         except Exception as e:
             logger.error(f"Exception in _on_joint_state: {e}")
@@ -298,6 +352,7 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         logger.info("Motion cancelled")
         return True
 
+    @rpc
     @skill
     def reset(self) -> str:
         """Reset the robot module to IDLE state, clearing any fault.
@@ -382,7 +437,7 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             return
         world = self._world_monitor.world
         if hasattr(world, "hide_preview"):
-            world.hide_preview(robot_id)  # type: ignore[attr-defined]
+            world.hide_preview(robot_id)
             world.publish_visualization()
 
     @rpc
@@ -447,6 +502,14 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         start = self._world_monitor.get_current_joint_state(robot_id)
         if start is None:
             return self._fail("No joint state")
+
+        # Trim goal to planner DOF (e.g. strip gripper joint from coordinator state)
+        planner_dof = len(start.position)
+        if len(goal.position) > planner_dof:
+            goal = JointState(
+                name=list(goal.name[:planner_dof]) if goal.name else [],
+                position=list(goal.position[:planner_dof]),
+            )
 
         result = self._planner.plan_joint_path(
             world=self._world_monitor.world,
@@ -577,23 +640,39 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
             "coordinator_task_name": config.coordinator_task_name,
             "home_joints": config.home_joints,
             "pre_grasp_offset": config.pre_grasp_offset,
-            "init_joints": list(self._init_joints.position) if self._init_joints else None,
+            "init_joints": list(init.position)
+            if (init := self._init_joints.get(robot_name))
+            else None,
         }
 
     @rpc
-    def get_init_joints(self) -> JointState | None:
-        """Get the init joint state (captured at startup or set manually)."""
-        return self._init_joints
+    def get_init_joints(self, robot_name: RobotName | None = None) -> JointState | None:
+        """Get the init joint state (captured at startup or set manually).
+
+        Args:
+            robot_name: Robot name (uses default if None and only one robot)
+        """
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return None
+        return self._init_joints.get(robot[0])
 
     @rpc
-    def set_init_joints(self, joint_state: JointState) -> bool:
+    def set_init_joints(self, joint_state: JointState, robot_name: RobotName | None = None) -> bool:
         """Set the init joint state.
 
         Args:
             joint_state: New init joint state (names + positions)
+            robot_name: Robot name (uses default if None and only one robot)
         """
-        self._init_joints = joint_state
-        logger.info(f"Init joints set: [{', '.join(f'{j:.3f}' for j in joint_state.position)}]")
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return False
+        self._init_joints[robot[0]] = joint_state
+        logger.info(
+            f"Init joints set for '{robot[0]}': "
+            f"[{', '.join(f'{j:.3f}' for j in joint_state.position)}]"
+        )
         return True
 
     @rpc
@@ -606,16 +685,17 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         robot = self._get_robot(robot_name)
         if robot is None:
             return False
-        _, robot_id, _, _ = robot
+        robot_name_resolved, robot_id, _, _ = robot
         if self._world_monitor is None:
             return False
         current = self._world_monitor.get_current_joint_state(robot_id)
         if current is None:
             logger.error("Cannot capture init joints — no current joint state")
             return False
-        self._init_joints = current
+        self._init_joints[robot_name_resolved] = current
         logger.info(
-            f"Init joints set to current: [{', '.join(f'{j:.3f}' for j in current.position)}]"
+            f"Init joints set to current for '{robot_name_resolved}': "
+            f"[{', '.join(f'{j:.3f}' for j in current.position)}]"
         )
         return True
 
@@ -898,6 +978,22 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         logger.warning(f"Trajectory execution timed out after {timeout}s")
         return False
 
+    def _lift_if_low(self, robot_name: RobotName | None = None, min_z: float = 0.05) -> str | None:
+        """If the end-effector is below *min_z*, plan and execute a short lift.
+
+        Returns None on success (or if already above threshold), error string on failure.
+        """
+        ee = self.get_ee_pose(robot_name)
+        if ee is None or ee.position.z >= min_z:
+            return None
+
+        lift_z = min_z + 0.05
+        logger.info(f"EE z={ee.position.z:.3f} < {min_z}, lifting to z={lift_z:.3f}")
+        lift_pose = Pose(Vector3(ee.position.x, ee.position.y, lift_z), ee.orientation)
+        if not self.plan_to_pose(lift_pose, robot_name):
+            return f"Error: Failed to plan lift from z={ee.position.z:.3f}"
+        return self._preview_execute_wait(robot_name)
+
     def _preview_execute_wait(
         self, robot_name: RobotName | None = None, preview_duration: float = 0.5
     ) -> str | None:
@@ -1004,6 +1100,11 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
 
         pose = Pose(Vector3(x, y, z), orientation)
 
+        # If EE is low, lift up first to clear obstacles
+        err = self._lift_if_low(robot_name)
+        if err:
+            return err
+
         if not self.plan_to_pose(pose, robot_name):
             return f"Error: Planning failed — pose ({x:.3f}, {y:.3f}, {z:.3f}) may be unreachable or in collision"
 
@@ -1090,13 +1191,44 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         Args:
             robot_name: Robot to move (only needed for multi-arm setups).
         """
-        if self._init_joints is None:
+        robot = self._get_robot(robot_name)
+        if robot is None:
+            return "Error: Robot not found"
+        rname, robot_id, _, _ = robot
+
+        init = self._init_joints.get(rname)
+        if init is None:
             return "Error: No init joints captured — robot may not have reported joint state yet"
 
+        # Lift if EE is low before moving to init
+        err = self._lift_if_low(robot_name)
+        if err:
+            return err
+
+        # Move through a safe waypoint: 10cm above and 5cm in front of init pose.
+        # This avoids direct paths through the workspace that could collide with objects.
+        if self._world_monitor is not None:
+            init_ee = self._world_monitor.get_ee_pose(robot_id, joint_state=init)
+            if init_ee is not None:
+                wp = Pose(
+                    Vector3(
+                        init_ee.position.x + 0.05,
+                        init_ee.position.y,
+                        init_ee.position.z + 0.10,
+                    ),
+                    init_ee.orientation,
+                )
+                if self.plan_to_pose(wp, robot_name):
+                    err = self._preview_execute_wait(robot_name)
+                    if err:
+                        return err
+                else:
+                    logger.warning("Safe waypoint unreachable, going directly to init")
+
         logger.info(
-            f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in self._init_joints.position)}]..."
+            f"Planning motion to init position [{', '.join(f'{j:.3f}' for j in init.position)}]..."
         )
-        if not self.plan_to_joints(self._init_joints, robot_name):
+        if not self.plan_to_joints(init, robot_name):
             return "Error: Failed to plan path to init position"
 
         err = self._preview_execute_wait(robot_name)
@@ -1113,7 +1245,7 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         # Stop TF thread
         if self._tf_thread is not None:
             self._tf_stop_event.set()
-            self._tf_thread.join(timeout=1.0)
+            self._tf_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._tf_thread = None
 
         # Stop world monitor (includes visualization thread)

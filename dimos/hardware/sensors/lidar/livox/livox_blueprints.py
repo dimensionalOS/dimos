@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 

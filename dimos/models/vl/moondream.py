@@ -5,7 +5,7 @@ import warnings
 import numpy as np
 from PIL import Image as PILImage
 import torch
-from transformers import AutoModelForCausalLM  # type: ignore[import-untyped]
+from transformers import AutoModelForCausalLM
 
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
 from dimos.models.vl.base import VlModel, VlModelConfig
@@ -17,7 +17,6 @@ from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 # Moondream works well with 512x512 max
 MOONDREAM_DEFAULT_AUTO_RESIZE = (512, 512)
 
-
 class MoondreamConfig(HuggingFaceModelConfig, VlModelConfig):
     """Configuration for MoondreamVlModel."""
 
@@ -25,10 +24,9 @@ class MoondreamConfig(HuggingFaceModelConfig, VlModelConfig):
     dtype: torch.dtype = torch.bfloat16
     auto_resize: tuple[int, int] | None = MOONDREAM_DEFAULT_AUTO_RESIZE
 
-
-class MoondreamVlModel(HuggingFaceModel, VlModel[MoondreamConfig]):
+class MoondreamVlModel(HuggingFaceModel, VlModel):
+    config: MoondreamConfig
     _model_class = AutoModelForCausalLM
-    default_config = MoondreamConfig  # type: ignore[assignment]
 
     @cached_property
     def _model(self) -> AutoModelForCausalLM:
@@ -55,7 +53,7 @@ class MoondreamVlModel(HuggingFaceModel, VlModel[MoondreamConfig]):
         rgb_image = image.to_rgb()
         return PILImage.fromarray(rgb_image.data)
 
-    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
+    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def]
         pil_image = self._to_pil(image)
 
         # Query the model

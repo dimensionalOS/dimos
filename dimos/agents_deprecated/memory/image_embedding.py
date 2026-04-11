@@ -65,7 +65,7 @@ class ImageEmbeddingProvider:
         try:
             import onnxruntime as ort  # type: ignore[import-untyped]
             import torch  # noqa: F401
-            from transformers import (  # type: ignore[import-untyped]
+            from transformers import (
                 AutoFeatureExtractor,
                 AutoModel,
                 CLIPProcessor,
@@ -104,7 +104,7 @@ class ImageEmbeddingProvider:
             self.processor = None
             raise
 
-    def get_embedding(self, image: np.ndarray | str | bytes) -> np.ndarray:  # type: ignore[type-arg]
+    def get_embedding(self, image: np.ndarray | str | bytes) -> np.ndarray:
         """
         Generate an embedding vector for the provided image.
 
@@ -177,7 +177,7 @@ class ImageEmbeddingProvider:
             logger.error(f"Error generating embedding: {e}")
             return np.random.randn(self.dimensions).astype(np.float32)
 
-    def get_text_embedding(self, text: str) -> np.ndarray:  # type: ignore[type-arg]
+    def get_text_embedding(self, text: str) -> np.ndarray:
         """
         Generate an embedding vector for the provided text.
 
@@ -244,7 +244,7 @@ class ImageEmbeddingProvider:
             logger.error(f"Error generating text embedding: {e}")
             return np.random.randn(self.dimensions).astype(np.float32)
 
-    def _prepare_image(self, image: np.ndarray | str | bytes) -> Image.Image:  # type: ignore[type-arg]
+    def _prepare_image(self, image: np.ndarray | str | bytes) -> Image.Image:
         """
         Convert the input image to PIL format required by the models.
 

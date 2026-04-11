@@ -27,19 +27,21 @@ Example usage::
         some_param: float = 1.0
 
     class MyCppModule(NativeModule):
-        default_config = MyConfig
+        config: MyConfig
         pointcloud: Out[PointCloud2]
         cmd_vel: In[Twist]
 
     # Works with autoconnect, remappings, etc.
-    autoconnect(
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    ModuleCoordinator.build(autoconnect(
         MyCppModule.blueprint(),
         SomeConsumer.blueprint(),
-    ).build().loop()
+    )).loop()
 """
 
 from __future__ import annotations
 
+import collections
 import enum
 import inspect
 import json
@@ -53,6 +55,7 @@ from typing import IO, Any
 
 from pydantic import Field
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.utils.logging_config import setup_logger
@@ -113,10 +116,10 @@ class NativeModuleConfig(ModuleConfig):
 _NativeConfig = TypeVar("_NativeConfig", bound=NativeModuleConfig, default=NativeModuleConfig)
 
 
-class NativeModule(Module[_NativeConfig]):
+class NativeModule(Module):
     """Module that wraps a native executable as a managed subprocess.
 
-    Subclass this, declare In/Out ports, and set ``default_config`` to a
+    Subclass this, declare In/Out ports, and annotate ``config`` with a
     :class:`NativeModuleConfig` subclass pointing at the executable.
 
     On ``start()``, the binary is launched with CLI args::
@@ -127,13 +130,16 @@ class NativeModule(Module[_NativeConfig]):
     LCM topics directly.  On ``stop()``, the process receives SIGTERM.
     """
 
-    default_config: type[_NativeConfig] = NativeModuleConfig  # type: ignore[assignment]
+    config: NativeModuleConfig
+
     _process: subprocess.Popen[bytes] | None = None
     _watchdog: threading.Thread | None = None
     _stopping: bool = False
+    _last_stderr_lines: collections.deque[str]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self._last_stderr_lines = collections.deque(maxlen=50)
         self._resolve_paths()
 
     @rpc
@@ -155,7 +161,13 @@ class NativeModule(Module[_NativeConfig]):
         env = {**os.environ, **self.config.extra_env}
         cwd = self.config.cwd or str(Path(self.config.executable).resolve().parent)
 
-        logger.info("Starting native process", cmd=" ".join(cmd), cwd=cwd)
+        module_name = type(self).__name__
+        logger.info(
+            f"Starting native process: {module_name}",
+            module=module_name,
+            cmd=" ".join(cmd),
+            cwd=cwd,
+        )
         self._process = subprocess.Popen(
             cmd,
             env=env,
@@ -163,7 +175,11 @@ class NativeModule(Module[_NativeConfig]):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        logger.info("Native process started", pid=self._process.pid)
+        logger.info(
+            f"Native process started: {module_name}",
+            module=module_name,
+            pid=self._process.pid,
+        )
 
         self._stopping = False
         self._watchdog = threading.Thread(target=self._watch_process, daemon=True)
@@ -184,7 +200,7 @@ class NativeModule(Module[_NativeConfig]):
                 self._process.kill()
                 self._process.wait(timeout=5)
         if self._watchdog is not None and self._watchdog is not threading.current_thread():
-            self._watchdog.join(timeout=2)
+            self._watchdog.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         self._watchdog = None
         self._process = None
         super().stop()
@@ -197,15 +213,25 @@ class NativeModule(Module[_NativeConfig]):
         stdout_t = self._start_reader(self._process.stdout, "info")
         stderr_t = self._start_reader(self._process.stderr, "warning")
         rc = self._process.wait()
-        stdout_t.join(timeout=2)
-        stderr_t.join(timeout=2)
+        stdout_t.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        stderr_t.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         if self._stopping:
             return
+
+        module_name = type(self).__name__
+        exe_name = Path(self.config.executable).name if self.config.executable else "unknown"
+
+        # Use buffered stderr lines from the reader thread for the crash report.
+        last_stderr = "\n".join(self._last_stderr_lines)
+
         logger.error(
-            "Native process died unexpectedly",
+            f"Native process crashed: {module_name} ({exe_name})",
+            module=module_name,
+            executable=exe_name,
             pid=self._process.pid,
             returncode=rc,
+            last_stderr=last_stderr[:500] if last_stderr else None,
         )
         self.stop()
 
@@ -219,10 +245,13 @@ class NativeModule(Module[_NativeConfig]):
         if stream is None:
             return
         log_fn = getattr(logger, level)
+        is_stderr = level == "warning"
         for raw in stream:
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line:
                 continue
+            if is_stderr:
+                self._last_stderr_lines.append(line)
             if self.config.log_format == LogFormat.JSON:
                 try:
                     data = json.loads(line)
@@ -274,12 +303,16 @@ class NativeModule(Module[_NativeConfig]):
             if line.strip():
                 logger.warning(line)
         if proc.returncode != 0:
+            stderr_tail = stderr.decode("utf-8", errors="replace").strip()[-1000:]
             raise RuntimeError(
-                f"Build command failed (exit {proc.returncode}): {self.config.build_command}"
+                f"Build command failed (exit {proc.returncode}): {self.config.build_command}\n"
+                f"stderr: {stderr_tail}"
             )
         if not exe.exists():
             raise FileNotFoundError(
-                f"Build command succeeded but executable still not found: {exe}"
+                f"Build command succeeded but executable still not found: {exe}\n"
+                f"Build output may have been written to a different path. "
+                f"Check that build_command produces the executable at the expected location."
             )
 
     def _collect_topics(self) -> dict[str, str]:

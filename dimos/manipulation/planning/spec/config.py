@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from pydantic import Field
@@ -30,7 +29,7 @@ class RobotModelConfig(ModuleConfig):
 
     Attributes:
         name: Human-readable robot name
-        urdf_path: Path to URDF file (can be .urdf or .xacro)
+        model_path: Path to robot model file (.urdf, .xacro, or .xml/MJCF)
         base_pose: Pose of robot base in world frame (position + orientation)
         joint_names: Ordered list of controlled joint names (in URDF namespace)
         end_effector_link: Name of the end-effector link for FK/IK
@@ -47,14 +46,14 @@ class RobotModelConfig(ModuleConfig):
         max_velocity: Maximum joint velocity for trajectory generation (rad/s)
         max_acceleration: Maximum joint acceleration for trajectory generation (rad/s^2)
         joint_name_mapping: Maps coordinator joint names to URDF joint names.
-            Example: {"left_joint1": "joint1"} means coordinator's "left_joint1"
+            Example: {"left/joint1": "joint1"} means coordinator's "left/joint1"
             corresponds to URDF's "joint1". If empty, names are assumed to match.
         coordinator_task_name: Task name for executing trajectories via coordinator RPC.
             If set, trajectories can be executed via execute_trajectory() RPC.
     """
 
     name: str
-    urdf_path: Path
+    model_path: Path
     base_pose: PoseStamped
     joint_names: list[str]
     end_effector_link: str
@@ -65,7 +64,7 @@ class RobotModelConfig(ModuleConfig):
     velocity_limits: list[float] | None = None
     auto_convert_meshes: bool = False
     xacro_args: dict[str, str] = Field(default_factory=dict)
-    collision_exclusion_pairs: Iterable[tuple[str, str]] = ()
+    collision_exclusion_pairs: list[tuple[str, str]] = Field(default_factory=list)
     # Motion constraints for trajectory generation
     max_velocity: float = 1.0
     max_acceleration: float = 2.0
@@ -74,9 +73,9 @@ class RobotModelConfig(ModuleConfig):
     coordinator_task_name: str | None = None
     gripper_hardware_id: str | None = None
     # TF publishing for extra links (e.g., camera mount)
-    tf_extra_links: Sequence[str] = ()
+    tf_extra_links: list[str] = Field(default_factory=list)
     # Home/observe joint configuration for go_home skill
-    home_joints: Iterable[float] | None = None
+    home_joints: list[float] | None = None
     # Pre-grasp offset distance in meters (along approach direction)
     pre_grasp_offset: float = 0.10
 

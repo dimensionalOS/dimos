@@ -58,7 +58,7 @@ Normally launched by `FastLio2` via the NativeModule framework:
 
 ```python
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 
 autoconnect(
     FastLio2.blueprint(host_ip="192.168.1.5"),

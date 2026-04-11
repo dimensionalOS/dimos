@@ -14,17 +14,16 @@
 
 from collections.abc import Generator
 from contextlib import contextmanager
-import os
 from pathlib import Path
 import shutil
 import tempfile
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import cv2
-from hydra.utils import instantiate  # type: ignore[import-not-found]
+from hydra.utils import instantiate
 import numpy as np
 from numpy.typing import NDArray
-from omegaconf import OmegaConf  # type: ignore[import-not-found]
+from omegaconf import OmegaConf
 from PIL import Image as PILImage
 import torch
 

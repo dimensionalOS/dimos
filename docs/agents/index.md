@@ -1,19 +1,8 @@
 # For Agents
 
-These docs are mostly for coding agents
-
-```sh
-tree . -P '*.md' --prune
-```
-
-<!--Result:-->
-```
-.
-├── docs
+├── testing.md (docs about writing tests)
+├── docs (these are docs about writing docs)
 │   ├── codeblocks.md
 │   ├── doclinks.md
 │   └── index.md
 └── index.md
-
-2 directories, 4 files
-```

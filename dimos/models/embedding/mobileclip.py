@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from functools import cached_property
-from typing import Any
+from typing import Any, overload
 
 import open_clip
 from PIL import Image as PILImage
@@ -25,15 +25,12 @@ from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingMode
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 
-
 class MobileCLIPModelConfig(EmbeddingModelConfig):
     model_name: str = "MobileCLIP2-S4"
-
 
 class MobileCLIPModel(EmbeddingModel, LocalModel):
     """MobileCLIP embedding model for vision-language re-identification."""
 
-    default_config = MobileCLIPModelConfig
     config: MobileCLIPModelConfig
 
     @cached_property
@@ -57,6 +54,10 @@ class MobileCLIPModel(EmbeddingModel, LocalModel):
     def _tokenizer(self) -> Any:
         return open_clip.get_tokenizer(self.config.model_name)
 
+    @overload
+    def embed(self, image: Image, /) -> Embedding: ...
+    @overload
+    def embed(self, *images: Image) -> list[Embedding]: ...
     def embed(self, *images: Image) -> Embedding | list[Embedding]:
         """Embed one or more images.
 
@@ -82,6 +83,10 @@ class MobileCLIPModel(EmbeddingModel, LocalModel):
 
         return embeddings[0] if len(images) == 1 else embeddings
 
+    @overload
+    def embed_text(self, text: str, /) -> Embedding: ...
+    @overload
+    def embed_text(self, *texts: str) -> list[Embedding]: ...
     def embed_text(self, *texts: str) -> Embedding | list[Embedding]:
         """Embed one or more text strings.
 

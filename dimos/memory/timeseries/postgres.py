@@ -17,8 +17,8 @@ from collections.abc import Iterator
 import pickle
 import re
 
-import psycopg2  # type: ignore[import-untyped]
-import psycopg2.extensions  # type: ignore[import-untyped]
+import psycopg2
+import psycopg2.extensions
 
 from dimos.core.resource import Resource
 from dimos.memory.timeseries.base import T, TimeSeriesStore
@@ -244,7 +244,7 @@ class PostgresStore(TimeSeriesStore[T], Resource):
         with conn.cursor() as cur:
             cur.execute(f"SELECT COUNT(*) FROM {self._table}")
             row = cur.fetchone()
-        return row[0] if row else 0  # type: ignore[no-any-return]
+        return row[0] if row else 0
 
     def _last_timestamp(self) -> float | None:
         self._ensure_table()

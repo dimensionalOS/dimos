@@ -23,10 +23,12 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.blueprints._hardware import mock_arm, piper, xarm6, xarm7
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.coordinator import ControlCoordinator
+from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.catalog.piper import piper as _catalog_piper
+from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
 
 # Minimal blueprint (no hardware, no tasks)
 coordinator_basic = ControlCoordinator.blueprint(
@@ -40,16 +42,11 @@ coordinator_basic = ControlCoordinator.blueprint(
 )
 
 # Mock 7-DOF arm (for testing)
+_mock_cfg = _catalog_xarm7(name="arm")
+
 coordinator_mock = ControlCoordinator.blueprint(
-    hardware=[mock_arm()],
-    tasks=[
-        TaskConfig(
-            name="traj_arm",
-            type="trajectory",
-            joint_names=[f"arm_joint{i + 1}" for i in range(7)],
-            priority=10,
-        ),
-    ],
+    hardware=[_mock_cfg.to_hardware_component()],
+    tasks=[_mock_cfg.to_task_config()],
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
@@ -57,16 +54,11 @@ coordinator_mock = ControlCoordinator.blueprint(
 )
 
 # XArm7 real hardware
+_xarm7_cfg = _catalog_xarm7(name="arm", adapter_type="xarm", address=global_config.xarm7_ip)
+
 coordinator_xarm7 = ControlCoordinator.blueprint(
-    hardware=[xarm7()],
-    tasks=[
-        TaskConfig(
-            name="traj_arm",
-            type="trajectory",
-            joint_names=[f"arm_joint{i + 1}" for i in range(7)],
-            priority=10,
-        ),
-    ],
+    hardware=[_xarm7_cfg.to_hardware_component()],
+    tasks=[_xarm7_cfg.to_task_config()],
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
@@ -74,16 +66,13 @@ coordinator_xarm7 = ControlCoordinator.blueprint(
 )
 
 # XArm6 real hardware
+_xarm6_cfg = _catalog_xarm6(
+    name="arm", adapter_type="xarm", address=global_config.xarm6_ip, add_gripper=False
+)
+
 coordinator_xarm6 = ControlCoordinator.blueprint(
-    hardware=[xarm6()],
-    tasks=[
-        TaskConfig(
-            name="traj_xarm",
-            type="trajectory",
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
-            priority=10,
-        ),
-    ],
+    hardware=[_xarm6_cfg.to_hardware_component()],
+    tasks=[_xarm6_cfg.to_task_config(task_name="traj_xarm")],
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
@@ -91,16 +80,13 @@ coordinator_xarm6 = ControlCoordinator.blueprint(
 )
 
 # Piper arm (6-DOF, CAN bus)
+_piper_cfg = _catalog_piper(
+    name="arm", adapter_type="piper", address=global_config.can_port or "can0"
+)
+
 coordinator_piper = ControlCoordinator.blueprint(
-    hardware=[piper()],
-    tasks=[
-        TaskConfig(
-            name="traj_piper",
-            type="trajectory",
-            joint_names=[f"arm_joint{i + 1}" for i in range(6)],
-            priority=10,
-        ),
-    ],
+    hardware=[_piper_cfg.to_hardware_component()],
+    tasks=[_piper_cfg.to_task_config(task_name="traj_piper")],
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),

@@ -12,10 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.memory2.store.base import Store
+from typing import Any
+
+from dimos.memory2.backend import Backend
+from dimos.memory2.observationstore.memory import ListObservationStore
+from dimos.memory2.store.base import Store, StoreConfig
+
+
+class MemoryStoreConfig(StoreConfig):
+    max_size: int | None = None
 
 
 class MemoryStore(Store):
-    """In-memory store for experimentation."""
+    """In-memory store for experimentation.
 
-    pass
+    ``max_size`` controls how many observations each stream retains:
+    - ``None`` (default) — keep all (unbounded).
+    - ``N`` — rolling window of the most recent N observations.
+    - ``0`` — discard immediately (live-only, no history).
+    """
+
+    config: MemoryStoreConfig
+
+    def _create_backend(
+        self, name: str, payload_type: type[Any] | None = None, **config: Any
+    ) -> Backend[Any]:
+        if "observation_store" not in config and self.config.observation_store is None:
+            obs: ListObservationStore[Any] = ListObservationStore(
+                name=name, max_size=self.config.max_size
+            )
+            config["observation_store"] = obs
+        return super()._create_backend(name, payload_type, **config)

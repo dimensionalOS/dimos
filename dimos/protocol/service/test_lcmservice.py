@@ -126,7 +126,7 @@ class TestTopic:
 
 
 class TestLCMService:
-    def test_init_with_default_config(self) -> None:
+    def test_init_with_defaults(self) -> None:
         with patch("dimos.protocol.service.lcmservice.lcm_mod.LCM") as mock_lcm_class:
             mock_lcm_instance = create_autospec(LCM, spec_set=True, instance=True)
             mock_lcm_class.return_value = mock_lcm_instance

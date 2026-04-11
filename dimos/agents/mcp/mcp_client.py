@@ -28,6 +28,7 @@ from reactivex.disposable import Disposable
 
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.rpc_client import RPCClient
@@ -45,8 +46,8 @@ class McpClientConfig(ModuleConfig):
     mcp_server_url: str = "http://localhost:9990/mcp"
 
 
-class McpClient(Module[McpClientConfig]):
-    default_config = McpClientConfig
+class McpClient(Module):
+    config: McpClientConfig
     agent: Out[BaseMessage]
     human_input: In[str]
     agent_idle: Out[bool]
@@ -168,7 +169,7 @@ class McpClient(Module[McpClientConfig]):
         def _on_human_input(string: str) -> None:
             self._message_queue.put(HumanMessage(content=string))
 
-        self._disposables.add(Disposable(self.human_input.subscribe(_on_human_input)))
+        self.register_disposable(Disposable(self.human_input.subscribe(_on_human_input)))
 
     @rpc
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
@@ -186,13 +187,14 @@ class McpClient(Module[McpClientConfig]):
                 tools=tools,
                 system_prompt=self.config.system_prompt,
             )
-            self._thread.start()
+            if not self._thread.is_alive():
+                self._thread.start()
 
     @rpc
     def stop(self) -> None:
         self._stop_event.set()
         if self._thread.is_alive():
-            self._thread.join(timeout=2.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         self._http_client.close()
         super().stop()
 

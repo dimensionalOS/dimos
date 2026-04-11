@@ -20,9 +20,9 @@ import open3d as o3d  # type: ignore[import-untyped]
 from reactivex import interval
 from reactivex.disposable import Disposable
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.mapping.pointclouds.accumulators.general import GeneralPointCloudAccumulator
@@ -41,9 +41,8 @@ class MapConfig(ModuleConfig):
     max_height: float = 0.5
 
 
-class Map(Module[MapConfig]):
-    default_config = MapConfig
-
+class Map(Module):
+    config: MapConfig
     lidar: In[PointCloud2]
     global_map: Out[PointCloud2]
     global_costmap: Out[OccupancyGrid]
@@ -67,11 +66,11 @@ class Map(Module[MapConfig]):
     def start(self) -> None:
         super().start()
 
-        self._disposables.add(Disposable(self.lidar.subscribe(self.add_frame)))
+        self.register_disposable(Disposable(self.lidar.subscribe(self.add_frame)))
 
         if self.global_publish_interval is not None:
             unsub = interval(self.global_publish_interval).subscribe(self._publish)
-            self._disposables.add(unsub)
+            self.register_disposable(unsub)
 
     @rpc
     def stop(self) -> None:
@@ -113,7 +112,7 @@ class Map(Module[MapConfig]):
 
 
 def deploy(dimos: ModuleCoordinator, connection: Go2ConnectionProtocol):  # type: ignore[no-untyped-def]
-    mapper = dimos.deploy(Map, global_publish_interval=1.0)  # type: ignore[attr-defined]
+    mapper = dimos.deploy(Map, global_publish_interval=1.0)
     mapper.global_map.transport = LCMTransport("/global_map", PointCloud2)
     mapper.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
     mapper.lidar.connect(connection.pointcloud)  # type: ignore[attr-defined]

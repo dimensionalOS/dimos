@@ -16,23 +16,58 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
 import threading
 import time
 from typing import TYPE_CHECKING
 
 import mujoco
-import mujoco.viewer as viewer  # type: ignore[import-untyped,import-not-found]
+import mujoco.viewer as viewer  # type: ignore[import-untyped]
+import numpy as np
+from numpy.typing import NDArray
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.simulation.engines.base import SimulationEngine
 from dimos.simulation.utils.xml_parser import JointMapping, build_joint_mappings
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from dimos.msgs.sensor_msgs.JointState import JointState
 
 logger = setup_logger()
+
+# Step hook signature: called with the engine instance inside the sim thread.
+StepHook = Callable[["MujocoEngine"], None]
+
+
+@dataclass
+class CameraConfig:
+    name: str
+    width: int = 640
+    height: int = 480
+    fps: float = 15.0
+
+
+@dataclass
+class CameraFrame:
+    rgb: NDArray[np.uint8]
+    depth: NDArray[np.float32]
+    cam_pos: NDArray[np.float64]
+    cam_mat: NDArray[np.float64]
+    fovy: float
+    timestamp: float
+
+
+@dataclass
+class _CameraRendererState:
+    cfg: CameraConfig
+    cam_id: int
+    rgb_renderer: mujoco.Renderer
+    depth_renderer: mujoco.Renderer
+    interval: float
+    last_render_time: float = 0.0
 
 
 class MujocoEngine(SimulationEngine):
@@ -44,8 +79,17 @@ class MujocoEngine(SimulationEngine):
     - applies control commands
     """
 
-    def __init__(self, config_path: Path, headless: bool) -> None:
+    def __init__(
+        self,
+        config_path: Path,
+        headless: bool,
+        cameras: list[CameraConfig] | None = None,
+        on_before_step: StepHook | None = None,
+        on_after_step: StepHook | None = None,
+    ) -> None:
         super().__init__(config_path=config_path, headless=headless)
+        self._on_before_step: StepHook | None = on_before_step
+        self._on_after_step: StepHook | None = on_after_step
 
         xml_path = self._resolve_xml_path(config_path)
         self._model = mujoco.MjModel.from_xml_path(str(xml_path))
@@ -75,6 +119,11 @@ class MujocoEngine(SimulationEngine):
             current_pos = self._current_position(mapping)
             self._joint_position_targets[i] = current_pos
             self._joint_positions[i] = current_pos
+
+        # Camera rendering state (renderers created in sim thread)
+        self._camera_configs = cameras or []
+        self._camera_frames: dict[str, CameraFrame] = {}
+        self._camera_lock = threading.Lock()
 
     def _resolve_xml_path(self, config_path: Path) -> Path:
         if config_path is None:
@@ -142,7 +191,7 @@ class MujocoEngine(SimulationEngine):
 
     def connect(self) -> bool:
         try:
-            logger.info(f"{self.__class__.__name__}: connect()")
+            logger.info("connect()", cls=self.__class__.__name__)
             with self._lock:
                 self._connected = True
                 self._stop_event.clear()
@@ -156,34 +205,99 @@ class MujocoEngine(SimulationEngine):
                 self._sim_thread.start()
             return True
         except Exception as e:
-            logger.error(f"{self.__class__.__name__}: connect() failed: {e}")
+            logger.error("connect() failed", cls=self.__class__.__name__, error=str(e))
             return False
 
     def disconnect(self) -> bool:
         try:
-            logger.info(f"{self.__class__.__name__}: disconnect()")
+            logger.info("disconnect()", cls=self.__class__.__name__)
             with self._lock:
                 self._connected = False
             self._stop_event.set()
             if self._sim_thread and self._sim_thread.is_alive():
-                self._sim_thread.join(timeout=2.0)
+                self._sim_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._sim_thread = None
             return True
         except Exception as e:
-            logger.error(f"{self.__class__.__name__}: disconnect() failed: {e}")
+            logger.error("disconnect() failed", cls=self.__class__.__name__, error=str(e))
             return False
 
+    def _init_cameras(self) -> dict[str, _CameraRendererState]:
+        """Create renderers for all configured cameras"""
+        cam_renderers: dict[str, _CameraRendererState] = {}
+        for cfg in self._camera_configs:
+            cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, cfg.name)
+            if cam_id < 0:
+                logger.warning("Camera not found in MJCF, skipping", camera_name=cfg.name)
+                continue
+            rgb_renderer = mujoco.Renderer(self._model, height=cfg.height, width=cfg.width)
+            depth_renderer = mujoco.Renderer(self._model, height=cfg.height, width=cfg.width)
+            depth_renderer.enable_depth_rendering()
+            interval = 1.0 / cfg.fps if cfg.fps > 0 else float("inf")
+            cam_renderers[cfg.name] = _CameraRendererState(
+                cfg=cfg,
+                cam_id=cam_id,
+                rgb_renderer=rgb_renderer,
+                depth_renderer=depth_renderer,
+                interval=interval,
+            )
+        return cam_renderers
+
+    def _render_cameras(self, now: float, cam_renderers: dict[str, _CameraRendererState]) -> None:
+        """Render all due cameras and store frames. Must be called from sim thread."""
+        for state in cam_renderers.values():
+            if now - state.last_render_time < state.interval:
+                continue
+            state.last_render_time = now
+
+            state.rgb_renderer.update_scene(self._data, camera=state.cam_id)
+            rgb = state.rgb_renderer.render().copy()
+
+            state.depth_renderer.update_scene(self._data, camera=state.cam_id)
+            depth = state.depth_renderer.render().copy()
+
+            frame = CameraFrame(
+                rgb=rgb,
+                depth=depth.astype(np.float32),
+                cam_pos=self._data.cam_xpos[state.cam_id].copy(),
+                cam_mat=self._data.cam_xmat[state.cam_id].copy(),
+                fovy=float(self._model.cam_fovy[state.cam_id]),
+                timestamp=now,
+            )
+            with self._camera_lock:
+                self._camera_frames[state.cfg.name] = frame
+
+    @staticmethod
+    def _close_cam_renderers(cam_renderers: dict[str, _CameraRendererState]) -> None:
+        for state in cam_renderers.values():
+            state.rgb_renderer.close()
+            state.depth_renderer.close()
+
     def _sim_loop(self) -> None:
-        logger.info(f"{self.__class__.__name__}: sim loop started")
+        logger.info("sim loop started", cls=self.__class__.__name__)
         dt = 1.0 / self._control_frequency
+
+        # Camera renderers: created once in the sim thread
+        cam_renderers = self._init_cameras()
 
         def _step_once(sync_viewer: bool) -> None:
             loop_start = time.time()
+            if self._on_before_step is not None:
+                try:
+                    self._on_before_step(self)
+                except Exception as exc:
+                    logger.error("on_before_step failed", error=str(exc))
             self._apply_control()
             mujoco.mj_step(self._model, self._data)
             if sync_viewer:
                 m_viewer.sync()
             self._update_joint_state()
+            if self._on_after_step is not None:
+                try:
+                    self._on_after_step(self)
+                except Exception as exc:
+                    logger.error("on_after_step failed", error=str(exc))
+            self._render_cameras(loop_start, cam_renderers)
 
             elapsed = time.time() - loop_start
             sleep_time = dt - elapsed
@@ -200,7 +314,8 @@ class MujocoEngine(SimulationEngine):
                 while m_viewer.is_running() and not self._stop_event.is_set():
                     _step_once(sync_viewer=True)
 
-        logger.info(f"{self.__class__.__name__}: sim loop stopped")
+        self._close_cam_renderers(cam_renderers)
+        logger.info("sim loop stopped", cls=self.__class__.__name__)
 
     @property
     def connected(self) -> bool:
@@ -288,13 +403,64 @@ class MujocoEngine(SimulationEngine):
             for i in range(len(efforts)):
                 self._joint_effort_targets[i] = float(efforts[i])
 
+    def set_position_target(self, index: int, value: float) -> None:
+        with self._lock:
+            self._joint_position_targets[index] = float(value)
+
+    def get_position_target(self, index: int) -> float:
+        with self._lock:
+            return float(self._joint_position_targets[index])
+
     def hold_current_position(self) -> None:
         with self._lock:
             self._command_mode = "position"
             for i, mapping in enumerate(self._joint_mappings):
                 self._joint_position_targets[i] = self._current_position(mapping)
 
+    def get_actuator_ctrl_range(self, joint_index: int) -> tuple[float, float] | None:
+        mapping = self._joint_mappings[joint_index]
+        if mapping.actuator_id is None:
+            return None
+        lo = float(self._model.actuator_ctrlrange[mapping.actuator_id, 0])
+        hi = float(self._model.actuator_ctrlrange[mapping.actuator_id, 1])
+        return (lo, hi)
+
+    def get_joint_range(self, joint_index: int) -> tuple[float, float] | None:
+        mapping = self._joint_mappings[joint_index]
+        if mapping.tendon_qpos_adrs:
+            first_adr = mapping.tendon_qpos_adrs[0]
+            for jid in range(self._model.njnt):
+                if self._model.jnt_qposadr[jid] == first_adr:
+                    return (
+                        float(self._model.jnt_range[jid, 0]),
+                        float(self._model.jnt_range[jid, 1]),
+                    )
+        if mapping.joint_id is not None:
+            return (
+                float(self._model.jnt_range[mapping.joint_id, 0]),
+                float(self._model.jnt_range[mapping.joint_id, 1]),
+            )
+        return None
+
+    def read_camera(self, camera_name: str) -> CameraFrame | None:
+        """Read the latest rendered frame for a camera (thread-safe).
+
+        Returns None if the camera hasn't rendered yet or doesn't exist.
+        """
+        with self._camera_lock:
+            return self._camera_frames.get(camera_name)
+
+    def get_camera_fovy(self, camera_name: str) -> float | None:
+        """Get vertical field of view for a named camera, in degrees."""
+        cam_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
+        if cam_id < 0:
+            return None
+        return float(self._model.cam_fovy[cam_id])
+
 
 __all__ = [
+    "CameraConfig",
+    "CameraFrame",
     "MujocoEngine",
+    "StepHook",
 ]

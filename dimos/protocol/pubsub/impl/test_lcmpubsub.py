@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Generator
+import time
 from typing import Any
 
 import pytest
@@ -28,27 +29,34 @@ from dimos.protocol.pubsub.impl.lcmpubsub import (
 )
 from dimos.utils.testing.collector import CallbackCollector
 
+# Isolated multicast group so stale messages from other tests
+# (which use the default 239.255.76.67:7667) don't leak in.
+_ISOLATED_LCM_URL = "udpm://239.255.76.98:7698?ttl=0"
+
 
 @pytest.fixture
 def lcm_pub_sub_base() -> Generator[LCMPubSubBase, None, None]:
-    lcm = LCMPubSubBase()
+    lcm = LCMPubSubBase(url=_ISOLATED_LCM_URL)
     lcm.start()
+    time.sleep(0.05)  # let the handler thread enter the LCM loop
     yield lcm
     lcm.stop()
 
 
 @pytest.fixture
 def pickle_lcm() -> Generator[PickleLCM, None, None]:
-    lcm = PickleLCM()
+    lcm = PickleLCM(url=_ISOLATED_LCM_URL)
     lcm.start()
+    time.sleep(0.05)  # let the handler thread enter the LCM loop
     yield lcm
     lcm.stop()
 
 
 @pytest.fixture
 def lcm() -> Generator[LCM, None, None]:
-    lcm = LCM()
+    lcm = LCM(url=_ISOLATED_LCM_URL)
     lcm.start()
+    time.sleep(0.05)  # let the handler thread enter the LCM loop
     yield lcm
     lcm.stop()
 

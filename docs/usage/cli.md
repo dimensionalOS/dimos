@@ -22,7 +22,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--n-workers` | INT | `2` | Number of forkserver workers |
 | `--memory-limit` | TEXT | `auto` | Rerun viewer memory limit |
 | `--mcp-port` | INT | `9990` | MCP server port |
-| `--mcp-host` | TEXT | `0.0.0.0` | MCP server bind address |
+| `--mcp-host` | TEXT | `127.0.0.1` | MCP server bind address |
 | `--dtop` / `--no-dtop` | bool | `False` | Enable live resource monitor overlay |
 | `--obstacle-avoidance` / `--no-obstacle-avoidance` | bool | `True` | Enable obstacle avoidance |
 | `--detection-model` | `qwen\|moondream` | `moondream` | Vision model for object detection |
@@ -65,8 +65,11 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...]
 
 | Option | Description |
 |--------|-------------|
+| `--config` `-c` | Path to read JSON config file from (options can be overriden with `-o` |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
+| `--option`, `-o` | Provide an configuration option to the blueprint (e.g. `-o voxelgridmapper.voxel_size=1` |
+| `--help` | Display the available configuration options that can be changed with `-o` or the config file |
 
 ```bash
 # Foreground (Ctrl-C to stop)
@@ -204,18 +207,18 @@ Works with any agentic blueprint — does not require MCP. Publishes directly to
 
 ### `dimos mcp`
 
-Interact with the running MCP server. **Requires a blueprint that includes `McpServer`** — for example `unitree-go2-agentic-mcp`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcp-port` / `--mcp-host` to override).
+Interact with the running MCP server. **Requires a blueprint that includes `McpServer`** — for example `unitree-go2-agentic`. The MCP server runs at `http://localhost:9990/mcp` by default (`--mcp-port` / `--mcp-host` to override).
 
-To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `mcp_client()` (LLM agent that fetches tools from the server):
+To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tools) and `McpClient.blueprint()` (LLM agent that fetches tools from the server):
 
 ```python
-from dimos.agents.mcp.mcp_client import mcp_client
+from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 
 my_mcp_blueprint = autoconnect(
     my_robot_stack,
     McpServer.blueprint(),
-    mcp_client(),
+    McpClient.blueprint(),
     my_skill_containers,
 )
 ```

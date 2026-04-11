@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.visualization.rerun.bridge import RerunBridgeModule
@@ -30,7 +30,7 @@ mid360_fastlio = autoconnect(
 
 mid360_fastlio_voxels = autoconnect(
     FastLio2.blueprint(),
-    VoxelGridMapper.blueprint(publish_interval=1.0, voxel_size=voxel_size, carve_columns=False),
+    VoxelGridMapper.blueprint(voxel_size=voxel_size, carve_columns=False),
     RerunBridgeModule.blueprint(
         visual_override={
             "world/global_map": lambda grid: grid.to_rerun(voxel_size=voxel_size, mode="boxes"),

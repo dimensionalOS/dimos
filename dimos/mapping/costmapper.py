@@ -38,9 +38,8 @@ class Config(ModuleConfig):
     config: OccupancyConfig = Field(default_factory=HeightCostConfig)
 
 
-class CostMapper(Module[Config]):
-    default_config = Config
-
+class CostMapper(Module):
+    config: Config
     global_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
 
@@ -60,7 +59,7 @@ class CostMapper(Module[Config]):
             elapsed_ms = (time.perf_counter() - start) * 1000
             return grid, elapsed_ms, rx_monotonic
 
-        self._disposables.add(
+        self.register_disposable(
             self.global_map.observable()  # type: ignore[no-untyped-call]
             .pipe(ops.map(_calculate_and_time))
             .subscribe(lambda result: _publish_costmap(result[0], result[1], result[2]))

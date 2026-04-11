@@ -20,9 +20,10 @@ from contextlib import contextmanager
 import threading
 from typing import TYPE_CHECKING, Any
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.manipulation.planning.factory import create_world
+from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
-from dimos.manipulation.planning.monitor.world_state_monitor import WorldStateMonitor
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
@@ -55,12 +56,12 @@ class WorldMonitor:
         backend: str = "drake",
         enable_viz: bool = False,
         **kwargs: Any,
-    ):
+    ) -> None:
         self._backend = backend
         self._world: WorldSpec = create_world(backend=backend, enable_viz=enable_viz, **kwargs)
         self._lock = threading.RLock()
         self._robot_joints: dict[WorldRobotID, list[str]] = {}
-        self._state_monitors: dict[WorldRobotID, WorldStateMonitor] = {}
+        self._state_monitors: dict[WorldRobotID, RobotStateMonitor] = {}
         self._obstacle_monitor: WorldObstacleMonitor | None = None
         self._viz_thread: threading.Thread | None = None
         self._viz_stop_event = threading.Event()
@@ -138,7 +139,7 @@ class WorldMonitor:
             if joint_name_mapping is None and config.joint_name_mapping:
                 joint_name_mapping = config.joint_name_mapping
 
-            monitor = WorldStateMonitor(
+            monitor = RobotStateMonitor(
                 world=self._world,
                 lock=self._lock,
                 robot_id=robot_id,
@@ -221,6 +222,12 @@ class WorldMonitor:
         if self._obstacle_monitor is not None:
             return self._obstacle_monitor.refresh_obstacles(min_duration)
         return []
+
+    def remove_object_obstacle(self, object_id: str) -> bool:
+        """Remove a single object's obstacle from the planning world."""
+        if self._obstacle_monitor is not None:
+            return self._obstacle_monitor.remove_object_obstacle(object_id)
+        return False
 
     def clear_perception_obstacles(self) -> int:
         """Remove all perception obstacles. Returns count removed."""
@@ -447,7 +454,7 @@ class WorldMonitor:
             return
 
         self._viz_stop_event.set()
-        self._viz_thread.join(timeout=1.0)
+        self._viz_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if self._viz_thread.is_alive():
             logger.warning("Visualization thread did not stop cleanly")
         self._viz_thread = None
@@ -473,7 +480,7 @@ class WorldMonitor:
         """Get underlying WorldSpec. Not thread-safe for modifications."""
         return self._world
 
-    def get_state_monitor(self, robot_id: str) -> WorldStateMonitor | None:
+    def get_state_monitor(self, robot_id: str) -> RobotStateMonitor | None:
         """Get state monitor for a robot (may be None)."""
         return self._state_monitors.get(robot_id)
 

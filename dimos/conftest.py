@@ -19,7 +19,7 @@ import threading
 from dotenv import load_dotenv
 import pytest
 
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.protocol.service.lcmservice import autoconf
 
 load_dotenv()

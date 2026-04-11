@@ -71,7 +71,7 @@ class JointTrajectoryTask(BaseControlTask):
         >>> task = JointTrajectoryTask(
         ...     name="traj_left",
         ...     config=JointTrajectoryTaskConfig(
-        ...         joint_names=["left_joint1", "left_joint2"],
+        ...         joint_names=["left/joint1", "left/joint2"],
         ...         priority=10,
         ...     ),
         ... )

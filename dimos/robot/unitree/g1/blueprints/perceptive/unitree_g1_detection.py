@@ -20,7 +20,7 @@ from typing import Any
 from dimos_lcm.foxglove_msgs import SceneUpdate
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.zed import compat as zed
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped

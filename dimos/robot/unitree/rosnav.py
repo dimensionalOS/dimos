@@ -44,7 +44,7 @@ class NavigationModule(Module):
 
     def _on_goal_reached(self, msg: Bool) -> None:
         """Handle goal reached status messages."""
-        self.goal_reach = msg.data  # type: ignore[assignment]
+        self.goal_reach = msg.data
 
     def _set_autonomy_mode(self) -> None:
         """

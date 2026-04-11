@@ -39,7 +39,7 @@ def robot_config():
     """Create a robot config for testing."""
     return RobotModelConfig(
         name="test_arm",
-        urdf_path=Path("/path/to/robot.urdf"),
+        model_path=Path("/path/to/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         end_effector_link="link_tcp",
@@ -55,15 +55,15 @@ def robot_config_with_mapping():
     """Create a robot config with joint name mapping (dual-arm scenario)."""
     return RobotModelConfig(
         name="left_arm",
-        urdf_path=Path("/path/to/robot.urdf"),
+        model_path=Path("/path/to/robot.urdf"),
         base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
         joint_names=["joint1", "joint2", "joint3"],
         end_effector_link="link_tcp",
         base_link="link_base",
         joint_name_mapping={
-            "left_joint1": "joint1",
-            "left_joint2": "joint2",
-            "left_joint3": "joint3",
+            "left/joint1": "joint1",
+            "left/joint2": "joint2",
+            "left/joint3": "joint3",
         },
         coordinator_task_name="traj_left",
     )
@@ -207,7 +207,7 @@ class TestJointNameTranslation:
         result = module._translate_trajectory_to_coordinator(
             simple_trajectory, robot_config_with_mapping
         )
-        assert result.joint_names == ["left_joint1", "left_joint2", "left_joint3"]
+        assert result.joint_names == ["left/joint1", "left/joint2", "left/joint3"]
         assert len(result.points) == 2  # Points preserved
 
 
@@ -227,7 +227,7 @@ class TestExecute:
         module = _make_module()
         config_no_task = RobotModelConfig(
             name="arm",
-            urdf_path=Path("/path"),
+            model_path=Path("/path"),
             base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
             joint_names=["j1"],
             end_effector_link="ee",
@@ -275,9 +275,9 @@ class TestRobotModelConfigMapping:
         config = robot_config_with_mapping
 
         # Coordinator -> URDF
-        assert config.get_urdf_joint_name("left_joint1") == "joint1"
+        assert config.get_urdf_joint_name("left/joint1") == "joint1"
         assert config.get_urdf_joint_name("unknown") == "unknown"
 
         # URDF -> Coordinator
-        assert config.get_coordinator_joint_name("joint1") == "left_joint1"
+        assert config.get_coordinator_joint_name("joint1") == "left/joint1"
         assert config.get_coordinator_joint_name("unknown") == "unknown"

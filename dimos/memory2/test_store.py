@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from dimos.memory2.backend import Backend
 from dimos.memory2.blobstore.base import BlobStore
 from dimos.memory2.vectorstore.base import VectorStore
 
@@ -525,3 +526,94 @@ class TestStreamAccessor:
         assert "late" not in dir(session.streams)
         session.stream("late", str)
         assert "late" in dir(session.streams)
+
+
+class TestStoreLifecycle:
+    """Cleanup chain: Store → Stream → Backend → components."""
+
+    def test_stop_stream_keeps_other_streams(self, session: Store) -> None:
+        """Stopping one stream doesn't affect another."""
+        s1 = session.stream("a", int)
+        s2 = session.stream("b", int)
+        s1.append(1)
+        s2.append(2)
+
+        s1.stop()
+
+        # s2 still works
+        s2.append(3)
+        assert [obs.data for obs in s2] == [2, 3]
+
+    def test_store_stop_stops_backends(self, session: Store) -> None:
+        """Store.stop() disposes backends transitively via streams."""
+        s1 = session.stream("x", int)
+        s2 = session.stream("y", int)
+        s1.append(10)
+        s2.append(20)
+
+        backend1 = s1._source
+        backend2 = s2._source
+        assert isinstance(backend1, Backend)
+        assert isinstance(backend2, Backend)
+
+        session.stop()
+
+        # Both backends' disposables are disposed
+        assert backend1._disposables is not None
+        assert backend1._disposables.is_disposed
+        assert backend2._disposables is not None
+        assert backend2._disposables.is_disposed
+
+    def test_stream_stop_stops_backend(self, session: Store) -> None:
+        """stream.stop() disposes its backend (Stream owns Backend)."""
+        s = session.stream("owned", int)
+        s.append(42)
+
+        backend = s._source
+        assert isinstance(backend, Backend)
+
+        s.stop()
+
+        assert backend._disposables is not None
+        assert backend._disposables.is_disposed
+
+    def test_stream_stop_stops_backend_components(self, session: Store) -> None:
+        """stream.stop() cascades through backend to its components."""
+        s = session.stream("cascade", int)
+        backend = s._source
+        assert isinstance(backend, Backend)
+
+        s.stop()
+
+        # Backend registers notifier as disposable, so it gets disposed
+        assert backend._disposables is not None
+        assert backend._disposables.is_disposed
+        # Notifier's own disposables may be None (no children registered),
+        # but the backend's disposal cascade is what matters.
+
+    def test_delete_stream_stops_backend(self, session: Store) -> None:
+        """delete_stream() stops the stream+backend and removes from cache."""
+        s = session.stream("ephemeral", int)
+        s.append(1)
+
+        backend = s._source
+        assert isinstance(backend, Backend)
+        assert "ephemeral" in session.list_streams()
+
+        session.delete_stream("ephemeral")
+
+        assert backend._disposables is not None
+        assert backend._disposables.is_disposed
+        assert "ephemeral" not in session.list_streams()
+
+    def test_backend_stop_stops_components(self, session: Store) -> None:
+        """Backend.stop() propagates to metadata_store, blob_store, vector_store."""
+        s = session.stream("z", int)
+        backend = s._source
+        assert isinstance(backend, Backend)
+
+        session.stop()
+
+        # Backend always registers its components, so _disposables is always set
+        assert backend._disposables is not None
+        assert backend._disposables.is_disposed

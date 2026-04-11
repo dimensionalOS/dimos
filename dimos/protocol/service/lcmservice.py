@@ -17,22 +17,17 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import os
 import platform
-import sys
 import threading
 import traceback
 from typing import Any
 
 import lcm as lcm_mod
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.protocol.service.spec import BaseConfig, Service
 from dimos.protocol.service.system_configurator.base import configure_system
 from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
 from dimos.utils.logging_config import setup_logger
-
-if sys.version_info < (3, 13):
-    from typing_extensions import TypeVar
-else:
-    from typing import TypeVar
 
 logger = setup_logger()
 
@@ -58,16 +53,14 @@ class LCMConfig(BaseConfig):
     lcm: lcm_mod.LCM | None = None
 
 
-_Config = TypeVar("_Config", bound=LCMConfig, default=LCMConfig)
 _LCM_LOOP_TIMEOUT = 50
 
 
 # this class just sets up cpp LCM instance
 # and runs its handle loop in a thread
 # higher order stuff is done by pubsub/impl/lcmpubsub.py
-class LCMService(Service[_Config]):
-    default_config = LCMConfig  # type: ignore[assignment]
-
+class LCMService(Service):
+    config: LCMConfig
     l: lcm_mod.LCM | None
     _stop_event: threading.Event
     _l_lock: threading.Lock
@@ -75,7 +68,7 @@ class LCMService(Service[_Config]):
     _call_thread_pool: ThreadPoolExecutor | None = None
     _call_thread_pool_lock: threading.RLock = threading.RLock()
 
-    def __init__(self, **kwargs: Any) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
 
         # we support passing an existing LCM instance
@@ -142,7 +135,7 @@ class LCMService(Service[_Config]):
         if self._thread is not None:
             # Only join if we're not the LCM thread (avoid "cannot join current thread")
             if threading.current_thread() != self._thread:
-                self._thread.join(timeout=1.0)
+                self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
                 if self._thread.is_alive():
                     logger.warning("LCM thread did not stop cleanly within timeout")
 
