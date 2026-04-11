@@ -51,7 +51,7 @@ m20_smartnav_native = (
     autoconnect(
         m20_connection(
             ip="10.21.31.103",
-            enable_ros=False,
+            enable_ros=True,  # falls back to UDP velocity (no rclpy on NOS)
             enable_lidar=False,  # lidar comes from DrddsLidarBridge
             lidar_height=M20_LIDAR_HEIGHT,
         ),
@@ -107,7 +107,7 @@ m20_smartnav_native = (
         ]
     )
     .global_config(
-        n_workers=2,
+        n_workers=4,
         robot_model="deeprobotics_m20",
         robot_ip="10.21.31.103",
         robot_width=0.45,

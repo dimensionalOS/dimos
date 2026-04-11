@@ -39,9 +39,12 @@ public:
                     int domain_id = 0,
                     const std::string& module_id = "dimos_nav_cmd",
                     const std::string& node_name = "nav_cmd_pub") {
-        // Initialize drdds (multi-domain Init, same pattern as rsdriver/drdds_recv)
+        // Initialize drdds with config loading enabled.
+        // enable_config=true loads /opt/drdds/dr_qos/drqos.xml which enables
+        // UDP transport for cross-board communication (NOS → AOS for /NAV_CMD).
+        // Without it, drdds defaults to SHM-only which can't reach AOS.
         std::vector<int> domains = {domain_id};
-        DrDDSManager::Init(domains, module_id, node_name, false, false, false);
+        DrDDSManager::Init(domains, module_id, node_name, true, false, false);
 
         // Create publisher
         publisher_ = new DrDDSPublisher<NavCmdPubSubType>(topic, domain_id, "");
