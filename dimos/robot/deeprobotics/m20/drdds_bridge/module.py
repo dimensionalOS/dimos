@@ -48,7 +48,7 @@ from dimos.spec import perception
 class DrddsLidarBridgeConfig(NativeModuleConfig):
     """Config for the drdds SHM → LCM bridge NativeModule."""
 
-    cwd: str | None = "dimos/robot/deeprobotics/m20/drdds_bridge/cpp"
+    cwd: str | None = "cpp"
     executable: str = "result/bin/drdds_lidar_bridge"
     build_command: str | None = "nix build .#drdds_lidar_bridge"
 

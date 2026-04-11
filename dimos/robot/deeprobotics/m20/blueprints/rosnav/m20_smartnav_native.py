@@ -50,13 +50,14 @@ M20_LIDAR_HEIGHT = 0.47  # lidar at 47cm in agile stance
 m20_smartnav_native = (
     autoconnect(
         m20_connection(
-            ip=global_config.robot_ip,
+            ip="10.21.31.103",
             enable_ros=False,
             enable_lidar=False,  # lidar comes from DrddsLidarBridge
             lidar_height=M20_LIDAR_HEIGHT,
         ),
-        DrddsLidarBridge.blueprint(),
+        DrddsLidarBridge.blueprint(build_command=None),
         AriseSLAM.blueprint(
+            build_command=None,
             scan_voxel_size=0.1,
             max_range=50.0,
         ),
@@ -64,10 +65,15 @@ m20_smartnav_native = (
             use_simple_planner=True,
             vehicle_height=M20_HEIGHT_CLEARANCE,
             terrain_analysis={
+                "build_command": None,
                 "obstacle_height_threshold": 0.01,
                 "ground_height_threshold": 0.01,
             },
+            local_planner={
+                "build_command": None,
+            },
             path_follower={
+                "build_command": None,
                 "two_way_drive": False,
             },
             simple_planner={
