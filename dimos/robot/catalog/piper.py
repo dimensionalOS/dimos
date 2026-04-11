@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos.core.global_config import global_config
 from dimos.robot.config import GripperConfig, RobotConfig
 from dimos.utils.data import LfsPath
 
@@ -83,10 +82,6 @@ def piper(
             close_position=0.0,
         ),
     }
-    if global_config.simulation and adapter_type == "mock":
-        defaults.update(adapter_type="sim_mujoco", address=str(PIPER_SIM_PATH))
-        defaults.setdefault("adapter_kwargs", {})["headless"] = False
-
     defaults.update(overrides)
     return RobotConfig(**defaults)
 
