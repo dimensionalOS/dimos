@@ -38,8 +38,7 @@ class Config(ModuleConfig):
 
 
 class ReidModule(Module):
-    default_config = Config
-
+    config: Config
     detections: In[Detection2DArray]
     image: In[Image]
     annotations: Out[ImageAnnotations]
@@ -50,7 +49,7 @@ class ReidModule(Module):
             try:
                 from dimos.models.embedding.treid import TorchReIDModel
 
-                idsystem = EmbeddingIDSystem(model=TorchReIDModel, padding=0)  # type: ignore[arg-type]
+                idsystem = EmbeddingIDSystem(model=TorchReIDModel, padding=0)
             except Exception as e:
                 raise RuntimeError(
                     "TorchReIDModel not available. Please install with: pip install dimos[torchreid]"
@@ -67,7 +66,7 @@ class ReidModule(Module):
                 ),
                 match_tolerance=0.0,
                 buffer_size=2.0,
-            ).pipe(ops.map(lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)))  # type: ignore[misc, arg-type]
+            ).pipe(ops.map(lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)))  # type: ignore[arg-type, misc]
         )
 
     @rpc

@@ -316,7 +316,7 @@ class DroneTrackingModule(Module):
         frame: NDArray[np.uint8],
         bbox: tuple[int, int, int, int],
         center: tuple[int, int],
-    ) -> NDArray[np.uint8]:  # type: ignore[type-arg]
+    ) -> NDArray[np.uint8]:
         """Draw tracking visualization overlay.
 
         Args:
@@ -327,7 +327,7 @@ class DroneTrackingModule(Module):
         Returns:
             Frame with overlay drawn
         """
-        overlay: NDArray[np.uint8] = frame.copy()  # type: ignore[type-arg]
+        overlay: NDArray[np.uint8] = frame.copy()
         x, y, w, h = bbox
 
         # Draw tracking box (green)

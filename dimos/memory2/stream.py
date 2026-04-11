@@ -15,9 +15,9 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
-from dimos.core.resource import Resource
+from dimos.core.resource import CompositeResource
 from dimos.memory2.buffer import BackpressureBuffer, KeepLast
 from dimos.memory2.transform import FnIterTransformer, FnTransformer, Transformer
 from dimos.memory2.type.filter import (
@@ -32,6 +32,7 @@ from dimos.memory2.type.filter import (
     TimeRangeFilter,
 )
 from dimos.memory2.type.observation import EmbeddedObservation, Observation
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -44,53 +45,61 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 R = TypeVar("R")
+logger = setup_logger()
 
 
-class Stream(Resource, Generic[T]):
+class Stream(CompositeResource, Generic[T]):
     """Lazy, pull-based stream over observations.
 
     Every filter/transform method returns a new Stream — no computation
     happens until iteration. Backends handle query application for stored
     data; transform sources apply filters as Python predicates.
 
-    Implements Resource so live streams can be cleanly stopped via
-    ``stop()`` or used as a context manager.
+    Implements CompositeResource so subscriptions created via ``.subscribe()``
+    and ``.publish()`` are tracked and disposed on ``stop()``.
+
+    An *unbound* stream (``Stream()``) records a chain of transforms
+    without a real source. Use ``.chain()`` to apply it to a bound stream::
+
+        pipeline = Stream().transform(VoxelMapTransformer()).map(postprocess)
+        store.stream("lidar", PointCloud2).live().chain(pipeline)
     """
 
     def __init__(
         self,
-        source: Backend[T] | Stream[Any],
+        source: Backend[T] | Stream[Any] | None = None,
         *,
-        xf: Transformer[Any, T] | None = None,
+        transform: Transformer[Any, T] | None = None,
         query: StreamQuery = StreamQuery(),
     ) -> None:
+        super().__init__()
         self._source = source
-        self._xf = xf
+        if source is not None:
+            self.register_disposable(source)
+        self._transform = transform
         self._query = query
 
-    def start(self) -> None:
-        pass
-
     def stop(self) -> None:
-        """Close the live buffer (if any), unblocking iteration."""
         buf = self._query.live_buffer
         if buf is not None:
             buf.close()
-        if isinstance(self._source, Stream):
-            self._source.stop()
+        super().stop()
 
     def __str__(self) -> str:
         # Walk the source chain to collect (xf, query) pairs
         chain: list[tuple[Any, StreamQuery]] = []
         current: Any = self
         while isinstance(current, Stream):
-            chain.append((current._xf, current._query))
+            chain.append((current._transform, current._query))
             current = current._source
         chain.reverse()  # innermost first
 
-        # current is the Backend
-        name = getattr(current, "name", "?")
-        result = f'Stream("{name}")'
+        # current is the Backend (or None for unbound)
+        if current is None:
+            result = "Stream(unbound)"
+        else:
+            name = getattr(current, "name", "?")
+            result = f'Stream("{name}")'
 
         for xf, query in chain:
             if xf is not None:
@@ -110,9 +119,10 @@ class Stream(Resource, Generic[T]):
         return False
 
     def __iter__(self) -> Iterator[Observation[T]]:
-        return self._build_iter()
-
-    def _build_iter(self) -> Iterator[Observation[T]]:
+        if self._source is None:
+            raise TypeError(
+                "Cannot iterate an unbound stream. Use .chain() to apply it to a real stream first."
+            )
         if isinstance(self._source, Stream):
             return self._iter_transform()
         # Backend handles all query application (including live if requested)
@@ -120,8 +130,8 @@ class Stream(Resource, Generic[T]):
 
     def _iter_transform(self) -> Iterator[Observation[T]]:
         """Iterate a transform source, applying query filters in Python."""
-        assert isinstance(self._source, Stream) and self._xf is not None
-        it: Iterator[Observation[T]] = self._xf(iter(self._source))
+        assert isinstance(self._source, Stream) and self._transform is not None
+        it: Iterator[Observation[T]] = self._transform(iter(self._source))
         return self._query.apply(it, live=self.is_live())
 
     def _replace_query(self, **overrides: Any) -> Stream[T]:
@@ -137,7 +147,7 @@ class Stream(Resource, Generic[T]):
             search_k=overrides.get("search_k", q.search_k),
             search_text=overrides.get("search_text", q.search_text),
         )
-        return Stream(self._source, xf=self._xf, query=new_q)
+        return Stream(self._source, transform=self._transform, query=new_q)
 
     def _with_filter(self, f: Filter) -> Stream[T]:
         return self._replace_query(filters=(*self._query.filters, f))
@@ -210,7 +220,7 @@ class Stream(Resource, Generic[T]):
         """
         if not isinstance(xf, Transformer):
             xf = FnIterTransformer(xf)
-        return Stream(source=self, xf=xf, query=StreamQuery())
+        return Stream(source=self, transform=xf, query=StreamQuery())
 
     def live(self, buffer: BackpressureBuffer[Observation[Any]] | None = None) -> Stream[T]:
         """Return a stream whose iteration never ends — backfill then live tail.
@@ -221,9 +231,9 @@ class Stream(Resource, Generic[T]):
         Default buffer: KeepLast(). The backend handles subscription, dedup,
         and backpressure — how it does so is its business.
         """
-        if isinstance(self._source, Stream):
+        if isinstance(self._source, Stream) or self._source is None:
             raise TypeError(
-                "Cannot call .live() on a transform stream. "
+                "Cannot call .live() on a transform/unbound stream. "
                 "Call .live() on the source stream, then .transform()."
             )
         buf = buffer if buffer is not None else KeepLast()
@@ -234,8 +244,10 @@ class Stream(Resource, Generic[T]):
 
         Returns the target stream for continued querying.
         """
-        if isinstance(target._source, Stream):
-            raise TypeError("Cannot save to a transform stream. Target must be backend-backed.")
+        if isinstance(target._source, Stream) or target._source is None:
+            raise TypeError(
+                "Cannot save to a transform/unbound stream. Target must be backend-backed."
+            )
         backend = target._source
         for obs in self:
             backend.append(obs)
@@ -264,7 +276,7 @@ class Stream(Resource, Generic[T]):
 
     def count(self) -> int:
         """Count matching observations."""
-        if not isinstance(self._source, Stream):
+        if self._source is not None and not isinstance(self._source, Stream):
             return self._source.count(self._query)
         if self.is_live():
             raise TypeError(".count() on a live transform stream would block forever.")
@@ -328,12 +340,78 @@ class Stream(Resource, Generic[T]):
         on_error: Callable[[Exception], None] | None = None,
         on_completed: Callable[[], None] | None = None,
     ) -> DisposableBase:
-        """Subscribe to this stream as an RxPY Observable."""
-        return self.observable().subscribe(  # type: ignore[call-overload]
-            on_next=on_next,
-            on_error=on_error,
-            on_completed=on_completed,
+        """Subscribe to this stream as an RxPY Observable.
+
+        The subscription is tracked and disposed when this stream is stopped.
+        """
+        return self.register_disposable(
+            self.observable().subscribe(  # type: ignore[call-overload]
+                on_next=on_next,
+                on_error=on_error,
+                on_completed=on_completed,
+            )
         )
+
+    def publish(self, out: Any) -> DisposableBase:
+        """Publish each observation's data to a Module ``Out`` port.
+
+        Iteration runs on the dimos thread pool (via :meth:`subscribe`).
+        Returns a ``DisposableBase`` suitable for ``register_disposable()``.
+
+        Example::
+
+            lidar.live().transform(VoxelMapTransformer()).publish(self.global_map)
+        """
+
+        def _on_error(e: Exception) -> None:
+            logger.error("Stream.publish() pipeline error: %s", e, exc_info=True)
+
+        return self.subscribe(
+            on_next=lambda obs: out.publish(obs.data),
+            on_error=_on_error,
+        )
+
+    def chain(self, other: Stream[R]) -> Stream[R]:
+        """Append operations from an unbound stream to this stream.
+
+        Extracts the transform/filter chain from *other* (which must be
+        unbound) and replays it on top of ``self``::
+
+            pipeline = Stream().transform(VoxelMapTransformer()).map(postprocess)
+            store.stream("lidar").live().chain(pipeline)
+        """
+        ops: list[tuple[Transformer[Any, Any] | None, StreamQuery]] = []
+        current: Stream[Any] | None | Any = other
+        found_root = False
+        while isinstance(current, Stream):
+            ops.append((current._transform, current._query))
+            if current._source is None:
+                found_root = True
+                break
+            current = current._source
+        if not found_root:
+            raise TypeError("Can only chain an unbound stream (created with Stream())")
+
+        # Validate no unsupported query fields in the unbound chain
+        for _, query in ops:
+            if query.search_vec is not None or query.search_text is not None:
+                raise TypeError("search() / search_text() cannot be used on unbound streams")
+            if query.live_buffer is not None:
+                raise TypeError("live() cannot be used on unbound streams")
+
+        result: Stream[Any] = self
+        for xf, query in reversed(ops):
+            if xf is not None:
+                result = result.transform(xf)
+            for f in query.filters:
+                result = result._with_filter(f)
+            if query.limit_val is not None:
+                result = result.limit(query.limit_val)
+            if query.offset_val is not None and query.offset_val != 0:
+                result = result.offset(query.offset_val)
+            if query.order_field is not None:
+                result = result.order_by(query.order_field, desc=query.order_desc)
+        return cast("Stream[R]", result)
 
     def append(
         self,
@@ -345,8 +423,10 @@ class Stream(Resource, Generic[T]):
         embedding: Embedding | None = None,
     ) -> Observation[T]:
         """Append to the backing store. Only works if source is a Backend."""
-        if isinstance(self._source, Stream):
-            raise TypeError("Cannot append to a transform stream. Append to the source stream.")
+        if isinstance(self._source, Stream) or self._source is None:
+            raise TypeError(
+                "Cannot append to a transform/unbound stream. Append to the source stream."
+            )
         _ts = ts if ts is not None else time.time()
         _tags = tags or {}
         if embedding is not None:

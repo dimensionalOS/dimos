@@ -23,9 +23,9 @@ from dimos_lcm.foxglove_bridge import (
 )
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -42,10 +42,10 @@ class FoxgloveConfig(ModuleConfig):
     jpeg_shm_channels: Sequence[str] = ()
 
 
-class FoxgloveBridge(Module[FoxgloveConfig]):
+class FoxgloveBridge(Module):
+    config: FoxgloveConfig
     _thread: threading.Thread
     _loop: asyncio.AbstractEventLoop
-    default_config = FoxgloveConfig
 
     @rpc
     def start(self) -> None:
@@ -100,7 +100,7 @@ def deploy(
             "/lidar#sensor_msgs.PointCloud2",
             "/map#sensor_msgs.PointCloud2",
         ]
-    foxglove_bridge = dimos.deploy(  # type: ignore[attr-defined]
+    foxglove_bridge = dimos.deploy(
         FoxgloveBridge,
         shm_channels=shm_channels,
     )

@@ -31,13 +31,13 @@ from typing import (
 )
 
 from pydantic import Field
-from reactivex.disposable import CompositeDisposable
 
 from dimos.core.core import T, rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.introspection.module.info import extract_module_info
 from dimos.core.introspection.module.render import render_module_io
-from dimos.core.resource import Resource
+from dimos.core.resource import CompositeResource
+from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteOut, Transport
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
@@ -47,7 +47,7 @@ from dimos.utils import colors
 from dimos.utils.generic import classproperty
 
 if TYPE_CHECKING:
-    from dimos.core.blueprints import Blueprint
+    from dimos.core.coordination.blueprints import Blueprint
     from dimos.core.introspection.module.info import ModuleInfo
     from dimos.core.rpc_client import RPCClient
 
@@ -97,28 +97,26 @@ class _BlueprintPartial(Protocol):
     def __call__(self, **kwargs: Any) -> "Blueprint": ...
 
 
-class ModuleBase(Configurable[ModuleConfigT], Resource):
-    # This won't type check against the TypeVar, but we need it as the default.
-    default_config: type[ModuleConfigT] = ModuleConfig  # type: ignore[assignment]
+class ModuleBase(Configurable, CompositeResource):
+    config: ModuleConfig
 
     # Deployment target. Worker managers declare which deployment type they
     # handle; the coordinator routes modules accordingly.
     deployment: ClassVar[Deployment] = "python"
 
     _rpc: RPCSpec | None = None
-    _tf: TFSpec[Any] | None = None
+    _tf: TFSpec | None = None
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread: threading.Thread | None
-    _disposables: CompositeDisposable
+    _bound_rpc_calls: dict[str, RpcCall] = {}
     _module_closed: bool = False
     _module_closed_lock: threading.Lock
     _loop_thread_timeout: float = 2.0
 
-    def __init__(self, config_args: dict[str, Any]):
+    def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
         self._module_closed_lock = threading.Lock()
         self._loop, self._loop_thread = get_loop()
-        self._disposables = CompositeDisposable()
         try:
             self.rpc = self.config.rpc_transport(  # type: ignore[call-arg]
                 rpc_timeouts=self.config.rpc_timeouts,
@@ -128,6 +126,11 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
             self.rpc.start()  # type: ignore[attr-defined]
         except ValueError:
             ...
+
+    @classproperty
+    def name(self) -> str:
+        """Name for this module to be used for blueprint configs."""
+        return self.__name__.lower()  # type: ignore[attr-defined,no-any-return]
 
     @property
     def frame_id(self) -> str:
@@ -151,6 +154,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
 
     @rpc
     def stop(self) -> None:
+        super().stop()
         self._close_module()
 
     def _close_module(self) -> None:
@@ -177,14 +181,12 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         if hasattr(self, "_tf") and self._tf is not None:
             self._tf.stop()
             self._tf = None
-        if hasattr(self, "_disposables"):
-            self._disposables.dispose()
 
-        # Break the In/Out -> owner -> self reference cycle so the instance
-        # can be freed by refcount instead of waiting for GC.
-        for attr in list(vars(self).values()):
-            if isinstance(attr, (In, Out)):
-                attr.owner = None
+        # Stop transports and break the In/Out -> owner -> self reference
+        # cycle so the instance can be freed by refcount instead of waiting for GC.
+        for attr in [*self.inputs.values(), *self.outputs.values()]:
+            attr.stop()
+            attr.owner = None
 
     def _close_rpc(self) -> None:
         if self.rpc:
@@ -207,7 +209,6 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         """Restore object from pickled state."""
         self.__dict__.update(state)
         # Reinitialize runtime attributes
-        self._disposables = CompositeDisposable()
         self._module_closed_lock = threading.Lock()
         self._loop = None
         self._loop_thread = None
@@ -371,7 +372,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
     @classproperty
     def blueprint(self) -> _BlueprintPartial:
         # Here to prevent circular imports.
-        from dimos.core.blueprints import Blueprint
+        from dimos.core.coordination.blueprints import Blueprint
 
         return partial(Blueprint.create, self)  # type: ignore[arg-type]
 
@@ -396,7 +397,7 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
         return skills
 
 
-class Module(ModuleBase[ModuleConfigT]):
+class Module(ModuleBase):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Set class-level None attributes for In/Out type annotations.
 
@@ -418,8 +419,8 @@ class Module(ModuleBase[ModuleConfigT]):
                 if not hasattr(cls, name) or getattr(cls, name) is None:
                     setattr(cls, name, None)
 
-    def __init__(self, **kwargs: Any):
-        self.ref = None  # type: ignore[assignment]
+    def __init__(self, **kwargs: Any) -> None:
+        self.ref = None
 
         try:
             hints = get_type_hints(self.__class__, include_extras=True)

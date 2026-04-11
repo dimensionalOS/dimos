@@ -14,13 +14,12 @@
 
 from collections.abc import Callable
 import time
-from typing import Any
 
 from pydantic import Field
 import reactivex as rx
 
 from dimos.agents.annotation import skill
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
@@ -47,16 +46,16 @@ def default_transform() -> Transform:
 class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
     transform: Transform | None = Field(default_factory=default_transform)
-    hardware: Callable[[], CameraHardware[Any]] | CameraHardware[Any] = Webcam
+    hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
     frequency: float = 0.0  # Hz, 0 means no limit
 
 
-class CameraModule(Module[CameraModuleConfig], perception.Camera):
+class CameraModule(Module, perception.Camera):
+    config: CameraModuleConfig
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
 
-    default_config = CameraModuleConfig
-    hardware: CameraHardware[Any]
+    hardware: CameraHardware
     _latest_image: Image | None = None
 
     @rpc
@@ -77,11 +76,11 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
             self.color_image.publish(image)
             self._latest_image = image
 
-        self._disposables.add(
+        self.register_disposable(
             stream.subscribe(on_image),
         )
 
-        self._disposables.add(
+        self.register_disposable(
             rx.interval(1.0).subscribe(lambda _: self.publish_metadata()),
         )
 

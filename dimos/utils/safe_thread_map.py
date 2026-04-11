@@ -20,7 +20,7 @@ from typing import Any, TypeVar
 
 if sys.version_info < (3, 11):
 
-    class ExceptionGroup(Exception):  # type: ignore[no-redef]  # noqa: N818
+    class ExceptionGroup(Exception):  # noqa: N818
         """Minimal ExceptionGroup polyfill for Python 3.10."""
 
         exceptions: tuple[BaseException, ...]
@@ -31,7 +31,7 @@ if sys.version_info < (3, 11):
 else:
     import builtins
 
-    ExceptionGroup = builtins.ExceptionGroup  # type: ignore[misc]
+    ExceptionGroup = builtins.ExceptionGroup
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -80,7 +80,7 @@ def safe_thread_map(
     if errors:
         if on_errors is not None:
             zipped = [(items[i], outcomes[i]) for i in range(len(items))]
-            return on_errors(zipped, successes, errors)  # type: ignore[return-value, no-any-return]
+            return on_errors(zipped, successes, errors)  # type: ignore[no-any-return]
         raise ExceptionGroup("safe_thread_map failed", errors)
 
     return [outcomes[i] for i in range(len(items))]  # type: ignore[misc]

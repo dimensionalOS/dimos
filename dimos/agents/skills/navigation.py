@@ -62,8 +62,8 @@ class NavigationSkillContainer(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.color_image.subscribe(self._on_color_image)))
-        self._disposables.add(Disposable(self.odom.subscribe(self._on_odom)))
+        self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
+        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
         self._skill_started = True
 
     @rpc

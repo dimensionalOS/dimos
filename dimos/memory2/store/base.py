@@ -77,13 +77,13 @@ class StoreConfig(BaseConfig):
     eager_blobs: bool = False
 
 
-class Store(Configurable[StoreConfig], CompositeResource):
+class Store(Configurable, CompositeResource):
     """Top-level entry point — wraps a storage location (file, URL, etc.).
 
     Store directly manages streams. No Session layer.
     """
 
-    default_config: type[StoreConfig] = StoreConfig
+    config: StoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
         Configurable.__init__(self, **kwargs)
@@ -120,17 +120,14 @@ class Store(Configurable[StoreConfig], CompositeResource):
         obs = config.pop("observation_store", self.config.observation_store)
         if obs is None or isinstance(obs, type):
             obs = (obs or ListObservationStore)(name=name)
-            obs.start()
 
         bs = config.pop("blob_store", self.config.blob_store)
         if isinstance(bs, type):
             bs = bs()
-            bs.start()
 
         vs = config.pop("vector_store", self.config.vector_store)
         if isinstance(vs, type):
             vs = vs()
-            vs.start()
 
         notifier = config.pop("notifier", self.config.notifier)
         if notifier is None or isinstance(notifier, type):
@@ -154,6 +151,7 @@ class Store(Configurable[StoreConfig], CompositeResource):
         if name not in self._streams:
             resolved = {**self.config.model_dump(exclude_none=True), **overrides}
             backend = self._create_backend(name, payload_type, **resolved)
+            backend.start()
             self._streams[name] = Stream(source=backend)
         return cast("Stream[T]", self._streams[name])
 
@@ -163,4 +161,11 @@ class Store(Configurable[StoreConfig], CompositeResource):
 
     def delete_stream(self, name: str) -> None:
         """Delete a stream by name (from cache and underlying storage)."""
-        self._streams.pop(name, None)
+        stream = self._streams.pop(name, None)
+        if stream is not None:
+            stream.stop()
+
+    def stop(self) -> None:
+        for stream in self._streams.values():
+            stream.stop()
+        super().stop()

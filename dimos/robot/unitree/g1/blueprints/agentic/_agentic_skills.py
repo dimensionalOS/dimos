@@ -19,7 +19,7 @@ from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.agents.skills.speak_skill import SpeakSkill
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.g1.skill_container import UnitreeG1SkillContainer
 from dimos.robot.unitree.g1.system_prompt import G1_SYSTEM_PROMPT
 

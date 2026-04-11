@@ -165,6 +165,29 @@ For this, we use `dimos.core` and DimOS transport protocols.
 
 Defining message exchange protocols and message types also gives us the ability to write models in faster languages.
 
+## Restarting a module
+
+While iterating on a module it's often convenient to edit its source file
+and pick up the changes without tearing down the whole coordinator. The
+`restart_module` call stops a single deployed module, reloads its source
+via `importlib.reload`, then redeploys it onto a fresh worker process while
+keeping its stream transports and reconnecting any other modules that held
+a reference to it.
+
+```python
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.global_config import GlobalConfig
+from dimos.hardware.sensors.camera.module import CameraModule
+
+coordinator = ModuleCoordinator(g=GlobalConfig(n_workers=0, viewer="none"))
+coordinator.start()
+coordinator.load_module(CameraModule)
+
+# ... edit CameraModule source on disk ...
+
+coordinator.restart_module(CameraModule)
+```
+
 ## Blueprints
 
 A blueprint is a predefined structure of interconnected modules. You can include blueprints or modules in new blueprints.

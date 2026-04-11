@@ -106,7 +106,7 @@ class Object(Detection3D):
 
     def to_detection3d_msg(self) -> ROSDetection3D:
         """Convert to ROS Detection3D message."""
-        obb = self.get_oriented_bounding_box()  # type: ignore[no-untyped-call]
+        obb = self.get_oriented_bounding_box()
         orientation = Quaternion.from_rotation_matrix(obb.R)
 
         msg = ROSDetection3D()
@@ -217,7 +217,7 @@ class Object(Detection3D):
             if mask_erode_pixels > 0:
                 mask_uint8 = mask.astype(np.uint8)
                 if mask_uint8.max() == 1:
-                    mask_uint8 = mask_uint8 * 255  # type: ignore[assignment]
+                    mask_uint8 = mask_uint8 * 255
                 kernel_size = 2 * mask_erode_pixels + 1
                 erode_kernel = cv2.getStructuringElement(
                     cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)

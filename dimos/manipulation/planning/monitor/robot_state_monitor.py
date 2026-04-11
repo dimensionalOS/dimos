@@ -13,13 +13,13 @@
 # limitations under the License.
 
 """
-World State Monitor
+Robot State Monitor
 
-Monitors joint state updates and syncs them to a WorldSpec instance.
+Per-robot monitor that tracks joint state and syncs it to a WorldSpec instance.
 This is the WorldSpec-based replacement for StateMonitor.
 
 Example:
-    monitor = WorldStateMonitor(world, lock, robot_id, joint_names)
+    monitor = RobotStateMonitor(world, lock, robot_id, joint_names)
     monitor.start()
     monitor.on_joint_state(joint_state_msg)  # Called by subscriber
 """
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-class WorldStateMonitor:
+class RobotStateMonitor:
     """Monitors joint state updates and syncs them to WorldSpec.
 
     This class subscribes to joint state messages and calls
@@ -60,7 +60,7 @@ class WorldStateMonitor:
     ## Comparison with StateMonitor
 
     - StateMonitor: Works with PlanningScene ABC
-    - WorldStateMonitor: Works with WorldSpec Protocol
+    - RobotStateMonitor: Works with WorldSpec Protocol
     """
 
     def __init__(
@@ -71,7 +71,7 @@ class WorldStateMonitor:
         joint_names: list[str],
         joint_name_mapping: dict[str, str] | None = None,
         timeout: float = 1.0,
-    ):
+    ) -> None:
         """Create a world state monitor.
 
         Args:
@@ -80,7 +80,7 @@ class WorldStateMonitor:
             robot_id: ID of the robot to monitor
             joint_names: Ordered list of joint names for this robot (URDF names)
             joint_name_mapping: Maps coordinator joint names to URDF joint names.
-                Example: {"left_joint1": "joint1"} means messages with "left_joint1"
+                Example: {"left/joint1": "joint1"} means messages with "left/joint1"
                 will be mapped to URDF "joint1". If None, names must match exactly.
             timeout: Timeout for waiting for initial state (seconds)
         """
@@ -142,7 +142,7 @@ class WorldStateMonitor:
             positions = self._extract_positions(msg)
             if positions is None:
                 logger.debug(
-                    "[WorldStateMonitor] Failed to extract positions - joint names mismatch"
+                    "[RobotStateMonitor] Failed to extract positions - joint names mismatch"
                 )
                 logger.debug(f"  Expected joints: {self._joint_names}")
                 logger.debug(f"  Received joints: {msg.name}")
@@ -182,7 +182,7 @@ class WorldStateMonitor:
                         logger.error(f"State callback error: {e}")
 
         except Exception as e:
-            logger.error(f"[WorldStateMonitor] Unexpected exception in on_joint_state: {e}")
+            logger.error(f"[RobotStateMonitor] Unexpected exception in on_joint_state: {e}")
             import traceback
 
             logger.error(traceback.format_exc())

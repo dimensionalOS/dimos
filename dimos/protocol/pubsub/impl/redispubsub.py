@@ -35,10 +35,10 @@ class RedisConfig(BaseConfig):
     kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
-class Redis(PubSub[str, Any], Service[RedisConfig]):
+class Redis(PubSub[str, Any], Service):
     """Redis-based pub/sub implementation."""
 
-    default_config = RedisConfig
+    config: RedisConfig
 
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)

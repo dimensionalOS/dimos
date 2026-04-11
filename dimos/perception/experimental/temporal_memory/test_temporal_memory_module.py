@@ -28,9 +28,9 @@ import numpy as np
 import pytest
 from reactivex import operators as ops
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.models.vl.base import VlModel
@@ -529,7 +529,7 @@ class VideoReplayModule(Module):
     def start(self) -> None:
         import reactivex
 
-        def emit_frames(observer, scheduler):  # type: ignore[no-untyped-def]
+        def emit_frames(observer, scheduler):
             for i in range(self.num_frames):
                 img = _make_image(value=min(50 + i * 30, 255))  # Varying brightness
                 img.ts = time.time()
@@ -537,7 +537,7 @@ class VideoReplayModule(Module):
                 time.sleep(0.5)
             observer.on_completed()
 
-        self._disposables.add(
+        self.register_disposable(
             reactivex.create(emit_frames)
             .pipe(
                 ops.observe_on(reactivex.scheduler.NewThreadScheduler()),

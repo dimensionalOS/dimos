@@ -65,7 +65,7 @@ class JointServoTask(BaseControlTask):
         >>> task = JointServoTask(
         ...     name="servo_arm",
         ...     config=JointServoTaskConfig(
-        ...         joint_names=["arm_joint1", "arm_joint2", "arm_joint3"],
+        ...         joint_names=["arm/joint1", "arm/joint2", "arm/joint3"],
         ...         priority=10,
         ...         timeout=0.5,
         ...     ),
