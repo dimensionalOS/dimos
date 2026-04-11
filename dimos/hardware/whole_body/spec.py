@@ -12,14 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""WholeBodyAdapter protocol for joint-level (q/dq/kp/kd/tau) motor control."""
+"""WholeBodyAdapter protocol for joint-level motor control.
+
+Lightweight protocol for robots that expose per-motor
+position/velocity/torque control (as opposed to TwistBaseAdapter which
+only exposes velocity commands).
+
+Supports any number of motors — quadrupeds (12 DOF), humanoids (29 DOF), etc.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-# Unitree SDK sentinels meaning "no command" for that DOF.
+# Sentinel values — used to signal "no command" for a DOF.
 POS_STOP: float = 2.146e9
 VEL_STOP: float = 16000.0
 
@@ -28,19 +35,19 @@ VEL_STOP: float = 16000.0
 class MotorCommand:
     """Command for a single motor."""
 
-    q: float = POS_STOP  # target position (rad)
+    q: float = POS_STOP   # target position (rad)
     dq: float = VEL_STOP  # target velocity (rad/s)
-    kp: float = 0.0  # position gain
-    kd: float = 0.0  # velocity gain
-    tau: float = 0.0  # feedforward torque (Nm)
+    kp: float = 0.0        # position gain
+    kd: float = 0.0        # velocity gain
+    tau: float = 0.0       # feedforward torque (Nm)
 
 
 @dataclass(frozen=True)
 class MotorState:
     """Feedback from a single motor."""
 
-    q: float = 0.0  # position (rad)
-    dq: float = 0.0  # velocity (rad/s)
+    q: float = 0.0    # position (rad)
+    dq: float = 0.0   # velocity (rad/s)
     tau: float = 0.0  # estimated torque (Nm)
 
 
@@ -56,15 +63,44 @@ class IMUState:
 
 @runtime_checkable
 class WholeBodyAdapter(Protocol):
-    """Joint-level whole-body motor IO. SI units (rad, rad/s, Nm)."""
+    """Protocol for joint-level whole-body motor IO.
 
-    def connect(self) -> bool: ...
-    def disconnect(self) -> None: ...
-    def is_connected(self) -> bool: ...
-    def read_motor_states(self) -> list[MotorState]: ...
-    def has_motor_states(self) -> bool: ...
-    def read_imu(self) -> IMUState: ...
-    def write_motor_commands(self, commands: list[MotorCommand]) -> bool: ...
+    Implement this per vendor SDK.  All methods use SI units:
+    - Position: radians
+    - Velocity: rad/s
+    - Torque: Nm
+    - Force: N
+    """
+
+    # --- Connection ---
+
+    def connect(self) -> bool:
+        """Connect to hardware. Returns True on success."""
+        ...
+
+    def disconnect(self) -> None:
+        """Disconnect from hardware."""
+        ...
+
+    def is_connected(self) -> bool:
+        """Check if connected."""
+        ...
+
+    # --- State Reading ---
+
+    def read_motor_states(self) -> list[MotorState]:
+        """Read motor states for all joints."""
+        ...
+
+    def read_imu(self) -> IMUState:
+        """Read IMU state."""
+        ...
+
+    # --- Control ---
+
+    def write_motor_commands(self, commands: list[MotorCommand]) -> bool:
+        """Write motor commands for all joints. Returns success."""
+        ...
 
 
 __all__ = [
