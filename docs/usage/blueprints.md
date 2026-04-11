@@ -7,7 +7,7 @@ You don't typically want to run a single module, so multiple blueprints are hand
 You create a `Blueprint` from a single module (say `ConnectionModule`) with:
 
 ```python session=blueprint-ex1
-from dimos.core.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 
@@ -38,7 +38,7 @@ blueprint = connection('arg1', 'arg2', kwarg='value')
 You can link multiple blueprints together with `autoconnect`:
 
 ```python session=blueprint-ex1
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 
 class Config(ModuleConfig):
     arg1: int = 42
@@ -105,7 +105,7 @@ Imagine you have this code:
 ```python session=blueprint-ex1
 from functools import partial
 
-from dimos.core.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out, In
@@ -168,7 +168,7 @@ Note: `expanded_blueprint` does not get the transport overrides because it's cre
 Sometimes you need to rename a connection to match what other modules expect. You can use `remappings` to rename module connections:
 
 ```python session=blueprint-ex2
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out, In
