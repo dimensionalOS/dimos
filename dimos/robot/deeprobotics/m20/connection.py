@@ -272,7 +272,14 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
             self._protocol.send_motion_state(MotionState.STAND)
             time.sleep(1.0)
 
-            if self._ros_sensors is not None:
+            # Enable navigation mode when:
+            # 1. ROS sensors available (GOS with rclpy), OR
+            # 2. DDS velocity controller active (native nav without rclpy)
+            use_nav_mode = (
+                self._ros_sensors is not None
+                or isinstance(self._velocity_ctrl, M20VelocityControllerDDS)
+            )
+            if use_nav_mode:
                 self._protocol.send_usage_mode(UsageMode.NAVIGATION)
                 # Agile Motion Mode for navigation (dev guide 2.2.2:
                 # "suitable for navigation and autonomous algorithm development")
@@ -283,7 +290,7 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
 
             if self._using_bridge:
                 mode = "Navigation (Mac Bridge)"
-            elif self._ros_sensors:
+            elif use_nav_mode:
                 mode = "Navigation"
             else:
                 mode = "Regular"
@@ -342,11 +349,14 @@ class M20Connection(Module, spec.Camera, spec.Pointcloud, LidarSpec, IMUSpec, Od
                 self._lidar.pointcloud_stream().subscribe(_on_lidar)
             )
 
-        # Dead-reckoning odometry
-        self._odometry = M20DeadReckonOdometry(
-            publish_callback=self._publish_tf
-        )
-        self._odometry.start()
+        # Dead-reckoning odometry — only when no external SLAM provides it.
+        # When using DDS velocity controller (native nav with AriseSLAM),
+        # odometry comes from AriseSLAM, not dead-reckoning.
+        if not isinstance(self._velocity_ctrl, M20VelocityControllerDDS):
+            self._odometry = M20DeadReckonOdometry(
+                publish_callback=self._publish_tf
+            )
+            self._odometry.start()
 
     @rpc
     def stop(self) -> None:
