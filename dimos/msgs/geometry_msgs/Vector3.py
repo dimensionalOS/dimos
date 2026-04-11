@@ -21,10 +21,10 @@ from dimos_lcm.geometry_msgs import Vector3 as LCMVector3
 import numpy as np
 
 # Types that can be converted to/from Vector
-VectorConvertable: TypeAlias = Sequence[int | float] | LCMVector3 | np.ndarray  # type: ignore[type-arg]
+VectorConvertable: TypeAlias = Sequence[int | float] | LCMVector3 | np.ndarray
 
 
-def _ensure_3d(data: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
+def _ensure_3d(data: np.ndarray) -> np.ndarray:
     """Ensure the data array is exactly 3D by padding with zeros or raising an exception if too long."""
     if len(data) == 3:
         return data
@@ -128,7 +128,7 @@ class Vector3(LCMVector3):  # type: ignore[misc]
         return self.x
 
     @property
-    def data(self) -> np.ndarray:  # type: ignore[type-arg]
+    def data(self) -> np.ndarray:
         """Get the underlying numpy array."""
         return np.array([self.x, self.y, self.z], dtype=float)
 
@@ -319,7 +319,7 @@ class Vector3(LCMVector3):  # type: ignore[misc]
         """Convert the vector to a tuple."""
         return (self.x, self.y, self.z)
 
-    def to_numpy(self) -> np.ndarray:  # type: ignore[type-arg]
+    def to_numpy(self) -> np.ndarray:
         """Convert the vector to a numpy array."""
         return np.array([self.x, self.y, self.z], dtype=float)
 
@@ -385,7 +385,7 @@ class Vector3(LCMVector3):  # type: ignore[misc]
         return not self.is_zero()
 
 
-def to_numpy(value: Vector3 | np.ndarray | Sequence[int | float]) -> np.ndarray:  # type: ignore[type-arg]
+def to_numpy(value: Vector3 | np.ndarray | Sequence[int | float]) -> np.ndarray:
     """Convert a value to a numpy array."""
     if isinstance(value, Vector3):
         return value.to_numpy()
@@ -402,7 +402,7 @@ def to_vector(value: VectorConvertable | Vector3) -> Vector3:
     return Vector3(value)
 
 
-def to_tuple(value: Vector3 | np.ndarray | Sequence[int | float]) -> tuple[float, ...]:  # type: ignore[type-arg]
+def to_tuple(value: Vector3 | np.ndarray | Sequence[int | float]) -> tuple[float, ...]:
     """Convert a value to a tuple."""
     if isinstance(value, Vector3):
         return value.to_tuple()
@@ -414,7 +414,7 @@ def to_tuple(value: Vector3 | np.ndarray | Sequence[int | float]) -> tuple[float
         return tuple(value)
 
 
-def to_list(value: Vector3 | np.ndarray | Sequence[int | float]) -> list[float]:  # type: ignore[type-arg]
+def to_list(value: Vector3 | np.ndarray | Sequence[int | float]) -> list[float]:
     """Convert a value to a list."""
     if isinstance(value, Vector3):
         return value.to_list()

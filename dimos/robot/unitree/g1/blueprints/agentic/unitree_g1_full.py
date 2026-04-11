@@ -15,7 +15,7 @@
 
 """Full featured G1 stack with agentic skills and teleop."""
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.g1.blueprints.agentic._agentic_skills import _agentic_skills
 from dimos.robot.unitree.g1.blueprints.perceptive.unitree_g1_shm import unitree_g1_shm
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop

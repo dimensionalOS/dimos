@@ -23,8 +23,8 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos.agents.annotation import skill
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -183,7 +183,7 @@ class Detection3DModule(Detection2DModule):
 
         self.detection_stream_3d = align_timestamped(  # type: ignore[type-var]
             backpressure(self.detection_stream_2d()),
-            self.pointcloud.observable(),  # type: ignore[no-untyped-call]
+            self.pointcloud.observable(),
             match_tolerance=0.25,
             buffer_size=20.0,
         ).pipe(ops.map(detection2d_to_3d))

@@ -39,8 +39,8 @@ class WebcamConfig(CameraConfig):
     stereo_slice: Literal["left", "right"] | None = None  # For stereo cameras
 
 
-class Webcam(CameraHardware[WebcamConfig]):
-    default_config = WebcamConfig
+class Webcam(CameraHardware):
+    config: WebcamConfig
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)

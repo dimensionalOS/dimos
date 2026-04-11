@@ -91,13 +91,14 @@ def wait_for_mcp_down(timeout: float = 10.0) -> bool:
 def run_blueprint_in_process(ready_event: multiprocessing.synchronize.Event) -> None:
     os.environ["CI"] = "1"
     from dimos.agents.mcp.mcp_server import McpServer
-    from dimos.core.blueprints import autoconnect
+    from dimos.core.coordination.blueprints import autoconnect
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.core.global_config import global_config
     from dimos.core.tests.stress_test_module import StressTestModule
 
     global_config.update(viewer="none", n_workers=1)
     bp = autoconnect(StressTestModule.blueprint(), McpServer.blueprint())
-    coord = bp.build()
+    coord = ModuleCoordinator.build(bp)
     ready_event.set()
     try:
         while True:

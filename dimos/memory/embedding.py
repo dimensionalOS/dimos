@@ -14,7 +14,6 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import cast
 
 from pydantic import Field
 import reactivex as rx
@@ -47,8 +46,8 @@ class SpatialEmbedding(SpatialEntry):
     embedding: Embedding
 
 
-class EmbeddingMemory(Module[Config]):
-    default_config = Config
+class EmbeddingMemory(Module):
+    config: Config
     color_image: In[Image]
     global_costmap: In[OccupancyGrid]
 
@@ -57,7 +56,7 @@ class EmbeddingMemory(Module[Config]):
     def get_costmap(self) -> OccupancyGrid:
         if self._costmap_getter is None:
             self._costmap_getter = getter_hot(self.global_costmap.pure_observable())
-            self._disposables.add(self._costmap_getter)
+            self.register_disposable(self._costmap_getter)
         return self._costmap_getter()
 
     @rpc
@@ -88,12 +87,16 @@ class EmbeddingMemory(Module[Config]):
         return rx.of(SpatialEntry(image=img, pose=pose))
 
     def _embed_spatial_entry(self, spatial_entry: SpatialEntry) -> SpatialEmbedding:
-        embedding = cast("Embedding", self.config.embedding_model.embed(spatial_entry.image))
+        embedding = self.config.embedding_model.embed(spatial_entry.image)
         return SpatialEmbedding(
             image=spatial_entry.image,
             pose=spatial_entry.pose,
             embedding=embedding,
         )
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _store_spatial_entry(self, spatial_embedding: SpatialEmbedding) -> SpatialEmbedding:
         return spatial_embedding

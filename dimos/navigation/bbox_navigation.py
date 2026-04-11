@@ -33,10 +33,10 @@ class Config(ModuleConfig):
     goal_distance: float = 1.0
 
 
-class BBoxNavigationModule(Module[Config]):
+class BBoxNavigationModule(Module):
     """Minimal module that converts 2D bbox center to navigation goals."""
 
-    default_config = Config
+    config: Config
 
     detection2d: In[Detection2DArray]
     camera_info: In[CameraInfo]
@@ -48,10 +48,10 @@ class BBoxNavigationModule(Module[Config]):
         unsub = self.camera_info.subscribe(
             lambda msg: setattr(self, "camera_intrinsics", [msg.K[0], msg.K[4], msg.K[2], msg.K[5]])
         )
-        self._disposables.add(Disposable(unsub))
+        self.register_disposable(Disposable(unsub))
 
         unsub = self.detection2d.subscribe(self._on_detection)
-        self._disposables.add(Disposable(unsub))
+        self.register_disposable(Disposable(unsub))
 
     @rpc
     def stop(self) -> None:

@@ -416,11 +416,14 @@ module = [
     "sqlite_vec",
     "std_msgs.*",
     "tf2_msgs.*",
+    "transformers",
+    "transformers.*",
     "torchreid",
     "turbojpeg",
     "ultralytics.*",
     "unitree_webrtc_connect.*",
     "xarm.*",
+    "ament_index_python.*",
 ]
 ignore_missing_imports = true
 

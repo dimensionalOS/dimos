@@ -22,8 +22,6 @@ from typing import Any
 # Internal RPCs to hide from io() output
 INTERNAL_RPCS = {
     "dynamic_skills",
-    "get_rpc_method_names",
-    "set_rpc_method",
     "skills",
     "_io_instance",
 }

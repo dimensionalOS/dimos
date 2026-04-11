@@ -15,7 +15,7 @@
 
 """G1 stack with keyboard teleop."""
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_basic import unitree_g1_basic
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 

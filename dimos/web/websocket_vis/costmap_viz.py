@@ -30,7 +30,7 @@ class CostmapViz:
         self.occupancy_grid = occupancy_grid
 
     @property
-    def data(self) -> np.ndarray | None:  # type: ignore[type-arg]
+    def data(self) -> np.ndarray | None:
         """Get the costmap data as a numpy array."""
         if self.occupancy_grid:
             return self.occupancy_grid.grid

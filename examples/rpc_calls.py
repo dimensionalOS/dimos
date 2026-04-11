@@ -14,7 +14,8 @@
 
 from typing import Protocol
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.spec.utils import Spec
@@ -51,7 +52,9 @@ class Client(Module):
 
 
 if __name__ == "__main__":
-    autoconnect(
-        Calculator.blueprint(),
-        Client.blueprint(),
-    ).build().loop()
+    ModuleCoordinator.build(
+        autoconnect(
+            Calculator.blueprint(),
+            Client.blueprint(),
+        )
+    ).loop()

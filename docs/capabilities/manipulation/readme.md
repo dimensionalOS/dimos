@@ -55,11 +55,8 @@ execute()               # Execute via coordinator
 ### Perception + Agent
 
 ```bash
-# Terminal 1: Coordinator with real xarm7
-dimos run coordinator-xarm7
-
-# Terminal 2: Perception + manipulation + LLM agent
-dimos run xarm-perception-agent
+# Coordinator + perception + manipulation + LLM agent (single command)
+XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
 ```
 
 ## Architecture

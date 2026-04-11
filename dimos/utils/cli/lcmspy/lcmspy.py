@@ -17,6 +17,7 @@ import threading
 import time
 from typing import Any
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 from dimos.utils.human import human_bytes
 
@@ -102,8 +103,8 @@ class LCMSpyConfig(LCMConfig):
     topic_history_window: float = 60.0
 
 
-class LCMSpy(LCMService[LCMSpyConfig], Topic):
-    default_config = LCMSpyConfig
+class LCMSpy(LCMService, Topic):
+    config: LCMSpyConfig
     topic = dict[str, Topic]
     graph_log_window: float = 1.0
     topic_class: type[Topic] = Topic
@@ -130,7 +131,7 @@ class LCMSpy(LCMService[LCMSpyConfig], Topic):
                 print(self.config)
                 self.topic[topic] = self.topic_class(  # type: ignore[assignment, call-arg]
                     topic,
-                    history_window=self.config.topic_history_window,  # type: ignore[attr-defined]
+                    history_window=self.config.topic_history_window,
                 )
         self.topic[topic].msg(data)  # type: ignore[attr-defined, type-arg]
 
@@ -154,8 +155,7 @@ class GraphLCMSpyConfig(LCMSpyConfig):
 
 
 class GraphLCMSpy(LCMSpy, GraphTopic):
-    default_config = GraphLCMSpyConfig
-
+    config: GraphLCMSpyConfig
     graph_log_thread: threading.Thread | None = None
     graph_log_stop_event: threading.Event = threading.Event()
     topic_class: type[Topic] = GraphTopic
@@ -182,7 +182,7 @@ class GraphLCMSpy(LCMSpy, GraphTopic):
         """Stop the graph logging and LCM spy"""
         self.graph_log_stop_event.set()
         if self.graph_log_thread and self.graph_log_thread.is_alive():
-            self.graph_log_thread.join(timeout=1.0)
+            self.graph_log_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
 

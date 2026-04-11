@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from turbojpeg import TurboJPEG  # type: ignore[import-untyped]
+from turbojpeg import TurboJPEG
 
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.protocol.pubsub.encoders import PubSubEncoderMixin

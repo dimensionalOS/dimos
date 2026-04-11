@@ -19,12 +19,14 @@ from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.navigation.patrolling.constants import EXTRA_CLEARANCE
 from dimos.navigation.patrolling.create_patrol_router import create_patrol_router
 from dimos.navigation.patrolling.routers.patrol_router import PatrolRouter
 from dimos.navigation.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
@@ -62,11 +64,11 @@ class PatrollingModule(Module):
     def start(self) -> None:
         super().start()
 
-        self._disposables.add(Disposable(self.odom.subscribe(self._on_odom)))
-        self._disposables.add(
+        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+        self.register_disposable(
             Disposable(self.global_costmap.subscribe(self._router.handle_occupancy_grid))
         )
-        self._disposables.add(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
+        self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
 
     @rpc
     def stop(self) -> None:
@@ -83,7 +85,7 @@ class PatrollingModule(Module):
                 return "Patrol is already running. Use `stop_patrol` to stop."
             self._planner_spec.set_replanning_enabled(False)
             self._planner_spec.set_safe_goal_clearance(
-                self._global_config.robot_rotation_diameter / 2 + 0.2
+                self._global_config.robot_rotation_diameter / 2 + EXTRA_CLEARANCE
             )
             self._stop_event.clear()
             self._patrol_thread = threading.Thread(
@@ -139,5 +141,5 @@ class PatrollingModule(Module):
             self.goal_request.publish(pose)
         with self._patrol_lock:
             if self._patrol_thread is not None:
-                self._patrol_thread.join()
+                self._patrol_thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
                 self._patrol_thread = None

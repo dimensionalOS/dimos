@@ -22,6 +22,7 @@ from typing import Any
 
 import numpy as np
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
@@ -32,11 +33,11 @@ from dimos.utils.logging_config import setup_logger
 if "/usr/lib/python3/dist-packages" not in sys.path:
     sys.path.insert(0, "/usr/lib/python3/dist-packages")
 
-import gi  # type: ignore[import-not-found, import-untyped]
+import gi  # type: ignore[import-not-found]
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
-from gi.repository import GLib, Gst  # type: ignore[import-not-found, import-untyped]
+from gi.repository import GLib, Gst  # type: ignore[import-not-found]
 
 logger = setup_logger(level=logging.INFO)
 
@@ -51,10 +52,10 @@ class Config(ModuleConfig):
     reconnect_interval: float = 5.0
 
 
-class GstreamerCameraModule(Module[Config]):
+class GstreamerCameraModule(Module):
     """Module that captures frames from a remote camera using GStreamer TCP with absolute timestamps."""
 
-    default_config = Config
+    config: Config
 
     video: Out[Image]
 
@@ -112,7 +113,7 @@ class GstreamerCameraModule(Module[Config]):
 
         # Only join the thread if we're not calling from within it
         if self.main_loop_thread and self.main_loop_thread != threading.current_thread():
-            self.main_loop_thread.join(timeout=2.0)
+            self.main_loop_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 

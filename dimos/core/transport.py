@@ -32,15 +32,14 @@ try:
 except ImportError:
     DDS_AVAILABLE = False
 
-from dimos.protocol.pubsub.impl.jpeg_shm import JpegSharedMemory
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-T = TypeVar("T")  # type: ignore[misc]
+T = TypeVar("T")
 
 # TODO
 # Transports need to be rewritten and simplified,
@@ -137,11 +136,15 @@ class LCMTransport(PubSubTransport[T]):
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
         if not self._started:
             self.start()
-        return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value, arg-type]
+        return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type, return-value]
 
 
 class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
     def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        from dimos.protocol.pubsub.impl.jpeg_lcm import (
+            JpegLCM,
+        )  # ~330ms: deferred to avoid pulling in Image/cv2/rerun
+
         self.lcm = JpegLCM(**kwargs)  # type: ignore[assignment]
         super().__init__(topic, type)
 
@@ -222,6 +225,10 @@ class JpegShmTransport(PubSubTransport[T]):
 
     def __init__(self, topic: str, quality: int = 75, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(topic)
+        from dimos.protocol.pubsub.impl.jpeg_shm import (
+            JpegSharedMemory,
+        )  # deferred to avoid pulling in Image/cv2/rerun
+
         self.shm = JpegSharedMemory(quality=quality, **kwargs)
         self.quality = quality
 

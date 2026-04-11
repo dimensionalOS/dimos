@@ -21,23 +21,15 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import time
 
+from dimos.constants import STATE_DIR
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-
-def _get_state_dir() -> Path:
-    """XDG_STATE_HOME compliant state directory for dimos."""
-    xdg = os.environ.get("XDG_STATE_HOME")
-    if xdg:
-        return Path(xdg) / "dimos"
-    return Path.home() / ".local" / "state" / "dimos"
-
-
-REGISTRY_DIR = _get_state_dir() / "runs"
-LOG_BASE_DIR = _get_state_dir() / "logs"
+REGISTRY_DIR = STATE_DIR / "runs"
 
 
 @dataclass
@@ -141,9 +133,6 @@ def get_most_recent(alive_only: bool = True) -> RunEntry | None:
     """Return the most recently created run entry, or None."""
     runs = list_runs(alive_only=alive_only)
     return runs[-1] if runs else None
-
-
-import signal
 
 
 def stop_entry(entry: RunEntry, force: bool = False) -> tuple[str, bool]:

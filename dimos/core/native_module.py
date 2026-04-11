@@ -27,15 +27,16 @@ Example usage::
         some_param: float = 1.0
 
     class MyCppModule(NativeModule):
-        default_config = MyConfig
+        config: MyConfig
         pointcloud: Out[PointCloud2]
         cmd_vel: In[Twist]
 
     # Works with autoconnect, remappings, etc.
-    autoconnect(
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    ModuleCoordinator.build(autoconnect(
         MyCppModule.blueprint(),
         SomeConsumer.blueprint(),
-    ).build().loop()
+    )).loop()
 """
 
 from __future__ import annotations
@@ -54,6 +55,7 @@ from typing import IO, Any
 
 from pydantic import Field
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.utils.logging_config import setup_logger
@@ -114,10 +116,10 @@ class NativeModuleConfig(ModuleConfig):
 _NativeConfig = TypeVar("_NativeConfig", bound=NativeModuleConfig, default=NativeModuleConfig)
 
 
-class NativeModule(Module[_NativeConfig]):
+class NativeModule(Module):
     """Module that wraps a native executable as a managed subprocess.
 
-    Subclass this, declare In/Out ports, and set ``default_config`` to a
+    Subclass this, declare In/Out ports, and annotate ``config`` with a
     :class:`NativeModuleConfig` subclass pointing at the executable.
 
     On ``start()``, the binary is launched with CLI args::
@@ -128,7 +130,8 @@ class NativeModule(Module[_NativeConfig]):
     LCM topics directly.  On ``stop()``, the process receives SIGTERM.
     """
 
-    default_config: type[_NativeConfig] = NativeModuleConfig  # type: ignore[assignment]
+    config: NativeModuleConfig
+
     _process: subprocess.Popen[bytes] | None = None
     _watchdog: threading.Thread | None = None
     _stopping: bool = False
@@ -197,7 +200,7 @@ class NativeModule(Module[_NativeConfig]):
                 self._process.kill()
                 self._process.wait(timeout=5)
         if self._watchdog is not None and self._watchdog is not threading.current_thread():
-            self._watchdog.join(timeout=2)
+            self._watchdog.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         self._watchdog = None
         self._process = None
         super().stop()
@@ -210,8 +213,8 @@ class NativeModule(Module[_NativeConfig]):
         stdout_t = self._start_reader(self._process.stdout, "info")
         stderr_t = self._start_reader(self._process.stderr, "warning")
         rc = self._process.wait()
-        stdout_t.join(timeout=2)
-        stderr_t.join(timeout=2)
+        stdout_t.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        stderr_t.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         if self._stopping:
             return

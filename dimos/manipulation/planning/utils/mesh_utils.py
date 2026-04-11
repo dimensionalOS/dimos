@@ -138,41 +138,14 @@ def _process_xacro(
 ) -> str:
     """Process xacro file to URDF."""
     try:
-        import xacro  # type: ignore[import-not-found,import-untyped]
+        from dimos.utils.ament_prefix import process_xacro
     except ImportError:
         raise ImportError(
-            "xacro is required for processing .xacro files. Install with: pip install xacro"
+            "xacro is required for processing .xacro files. "
+            "Install the manipulation extra: pip install dimos[manipulation]"
         )
 
-    # Create a custom substitution_args_context that resolves $(find pkg) to our paths
-    # This avoids requiring ROS package discovery
-    from xacro import substitution_args
-
-    # Store original function
-    original_find = substitution_args._find
-
-    def custom_find(resolved: str, a: str, args: list[str], context: dict[str, str]) -> str:
-        """Custom $(find pkg) handler that uses our package_paths."""
-        pkg_name = args[0] if args else ""
-        if pkg_name in package_paths:
-            pkg_path = str(Path(package_paths[pkg_name]).resolve())
-            return resolved.replace(f"$({a})", pkg_path)
-        # Fall back to original behavior
-        return str(original_find(resolved, a, args, context))
-
-    # Monkey-patch the find function temporarily
-    substitution_args._find = custom_find
-
-    try:
-        # Process xacro with our mappings
-        doc = xacro.process_file(
-            str(xacro_path),
-            mappings=xacro_args,
-        )
-        return str(doc.toprettyxml(indent="  "))
-    finally:
-        # Restore original function
-        substitution_args._find = original_find
+    return process_xacro(xacro_path, package_paths, xacro_args)
 
 
 def _strip_transmission_blocks(urdf_content: str) -> str:

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import overload
 import warnings
 
 warnings.filterwarnings("ignore", message="Cython evaluation.*unavailable", category=UserWarning)
@@ -27,18 +28,15 @@ from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingMode
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 
-
 # osnet models downloaded from https://kaiyangzhou.github.io/deep-person-reid/MODEL_ZOO.html
 # into dimos/data/models_torchreid/
 # feel free to add more
 class TorchReIDModelConfig(EmbeddingModelConfig):
     model_name: str = "osnet_x1_0"
 
-
 class TorchReIDModel(EmbeddingModel, LocalModel):
     """TorchReID embedding model for person re-identification."""
 
-    default_config = TorchReIDModelConfig
     config: TorchReIDModelConfig
 
     @cached_property
@@ -50,6 +48,10 @@ class TorchReIDModel(EmbeddingModel, LocalModel):
             device=self.config.device,
         )
 
+    @overload
+    def embed(self, image: Image, /) -> Embedding: ...
+    @overload
+    def embed(self, *images: Image) -> list[Embedding]: ...
     def embed(self, *images: Image) -> Embedding | list[Embedding]:
         """Embed one or more images.
 
@@ -79,6 +81,10 @@ class TorchReIDModel(EmbeddingModel, LocalModel):
 
         return embeddings[0] if len(images) == 1 else embeddings
 
+    @overload
+    def embed_text(self, text: str, /) -> Embedding: ...
+    @overload
+    def embed_text(self, *texts: str) -> list[Embedding]: ...
     def embed_text(self, *texts: str) -> Embedding | list[Embedding]:
         """Text embedding not supported for ReID models.
 

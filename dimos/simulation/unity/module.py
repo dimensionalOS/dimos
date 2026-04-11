@@ -48,6 +48,7 @@ import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -78,7 +79,6 @@ _LFS_ASSET = "unity_sim_x86"
 # sending data for longer than this the bridge treats it as a hung
 # connection and drops it.
 _BRIDGE_READ_TIMEOUT = 30.0
-
 
 # TCP protocol helpers
 
@@ -216,11 +216,10 @@ _CAM_FY = _CAM_FX
 _CAM_CX = _CAM_WIDTH / 2.0
 _CAM_CY = _CAM_HEIGHT / 2.0
 
-
 # Module
 
 
-class UnityBridgeModule(Module[UnityBridgeConfig]):
+class UnityBridgeModule(Module):
     """TCP bridge to the Unity simulator with kinematic odometry integration.
 
     Ports:
@@ -233,7 +232,7 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
         camera_info (Out[CameraInfo]): Camera intrinsics.
     """
 
-    default_config = UnityBridgeConfig
+    config: UnityBridgeConfig
 
     cmd_vel: In[Twist]
     terrain_map: In[PointCloud2]
@@ -294,8 +293,8 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
-        self._disposables.add(Disposable(self.terrain_map.subscribe(self._on_terrain)))
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
+        self.register_disposable(Disposable(self.terrain_map.subscribe(self._on_terrain)))
         self._running.set()
         self._sim_thread = threading.Thread(target=self._sim_loop, daemon=True)
         self._sim_thread.start()
@@ -309,9 +308,9 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
     def stop(self) -> None:
         self._running.clear()
         if self._sim_thread:
-            self._sim_thread.join(timeout=2.0)
+            self._sim_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if self._unity_thread:
-            self._unity_thread.join(timeout=2.0)
+            self._unity_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         with self._state_lock:
             proc = self._unity_process
             self._unity_process = None
@@ -513,7 +512,7 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
                     self._handle_unity_message(dest, data)
         finally:
             halt.set()
-            sender.join(timeout=2.0)
+            sender.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
     def _unity_sender(self, sock: socket.socket, halt: threading.Event) -> None:
         while not halt.is_set():
@@ -600,89 +599,90 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
         if connected:
             self._send_queue.put((topic, data))
 
+    def _sim_step(self, dt: float) -> None:
+        """Execute a single simulation tick: integrate kinematics, publish odometry + TF."""
+        with self._cmd_lock:
+            fwd, left, yaw_rate = self._fwd_speed, self._left_speed, self._yaw_rate
+
+        with self._state_lock:
+            prev_z = self._z
+
+            self._yaw += dt * yaw_rate
+            if self._yaw > PI:
+                self._yaw -= 2 * PI
+            elif self._yaw < -PI:
+                self._yaw += 2 * PI
+
+            cy, sy = math.cos(self._yaw), math.sin(self._yaw)
+            self._x += dt * cy * fwd - dt * sy * left
+            self._y += dt * sy * fwd + dt * cy * left
+            self._z = self._terrain_z + self.config.vehicle_height
+
+            x, y, z = self._x, self._y, self._z
+            yaw = self._yaw
+            roll, pitch = self._roll, self._pitch
+
+        now = time.time()
+        quat = Quaternion.from_euler(Vector3(roll, pitch, yaw))
+
+        # Accumulate drift (persistent integration error).
+        if self.config.odom_drift_rate > 0:
+            self._drift_x += np.random.normal(0.0, self.config.odom_drift_rate)
+            self._drift_y += np.random.normal(0.0, self.config.odom_drift_rate)
+
+        # Apply drift + per-step noise to reported x/y (not actual state).
+        odom_x = x + self._drift_x
+        odom_y = y + self._drift_y
+        if self.config.odom_noise_std > 0:
+            odom_x += np.random.normal(0.0, self.config.odom_noise_std)
+            odom_y += np.random.normal(0.0, self.config.odom_noise_std)
+
+        self.odometry.publish(
+            Odometry(
+                ts=now,
+                frame_id="map",
+                child_frame_id="sensor",
+                pose=Pose(
+                    position=[odom_x, odom_y, z],
+                    orientation=[quat.x, quat.y, quat.z, quat.w],
+                ),
+                twist=Twist(
+                    linear=[fwd, left, (z - prev_z) * self.config.sim_rate],
+                    angular=[0.0, 0.0, yaw_rate],
+                ),
+            )
+        )
+
+        self.tf.publish(
+            Transform(
+                translation=Vector3(x, y, z),
+                rotation=quat,
+                frame_id="map",
+                child_frame_id="sensor",
+                ts=now,
+            ),
+            Transform(
+                translation=Vector3(0.0, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="map",
+                child_frame_id="world",
+                ts=now,
+            ),
+        )
+
+        with self._state_lock:
+            unity_connected = self._unity_connected
+        if unity_connected:
+            self._send_to_unity(
+                "/unity_sim/set_model_state",
+                serialize_pose_stamped(x, y, z, quat.x, quat.y, quat.z, quat.w),
+            )
+
     def _sim_loop(self) -> None:
         dt = 1.0 / self.config.sim_rate
-
         while self._running.is_set():
             t0 = time.monotonic()
-
-            with self._cmd_lock:
-                fwd, left, yaw_rate = self._fwd_speed, self._left_speed, self._yaw_rate
-
-            with self._state_lock:
-                prev_z = self._z
-
-                self._yaw += dt * yaw_rate
-                if self._yaw > PI:
-                    self._yaw -= 2 * PI
-                elif self._yaw < -PI:
-                    self._yaw += 2 * PI
-
-                cy, sy = math.cos(self._yaw), math.sin(self._yaw)
-                self._x += dt * cy * fwd - dt * sy * left
-                self._y += dt * sy * fwd + dt * cy * left
-                self._z = self._terrain_z + self.config.vehicle_height
-
-                x, y, z = self._x, self._y, self._z
-                yaw = self._yaw
-                roll, pitch = self._roll, self._pitch
-
-            now = time.time()
-            quat = Quaternion.from_euler(Vector3(roll, pitch, yaw))
-
-            # Accumulate drift (persistent integration error).
-            if self.config.odom_drift_rate > 0:
-                self._drift_x += np.random.normal(0.0, self.config.odom_drift_rate)
-                self._drift_y += np.random.normal(0.0, self.config.odom_drift_rate)
-
-            # Apply drift + per-step noise to reported x/y (not actual state).
-            odom_x = x + self._drift_x
-            odom_y = y + self._drift_y
-            if self.config.odom_noise_std > 0:
-                odom_x += np.random.normal(0.0, self.config.odom_noise_std)
-                odom_y += np.random.normal(0.0, self.config.odom_noise_std)
-
-            self.odometry.publish(
-                Odometry(
-                    ts=now,
-                    frame_id="map",
-                    child_frame_id="sensor",
-                    pose=Pose(
-                        position=[odom_x, odom_y, z],
-                        orientation=[quat.x, quat.y, quat.z, quat.w],
-                    ),
-                    twist=Twist(
-                        linear=[fwd, left, (z - prev_z) * self.config.sim_rate],
-                        angular=[0.0, 0.0, yaw_rate],
-                    ),
-                )
-            )
-
-            self.tf.publish(
-                Transform(
-                    translation=Vector3(x, y, z),
-                    rotation=quat,
-                    frame_id="map",
-                    child_frame_id="sensor",
-                    ts=now,
-                ),
-                Transform(
-                    translation=Vector3(0.0, 0.0, 0.0),
-                    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                    frame_id="map",
-                    child_frame_id="world",
-                    ts=now,
-                ),
-            )
-
-            with self._state_lock:
-                unity_connected = self._unity_connected
-            if unity_connected:
-                self._send_to_unity(
-                    "/unity_sim/set_model_state",
-                    serialize_pose_stamped(x, y, z, quat.x, quat.y, quat.z, quat.w),
-                )
-
+            self._sim_step(dt)
             sleep_for = dt - (time.monotonic() - t0)
             if sleep_for > 0:
                 time.sleep(sleep_for)

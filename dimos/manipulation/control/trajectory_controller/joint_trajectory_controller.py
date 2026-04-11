@@ -33,6 +33,7 @@ import threading
 import time
 from typing import Any
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -52,7 +53,7 @@ class JointTrajectoryControllerConfig(ModuleConfig):
     control_frequency: float = 100.0  # Hz - trajectory execution rate
 
 
-class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
+class JointTrajectoryController(Module):
     """
     Joint-space trajectory executor.
 
@@ -72,7 +73,7 @@ class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
                               FAULT ──reset()──► IDLE
     """
 
-    default_config = JointTrajectoryControllerConfig
+    config: JointTrajectoryControllerConfig
 
     # Input topics
     joint_state: In[JointState] = None  # type: ignore[assignment]  # Feedback from arm driver
@@ -151,7 +152,7 @@ class JointTrajectoryController(Module[JointTrajectoryControllerConfig]):
         self._stop_event.set()
 
         if self._exec_thread and self._exec_thread.is_alive():
-            self._exec_thread.join(timeout=2.0)
+            self._exec_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
         logger.info("JointTrajectoryController stopped")

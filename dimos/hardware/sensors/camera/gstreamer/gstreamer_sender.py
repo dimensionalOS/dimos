@@ -24,11 +24,11 @@ import time
 if "/usr/lib/python3/dist-packages" not in sys.path:
     sys.path.insert(0, "/usr/lib/python3/dist-packages")
 
-import gi  # type: ignore[import-not-found, import-untyped]
+import gi  # type: ignore[import-not-found]
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstVideo", "1.0")
-from gi.repository import GLib, Gst  # type: ignore[import-not-found, import-untyped]
+from gi.repository import GLib, Gst  # type: ignore[import-not-found]
 
 # Initialize GStreamer
 Gst.init(None)
@@ -49,7 +49,7 @@ class GStreamerTCPSender:
         framerate: int = 60,
         format_str: str = "YUY2",
         bitrate: int = 5000,
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         port: int = 5000,
         single_camera: bool = False,
     ) -> None:
@@ -62,7 +62,7 @@ class GStreamerTCPSender:
             framerate: Frame rate in fps
             format_str: Video format
             bitrate: H264 encoding bitrate in kbps
-            host: Host to listen on (0.0.0.0 for all interfaces)
+            host: Host to listen on (use 0.0.0.0 to expose on all interfaces)
             port: TCP port for listening
             single_camera: If True, crop to left half (for stereo cameras)
         """
@@ -306,8 +306,8 @@ def main() -> None:
     # Network options
     parser.add_argument(
         "--host",
-        default="0.0.0.0",
-        help="Host to listen on (default: 0.0.0.0 for all interfaces)",
+        default="127.0.0.1",
+        help="Host to listen on (default: 127.0.0.1; use 0.0.0.0 to expose on all interfaces)",
     )
     parser.add_argument("--port", type=int, default=5000, help="TCP port (default: 5000)")
 

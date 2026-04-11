@@ -22,7 +22,7 @@ dimos [GLOBAL OPTIONS] COMMAND [ARGS]
 | `--n-workers` | INT | `2` | Number of forkserver workers |
 | `--memory-limit` | TEXT | `auto` | Rerun viewer memory limit |
 | `--mcp-port` | INT | `9990` | MCP server port |
-| `--mcp-host` | TEXT | `0.0.0.0` | MCP server bind address |
+| `--mcp-host` | TEXT | `127.0.0.1` | MCP server bind address |
 | `--dtop` / `--no-dtop` | bool | `False` | Enable live resource monitor overlay |
 | `--obstacle-avoidance` / `--no-obstacle-avoidance` | bool | `True` | Enable obstacle avoidance |
 | `--detection-model` | `qwen\|moondream` | `moondream` | Vision model for object detection |
@@ -65,8 +65,11 @@ dimos run <blueprint> [<blueprint> ...] [--daemon] [--disable <module> ...]
 
 | Option | Description |
 |--------|-------------|
+| `--config` `-c` | Path to read JSON config file from (options can be overriden with `-o` |
 | `--daemon`, `-d` | Run in background (double-fork, health check, writes run registry) |
 | `--disable` | Module class names to exclude from the blueprint |
+| `--option`, `-o` | Provide an configuration option to the blueprint (e.g. `-o voxelgridmapper.voxel_size=1` |
+| `--help` | Display the available configuration options that can be changed with `-o` or the config file |
 
 ```bash
 # Foreground (Ctrl-C to stop)
