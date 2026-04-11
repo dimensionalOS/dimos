@@ -50,6 +50,9 @@ class ModuleCoordinator(Resource):  # type: ignore[misc]
         self._deployed_modules = {}
 
     def start(self) -> None:
+        from dimos.core.o3dpickle import register_picklers
+
+        register_picklers()
         for m in self._managers.values():
             m.start()
 

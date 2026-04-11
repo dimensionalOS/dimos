@@ -34,6 +34,7 @@ from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untype
     WebRTCConnectionMethod,
 )
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -147,7 +148,7 @@ class UnitreeWebRTCConnection(Resource):
             self.loop.call_soon_threadsafe(self.loop.stop)
 
         if self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+            self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send movement command to the robot using Twist commands.
@@ -397,4 +398,4 @@ class UnitreeWebRTCConnection(Resource):
             self.loop.call_soon_threadsafe(self.loop.stop)
 
         if hasattr(self, "thread") and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+            self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)

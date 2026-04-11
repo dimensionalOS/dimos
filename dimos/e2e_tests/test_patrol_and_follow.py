@@ -20,24 +20,6 @@ import pytest
 from dimos.e2e_tests.conf_types import StartPersonTrack
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
-from dimos.simulation.mujoco.direct_cmd_vel_explorer import DirectCmdVelExplorer
-
-points = [
-    (0, -7.07),
-    (-4.16, -7.07),
-    (-4.45, 1.10),
-    (-6.72, 2.87),
-    (-1.78, 3.01),
-    (-1.54, 5.74),
-    (3.88, 6.16),
-    (2.16, 9.36),
-    (4.70, 3.87),
-    (4.67, -7.15),
-    (4.57, -4.19),
-    (-0.84, -2.78),
-    (-4.71, 1.17),
-    (4.30, 0.87),
-]
 
 
 @pytest.mark.skipif_in_ci
@@ -48,7 +30,7 @@ def test_patrol_and_follow(
     start_blueprint: Callable[[str], DimosCliCall],
     human_input: Callable[[str], None],
     start_person_track: StartPersonTrack,
-    direct_cmd_vel_explorer: DirectCmdVelExplorer,
+    explore_office: Callable[[], None],
 ) -> None:
     start_blueprint(
         "--mujoco-start-pos",
@@ -66,12 +48,7 @@ def test_patrol_and_follow(
 
     time.sleep(5)
 
-    print("Starting discovery.")
-
-    # Explore the entire room by driving directly via /cmd_vel.
-    direct_cmd_vel_explorer.follow_points(points)
-
-    print("Ended discovery.")
+    explore_office()
 
     start_person_track(
         [

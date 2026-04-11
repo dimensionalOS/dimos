@@ -30,7 +30,6 @@ from typing import (
     get_type_hints,
 )
 
-from langchain_core.tools import tool
 from pydantic import Field
 from reactivex.disposable import CompositeDisposable
 
@@ -382,6 +381,8 @@ class ModuleBase(Configurable[ModuleConfigT], Resource):
 
     @rpc
     def get_skills(self) -> list[SkillInfo]:
+        from langchain_core.tools import tool  # ~170ms: deferred to avoid CLI startup cost
+
         skills: list[SkillInfo] = []
         for name in dir(self):
             attr = getattr(self, name)

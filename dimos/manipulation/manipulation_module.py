@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 from pydantic import Field
 
 from dimos.agents.annotation import skill
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
@@ -1184,7 +1185,7 @@ class ManipulationModule(Module[ManipulationModuleConfig]):
         # Stop TF thread
         if self._tf_thread is not None:
             self._tf_stop_event.set()
-            self._tf_thread.join(timeout=1.0)
+            self._tf_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._tf_thread = None
 
         # Stop world monitor (includes visualization thread)

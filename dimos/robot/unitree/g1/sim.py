@@ -21,6 +21,7 @@ from typing import Any
 from pydantic import Field
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
@@ -86,7 +87,7 @@ class G1SimConnection(G1ConnectionBase[G1SimConfig]):
         assert self.connection is not None
         self.connection.stop()
         if self._camera_info_thread and self._camera_info_thread.is_alive():
-            self._camera_info_thread.join(timeout=1.0)
+            self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
     def _publish_camera_info_loop(self) -> None:

@@ -20,6 +20,7 @@ from dimos_lcm.std_msgs import Bool
 from reactivex import Subject
 from reactivex.disposable import CompositeDisposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
@@ -113,7 +114,7 @@ class GlobalPlanner(Resource):
         self._replan_event.set()
 
         if self._thread is not None and self._thread is not current_thread():
-            self._thread.join(2)
+            self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
             if self._thread.is_alive():
                 logger.error("GlobalPlanner thread did not stop in time.")
             self._thread = None
