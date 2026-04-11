@@ -50,8 +50,9 @@ def rewrite_file(path: Path) -> int:
 def commits_to_check() -> list[str]:
     """Commits to check, oldest first.
 
-    On a PR, pre-commit exports PRE_COMMIT_FROM_REF / PRE_COMMIT_TO_REF for
-    the base..head range. Outside that, we only inspect HEAD.
+    When pre-commit is invoked with `--from-ref/--to-ref` (see code-cleanup.yml
+    for the CI invocation), it exports PRE_COMMIT_FROM_REF / PRE_COMMIT_TO_REF
+    and we walk that range. Otherwise we only inspect HEAD.
     """
     from_ref = os.environ.get("PRE_COMMIT_FROM_REF")
     to_ref = os.environ.get("PRE_COMMIT_TO_REF")
