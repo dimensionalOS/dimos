@@ -44,7 +44,7 @@ public:
         // UDP transport for cross-board communication (NOS → AOS for /NAV_CMD).
         // Without it, drdds defaults to SHM-only which can't reach AOS.
         std::vector<int> domains = {domain_id};
-        DrDDSManager::Init(domains, module_id, node_name, true, false, false);
+        DrDDSManager::Init(domains, module_id, node_name, true, true, false);
 
         // Create publisher
         publisher_ = new DrDDSPublisher<NavCmdPubSubType>(topic, domain_id, "");
