@@ -1,0 +1,11 @@
+name: Question
+description: Ask a question about DimOS usage or development
+labels: ["question"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Question
+      description: What do you need help with?
+    validations:
+      required: true

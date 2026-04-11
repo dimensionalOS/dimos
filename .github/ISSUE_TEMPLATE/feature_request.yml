@@ -1,35 +1,12 @@
 name: Feature Request
 description: Suggest a new feature or improvement for DimOS
-title: "[Feature]: "
+labels: ["feature"]
 body:
   - type: textarea
-    id: problem
+    id: description
     attributes:
-      label: Problem
-      description: What problem does this solve? What's frustrating or missing?
+      label: Description
+      description: What do you want and why?
+
     validations:
       required: true
-
-  - type: textarea
-    id: solution
-    attributes:
-      label: Proposed Solution
-      description: How would you like this to work?
-    validations:
-      required: true
-
-  - type: textarea
-    id: alternatives
-    attributes:
-      label: Alternatives Considered
-      description: Any other approaches you've thought about or workarounds you're using
-    validations:
-      required: false
-
-  - type: textarea
-    id: additional
-    attributes:
-      label: Additional Context
-      description: Any other context — diagrams, references, related issues, etc.
-    validations:
-      required: false
