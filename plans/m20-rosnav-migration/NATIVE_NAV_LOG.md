@@ -63,3 +63,39 @@ Tried multiple approaches to configure drdds UDP transport:
 - This is essentially the reverse of how `drdds_recv` bridges lidar data
 
 Alternatively, ask Deep Robotics if there's a way to enable UDP transport in drdds, or if the UDP protocol (Type=2, Cmd=21) works in Navigation Mode (the docs say it doesn't, but maybe newer firmware supports it).
+
+---
+
+## Finding no.3: DrDDSChannel Matches but Robot Doesn't Move (2026-04-11)
+
+**Partial resolution of Finding no.2.** Using `DrDDSChannel` (pub+sub pair) instead of
+`DrDDSPublisher` alone achieves `matched_count=1` with `basic_server` on AOS. Confirmed
+NOT a self-match (matched_count=0 when services stopped, 1 when running).
+
+Built a TCP bridge on AOS (`nav_cmd_bridge.cpp`):
+- NOS sends 12-byte velocity (3x float32) over TCP to AOS port 9740
+- Bridge publishes to `/NAV_CMD` via DrDDSChannel locally on AOS
+- Data confirmed received and published (bridge logs show velocity values)
+
+**But the robot doesn't move.** Despite `matched_count=1` and correct message format,
+`/NAV_CMD` velocity commands have no effect on locomotion.
+
+**Key insight from investigation logs:** The ONLY time `/NAV_CMD` successfully moved the
+robot was via `mac_bridge.py` on GOS using **rclpy** (`self._node.create_publisher(NavCmd,
+"/NAV_CMD", qos)`), NOT via drdds's `DrDDSPublisher` or `DrDDSChannel`. ROS2's
+rmw_fastrtps creates DDS entities differently from drdds's wrapper — the subscriber
+(likely in `basic_server`) may only accept messages from ROS2-created publishers.
+
+**rl_deploy is the balance controller** — stopping it causes the robot to collapse.
+It must remain running. It does NOT subscribe to `/NAV_CMD` directly.
+
+**UDP velocity works** — `M20Protocol.send_velocity()` in Regular Mode moves the robot.
+The motor controller is functional; the issue is purely in the `/NAV_CMD` DDS path.
+
+**Next steps:**
+1. Ask Jeff/Deep Robotics: does `/NAV_CMD` require a ROS2 publisher (via rmw_fastrtps)
+   rather than a raw drdds publisher? The mac_bridge used rclpy and it worked.
+2. If so, we need a lightweight rclpy publisher somewhere (GOS has Foxy, NOS has Foxy
+   in /opt/ros/foxy). Could be a tiny Python script on AOS using rclpy.
+3. Alternative: investigate if `basic_server` forwards `/NAV_CMD` to ctrlmcu or if
+   it needs height_map_nav as an intermediary.
