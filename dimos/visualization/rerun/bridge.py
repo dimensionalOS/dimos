@@ -153,7 +153,7 @@ def _default_blueprint() -> Blueprint:
     import rerun as rr
     import rerun.blueprint as rrb
 
-    return rrb.Blueprint(  # type: ignore[no-any-return]
+    return rrb.Blueprint(
         rrb.Spatial3DView(
             origin="world",
             background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
@@ -205,7 +205,6 @@ class RerunBridgeModule(Module):
         # All messages with to_rerun() are now logged to Rerun
         bridge.stop()
     """
-
 
     config: Config
     _last_log: dict[str, float] = {}
@@ -299,7 +298,7 @@ class RerunBridgeModule(Module):
         logger.info("Rerun bridge starting")
 
         # Build throttle lookup: entity_path → min interval in seconds
-        self._last_log = {}
+        self._last_log: dict[str, float] = {}
         self._min_intervals: dict[str, float] = {
             entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
         }
