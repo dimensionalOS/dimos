@@ -82,7 +82,12 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         key_expr = topic.topic if isinstance(topic.topic, str) else topic.pattern
 
         def on_sample(sample: zenoh.Sample) -> None:
-            callback(sample.payload.to_bytes(), topic)
+            try:
+                data = sample.payload.to_bytes()
+            except Exception:
+                logger.error(f"Error reading payload from {key_expr}", exc_info=True)
+                return
+            callback(data, topic)
 
         sub = self.session.declare_subscriber(key_expr, on_sample)
         with self._subscriber_lock:
@@ -95,12 +100,13 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             if undeclared:
                 return
             undeclared = True
-            sub.undeclare()
             with self._subscriber_lock:
                 try:
                     self._subscribers.remove(sub)
                 except ValueError:
-                    pass
+                    # Already removed by stop() — stop() owns the undeclare
+                    return
+            sub.undeclare()
 
         return unsubscribe
 
