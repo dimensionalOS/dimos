@@ -161,3 +161,91 @@ class TestConfiguratorGating:
         _run_configurators(bp)
 
         mock_lcm_configs.assert_not_called()
+
+
+@pytest.mark.skipif(not ZENOH_AVAILABLE, reason="zenoh not installed")
+class TestZenohTransportWrapper:
+    """Test ZenohTransport and pZenohTransport broadcast/subscribe lifecycle."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_sessions(self):
+        from dimos.protocol.service.zenohservice import _sessions
+
+        yield
+        for s in _sessions.values():
+            s.close()
+        _sessions.clear()
+
+    def test_zenoh_transport_broadcast_and_subscribe(self) -> None:
+        import threading
+        import time
+
+        from dimos.core.transport import ZenohTransport
+
+        t = ZenohTransport("dimos/test/transport", Image)
+        t.start()
+
+        received = []
+        event = threading.Event()
+
+        def cb(msg):  # type: ignore[no-untyped-def]
+            received.append(msg)
+            event.set()
+
+        t.subscribe(cb)
+        time.sleep(0.05)
+
+        import numpy as np
+
+        test_img = Image(np.zeros((2, 2, 3), dtype=np.uint8))
+        t.broadcast(None, test_img)
+
+        assert event.wait(timeout=2.0), f"Timed out (got {len(received)} messages)"
+        assert isinstance(received[0], Image)
+        t.stop()
+
+    def test_pzenoh_transport_broadcast_and_subscribe(self) -> None:
+        import threading
+        import time
+
+        from dimos.core.transport import pZenohTransport
+
+        t = pZenohTransport("dimos/test/pickle_transport")
+        t.start()
+
+        received = []
+        event = threading.Event()
+
+        def cb(msg):  # type: ignore[no-untyped-def]
+            received.append(msg)
+            event.set()
+
+        t.subscribe(cb)
+        time.sleep(0.05)
+
+        t.broadcast(None, {"key": "value"})
+
+        assert event.wait(timeout=2.0), f"Timed out (got {len(received)} messages)"
+        assert received[0] == {"key": "value"}
+        t.stop()
+
+    def test_auto_start_on_broadcast(self) -> None:
+        from dimos.core.transport import pZenohTransport
+
+        t = pZenohTransport("dimos/test/autostart")
+        # Don't call start() — broadcast should auto-start
+        t.broadcast(None, "test")
+        assert t._started
+        t.stop()
+
+    def test_stop_and_restart(self) -> None:
+        from dimos.core.transport import pZenohTransport
+
+        t = pZenohTransport("dimos/test/restart")
+        t.start()
+        assert t._started
+        t.stop()
+        assert not t._started
+        t.start()
+        assert t._started
+        t.stop()
