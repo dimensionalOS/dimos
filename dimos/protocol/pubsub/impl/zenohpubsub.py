@@ -58,7 +58,13 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             return self._publishers[key_expr]
 
     def publish(self, topic: Topic, message: bytes) -> None:
-        """Publish bytes to a Zenoh key expression."""
+        """Publish bytes to a Zenoh key expression.
+
+        Transport-level errors (session closed, invalid key expression) are
+        logged but not raised. Delivery guarantees are handled by Zenoh's
+        reliability protocol (RELIABLE mode retransmits at each hop) — these
+        do not surface as exceptions from put().
+        """
         key_expr = topic.topic if isinstance(topic.topic, str) else topic.pattern
         try:
             publisher = self._get_publisher(key_expr)
