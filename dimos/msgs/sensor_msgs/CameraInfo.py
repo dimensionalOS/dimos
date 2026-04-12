@@ -90,6 +90,38 @@ class CameraInfo(Timestamped):
         self.roi_width = 0
         self.roi_do_rectify = False
 
+    @classmethod
+    def from_intrinsics(
+        cls,
+        fx: float,
+        fy: float,
+        cx: float,
+        cy: float,
+        width: int,
+        height: int,
+        frame_id: str = "",
+    ) -> CameraInfo:
+        """Create CameraInfo from pinhole intrinsics (no distortion).
+
+        Args:
+            fx: Focal length x (pixels)
+            fy: Focal length y (pixels)
+            cx: Principal point x (pixels)
+            cy: Principal point y (pixels)
+            width: Image width
+            height: Image height
+            frame_id: Frame ID
+        """
+        return cls(
+            height=height,
+            width=width,
+            distortion_model="plumb_bob",
+            D=[0.0, 0.0, 0.0, 0.0, 0.0],
+            K=[fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
+            P=[fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
+            frame_id=frame_id,
+        )
+
     def with_ts(self, ts: float) -> CameraInfo:
         """Return a copy of this CameraInfo with the given timestamp.
 
@@ -123,7 +155,7 @@ class CameraInfo(Timestamped):
         Returns:
             CameraInfo instance with loaded calibration data
         """
-        import yaml  # type: ignore[import-untyped]
+        import yaml
 
         with open(yaml_file) as f:
             data = yaml.safe_load(f)
@@ -158,41 +190,41 @@ class CameraInfo(Timestamped):
             frame_id="camera_optical",
         )
 
-    def get_K_matrix(self) -> np.ndarray:  # type: ignore[type-arg]
+    def get_K_matrix(self) -> np.ndarray:
         """Get intrinsic matrix as numpy array."""
         return np.array(self.K, dtype=np.float64).reshape(3, 3)
 
-    def get_P_matrix(self) -> np.ndarray:  # type: ignore[type-arg]
+    def get_P_matrix(self) -> np.ndarray:
         """Get projection matrix as numpy array."""
         return np.array(self.P, dtype=np.float64).reshape(3, 4)
 
-    def get_R_matrix(self) -> np.ndarray:  # type: ignore[type-arg]
+    def get_R_matrix(self) -> np.ndarray:
         """Get rectification matrix as numpy array."""
         return np.array(self.R, dtype=np.float64).reshape(3, 3)
 
-    def get_D_coeffs(self) -> np.ndarray:  # type: ignore[type-arg]
+    def get_D_coeffs(self) -> np.ndarray:
         """Get distortion coefficients as numpy array."""
         return np.array(self.D, dtype=np.float64)
 
-    def set_K_matrix(self, K: np.ndarray):  # type: ignore[no-untyped-def, type-arg]
+    def set_K_matrix(self, K: np.ndarray):  # type: ignore[no-untyped-def]
         """Set intrinsic matrix from numpy array."""
         if K.shape != (3, 3):
             raise ValueError(f"K matrix must be 3x3, got {K.shape}")
         self.K = K.flatten().tolist()
 
-    def set_P_matrix(self, P: np.ndarray):  # type: ignore[no-untyped-def, type-arg]
+    def set_P_matrix(self, P: np.ndarray):  # type: ignore[no-untyped-def]
         """Set projection matrix from numpy array."""
         if P.shape != (3, 4):
             raise ValueError(f"P matrix must be 3x4, got {P.shape}")
         self.P = P.flatten().tolist()
 
-    def set_R_matrix(self, R: np.ndarray):  # type: ignore[no-untyped-def, type-arg]
+    def set_R_matrix(self, R: np.ndarray):  # type: ignore[no-untyped-def]
         """Set rectification matrix from numpy array."""
         if R.shape != (3, 3):
             raise ValueError(f"R matrix must be 3x3, got {R.shape}")
         self.R = R.flatten().tolist()
 
-    def set_D_coeffs(self, D: np.ndarray) -> None:  # type: ignore[type-arg]
+    def set_D_coeffs(self, D: np.ndarray) -> None:
         """Set distortion coefficients from numpy array."""
         self.D = D.flatten().tolist()
 

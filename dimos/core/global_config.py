@@ -34,7 +34,7 @@ class GlobalConfig(BaseSettings):
     robot_ips: str | None = None
     xarm7_ip: str | None = None
     xarm6_ip: str | None = None
-    can_port: str = "can0"
+    can_port: str | None = None
     simulation: bool = False
     replay: bool = False
     replay_dir: str = "go2_sf_office"

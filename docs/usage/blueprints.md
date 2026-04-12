@@ -1,6 +1,6 @@
 # Blueprints
 
-Blueprints (`_BlueprintAtom`) are instructions for how to initialize a `Module`.
+Blueprints (`BlueprintAtom`) are instructions for how to initialize a `Module`.
 
 You don't typically want to run a single module, so multiple blueprints are handled together in `Blueprint`.
 
@@ -15,8 +15,8 @@ class ConnectionConfig(ModuleConfig):
     arg1: int
     arg2: str = "value"
 
-class ConnectionModule(Module[ConnectionConfig]):
-    default_config = ConnectionConfig
+class ConnectionModule(Module):
+    config: ConnectionConfig
 
 blueprint = Blueprint.create(ConnectionModule, arg1=5, arg2="foo")
 ```
@@ -43,8 +43,8 @@ from dimos.core.blueprints import autoconnect
 class Config(ModuleConfig):
     arg1: int = 42
 
-class Module1(Module[Config]):
-    default_config = Config
+class Module1(Module):
+    config: Config
 
 class Module2(Module):
     ...
@@ -228,6 +228,45 @@ The config is normally taken from .env or from environment variables. But you ca
 
 ```python session=blueprint-ex3
 blueprint = ModuleA.blueprint().global_config(n_workers=8)
+```
+
+## Providing blueprint configuration to users
+
+`Blueprint.config()` can be used to get a `pydantic.BaseModel` that can be used to
+inspect or test configuration settings that can be passed to `Blueprint.build()`:
+
+```python session=blueprint-ex1
+# Validate config input
+blueprint_args = {
+    "module1": {"arg1": 5}
+}
+config = base_blueprint.config()
+config(**blueprint_args)  # raises pydantic.ValidationError if args are incorrect
+```
+
+`dimos.robot.cli.dimos.arghelp()` is a helper function that will return a string
+containing all details of these arguments (this is how the output is produced when
+running `dimos run unitree-go2 --help`, for example):
+
+```python session=blueprint-ex1
+from dimos.robot.cli.dimos import arghelp
+print(arghelp(base_blueprint.config(), base_blueprint))
+```
+
+Another function is `dimos.robot.cli.dimos.load_config_args()` which can create the
+argument dict for users from a config file, environment variables and CLI arguments:
+
+
+```python session=blueprint-ex1
+from dimos.robot.cli.dimos import load_config_args
+
+config_path = Path.home() / "base-blueprint-config.json"
+cli_args = ["arg1=5"]
+blueprint_args = load_config_args(base_blueprint.config(), cli_args, config_path)
+# Test user input is valid
+config(**blueprint_args)
+# Then we can build the blueprint
+base_blueprint.build(blueprint_args)
 ```
 
 ## Calling the methods of other modules

@@ -20,22 +20,19 @@ from typing import overload
 from PIL import Image as PILImage
 import torch
 import torch.nn.functional as functional
-from transformers import CLIPModel as HFCLIPModel, CLIPProcessor  # type: ignore[import-untyped]
+from transformers import CLIPModel as HFCLIPModel, CLIPProcessor
 
 from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
 from dimos.msgs.sensor_msgs.Image import Image
 
-
 class CLIPModelConfig(HuggingFaceEmbeddingModelConfig):
     model_name: str = "openai/clip-vit-base-patch32"
     dtype: torch.dtype = torch.float32
 
-
 class CLIPModel(EmbeddingModel, HuggingFaceModel):
     """CLIP embedding model for vision-language re-identification."""
 
-    default_config = CLIPModelConfig
     config: CLIPModelConfig
     _model_class = HFCLIPModel
 

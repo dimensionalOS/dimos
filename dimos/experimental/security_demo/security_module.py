@@ -51,7 +51,6 @@ if TYPE_CHECKING:
 
 logger = setup_logger()
 
-
 # COCO skeleton connections for drawing
 _SKELETON_CONNECTIONS = [
     (0, 1),
@@ -77,7 +76,7 @@ _ANTI_BUSY_LOOP_TIMEOUT = 0.01
 
 
 def _draw_skeleton(
-    image: np.ndarray,  # type: ignore[type-arg]
+    image: np.ndarray,
     person: Detection2DPerson,
     joint_color: tuple[int, int, int] = (0, 255, 0),
     bone_color: tuple[int, int, int] = (255, 255, 0),
@@ -126,14 +125,14 @@ def _create_visual_servo(
     return VisualServoing2D(camera_info, global_config.simulation)
 
 
-class SecurityModule(Module[SecurityModuleConfig]):
+class SecurityModule(Module):
     """Integrated security patrol module.
 
     Manages the full patrol-detect-follow state machine internally,
     eliminating agent round-trips between separate modules.
     """
 
-    default_config = SecurityModuleConfig
+    config: SecurityModuleConfig
 
     odom: In[PoseStamped]
     global_costmap: In[OccupancyGrid]
@@ -172,12 +171,12 @@ class SecurityModule(Module[SecurityModuleConfig]):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.odom.subscribe(self._on_odom)))
-        self._disposables.add(
+        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
+        self.register_disposable(
             Disposable(self.global_costmap.subscribe(self._router.handle_occupancy_grid))
         )
-        self._disposables.add(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
-        self._disposables.add(Disposable(self.color_image.subscribe(self._on_color_image)))
+        self.register_disposable(Disposable(self.goal_reached.subscribe(self._on_goal_reached)))
+        self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
 
         self._depth_estimator.start()
 

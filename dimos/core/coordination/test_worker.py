@@ -16,11 +16,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.core.worker_manager import WorkerManager
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 if TYPE_CHECKING:
@@ -88,7 +88,7 @@ def create_worker_manager():
     def _create(n_workers):
         nonlocal manager
         g = GlobalConfig(n_workers=n_workers)
-        manager = WorkerManager(g=g)
+        manager = WorkerManagerPython(g=g)
         manager.start()
         return manager
 
@@ -146,7 +146,8 @@ def test_worker_manager_parallel_deployment(create_worker_manager):
             (SimpleModule, global_config, {}),
             (AnotherModule, global_config, {}),
             (ThirdModule, global_config, {}),
-        ]
+        ],
+        {},
     )
 
     assert len(modules) == 3
@@ -241,3 +242,62 @@ def test_worker_pool_modules_share_workers(create_worker_manager):
 
     module1.stop()
     module2.stop()
+
+
+@pytest.fixture
+def manager_and_modules():
+    """Fixture that tracks deployed modules and stops them on teardown."""
+    manager = None
+    modules = []
+
+    def _create(n_workers):
+        nonlocal manager
+        g = GlobalConfig(n_workers=n_workers)
+        manager = WorkerManagerPython(g=g)
+        manager.start()
+        return manager, modules
+
+    yield _create
+
+    for m in reversed(modules):
+        m.stop()
+    if manager is not None:
+        manager.stop()
+
+
+@pytest.mark.slow
+def test_health_check_alive_workers(manager_and_modules):
+    manager, modules = manager_and_modules(n_workers=2)
+    module = manager.deploy(SimpleModule, global_config, {})
+    modules.append(module)
+    module.start()
+
+    assert manager.health_check() is True
+
+
+@pytest.mark.slow
+def test_add_workers_grows_pool(manager_and_modules):
+    manager, modules = manager_and_modules(n_workers=1)
+    manager.add_workers(2)
+
+    assert len(manager._workers) == 3
+
+    # Deploy on the expanded pool and verify it works
+    module = manager.deploy(SimpleModule, global_config, {})
+    modules.append(module)
+    module.start()
+    assert module.increment() == 1
+
+
+@pytest.mark.slow
+def test_load_balancing_distributes_modules(manager_and_modules):
+    manager, modules = manager_and_modules(n_workers=2)
+
+    for _ in range(4):
+        m = manager.deploy(SimpleModule, global_config, {})
+        modules.append(m)
+        m.start()
+
+    # Each worker should have 2 modules (even distribution)
+    counts = [w.module_count for w in manager._workers]
+    assert counts == [2, 2]

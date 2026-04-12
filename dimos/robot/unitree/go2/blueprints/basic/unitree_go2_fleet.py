@@ -20,7 +20,7 @@ Usage:
     ROBOT_IPS=10.0.0.102,10.0.0.209 dimos run unitree-go2-fleet
 """
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import _with_vis
 from dimos.robot.unitree.go2.fleet_connection import Go2FleetConnection

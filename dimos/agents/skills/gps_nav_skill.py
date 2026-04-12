@@ -14,6 +14,8 @@
 
 import json
 
+from reactivex.disposable import Disposable
+
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -38,7 +40,7 @@ class GpsNavSkillContainer(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))  # type: ignore[arg-type]
+        self.register_disposable(Disposable(self.gps_location.subscribe(self._on_gps_location)))
 
     @rpc
     def stop(self) -> None:

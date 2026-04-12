@@ -107,8 +107,8 @@ class ObjectSceneRegistrationModule(Module):
         self.camera_info.subscribe(lambda msg: setattr(self, "_camera_info", msg))
 
         aligned_frames = align_timestamped(
-            self.color_image.observable(),  # type: ignore[no-untyped-call]
-            self.depth_image.observable(),  # type: ignore[no-untyped-call]
+            self.color_image.observable(),
+            self.depth_image.observable(),
             buffer_size=2.0,
             match_tolerance=0.1,
         )

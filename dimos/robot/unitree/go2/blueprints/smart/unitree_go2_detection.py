@@ -14,11 +14,11 @@
 # limitations under the License.
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,  # type: ignore[import-untyped]
+    ImageAnnotations,
 )
-from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2

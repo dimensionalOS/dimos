@@ -32,7 +32,8 @@ import math
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.control.coordinator import ControlCoordinator
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -46,7 +47,11 @@ from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _cata
 from dimos.robot.foxglove_bridge import FoxgloveBridge  # TODO: migrate to rerun
 
 # Single XArm6 planner (standalone, no coordinator)
-_xarm6_planner_cfg = _catalog_xarm6(name="arm")
+_xarm6_planner_cfg = _catalog_xarm6(
+    name="arm",
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip,
+)
 
 xarm6_planner_only = ManipulationModule.blueprint(
     robots=[_xarm6_planner_cfg.to_robot_model_config()],
@@ -61,8 +66,18 @@ xarm6_planner_only = ManipulationModule.blueprint(
 
 # Dual XArm6 planner with coordinator integration
 # Usage: Start with coordinator_dual_mock, then plan/execute via RPC
-_left_arm_cfg = _catalog_xarm6(name="left_arm", y_offset=0.5)
-_right_arm_cfg = _catalog_xarm6(name="right_arm", y_offset=-0.5)
+_left_arm_cfg = _catalog_xarm6(
+    name="left_arm",
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip,
+    y_offset=0.5,
+)
+_right_arm_cfg = _catalog_xarm6(
+    name="right_arm",
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip,
+    y_offset=-0.5,
+)
 
 dual_xarm6_planner = ManipulationModule.blueprint(
     robots=[
@@ -78,9 +93,13 @@ dual_xarm6_planner = ManipulationModule.blueprint(
 )
 
 
-# Single XArm7 planner + mock coordinator (standalone, no external coordinator needed)
-# Usage: dimos run xarm7-planner-coordinator
-_xarm7_cfg = _catalog_xarm7(name="arm")
+# Single XArm7 planner + coordinator (uses real hardware when XARM7_IP is set)
+# Usage: XARM7_IP=<ip> dimos run xarm7-planner-coordinator
+_xarm7_cfg = _catalog_xarm7(
+    name="arm",
+    adapter_type="xarm" if global_config.xarm7_ip else "mock",
+    address=global_config.xarm7_ip,
+)
 
 xarm7_planner_coordinator = autoconnect(
     ManipulationModule.blueprint(
@@ -150,6 +169,8 @@ _XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
 
 _xarm7_perception_cfg = _catalog_xarm7(
     name="arm",
+    adapter_type="xarm" if global_config.xarm7_ip else "mock",
+    address=global_config.xarm7_ip,
     pitch=math.radians(45),
     add_gripper=True,
     tf_extra_links=["link7"],
@@ -262,6 +283,61 @@ xarm_perception_agent = autoconnect(
 )
 
 
+# Sim perception: MujocoSimModule owns the MujocoEngine and publishes both
+# camera streams and joint state via shared memory.
+# ShmMujocoAdapter attaches to the same SHM buffers by MJCF path.
+
+from dimos.robot.catalog.ufactory import XARM7_SIM_PATH
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
+
+_xarm7_sim_cfg = _catalog_xarm7(
+    name="arm",
+    adapter_type="sim_mujoco",
+    address=str(XARM7_SIM_PATH),
+    add_gripper=True,
+    pitch=math.radians(45),
+    tf_extra_links=["link7"],
+    home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0],
+    pre_grasp_offset=0.05,
+)
+
+xarm_perception_sim = autoconnect(
+    PickAndPlaceModule.blueprint(
+        robots=[_xarm7_sim_cfg.to_robot_model_config()],
+        planning_timeout=10.0,
+        enable_viz=True,
+    ),
+    MujocoSimModule.blueprint(
+        address=str(XARM7_SIM_PATH),
+        headless=False,
+        dof=7,
+        camera_name="wrist_camera",
+        base_frame_id="link7",
+    ),
+    ObjectSceneRegistrationModule.blueprint(target_frame="world"),
+    ControlCoordinator.blueprint(
+        tick_rate=100.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[_xarm7_sim_cfg.to_hardware_component()],
+        tasks=[_xarm7_sim_cfg.to_task_config()],
+    ),
+    RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode()),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
+)
+
+
+xarm_perception_sim_agent = autoconnect(
+    xarm_perception_sim,
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
+)
+
+
 __all__ = [
     "dual_xarm6_planner",
     "xarm6_planner_only",
@@ -269,4 +345,6 @@ __all__ = [
     "xarm7_planner_coordinator_agent",
     "xarm_perception",
     "xarm_perception_agent",
+    "xarm_perception_sim",
+    "xarm_perception_sim_agent",
 ]

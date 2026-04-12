@@ -33,7 +33,6 @@ except ImportError:
 
 logger = setup_logger()
 
-
 class BaseAgentConfig(ModuleConfig):
     model: str = "openai::gpt-4o-mini"
     system_prompt: str | None = None
@@ -47,15 +46,13 @@ class BaseAgentConfig(ModuleConfig):
     rag_threshold: float = 0.45
     process_all_inputs: bool = False
 
-
-class BaseAgentModule(BaseAgent, Module[BaseAgentConfig]):  # type: ignore[misc]
+class BaseAgentModule(BaseAgent, Module):  # type: ignore[misc]
     """Agent module that inherits from BaseAgent and adds DimOS module interface.
 
     This provides a thin wrapper around BaseAgent functionality, exposing it
     through the DimOS module system with RPC methods and stream I/O.
     """
-
-    default_config = BaseAgentConfig
+    config: BaseAgentConfig
 
     # Module I/O - AgentMessage based communication
     message_in: In[AgentMessage]  # Primary input for AgentMessage
@@ -119,7 +116,7 @@ class BaseAgentModule(BaseAgent, Module[BaseAgentConfig]):  # type: ignore[misc]
         # Primary AgentMessage input
         if self.message_in and self.message_in.connection is not None:
             try:
-                disposable = self.message_in.observable().subscribe(  # type: ignore[no-untyped-call]
+                disposable = self.message_in.observable().subscribe(
                     lambda msg: self._handle_agent_message(msg)
                 )
                 self._module_disposables.append(disposable)

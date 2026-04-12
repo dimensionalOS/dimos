@@ -22,6 +22,17 @@ import threading
 import traceback
 from typing import TYPE_CHECKING, Any
 
+from dimos.core.coordination.worker_messages import (
+    CallMethodRequest,
+    DeployModuleRequest,
+    GetAttrRequest,
+    SetRefRequest,
+    ShutdownRequest,
+    SuppressConsoleRequest,
+    UndeployModuleRequest,
+    WorkerRequest,
+    WorkerResponse,
+)
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.library_config import apply_library_config
 from dimos.utils.logging_config import setup_logger
@@ -63,7 +74,12 @@ class MethodCallProxy:
 
         def _call(*args: Any, **kwargs: Any) -> ActorFuture:
             result = self._actor._send_request_to_worker(
-                {"type": "call_method", "name": name, "args": args, "kwargs": kwargs}
+                CallMethodRequest(
+                    module_id=self._actor._module_id,
+                    name=name,
+                    args=args,
+                    kwargs=kwargs,
+                )
             )
             return ActorFuture(result)
 
@@ -91,26 +107,25 @@ class Actor:
         """Exclude the connection and lock when pickling."""
         return (Actor, (None, self._cls, self._worker_id, self._module_id, None))
 
-    def _send_request_to_worker(self, request: dict[str, Any]) -> Any:
+    def _send_request_to_worker(self, request: WorkerRequest) -> Any:
         if self._conn is None:
             raise RuntimeError("Actor connection not available - cannot send requests")
-        request["module_id"] = self._module_id
         if self._lock is not None:
             with self._lock:
                 self._conn.send(request)
-                response = self._conn.recv()
+                response: WorkerResponse = self._conn.recv()
         else:
             self._conn.send(request)
             response = self._conn.recv()
-        if response.get("error"):
-            if "AttributeError" in response["error"]:  # TODO: better error handling
-                raise AttributeError(response["error"])
-            raise RuntimeError(f"Worker error: {response['error']}")
-        return response.get("result")
+        if response.error:
+            if "AttributeError" in response.error:  # TODO: better error handling
+                raise AttributeError(response.error)
+            raise RuntimeError(f"Worker error: {response.error}")
+        return response.result
 
     def set_ref(self, ref: Any) -> ActorFuture:
         """Set the actor reference on the remote module."""
-        result = self._send_request_to_worker({"type": "set_ref", "ref": ref})
+        result = self._send_request_to_worker(SetRefRequest(module_id=self._module_id, ref=ref))
         return ActorFuture(result)
 
     def __getattr__(self, name: str) -> Any:
@@ -118,7 +133,7 @@ class Actor:
         if name.startswith("_"):
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
-        return self._send_request_to_worker({"type": "getattr", "name": name})
+        return self._send_request_to_worker(GetAttrRequest(module_id=self._module_id, name=name))
 
 
 # Global forkserver context. Using `forkserver` instead of `fork` because it
@@ -143,7 +158,7 @@ _worker_ids = SequentialIds()
 _module_ids = SequentialIds()
 
 
-class Worker:
+class PythonWorker:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._modules: dict[int, Actor] = {}
@@ -208,20 +223,14 @@ class Worker:
         kwargs["g"] = global_config
         module_id = _module_ids.next()
 
-        # Send deploy_module request to the worker process
-        request = {
-            "type": "deploy_module",
-            "module_id": module_id,
-            "module_class": module_class,
-            "kwargs": kwargs,
-        }
+        request = DeployModuleRequest(module_id=module_id, module_class=module_class, kwargs=kwargs)
         try:
             with self._lock:
                 self._conn.send(request)
-                response = self._conn.recv()
+                response: WorkerResponse = self._conn.recv()
 
-            if response.get("error"):
-                raise RuntimeError(f"Failed to deploy module: {response['error']}")
+            if response.error:
+                raise RuntimeError(f"Failed to deploy module: {response.error}")
 
             actor = Actor(self._conn, module_class, self._worker_id, module_id, self._lock)
             actor.set_ref(actor).result()
@@ -237,12 +246,26 @@ class Worker:
         finally:
             self._reserved = max(0, self._reserved - 1)
 
+    def undeploy_module(self, module_id: int) -> None:
+        """Stop and remove a single module from the worker process."""
+        if self._conn is None:
+            raise RuntimeError("Worker process not started")
+
+        with self._lock:
+            self._conn.send(UndeployModuleRequest(module_id=module_id))
+            response: WorkerResponse = self._conn.recv()
+
+        if response.error:
+            raise RuntimeError(f"Failed to undeploy module: {response.error}")
+
+        self._modules.pop(module_id, None)
+
     def suppress_console(self) -> None:
         if self._conn is None:
             return
         try:
             with self._lock:
-                self._conn.send({"type": "suppress_console"})
+                self._conn.send(SuppressConsoleRequest())
                 self._conn.recv()
         except (BrokenPipeError, EOFError, ConnectionResetError):
             pass
@@ -251,7 +274,7 @@ class Worker:
         if self._conn is not None:
             try:
                 with self._lock:
-                    self._conn.send({"type": "shutdown"})
+                    self._conn.send(ShutdownRequest())
                     if self._conn.poll(timeout=5):
                         self._conn.recv()
                     else:
@@ -339,47 +362,48 @@ def _worker_loop(conn: Connection, instances: dict[int, Any], worker_id: int) ->
         except (EOFError, KeyboardInterrupt):
             break
 
-        response: dict[str, Any] = {}
+        response: WorkerResponse
         try:
-            req_type = request.get("type")
+            match request:
+                case DeployModuleRequest(
+                    module_id=module_id, module_class=module_class, kwargs=kwargs
+                ):
+                    instance = module_class(**kwargs)
+                    instances[module_id] = instance
+                    response = WorkerResponse(result=module_id)
 
-            if req_type == "deploy_module":
-                module_class = request["module_class"]
-                kwargs = request["kwargs"]
-                module_id = request["module_id"]
-                instance = module_class(**kwargs)
-                instances[module_id] = instance
-                response["result"] = module_id
+                case SetRefRequest(module_id=module_id, ref=ref):
+                    instances[module_id].ref = ref
+                    response = WorkerResponse(result=worker_id)
 
-            elif req_type == "set_ref":
-                module_id = request["module_id"]
-                instances[module_id].ref = request.get("ref")
-                response["result"] = worker_id
+                case GetAttrRequest(module_id=module_id, name=name):
+                    response = WorkerResponse(result=getattr(instances[module_id], name))
 
-            elif req_type == "getattr":
-                module_id = request["module_id"]
-                response["result"] = getattr(instances[module_id], request["name"])
+                case CallMethodRequest(module_id=module_id, name=name, args=args, kwargs=kwargs):
+                    method = getattr(instances[module_id], name)
+                    response = WorkerResponse(result=method(*args, **kwargs))
 
-            elif req_type == "call_method":
-                module_id = request["module_id"]
-                method = getattr(instances[module_id], request["name"])
-                result = method(*request.get("args", ()), **request.get("kwargs", {}))
-                response["result"] = result
+                case UndeployModuleRequest(module_id=module_id):
+                    instance = instances.pop(module_id, None)
+                    if instance is not None:
+                        instance.stop()
+                    response = WorkerResponse(result=True)
 
-            elif req_type == "suppress_console":
-                _suppress_console_output()
-                response["result"] = True
+                case SuppressConsoleRequest():
+                    _suppress_console_output()
+                    response = WorkerResponse(result=True)
 
-            elif req_type == "shutdown":
-                response["result"] = True
-                conn.send(response)
-                break
+                case ShutdownRequest():
+                    conn.send(WorkerResponse(result=True))
+                    break
 
-            else:
-                response["error"] = f"Unknown request type: {req_type}"
+                case _:
+                    response = WorkerResponse(error=f"Unknown request type: {type(request)}")
 
         except Exception as e:
-            response["error"] = f"{e.__class__.__name__}: {e}\n{traceback.format_exc()}"
+            response = WorkerResponse(
+                error=f"{e.__class__.__name__}: {e}\n{traceback.format_exc()}"
+            )
 
         try:
             conn.send(response)

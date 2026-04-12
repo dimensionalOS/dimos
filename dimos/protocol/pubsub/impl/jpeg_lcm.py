@@ -43,6 +43,6 @@ class JpegEncoderMixin(PubSubEncoderMixin[LCMTopicProto, Image, bytes]):
 
 
 class JpegLCM(  # type: ignore[misc]
-    JpegEncoderMixin,  # type: ignore[type-arg]
+    JpegEncoderMixin,
     LCMPubSubBase,
 ): ...

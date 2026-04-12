@@ -14,8 +14,11 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import BeforeValidator
 
 from dimos.memory2.backend import Backend
 from dimos.memory2.blobstore.base import BlobStore
@@ -33,14 +36,15 @@ from dimos.memory2.vectorstore.sqlite import SqliteVectorStore
 class SqliteStoreConfig(StoreConfig):
     """Config for SQLite-backed store."""
 
-    path: str = "memory.db"
+    path: Annotated[
+        str, BeforeValidator(lambda v: os.fspath(v) if isinstance(v, os.PathLike) else v)
+    ] = "memory.db"
     page_size: int = 256
 
 
 class SqliteStore(Store):
     """Store backed by a SQLite database file."""
 
-    default_config = SqliteStoreConfig
     config: SqliteStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:
@@ -51,7 +55,7 @@ class SqliteStore(Store):
     def _open_connection(self) -> sqlite3.Connection:
         """Open a new WAL-mode connection with sqlite-vec loaded."""
         disposable, connection = open_disposable_sqlite_connection(self.config.path)
-        self.register_disposables(disposable)
+        self.register_disposable(disposable)
         return connection
 
     def _assemble_backend(self, name: str, stored: dict[str, Any]) -> Backend[Any]:
@@ -75,7 +79,6 @@ class SqliteStore(Store):
                 bs = deserialize_component(bs_data)
         else:
             bs = SqliteBlobStore(conn=backend_conn)
-        bs.start()
 
         vs_data = stored.get("vector_store")
         if vs_data is not None:
@@ -86,7 +89,6 @@ class SqliteStore(Store):
                 vs = deserialize_component(vs_data)
         else:
             vs = SqliteVectorStore(conn=backend_conn)
-        vs.start()
 
         notifier_data = stored.get("notifier")
         if notifier_data is not None:
@@ -105,8 +107,6 @@ class SqliteStore(Store):
             blob_store_conn_match=blob_store_conn_match and eager_blobs,
             page_size=page_size,
         )
-        metadata_store.start()
-
         backend: Backend[Any] = Backend(
             metadata_store=metadata_store,
             codec=codec,
@@ -161,13 +161,9 @@ class SqliteStore(Store):
 
         # Inject conn-shared instances unless user provided overrides
         if not isinstance(config.get("blob_store"), BlobStore):
-            bs = SqliteBlobStore(conn=backend_conn)
-            bs.start()
-            config["blob_store"] = bs
+            config["blob_store"] = SqliteBlobStore(conn=backend_conn)
         if not isinstance(config.get("vector_store"), VectorStore):
-            vs = SqliteVectorStore(conn=backend_conn)
-            vs.start()
-            config["vector_store"] = vs
+            config["vector_store"] = SqliteVectorStore(conn=backend_conn)
 
         # Resolve codec early — needed for SqliteObservationStore
         codec = self._resolve_codec(payload_type, config.get("codec"))
@@ -184,7 +180,6 @@ class SqliteStore(Store):
             blob_store_conn_match=blob_conn_match and eager_blobs,
             page_size=config.pop("page_size", self.config.page_size),
         )
-        obs_store.start()
         config["observation_store"] = obs_store
 
         backend = super()._create_backend(name, payload_type, **config)

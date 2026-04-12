@@ -17,14 +17,14 @@ class Lock:
 
 
 class BooleanLock(Lock):
-    def __init__(self):
+    def __init__(self) -> None:
         self.locked: bool = False
 
     def is_locked(self) -> bool:
         return self.locked
 
-    def unlock(self):
+    def unlock(self) -> None:
         self.locked = False
 
-    def lock(self):
+    def lock(self) -> None:
         self.locked = True

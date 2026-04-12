@@ -33,7 +33,6 @@ class FileBlobStore(BlobStore):
         {root}/{stream}/{key}.bin
     """
 
-    default_config = FileBlobStoreConfig
     config: FileBlobStoreConfig
 
     def __init__(self, **kwargs: Any) -> None:

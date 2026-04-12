@@ -22,6 +22,7 @@ from functools import lru_cache
 import subprocess
 import time
 from typing import (
+    TYPE_CHECKING,
     Any,
     Protocol,
     TypeAlias,
@@ -32,14 +33,15 @@ from typing import (
 )
 
 from reactivex.disposable import Disposable
-from rerun._baseclasses import Archetype
-from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
+
+if TYPE_CHECKING:
+    from rerun._baseclasses import Archetype
+    from rerun.blueprint import Blueprint
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.msgs.sensor_msgs.Image import Image
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
@@ -50,14 +52,6 @@ from dimos.visualization.constants import (
     RERUN_OPEN_DEFAULT,
     RerunOpenOption,
 )
-
-# Message types with large payloads that need rate-limiting.
-# Image (~1 MB/frame at 30 fps) and PointCloud2 (~600-800 KB/frame)
-# cause viewer OOM if logged at full rate.  Light messages
-# (Path, PointStamped, Twist, TF, EntityMarkers …) pass through
-# unthrottled so navigation overlays and user input are never dropped.
-_HEAVY_MSG_TYPES: tuple[type, ...] = (Image, PointCloud2)
-
 
 # TODO OUT visual annotations
 #
@@ -76,7 +70,6 @@ _HEAVY_MSG_TYPES: tuple[type, ...] = (Image, PointCloud2)
 # to define custom visualizations for specific topics
 #
 # as well as pubsubs={} to specify which protocols to listen to.
-
 
 # TODO better TF processing
 #
@@ -101,7 +94,6 @@ _HEAVY_MSG_TYPES: tuple[type, ...] = (Image, PointCloud2)
 # In order to solve this, bridge needs to own it's own tf service
 # and render it's tf tree into correct rerun entity paths
 
-
 logger = setup_logger()
 
 BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
@@ -113,6 +105,8 @@ RerunData: TypeAlias = "Archetype | RerunMulti"
 
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
     """Check if data is a list of (entity_path, archetype) tuples."""
+    from rerun._baseclasses import Archetype
+
     return (
         isinstance(data, list)
         and bool(data)
@@ -180,7 +174,10 @@ class Config(ModuleConfig):
     # Static items logged once after start. Maps entity_path -> callable(rr) returning Archetype
     static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
-    min_interval_sec: float = 0.1  # Rate-limit per entity path (default: 10 Hz max)
+    # Per-entity max update rate (Hz). Entities not listed are unthrottled.
+    # Use for heavy entities to prevent viewer backpressure.
+    max_hz: dict[str, float] = field(default_factory=dict)
+
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
     connect_url: str = "rerun+http://127.0.0.1:9877/proxy"
@@ -193,7 +190,7 @@ class Config(ModuleConfig):
     blueprint: BlueprintFactory | None = _default_blueprint
 
 
-class RerunBridgeModule(Module[Config]):
+class RerunBridgeModule(Module):
     """Bridge that logs messages from pubsubs to Rerun.
 
     Spawns its own Rerun viewer and subscribes to all topics on each provided
@@ -209,7 +206,8 @@ class RerunBridgeModule(Module[Config]):
         bridge.stop()
     """
 
-    default_config = Config
+
+    config: Config
     _last_log: dict[str, float] = {}
 
     # Graphviz layout scale and node radii for blueprint graph
@@ -238,6 +236,8 @@ class RerunBridgeModule(Module[Config]):
             return lambda msg: None
 
         # final step (ensures we return Archetype or None)
+        from rerun._baseclasses import Archetype
+
         def final_convert(msg: Any) -> RerunData | None:
             if isinstance(msg, Archetype):
                 return msg
@@ -265,24 +265,18 @@ class RerunBridgeModule(Module[Config]):
         """Handle incoming message - log to rerun."""
         import rerun as rr
 
-        # convert a potentially complex topic object into an str rerun entity path
         entity_path: str = self._get_entity_path(topic)
 
-        # Rate-limit heavy data types to prevent viewer memory exhaustion.
-        # High-bandwidth streams (e.g. 30fps camera, lidar) would otherwise
-        # flood the viewer faster than it can evict, causing OOM.  Light
-        # messages (Path, PointStamped, TF, etc.) pass through unthrottled.
-        if self.config.min_interval_sec > 0 and isinstance(msg, _HEAVY_MSG_TYPES):
+        # Throttle entities with a max_hz limit
+        if entity_path in self._min_intervals:
             now = time.monotonic()
-            last = self._last_log.get(entity_path, 0.0)
-            if now - last < self.config.min_interval_sec:
+            if now - self._last_log.get(entity_path, 0.0) < self._min_intervals[entity_path]:
                 return
             self._last_log[entity_path] = now
 
         # apply visual overrides (including final_convert which handles .to_rerun())
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
 
-        # converters can also suppress logging by returning None
         if not rerun_data:
             return
 
@@ -302,10 +296,15 @@ class RerunBridgeModule(Module[Config]):
 
         super().start()
 
-        self._last_log: dict[str, float] = {}  # reset on each start
         logger.info("Rerun bridge starting")
 
-        # Initialize
+        # Build throttle lookup: entity_path → min interval in seconds
+        self._last_log = {}
+        self._min_intervals: dict[str, float] = {
+            entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
+        }
+
+        # Initialize and spawn Rerun viewer
         rr.init("dimos")
 
         # start grpc if needed
@@ -384,18 +383,21 @@ class RerunBridgeModule(Module[Config]):
         if self.config.blueprint:
             rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
 
+        # Register colormap for viewer-side color resolution (PointCloud2 class_ids)
+        register_colormap_annotation("turbo")
+
         # Start pubsubs and subscribe to all messages
         for pubsub in self.config.pubsubs:
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
             if hasattr(pubsub, "start"):
-                pubsub.start()  # type: ignore[union-attr]
+                pubsub.start()
             unsub = pubsub.subscribe_all(self._on_message)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
 
         # Add pubsub stop as disposable
         for pubsub in self.config.pubsubs:
             if hasattr(pubsub, "stop"):
-                self._disposables.add(Disposable(pubsub.stop))  # type: ignore[union-attr]
+                self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
         self._log_static()
 

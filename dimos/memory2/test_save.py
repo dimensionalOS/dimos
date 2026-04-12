@@ -101,7 +101,7 @@ class TestSave:
         base = make_stream(2)
         transform_stream = base.transform(FnTransformer(lambda obs: obs.derive(obs.data)))
 
-        with pytest.raises(TypeError, match="Cannot save to a transform stream"):
+        with pytest.raises(TypeError, match="Cannot save to a transform"):
             source.save(transform_stream)
 
     def test_save_target_queryable(self) -> None:

@@ -29,7 +29,7 @@ from unitree_webrtc_connect.constants import (
     SPORT_CMD,
     VUI_COLOR,
 )
-from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untyped]
+from unitree_webrtc_connect.webrtc_driver import (
     UnitreeWebRTCConnection as LegionConnection,
     WebRTCConnectionMethod,
 )
@@ -54,7 +54,7 @@ VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 class SerializableVideoFrame:
     """Pickleable wrapper for av.VideoFrame with all metadata"""
 
-    data: np.ndarray  # type: ignore[type-arg]
+    data: np.ndarray
     pts: int | None = None
     time: float | None = None
     dts: int | None = None
@@ -324,7 +324,7 @@ class UnitreeWebRTCConnection(Resource):
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
 
-        from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
+        from aiortc import MediaStreamTrack
 
         async def accept_track(track: MediaStreamTrack) -> None:
             while True:
@@ -366,7 +366,7 @@ class UnitreeWebRTCConnection(Resource):
         Returns:
             Observable: An observable stream of video frames or None if video is not available.
         """
-        return self.video_stream()  # type: ignore[no-any-return]
+        return self.video_stream()
 
     def stop_movement(self) -> None:
         """Cancel the auto-stop timer (used by move() for continuous commands)."""

@@ -108,9 +108,9 @@ class GraspingModule(Module):
         """Fetch object pointcloud from perception."""
         try:
             if object_id is not None:
-                return self._scene_registration.get_object_pointcloud_by_object_id(object_id)  # type: ignore[no-any-return]
+                return self._scene_registration.get_object_pointcloud_by_object_id(object_id)
 
-            return self._scene_registration.get_object_pointcloud_by_name(object_name)  # type: ignore[no-any-return]
+            return self._scene_registration.get_object_pointcloud_by_name(object_name)
         except Exception as e:
             logger.error(f"Failed to get object pointcloud: {e}")
             return None
@@ -120,7 +120,7 @@ class GraspingModule(Module):
         try:
             return self._scene_registration.get_full_scene_pointcloud(
                 exclude_object_id=exclude_object_id
-            )  # type: ignore[no-any-return]
+            )
         except Exception as e:
             logger.debug(f"Could not get scene pointcloud: {e}")
             return None

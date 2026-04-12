@@ -80,7 +80,9 @@ coordinator_xarm6 = ControlCoordinator.blueprint(
 )
 
 # Piper arm (6-DOF, CAN bus)
-_piper_cfg = _catalog_piper(name="arm", adapter_type="piper", address=global_config.can_port)
+_piper_cfg = _catalog_piper(
+    name="arm", adapter_type="piper", address=global_config.can_port or "can0"
+)
 
 coordinator_piper = ControlCoordinator.blueprint(
     hardware=[_piper_cfg.to_hardware_component()],

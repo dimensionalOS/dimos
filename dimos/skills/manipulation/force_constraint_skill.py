@@ -53,7 +53,7 @@ class ForceConstraintSkill(AbstractManipulationSkill):
         # Create force direction vector if provided (convert 2D point to 3D vector with z=0)
         force_direction_vector = None
         if self.force_direction:
-            force_direction_vector = Vector(self.force_direction[0], self.force_direction[1], 0.0)  # type: ignore[arg-type]
+            force_direction_vector = Vector(self.force_direction[0], self.force_direction[1], 0.0)
 
         # Create and return the constraint
         constraint = ForceConstraint(

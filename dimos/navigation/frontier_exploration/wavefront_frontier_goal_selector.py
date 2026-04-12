@@ -92,7 +92,7 @@ class WavefrontConfig(ModuleConfig):
     goal_timeout: float = 15.0
 
 
-class WavefrontFrontierExplorer(Module[WavefrontConfig]):
+class WavefrontFrontierExplorer(Module):
     """
     Wavefront frontier exploration algorithm implementation.
 
@@ -107,7 +107,7 @@ class WavefrontFrontierExplorer(Module[WavefrontConfig]):
         - goal_request: Exploration goals sent to the navigator
     """
 
-    default_config = WavefrontConfig
+    config: WavefrontConfig
 
     # LCM inputs
     global_costmap: In[OccupancyGrid]
@@ -155,22 +155,22 @@ class WavefrontFrontierExplorer(Module[WavefrontConfig]):
         super().start()
 
         unsub = self.global_costmap.subscribe(self._on_costmap)
-        self._disposables.add(Disposable(unsub))
+        self.register_disposable(Disposable(unsub))
 
         unsub = self.odom.subscribe(self._on_odometry)
-        self._disposables.add(Disposable(unsub))
+        self.register_disposable(Disposable(unsub))
 
         if self.goal_reached.transport is not None:
             unsub = self.goal_reached.subscribe(self._on_goal_reached)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
 
         if self.explore_cmd.transport is not None:
             unsub = self.explore_cmd.subscribe(self._on_explore_cmd)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
 
         if self.stop_explore_cmd.transport is not None:
             unsub = self.stop_explore_cmd.subscribe(self._on_stop_explore_cmd)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
 
         if self.stop_movement.transport is not None:
             unsub = self.stop_movement.subscribe(self._on_stop_movement)

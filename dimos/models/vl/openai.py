@@ -11,14 +11,12 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-
 class OpenAIVlModelConfig(VlModelConfig):
     model_name: str = "gpt-4o-mini"
     api_key: str | None = None
 
-
-class OpenAIVlModel(VlModel[OpenAIVlModelConfig]):
-    default_config = OpenAIVlModelConfig
+class OpenAIVlModel(VlModel):
+    config: OpenAIVlModelConfig
 
     @cached_property
     def _client(self) -> OpenAI:
@@ -30,7 +28,7 @@ class OpenAIVlModel(VlModel[OpenAIVlModelConfig]):
 
         return OpenAI(api_key=api_key)
 
-    def query(self, image: Image | np.ndarray, query: str, response_format: dict | None = None, **kwargs) -> str:  # type: ignore[override, type-arg, no-untyped-def]
+    def query(self, image: Image | np.ndarray, query: str, response_format: dict | None = None, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
         if isinstance(image, np.ndarray):
             import warnings
 
@@ -68,11 +66,11 @@ class OpenAIVlModel(VlModel[OpenAIVlModelConfig]):
 
         response = self._client.chat.completions.create(**api_kwargs)
 
-        return response.choices[0].message.content  # type: ignore[return-value,no-any-return]
+        return response.choices[0].message.content  # type: ignore[no-any-return]
 
     def query_batch(
         self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs: Any
-    ) -> list[str]:  # type: ignore[override]
+    ) -> list[str]:
         """Query VLM with multiple images using a single API call."""
         if not images:
             return []

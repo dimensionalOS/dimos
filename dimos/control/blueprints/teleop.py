@@ -50,7 +50,9 @@ _xarm6_cfg = _catalog_xarm6(
 _xarm7_cfg = _catalog_xarm7(
     name="arm", adapter_type="xarm", address=global_config.xarm7_ip, add_gripper=True
 )
-_piper_cfg = _catalog_piper(name="arm", adapter_type="piper", address=global_config.can_port)
+_piper_cfg = _catalog_piper(
+    name="arm", adapter_type="piper", address=global_config.can_port or "can0"
+)
 
 # -- Servo / velocity ---------------------------------------------------------
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 
 from reactivex.abc import DisposableBase
 from reactivex.disposable import CompositeDisposable
+
+D = TypeVar("D", bound=DisposableBase)
 
 
 class Resource(DisposableBase):
@@ -75,18 +77,17 @@ class Resource(DisposableBase):
 class CompositeResource(Resource):
     """Resource that owns child disposables, disposed on stop()."""
 
-    _disposables: CompositeDisposable
+    _disposables: CompositeDisposable | None = None
 
-    def __init__(self) -> None:
-        self._disposables = CompositeDisposable()
+    def register_disposable(self, disposable: D) -> D:
+        """Register a child disposable to be disposed when this resource stops."""
+        if self._disposables is None:
+            self._disposables = CompositeDisposable()
+        self._disposables.add(disposable)
+        return disposable
 
-    def register_disposables(self, *disposables: DisposableBase) -> None:
-        """Register child disposables to be disposed when this resource stops."""
-        for d in disposables:
-            self._disposables.add(d)
-
-    def start(self) -> None:
-        pass
+    def start(self) -> None: ...
 
     def stop(self) -> None:
-        self._disposables.dispose()
+        if self._disposables is not None:
+            self._disposables.dispose()

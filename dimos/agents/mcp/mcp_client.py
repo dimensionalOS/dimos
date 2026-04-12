@@ -46,8 +46,8 @@ class McpClientConfig(ModuleConfig):
     mcp_server_url: str = "http://localhost:9990/mcp"
 
 
-class McpClient(Module[McpClientConfig]):
-    default_config = McpClientConfig
+class McpClient(Module):
+    config: McpClientConfig
     agent: Out[BaseMessage]
     human_input: In[str]
     agent_idle: Out[bool]
@@ -169,7 +169,7 @@ class McpClient(Module[McpClientConfig]):
         def _on_human_input(string: str) -> None:
             self._message_queue.put(HumanMessage(content=string))
 
-        self._disposables.add(Disposable(self.human_input.subscribe(_on_human_input)))
+        self.register_disposable(Disposable(self.human_input.subscribe(_on_human_input)))
 
     @rpc
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
@@ -187,7 +187,8 @@ class McpClient(Module[McpClientConfig]):
                 tools=tools,
                 system_prompt=self.config.system_prompt,
             )
-            self._thread.start()
+            if not self._thread.is_alive():
+                self._thread.start()
 
     @rpc
     def stop(self) -> None:
