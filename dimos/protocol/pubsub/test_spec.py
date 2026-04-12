@@ -145,6 +145,49 @@ testdata.append(
 )
 
 
+from dimos.core.transport import ZENOH_AVAILABLE
+
+if ZENOH_AVAILABLE:
+    from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh, PickleZenoh
+    from dimos.protocol.service.zenohservice import _sessions as _zenoh_sessions
+
+    @contextmanager
+    def zenoh_lcm_context() -> Generator[Zenoh, None, None]:
+        zenoh_pubsub = Zenoh()
+        zenoh_pubsub.start()
+        yield zenoh_pubsub
+        zenoh_pubsub.stop()
+        for s in _zenoh_sessions.values():
+            s.close()
+        _zenoh_sessions.clear()
+
+    testdata.append(
+        (
+            zenoh_lcm_context,
+            Topic(topic="dimos/test/spec", lcm_type=Vector3),
+            [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],
+        )
+    )
+
+    @contextmanager
+    def zenoh_pickle_context() -> Generator[PickleZenoh, None, None]:
+        zenoh_pubsub = PickleZenoh()
+        zenoh_pubsub.start()
+        yield zenoh_pubsub
+        zenoh_pubsub.stop()
+        for s in _zenoh_sessions.values():
+            s.close()
+        _zenoh_sessions.clear()
+
+    testdata.append(
+        (
+            zenoh_pickle_context,
+            Topic("dimos/test/spec/pickle"),
+            [{"key": "value1"}, {"key": "value2"}, {"key": "value3"}],
+        )
+    )
+
+
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
 def test_store(pubsub_context: Callable[[], Any], topic: Any, values: list[Any]) -> None:
     with pubsub_context() as x:
