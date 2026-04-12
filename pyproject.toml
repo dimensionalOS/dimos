@@ -311,6 +311,11 @@ dds = [
     "cyclonedds>=0.10.5",
 ]
 
+zenoh = [
+    "dimos[dev]",
+    "eclipse-zenoh>=1.0.0,<2.0",
+]
+
 # Minimal dependencies for Docker modules that communicate with the DimOS host
 docker = [
     "dimos-lcm",
