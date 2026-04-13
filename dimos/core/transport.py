@@ -336,9 +336,9 @@ if DDS_AVAILABLE:
 
 if ZENOH_AVAILABLE:
     from dimos.protocol.pubsub.impl.zenohpubsub import (
-        Zenoh,
         PickleZenoh,
         Topic as ZenohTopic,
+        Zenoh,
     )
 
     class ZenohTransport(PubSubTransport[T]):
