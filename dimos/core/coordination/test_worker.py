@@ -99,7 +99,7 @@ def create_worker_manager():
 
 
 @pytest.mark.slow
-@pytest.mark.macos_bug
+@pytest.mark.skipif_macos_bug
 def test_worker_manager_basic(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
     module = worker_manager.deploy(SimpleModule, global_config, {})
@@ -118,7 +118,7 @@ def test_worker_manager_basic(create_worker_manager):
 
 
 @pytest.mark.slow
-@pytest.mark.macos_bug
+@pytest.mark.skipif_macos_bug
 def test_worker_manager_multiple_different_modules(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
     module1 = worker_manager.deploy(SimpleModule, global_config, {})
@@ -141,7 +141,7 @@ def test_worker_manager_multiple_different_modules(create_worker_manager):
 
 
 @pytest.mark.slow
-@pytest.mark.macos_bug
+@pytest.mark.skipif_macos_bug
 def test_worker_manager_parallel_deployment(create_worker_manager):
     worker_manager = create_worker_manager(n_workers=2)
     modules = worker_manager.deploy_parallel(
@@ -177,7 +177,7 @@ def test_worker_manager_parallel_deployment(create_worker_manager):
 
 
 @pytest.mark.slow
-@pytest.mark.macos_bug
+@pytest.mark.skipif_macos_bug
 def test_collect_stats(create_worker_manager):
     from dimos.core.resource_monitor.monitor import StatsMonitor
 
@@ -224,7 +224,7 @@ def test_collect_stats(create_worker_manager):
 
 
 @pytest.mark.slow
-@pytest.mark.macos_bug
+@pytest.mark.skipif_macos_bug
 def test_worker_pool_modules_share_workers(create_worker_manager):
     manager = create_worker_manager(n_workers=1)
     module1 = manager.deploy(SimpleModule, global_config, {})
@@ -271,7 +271,7 @@ def manager_and_modules():
 
 
 @pytest.mark.slow
-@pytest.mark.macos_bug
+@pytest.mark.skipif_macos_bug
 def test_health_check_alive_workers(manager_and_modules):
     manager, modules = manager_and_modules(n_workers=2)
     module = manager.deploy(SimpleModule, global_config, {})
@@ -282,7 +282,7 @@ def test_health_check_alive_workers(manager_and_modules):
 
 
 @pytest.mark.slow
-@pytest.mark.macos_bug
+@pytest.mark.skipif_macos_bug
 def test_add_workers_grows_pool(manager_and_modules):
     manager, modules = manager_and_modules(n_workers=1)
     manager.add_workers(2)
@@ -297,7 +297,7 @@ def test_add_workers_grows_pool(manager_and_modules):
 
 
 @pytest.mark.slow
-@pytest.mark.macos_bug
+@pytest.mark.skipif_macos_bug
 def test_load_balancing_distributes_modules(manager_and_modules):
     manager, modules = manager_and_modules(n_workers=2)
 

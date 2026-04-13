@@ -98,7 +98,7 @@ jobs:
           CI: "1"
         run: |
           source .venv/bin/activate
-          python -m pytest --durations=10 -m 'not (tool or mujoco or macos_bug)' --timeout=120 dimos/
+          python -m pytest --durations=10 -m 'not (tool or mujoco)' --timeout=120 dimos/
 
       - name: Check disk usage (post-test)
         if: always()
