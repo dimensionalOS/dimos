@@ -47,13 +47,13 @@ class UntypedMsg:
 
 
 class ProducerModule(Module):
-    typed_out: Out[Image]
-    untyped_out: Out[UntypedMsg]
+    typed_data: Out[TypedMsg]
+    untyped_data: Out[UntypedMsg]
 
 
 class ConsumerModule(Module):
-    typed_out: In[Image]
-    untyped_out: In[UntypedMsg]
+    typed_data: In[TypedMsg]
+    untyped_data: In[UntypedMsg]
 
 
 class TestGlobalConfigTransportField:
@@ -88,13 +88,13 @@ class TestGetTransportForBranching:
     def test_lcm_transport_returned_when_transport_is_lcm(self, mocker) -> None:
         mocker.patch("dimos.core.blueprints.global_config.transport", "lcm")
         bp = self._make_blueprint()
-        transport = bp._get_transport_for("typed_out", Image)
+        transport = bp._get_transport_for("typed_data", TypedMsg)
         assert isinstance(transport, LCMTransport)
 
     def test_lcm_pickle_transport_returned_for_untyped_when_lcm(self, mocker) -> None:
         mocker.patch("dimos.core.blueprints.global_config.transport", "lcm")
         bp = self._make_blueprint()
-        transport = bp._get_transport_for("untyped_out", UntypedMsg)
+        transport = bp._get_transport_for("untyped_data", UntypedMsg)
         assert isinstance(transport, pLCMTransport)
 
     @pytest.mark.skipif(not ZENOH_AVAILABLE, reason="zenoh not installed")
@@ -103,7 +103,7 @@ class TestGetTransportForBranching:
 
         mocker.patch("dimos.core.blueprints.global_config.transport", "zenoh")
         bp = self._make_blueprint()
-        transport = bp._get_transport_for("typed_out", Image)
+        transport = bp._get_transport_for("typed_data", TypedMsg)
         assert isinstance(transport, ZenohTransport)
 
     @pytest.mark.skipif(not ZENOH_AVAILABLE, reason="zenoh not installed")
@@ -112,7 +112,7 @@ class TestGetTransportForBranching:
 
         mocker.patch("dimos.core.blueprints.global_config.transport", "zenoh")
         bp = self._make_blueprint()
-        transport = bp._get_transport_for("untyped_out", UntypedMsg)
+        transport = bp._get_transport_for("untyped_data", UntypedMsg)
         assert isinstance(transport, pZenohTransport)
 
     @pytest.mark.skipif(not ZENOH_AVAILABLE, reason="zenoh not installed")
@@ -121,7 +121,7 @@ class TestGetTransportForBranching:
 
         mocker.patch("dimos.core.blueprints.global_config.transport", "zenoh")
         bp = self._make_blueprint()
-        transport = bp._get_transport_for("untyped_out", UntypedMsg)
+        transport = bp._get_transport_for("untyped_data", UntypedMsg)
         assert isinstance(transport, pZenohTransport)
         assert "dimos/" in transport.topic
 
@@ -131,7 +131,7 @@ class TestGetTransportForBranching:
 
         bp = self._make_blueprint()
         with pytest.raises(RuntimeError, match="eclipse-zenoh is not installed"):
-            bp._get_transport_for("typed_out", Image)
+            bp._get_transport_for("typed_data", TypedMsg)
 
 
 class TestConfiguratorGating:
