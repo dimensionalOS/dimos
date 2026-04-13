@@ -42,7 +42,9 @@ from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
+from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
@@ -163,6 +165,19 @@ def _default_blueprint() -> Blueprint:
     )
 
 
+def _default_pubsubs(config: Any = None) -> list[SubscribeAllCapable[Any, Any]]:
+    """Select the pubsub backend based on the active transport."""
+    transport = getattr(config, "transport", None) or global_config.transport
+    if transport == "zenoh":
+        from dimos.core.transport import ZENOH_AVAILABLE
+
+        if ZENOH_AVAILABLE:
+            from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
+
+            return [Zenoh()]
+    return [LCM()]
+
+
 class Config(ModuleConfig):
     pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
 
@@ -269,7 +284,15 @@ class RerunBridgeModule(Module):
             return self.config.topic_to_entity(topic)
 
         topic_str = getattr(topic, "name", None) or str(topic)
-        topic_str = topic_str.split("#")[0]  # strip LCM topic suffix
+        # Strip type suffix: LCM uses '#type', Zenoh embeds type as '/type' in key expr
+        # but _key_expr_to_topic already parsed it into topic.topic, so use that.
+        raw = getattr(topic, "topic", topic_str)
+        if isinstance(raw, str):
+            topic_str = raw
+        topic_str = topic_str.split("#")[0]
+        # Strip Zenoh key prefix (dimos/) to match LCM entity paths
+        if topic_str.startswith("dimos/"):
+            topic_str = "/" + topic_str.removeprefix("dimos/")
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:
@@ -390,14 +413,22 @@ class RerunBridgeModule(Module):
         if self.config.blueprint:
             rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
 
-        for pubsub in self.config.pubsubs:
+        # Register colormap for viewer-side color resolution (PointCloud2 class_ids)
+        register_colormap_annotation("turbo")
+
+        # Resolve pubsubs lazily — the module-level global_config singleton in worker
+        # processes doesn't have CLI overrides. Use self.config.g which is the parent's
+        # updated config, passed via the worker kwargs.
+        pubsubs = _default_pubsubs(self.config.g)
+
+        for pubsub in pubsubs:
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
             if hasattr(pubsub, "start"):
                 pubsub.start()
             unsub = pubsub.subscribe_all(self._on_message)
             self.register_disposable(Disposable(unsub))
 
-        for pubsub in self.config.pubsubs:
+        for pubsub in pubsubs:
             if hasattr(pubsub, "stop"):
                 self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 

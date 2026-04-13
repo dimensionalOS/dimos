@@ -36,6 +36,37 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
+def _topic_to_key_expr(topic: Topic) -> str:
+    """Convert a Topic to a Zenoh key expression.
+
+    Embeds the lcm_type in the key using '/' instead of '#' (which is
+    forbidden in Zenoh key expressions). This mirrors how LCM channels
+    carry type info in the channel name for subscribe_all decoding.
+    """
+    base = topic.topic if isinstance(topic.topic, str) else topic.pattern
+    if topic.lcm_type is not None:
+        return f"{base}/{topic.lcm_type.msg_name}"
+    return base
+
+
+def _key_expr_to_topic(key_expr: str, default_lcm_type: type | None = None) -> Topic:
+    """Reconstruct a Topic from a Zenoh key expression.
+
+    Parses the type suffix (last segment after the base path) using
+    the same resolver as LCM's Topic.from_channel_str.
+    """
+    from dimos.msgs.helpers import resolve_msg_type
+
+    # Try to resolve the last segment as a message type
+    parts = key_expr.rsplit("/", 1)
+    if len(parts) == 2:
+        base, maybe_type = parts
+        lcm_type = resolve_msg_type(maybe_type)
+        if lcm_type is not None:
+            return Topic(topic=base, lcm_type=lcm_type)
+    return Topic(topic=key_expr, lcm_type=default_lcm_type)
+
+
 class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
     """Raw bytes pub/sub over Zenoh.
 
@@ -65,7 +96,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         reliability protocol (RELIABLE mode retransmits at each hop) — these
         do not surface as exceptions from put().
         """
-        key_expr = topic.topic if isinstance(topic.topic, str) else topic.pattern
+        key_expr = _topic_to_key_expr(topic)
         try:
             publisher = self._get_publisher(key_expr)
             publisher.put(message)
@@ -79,7 +110,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
 
         Returns an unsubscribe callable.
         """
-        key_expr = topic.topic if isinstance(topic.topic, str) else topic.pattern
+        key_expr = _topic_to_key_expr(topic)
 
         def on_sample(sample: zenoh.Sample) -> None:
             try:
@@ -87,7 +118,10 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
             except Exception:
                 logger.error(f"Error reading payload from {key_expr}", exc_info=True)
                 return
-            callback(data, topic)
+            # Reconstruct topic with type info from the key expression
+            # (needed for subscribe_all where the subscription topic has no lcm_type)
+            recv_topic = _key_expr_to_topic(str(sample.key_expr), topic.lcm_type)
+            callback(data, recv_topic)
 
         sub = self.session.declare_subscriber(key_expr, on_sample)
         with self._subscriber_lock:
