@@ -101,11 +101,9 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
                 return
             undeclared = True
             with self._subscriber_lock:
-                try:
-                    self._subscribers.remove(sub)
-                except ValueError:
-                    # Already removed by stop() — stop() owns the undeclare
-                    return
+                if sub not in self._subscribers:
+                    return  # Already removed by stop() — stop() owns the undeclare
+                self._subscribers.remove(sub)
             sub.undeclare()
 
         return unsubscribe
