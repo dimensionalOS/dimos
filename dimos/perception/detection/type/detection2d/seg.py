@@ -95,7 +95,7 @@ class Detection2DSeg(Detection2DBBox):
             name=name,
             ts=image.ts,
             image=image,
-            mask=mask.astype(np.uint8),  # type: ignore[arg-type]
+            mask=mask.astype(np.uint8),
         )
 
     @classmethod
@@ -157,7 +157,7 @@ class Detection2DSeg(Detection2DBBox):
                 )
 
             # Binarize mask
-            mask = (mask_np > 0.5).astype(np.uint8) * 255  # type: ignore[assignment]
+            mask = (mask_np > 0.5).astype(np.uint8) * 255
 
         return cls(
             bbox=bbox,

@@ -53,16 +53,18 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     def start(self) -> None:
         super().start()
 
-        self._disposables.add(Disposable(self.odom.subscribe(self._planner.handle_odom)))
-        self._disposables.add(
+        self.register_disposable(Disposable(self.odom.subscribe(self._planner.handle_odom)))
+        self.register_disposable(
             Disposable(self.global_costmap.subscribe(self._planner.handle_global_costmap))
         )
-        self._disposables.add(
+        self.register_disposable(
             Disposable(self.goal_request.subscribe(self._planner.handle_goal_request))
         )
-        self._disposables.add(Disposable(self.target.subscribe(self._planner.handle_goal_request)))
+        self.register_disposable(
+            Disposable(self.target.subscribe(self._planner.handle_goal_request))
+        )
 
-        self._disposables.add(
+        self.register_disposable(
             Disposable(
                 self.clicked_point.subscribe(
                     lambda pt: self._planner.handle_goal_request(pt.to_pose_stamped())
@@ -70,14 +72,14 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
             )
         )
 
-        self._disposables.add(self._planner.path.subscribe(self.path.publish))
+        self.register_disposable(self._planner.path.subscribe(self.path.publish))
 
-        self._disposables.add(self._planner.cmd_vel.subscribe(self.cmd_vel.publish))
+        self.register_disposable(self._planner.cmd_vel.subscribe(self.cmd_vel.publish))
 
-        self._disposables.add(self._planner.goal_reached.subscribe(self.goal_reached.publish))
+        self.register_disposable(self._planner.goal_reached.subscribe(self.goal_reached.publish))
 
         if "DEBUG_NAVIGATION" in os.environ:
-            self._disposables.add(
+            self.register_disposable(
                 self._planner.navigation_costmap.subscribe(self.navigation_costmap.publish)
             )
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from dimos.core.resource import CompositeResource
 from dimos.memory2.codecs.base import Codec, codec_id
 from dimos.memory2.notifier.subject import SubjectNotifier
 from dimos.memory2.type.observation import _UNLOADED
@@ -39,12 +40,9 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
-class Backend(Generic[T]):
+class Backend(CompositeResource, Generic[T]):
     """Orchestrates metadata, blob, vector, and live stores for one stream.
-
-    This is a concrete class — NOT a protocol. All shared orchestration logic
     (encode → insert → store blob → index vector → notify) lives here,
-    eliminating duplication between ListObservationStore and SqliteObservationStore.
     """
 
     def __init__(
@@ -57,12 +55,20 @@ class Backend(Generic[T]):
         notifier: Notifier[T] | None = None,
         eager_blobs: bool = False,
     ) -> None:
-        self.metadata_store = metadata_store
+        super().__init__()
+        self.metadata_store = self.register_disposable(metadata_store)
         self.codec = codec
-        self.blob_store = blob_store
-        self.vector_store = vector_store
-        self.notifier: Notifier[T] = notifier or SubjectNotifier()
+        self.blob_store = self.register_disposable(blob_store) if blob_store else None
+        self.vector_store = self.register_disposable(vector_store) if vector_store else None
+        self.notifier: Notifier[T] = self.register_disposable(notifier or SubjectNotifier())
         self.eager_blobs = eager_blobs
+
+    def start(self) -> None:
+        self.metadata_store.start()
+        if self.blob_store is not None:
+            self.blob_store.start()
+        if self.vector_store is not None:
+            self.vector_store.start()
 
     @property
     def name(self) -> str:
@@ -96,7 +102,7 @@ class Backend(Generic[T]):
                 assert self.blob_store is not None
                 self.blob_store.put(self.name, row_id, encoded)
                 # Replace inline data with lazy loader
-                obs._data = _UNLOADED  # type: ignore[assignment]
+                obs._data = _UNLOADED
                 obs._loader = self._make_loader(row_id)
 
             # Store embedding vector
@@ -237,8 +243,3 @@ class Backend(Generic[T]):
             "vector_store": self.vector_store.serialize() if self.vector_store else None,
             "notifier": self.notifier.serialize(),
         }
-
-    def stop(self) -> None:
-        """Stop the metadata store (closes per-stream connections if any)."""
-        if hasattr(self.metadata_store, "stop"):
-            self.metadata_store.stop()

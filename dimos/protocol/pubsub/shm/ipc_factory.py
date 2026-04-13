@@ -71,7 +71,7 @@ class FrameChannel(ABC):
 
     @property
     @abstractmethod
-    def dtype(self) -> np.dtype: ...  # type: ignore[type-arg]
+    def dtype(self) -> np.dtype: ...
 
     @abstractmethod
     def publish(self, frame, length: int | None = None) -> None:  # type: ignore[no-untyped-def]
@@ -155,7 +155,7 @@ class CpuShmChannel(FrameChannel):
             self._shm_ctrl, own_c = _create_or_open(ctrl_name, 24)
             self._is_owner = own_d and own_c
 
-        self._ctrl = np.ndarray((3,), dtype=np.int64, buffer=self._shm_ctrl.buf)  # type: ignore[var-annotated]
+        self._ctrl = np.ndarray((3,), dtype=np.int64, buffer=self._shm_ctrl.buf)
         if self._is_owner:
             self._ctrl[:] = 0  # initialize only once
 
@@ -198,7 +198,7 @@ class CpuShmChannel(FrameChannel):
         assert frame.shape == self._shape and frame.dtype == self._dtype
         active = int(self._ctrl[2])
         inactive = 1 - active
-        view = np.ndarray(  # type: ignore[var-annotated]
+        view = np.ndarray(
             self._shape,
             dtype=self._dtype,
             buffer=self._shm_data.buf,
@@ -220,7 +220,7 @@ class CpuShmChannel(FrameChannel):
             seq1 = int(self._ctrl[0])
             idx = int(self._ctrl[2])
             ts = int(self._ctrl[1])
-            view = np.ndarray(  # type: ignore[var-annotated]
+            view = np.ndarray(
                 self._shape, dtype=self._dtype, buffer=self._shm_data.buf, offset=idx * self._nbytes
             )
             if seq1 == int(self._ctrl[0]):

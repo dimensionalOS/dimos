@@ -20,9 +20,9 @@ from typing import Any
 import pytest
 from reactivex import operators as ops
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -40,10 +40,11 @@ class VideoReplayConfig(ModuleConfig):
     video_path: str
 
 
-class VideoReplayModule(Module[VideoReplayConfig]):
+class VideoReplayModule(Module):
     """Module that replays video data from TimedSensorReplay."""
 
-    default_config = VideoReplayConfig
+    config: VideoReplayConfig
+
     video_out: Out[Image]
     _subscription = None
 

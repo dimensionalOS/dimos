@@ -22,9 +22,9 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -53,8 +53,8 @@ class Config(ModuleConfig):
     ] = ()
 
 
-class Detection2DModule(Module[Config]):
-    default_config = Config
+class Detection2DModule(Module):
+    config: Config
     detector: Detector
 
     color_image: In[Image]
@@ -78,7 +78,7 @@ class Detection2DModule(Module[Config]):
         imageDetections = self.detector.process_image(image)
         if not self.config.filter:
             return imageDetections
-        return imageDetections.filter(*self.config.filter)  # type: ignore[misc, return-value]
+        return imageDetections.filter(*self.config.filter)  # type: ignore[return-value]
 
     @simple_mcache
     def sharp_image_stream(self) -> Observable[Image]:
@@ -155,7 +155,7 @@ class Detection2DModule(Module[Config]):
 
     @rpc
     def stop(self) -> None:
-        return super().stop()  # type: ignore[no-any-return]
+        return super().stop()
 
 
 def deploy(  # type: ignore[no-untyped-def]

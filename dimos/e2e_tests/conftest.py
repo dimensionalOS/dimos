@@ -125,3 +125,30 @@ def direct_cmd_vel_explorer() -> Generator[PersonTrackPublisher, None, None]:
     explorer.start()
     yield explorer
     explorer.stop()
+
+
+@pytest.fixture
+def explore_office(
+    direct_cmd_vel_explorer: DirectCmdVelExplorer,
+) -> Callable[[], None]:
+    points = [
+        (0, -7.07),
+        (-4.16, -7.07),
+        (-4.45, 1.10),
+        (-6.72, 2.87),
+        (-1.78, 3.01),
+        (-1.54, 5.74),
+        (3.88, 6.16),
+        (2.16, 9.36),
+        (4.70, 3.87),
+        (4.67, -7.15),
+        (4.57, -4.19),
+        (-0.84, -2.78),
+        (-4.71, 1.17),
+        (4.30, 0.87),
+    ]
+
+    def explore() -> None:
+        direct_cmd_vel_explorer.follow_points(points)
+
+    return explore

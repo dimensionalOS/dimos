@@ -197,7 +197,7 @@ class HumanCLIApp(App):  # type: ignore[type-arg]
         # Focus on input
         self.input_widget.focus()  # type: ignore[union-attr]
 
-        self.chat_log.write(f"[{theme.ACCENT}]{theme.ascii_logo}[/{theme.ACCENT}]")  # type: ignore[union-attr]
+        self.chat_log.write(f"[{theme.ACCENT}]{theme.ascii_logo}[/{theme.ACCENT}]")
 
         self._add_system_message("Connected to DimOS Agent Interface")
 

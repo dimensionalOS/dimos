@@ -31,6 +31,7 @@ import threading
 import time
 from typing import Any
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -83,7 +84,7 @@ class CartesianMotionControllerConfig(ModuleConfig):
     control_frame: str = "world"  # Frame for target poses (world, base_link, etc.)
 
 
-class CartesianMotionController(Module[CartesianMotionControllerConfig]):
+class CartesianMotionController(Module):
     """
     Hardware-agnostic Cartesian motion controller.
 
@@ -98,7 +99,7 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
     provides IK/FK RPC methods and JointState/RobotState outputs.
     """
 
-    default_config = CartesianMotionControllerConfig
+    config: CartesianMotionControllerConfig
 
     _arm_driver: ArmDriverSpec
 
@@ -236,7 +237,7 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
 
         # Wait for control thread
         if self._control_thread and self._control_thread.is_alive():
-            self._control_thread.join(timeout=2.0)
+            self._control_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
         logger.info("CartesianMotionController stopped")

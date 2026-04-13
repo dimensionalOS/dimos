@@ -42,7 +42,7 @@ from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 
 try:
-    from pydrake.geometry import (  # type: ignore[import-not-found]
+    from pydrake.geometry import (
         AddContactMaterial,
         Box,
         CollisionFilterDeclaration,
@@ -62,15 +62,15 @@ try:
         SceneGraph,
         Sphere,
     )
-    from pydrake.math import RigidTransform  # type: ignore[import-not-found]
-    from pydrake.multibody.parsing import Parser  # type: ignore[import-not-found]
-    from pydrake.multibody.plant import (  # type: ignore[import-not-found]
+    from pydrake.math import RigidTransform
+    from pydrake.multibody.parsing import Parser
+    from pydrake.multibody.plant import (
         AddMultibodyPlantSceneGraph,
         CoulombFriction,
         MultibodyPlant,
     )
-    from pydrake.multibody.tree import JacobianWrtVariable  # type: ignore[import-not-found]
-    from pydrake.systems.framework import Context, DiagramBuilder  # type: ignore[import-not-found]
+    from pydrake.multibody.tree import JacobianWrtVariable
+    from pydrake.systems.framework import Context, DiagramBuilder
 
     DRAKE_AVAILABLE = True
 except ImportError:
@@ -148,7 +148,7 @@ class _ThreadSafeMeshcat:
 class DrakeWorld(WorldSpec):
     """Drake implementation of WorldSpec with MultibodyPlant, SceneGraph, optional Meshcat."""
 
-    def __init__(self, time_step: float = 0.0, enable_viz: bool = False):
+    def __init__(self, time_step: float = 0.0, enable_viz: bool = False) -> None:
         if not DRAKE_AVAILABLE:
             raise ImportError("Drake is not installed. Install with: pip install drake")
 
@@ -194,7 +194,10 @@ class DrakeWorld(WorldSpec):
         self._obstacle_source_id: Any = None
 
     def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
-        """Add a robot to the world. Returns robot_id."""
+        """Add a robot to the world. Returns robot_id.
+
+        Same model_path + base_pose reuses the model instance (e.g. two arms in one URDF).
+        """
         if self._finalized:
             raise RuntimeError("Cannot add robot after world is finalized")
 
@@ -204,6 +207,7 @@ class DrakeWorld(WorldSpec):
 
             model_instance = self._load_model(config)
             self._weld_base_if_needed(config, model_instance)
+
             self._validate_joints(config, model_instance)
 
             ee_frame = self._plant.GetBodyByName(
@@ -211,7 +215,7 @@ class DrakeWorld(WorldSpec):
             ).body_frame()
             base_frame = self._plant.GetBodyByName(config.base_link, model_instance).body_frame()
 
-            # Load a second copy of the URDF as the preview (yellow ghost) robot
+            # Preview (yellow ghost) — always a separate instance per robot
             preview_model_instance = None
             if self._enable_viz:
                 preview_model_instance = self._load_model(config)
@@ -397,7 +401,7 @@ class DrakeWorld(WorldSpec):
 
         body = self._plant.AddRigidBody(
             obstacle_id,
-            self._obstacles_model_instance,  # type: ignore[arg-type]
+            self._obstacles_model_instance,
         )
 
         transform = self._pose_to_rigid_transform(obstacle.pose)
@@ -828,7 +832,7 @@ class DrakeWorld(WorldSpec):
         scene_graph_ctx = self._diagram.GetSubsystemContext(self._scene_graph, ctx)
         query_object = self._scene_graph.get_query_output_port().Eval(scene_graph_ctx)
 
-        return not query_object.HasCollisions()  # type: ignore[attr-defined]
+        return not query_object.HasCollisions()
 
     def get_min_distance(self, ctx: Context, robot_id: WorldRobotID) -> float:
         """Get minimum signed distance (positive = clearance, negative = penetration)."""
@@ -838,7 +842,7 @@ class DrakeWorld(WorldSpec):
         scene_graph_ctx = self._diagram.GetSubsystemContext(self._scene_graph, ctx)
         query_object = self._scene_graph.get_query_output_port().Eval(scene_graph_ctx)
 
-        signed_distance_pairs = query_object.ComputeSignedDistancePairwiseClosestPoints()  # type: ignore[attr-defined]
+        signed_distance_pairs = query_object.ComputeSignedDistancePairwiseClosestPoints()
 
         if not signed_distance_pairs:
             return float("inf")
@@ -939,7 +943,7 @@ class DrakeWorld(WorldSpec):
         X_WL = self._plant.EvalBodyPoseInWorld(plant_ctx, body)
 
         result = X_WL.GetAsMatrix4()
-        return result  # type: ignore[no-any-return, return-value]
+        return result  # type: ignore[no-any-return]
 
     def get_jacobian(self, ctx: Context, robot_id: WorldRobotID) -> NDArray[np.float64]:
         """Get geometric Jacobian (6 x n_joints).

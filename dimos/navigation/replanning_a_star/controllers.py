@@ -46,7 +46,7 @@ class PController:
     _max_angular_accel: float = 2.0
     _rotation_threshold: float = 90 * (math.pi / 180)
 
-    def __init__(self, global_config: GlobalConfig, speed: float, control_frequency: float):
+    def __init__(self, global_config: GlobalConfig, speed: float, control_frequency: float) -> None:
         self._global_config = global_config
         self._speed = speed
         self._control_frequency = control_frequency
@@ -120,7 +120,7 @@ class PdController(PController):
     _prev_yaw_error: float
     _prev_angular_velocity: float
 
-    def __init__(self, global_config: GlobalConfig, speed: float, control_frequency: float):
+    def __init__(self, global_config: GlobalConfig, speed: float, control_frequency: float) -> None:
         super().__init__(global_config, speed, control_frequency)
 
         self._prev_yaw_error = 0.0

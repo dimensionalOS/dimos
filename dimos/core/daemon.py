@@ -26,7 +26,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from dimos.core.module_coordinator import ModuleCoordinator
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.core.run_registry import RunEntry
 
 logger = setup_logger()

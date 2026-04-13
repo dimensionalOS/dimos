@@ -204,8 +204,12 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
 
         self.is_running = False
 
+        # Clear pending items so the thread doesn't start new synthesis.
+        with self.queue_lock:
+            self.text_queue.clear()
+
         if self.processing_thread and self.processing_thread.is_alive():
-            self.processing_thread.join(timeout=5.0)
+            self.processing_thread.join(timeout=2.0)
 
         if self.subscription:
             self.subscription.dispose()

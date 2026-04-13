@@ -18,8 +18,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos.robot.config import RobotConfig
+from dimos.robot.config import GripperConfig, RobotConfig
 from dimos.utils.data import LfsPath
+
+# Pre-built MJCF for Pinocchio FK (xacro not supported by Pinocchio)
+PIPER_FK_MODEL = LfsPath("piper_description/mujoco_model/piper_no_gripper_description.xml")
+
+# Simulation model path (MJCF)
+PIPER_SIM_PATH = LfsPath("piper/scene.xml")
 
 # Piper gripper collision exclusions (parallel jaw gripper)
 # The gripper fingers (link7, link8) can touch each other and gripper_base
@@ -58,7 +64,7 @@ def piper(
         "adapter_type": adapter_type,
         "address": address,
         "joint_names": [f"joint{i}" for i in range(1, 7)],
-        "base_link": "arm_base",
+        "base_link": "base_link",
         "home_joints": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         "base_pose": [0, y_offset, 0, 0, 0, 0, 1],
         "package_paths": {
@@ -68,9 +74,16 @@ def piper(
         "xacro_args": {},
         "auto_convert_meshes": True,
         "collision_exclusion_pairs": PIPER_GRIPPER_COLLISION_EXCLUSIONS,
+        "gripper": GripperConfig(
+            type="piper",
+            joints=["gripper"],
+            collision_exclusions=PIPER_GRIPPER_COLLISION_EXCLUSIONS,
+            open_position=0.08,
+            close_position=0.0,
+        ),
     }
     defaults.update(overrides)
     return RobotConfig(**defaults)
 
 
-__all__ = ["PIPER_GRIPPER_COLLISION_EXCLUSIONS", "piper"]
+__all__ = ["PIPER_FK_MODEL", "PIPER_GRIPPER_COLLISION_EXCLUSIONS", "piper"]

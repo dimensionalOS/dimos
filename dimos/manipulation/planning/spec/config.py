@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic import Field
@@ -47,7 +46,7 @@ class RobotModelConfig(ModuleConfig):
         max_velocity: Maximum joint velocity for trajectory generation (rad/s)
         max_acceleration: Maximum joint acceleration for trajectory generation (rad/s^2)
         joint_name_mapping: Maps coordinator joint names to URDF joint names.
-            Example: {"left_joint1": "joint1"} means coordinator's "left_joint1"
+            Example: {"left/joint1": "joint1"} means coordinator's "left/joint1"
             corresponds to URDF's "joint1". If empty, names are assumed to match.
         coordinator_task_name: Task name for executing trajectories via coordinator RPC.
             If set, trajectories can be executed via execute_trajectory() RPC.
@@ -74,7 +73,7 @@ class RobotModelConfig(ModuleConfig):
     coordinator_task_name: str | None = None
     gripper_hardware_id: str | None = None
     # TF publishing for extra links (e.g., camera mount)
-    tf_extra_links: Sequence[str] = ()
+    tf_extra_links: list[str] = Field(default_factory=list)
     # Home/observe joint configuration for go_home skill
     home_joints: list[float] | None = None
     # Pre-grasp offset distance in meters (along approach direction)

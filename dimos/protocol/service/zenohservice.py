@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import threading
-from typing import Any
 
 import zenoh
 
@@ -44,11 +43,8 @@ class ZenohConfig(BaseConfig):
         return f"{self.mode}|{json.dumps(sorted(self.connect))}|{json.dumps(sorted(self.listen))}"
 
 
-class ZenohService(Service[ZenohConfig]):
-    default_config = ZenohConfig
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+class ZenohService(Service):
+    config: ZenohConfig
 
     def start(self) -> None:
         """Start the Zenoh service — opens a session if one doesn't exist for this config."""

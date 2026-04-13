@@ -24,21 +24,12 @@ import re
 import signal
 import time
 
+from dimos.constants import STATE_DIR
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
-
-def _get_state_dir() -> Path:
-    """XDG_STATE_HOME compliant state directory for dimos."""
-    xdg = os.environ.get("XDG_STATE_HOME")
-    if xdg:
-        return Path(xdg) / "dimos"
-    return Path.home() / ".local" / "state" / "dimos"
-
-
-REGISTRY_DIR = _get_state_dir() / "runs"
-LOG_BASE_DIR = _get_state_dir() / "logs"
+REGISTRY_DIR = STATE_DIR / "runs"
 
 
 @dataclass

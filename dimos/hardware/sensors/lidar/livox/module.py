@@ -16,18 +16,20 @@
 
 Usage::
     from dimos.hardware.sensors.lidar.livox.module import Mid360
-    from dimos.core.blueprints import autoconnect
+    from dimos.core.coordination.blueprints import autoconnect
 
-    autoconnect(
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    ModuleCoordinator.build(autoconnect(
         Mid360.blueprint(host_ip="192.168.1.5"),
         SomeConsumer.blueprint(),
-    ).build().loop()
+    )).loop()
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.lidar.livox.ports import (
@@ -74,7 +76,7 @@ class Mid360Config(NativeModuleConfig):
     host_log_data_port: int = SDK_HOST_LOG_DATA_PORT
 
 
-class Mid360(NativeModule[Mid360Config], perception.Lidar, perception.IMU):
+class Mid360(NativeModule, perception.Lidar, perception.IMU):
     """Livox Mid-360 LiDAR module backed by a native C++ binary.
 
     Ports:
@@ -83,10 +85,17 @@ class Mid360(NativeModule[Mid360Config], perception.Lidar, perception.IMU):
     """
 
     config: Mid360Config
-    default_config = Mid360Config
 
     lidar: Out[PointCloud2]
     imu: Out[Imu]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
 
 # Verify protocol port compliance (mypy will flag missing ports)

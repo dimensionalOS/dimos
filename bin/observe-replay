@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# observe-replay: Start a replay with a given transport, capture screenshots, then shut down.
+#
+# Usage:
+#   bin/observe-replay lcm    # replay with LCM transport
+#   bin/observe-replay zenoh  # replay with Zenoh transport
+#
+# Captures screenshots at 5s, 15s, and 25s into /tmp/replay-{transport}-{N}.png
+# Then sends SIGINT and waits for clean shutdown.
+
+set -euo pipefail
+
+TRANSPORT="${1:-lcm}"
+SCREENSHOT_DIR="/tmp/replay-screenshots"
+WAIT_BOOT=10    # seconds to wait for modules to deploy
+INTERVAL=10     # seconds between screenshots
+N_SCREENSHOTS=3
+
+mkdir -p "$SCREENSHOT_DIR"
+rm -f "$SCREENSHOT_DIR/replay-${TRANSPORT}-"*.png "$SCREENSHOT_DIR/replay-${TRANSPORT}.log"
+
+echo "==> Starting replay with transport=$TRANSPORT"
+
+TRANSPORT_FLAG=""
+if [ "$TRANSPORT" != "lcm" ]; then
+    TRANSPORT_FLAG="--transport=$TRANSPORT"
+fi
+
+# Start the replay in background
+# Log to file but don't redirect stderr — the viewer needs it to spawn its GUI
+uv run dimos --dtop --replay $TRANSPORT_FLAG --replay-dir=unitree_go2_bigoffice run unitree-go2 \
+    > "$SCREENSHOT_DIR/replay-${TRANSPORT}.log" 2>&1 &
+REPLAY_PID=$!
+
+echo "==> Replay PID: $REPLAY_PID"
+echo "==> Waiting ${WAIT_BOOT}s for boot..."
+sleep "$WAIT_BOOT"
+
+for i in $(seq 1 "$N_SCREENSHOTS"); do
+    FILENAME="$SCREENSHOT_DIR/replay-${TRANSPORT}-${i}.png"
+    echo "==> Screenshot $i/$N_SCREENSHOTS -> $FILENAME"
+    # Capture the dimos-viewer window only (smaller, focused)
+    VIEWER_GEOMETRY=$(hyprctl clients -j 2>/dev/null | jq -r '.[] | select(.title | test("DimOS|Rerun|dimos-viewer")) | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"' | head -1)
+    if [ -n "$VIEWER_GEOMETRY" ]; then
+        grim -g "$VIEWER_GEOMETRY" "$FILENAME"
+    else
+        # Fallback: full screen, scaled down
+        grim -s 0.5 "$FILENAME"
+    fi
+    if [ "$i" -lt "$N_SCREENSHOTS" ]; then
+        sleep "$INTERVAL"
+    fi
+done
+
+cleanup() {
+    echo "==> Shutting down..."
+    # SIGINT first for graceful shutdown
+    kill -INT "$REPLAY_PID" 2>/dev/null || true
+    # Give it 5s to shut down gracefully
+    for _ in $(seq 1 10); do
+        kill -0 "$REPLAY_PID" 2>/dev/null || break
+        sleep 0.5
+    done
+    # SIGTERM if still alive
+    kill -TERM "$REPLAY_PID" 2>/dev/null || true
+    sleep 1
+    # SIGKILL as last resort
+    kill -KILL "$REPLAY_PID" 2>/dev/null || true
+    wait "$REPLAY_PID" 2>/dev/null || true
+    # Kill dimos-viewer (spawned as a child, may outlive the parent)
+    pkill -f dimos-viewer 2>/dev/null || true
+    echo "==> Shutdown complete"
+}
+
+cleanup
+
+echo "==> Done. Screenshots in $SCREENSHOT_DIR/"
+echo "==> Log: $SCREENSHOT_DIR/replay-${TRANSPORT}.log"
+ls -la "$SCREENSHOT_DIR/replay-${TRANSPORT}"*

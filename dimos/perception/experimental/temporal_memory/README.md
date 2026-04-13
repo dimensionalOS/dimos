@@ -50,7 +50,7 @@ The standalone `temporal-memory` component is registered in `all_blueprints.py`
 and can be composed with any camera source:
 
 ```python
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.perception.experimental.temporal_memory import temporal_memory
 
 bp = autoconnect(your_camera_blueprint, temporal_memory())

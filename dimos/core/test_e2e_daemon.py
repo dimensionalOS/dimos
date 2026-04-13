@@ -23,7 +23,9 @@ import time
 import pytest
 from typer.testing import CliRunner
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import global_config
 from dimos.core.module import Module
 import dimos.core.run_registry as _reg
@@ -34,7 +36,6 @@ from dimos.core.run_registry import (
     list_runs,
 )
 from dimos.core.stream import Out
-from dimos.core.worker_manager import WorkerManager
 from dimos.robot.cli.dimos import main
 
 
@@ -72,7 +73,7 @@ def coordinator():
     """Build a PingPong blueprint (1 worker) and yield the coordinator."""
     global_config.update(viewer="none", n_workers=1)
     bp = autoconnect(PingModule.blueprint(), PongModule.blueprint())
-    coord = bp.build()
+    coord = ModuleCoordinator.build(bp)
     yield coord
     coord.stop()
 
@@ -82,7 +83,7 @@ def coordinator_2w():
     """Build a PingPong blueprint with 2 workers."""
     global_config.update(viewer="none", n_workers=2)
     bp = autoconnect(PingModule.blueprint(), PongModule.blueprint())
-    coord = bp.build()
+    coord = ModuleCoordinator.build(bp)
     yield coord
     coord.stop()
 
@@ -129,7 +130,9 @@ class TestDaemonE2E:
 
     def test_health_check_detects_dead_worker(self, coordinator):
         """Kill a worker process — health check should fail."""
-        py_mgr = next(m for m in coordinator._managers.values() if isinstance(m, WorkerManager))
+        py_mgr = next(
+            m for m in coordinator._managers.values() if isinstance(m, WorkerManagerPython)
+        )
         worker = py_mgr.workers[0]
         worker_pid = worker.pid
         assert worker_pid is not None
@@ -203,7 +206,7 @@ def live_blueprint():
     """Build PingPong and register. Yields (coord, entry). Cleans up on teardown."""
     global_config.update(viewer="none", n_workers=1)
     bp = autoconnect(PingModule.blueprint(), PongModule.blueprint())
-    coord = bp.build()
+    coord = ModuleCoordinator.build(bp)
     run_id = f"e2e-cli-{datetime.now(timezone.utc).strftime('%H%M%S%f')}"
     entry = RunEntry(
         run_id=run_id,
@@ -242,7 +245,7 @@ class TestCLIWithRealBlueprint:
 
     def test_stop_kills_real_workers(self, live_blueprint):
         coord, _entry = live_blueprint
-        py_mgr = next(m for m in coord._managers.values() if isinstance(m, WorkerManager))
+        py_mgr = next(m for m in coord._managers.values() if isinstance(m, WorkerManagerPython))
         worker_pids = [w.pid for w in py_mgr.workers if w.pid]
         assert len(worker_pids) >= 1
 

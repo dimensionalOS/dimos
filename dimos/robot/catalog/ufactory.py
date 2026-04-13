@@ -18,8 +18,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos.robot.config import RobotConfig
+from dimos.robot.config import GripperConfig, RobotConfig
 from dimos.utils.data import LfsPath
+
+# Pre-built URDFs for Pinocchio FK (xacro not supported by Pinocchio)
+XARM6_FK_MODEL = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
+XARM7_FK_MODEL = LfsPath("xarm_description/urdf/xarm7/xarm7.urdf")
+
+# Simulation model paths (MJCF)
+XARM7_SIM_PATH = LfsPath("xarm7/scene.xml")
+XARM6_SIM_PATH = LfsPath("xarm6/scene.xml")
 
 # XArm gripper collision exclusions (parallel linkage mechanism)
 # The gripper uses mimic joints where non-adjacent links can overlap legitimately
@@ -81,6 +89,15 @@ def xarm7(
         "auto_convert_meshes": True,
         "collision_exclusion_pairs": XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
         "tf_extra_links": tf_extra_links or [],
+        "gripper": GripperConfig(
+            type="xarm",
+            joints=["gripper"],
+            collision_exclusions=XARM_GRIPPER_COLLISION_EXCLUSIONS,
+            open_position=0.85,
+            close_position=0.0,
+        )
+        if add_gripper
+        else None,
     }
     defaults.update(overrides)
     return RobotConfig(**defaults)
@@ -124,9 +141,24 @@ def xarm6(
         "auto_convert_meshes": True,
         "collision_exclusion_pairs": XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
         "tf_extra_links": tf_extra_links or [],
+        "gripper": GripperConfig(
+            type="xarm",
+            joints=["gripper"],
+            collision_exclusions=XARM_GRIPPER_COLLISION_EXCLUSIONS,
+            open_position=0.85,
+            close_position=0.0,
+        )
+        if add_gripper
+        else None,
     }
     defaults.update(overrides)
     return RobotConfig(**defaults)
 
 
-__all__ = ["XARM_GRIPPER_COLLISION_EXCLUSIONS", "xarm6", "xarm7"]
+__all__ = [
+    "XARM6_FK_MODEL",
+    "XARM7_FK_MODEL",
+    "XARM_GRIPPER_COLLISION_EXCLUSIONS",
+    "xarm6",
+    "xarm7",
+]

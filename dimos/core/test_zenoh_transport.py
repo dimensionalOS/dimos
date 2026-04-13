@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import pytest
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.coordination.module_coordinator import _get_transport_for, _run_configurators
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
@@ -87,57 +88,57 @@ class TestGetTransportForBranching:
         return autoconnect(ProducerModule.blueprint(), ConsumerModule.blueprint())
 
     def test_lcm_transport_returned_when_transport_is_lcm(self, mocker) -> None:
-        mocker.patch("dimos.core.blueprints.global_config.transport", "lcm")
+        mocker.patch("dimos.core.coordination.module_coordinator.global_config.transport", "lcm")
         bp = self._make_blueprint()
-        transport = bp._get_transport_for("typed_data", TypedMsg)
+        transport = _get_transport_for(bp,"typed_data", TypedMsg)
         assert isinstance(transport, LCMTransport)
 
     def test_lcm_pickle_transport_returned_for_untyped_when_lcm(self, mocker) -> None:
-        mocker.patch("dimos.core.blueprints.global_config.transport", "lcm")
+        mocker.patch("dimos.core.coordination.module_coordinator.global_config.transport", "lcm")
         bp = self._make_blueprint()
-        transport = bp._get_transport_for("untyped_data", UntypedMsg)
+        transport = _get_transport_for(bp,"untyped_data", UntypedMsg)
         assert isinstance(transport, pLCMTransport)
 
     @pytest.mark.skipif(not ZENOH_AVAILABLE, reason="zenoh not installed")
     def test_zenoh_transport_returned_when_transport_is_zenoh(self, mocker) -> None:
         from dimos.core.transport import ZenohTransport
 
-        mocker.patch("dimos.core.blueprints.global_config.transport", "zenoh")
+        mocker.patch("dimos.core.coordination.module_coordinator.global_config.transport", "zenoh")
         bp = self._make_blueprint()
-        transport = bp._get_transport_for("typed_data", TypedMsg)
+        transport = _get_transport_for(bp,"typed_data", TypedMsg)
         assert isinstance(transport, ZenohTransport)
 
     @pytest.mark.skipif(not ZENOH_AVAILABLE, reason="zenoh not installed")
     def test_zenoh_pickle_transport_returned_for_untyped_when_zenoh(self, mocker) -> None:
         from dimos.core.transport import pZenohTransport
 
-        mocker.patch("dimos.core.blueprints.global_config.transport", "zenoh")
+        mocker.patch("dimos.core.coordination.module_coordinator.global_config.transport", "zenoh")
         bp = self._make_blueprint()
-        transport = bp._get_transport_for("untyped_data", UntypedMsg)
+        transport = _get_transport_for(bp,"untyped_data", UntypedMsg)
         assert isinstance(transport, pZenohTransport)
 
     @pytest.mark.skipif(not ZENOH_AVAILABLE, reason="zenoh not installed")
     def test_zenoh_topic_uses_dimos_prefix(self, mocker) -> None:
         from dimos.core.transport import pZenohTransport
 
-        mocker.patch("dimos.core.blueprints.global_config.transport", "zenoh")
+        mocker.patch("dimos.core.coordination.module_coordinator.global_config.transport", "zenoh")
         bp = self._make_blueprint()
-        transport = bp._get_transport_for("untyped_data", UntypedMsg)
+        transport = _get_transport_for(bp,"untyped_data", UntypedMsg)
         assert isinstance(transport, pZenohTransport)
         assert "dimos/" in transport.topic
 
     def test_zenoh_raises_when_not_available(self, mocker) -> None:
-        mocker.patch("dimos.core.blueprints.global_config.transport", "zenoh")
+        mocker.patch("dimos.core.coordination.module_coordinator.global_config.transport", "zenoh")
         mocker.patch("dimos.core.transport.ZENOH_AVAILABLE", False)
 
         bp = self._make_blueprint()
         with pytest.raises(RuntimeError, match="eclipse-zenoh is not installed"):
-            bp._get_transport_for("typed_data", TypedMsg)
+            _get_transport_for(bp,"typed_data", TypedMsg)
 
 
 class TestConfiguratorGating:
     def test_lcm_configurators_run_when_transport_is_lcm(self, mocker) -> None:
-        mocker.patch("dimos.core.blueprints.global_config.transport", "lcm")
+        mocker.patch("dimos.core.coordination.module_coordinator.global_config.transport", "lcm")
         mock_lcm_configs = mocker.patch(
             "dimos.protocol.service.system_configurator.lcm_config.lcm_configurators",
             return_value=[],
@@ -145,12 +146,12 @@ class TestConfiguratorGating:
         mocker.patch("dimos.protocol.service.system_configurator.base.configure_system")
 
         bp = autoconnect(ProducerModule.blueprint(), ConsumerModule.blueprint())
-        bp._run_configurators()
+        _run_configurators(bp)
 
         mock_lcm_configs.assert_called_once()
 
     def test_lcm_configurators_skipped_when_transport_is_zenoh(self, mocker) -> None:
-        mocker.patch("dimos.core.blueprints.global_config.transport", "zenoh")
+        mocker.patch("dimos.core.coordination.module_coordinator.global_config.transport", "zenoh")
         mock_lcm_configs = mocker.patch(
             "dimos.protocol.service.system_configurator.lcm_config.lcm_configurators",
             return_value=[],
@@ -158,7 +159,7 @@ class TestConfiguratorGating:
         mocker.patch("dimos.protocol.service.system_configurator.base.configure_system")
 
         bp = autoconnect(ProducerModule.blueprint(), ConsumerModule.blueprint())
-        bp._run_configurators()
+        _run_configurators(bp)
 
         mock_lcm_configs.assert_not_called()
 

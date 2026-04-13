@@ -99,3 +99,11 @@ repos:
         entry: python bin/hooks/filter_commit_message.py
         language: python
         stages: [commit-msg]
+
+      - id: check-commit-message
+        name: Check commit messages for generated signatures
+        always_run: true
+        pass_filenames: false
+        entry: python bin/hooks/filter_commit_message.py --check
+        language: python
+        stages: [pre-commit]

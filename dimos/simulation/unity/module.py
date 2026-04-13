@@ -48,6 +48,7 @@ import numpy as np
 from pydantic import Field
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -78,7 +79,6 @@ _LFS_ASSET = "unity_sim_x86"
 # sending data for longer than this the bridge treats it as a hung
 # connection and drops it.
 _BRIDGE_READ_TIMEOUT = 30.0
-
 
 # TCP protocol helpers
 
@@ -216,11 +216,10 @@ _CAM_FY = _CAM_FX
 _CAM_CX = _CAM_WIDTH / 2.0
 _CAM_CY = _CAM_HEIGHT / 2.0
 
-
 # Module
 
 
-class UnityBridgeModule(Module[UnityBridgeConfig]):
+class UnityBridgeModule(Module):
     """TCP bridge to the Unity simulator with kinematic odometry integration.
 
     Ports:
@@ -233,7 +232,7 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
         camera_info (Out[CameraInfo]): Camera intrinsics.
     """
 
-    default_config = UnityBridgeConfig
+    config: UnityBridgeConfig
 
     cmd_vel: In[Twist]
     terrain_map: In[PointCloud2]
@@ -294,8 +293,8 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
-        self._disposables.add(Disposable(self.terrain_map.subscribe(self._on_terrain)))
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self._on_cmd_vel)))
+        self.register_disposable(Disposable(self.terrain_map.subscribe(self._on_terrain)))
         self._running.set()
         self._sim_thread = threading.Thread(target=self._sim_loop, daemon=True)
         self._sim_thread.start()
@@ -309,9 +308,9 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
     def stop(self) -> None:
         self._running.clear()
         if self._sim_thread:
-            self._sim_thread.join(timeout=2.0)
+            self._sim_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if self._unity_thread:
-            self._unity_thread.join(timeout=2.0)
+            self._unity_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         with self._state_lock:
             proc = self._unity_process
             self._unity_process = None
@@ -513,7 +512,7 @@ class UnityBridgeModule(Module[UnityBridgeConfig]):
                     self._handle_unity_message(dest, data)
         finally:
             halt.set()
-            sender.join(timeout=2.0)
+            sender.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
     def _unity_sender(self, sock: socket.socket, halt: threading.Event) -> None:
         while not halt.is_set():
