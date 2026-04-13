@@ -155,3 +155,78 @@ class TestZenohPubSubBase:
 
         assert event.wait(timeout=2.0), "Timed out waiting for wildcard message"
         assert received[0] == b"wildcard"
+
+
+class TestTopicKeyExprConversion:
+    """Tests for _topic_to_key_expr and _key_expr_to_topic round-trip."""
+
+    def test_typed_topic_to_key_expr(self) -> None:
+        from dimos.msgs.geometry_msgs.Twist import Twist
+        from dimos.protocol.pubsub.impl.zenohpubsub import _topic_to_key_expr
+
+        topic = Topic("dimos/cmd_vel", lcm_type=Twist)
+        key = _topic_to_key_expr(topic)
+        assert key == "dimos/cmd_vel/geometry_msgs.Twist"
+
+    def test_untyped_topic_to_key_expr(self) -> None:
+        from dimos.protocol.pubsub.impl.zenohpubsub import _topic_to_key_expr
+
+        topic = Topic("dimos/data")
+        key = _topic_to_key_expr(topic)
+        assert key == "dimos/data"
+
+    def test_key_expr_to_topic_with_known_type(self) -> None:
+        from dimos.msgs.geometry_msgs.Twist import Twist
+        from dimos.protocol.pubsub.impl.zenohpubsub import _key_expr_to_topic
+
+        topic = _key_expr_to_topic("dimos/cmd_vel/geometry_msgs.Twist")
+        assert topic.topic == "dimos/cmd_vel"
+        assert topic.lcm_type is Twist
+
+    def test_key_expr_to_topic_with_unknown_type(self) -> None:
+        from dimos.protocol.pubsub.impl.zenohpubsub import _key_expr_to_topic
+
+        topic = _key_expr_to_topic("dimos/data/unknown.FooBar")
+        # Last segment doesn't resolve — entire string becomes the topic
+        assert topic.topic == "dimos/data/unknown.FooBar"
+        assert topic.lcm_type is None
+
+    def test_key_expr_to_topic_with_no_slash(self) -> None:
+        from dimos.protocol.pubsub.impl.zenohpubsub import _key_expr_to_topic
+
+        topic = _key_expr_to_topic("simple_topic")
+        assert topic.topic == "simple_topic"
+        assert topic.lcm_type is None
+
+    def test_key_expr_to_topic_uses_default_type(self) -> None:
+        from dimos.msgs.geometry_msgs.Twist import Twist
+        from dimos.protocol.pubsub.impl.zenohpubsub import _key_expr_to_topic
+
+        topic = _key_expr_to_topic("dimos/data", default_lcm_type=Twist)
+        assert topic.topic == "dimos/data"
+        assert topic.lcm_type is Twist
+
+    def test_round_trip_typed(self) -> None:
+        from dimos.msgs.sensor_msgs.Image import Image
+        from dimos.protocol.pubsub.impl.zenohpubsub import (
+            _key_expr_to_topic,
+            _topic_to_key_expr,
+        )
+
+        original = Topic("dimos/color_image", lcm_type=Image)
+        key = _topic_to_key_expr(original)
+        reconstructed = _key_expr_to_topic(key)
+        assert reconstructed.topic == original.topic
+        assert reconstructed.lcm_type is original.lcm_type
+
+    def test_round_trip_untyped(self) -> None:
+        from dimos.protocol.pubsub.impl.zenohpubsub import (
+            _key_expr_to_topic,
+            _topic_to_key_expr,
+        )
+
+        original = Topic("dimos/gps_location")
+        key = _topic_to_key_expr(original)
+        reconstructed = _key_expr_to_topic(key)
+        assert reconstructed.topic == original.topic
+        assert reconstructed.lcm_type is None

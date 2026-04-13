@@ -42,6 +42,16 @@ def _topic_to_key_expr(topic: Topic) -> str:
     Embeds the lcm_type in the key using '/' instead of '#' (which is
     forbidden in Zenoh key expressions). This mirrors how LCM channels
     carry type info in the channel name for subscribe_all decoding.
+
+    Examples:
+        Topic("dimos/cmd_vel", Twist) → "dimos/cmd_vel/geometry_msgs.Twist"
+        Topic("dimos/data")           → "dimos/data"
+
+    Known limitation: the type name becomes a path segment. If a topic
+    name itself looks like a type name (e.g., "dimos/geometry_msgs.Twist"),
+    _key_expr_to_topic may misparse it on the receiving end. In practice
+    this doesn't happen because topic names come from stream names (e.g.,
+    "cmd_vel", "lidar"), not from type names.
     """
     base = topic.topic if isinstance(topic.topic, str) else topic.pattern
     if topic.lcm_type is not None:
@@ -52,8 +62,18 @@ def _topic_to_key_expr(topic: Topic) -> str:
 def _key_expr_to_topic(key_expr: str, default_lcm_type: type | None = None) -> Topic:
     """Reconstruct a Topic from a Zenoh key expression.
 
-    Parses the type suffix (last segment after the base path) using
-    the same resolver as LCM's Topic.from_channel_str.
+    Parses the last '/' segment and attempts to resolve it as a DimosMsg
+    type via resolve_msg_type(). If resolution succeeds, the segment is
+    treated as the type suffix and the remainder as the base topic.
+
+    Examples:
+        "dimos/cmd_vel/geometry_msgs.Twist" → Topic("dimos/cmd_vel", Twist)
+        "dimos/data"                        → Topic("dimos/data", default_lcm_type)
+        "dimos/data/unknown.Foo"            → Topic("dimos/data/unknown.Foo", default_lcm_type)
+
+    Known limitation: if a topic's base path ends with a segment that
+    happens to match a registered DimosMsg type name, this function will
+    incorrectly split it. See _topic_to_key_expr docstring for details.
     """
     from dimos.msgs.helpers import resolve_msg_type
 
