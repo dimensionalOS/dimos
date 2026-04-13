@@ -24,7 +24,6 @@ from typing import (
 from dimos.core.stream import In, Out, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
 from dimos.utils import colors
-
 try:
     import cyclonedds as _cyclonedds  # noqa: F401
 
@@ -128,9 +127,6 @@ class LCMTransport(PubSubTransport[T]):
         return (LCMTransport, (self.topic.topic, self.topic.lcm_type))
 
     def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
-        if not self._started:
-            self.start()
-
         self.lcm.publish(self.topic, msg)
 
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]

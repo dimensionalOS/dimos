@@ -96,18 +96,15 @@ def tcp_server(node):
         while rclpy.ok():
             node.watchdog_check()
             try:
-                data = b""
-                while len(data) < 12:
-                    chunk = client.recv(12 - len(data))
-                    if not chunk:
-                        raise ConnectionError("disconnected")
-                    data += chunk
-            except (socket.timeout, ConnectionError):
-                if len(data) == 0:
-                    continue
+                packet = _recv_packet(client)
+            except socket.timeout:
+                continue
+            except ConnectionError:
+                break
+            if packet is None:
                 break
 
-            x, y, yaw = struct.unpack("fff", data)
+            x, y, yaw = packet
             node.publish_vel(x, y, yaw)
             msg_count += 1
 
@@ -120,6 +117,18 @@ def tcp_server(node):
         node.publish_vel(0.0, 0.0, 0.0)
 
     server.close()
+
+
+def _recv_packet(client):
+    data = b""
+    while len(data) < 12:
+        chunk = client.recv(12 - len(data))
+        if not chunk:
+            if len(data) == 0:
+                return None
+            raise ConnectionError("partial packet")
+        data += chunk
+    return struct.unpack("fff", data)
 
 
 def main():

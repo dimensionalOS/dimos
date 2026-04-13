@@ -50,6 +50,7 @@ MAX_LINEAR_VEL = 1.0  # m/s
 MAX_YAW_RATE = 1.5  # rad/s
 SEND_HZ = 10  # M20 SDK recommends 10 Hz for /NAV_CMD
 WATCHDOG_TIMEOUT_S = 0.3  # Zero velocities if no cmd for 300 ms
+RECONNECT_TIMEOUT_S = 0.2
 
 
 @dataclass
@@ -184,21 +185,38 @@ class M20VelocityController:
             logger.info("[TEST] M20VelocityController in test mode — no publishing")
             return
 
+        self._connect_socket(timeout_s=5.0, log_failure=True)
+
+    def _close_socket(self) -> None:
+        if self._socket is None:
+            return
         try:
-            self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._socket.settimeout(5.0)
-            self._socket.connect((self._aos_host, NAV_CMD_BRIDGE_PORT))
-            self._socket.settimeout(None)
+            self._socket.close()
+        except Exception:
+            pass
+        self._socket = None
+
+    def _connect_socket(self, *, timeout_s: float, log_failure: bool) -> None:
+        self._close_socket()
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(timeout_s)
+            sock.connect((self._aos_host, NAV_CMD_BRIDGE_PORT))
+            sock.settimeout(None)
+            self._socket = sock
             logger.info(
                 "Connected to nav_cmd_bridge at %s:%d for /NAV_CMD",
                 self._aos_host, NAV_CMD_BRIDGE_PORT,
             )
         except Exception as exc:
-            logger.warning(
-                "Failed to connect to nav_cmd_bridge at %s:%d: %s — "
-                "velocity commands will be logged only.",
-                self._aos_host, NAV_CMD_BRIDGE_PORT, exc,
-            )
+            self._close_socket()
+            if log_failure:
+                logger.warning(
+                    "Failed to connect to nav_cmd_bridge at %s:%d: %s — "
+                    "velocity commands will be logged only.",
+                    self._aos_host, NAV_CMD_BRIDGE_PORT, exc,
+                )
             self._socket = None
 
     def _publish_once(self, cmd: NavCmd) -> None:
@@ -215,27 +233,22 @@ class M20VelocityController:
             return
 
         if self._socket is None:
-            return
+            should_attempt_reconnect = self._packet_count % SEND_HZ == 0
+            if should_attempt_reconnect:
+                should_log_failure = self._packet_count % (SEND_HZ * 5) == 0
+                self._connect_socket(
+                    timeout_s=RECONNECT_TIMEOUT_S,
+                    log_failure=should_log_failure,
+                )
+            if self._socket is None:
+                return
 
         try:
             self._socket.sendall(struct.pack("fff", cmd.x_vel, cmd.y_vel, cmd.yaw_vel))
         except Exception as exc:
             if self._packet_count % SEND_HZ == 0:
                 logger.error("Failed to send /NAV_CMD via bridge: %s", exc)
-            # Try to reconnect
-            try:
-                self._socket.close()
-            except Exception:
-                pass
-            self._socket = None
-            try:
-                self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self._socket.settimeout(5.0)
-                self._socket.connect((self._aos_host, NAV_CMD_BRIDGE_PORT))
-                self._socket.settimeout(None)
-                logger.info("Reconnected to nav_cmd_bridge")
-            except Exception:
-                self._socket = None
+            self._connect_socket(timeout_s=RECONNECT_TIMEOUT_S, log_failure=False)
 
     def _send_loop(self) -> None:
         """Continuously publish the current command at 10 Hz."""
