@@ -215,7 +215,9 @@ class Blueprint:
                 )
             zenoh_topic = f"dimos{topic}"
             transport = (
-                pZenohTransport(zenoh_topic) if use_pickled else ZenohTransport(zenoh_topic, stream_type)
+                pZenohTransport(zenoh_topic)
+                if use_pickled
+                else ZenohTransport(zenoh_topic, stream_type)
             )
         else:
             transport = pLCMTransport(topic) if use_pickled else LCMTransport(topic, stream_type)
