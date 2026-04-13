@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
@@ -44,6 +43,27 @@ def pubsub():
     _sessions.clear()
 
 
+def wait_for_delivery() -> None:
+    """Wait for published messages to be delivered to subscribers."""
+    import time
+
+    time.sleep(0.1)
+
+
+def wait_for_subscribers() -> None:
+    """Wait for Zenoh subscriber declarations to propagate.
+
+    Zenoh's Python API does not expose a "subscriber ready" signal or
+    callback. After declare_subscriber(), there is a brief window where
+    messages published to the same key expression may not be delivered.
+    This is a known limitation of the peer discovery protocol — peers
+    need time to exchange interest declarations over the network.
+    """
+    import time
+
+    time.sleep(0.05)
+
+
 class TestZenohPubSubBase:
     def test_publish_and_subscribe(self, pubsub) -> None:
         received = []
@@ -55,7 +75,7 @@ class TestZenohPubSubBase:
             event.set()
 
         pubsub.subscribe(topic, callback)
-        time.sleep(0.05)  # let subscriber register
+        wait_for_subscribers()
         pubsub.publish(topic, b"hello zenoh")
 
         assert event.wait(timeout=2.0), f"Timed out waiting for message (got {len(received)})"
@@ -79,7 +99,7 @@ class TestZenohPubSubBase:
 
         pubsub.subscribe(topic, callback_a)
         pubsub.subscribe(topic, callback_b)
-        time.sleep(0.05)
+        wait_for_subscribers()
         pubsub.publish(topic, b"broadcast")
 
         assert event.wait(timeout=2.0), "Timed out waiting for both subscribers"
@@ -94,13 +114,13 @@ class TestZenohPubSubBase:
             received.append(msg)
 
         unsub = pubsub.subscribe(topic, callback)
-        time.sleep(0.05)
+        wait_for_subscribers()
         pubsub.publish(topic, b"before")
-        time.sleep(0.1)
+        wait_for_delivery()
         unsub()
-        time.sleep(0.05)
+        wait_for_subscribers()
         pubsub.publish(topic, b"after")
-        time.sleep(0.1)
+        wait_for_delivery()
 
         assert received == [b"before"]
 
@@ -131,7 +151,7 @@ class TestZenohPubSubBase:
             event.set()
 
         pubsub.subscribe_all(callback)
-        time.sleep(0.05)
+        wait_for_subscribers()
         pubsub.publish(Topic("dimos/test/any/topic"), b"wildcard")
 
         assert event.wait(timeout=2.0), "Timed out waiting for wildcard message"
