@@ -174,7 +174,12 @@ def _resolve_viewer_mode() -> ViewerMode:
 
 
 def _default_pubsubs(config: Any = None) -> list[SubscribeAllCapable[Any, Any]]:
-    """Select the pubsub backend based on the active transport."""
+    """Select the pubsub backend based on the active transport.
+
+    When transport is Zenoh, we listen on BOTH Zenoh and LCM because
+    TF (transform frames) is currently hardcoded to LCM in the Module
+    base class. Without LCM, the robot pose won't update in the viewer.
+    """
     transport = getattr(config, "transport", None) or global_config.transport
     if transport == "zenoh":
         from dimos.core.transport import ZENOH_AVAILABLE
@@ -182,7 +187,7 @@ def _default_pubsubs(config: Any = None) -> list[SubscribeAllCapable[Any, Any]]:
         if ZENOH_AVAILABLE:
             from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 
-            return [Zenoh()]
+            return [Zenoh(), LCM()]
     return [LCM()]
 
 
