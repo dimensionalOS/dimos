@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for Zenoh transport scaffold — Phase 1.
+"""Tests for Zenoh transport scaffold
 
 Tests the conditional logic added to support Zenoh alongside LCM:
 - GlobalConfig transport field
