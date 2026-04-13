@@ -14,6 +14,7 @@ Demonstrates controlling a dimos robot from non-Python languages.
    - [TypeScript](ts/) - CLI and browser-based web UI
    - [C++](cpp/)
    - [Lua](lua/)
+   - [Rust](rust/)
 
 3. (Optional) Monitor traffic with `lcmspy`
 
