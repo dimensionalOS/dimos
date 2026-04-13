@@ -92,5 +92,7 @@ class ListObservationStore(ObservationStore[T]):
         with self._lock:
             to_delete = [obs for obs in self._observations if t1 <= obs.ts <= t2]
             ids = [obs.id for obs in to_delete]
-            self._observations = [obs for obs in self._observations if not (t1 <= obs.ts <= t2)]
+            self._observations = deque(
+                obs for obs in self._observations if not (t1 <= obs.ts <= t2)
+            )
         return ids

@@ -242,11 +242,6 @@ class ModuleCoordinator(Resource):
             # Strip replay_file from all override sources so the nested build()
             # inside replay() does not re-enter this branch.
             global_config.replay_file = None
-            clean_cli = (
-                {k: v for k, v in cli_config_overrides.items() if k != "replay_file"}
-                if cli_config_overrides
-                else None
-            )
             clean_bp = dataclasses.replace(
                 blueprint,
                 global_config_overrides=MappingProxyType(
@@ -257,7 +252,7 @@ class ModuleCoordinator(Resource):
                     }
                 ),
             )
-            return cls.replay(clean_bp, replay_file, cli_config_overrides=clean_cli)
+            return cls.replay(clean_bp, replay_file, blueprint_args=dict(blueprint_args))
 
         _run_configurators(blueprint)
         _check_requirements(blueprint)
@@ -295,7 +290,7 @@ class ModuleCoordinator(Resource):
         recording_path: str,
         *,
         speed: float = 1.0,
-        cli_config_overrides: Mapping[str, Any] | None = None,
+        blueprint_args: MutableMapping[str, Any] | None = None,
     ) -> ModuleCoordinator:
         """Build with a recording replacing some module outputs."""
         recording = RecordReplay(recording_path)
@@ -330,7 +325,7 @@ class ModuleCoordinator(Resource):
             )
 
         patched = blueprint.disabled_modules(*modules_to_disable)
-        coordinator = cls.build(patched, cli_config_overrides)
+        coordinator = cls.build(patched, blueprint_args)
 
         recording.play(speed=speed)
 

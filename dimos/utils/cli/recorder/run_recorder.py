@@ -27,7 +27,7 @@ Usage::
 from __future__ import annotations
 
 from collections import deque
-from pathlib import Path
+import sys
 import time
 from typing import Any
 
@@ -234,11 +234,7 @@ class RecorderApp(App[None]):
         self._spy = GraphLCMSpy(graph_log_window=0.5)
         self._spy.start()
 
-        if self._db_path:
-            self._recorder = RecordReplay(self._db_path)
-        else:
-            self._recorder = RecordReplay()
-
+        self._recorder = RecordReplay(self._db_path)
         self.title = f"recorder — {self._recorder.path}"
         self.set_interval(0.5, self._refresh)
 
@@ -390,7 +386,7 @@ class RecorderApp(App[None]):
     def _refresh(self) -> None:
         if self._table is None:
             return
-        rec = self._recorder
+        assert self._recorder is not None
         spy = self._spy
 
         # ---- Build unified row list: live topics + recorded-only streams ----
@@ -405,7 +401,7 @@ class RecorderApp(App[None]):
                 rows[sname] = (channel, spy_topic)
 
         # Add streams that exist in the recording but are not live
-        recorded_streams = set(rec.store.list_streams()) if rec else set()
+        recorded_streams = set(self._recorder.store.list_streams())
         for sname in recorded_streams:
             if sname not in rows:
                 rows[sname] = (sname, None)
@@ -427,7 +423,7 @@ class RecorderApp(App[None]):
                 sel = Text(" [ ] ", style=theme.DIM)
 
             # Topic name — green when actively recording, bright when selected
-            if rec and rec.is_recording and sname in (rec.store.list_streams()):
+            if self._recorder.is_recording and sname in (self._recorder.store.list_streams()):
                 topic_style = f"bold {theme.BRIGHT_GREEN}"
             elif is_sel:
                 topic_style = theme.BRIGHT_WHITE
@@ -449,11 +445,8 @@ class RecorderApp(App[None]):
 
             # Recorded count
             if sname in recorded_streams:
-                try:
-                    count = rec.stream(sname).count()
-                    rec_text = Text(str(count), style=theme.YELLOW)
-                except Exception:
-                    rec_text = Text("—", style=theme.DIM)
+                count = self._recorder.store.stream(sname).count()
+                rec_text = Text(str(count), style=theme.YELLOW)
             else:
                 rec_text = Text("", style=theme.DIM)
 
@@ -484,8 +477,8 @@ class RecorderApp(App[None]):
             self._table.move_cursor(row=row)
 
         # ---- Timeline ----
-        duration = rec.duration if rec else 0.0
-        position = rec.position if rec else 0.0
+        duration = self._recorder.duration
+        position = self._recorder.position
 
         timeline = Text()
         timeline.append("  ")
@@ -513,11 +506,11 @@ class RecorderApp(App[None]):
 
         # ---- Status bar ----
         status = Text()
-        if rec and rec.is_recording:
+        if self._recorder.is_recording:
             status.append(" ● REC ", style=f"bold on {theme.RED}")
-        elif rec and rec.is_paused:
+        elif self._recorder.is_paused:
             status.append(" ❚❚ PAUSED ", style=theme.YELLOW)
-        elif rec and rec.is_playing:
+        elif self._recorder.is_playing:
             status.append(" ▶ PLAYING ", style=theme.BRIGHT_GREEN)
         else:
             status.append(" ■ STOPPED ", style=theme.DIM)
@@ -531,7 +524,7 @@ class RecorderApp(App[None]):
             status.append(f"  {len(recorded_streams)} recorded", style=theme.YELLOW)
 
         # Contextual hint
-        if not (rec and (rec.is_recording or rec.is_playing)):
+        if not (self._recorder.is_recording or self._recorder.is_playing):
             if n_live > 0 and n_sel == 0:
                 status.append("  SPACE select, A all, R rec", style=theme.DIM)
             elif n_sel > 0:
@@ -540,23 +533,20 @@ class RecorderApp(App[None]):
         self.query_one("#status-left", Static).update(status)
 
         rhs = Text()
-        if rec:
-            rhs.append(f"{rec.path} ", style=theme.DIM)
+        rhs.append(f"{self._recorder.path} ", style=theme.DIM)
         self.query_one("#status-right", Static).update(rhs)
 
 
 def main() -> None:
-    import sys
-
-    db_path: Path | None = None
+    db_path: str | None = None
     autoplay = False
 
     args = sys.argv[1:]
     if args and args[0] == "play" and len(args) > 1:
-        db_path = Path(args[1])
+        db_path = args[1]
         autoplay = True
     elif args and not args[0].startswith("-"):
-        db_path = Path(args[0])
+        db_path = args[0]
 
     RecorderApp(db_path=db_path, autoplay=autoplay).run()
 
