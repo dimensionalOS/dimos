@@ -84,18 +84,17 @@ class TestZenohPubSubBase:
     def test_multiple_subscribers(self, pubsub) -> None:
         received_a: list[bytes] = []
         received_b: list[bytes] = []
+        countdown = threading.Barrier(2, action=lambda: event.set())
         event = threading.Event()
         topic = Topic("dimos/test/multi")
 
         def callback_a(msg: bytes, t: Topic) -> None:
             received_a.append(msg)
-            if received_a and received_b:
-                event.set()
+            countdown.wait()
 
         def callback_b(msg: bytes, t: Topic) -> None:
             received_b.append(msg)
-            if received_a and received_b:
-                event.set()
+            countdown.wait()
 
         pubsub.subscribe(topic, callback_a)
         pubsub.subscribe(topic, callback_b)
