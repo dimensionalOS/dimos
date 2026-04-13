@@ -41,7 +41,12 @@ def big_office() -> OccupancyGrid:
 
 @pytest.mark.slow
 @pytest.mark.parametrize(
-    "router_name, saturation", [("random", 0.20), ("coverage", 0.30), ("frontier", 0.20)]
+    "router_name, saturation",
+    [
+        ("random", 0.20),
+        pytest.param("coverage", 0.30, marks=pytest.mark.macos_bug),
+        ("frontier", 0.20),
+    ],
 )
 def test_patrolling_coverage(router_name, saturation, big_office) -> None:
     start = (-1.03, -13.48)
