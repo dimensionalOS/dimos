@@ -58,7 +58,7 @@ class ZenohService(Service):
                 if self.config.listen:
                     config.insert_json5("listen/endpoints", json.dumps(self.config.listen))
                 _sessions[key] = zenoh.open(config)
-                logger.info(f"Zenoh session opened in {self.config.mode} mode")
+                logger.debug(f"Zenoh session opened in {self.config.mode} mode")
         super().start()
 
     def stop(self) -> None:
