@@ -189,8 +189,12 @@ def _default_pubsubs(config: Any = None) -> list[SubscribeAllCapable[Any, Any]]:
 class Config(ModuleConfig):
     """Configuration for RerunBridgeModule.
 
-    Pubsub backend is resolved lazily at start() from global_config.transport.
+    The pubsubs field is accepted for backwards compatibility (existing blueprints
+    pass it), but ignored at start() — the actual pubsub backend is resolved
+    lazily from global_config.transport.
     """
+
+    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
 
     visual_override: dict[Glob | str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
