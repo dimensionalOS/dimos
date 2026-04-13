@@ -29,6 +29,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import ZENOH_AVAILABLE, LCMTransport, pLCMTransport
+from dimos.protocol.pubsub.impl.test_zenohpubsub import wait_for_subscribers
 from dimos.msgs.sensor_msgs.Image import Image
 
 
@@ -192,7 +193,7 @@ class TestZenohTransportWrapper:
             event.set()
 
         t.subscribe(cb)
-        time.sleep(0.05)
+        wait_for_subscribers()
 
         import numpy as np
 
@@ -220,7 +221,7 @@ class TestZenohTransportWrapper:
             event.set()
 
         t.subscribe(cb)
-        time.sleep(0.05)
+        wait_for_subscribers()
 
         t.broadcast(None, {"key": "value"})
 
