@@ -387,7 +387,6 @@ if ZENOH_AVAILABLE:
 
         def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
             super().__init__(topic)
-            self._zenoh_topic = ZenohTopic(topic)
             self.zenoh = PickleZenoh(**kwargs)
             self._start_lock = threading.RLock()
 
@@ -410,7 +409,7 @@ if ZENOH_AVAILABLE:
             with self._start_lock:
                 if not self._started:
                     self.start()
-                self.zenoh.publish(self._zenoh_topic, msg)
+                self.zenoh.publish(ZenohTopic(self.topic), msg)
 
         def subscribe(
             self, callback: Callable[[T], None], selfstream: Stream[T] | None = None
@@ -418,4 +417,4 @@ if ZENOH_AVAILABLE:
             with self._start_lock:
                 if not self._started:
                     self.start()
-                return self.zenoh.subscribe(self._zenoh_topic, lambda msg, topic: callback(msg))
+                return self.zenoh.subscribe(ZenohTopic(self.topic), lambda msg, topic: callback(msg))

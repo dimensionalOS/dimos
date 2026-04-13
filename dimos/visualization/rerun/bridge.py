@@ -187,9 +187,10 @@ def _default_pubsubs(config: Any = None) -> list[SubscribeAllCapable[Any, Any]]:
 
 
 class Config(ModuleConfig):
-    """Configuration for RerunBridgeModule."""
+    """Configuration for RerunBridgeModule.
 
-    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
+    Pubsub backend is resolved lazily at start() from global_config.transport.
+    """
 
     visual_override: dict[Glob | str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
@@ -467,9 +468,6 @@ def run_bridge(
     bridge = RerunBridgeModule(
         viewer_mode=viewer_mode,
         memory_limit=memory_limit,
-        # any pubsub that supports subscribe_all and topic that supports str(topic)
-        # is acceptable here
-        pubsubs=[LCM()],
     )
 
     bridge.start()
