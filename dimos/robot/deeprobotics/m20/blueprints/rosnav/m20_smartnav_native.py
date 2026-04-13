@@ -51,7 +51,7 @@ m20_smartnav_native = (
     autoconnect(
         m20_connection(
             ip="10.21.31.103",
-            enable_ros=True,  # falls back to UDP velocity (no rclpy on NOS)
+            enable_ros=False,  # use DDS velocity controller (TCP bridge to AOS)
             enable_lidar=False,  # lidar comes from DrddsLidarBridge
             lidar_height=M20_LIDAR_HEIGHT,
         ),

@@ -15,33 +15,24 @@
 
 """Velocity controller for the Deep Robotics M20 quadruped.
 
-Converts dimos Twist messages to /NAV_CMD DDS messages via the drdds library
-and publishes at 10 Hz (per M20 SDK recommendation). Includes a safety
-watchdog that zeros velocities when no command arrives within the timeout.
+Sends velocity commands to /NAV_CMD via a TCP bridge on AOS (port 9740).
+The bridge (`nav_cmd_rclpy_bridge.py`) publishes to /NAV_CMD via rclpy,
+which is the only proven path that basic_server accepts.
 
-/NAV_CMD message structure (drdds/msg/NavCmd):
-    MetaType header|meta     (Foxy uses 'header', Humble uses 'meta')
-        uint64 frame_id
-        Timestamp timestamp
-            int32 sec
-            uint32 nsec
-    NavCmdValue data
-        float32 x_vel        (forward/backward, m/s, +forward)
-        float32 y_vel        (left/right, m/s, +left)
-        float32 yaw_vel      (yaw rate, rad/s, +ccw)
+Publishes at 10 Hz (per M20 SDK recommendation). Includes a safety
+watchdog that zeros velocities when no command arrives within the timeout.
 
 Prerequisites:
     - Robot must be in navigation mode with Agile gait (0x3002)
     - basic_server service must be running on AOS
+    - nav_cmd_rclpy_bridge.py must be running on AOS (port 9740)
     - Built-in planner (handler) should be stopped to avoid conflicts
-
-The drdds package is installed into the NOS host venv by deploy.sh setup
-(extracted from the nav container). When running off-robot the controller
-operates in log-only mode.
 """
 
 from __future__ import annotations
 
+import socket
+import struct
 import threading
 import time
 from dataclasses import dataclass
@@ -52,23 +43,9 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 # ---------------------------------------------------------------------------
-# Conditional import of nav_cmd_pub — pybind11 module compiled on NOS against
-# the host's libdrdds.so (FastDDS 2.14).  Bypasses rclpy entirely, avoiding
-# the glibc 2.32 incompatibility between Ubuntu 22.04 (Humble) and 20.04 (NOS).
-# Built by: dimos/robot/deeprobotics/m20/docker/drdds_bridge/build_nav_cmd_pub.sh
-# ---------------------------------------------------------------------------
-NAV_CMD_PUB_AVAILABLE = False
-
-try:
-    import nav_cmd_pub  # type: ignore[import-untyped]
-
-    NAV_CMD_PUB_AVAILABLE = True
-except ImportError:
-    pass
-
-# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+NAV_CMD_BRIDGE_PORT = 9740  # TCP port on AOS for nav_cmd_rclpy_bridge
 MAX_LINEAR_VEL = 1.0  # m/s
 MAX_YAW_RATE = 1.5  # rad/s
 SEND_HZ = 10  # M20 SDK recommends 10 Hz for /NAV_CMD
@@ -105,16 +82,22 @@ class NavCmd:
 
 
 class M20VelocityController:
-    """Publishes velocity commands to /NAV_CMD at 10 Hz.
+    """Publishes velocity commands to /NAV_CMD at 10 Hz via TCP bridge.
+
+    Connects to nav_cmd_rclpy_bridge on AOS which publishes to /NAV_CMD
+    via rclpy. Falls back to log-only mode if the bridge is unreachable.
 
     Parameters
     ----------
+    aos_host : str
+        AOS IP address for the TCP bridge connection.
     test_mode : bool
-        If True, log commands instead of publishing over DDS.
+        If True, log commands instead of publishing.
     """
 
-    def __init__(self, *, test_mode: bool = False) -> None:
+    def __init__(self, *, aos_host: str = "10.21.31.103", test_mode: bool = False) -> None:
         self._test_mode = test_mode
+        self._aos_host = aos_host
         self._lock = threading.Lock()
         self._current_cmd = NavCmd.zero()
         self._last_cmd_time = time.monotonic()
@@ -124,8 +107,8 @@ class M20VelocityController:
         self._packet_count = 0
         self._timeout_active = False
 
-        # DDS publisher handle — set up on start()
-        self._dds_publisher: object | None = None
+        # TCP socket to AOS bridge — set up on start()
+        self._socket: socket.socket | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -150,8 +133,8 @@ class M20VelocityController:
         self._watchdog_thread.start()
 
         logger.info(
-            "M20VelocityController started (nav_cmd_pub=%s, test=%s)",
-            NAV_CMD_PUB_AVAILABLE,
+            "M20VelocityController started (bridge=%s, test=%s)",
+            self._socket is not None,
             self._test_mode,
         )
 
@@ -171,12 +154,12 @@ class M20VelocityController:
         if self._watchdog_thread:
             self._watchdog_thread.join(timeout=0.5)
 
-        if self._dds_publisher is not None:
+        if self._socket is not None:
             try:
-                self._dds_publisher.shutdown()
+                self._socket.close()
             except Exception:
                 pass
-        self._dds_publisher = None
+        self._socket = None
         logger.info("M20VelocityController stopped")
 
     # ------------------------------------------------------------------
@@ -196,36 +179,30 @@ class M20VelocityController:
     # ------------------------------------------------------------------
 
     def _init_publisher(self) -> None:
-        """Set up the DDS publisher for /NAV_CMD.
-
-        Uses the nav_cmd_pub pybind11 module (compiled on NOS against the
-        host's libdrdds.so).  No rclpy dependency — avoids the glibc 2.32
-        incompatibility between Humble (Ubuntu 22.04) and the NOS host
-        (Ubuntu 20.04).
-        """
+        """Connect to the TCP bridge on AOS for /NAV_CMD publishing."""
         if self._test_mode:
-            logger.info("[TEST] M20VelocityController in test mode — no DDS publishing")
-            return
-
-        if not NAV_CMD_PUB_AVAILABLE:
-            logger.warning(
-                "nav_cmd_pub not available — /NAV_CMD will be logged only. "
-                "Run 'build_nav_cmd_pub.sh' on NOS to compile the module."
-            )
+            logger.info("[TEST] M20VelocityController in test mode — no publishing")
             return
 
         try:
-            self._dds_publisher = nav_cmd_pub.NavCmdPublisher("/NAV_CMD", 0)
-            logger.info("DDS publisher created via native drdds for /NAV_CMD")
+            self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._socket.settimeout(5.0)
+            self._socket.connect((self._aos_host, NAV_CMD_BRIDGE_PORT))
+            self._socket.settimeout(None)
+            logger.info(
+                "Connected to nav_cmd_bridge at %s:%d for /NAV_CMD",
+                self._aos_host, NAV_CMD_BRIDGE_PORT,
+            )
         except Exception as exc:
             logger.warning(
-                "Failed to create native /NAV_CMD publisher: %s — "
+                "Failed to connect to nav_cmd_bridge at %s:%d: %s — "
                 "velocity commands will be logged only.",
-                exc,
+                self._aos_host, NAV_CMD_BRIDGE_PORT, exc,
             )
+            self._socket = None
 
     def _publish_once(self, cmd: NavCmd) -> None:
-        """Publish a single NavCmd to /NAV_CMD."""
+        """Send a velocity command to the AOS bridge."""
         if self._test_mode:
             if self._packet_count % SEND_HZ == 0:
                 logger.info(
@@ -237,14 +214,28 @@ class M20VelocityController:
                 )
             return
 
-        if self._dds_publisher is None:
+        if self._socket is None:
             return
 
         try:
-            self._dds_publisher.publish(cmd.x_vel, cmd.y_vel, cmd.yaw_vel)
+            self._socket.sendall(struct.pack("fff", cmd.x_vel, cmd.y_vel, cmd.yaw_vel))
         except Exception as exc:
             if self._packet_count % SEND_HZ == 0:
-                logger.error("Failed to publish /NAV_CMD: %s", exc)
+                logger.error("Failed to send /NAV_CMD via bridge: %s", exc)
+            # Try to reconnect
+            try:
+                self._socket.close()
+            except Exception:
+                pass
+            self._socket = None
+            try:
+                self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self._socket.settimeout(5.0)
+                self._socket.connect((self._aos_host, NAV_CMD_BRIDGE_PORT))
+                self._socket.settimeout(None)
+                logger.info("Reconnected to nav_cmd_bridge")
+            except Exception:
+                self._socket = None
 
     def _send_loop(self) -> None:
         """Continuously publish the current command at 10 Hz."""
