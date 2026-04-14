@@ -31,10 +31,14 @@ import hashlib
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
-from typing import Any
+from typing import TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
+
+# Bound to `np.generic` so `NDArray[_NPDType]` is a well-formed type; every
+# dtype class we pass in (np.float64, np.int32, ...) is a subclass.
+_NPDType = TypeVar("_NPDType", bound=np.generic)
 
 from dimos.utils.logging_config import setup_logger
 
@@ -203,7 +207,13 @@ class ManipShmWriter:
             return None
         self._last_pos_cmd_seq = seq
         arr = self._array(self.shm.pos_t, MAX_JOINTS, np.float64)
-        return arr[:num_joints].copy()
+        # `.astype(np.float64)` is typed on both mypy 3.10 and 3.12 as
+        # returning ``NDArray[np.float64]`` — using it here (instead of
+        # ``.copy()`` on a slice, which mypy 3.10 loses dtype on) gives
+        # us a dtype-parameterized return without a cast.  `.astype`
+        # also always returns a fresh array, so the copy semantics are
+        # preserved.
+        return arr[:num_joints].astype(np.float64)
 
     def read_velocity_command(self, num_joints: int) -> NDArray[np.float64] | None:
         seq = self._get_seq(SEQ_VELOCITY_CMD)
@@ -211,7 +221,7 @@ class ManipShmWriter:
             return None
         self._last_vel_cmd_seq = seq
         arr = self._array(self.shm.vel_t, MAX_JOINTS, np.float64)
-        return arr[:num_joints].copy()
+        return arr[:num_joints].astype(np.float64)
 
     def read_gripper_command(self) -> float | None:
         seq = self._get_seq(SEQ_GRIPPER_CMD)
@@ -250,7 +260,7 @@ class ManipShmWriter:
             except OSError as exc:
                 logger.warning("SHM unlink failed", name=shm.name, error=str(exc))
 
-    def _array(self, buf: SharedMemory, n: int, dtype: Any) -> NDArray[Any]:
+    def _array(self, buf: SharedMemory, n: int, dtype: type[_NPDType]) -> NDArray[_NPDType]:
         return np.ndarray((n,), dtype=dtype, buffer=buf.buf)
 
     def _control(self) -> NDArray[np.int32]:

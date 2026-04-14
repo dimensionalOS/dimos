@@ -471,7 +471,11 @@ class Image(Timestamped):
         channels = 1 if self.data.ndim == 2 else self.data.shape[2]
         msg.step = self.width * self.dtype.itemsize * channels
 
-        view = memoryview(np.ascontiguousarray(self.data)).cast("B")
+        # Use ``.data`` (already a memoryview per numpy stubs) instead of
+        # wrapping the ndarray in ``memoryview(...)``, which mypy 3.10
+        # rejects because the bundled numpy stubs don't advertise the
+        # ``__buffer__`` protocol.  Runtime is identical.
+        view = np.ascontiguousarray(self.data).data.cast("B")
         msg.data_length = len(view)
         msg.data = view
 
