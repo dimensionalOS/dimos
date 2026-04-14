@@ -311,16 +311,19 @@ class GO2Connection(Module, Camera, Pointcloud):
         )
         self._camera_info_thread.start()
 
-        self.standup()
-        time.sleep(3)
-        self.connection.balance_stand()
-        self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
+        if _os.environ.get("DIMOS_SKIP_ROBOT_INIT") != "1":
+            self.standup()
+            time.sleep(3)
+            self.connection.balance_stand()
+            self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
         # self.record("go2_bigoffice")
 
     @rpc
     def stop(self) -> None:
-        self.liedown()
+        import os as _os
+        if _os.environ.get("DIMOS_SKIP_ROBOT_INIT") != "1":
+            self.liedown()
 
         if self.connection:
             self.connection.stop()

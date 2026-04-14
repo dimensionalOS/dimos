@@ -168,6 +168,15 @@ ENABLE_SKIP_TF = True
 ENABLE_SKIP_SENSOR_PUBLISH = True
 
 
+# ------------------------------------------------------------------
+# KNOB 13: Skip robot motion init/shutdown during replay
+# ------------------------------------------------------------------
+# GO2Connection.start() calls standup/balance_stand + sleep(3).
+# During replay these are no-ops but sleep(3) delays TTFM.
+# Controlled via env var DIMOS_SKIP_ROBOT_INIT=1.
+ENABLE_SKIP_ROBOT_INIT = True
+
+
 def _build_startup_code() -> str:
     """Assemble the monkey-patch string injected via sitecustomize.py."""
     lines: list[str] = []
@@ -224,6 +233,9 @@ def apply() -> dict:
 
     if ENABLE_SKIP_SENSOR_PUBLISH:
         env["DIMOS_SKIP_SENSOR_PUBLISH"] = "1"
+
+    if ENABLE_SKIP_ROBOT_INIT:
+        env["DIMOS_SKIP_ROBOT_INIT"] = "1"
 
     startup_code = _build_startup_code()
     if startup_code:
