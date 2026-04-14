@@ -13,21 +13,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""M20 native navigation blueprint — no Docker container.
+"""M20 native navigation blueprint — no Docker, no ROS.
 
 All modules run on the NOS host via nix:
 - DrddsLidarBridge: reads drdds SHM (lidar + IMU) and publishes to LCM
 - AriseSLAM: C++ NativeModule for lidar-inertial SLAM
 - SmartNav: full planning stack (terrain analysis, local planner, path
   follower, simple planner, PGO, CmdVelMux, ClickToGoal)
-- M20Connection: camera (RTSP), velocity control (/NAV_CMD via drdds)
+- NavCmdPub: raw FastDDS publisher for /NAV_CMD (no rclpy needed)
+- M20Connection: camera (RTSP), robot state (UDP heartbeat, gait, mode)
 
 Data flow:
     drdds_recv (host) → POSIX SHM
     → DrddsLidarBridge → raw_points + imu (LCM)
     → AriseSLAM → registered_scan + odometry
     → SmartNav (TerrainAnalysis → LocalPlanner → PathFollower)
-    → CmdVelMux → cmd_vel → M20Connection → /NAV_CMD → motors
+    → CmdVelMux → cmd_vel → NavCmdPub → rt/NAV_CMD (FastDDS) → AOS motors
 """
 
 from dimos.core.blueprints import autoconnect
@@ -40,7 +41,7 @@ from dimos.robot.deeprobotics.m20.blueprints.rosnav.m20_rerun import (
     static_robot,
 )
 from dimos.robot.deeprobotics.m20.connection import m20_connection
-from dimos.robot.deeprobotics.m20.drdds_bridge.module import DrddsLidarBridge
+from dimos.robot.deeprobotics.m20.drdds_bridge.module import DrddsLidarBridge, NavCmdPub
 from dimos.visualization.vis_module import vis_module
 
 # M20 physical dimensions
@@ -51,11 +52,12 @@ m20_smartnav_native = (
     autoconnect(
         m20_connection(
             ip="10.21.31.103",
-            enable_ros=False,  # use DDS velocity controller (TCP bridge to AOS)
-            enable_camera=False,  # disable camera for faster startup
+            enable_ros=False,
+            enable_camera=False,  # TODO: re-enable once startup is fast
             enable_lidar=False,  # lidar comes from DrddsLidarBridge
             lidar_height=M20_LIDAR_HEIGHT,
         ),
+        NavCmdPub.blueprint(),
         DrddsLidarBridge.blueprint(build_command=None),
         AriseSLAM.blueprint(
             build_command=None,

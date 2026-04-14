@@ -39,7 +39,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec import perception
@@ -77,5 +78,31 @@ class DrddsLidarBridge(
     imu: Out[Imu]
 
 
+class NavCmdPubConfig(NativeModuleConfig):
+    """Config for the raw FastDDS /NAV_CMD publisher."""
+
+    cwd: str | None = "cpp"
+    executable: str = "result/bin/nav_cmd_pub"
+    build_command: str | None = None
+
+
+class NavCmdPub(NativeModule[NavCmdPubConfig]):
+    """Publishes velocity commands to /NAV_CMD via raw FastDDS.
+
+    Subscribes to cmd_vel on LCM and publishes to DDS topic rt/NAV_CMD
+    using FastDDS directly (no ROS, no drdds wrapper). Uses the ROS2
+    topic naming convention so basic_server on AOS can receive commands.
+
+    Ports:
+        cmd_vel (In[Twist]): Velocity commands from CmdVelMux.
+    """
+
+    config: NavCmdPubConfig
+    default_config = NavCmdPubConfig
+
+    cmd_vel: In[Twist]
+
+
 if TYPE_CHECKING:
     DrddsLidarBridge()
+    NavCmdPub()

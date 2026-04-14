@@ -40,4 +40,33 @@ target_link_directories(drdds_lidar_bridge PRIVATE
   ${LCM_LIBRARY_DIRS}
 )
 
-install(TARGETS drdds_lidar_bridge DESTINATION bin)
+# nav_cmd_pub: raw FastDDS publisher for /NAV_CMD (no ROS, no drdds wrapper)
+# Subscribes to cmd_vel on LCM, publishes to rt/NAV_CMD via FastDDS
+add_executable(nav_cmd_pub nav_cmd_pub.cpp)
+
+target_include_directories(nav_cmd_pub PRIVATE
+  ${dimos_lcm_SOURCE_DIR}/generated/cpp_lcm_msgs
+  ${LCM_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  /usr/local/include          # drdds IDL headers
+  /usr/local/include/dridl    # drdds message types
+)
+
+# Find all IDL msg subdirectories for includes
+file(GLOB DRIDL_MSG_DIRS "/usr/local/include/dridl/*/msg")
+target_include_directories(nav_cmd_pub PRIVATE ${DRIDL_MSG_DIRS})
+
+target_link_libraries(nav_cmd_pub PRIVATE
+  ${LCM_LIBRARIES}
+  fastrtps    # FastDDS 2.14
+  fastcdr     # CDR serialization
+  drdds       # NavCmd message implementations
+  pthread
+)
+
+target_link_directories(nav_cmd_pub PRIVATE
+  ${LCM_LIBRARY_DIRS}
+  /usr/local/lib
+)
+
+install(TARGETS drdds_lidar_bridge nav_cmd_pub DESTINATION bin)
