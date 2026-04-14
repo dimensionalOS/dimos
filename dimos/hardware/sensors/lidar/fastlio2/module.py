@@ -54,6 +54,7 @@ from dimos.hardware.sensors.lidar.livox.ports import (
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec import mapping, perception
+from dimos.utils.change_detect import Glob, PathEntry
 
 _CONFIG_DIR = Path(__file__).parent / "config"
 
@@ -64,6 +65,14 @@ class FastLio2Config(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/fastlio2_native"
     build_command: str | None = "nix build .#fastlio2_native"
+    rebuild_on_change: list[PathEntry] | None = [
+        Glob("*.cpp"),
+        Glob("*.hpp"),
+        "CMakeLists.txt",
+        "flake.nix",
+        "flake.lock",
+        "config",
+    ]
 
     # Livox SDK hardware config
     host_ip: str = "192.168.1.5"

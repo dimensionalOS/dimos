@@ -47,6 +47,7 @@ from dimos.hardware.sensors.lidar.livox.ports import (
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec import perception
+from dimos.utils.change_detect import Glob, PathEntry
 
 
 class Mid360Config(NativeModuleConfig):
@@ -55,6 +56,12 @@ class Mid360Config(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/mid360_native"
     build_command: str | None = "nix build .#mid360_native"
+    rebuild_on_change: list[PathEntry] | None = [
+        Glob("*.cpp"),
+        "CMakeLists.txt",
+        "flake.nix",
+        "flake.lock",
+    ]
 
     host_ip: str = "192.168.1.5"
     lidar_ip: str = "192.168.1.155"
