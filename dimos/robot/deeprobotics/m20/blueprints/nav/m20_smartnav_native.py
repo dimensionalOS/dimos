@@ -35,7 +35,7 @@ from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.navigation.smart_nav.main import smart_nav, smart_nav_rerun_config
 from dimos.navigation.smart_nav.modules.arise_slam.arise_slam import AriseSLAM
-from dimos.robot.deeprobotics.m20.blueprints.rosnav.m20_rerun import (
+from dimos.robot.deeprobotics.m20.blueprints.nav.m20_rerun import (
     camera_info_override,
     m20_rerun_blueprint,
     static_robot,
@@ -52,9 +52,7 @@ m20_smartnav_native = (
     autoconnect(
         m20_connection(
             ip="10.21.31.103",
-            enable_ros=False,
             enable_camera=False,  # TODO: re-enable once startup is fast
-            enable_lidar=False,  # lidar comes from DrddsLidarBridge
             lidar_height=M20_LIDAR_HEIGHT,
         ),
         NavCmdPub.blueprint(),
