@@ -311,7 +311,6 @@ dds = [
 ]
 
 zenoh = [
-    "dimos[dev]",
     "eclipse-zenoh>=1.0.0,<2.0",
 ]
 
