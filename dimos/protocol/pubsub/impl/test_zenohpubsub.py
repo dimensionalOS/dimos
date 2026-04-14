@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 
 import pytest
 
@@ -43,25 +44,30 @@ def pubsub():
     _sessions.clear()
 
 
-def wait_for_delivery() -> None:
-    """Wait for published messages to be delivered to subscribers."""
-    import time
+def _retry_until(
+    event: threading.Event,
+    action: Callable[[], None],
+    timeout: float = 2.0,
+    interval: float = 0.01,
+) -> None:
+    """Retry an action until an Event fires.
 
-    time.sleep(0.1)
-
-
-def wait_for_subscribers() -> None:
-    """Wait for Zenoh subscriber declarations to propagate.
-
-    Zenoh's Python API does not expose a "subscriber ready" signal or
-    callback. After declare_subscriber(), there is a brief window where
-    messages published to the same key expression may not be delivered.
-    This is a known limitation of the peer discovery protocol — peers
-    need time to exchange interest declarations over the network.
+    Zenoh's Python API does not expose a "subscriber ready" signal.
+    After declare_subscriber(), there is a brief window where published
+    messages may not be delivered (peers need to exchange interest
+    declarations). Instead of sleeping a fixed duration, we re-run
+    the action in a tight loop until the callback sets the event.
     """
-    import time
-
-    time.sleep(0.05)
+    deadline = threading.Event()
+    timer = threading.Timer(timeout, deadline.set)
+    timer.start()
+    try:
+        while not event.is_set() and not deadline.is_set():
+            action()
+            event.wait(interval)
+    finally:
+        timer.cancel()
+    assert event.is_set(), f"Timed out after {timeout}s waiting for event"
 
 
 class TestZenohPubSubBase:
@@ -75,17 +81,14 @@ class TestZenohPubSubBase:
             event.set()
 
         pubsub.subscribe(topic, callback)
-        wait_for_subscribers()
-        pubsub.publish(topic, b"hello zenoh")
-
-        assert event.wait(timeout=2.0), f"Timed out waiting for message (got {len(received)})"
+        _retry_until(event, lambda: pubsub.publish(topic, b"hello zenoh"))
         assert received[0] == b"hello zenoh"
 
     def test_multiple_subscribers(self, pubsub) -> None:
         received_a: list[bytes] = []
         received_b: list[bytes] = []
-        countdown = threading.Barrier(2, action=lambda: event.set())
-        event = threading.Event()
+        both_received = threading.Event()
+        countdown = threading.Barrier(2, action=both_received.set)
         topic = Topic("dimos/test/multi")
 
         def callback_a(msg: bytes, t: Topic) -> None:
@@ -98,30 +101,32 @@ class TestZenohPubSubBase:
 
         pubsub.subscribe(topic, callback_a)
         pubsub.subscribe(topic, callback_b)
-        wait_for_subscribers()
-        pubsub.publish(topic, b"broadcast")
-
-        assert event.wait(timeout=2.0), "Timed out waiting for both subscribers"
-        assert received_a == [b"broadcast"]
-        assert received_b == [b"broadcast"]
+        _retry_until(both_received, lambda: pubsub.publish(topic, b"broadcast"))
+        assert received_a[-1:] == [b"broadcast"]
+        assert received_b[-1:] == [b"broadcast"]
 
     def test_unsubscribe(self, pubsub) -> None:
         received: list[bytes] = []
+        event = threading.Event()
         topic = Topic("dimos/test/unsub")
 
         def callback(msg: bytes, t: Topic) -> None:
             received.append(msg)
+            event.set()
 
         unsub = pubsub.subscribe(topic, callback)
-        wait_for_subscribers()
-        pubsub.publish(topic, b"before")
-        wait_for_delivery()
-        unsub()
-        wait_for_subscribers()
-        pubsub.publish(topic, b"after")
-        wait_for_delivery()
-
+        _retry_until(event, lambda: pubsub.publish(topic, b"before"))
         assert received == [b"before"]
+
+        # Unsubscribe and verify no more messages arrive
+        unsub()
+        received.clear()
+        event.clear()
+        pubsub.publish(topic, b"after")
+
+        # We can't prove a negative with an event, so use a short timeout
+        assert not event.wait(timeout=0.2), "Received message after unsubscribe"
+        assert received == []
 
     def test_unsubscribe_is_idempotent(self, pubsub) -> None:
         topic = Topic("dimos/test/idempotent")
@@ -144,17 +149,15 @@ class TestZenohPubSubBase:
     def test_subscribe_all(self, pubsub) -> None:
         received: list[bytes] = []
         event = threading.Event()
+        topic = Topic("dimos/test/any/topic")
 
         def callback(msg: bytes, t: Topic) -> None:
             received.append(msg)
             event.set()
 
         pubsub.subscribe_all(callback)
-        wait_for_subscribers()
-        pubsub.publish(Topic("dimos/test/any/topic"), b"wildcard")
-
-        assert event.wait(timeout=2.0), "Timed out waiting for wildcard message"
-        assert received[0] == b"wildcard"
+        _retry_until(event, lambda: pubsub.publish(topic, b"wildcard"))
+        assert received[-1] == b"wildcard"
 
 
 class TestTopicKeyExprConversion:
