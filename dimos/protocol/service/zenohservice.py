@@ -23,6 +23,8 @@ from typing import Any
 import zenoh
 
 from dimos.protocol.service.spec import BaseConfig, Service
+
+zenoh.init_log_from_env_or("warn")
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
