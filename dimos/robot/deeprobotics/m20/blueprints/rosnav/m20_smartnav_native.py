@@ -52,6 +52,7 @@ m20_smartnav_native = (
         m20_connection(
             ip="10.21.31.103",
             enable_ros=False,  # use DDS velocity controller (TCP bridge to AOS)
+            enable_camera=False,  # disable camera for faster startup
             enable_lidar=False,  # lidar comes from DrddsLidarBridge
             lidar_height=M20_LIDAR_HEIGHT,
         ),
