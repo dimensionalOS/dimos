@@ -30,8 +30,8 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import ZENOH_AVAILABLE, LCMTransport, pLCMTransport
-from dimos.protocol.pubsub.impl.test_zenohpubsub import wait_for_subscribers
 from dimos.msgs.sensor_msgs.Image import Image
+from dimos.protocol.pubsub.impl.test_zenohpubsub import _retry_until
 
 
 class TypedMsg:
@@ -179,7 +179,8 @@ class TestZenohTransportWrapper:
 
     def test_zenoh_transport_broadcast_and_subscribe(self) -> None:
         import threading
-        import time
+
+        import numpy as np
 
         from dimos.core.transport import ZenohTransport
 
@@ -194,20 +195,13 @@ class TestZenohTransportWrapper:
             event.set()
 
         t.subscribe(cb)
-        wait_for_subscribers()
-
-        import numpy as np
-
         test_img = Image(np.zeros((2, 2, 3), dtype=np.uint8))
-        t.broadcast(None, test_img)
-
-        assert event.wait(timeout=2.0), f"Timed out (got {len(received)} messages)"
+        _retry_until(event, lambda: t.broadcast(None, test_img))
         assert isinstance(received[0], Image)
         t.stop()
 
     def test_pzenoh_transport_broadcast_and_subscribe(self) -> None:
         import threading
-        import time
 
         from dimos.core.transport import pZenohTransport
 
@@ -222,11 +216,7 @@ class TestZenohTransportWrapper:
             event.set()
 
         t.subscribe(cb)
-        wait_for_subscribers()
-
-        t.broadcast(None, {"key": "value"})
-
-        assert event.wait(timeout=2.0), f"Timed out (got {len(received)} messages)"
+        _retry_until(event, lambda: t.broadcast(None, {"key": "value"}))
         assert received[0] == {"key": "value"}
         t.stop()
 
