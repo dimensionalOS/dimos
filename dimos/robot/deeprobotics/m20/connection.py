@@ -148,6 +148,7 @@ class M20Connection(Module, spec.Camera):
 
     @rpc
     def stop(self) -> None:
+        """Sit down, stop camera, and close UDP connection."""
         try:
             self._protocol.send_usage_mode(UsageMode.REGULAR)
             self._protocol.send_motion_state(MotionState.SIT)
@@ -173,9 +174,11 @@ class M20Connection(Module, spec.Camera):
         super().stop()
 
     def _on_status_report(self, report: dict) -> None:
+        """Handle incoming UDP status reports (battery, fault, motion state)."""
         logger.debug(f"M20 status: type={report.get('type')} items={report.get('items')}")
 
     def _publish_camera_info(self) -> None:
+        """Publish camera intrinsics at 1Hz while camera is running."""
         while self._camera_info_running and self._camera and self._camera._running:
             self.camera_info.publish(self._camera.camera_info.with_ts(time.time()))
             time.sleep(1.0)
@@ -184,6 +187,13 @@ class M20Connection(Module, spec.Camera):
 
     @staticmethod
     def _odom_to_tf(odom: PoseStamped, lidar_height: float = 0.0) -> list[Transform]:
+        """Convert odometry pose to TF transforms (base_link + camera frames).
+
+        Args:
+            odom: Odometry pose from AriseSLAM.
+            lidar_height: Height of lidar above ground (m). Shifts the ODOM
+                frame so that ground level ≈ z=0 in the world frame.
+        """
         if lidar_height:
             odom = PoseStamped(
                 position=Vector3(odom.position.x, odom.position.y, odom.position.z + lidar_height),
@@ -210,6 +220,7 @@ class M20Connection(Module, spec.Camera):
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
+        """Publish TF transforms from odometry pose."""
         transforms = self._odom_to_tf(msg, self._lidar_height)
         self.tf.publish(*transforms)
         if self.odom.transport:
@@ -219,16 +230,19 @@ class M20Connection(Module, spec.Camera):
 
     @rpc
     def standup(self) -> bool:
+        """Make the robot stand up."""
         self._protocol.send_motion_state(MotionState.STAND)
         return True
 
     @rpc
     def sitdown(self) -> bool:
+        """Make the robot sit down."""
         self._protocol.send_motion_state(MotionState.SIT)
         return True
 
     @rpc
     def set_gait(self, gait: int) -> bool:
+        """Switch gait mode. Standard=0x1001, HighObs=0x1002, Stairs=0x1003, Agile=0x3002."""
         self._protocol.send_gait_switch(gait)
         return True
 
