@@ -71,6 +71,12 @@ jobs:
         run: |
           uv sync --all-extras --no-extra dds --no-extra cuda --frozen
 
+      - name: Build C++ extensions
+        run: |
+          source .venv/bin/activate
+          uv pip install pybind11
+          python setup.py build_ext --inplace
+
       - name: Check disk usage
         run: |
           df -h .

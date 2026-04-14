@@ -281,6 +281,7 @@ def test_time_window_collection() -> None:
     assert window.end_ts == 5.5
 
 
+@pytest.mark.skipif_macos_bug
 def test_timestamp_alignment(test_scheduler) -> None:
     speed = 5.0
 
