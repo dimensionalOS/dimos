@@ -144,22 +144,63 @@ AOS (10.21.31.103) — stock firmware, no modifications
 └── basic_server → ctrlmcu → motors
 ```
 
-## NOS Prerequisites After Reboot
+## Deployment
 
 ```bash
-sudo ip link set lo multicast on
-sudo ip route add 224.0.0.0/4 dev lo
-sudo ip route add 10.21.33.103/32 via 10.21.31.103
-sudo mount --bind /var/opt/robot/data/nix /nix
+# Quick deploy after code changes:
+./deploy.sh sync --host m20-770-gogo && ./deploy.sh restart --host m20-770-gogo
+
+# Start viewer:
+./deploy.sh viewer --host m20-770-gogo
+
+# Full deploy after reboot:
+./deploy.sh setup --host m20-770-gogo
+./deploy.sh bridge-start --host m20-770-gogo
+./deploy.sh start --host m20-770-gogo
+./deploy.sh viewer --host m20-770-gogo
 ```
 
-## Files
+## Files (19 total)
 
-| File | Purpose |
-|------|---------|
-| `dimos/robot/deeprobotics/m20/drdds_bridge/cpp/main.cpp` | DrddsLidarBridge: SHM → LCM |
-| `dimos/robot/deeprobotics/m20/drdds_bridge/cpp/nav_cmd_pub.cpp` | NavCmdPub: LCM → FastDDS rt/NAV_CMD |
-| `dimos/robot/deeprobotics/m20/drdds_bridge/module.py` | Python NativeModule wrappers |
-| `dimos/robot/deeprobotics/m20/blueprints/rosnav/m20_smartnav_native.py` | The working blueprint |
-| `dimos/robot/deeprobotics/m20/connection.py` | Camera + robot state |
-| `dimos/robot/deeprobotics/m20/blueprints/rosnav/m20_rerun.py` | Rerun visualization config |
+```
+m20/
+├── blueprints/nav/
+│   ├── __init__.py
+│   ├── m20_rerun.py              # Rerun visualization config
+│   └── m20_smartnav_native.py    # The working blueprint
+├── config/
+│   ├── arise_slam_m20.yaml       # ARISE SLAM parameters
+│   └── local_planner_m20.yaml    # Local planner parameters
+├── docs/
+│   └── m20-official-software-development-guide.md
+├── drdds_bridge/
+│   ├── __init__.py
+│   ├── module.py                 # Python NativeModule wrappers (DrddsLidarBridge + NavCmdPub)
+│   └── cpp/
+│       ├── CMakeLists.txt
+│       ├── flake.nix             # Nix build (with kernel 5.10 workaround)
+│       ├── main.cpp              # DrddsLidarBridge: drdds SHM → LCM
+│       ├── nav_cmd_pub.cpp       # NavCmdPub: LCM cmd_vel → FastDDS rt/NAV_CMD
+│       ├── drdds_recv.cpp        # Host-side drdds SHM writer (lidar + IMU)
+│       └── include/
+│           └── shm_transport.h   # POSIX SHM ring buffer for drdds bridge
+├── __init__.py
+├── camera.py                     # RTSP camera
+├── connection.py                 # Robot state (UDP heartbeat, gait, mode)
+└── deploy.sh                     # Deployment tooling
+```
+
+## Journey Summary
+
+Started with 59 files, Docker containers, ROS2 Humble, rclpy bridges, TCP hops,
+mac_bridge, dead-reckoning odometry, and multiple velocity controllers.
+
+Ended with 19 files, zero Docker, zero ROS, pure C++ NativeModules + LCM + FastDDS.
+WASD teleop verified working end-to-end via dimos-viewer.
+
+Key discoveries along the way:
+1. Nix builds need `fchmodat2` workaround for kernel 5.10 (Rockchip RK3588)
+2. drdds SDK hardcodes SHM-only transport — can't cross machine boundaries
+3. ROS2 `rmw_fastrtps` prefixes DDS topics with `rt/` — the key to matching basic_server
+4. Raw FastDDS publisher with `rt/NAV_CMD` + `initialPeersList` to 10.21.33.103 works
+5. Host route `10.21.33.103/32 via 10.21.31.103` bridges the subnet gap for DDS discovery
