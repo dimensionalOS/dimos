@@ -219,39 +219,41 @@ class BufferConfiguratorLinux(SystemConfigurator):
 
 class BufferConfiguratorMacOS(SystemConfigurator):
     critical = False
-    MAX_POSSIBLE_RECVSPACE = 2_097_152
-    MAX_POSSIBLE_BUFFER_SIZE = 8_388_608
-    MAX_POSSIBLE_DGRAM_SIZE = 65_535
-    # these values are based on macos 26
 
-    TARGET_BUFFER_SIZE = MAX_POSSIBLE_BUFFER_SIZE
-    TARGET_RECVSPACE = MAX_POSSIBLE_RECVSPACE  # we want this to be IDEAL_RMEM_SIZE but MacOS 26 (and probably in general) doesn't support it
-    TARGET_DGRAM_SIZE = MAX_POSSIBLE_DGRAM_SIZE
+    TARGET = IDEAL_RMEM_SIZE
+
+    KEYS = (
+        "kern.ipc.maxsockbuf",
+        "net.inet.udp.recvspace",
+        "net.inet.udp.maxdgram",
+    )
 
     def __init__(self) -> None:
-        self.needs: list[tuple[str, int]] = []
+        self.needs: list[tuple[str, int, int]] = []  # (key, target, current)
 
     def check(self) -> bool:
         self.needs.clear()
-        for key, target in [
-            ("kern.ipc.maxsockbuf", self.TARGET_BUFFER_SIZE),
-            ("net.inet.udp.recvspace", self.TARGET_RECVSPACE),
-            ("net.inet.udp.maxdgram", self.TARGET_DGRAM_SIZE),
-        ]:
-            current = _read_sysctl_int(key)
-            if current is None or current < target:
-                self.needs.append((key, target))
+        for key in self.KEYS:
+            current = _read_sysctl_int(key) or 0
+            if current < self.TARGET:
+                self.needs.append((key, self.TARGET, current))
         return not self.needs
 
     def explanation(self) -> str | None:
         lines = []
-        for key, target in self.needs:
+        for key, target, _ in self.needs:
             lines.append(f"- socket buffer optimization for LCM: sudo sysctl -w {key}={target}")
         return "\n".join(lines)
 
     def fix(self) -> None:
-        for key, target in self.needs:
-            _write_sysctl_int(key, target)
+        for key, target, current in self.needs:
+            while target > current:
+                try:
+                    _write_sysctl_int(key, target)
+                except subprocess.CalledProcessError:
+                    target //= 2
+                else:
+                    break
 
 
 # specific checks: ulimit
