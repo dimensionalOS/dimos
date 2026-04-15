@@ -144,20 +144,40 @@ def _resolve_paths(paths: Sequence[PathEntry], cwd: str | Path | None = None) ->
 _HASH_CHUNK_SIZE = 1 << 20  # 1 MiB
 
 
-def _hash_files(files: list[Path]) -> str:
+def _hash_files(files: list[Path], *, max_file_size: int | None = None) -> str:
     """Compute an aggregate xxhash digest over the sorted file list.
 
     Files are streamed in 1 MiB chunks so large files don't get loaded into
-    memory all at once.
+    memory all at once.  When *max_file_size* is set, any file whose size
+    exceeds the threshold is fingerprinted by ``(size, mtime_ns)`` instead of
+    by content — O(1) regardless of file size, at the cost of missing
+    content changes that don't touch mtime (rare: in-place writes that
+    preserve timestamps, or two different files hitting the same mtime).
+    Good enough for "rebuild when a large dataset is swapped in", not good
+    enough for correctness-critical integrity checking.
+
+    The digest embeds a mode marker per file so that the same file switching
+    between content-mode and stat-mode (e.g. because it grew past the
+    threshold) produces a different aggregate digest.
     """
     h = xxhash.xxh64()
     for fpath in files:
         try:
-            # Include the path so additions/deletions/renames are detected
+            st = fpath.stat()
+            # Include the path so additions/deletions/renames are detected.
             h.update(str(fpath).encode())
-            with open(fpath, "rb") as f:
-                while chunk := f.read(_HASH_CHUNK_SIZE):
-                    h.update(chunk)
+            if max_file_size is not None and st.st_size > max_file_size:
+                # Fingerprint-only mode: stat fields, no content read.
+                h.update(b"\x00stat\x00")
+                h.update(str(st.st_size).encode())
+                h.update(b"\x00")
+                h.update(str(st.st_mtime_ns).encode())
+                h.update(b"\x00")
+            else:
+                h.update(b"\x00content\x00")
+                with open(fpath, "rb") as f:
+                    while chunk := f.read(_HASH_CHUNK_SIZE):
+                        h.update(chunk)
         except (OSError, PermissionError):
             logger.warning("Cannot read file for hashing", path=str(fpath))
     return h.hexdigest()
@@ -188,6 +208,7 @@ def hash_paths(
     cwd: str | Path | None = None,
     *,
     extra_hash: str | None = None,
+    max_file_size: int | None = None,
 ) -> str | None:
     """Return a stable content hash of *paths*, or ``None`` if nothing resolves.
 
@@ -196,6 +217,12 @@ def hash_paths(
     digest of the sorted file contents.  If *extra_hash* is provided it is
     folded into the final digest, so callers can invalidate on non-file inputs
     (e.g. a build command, a processing version string).
+
+    *max_file_size* (in bytes, default ``None``): files larger than this are
+    fingerprinted by ``(size, mtime_ns)`` instead of full content.  See
+    :func:`_hash_files` for the tradeoff — use it when sources may include
+    the occasional large blob (datasets, binaries) you don't want to stream
+    through xxhash every call.
 
     Use this directly when you want a content-addressed cache key without the
     full :func:`did_change` machinery (no cache file, no lock, no previous
@@ -210,7 +237,7 @@ def hash_paths(
     files = _resolve_paths(paths, cwd=cwd)
     if not files:
         return None
-    digest = _hash_files(files)
+    digest = _hash_files(files, max_file_size=max_file_size)
     if extra_hash:
         h = xxhash.xxh64()
         h.update(digest.encode())
@@ -238,6 +265,7 @@ def did_change(
     *,
     update: bool = True,
     extra_hash: str | None = None,
+    max_file_size: int | None = None,
 ) -> bool:
     """Check if any files/dirs matching the given paths have changed since last check.
 
@@ -283,13 +311,22 @@ def did_change(
         extra_hash: Optional extra string folded into the hash (e.g. a build
             command), so changes to it trigger a rebuild even if source files
             are unchanged.
+        max_file_size: If set, files larger than this (in bytes) are
+            fingerprinted by ``(size, mtime_ns)`` instead of having their
+            content streamed through xxhash.  Trades precision for constant-
+            time handling of large blobs — see :func:`_hash_files`.
 
     Returns ``True`` on the first call (no previous cache), and on subsequent
     calls returns ``True`` only if file contents differ from the last check.
     When *update* is ``True`` the cache is updated, so two consecutive calls
     with no changes return ``True`` then ``False``.
     """
-    current_hash = hash_paths(paths, cwd=cwd, extra_hash=extra_hash)
+    current_hash = hash_paths(
+        paths,
+        cwd=cwd,
+        extra_hash=extra_hash,
+        max_file_size=max_file_size,
+    )
 
     # If none of the monitored paths resolve to actual files (e.g. source
     # files don't exist on this branch or checkout), don't claim anything
@@ -330,12 +367,16 @@ def update_cache(
     cache_name: str,
     paths: Sequence[PathEntry],
     cwd: str | Path | None = None,
+    *,
     extra_hash: str | None = None,
+    max_file_size: int | None = None,
 ) -> None:
     """Write the current file hash to the cache without checking for changes.
 
     Call this after a successful build to record the current state so that the
     next :func:`did_change` call returns ``False`` (unless files change again).
+    Pass the same *max_file_size* you'll be passing to :func:`did_change`, or
+    the two won't agree on the hash of any large files.
 
     Example::
 
@@ -343,7 +384,12 @@ def update_cache(
             run_build()          # might fail
             update_cache("my_build", sources, extra_hash=cmd)  # only on success
     """
-    current_hash = hash_paths(paths, cwd=cwd, extra_hash=extra_hash)
+    current_hash = hash_paths(
+        paths,
+        cwd=cwd,
+        extra_hash=extra_hash,
+        max_file_size=max_file_size,
+    )
     if current_hash is None:
         return
 

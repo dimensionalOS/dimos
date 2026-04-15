@@ -172,3 +172,65 @@ def test_update_cache_after_build(src_dir: Path) -> None:
     # Simulate failed build — don't call update_cache
     # Next check still sees the change
     assert did_change("build_test", paths, update=False) is True
+
+
+def test_max_file_size_fingerprints_large_files(tmp_path: Path) -> None:
+    """Files over max_file_size use (size, mtime_ns), not content."""
+    import os
+
+    big = tmp_path / "big.bin"
+    big.write_bytes(b"a" * 2000)  # 2000 bytes
+
+    paths = [str(big)]
+    # Seed the cache with a 1000-byte threshold — big.bin is over it, so
+    # only its size+mtime are hashed.
+    assert did_change("large", paths, max_file_size=1000) is True
+    assert did_change("large", paths, max_file_size=1000) is False
+
+    # Replace the content but preserve size and mtime: should NOT be detected
+    # (this is the known precision loss of fingerprint-mode).
+    stat_before = big.stat()
+    big.write_bytes(b"b" * 2000)
+    os.utime(big, ns=(stat_before.st_atime_ns, stat_before.st_mtime_ns))
+    assert did_change("large", paths, max_file_size=1000) is False
+
+    # Change the size → detected.
+    big.write_bytes(b"b" * 2001)
+    assert did_change("large", paths, max_file_size=1000) is True
+
+
+def test_max_file_size_none_hashes_content(tmp_path: Path) -> None:
+    """Without max_file_size, content changes are always detected even if
+    mtime is preserved."""
+    import os
+
+    f = tmp_path / "src.bin"
+    f.write_bytes(b"a" * 2000)
+
+    paths = [str(f)]
+    assert did_change("content", paths) is True
+    assert did_change("content", paths) is False
+
+    # Rewrite with same size and same mtime but different content.
+    st = f.stat()
+    f.write_bytes(b"b" * 2000)
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert did_change("content", paths) is True, (
+        "content-mode should catch content changes regardless of mtime"
+    )
+
+
+def test_max_file_size_mode_switch_invalidates_cache(tmp_path: Path) -> None:
+    """A file crossing the size threshold should invalidate the cached hash
+    because the per-file mode marker (content vs stat) differs."""
+    f = tmp_path / "grows.bin"
+    f.write_bytes(b"a" * 500)  # under threshold
+
+    paths = [str(f)]
+    # First call: content-mode (file is under 1000 bytes).
+    assert did_change("grow", paths, max_file_size=1000) is True
+    assert did_change("grow", paths, max_file_size=1000) is False
+
+    # Grow past the threshold → switches to stat-mode → different digest.
+    f.write_bytes(b"a" * 1500)
+    assert did_change("grow", paths, max_file_size=1000) is True
