@@ -143,8 +143,10 @@ case "${CMD}" in
 
     start)
         echo "=== Starting smartnav ==="
+        remote_ssh "pkill -f m20_smartnav 2>/dev/null" || true
+        sleep 3
         remote_ssh "pkill -9 -f m20_smartnav 2>/dev/null; pkill -9 -f dimos-venv 2>/dev/null" || true
-        sleep 2
+        sleep 1
         remote_ssh "fuser -k 9877/tcp 2>/dev/null; fuser -k 3030/tcp 2>/dev/null; fuser -k 7779/tcp 2>/dev/null" || true
         remote_ssh "cd ${DEPLOY_DIR} && ${VENV}/bin/python -m ${SMARTNAV_MODULE} > ${SMARTNAV_LOG} 2>&1 &"
         echo "  Waiting for startup..."
@@ -156,15 +158,24 @@ case "${CMD}" in
 
     stop)
         echo "=== Stopping smartnav ==="
+        # Graceful shutdown first (sends sit-down command to robot)
+        remote_ssh "pkill -f m20_smartnav 2>/dev/null" || true
+        sleep 5
+        # Force kill if still running
         remote_ssh "pkill -9 -f m20_smartnav 2>/dev/null; pkill -9 -f dimos-venv 2>/dev/null" || true
-        sleep 2
+        sleep 1
         remote_ssh "fuser -k 9877/tcp 2>/dev/null; fuser -k 3030/tcp 2>/dev/null; fuser -k 7779/tcp 2>/dev/null" || true
         echo "=== Stopped ==="
         ;;
 
     restart)
-        "$0" stop "${@}" --host "${REMOTE_HOST}"
-        "$0" start "${@}" --host "${REMOTE_HOST}"
+        if [ -n "${REMOTE_HOST}" ]; then
+            "$0" stop --host "${REMOTE_HOST}"
+            "$0" start --host "${REMOTE_HOST}"
+        else
+            "$0" stop
+            "$0" start
+        fi
         ;;
 
     viewer)

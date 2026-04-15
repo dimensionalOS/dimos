@@ -45,7 +45,6 @@ static void signal_handler(int) { g_running = false; }
 // Latest velocity from LCM
 static std::mutex g_vel_mutex;
 static float g_vx = 0.0f, g_vy = 0.0f, g_vyaw = 0.0f;
-static std::atomic<uint64_t> g_vel_seq{0};
 
 // ---------------------------------------------------------------------------
 // DataWriter listener for match counting
@@ -75,7 +74,6 @@ public:
         g_vx = static_cast<float>(msg->linear.x);
         g_vy = static_cast<float>(msg->linear.y);
         g_vyaw = static_cast<float>(msg->angular.z);
-        g_vel_seq++;
     }
 };
 
@@ -169,7 +167,10 @@ int main(int argc, char** argv) {
         }
     });
 
-    // --- Publish loop at 10Hz ---
+    // --- Publish loop at 10Hz (M20 SDK recommended rate) ---
+    // Publishes continuously even without new cmd_vel data. This is
+    // intentional: basic_server requires periodic commands to stay in
+    // navigation mode, and zero-velocity acts as a safety keepalive.
     drdds::msg::NavCmd nav_cmd;
     uint64_t count = 0;
 

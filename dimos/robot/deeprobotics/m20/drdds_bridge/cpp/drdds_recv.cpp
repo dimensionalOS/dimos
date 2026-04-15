@@ -1,5 +1,5 @@
 // drdds_recv.cpp - Subscribes to /LIDAR/POINTS and /IMU via drdds,
-// writes to shared memory for the ROS2 publisher process.
+// writes to POSIX shared memory for DrddsLidarBridge to read.
 //
 // Links against: libdrdds.so, libfastrtps.so.2.14, libfastcdr.so.2
 // Does NOT link against ROS2 (avoids FastDDS version conflict).

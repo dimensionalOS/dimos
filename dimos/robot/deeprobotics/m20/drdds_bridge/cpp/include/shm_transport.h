@@ -1,6 +1,6 @@
 // shm_transport.h - Lock-free SPSC ring buffer over POSIX shared memory
-// Used by drdds_recv (writer) and ros2_pub (reader) to bridge point cloud data
-// without linking both FastDDS versions in one process.
+// Used by drdds_recv (writer) and DrddsLidarBridge (reader) to bridge
+// lidar + IMU data from drdds into dimos via LCM.
 
 #pragma once
 #include <sys/mman.h>

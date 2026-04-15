@@ -53,7 +53,6 @@ m20_smartnav_native = (
         m20_connection(
             ip="10.21.31.103",
             enable_camera=False,  # TODO: re-enable once startup is fast
-            lidar_height=M20_LIDAR_HEIGHT,
         ),
         NavCmdPub.blueprint(),
         DrddsLidarBridge.blueprint(build_command=None),

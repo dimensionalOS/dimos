@@ -33,10 +33,6 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 
@@ -62,18 +58,15 @@ class M20Connection(Module, spec.Camera):
     Streams:
         color_image (Out): RGB camera frames (via RTSP)
         camera_info (Out): Camera intrinsics
-        odom (Out):        Robot odometry pose (for TF publishing)
     """
 
     # Output streams
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
-    odom: Out[PoseStamped]
 
     # Internal state
     _protocol: M20Protocol
     _global_config: GlobalConfig
-    _camera_info: CameraInfo
     _camera_info_thread: Thread | None = None
     _camera_info_running: bool = False
     _latest_video_frame: Image | None = None
@@ -85,12 +78,10 @@ class M20Connection(Module, spec.Camera):
         port: int = 30000,
         enable_camera: bool = True,
         camera_stream: str = "video1",
-        lidar_height: float = 0.0,
         *args: Any,
         **kwargs: Any,
     ) -> None:
         self._global_config = global_config
-        self._lidar_height = lidar_height
 
         ip = ip if ip is not None else self._global_config.robot_ip
 
@@ -181,49 +172,6 @@ class M20Connection(Module, spec.Camera):
         while self._camera_info_running and self._camera and self._camera._running:
             self.camera_info.publish(self._camera.camera_info.with_ts(time.time()))
             time.sleep(1.0)
-
-    # --- TF publishing ---
-
-    @staticmethod
-    def _odom_to_tf(odom: PoseStamped, lidar_height: float = 0.0) -> list[Transform]:
-        """Convert odometry pose to TF transforms (base_link + camera frames).
-
-        Args:
-            odom: Odometry pose from AriseSLAM.
-            lidar_height: Height of lidar above ground (m). Shifts the ODOM
-                frame so that ground level ≈ z=0 in the world frame.
-        """
-        if lidar_height:
-            odom = PoseStamped(
-                position=Vector3(odom.position.x, odom.position.y, odom.position.z + lidar_height),
-                orientation=odom.orientation,
-                frame_id=odom.frame_id,
-                ts=odom.ts,
-            )
-        return [
-            Transform.from_pose("base_link", odom),
-            Transform(
-                translation=Vector3(0.3, 0.0, 0.1),
-                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-                frame_id="base_link",
-                child_frame_id="camera_link",
-                ts=odom.ts,
-            ),
-            Transform(
-                translation=Vector3(0.0, 0.0, 0.0),
-                rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-                frame_id="camera_link",
-                child_frame_id="camera_optical",
-                ts=odom.ts,
-            ),
-        ]
-
-    def _publish_tf(self, msg: PoseStamped) -> None:
-        """Publish TF transforms from odometry pose."""
-        transforms = self._odom_to_tf(msg, self._lidar_height)
-        self.tf.publish(*transforms)
-        if self.odom.transport:
-            self.odom.publish(msg)
 
     # --- RPC commands ---
 
