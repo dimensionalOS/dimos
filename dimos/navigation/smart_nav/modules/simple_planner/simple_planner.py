@@ -378,7 +378,13 @@ class SimplePlanner(Module):
             self._has_odom = True
 
     def _on_goal(self, msg: PointStamped) -> None:
+        # NaN sentinel = cancel navigation (e.g. teleop took over).
         if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):
+            with self._lock:
+                self._goal_x = None
+                self._goal_y = None
+                self._cached_path = None
+            print("[simple_planner] Goal cleared — idle until new goal.")
             return
         with self._lock:
             self._goal_x = float(msg.x)

@@ -99,13 +99,17 @@ class ClickToGoal(Module):
         self.goal.publish(msg)
 
     def _on_stop_movement(self, msg: Bool) -> None:
-        """Cancel navigation by setting the goal to the robot's current position."""
+        """Cancel navigation by publishing a NaN goal (sentinel for 'no goal').
+
+        Downstream planners treat NaN as "clear goal and stop planning".
+        Navigation stays idle until a new clicked_point arrives.
+        """
         if not msg.data:
             return
 
-        with self._lock:
-            rx, ry, rz = self._robot_x, self._robot_y, self._robot_z
-
-        here = PointStamped(ts=time.time(), frame_id="map", x=rx, y=ry, z=rz)
-        self.way_point.publish(here)
-        self.goal.publish(here)
+        cancel = PointStamped(
+            ts=time.time(), frame_id="map", x=float("nan"), y=float("nan"), z=float("nan")
+        )
+        self.way_point.publish(cancel)
+        self.goal.publish(cancel)
+        logger.info("Navigation cancelled — waiting for new goal")
