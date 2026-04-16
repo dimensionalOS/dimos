@@ -17,9 +17,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
-import numpy as np
 import pinocchio
 import rerun as rr
 
@@ -27,6 +25,12 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# Try to use hpp-fcl types if available (usually bundled with pinocchio)
+try:
+    import hppfcl
+except ImportError:
+    hppfcl = None
 
 
 class RobotVisualizer:
@@ -112,12 +116,6 @@ class RobotVisualizer:
 
     def _log_geometry(self, entity_path: str, geom: pinocchio.GeometryObject) -> None:
         """Log a single geometry object to Rerun."""
-        # Try to use hpp-fcl types if available (usually bundled with pinocchio)
-        try:
-            import hppfcl
-        except ImportError:
-            hppfcl = None
-
         # Convert Pinocchio's 4-float rgba (0-1) to Rerun's 4-uint8 rgba
         color = None
         if hasattr(geom, "meshColor") and geom.meshColor is not None:
@@ -129,7 +127,16 @@ class RobotVisualizer:
             half_size = geom.geometry.halfSide
             rr.log(entity_path, rr.Boxes3D(half_sizes=[half_size], colors=[color] if color else None), static=True)
         elif hppfcl and isinstance(geom.geometry, hppfcl.Sphere):
-            rr.log(entity_path, rr.Ellipsoids3D(radii=[geom.geometry.radius] * 3, colors=[color] if color else None), static=True)
+            # Using half_sizes as a list-of-vectors to log a single sphere correctly
+            radius = geom.geometry.radius
+            rr.log(
+                entity_path,
+                rr.Ellipsoids3D(
+                    half_sizes=[[radius] * 3],
+                    colors=[color] if color else None
+                ),
+                static=True
+            )
         elif hppfcl and isinstance(geom.geometry, hppfcl.Cylinder):
             # Cylinder not directly supported, skip or log debug
             logger.debug(f"Cylinder primitive not yet supported in Rerun logging for {entity_path}")
