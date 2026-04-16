@@ -460,11 +460,11 @@ name = "bitsandbytes"
 version = "0.49.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "packaging" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (python_full_version < '3.11' and sys_platform == 'linux')" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or (python_full_version >= '3.11' and sys_platform == 'linux')" },
+    { name = "packaging", marker = "(platform_machine != 'aarch64' and sys_platform != 'darwin' and sys_platform != 'win32') or sys_platform == 'linux'" },
     { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'win32'" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x') or platform_machine == 'aarch64' or platform_machine == 's390x' or sys_platform == 'darwin' or sys_platform == 'win32'" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'win32') or (python_full_version < '3.11' and sys_platform == 'linux') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 's390x' and sys_platform == 'linux') or (platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/29/71/acff7af06c818664aa87ff73e17a52c7788ad746b72aea09d3cb8e424348/bitsandbytes-0.49.2-py3-none-manylinux_2_24_aarch64.whl", hash = "sha256:2fc0830c5f7169be36e60e11f2be067c8f812dfcb829801a8703735842450750", size = 31442815, upload-time = "2026-02-16T21:26:06.783Z" },
@@ -1796,9 +1796,9 @@ name = "cupy-cuda12x"
 version = "13.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fastrlock", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "fastrlock", marker = "platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/53/2b/8064d94a6ab6b5c4e643d8535ab6af6cabe5455765540931f0ef60a0bc3b/cupy_cuda12x-13.6.0-cp310-cp310-manylinux2014_x86_64.whl", hash = "sha256:e78409ea72f5ac7d6b6f3d33d99426a94005254fa57e10617f430f9fd7c3a0a1", size = 112238589, upload-time = "2025-08-18T08:24:15.541Z" },
@@ -1852,15 +1852,15 @@ name = "dash"
 version = "4.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "flask" },
-    { name = "importlib-metadata" },
-    { name = "nest-asyncio" },
-    { name = "plotly" },
-    { name = "requests" },
-    { name = "retrying" },
-    { name = "setuptools" },
-    { name = "typing-extensions" },
-    { name = "werkzeug" },
+    { name = "flask", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "importlib-metadata", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "nest-asyncio", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "plotly", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "requests", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "retrying", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "setuptools", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "typing-extensions", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "werkzeug", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/44/da/a13ae3a6528bd51a6901461dbff4549c6009de203d6249a89b9a09ac5cfb/dash-4.1.0.tar.gz", hash = "sha256:17a92a87b0c1eacc025079a705e44e72cd4c5794629c0a2909942b611faeb595", size = 6927689, upload-time = "2026-03-23T20:39:47.578Z" }
 wheels = [
@@ -2324,9 +2324,9 @@ requires-dist = [
     { name = "open-clip-torch", marker = "extra == 'misc'", specifier = "==3.2.0" },
     { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'", specifier = ">=0.18.0" },
     { name = "open3d", marker = "(platform_machine != 'aarch64' and extra == 'docker') or (sys_platform != 'linux' and extra == 'docker')", specifier = ">=0.18.0" },
-    { name = "open3d-unofficial-arm", specifier = ">=0.19.0.post8" },
-    { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'" },
-    { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'docker'" },
+    { name = "open3d-unofficial-arm", specifier = ">=0.19.0.post9" },
+    { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux'", specifier = ">=0.19.0.post9" },
+    { name = "open3d-unofficial-arm", marker = "platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'docker'", specifier = ">=0.19.0.post9" },
     { name = "openai", marker = "extra == 'agents'" },
     { name = "openai-whisper", marker = "extra == 'agents'" },
     { name = "opencv-contrib-python", marker = "extra == 'misc'", specifier = "==4.10.0.84" },
@@ -2746,7 +2746,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -6029,10 +6029,10 @@ name = "nbformat"
 version = "5.10.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fastjsonschema" },
-    { name = "jsonschema" },
-    { name = "jupyter-core" },
-    { name = "traitlets" },
+    { name = "fastjsonschema", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "jsonschema", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "jupyter-core", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "traitlets", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6d/fd/91545e604bc3dad7dca9ed03284086039b294c6b3d75c0d2fa45f9e9caf3/nbformat-5.10.4.tar.gz", hash = "sha256:322168b14f937a5d11362988ecac2a4952d3d8e3a2cbeb2319584631226d5b3a", size = 142749, upload-time = "2024-04-04T11:20:37.371Z" }
 wheels = [
@@ -6844,10 +6844,10 @@ wheels = [
 
 [package.optional-dependencies]
 all = [
-    { name = "nvidia-libnvcomp-cu12", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
-    { name = "nvidia-nvjpeg-cu12", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
-    { name = "nvidia-nvjpeg2k-cu12", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
-    { name = "nvidia-nvtiff-cu12", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
+    { name = "nvidia-libnvcomp-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "nvidia-nvjpeg-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "nvidia-nvjpeg2k-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "nvidia-nvtiff-cu12", marker = "platform_machine != 'aarch64' and platform_machine != 's390x'" },
 ]
 
 [[package]]
@@ -7145,11 +7145,11 @@ resolution-markers = [
     "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "flatbuffers", marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
-    { name = "packaging", marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
-    { name = "protobuf", marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
-    { name = "sympy", marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
+    { name = "flatbuffers", marker = "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "packaging", marker = "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "protobuf", marker = "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "sympy", marker = "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/28/f4/c8050f3f4916ab6c75432724f0ba51c1548dc1c3d66d40c0f8a9611e370f/onnxruntime_gpu-1.24.3-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ac922633819e1cdc81c9b3a28b5e37d788805307bbaa708a01a3d7150e345625", size = 252750845, upload-time = "2026-03-05T16:35:33.604Z" },
@@ -7183,11 +7183,11 @@ resolution-markers = [
     "python_full_version == '3.11.*' and platform_machine != 'aarch64' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "flatbuffers", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
-    { name = "packaging", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
-    { name = "protobuf", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
-    { name = "sympy", marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "flatbuffers", marker = "python_full_version >= '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "packaging", marker = "python_full_version >= '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "protobuf", marker = "python_full_version >= '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "sympy", marker = "python_full_version >= '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9f/13/e080d758f2b60f71abe518c707135fb121d6a3019e0761ead89b5283ac3d/onnxruntime_gpu-1.24.4-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:c2a698659271c28220b3f56fe9b63f70eae3b3c36afa544201bf750b929a36dc", size = 252761835, upload-time = "2026-03-17T22:03:45.584Z" },
@@ -7260,25 +7260,12 @@ wheels = [
 
 [[package]]
 name = "open3d-unofficial-arm"
-version = "0.19.0.post8"
+version = "0.19.0.post9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "configargparse" },
-    { name = "dash" },
-    { name = "flask" },
-    { name = "nbformat" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "werkzeug" },
+    { name = "open3d", marker = "platform_machine != 'aarch64' or sys_platform != 'linux'" },
 ]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/e3/9e59fcc0af2ad13135258079460e0d071434784d612e63b2c35793e359be/open3d_unofficial_arm-0.19.0.post8-cp310-cp310-manylinux_2_31_aarch64.whl", hash = "sha256:2941d0995d459cf50340e837ace4951f82f2bb44fc9da7d6ef0e03b0d2fc40ad", size = 47332825, upload-time = "2026-02-13T22:07:00.227Z" },
-    { url = "https://files.pythonhosted.org/packages/0b/af/cf09c438cf393b5e93c9f9bac4ebe2be735ca14c9ce958d91f5d254364a1/open3d_unofficial_arm-0.19.0.post8-cp310-cp310-manylinux_2_35_aarch64.whl", hash = "sha256:8fd29849d36529755e9eea18b73d7150b02b128a0e6c625f7dc210073c349878", size = 48230542, upload-time = "2026-02-13T22:07:25.943Z" },
-    { url = "https://files.pythonhosted.org/packages/02/69/1088b2f8973c0f01c4892060223722b4a7d27e1b7a79d03bc85677326db3/open3d_unofficial_arm-0.19.0.post8-cp311-cp311-manylinux_2_35_aarch64.whl", hash = "sha256:d4140ec535acf8b9ed36519efd77f1717e334daf5e803f1d865f75fb9c2822f2", size = 48233478, upload-time = "2026-02-13T22:06:47.63Z" },
-    { url = "https://files.pythonhosted.org/packages/ba/c6/426bfd25c85787b4e1e09f3137b867e9fad6b1fdef36243fee97270a3481/open3d_unofficial_arm-0.19.0.post8-cp312-cp312-manylinux_2_31_aarch64.whl", hash = "sha256:fe705aec687ec930fe93155306194d27f64b65c09011a73fa72ff17915037133", size = 47305245, upload-time = "2026-02-13T22:07:12.646Z" },
-    { url = "https://files.pythonhosted.org/packages/f3/18/df59c75156fba22d65fbc13cdd931ebe0c48d1292341029e76d703f26c71/open3d_unofficial_arm-0.19.0.post8-cp312-cp312-manylinux_2_35_aarch64.whl", hash = "sha256:26d6570df3e360186ae82cba41fd8b320a709aaa1404b9b59b3fd30864e0b793", size = 48221813, upload-time = "2026-02-13T22:07:39.177Z" },
-    { url = "https://files.pythonhosted.org/packages/b9/fd/d912ba68b9fe7aa82ccc7b0a2252ef4022de8c1a4418685e8fdefc60ab1e/open3d_unofficial_arm-0.19.0.post8-cp313-cp313-manylinux_2_35_aarch64.whl", hash = "sha256:2bb8cbfdae05e87fc4c62d438a303bb7f455df66216d4774e59fdcfe642fe369", size = 48223510, upload-time = "2026-02-13T22:06:33.961Z" },
-]
+sdist = { url = "https://files.pythonhosted.org/packages/ec/f9/edcfaa213800ea278804402baa65693840bc7a323b3de8a31c54ce4e42c8/open3d_unofficial_arm-0.19.0.post9.tar.gz", hash = "sha256:ee300bd557f04750db6e47ccb6c6867c6dd6cfc04169dddeb92505da9ea739ef", size = 5327, upload-time = "2026-04-16T21:21:11.152Z" }
 
 [[package]]
 name = "openai"
@@ -12534,10 +12521,10 @@ name = "xformers"
 version = "0.0.35"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or (python_full_version < '3.11' and sys_platform != 'linux')" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64') or (python_full_version >= '3.11' and sys_platform != 'linux')" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x'" },
     { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'win32'" },
-    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64') or platform_machine == 's390x' or (platform_machine == 'aarch64' and sys_platform != 'linux') or sys_platform == 'darwin' or sys_platform == 'win32'" },
+    { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x') or (platform_machine != 'aarch64' and platform_machine != 's390x' and sys_platform == 'darwin') or (platform_machine != 'aarch64' and platform_machine != 's390x' and sys_platform == 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/de/5a/6e27734bd793adc44d0b8d294e67cfacf4ec590572c1aef51d683fc7a791/xformers-0.0.35.tar.gz", hash = "sha256:f7fc183a58e4bf0e2ae339a18fb1b1d4a37854c0f2545b4f360fef001646ab76", size = 4258182, upload-time = "2026-02-20T20:33:05.417Z" }
 wheels = [
