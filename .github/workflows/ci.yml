@@ -10,7 +10,7 @@ on:
       - '**.md'
 
 permissions:
-  contents: read
+  contents: write
   packages: read
 
 jobs:
@@ -68,3 +68,45 @@ jobs:
         if: failure()
         run: |
           df -h
+
+  perf-audit:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    timeout-minutes: 15
+    runs-on: [self-hosted, Linux]
+    container:
+      image: ghcr.io/dimensionalos/ros-dev:dev
+    
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          clean: false
+
+      - name: Fix permissions
+        run: |
+          git config --global --add safe.directory '*'
+          git clean -ffdx -e .venv
+
+      - name: Install Python dependencies
+        run: uv sync --all-extras --no-extra dds --frozen
+
+      - name: Measure Unitree Go2 Replay Performance
+        run: |
+          /entrypoint.sh bash -c "source .venv/bin/activate && ./bin/measure-perf --duration 60 --output perf.json ./.venv/bin/dimos --replay --viewer none run unitree-go2"
+
+      - name: Convert to Github Action Benchmark Format
+        run: |
+          ./bin/perf-to-github-action.py perf.json > benchmark_result.json
+
+      - name: Store and compare benchmark
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: "Unitree Go2 Replay Performance"
+          tool: 'customGeneric'
+          output-file-path: benchmark_result.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: "115%"
+          comment-on-alert: true
+          fail-on-alert: true
+          gh-pages-branch: "gh-pages"
+          benchmark-data-dir-path: "dev/benchmarks"

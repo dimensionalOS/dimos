@@ -304,6 +304,9 @@ class RerunBridgeModule(Module):
         rr.init("dimos")
 
         if self.config.viewer_mode == "native":
+            # Always open gRPC port 9876 for other processes
+            rr.serve_grpc(grpc_port=RERUN_GRPC_PORT)
+            
             try:
                 import rerun_bindings
 
@@ -325,6 +328,9 @@ class RerunBridgeModule(Module):
             rr.serve_web_viewer(connect_to=server_uri, open_browser=False)
         elif self.config.viewer_mode == "connect":
             rr.connect_grpc(self.config.connect_url)
+        elif self.config.viewer_mode == "none":
+            # Just open the port for external connections
+            rr.serve_grpc(grpc_port=RERUN_GRPC_PORT)
         # "none" - just init, no viewer (connect externally)
 
         if self.config.blueprint:

@@ -74,7 +74,7 @@ class CartesianIKTaskConfig:
     ee_joint_id: int
     priority: int = 10
     timeout: float = 0.5
-    max_joint_delta_deg: float = 15.0  # ~1500°/s at 100Hz
+    max_joint_delta_deg: float = 180.0  # Allow large initial snaps, safety still handled by adapter limits
 
 
 class CartesianIKTask(BaseControlTask):

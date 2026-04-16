@@ -52,6 +52,13 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
+try:
+    import rerun as rr
+    from dimos.visualization.rerun.robot import RobotVisualizer
+except ImportError:
+    rr = None
+    RobotVisualizer = None
+
 if TYPE_CHECKING:
     from dimos.core.rpc_client import RPCClient
 
@@ -87,6 +94,7 @@ class ManipulationModuleConfig(ModuleConfig):
     robots: list[RobotModelConfig] = Field(default_factory=list)
     planning_timeout: float = 10.0
     enable_viz: bool = False
+    enable_rerun_viz: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
     # Floor plane Z height (meters). When set, a box obstacle is added at startup
@@ -121,6 +129,8 @@ class ManipulationModule(Module):
         self._world_monitor: WorldMonitor | None = None
         self._planner: PlannerSpec | None = None
         self._kinematics: KinematicsSpec | None = None
+
+        self._robot_visualizers: dict[RobotName, RobotVisualizer] = {}
 
         # Robot registry: maps robot_name -> (world_robot_id, config, trajectory_gen)
         self._robots: RobotRegistry = {}
@@ -174,6 +184,31 @@ class ManipulationModule(Module):
             self._robots[robot_config.name] = (robot_id, robot_config, traj_gen)
 
         self._world_monitor.finalize()
+
+        if self.config.enable_rerun_viz:
+            if rr is None or RobotVisualizer is None:
+                logger.error("Rerun or RobotVisualizer not available, rerun visualization disabled")
+            else:
+                # Init rerun once
+                rr.init("dimos")
+                # ManipulationModule often runs in its own process, connect to shared viewer
+                try:
+                    rr.connect_grpc("rerun+http://127.0.0.1:9876/proxy")
+                except Exception:
+                    pass  # Might not be listening yet, standard rerun buffering will handle it
+                
+                for robot_config in self.config.robots:
+                    try:
+                        vis = RobotVisualizer(
+                            urdf_path=robot_config.model_path,
+                            entity_path=f"world/{robot_config.name}",
+                            package_paths=robot_config.package_paths,
+                            xacro_args=robot_config.xacro_args,
+                        )
+                        self._robot_visualizers[robot_config.name] = vis
+                        logger.info(f"Initialized Rerun visualization for {robot_config.name}")
+                    except Exception as e:
+                        logger.error(f"Failed to initialize Rerun visualization for {robot_config.name}: {e}")
 
         # Add floor obstacle to prevent trajectories below the table surface
         if self.config.floor_z is not None:
@@ -281,6 +316,10 @@ class ManipulationModule(Module):
 
                 # Route to specific monitor
                 self._world_monitor.on_joint_state(sub_msg, robot_id=robot_id)
+
+                # Update Rerun visualizer
+                if robot_name in self._robot_visualizers:
+                    self._robot_visualizers[robot_name].update_joints(sub_msg)
 
                 # Capture per-robot init joints on first receipt
                 if robot_name not in self._init_joints:

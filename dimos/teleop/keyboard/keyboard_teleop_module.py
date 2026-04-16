@@ -29,6 +29,7 @@ Keyboard controls:
 """
 
 import os
+from pathlib import Path
 import threading
 import time
 from typing import Any
@@ -65,7 +66,7 @@ def _clamp(value: float, min_val: float, max_val: float) -> float:
 
 
 class KeyboardTeleopConfig(ModuleConfig):
-    model_path: str = ""
+    model_path: str | Path = ""
     ee_joint_id: int = 6
     task_name: str = "cartesian_ik_arm"
 
