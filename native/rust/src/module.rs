@@ -84,7 +84,7 @@ impl<T> Output<T> {
 ///
 /// ```ignore
 /// let transport = LcmTransport::new().await?;
-/// let mut module = NativeModule::from_args(transport).await?;
+/// let (mut module, config) = NativeModule::from_stdin::<MyConfig>(transport).await?;
 ///
 /// let mut image_in = module.input("color_image", Image::decode);
 /// let cmd_out      = module.output("cmd_vel", Twist::encode);

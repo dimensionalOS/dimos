@@ -5,7 +5,7 @@ Ping publishes to data (received by pong), and Pong published to confirm (receiv
 Topics and module configs are sent through stdin to modules.
 
 Run with:
-    python dimos/native/rust/examples/native_ping_pong.py
+    python dimos/native/rust/examples/rust_ping_pong.py
 """
 
 from __future__ import annotations
