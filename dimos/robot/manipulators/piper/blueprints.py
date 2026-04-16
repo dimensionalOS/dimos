@@ -84,6 +84,7 @@ keyboard_teleop_piper = autoconnect(
             ),
         ],
         enable_viz=True,
+        enable_rerun_viz=True,
     ),
 ).transports(
     {
