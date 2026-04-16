@@ -707,6 +707,7 @@ class PointCloud2(Timestamped):
                 positions=points,
                 radii=voxel_size / 2,
                 colors=point_colors,
+                class_ids=class_ids,
             )
 
     def filter_by_height(
