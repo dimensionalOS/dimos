@@ -69,6 +69,7 @@ keyboard_teleop_xarm6 = autoconnect(
     manipulation_module(
         robots=[_make_xarm6_config(name="arm", joint_prefix="arm_", add_gripper=False)],
         enable_viz=True,
+        enable_rerun_viz=True,
     ),
 ).transports(
     {
@@ -108,6 +109,7 @@ keyboard_teleop_xarm7 = autoconnect(
     manipulation_module(
         robots=[_make_xarm7_config(name="arm", joint_prefix="arm_", add_gripper=False)],
         enable_viz=True,
+        enable_rerun_viz=True,
     ),
 ).transports(
     {

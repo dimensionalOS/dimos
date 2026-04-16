@@ -53,6 +53,13 @@ from dimos.msgs.sensor_msgs import JointState
 from dimos.msgs.trajectory_msgs import JointTrajectory
 from dimos.utils.logging_config import setup_logger
 
+try:
+    import rerun as rr
+    from dimos.visualization.rerun.robot import RobotVisualizer
+except ImportError:
+    rr = None
+    RobotVisualizer = None
+
 if TYPE_CHECKING:
     from dimos.core.rpc_client import RPCClient
 
@@ -89,6 +96,7 @@ class ManipulationModuleConfig(ModuleConfig):
     robots: list[RobotModelConfig] = field(default_factory=list)
     planning_timeout: float = 10.0
     enable_viz: bool = False
+    enable_rerun_viz: bool = False
     planner_name: str = "rrt_connect"  # "rrt_connect"
     kinematics_name: str = "jacobian"  # "jacobian" or "drake_optimization"
 
@@ -122,6 +130,8 @@ class ManipulationModule(Module):
         self._world_monitor: WorldMonitor | None = None
         self._planner: PlannerSpec | None = None
         self._kinematics: KinematicsSpec | None = None
+
+        self._robot_visualizers: dict[RobotName, RobotVisualizer] = {}
 
         # Robot registry: maps robot_name -> (world_robot_id, config, trajectory_gen)
         self._robots: RobotRegistry = {}
@@ -184,6 +194,27 @@ class ManipulationModule(Module):
             if url := self._world_monitor.get_visualization_url():
                 logger.info(f"Visualization: {url}")
 
+        if self.config.enable_rerun_viz:
+            if rr is None or RobotVisualizer is None:
+                logger.error("Rerun or RobotVisualizer not available, rerun visualization disabled")
+            else:
+                rr.init("dimos")
+                try:
+                    # Attempt to connect to a running bridge/viewer
+                    rr.connect_grpc("rerun+http://127.0.0.1:9876/proxy")
+                except Exception:
+                    pass
+
+                for robot_config in self.config.robots:
+                    vis = RobotVisualizer(
+                        urdf_path=robot_config.urdf_path,
+                        entity_path=f"world/{robot_config.name}",
+                        package_paths=robot_config.package_paths,
+                        xacro_args=robot_config.xacro_args,
+                    )
+                    self._robot_visualizers[robot_config.name] = vis
+                logger.info(f"Initialized Rerun visualization for {list(self._robot_visualizers.keys())}")
+
         self._planner = create_planner(name=self.config.planner_name)
         self._kinematics = create_kinematics(name=self.config.kinematics_name)
 
@@ -235,6 +266,10 @@ class ManipulationModule(Module):
             # extracts only its robot's joints based on joint_name_mapping.
             if self._world_monitor is not None:
                 self._world_monitor.on_joint_state(msg, robot_id=None)
+
+            # Update Rerun visualizers
+            for vis in self._robot_visualizers.values():
+                vis.update_joints(msg)
 
             # Capture initial joint positions on first callback
             if self._init_joints is None and msg.position:
