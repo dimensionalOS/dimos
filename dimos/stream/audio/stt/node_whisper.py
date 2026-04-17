@@ -65,8 +65,8 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
         self.audio_observable = None
 
         if _USE_FASTER_WHISPER:
-            fp16 = modelopts.pop("fp16", False)
-            compute_type = "float16" if fp16 else "int8"
+            compute_type = "float16" if modelopts.get("fp16", False) else "int8"
+            modelopts = {k: v for k, v in modelopts.items() if k != "fp16"}
             self.modelopts = modelopts
             self.model = WhisperModel(model, device="auto", compute_type=compute_type)
         else:
