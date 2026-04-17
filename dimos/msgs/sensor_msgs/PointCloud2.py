@@ -650,7 +650,7 @@ class PointCloud2(Timestamped):
         self,
         voxel_size: float = 0.05,
         colors: list[int] | None = None,
-        mode: str = "points",
+        mode: str = "spheres",
         size: float | None = None,
         fill_mode: str = "solid",
         **kwargs: object,
