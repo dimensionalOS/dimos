@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import numpy as np
-from scipy import ndimage
+from scipy import ndimage  # type: ignore[import-untyped]
 
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 
@@ -85,4 +85,90 @@ def overlay_occupied(base: OccupancyGrid, overlay: OccupancyGrid) -> OccupancyGr
         origin=base.origin,
         frame_id=base.frame_id,
         ts=base.ts,
+    )
+
+
+def update_confirmation_counts(
+    counts: np.ndarray, observation: OccupancyGrid, max_abs_count: int = 100
+) -> np.ndarray:
+    """Update signed per-cell confidence counts from a new observation.
+
+    Positive values mean confidence toward occupied, negative toward free.
+    Unknown cells in the observation do not change confidence.
+    """
+    if counts.shape != observation.grid.shape:
+        raise ValueError(
+            f"Counts shape must match observation: {counts.shape} vs {observation.grid.shape}"
+        )
+
+    updated = counts.astype(np.int32, copy=True)
+    occupied_mask = observation.grid >= CostValues.OCCUPIED
+    free_mask = observation.grid == CostValues.FREE
+
+    updated[occupied_mask] += 1
+    updated[free_mask] -= 1
+
+    if max_abs_count <= 0:
+        raise ValueError("max_abs_count must be positive")
+
+    np.clip(updated, -max_abs_count, max_abs_count, out=updated)
+    return updated.astype(np.int16)
+
+
+def update_structural_map(
+    structural_map: OccupancyGrid,
+    counts: np.ndarray,
+    write_threshold: int,
+    clear_threshold: int,
+    ts: float,
+) -> OccupancyGrid:
+    """Apply confidence thresholds to mutate a structural map."""
+    if structural_map.grid.shape != counts.shape:
+        raise ValueError(
+            f"Structural map shape must match counts: {structural_map.grid.shape} vs {counts.shape}"
+        )
+
+    if clear_threshold > write_threshold:
+        raise ValueError(
+            f"clear_threshold ({clear_threshold}) must be <= write_threshold ({write_threshold})"
+        )
+
+    result_grid = structural_map.grid.copy()
+    result_grid[counts >= write_threshold] = CostValues.OCCUPIED
+    result_grid[counts <= clear_threshold] = CostValues.FREE
+
+    return OccupancyGrid(
+        grid=result_grid,
+        resolution=structural_map.resolution,
+        origin=structural_map.origin,
+        frame_id=structural_map.frame_id,
+        ts=ts,
+    )
+
+
+def fuse_planning_map(
+    structural_map: OccupancyGrid, live_map: OccupancyGrid | None, ts: float
+) -> OccupancyGrid:
+    """Compose planning map from structural map plus recent live occupancy."""
+    if live_map is None:
+        return OccupancyGrid(
+            grid=structural_map.grid.copy(),
+            resolution=structural_map.resolution,
+            origin=structural_map.origin,
+            frame_id=structural_map.frame_id,
+            ts=ts,
+        )
+
+    if structural_map.grid.shape != live_map.grid.shape:
+        raise ValueError(
+            f"Grid shapes must match: structural {structural_map.grid.shape} vs live {live_map.grid.shape}"
+        )
+
+    fused = overlay_occupied(structural_map, live_map)
+    return OccupancyGrid(
+        grid=fused.grid,
+        resolution=fused.resolution,
+        origin=fused.origin,
+        frame_id=fused.frame_id,
+        ts=ts,
     )

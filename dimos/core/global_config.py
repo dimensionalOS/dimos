@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import cached_property
 import re
 from typing import Literal, TypeAlias
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from dimos.models.vl.types import VlModelName
+from dimos.mapping.occupancy.path_map import NavigationStrategy
 
-ViewerBackend: TypeAlias = Literal["rerun", "rerun-web", "rerun-connect", "foxglove", "none"]
+ViewerBackend: TypeAlias = Literal["rerun-web", "rerun-native", "foxglove"]
 
 
 def _get_all_numbers(s: str) -> list[float]:
@@ -28,16 +30,12 @@ def _get_all_numbers(s: str) -> list[float]:
 
 class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
-    robot_ips: str | None = None
-    xarm7_ip: str | None = None
-    xarm6_ip: str | None = None
-    can_port: str | None = None
     simulation: bool = False
     replay: bool = False
-    replay_dir: str = "go2_sf_office"
-    new_memory: bool = False
-    viewer: ViewerBackend = "rerun"
-    n_workers: int = 2
+    rerun_enabled: bool = True
+    rerun_server_addr: str | None = None
+    viewer_backend: ViewerBackend = "rerun-web"
+    n_dask_workers: int = 2
     memory_limit: str = "auto"
     mujoco_camera_position: str | None = None
     mujoco_room: str | None = None
@@ -49,28 +47,34 @@ class GlobalConfig(BaseSettings):
     robot_model: str | None = None
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
-    nerf_speed: float = 1.0
+    planner_strategy: NavigationStrategy = "simple"
     planner_robot_speed: float | None = None
-    mcp_port: int = 9990
-    mcp_host: str = "127.0.0.1"
-    dtop: bool = False
-    obstacle_avoidance: bool = True
-    detection_model: VlModelName = "moondream"
+    structural_write_threshold: int = 3
+    structural_clear_threshold: int = -3
+    live_map_retention_sec: float = 1.5
+    enable_structural_update: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        frozen=True,
     )
 
-    def update(self, **kwargs: object) -> None:
-        """Update config fields in place."""
-        for key, value in kwargs.items():
-            if not hasattr(self, key):
-                raise AttributeError(f"GlobalConfig has no field '{key}'")
-            setattr(self, key, value)
+    @model_validator(mode="after")
+    def validate_structural_map_config(self) -> "GlobalConfig":
+        if self.structural_write_threshold <= 0:
+            raise ValueError("structural_write_threshold must be > 0")
 
-    @property
+        if self.structural_clear_threshold >= 0:
+            raise ValueError("structural_clear_threshold must be < 0")
+
+        if self.live_map_retention_sec < 0:
+            raise ValueError("live_map_retention_sec must be >= 0")
+
+        return self
+
+    @cached_property
     def unitree_connection_type(self) -> str:
         if self.replay:
             return "replay"
@@ -78,16 +82,13 @@ class GlobalConfig(BaseSettings):
             return "mujoco"
         return "webrtc"
 
-    @property
+    @cached_property
     def mujoco_start_pos_float(self) -> tuple[float, float]:
         x, y = _get_all_numbers(self.mujoco_start_pos)
         return (x, y)
 
-    @property
+    @cached_property
     def mujoco_camera_position_float(self) -> tuple[float, ...]:
         if self.mujoco_camera_position is None:
             return (-0.906, 0.008, 1.101, 4.931, 89.749, -46.378)
         return tuple(_get_all_numbers(self.mujoco_camera_position))
-
-
-global_config = GlobalConfig()
