@@ -32,6 +32,13 @@ try:
 except ImportError:
     DDS_AVAILABLE = False
 
+try:
+    import zenoh as _zenoh  # noqa: F401
+
+    ZENOH_AVAILABLE = True
+except ImportError:
+    ZENOH_AVAILABLE = False
+
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 from dimos.protocol.pubsub.impl.shmpubsub import BytesSharedMemory, PickleSharedMemory
@@ -327,4 +334,87 @@ if DDS_AVAILABLE:
                 return self.dds.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
-class ZenohTransport(PubSubTransport[T]): ...
+if ZENOH_AVAILABLE:
+    from dimos.protocol.pubsub.impl.zenohpubsub import (
+        PickleZenoh,
+        Topic as ZenohTopic,
+        Zenoh,
+    )
+
+    class ZenohTransport(PubSubTransport[T]):
+        """Zenoh transport with LCM encoding for typed DimosMsg."""
+
+        _started: bool = False
+
+        def __init__(self, topic: str, type: type, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            super().__init__(LCMTopic(topic, type))
+            self.zenoh = Zenoh(**kwargs)
+            self._start_lock = threading.RLock()
+
+        def __reduce__(self):  # type: ignore[no-untyped-def]
+            return (ZenohTransport, (self.topic.topic, self.topic.lcm_type))
+
+        def start(self) -> None:
+            with self._start_lock:
+                if not self._started:
+                    self.zenoh.start()
+                    self._started = True
+
+        def stop(self) -> None:
+            with self._start_lock:
+                if self._started:
+                    self.zenoh.stop()
+                    self._started = False
+
+        def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+            with self._start_lock:
+                if not self._started:
+                    self.start()
+                self.zenoh.publish(self.topic, msg)
+
+        def subscribe(
+            self, callback: Callable[[T], None], selfstream: Stream[T] | None = None
+        ) -> Callable[[], None]:
+            with self._start_lock:
+                if not self._started:
+                    self.start()
+                return self.zenoh.subscribe(self.topic, lambda msg, topic: callback(msg))
+
+    class pZenohTransport(PubSubTransport[T]):
+        """Zenoh transport with pickle encoding for arbitrary Python objects."""
+
+        _started: bool = False
+
+        def __init__(self, topic: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
+            super().__init__(topic)
+            self.zenoh = PickleZenoh(**kwargs)
+            self._start_lock = threading.RLock()
+
+        def __reduce__(self):  # type: ignore[no-untyped-def]
+            return (pZenohTransport, (self.topic,))
+
+        def start(self) -> None:
+            with self._start_lock:
+                if not self._started:
+                    self.zenoh.start()
+                    self._started = True
+
+        def stop(self) -> None:
+            with self._start_lock:
+                if self._started:
+                    self.zenoh.stop()
+                    self._started = False
+
+        def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+            with self._start_lock:
+                if not self._started:
+                    self.start()
+                self.zenoh.publish(ZenohTopic(self.topic), msg)
+
+        def subscribe(
+            self, callback: Callable[[T], None], selfstream: Stream[T] | None = None
+        ) -> Callable[[], None]:
+            with self._start_lock:
+                if not self._started:
+                    self.start()
+                return self.zenoh.subscribe(ZenohTopic(self.topic), lambda msg, topic: callback(msg))

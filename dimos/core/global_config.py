@@ -53,6 +53,7 @@ class GlobalConfig(BaseSettings):
     planner_robot_speed: float | None = None
     mcp_port: int = 9990
     mcp_host: str = "127.0.0.1"
+    transport: str = "lcm"
     dtop: bool = False
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"

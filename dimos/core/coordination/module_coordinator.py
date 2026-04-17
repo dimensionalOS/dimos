@@ -484,7 +484,23 @@ def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> Pu
 
     use_pickled = getattr(stream_type, "lcm_encode", None) is None
     topic = f"/{name}" if _is_name_unique(blueprint, name) else f"/{short_id()}"
-    transport = pLCMTransport(topic) if use_pickled else LCMTransport(topic, stream_type)
+
+    if global_config.transport == "zenoh":
+        from dimos.core.transport import ZENOH_AVAILABLE, ZenohTransport, pZenohTransport
+
+        if not ZENOH_AVAILABLE:
+            raise RuntimeError(
+                "transport='zenoh' but eclipse-zenoh is not installed. "
+                "Install with: uv sync --extra zenoh"
+            )
+        zenoh_topic = f"dimos{topic}"
+        transport = (
+            pZenohTransport(zenoh_topic)
+            if use_pickled
+            else ZenohTransport(zenoh_topic, stream_type)
+        )
+    else:
+        transport = pLCMTransport(topic) if use_pickled else LCMTransport(topic, stream_type)
 
     return transport
 
@@ -554,7 +570,8 @@ def _run_configurators(blueprint: Blueprint) -> None:
     from dimos.protocol.service.system_configurator.base import configure_system
     from dimos.protocol.service.system_configurator.lcm_config import lcm_configurators
 
-    configurators = [*lcm_configurators(), *blueprint.configurator_checks]
+    lcm_checks = lcm_configurators() if global_config.transport == "lcm" else []
+    configurators = [*lcm_checks, *blueprint.configurator_checks]
 
     try:
         configure_system(configurators)
