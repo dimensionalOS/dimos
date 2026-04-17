@@ -125,9 +125,13 @@ class TwitchChat(Module):
             channel,
         )
 
-        if not token or not channel:
-            logger.warning("[TwitchChat] No token/channel — running in local-only mode")
-            return
+        missing = [name for name, val in [("token", token), ("channel", channel)] if not val]
+        if missing:
+            raise RuntimeError(
+                f"[TwitchChat] Missing required config: {', '.join(missing)}. "
+                "Set via DIMOS_TWITCH_TOKEN / TWITCH_TOKEN and DIMOS_CHANNEL_NAME / CHANNEL_NAME "
+                "env vars, or pass twitch_token= / channel_name= to TwitchChat.blueprint()."
+            )
 
         self._bot_loop = asyncio.new_event_loop()
         self._bot_thread = threading.Thread(
