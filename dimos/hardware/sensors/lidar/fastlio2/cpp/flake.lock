@@ -39,15 +39,15 @@
       "locked": {
         "lastModified": 1775524369,
         "narHash": "sha256-XyfHAHkj5jIKSCiyk83KcuvpOQSW3lQ8ha5svBBznGg=",
-        "owner": "jeff-hykin",
-        "repo": "fastlio2-pure",
+        "owner": "dimensionalOS",
+        "repo": "dimos-module-fastlio2",
         "rev": "f3bbefa6686989a874ba91d3be6ed37caa8f8904",
         "type": "github"
       },
       "original": {
-        "owner": "jeff-hykin",
+        "owner": "dimensionalOS",
         "ref": "main",
-        "repo": "fastlio2-pure",
+        "repo": "dimos-module-fastlio2",
         "type": "github"
       }
     },
