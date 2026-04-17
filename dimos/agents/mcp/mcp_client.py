@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
 import time
@@ -26,6 +27,7 @@ from langchain_core.tools import StructuredTool
 from langgraph.graph.state import CompiledStateGraph
 from reactivex.disposable import Disposable
 
+from dimos.agents.mcp import tool_stream
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.agents.utils import pretty_print_langchain_message
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
@@ -61,6 +63,7 @@ class McpClient(Module):
     _stop_event: Event
     _http_client: httpx.Client
     _seq_ids: SequentialIds
+    _tool_stream_cleanup: Callable[[], None] | None
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -77,6 +80,7 @@ class McpClient(Module):
         self._stop_event = Event()
         self._http_client = httpx.Client(timeout=120.0)
         self._seq_ids = SequentialIds()
+        self._tool_stream_cleanup = None
 
     def __reduce__(self) -> Any:
         return (self.__class__, (), {})
@@ -99,6 +103,32 @@ class McpClient(Module):
 
         result: dict[str, Any] = data.get("result")
         return result
+
+    def _mcp_tool_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        progress_token = str(uuid.uuid4())
+        return self._mcp_request(
+            "tools/call",
+            {
+                "name": name,
+                "arguments": arguments,
+                "_meta": {"progressToken": progress_token},
+            },
+        )
+
+    def _on_tool_stream_message(self, msg: dict[str, Any]) -> None:
+        method = msg.get("method")
+        params = msg.get("params") or {}
+        if method == tool_stream.NOTIFICATIONS_PROGRESS_METHOD:
+            text = params.get("message") or ""
+            tool_name = (params.get("_meta") or {}).get("tool_name") or "tool"
+        elif method == tool_stream.NOTIFICATIONS_MESSAGE_METHOD:
+            text = params.get("data") or ""
+            tool_name = params.get("logger") or "tool"
+        else:
+            return
+        if not text:
+            return
+        self._message_queue.put(HumanMessage(content=f"[tool:{tool_name}] {text}"))
 
     def _fetch_tools(self, timeout: float = 60.0, interval: float = 1.0) -> list[StructuredTool]:
         result = self._try_fetch_tools(timeout=timeout, interval=interval)
@@ -139,7 +169,7 @@ class McpClient(Module):
         input_schema = mcp_tool.get("inputSchema", {"type": "object", "properties": {}})
 
         def call_tool(**kwargs: Any) -> str:
-            result = self._mcp_request("tools/call", {"name": name, "arguments": kwargs})
+            result = self._mcp_tool_call(name, kwargs)
             content = result.get("content", [])
             parts = [c.get("text", "") for c in content if c.get("type") == "text"]
             text = "\n".join(parts)
@@ -171,6 +201,13 @@ class McpClient(Module):
 
         self.register_disposable(Disposable(self.human_input.subscribe(_on_human_input)))
 
+        # Subscribe directly over LCM rather than through the server's GET
+        # /mcp SSE channel.  HTTP would add a startup race: the first few
+        # updates of a short-lived stream can fire before the SSE connection
+        # is established.  External clients like Claude Code still use GET
+        # /mcp, which the server fans out to from the same LCM topic.
+        self._tool_stream_cleanup = tool_stream.subscribe(self._on_tool_stream_message)
+
     @rpc
     def on_system_modules(self, _modules: list[RPCClient]) -> None:
         tools = self._fetch_tools()
@@ -192,6 +229,11 @@ class McpClient(Module):
 
     @rpc
     def stop(self) -> None:
+        # Unsubscribe first so no new tool-stream messages can arrive while
+        # the worker thread is draining and joining.
+        if self._tool_stream_cleanup is not None:
+            self._tool_stream_cleanup()
+            self._tool_stream_cleanup = None
         self._stop_event.set()
         if self._thread.is_alive():
             self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
@@ -243,7 +285,7 @@ class McpClient(Module):
                     tool_args[key] = continuation_context[context_key]
 
         try:
-            result = self._mcp_request("tools/call", {"name": tool_name, "arguments": tool_args})
+            result = self._mcp_tool_call(tool_name, tool_args)
             content = result.get("content", [])
             parts = [c.get("text", "") for c in content if c.get("type") == "text"]
             text = "\n".join(parts)

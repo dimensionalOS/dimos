@@ -290,7 +290,7 @@ from dimos.core.module import Module
 class MyModule(Module):
     def start(self):
         source = rx.interval(0.05)
-        self._disposables.add(source.subscribe(lambda x: print(f"got {x}")))
+        self.register_disposable(source.subscribe(lambda x: print(f"got {x}")))
 
 module = MyModule()
 module.start()

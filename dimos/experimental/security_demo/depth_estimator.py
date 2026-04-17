@@ -22,6 +22,7 @@ from PIL import Image as PILImage
 import torch
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 _DEPTH_MODEL_NAME = "depth-anything/Depth-Anything-V2-Small-hf"
@@ -63,7 +64,7 @@ class DepthEstimator:
         self._stop.set()
         self._event.set()
         if self._thread is not None:
-            self._thread.join(timeout=5.0)
+            self._thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
             self._thread = None
 
     def submit(self, image: Image) -> None:
