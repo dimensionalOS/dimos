@@ -405,6 +405,7 @@ def _handle_request(request: Any, state: _WorkerState) -> WorkerResponse:
             state.rpyc_server = ThreadedServer(
                 WorkerRpycService,
                 port=0,
+                hostname=global_config.listen_host,
                 protocol_config={
                     "allow_all_attrs": True,
                     "allow_public_attrs": True,

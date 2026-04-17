@@ -21,6 +21,7 @@ from rpyc.utils.server import ThreadedServer
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.coordination.rpyc_services import CoordinatorService
+from dimos.core.global_config import global_config
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -47,6 +48,7 @@ class RpycServer:
         self._server = ThreadedServer(
             bound_service,
             port=0,
+            hostname=global_config.listen_host,
             protocol_config={
                 "allow_all_attrs": True,
                 "allow_public_attrs": True,
