@@ -52,7 +52,7 @@ def _convert_camera_info(camera_info: Any) -> Any:
 
 
 def _convert_global_map(grid: Any) -> Any:
-    return grid.to_rerun(voxel_size=0.1, mode="spheres")
+    return grid.to_rerun(voxel_size=0.05, mode="spheres")
 
 
 def _convert_navigation_costmap(grid: Any) -> Any:
@@ -152,7 +152,7 @@ uintree_g1_primitive_no_nav = (
     autoconnect(
         _with_vis,
         _camera,
-        VoxelGridMapper.blueprint(voxel_size=0.1),
+        VoxelGridMapper.blueprint(voxel_size=0.05),
         CostMapper.blueprint(),
         WavefrontFrontierExplorer.blueprint(),
         # Visualization
