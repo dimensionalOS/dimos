@@ -147,7 +147,7 @@ uintree_g1_primitive_no_nav = (
     autoconnect(
         _with_vis,
         _camera,
-        VoxelGridMapper.blueprint(voxel_size=0.05),
+        VoxelGridMapper.blueprint(),
         CostMapper.blueprint(),
         WavefrontFrontierExplorer.blueprint(),
         # Visualization
