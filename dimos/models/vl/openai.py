@@ -11,9 +11,11 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
+
 class OpenAIVlModelConfig(VlModelConfig):
     model_name: str = "gpt-4o-mini"
     api_key: str | None = None
+
 
 class OpenAIVlModel(VlModel):
     config: OpenAIVlModelConfig
@@ -28,7 +30,9 @@ class OpenAIVlModel(VlModel):
 
         return OpenAI(api_key=api_key)
 
-    def query(self, image: Image | np.ndarray, query: str, response_format: dict | None = None, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
+    def query(
+        self, image: Image | np.ndarray, query: str, response_format: dict | None = None, **kwargs
+    ) -> str:  # type: ignore[no-untyped-def, type-arg]
         if isinstance(image, np.ndarray):
             import warnings
 
@@ -69,7 +73,11 @@ class OpenAIVlModel(VlModel):
         return response.choices[0].message.content  # type: ignore[no-any-return]
 
     def query_batch(
-        self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs: Any
+        self,
+        images: list[Image],
+        query: str,
+        response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> list[str]:
         """Query VLM with multiple images using a single API call."""
         if not images:
@@ -78,7 +86,9 @@ class OpenAIVlModel(VlModel):
         content: list[dict[str, Any]] = [
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"},
+                "image_url": {
+                    "url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"
+                },
             }
             for img in images
         ]
@@ -98,4 +108,3 @@ class OpenAIVlModel(VlModel):
         """Release the OpenAI client."""
         if "_client" in self.__dict__:
             del self.__dict__["_client"]
-
