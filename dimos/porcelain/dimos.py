@@ -29,7 +29,7 @@ from dimos.porcelain.module_source import ModuleSource
 from dimos.porcelain.remote_module_source import RemoteModuleSource
 from dimos.porcelain.skills_proxy import SkillsProxy
 from dimos.robot.all_blueprints import all_modules
-from dimos.robot.get_all_blueprints import get_by_name
+from dimos.robot.get_all_blueprints import class_name_to_registry_key, get_by_name
 
 
 class Dimos:
@@ -53,17 +53,21 @@ class Dimos:
 
         The first call creates the coordinator and starts the system.
         Subsequent calls add modules to the already-running system.
-        """
-        blueprint = _resolve_target(target)
 
+        On a connected Dimos, `target` is sent to the daemon: strings and
+        registered module classes take a name-based fast path, while Module
+        classes and Blueprint objects are pickled and unpickled on the daemon.
+        """
         with self._lock:
             if self._stopped:
                 raise RuntimeError("This Dimos instance has been stopped")
-            if self._source is not None and self._source.is_remote:
-                raise NotImplementedError(
-                    "run() is not supported on a connected Dimos — use the `dimos` CLI"
-                )
 
+            if self._source is not None and self._source.is_remote:
+                assert isinstance(self._source, RemoteModuleSource)
+                _run_remote(target, self._source)
+                return
+
+            blueprint = _resolve_target(target)
             if self._coordinator is None:
                 if self._config_overrides:
                     global_config.update(**self._config_overrides)
@@ -81,13 +85,16 @@ class Dimos:
                 so code changes are picked up.
         """
         with self._lock:
-            if self._source is not None and self._source.is_remote:
-                raise NotImplementedError(
-                    "restart() is not supported on a connected Dimos. Use the `dimos` CLI"
-                )
-            if self._coordinator is None:
+            if self._source is None:
                 raise RuntimeError("No modules are running")
+            if self._source.is_remote:
+                assert isinstance(self._source, RemoteModuleSource)
+                self._source.restart_module_by_class_name(
+                    module_class.__name__, reload_source=reload_source
+                )
+                return
             assert isinstance(self._source, LocalModuleSource)
+            assert self._coordinator is not None
             self._source.invalidate(module_class.__name__)
             self._coordinator.restart_module(module_class, reload_source=reload_source)
 
@@ -197,6 +204,26 @@ class Dimos:
             if self._source is not None:
                 base.extend(self._source.list_module_names())
         return base
+
+
+def _run_remote(target: str | Blueprint | type[ModuleBase], source: RemoteModuleSource) -> None:
+    if isinstance(target, str):
+        source.load_blueprint_by_name(target)
+        return
+    if inspect.isclass(target) and issubclass(target, ModuleBase):
+        key = class_name_to_registry_key(target.__name__)
+        if key in all_modules:
+            source.load_blueprint_by_name(key)
+        else:
+            source.load_blueprint_pickled(target.blueprint())
+        return
+    if isinstance(target, Blueprint):
+        source.load_blueprint_pickled(target)
+        return
+    raise TypeError(
+        f"run() expects a blueprint name (str), Blueprint, or Module class, "
+        f"got {type(target).__name__}"
+    )
 
 
 def _resolve_target(target: str | Blueprint | type[ModuleBase]) -> Blueprint:

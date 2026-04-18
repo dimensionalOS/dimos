@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pytest
 
+from dimos.agents.mcp.mcp_server import McpServer
 from dimos.core.tests.stress_test_module import StressTestModule
 from dimos.porcelain.dimos import Dimos, _resolve_target
 
@@ -140,14 +141,29 @@ def test_skills_accessible(running_app):
     assert "ping" in dir(skills)
 
 
-def test_connected_run_raises(client):
-    with pytest.raises(NotImplementedError):
-        client.run(StressTestModule)
+@pytest.mark.slow
+def test_connected_run_by_name_adds_module(running_app, client):
+    client.run("mcp-server")
+    assert "McpServer" in client._source.list_module_names()
+    assert "McpServer" in running_app._source.list_module_names()
 
 
-def test_connected_restart_raises(client):
-    with pytest.raises(NotImplementedError):
-        client.restart(StressTestModule)
+@pytest.mark.slow
+def test_connected_run_by_class_adds_module(client):
+    client.run(McpServer)
+    assert "McpServer" in client._source.list_module_names()
+
+
+@pytest.mark.slow
+def test_connected_run_by_blueprint_object(client):
+    client.run(McpServer.blueprint())
+    assert "McpServer" in client._source.list_module_names()
+
+
+@pytest.mark.slow
+def test_connected_restart_no_reload(client):
+    client.restart(StressTestModule, reload_source=False)
+    assert client.skills.ping() == "pong"
 
 
 def test_connected_repr(client):

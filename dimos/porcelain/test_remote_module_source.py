@@ -41,11 +41,21 @@ def test_connect_attribute_access(client):
     assert module._module_closed is False
 
 
-def test_connect_run_and_restart_raise(client):
-    with pytest.raises(NotImplementedError, match="connected"):
-        client.run(StressTestModule)
-    with pytest.raises(NotImplementedError, match="connected"):
-        client.restart(StressTestModule)
+@pytest.mark.slow
+def test_connect_restart_invalidates_cache(client):
+    source = client._source
+    m_before = source.get_rpyc_module("StressTestModule")
+    client.restart(StressTestModule, reload_source=False)
+    m_after = source.get_rpyc_module("StressTestModule")
+    assert m_before is not m_after
+    assert client.skills.ping() == "pong"
+
+
+@pytest.mark.slow
+def test_connect_run_by_name_adds_module(running_app, client):
+    client.run("mcp-server")
+    assert "McpServer" in client._source.list_module_names()
+    assert "McpServer" in running_app._source.list_module_names()
 
 
 def test_connect_repr_marks_remote(client):

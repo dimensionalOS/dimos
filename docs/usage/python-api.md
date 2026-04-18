@@ -71,9 +71,23 @@ app = Dimos.connect(run_id="20260306-143022-unitree-go2")
 app = Dimos.connect(host="192.168.1.50", port=18861)
 ```
 
+`run()` and `restart()` also work against a daemon:
+
+```python
+app = Dimos.connect()
+
+app.run("keyboard-teleop")       # add a module by registry name
+app.run(SomeModule)               # or by Module class
+app.restart(SomeModule)           # hot-restart it on the daemon
+```
+
+Strings and registered Module classes take a name-based fast path. Other
+Module classes and `Blueprint` objects are pickled and unpickled on the
+daemon, so their module classes must be importable there and all kwargs must
+be picklable.
+
 ## Limitations
 
-- `run()` and `restart()` are only available in local mode. On a connected instance they raise `NotImplementedError`.
 - `stop()` on a connected instance closes the RPyC connection but does not terminate the remote process. Use `dimos stop` for that.
 
 ## Restarting modules

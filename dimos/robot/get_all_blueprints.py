@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import difflib
+import re
 import sys
 from typing import NoReturn
 
@@ -22,6 +23,13 @@ from dimos.core.coordination.blueprints import Blueprint
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 
 all_names = sorted(set(all_blueprints.keys()) | set(all_modules.keys()))
+
+
+def class_name_to_registry_key(class_name: str) -> str:
+    """Convert a CamelCase class name to its kebab-case registry key."""
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", class_name)
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
+    return s.lower().replace("_", "-")
 
 
 def _raise_unknown(name: str, candidates: list[str]) -> NoReturn:

@@ -398,6 +398,18 @@ class ModuleCoordinator(Resource):
             if key[0] is not module_class and target is not module_class
         }
 
+    def restart_module_by_class_name(
+        self,
+        class_name: str,
+        *,
+        reload_source: bool = True,
+    ) -> ModuleProxyProtocol:
+        with self._modules_lock:
+            for cls in self._deployed_modules:
+                if cls.__name__ == class_name:
+                    return self._restart_module(cls, reload_source=reload_source)
+        raise ValueError(f"No deployed module with class name {class_name!r}")
+
     def restart_module(
         self,
         module_class: type[ModuleBase],

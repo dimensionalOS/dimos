@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import pickle
 from typing import TYPE_CHECKING, Any
 
 import rpyc
@@ -47,6 +48,31 @@ class CoordinatorService(rpyc.Service):  # type: ignore[misc]
     def exposed_get_module_endpoint(self, class_name: str) -> tuple[str, int, int]:
         assert self._coordinator is not None
         return self._coordinator.get_module_endpoint(class_name)
+
+    def exposed_load_blueprint_by_name(self, name: str) -> None:
+        # Avoid circular import.
+        from dimos.robot.get_all_blueprints import get_by_name
+
+        assert self._coordinator is not None
+        self._coordinator.load_blueprint(get_by_name(name))
+
+    def exposed_load_blueprint_pickled(self, data: bytes) -> None:
+        assert self._coordinator is not None
+        try:
+            blueprint = pickle.loads(data)
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to unpickle Blueprint on daemon ({type(e).__name__}: {e}). "
+                "The blueprint's module classes must be importable on the daemon "
+                "and all kwargs must be picklable."
+            ) from e
+        self._coordinator.load_blueprint(blueprint)
+
+    def exposed_restart_module_by_class_name(
+        self, class_name: str, reload_source: bool = True
+    ) -> None:
+        assert self._coordinator is not None
+        self._coordinator.restart_module_by_class_name(class_name, reload_source=reload_source)
 
 
 class WorkerRpycService(rpyc.Service):  # type: ignore[misc]
