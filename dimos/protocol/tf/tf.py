@@ -16,10 +16,12 @@
 
 from abc import abstractmethod
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import reduce
 from typing import TypeVar
 
+from dimos.core.stream import ObservableMixin
 from dimos.memory.timeseries.inmemory import InMemoryStore
 from dimos.msgs.geometry_msgs import PoseStamped, Transform
 from dimos.msgs.tf2_msgs import TFMessage
@@ -113,10 +115,19 @@ class TBuffer(InMemoryStore[Transform]):
 
 # stores multiple transform buffers
 # creates a new buffer on demand when new transform is detected
-class MultiTBuffer:
+class MultiTBuffer(ObservableMixin[Transform]):
     def __init__(self, buffer_size: float = 10.0) -> None:
         self.buffers: dict[tuple[str, str], TBuffer] = {}
         self.buffer_size = buffer_size
+        self._subscribers: list[Callable[[Transform], None]] = []
+
+    def subscribe(self, callback: Callable[[Transform], None]) -> Callable[[], None]:
+        self._subscribers.append(callback)
+
+        def unsubscribe() -> None:
+            self._subscribers.remove(callback)
+
+        return unsubscribe
 
     def receive_transform(self, *args: Transform) -> None:
         for transform in args:
@@ -124,6 +135,14 @@ class MultiTBuffer:
             if key not in self.buffers:
                 self.buffers[key] = TBuffer(self.buffer_size)
             self.buffers[key].add(transform)
+            # Snapshot subscribers so callbacks that unsubscribe themselves
+            # don't skip the next subscriber (list mutated during iteration).
+            for callback in list(self._subscribers):
+                callback(transform)
+
+    def receive_tfmessage(self, msg: TFMessage) -> None:
+        for transform in msg.transforms:
+            self.receive_transform(transform)
 
     def get_frames(self) -> set[str]:
         frames = set()
@@ -161,6 +180,85 @@ class MultiTBuffer:
             return transform.inverse() if transform else None
 
         return None
+
+    def get_parent_transform(
+        self,
+        child_frame: str,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> Transform | None:
+        latest: Transform | None = None
+
+        for (parent, child), buffer in self.buffers.items():
+            if child != child_frame:
+                continue
+
+            transform = buffer.get(
+                time_point,
+                1.0 if time_tolerance is None else time_tolerance,
+            )
+            if transform is None:
+                continue
+
+            if latest is None or transform.ts >= latest.ts:
+                latest = Transform(
+                    translation=transform.translation,
+                    rotation=transform.rotation,
+                    frame_id=parent,
+                    child_frame_id=child,
+                    ts=transform.ts,
+                )
+
+        return latest
+
+    def get_frame_chain(
+        self,
+        child_frame: str,
+        root_frame: str | None = None,
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> list[str]:
+        chain = [child_frame]
+        visited = {child_frame}
+        current_frame = child_frame
+
+        while True:
+            parent_transform = self.get_parent_transform(current_frame, time_point, time_tolerance)
+            if parent_transform is None:
+                break
+
+            parent_frame = parent_transform.frame_id
+            if parent_frame in visited:
+                break
+
+            chain.append(parent_frame)
+            if root_frame is not None and parent_frame == root_frame:
+                break
+
+            visited.add(parent_frame)
+            current_frame = parent_frame
+
+        return list(reversed(chain))
+
+    def entity_path_for_frame(
+        self,
+        child_frame: str,
+        prefix: str = "world/tf",
+        root_frame: str | None = "world",
+        time_point: float | None = None,
+        time_tolerance: float | None = None,
+    ) -> str:
+        chain = self.get_frame_chain(child_frame, root_frame, time_point, time_tolerance)
+        # When a root_frame is specified, `prefix` represents the tree root, so
+        # strip the topmost frame from the chain. It's either `root_frame` (when
+        # matched during the walk) or the tree's actual topmost frame (when the
+        # tree is rooted elsewhere). Without this, a mismatched root_frame would
+        # silently leak the real root into the path, e.g. `world/tf/map/robot`.
+        if root_frame is not None and chain:
+            chain = chain[1:]
+        if not chain:
+            return prefix
+        return "/".join([prefix, *chain])
 
     def get(self, *args, **kwargs) -> Transform | None:  # type: ignore[no-untyped-def]
         simple = self.get_transform(*args, **kwargs)

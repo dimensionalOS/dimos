@@ -325,6 +325,72 @@ class TestMultiTBuffer:
         assert latest is not None
         assert latest.translation.x == 2.0
 
+    def test_subscribe_receives_transform_updates(self) -> None:
+        ttbuffer = MultiTBuffer()
+        received: list[str] = []
+        unsubscribe = ttbuffer.subscribe(lambda transform: received.append(transform.child_frame_id))
+
+        ttbuffer.receive_transform(
+            Transform(frame_id="world", child_frame_id="robot", ts=time.time()),
+            Transform(frame_id="robot", child_frame_id="camera", ts=time.time()),
+        )
+
+        unsubscribe()
+
+        assert received == ["robot", "camera"]
+
+    def test_entity_path_for_frame_reconstructs_chain(self) -> None:
+        ttbuffer = MultiTBuffer()
+        base_time = time.time()
+
+        ttbuffer.receive_transform(
+            Transform(frame_id="world", child_frame_id="robot", ts=base_time),
+            Transform(frame_id="robot", child_frame_id="camera", ts=base_time),
+            Transform(frame_id="camera", child_frame_id="camera_optical", ts=base_time),
+        )
+
+        assert ttbuffer.get_frame_chain("camera_optical") == ["world", "robot", "camera", "camera_optical"]
+        assert ttbuffer.entity_path_for_frame("camera_optical") == "world/tf/robot/camera/camera_optical"
+
+    def test_entity_path_strips_non_world_tree_root(self) -> None:
+        # Tree rooted at "map" (not "world") — the real root must not leak
+        # into the entity path when the caller uses the default root_frame.
+        ttbuffer = MultiTBuffer()
+        base_time = time.time()
+
+        ttbuffer.receive_transform(
+            Transform(frame_id="map", child_frame_id="robot", ts=base_time),
+            Transform(frame_id="robot", child_frame_id="camera", ts=base_time),
+        )
+
+        assert ttbuffer.entity_path_for_frame("camera") == "world/tf/robot/camera"
+
+    def test_subscriber_unsubscribing_itself_does_not_skip_next(self) -> None:
+        # Regression: iterating self._subscribers directly lets an unsubscribing
+        # callback skip the next one (list mutated during iteration).
+        ttbuffer = MultiTBuffer()
+        received_a: list[str] = []
+        received_b: list[str] = []
+
+        unsub_a: list = []
+
+        def callback_a(transform: Transform) -> None:
+            received_a.append(transform.child_frame_id)
+            unsub_a[0]()  # unsubscribe self during dispatch
+
+        def callback_b(transform: Transform) -> None:
+            received_b.append(transform.child_frame_id)
+
+        unsub_a.append(ttbuffer.subscribe(callback_a))
+        ttbuffer.subscribe(callback_b)
+
+        ttbuffer.receive_transform(
+            Transform(frame_id="world", child_frame_id="robot", ts=time.time()),
+        )
+
+        assert received_a == ["robot"]
+        assert received_b == ["robot"]
+
     def test_get_transform_at_time(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()

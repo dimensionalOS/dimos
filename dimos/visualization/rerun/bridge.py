@@ -37,8 +37,10 @@ import typer
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.tf2_msgs import TFMessage
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
+from dimos.protocol.tf import MultiTBuffer
 from dimos.utils.logging_config import setup_logger
 
 # Message types with large payloads that need rate-limiting.
@@ -209,6 +211,22 @@ class RerunBridgeModule(Module):
     default_config = Config
     config: Config
 
+    def _topic_name(self, topic: Any) -> str:
+        topic_str = getattr(topic, "topic", None) or getattr(topic, "name", None) or str(topic)
+        return str(topic_str).split("#")[0]
+
+    def _is_tf_message(self, msg: Any, topic: Any) -> bool:
+        return isinstance(msg, TFMessage) or self._topic_name(topic) == "/tf"
+
+    def _log_tf_transform(self, transform: Any) -> None:
+        import rerun as rr
+
+        entity_path = self._tf_buffer.entity_path_for_frame(
+            transform.child_frame_id,
+            prefix=f"{self.config.entity_prefix}/tf",
+        )
+        rr.log(entity_path, transform.to_rerun())
+
     @lru_cache(maxsize=256)
     def _visual_override_for_entity_path(
         self, entity_path: str
@@ -259,6 +277,10 @@ class RerunBridgeModule(Module):
         """Handle incoming message - log to rerun."""
         import rerun as rr
 
+        if self._is_tf_message(msg, topic):
+            self._tf_buffer.receive_tfmessage(msg)
+            return
+
         # convert a potentially complex topic object into an str rerun entity path
         entity_path: str = self._get_entity_path(topic)
 
@@ -294,6 +316,12 @@ class RerunBridgeModule(Module):
         super().start()
 
         self._last_log: dict[str, float] = {}
+        # `_tf_buffer` is an injection point: tests (or callers) may pre-install
+        # a buffer on the instance before start() to bypass rerun side effects.
+        # If set, don't clobber it or double-subscribe.
+        if not hasattr(self, "_tf_buffer"):
+            self._tf_buffer = MultiTBuffer()
+            self._disposables.add(Disposable(self._tf_buffer.subscribe(self._log_tf_transform)))
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
 
         # Initialize and spawn Rerun viewer
