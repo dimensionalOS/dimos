@@ -135,7 +135,9 @@ class MultiTBuffer(ObservableMixin[Transform]):
             if key not in self.buffers:
                 self.buffers[key] = TBuffer(self.buffer_size)
             self.buffers[key].add(transform)
-            for callback in self._subscribers:
+            # Snapshot subscribers so callbacks that unsubscribe themselves
+            # don't skip the next subscriber (list mutated during iteration).
+            for callback in list(self._subscribers):
                 callback(transform)
 
     def receive_tfmessage(self, msg: TFMessage) -> None:
@@ -247,7 +249,12 @@ class MultiTBuffer(ObservableMixin[Transform]):
         time_tolerance: float | None = None,
     ) -> str:
         chain = self.get_frame_chain(child_frame, root_frame, time_point, time_tolerance)
-        if root_frame is not None and chain and chain[0] == root_frame:
+        # When a root_frame is specified, `prefix` represents the tree root, so
+        # strip the topmost frame from the chain. It's either `root_frame` (when
+        # matched during the walk) or the tree's actual topmost frame (when the
+        # tree is rooted elsewhere). Without this, a mismatched root_frame would
+        # silently leak the real root into the path, e.g. `world/tf/map/robot`.
+        if root_frame is not None and chain:
             chain = chain[1:]
         if not chain:
             return prefix

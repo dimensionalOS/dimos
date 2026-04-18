@@ -316,8 +316,12 @@ class RerunBridgeModule(Module):
         super().start()
 
         self._last_log: dict[str, float] = {}
-        self._tf_buffer = MultiTBuffer()
-        self._disposables.add(Disposable(self._tf_buffer.subscribe(self._log_tf_transform)))
+        # `_tf_buffer` is an injection point: tests (or callers) may pre-install
+        # a buffer on the instance before start() to bypass rerun side effects.
+        # If set, don't clobber it or double-subscribe.
+        if not hasattr(self, "_tf_buffer"):
+            self._tf_buffer = MultiTBuffer()
+            self._disposables.add(Disposable(self._tf_buffer.subscribe(self._log_tf_transform)))
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
 
         # Initialize and spawn Rerun viewer
