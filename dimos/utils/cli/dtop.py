@@ -119,6 +119,20 @@ def _fmt_io(v: float) -> str:
     return f"{v / 1048576:.0f} MB"
 
 
+def _cpu_metric(line: Text, cpu: float, stale: bool, cpu_hist: deque[float] | None = None) -> None:
+    """Append a CPU label + value + sparkline/bar to an existing Text line."""
+    dim = "#606060"
+    line.append("CPU ", style=dim if stale else _LABEL_COLOR)
+    line.append(_fmt_pct(cpu), style=dim if stale else _heat(min(cpu / 100.0, 1.0)))
+    line.append(" ")
+    if stale:
+        line.append("░" * _SPARK_WIDTH, style=dim)
+    elif cpu_hist is not None and len(cpu_hist) > 0:
+        line.append_text(_spark(cpu_hist))
+    else:
+        line.append_text(_bar(cpu, 100))
+
+
 _LINE1: list[tuple[str, str, Callable[[float], str]]] = [
     ("CPU", "cpu_percent", _fmt_pct),
     ("PSS", "pss", _fmt_mem),
@@ -191,6 +205,7 @@ class ResourceSpyApp(App[None]):
         self._latest: dict[str, Any] | None = None
         self._last_msg_time: float = 0.0
         self._cpu_history: dict[str, deque[float]] = {}
+        self._child_cpu_history: dict[int, deque[float]] = {}
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
@@ -266,6 +281,13 @@ class ResourceSpyApp(App[None]):
                 title.append(" ")
                 parts.append(Rule(title=title, style=border_style))
             parts.extend(self._make_lines(d, stale, ranges, self._cpu_history[role]))
+            for child in d.get("children", []):
+                pid = child.get("pid", 0)
+                if pid not in self._child_cpu_history:
+                    self._child_cpu_history[pid] = deque(maxlen=_SPARK_WIDTH * 2)
+                if not stale:
+                    self._child_cpu_history[pid].append(child.get("cpu_percent", 0.0))
+                parts.append(self._make_child_line(child, stale, self._child_cpu_history[pid]))
 
         # First entry title goes on the Panel itself
         first_role, first_rs, _, first_mods, first_pid = entries[0]
@@ -286,6 +308,24 @@ class ResourceSpyApp(App[None]):
         self.query_one("#panels", Static).update(panel)
 
     @staticmethod
+    def _make_child_line(
+        child: dict[str, Any], stale: bool, cpu_hist: deque[float] | None = None
+    ) -> Text:
+        dim = "#606060"
+        sep = " · "
+        sep_style = dim if stale else "#555555"
+        cpu = child.get("cpu_percent", 0.0)
+        pid = child.get("pid", "")
+        name = child.get("name", "?")
+        line = Text()
+        line.append("    ↳ ", style=sep_style)
+        line.append(f"{name}", style=dim if stale else _LABEL_COLOR)
+        line.append(f" [{pid}]", style=dim if stale else "#777777")
+        line.append(sep, style=sep_style)
+        _cpu_metric(line, cpu, stale, cpu_hist)
+        return line
+
+    @staticmethod
     def _make_lines(
         d: dict[str, Any],
         stale: bool,
@@ -304,24 +344,13 @@ class ResourceSpyApp(App[None]):
         for idx, (label, key, fmt) in enumerate(_LINE1):
             val = d.get(key, 0)
             lo, hi = ranges[key]
-            # CPU% uses absolute 0-100 scale; everything else is relative
-            if key == "cpu_percent":
-                val_style = dim if stale else _heat(min(val / 100.0, 1.0))
-            else:
-                val_style = dim if stale else _rel_style(val, lo, hi)
             if idx > 0:
                 line1.append(sep, style=sep_style)
-            line1.append(f"{label} ", style=label1_style)
-            line1.append(fmt(val), style=val_style)
-            # CPU bar right after CPU%
             if key == "cpu_percent":
-                line1.append(" ")
-                if stale:
-                    line1.append("░" * _SPARK_WIDTH, style=dim)
-                elif cpu_hist is not None and len(cpu_hist) > 0:
-                    line1.append_text(_spark(cpu_hist))
-                else:
-                    line1.append_text(_bar(val, 100))
+                _cpu_metric(line1, val, stale, cpu_hist)
+            else:
+                line1.append(f"{label} ", style=label1_style)
+                line1.append(fmt(val), style=dim if stale else _rel_style(val, lo, hi))
 
         # Line 2
         line2 = Text()
