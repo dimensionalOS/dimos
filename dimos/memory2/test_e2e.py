@@ -21,14 +21,15 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.memory2.embed import EmbedImages
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.transform import QualityWindow
 from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data_dir
-from dimos.utils.testing.replay import TimedSensorReplay
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -47,7 +48,7 @@ def session() -> Iterator[SqliteStore]:
 class PoseIndex:
     """Preloaded odom data with O(log n) closest-timestamp lookup."""
 
-    def __init__(self, replay: TimedSensorReplay) -> None:  # type: ignore[type-arg]
+    def __init__(self, replay: LegacyPickleStore) -> None:  # type: ignore[type-arg]
         self._timestamps: list[float] = []
         self._data: list[Any] = []
         for ts, data in replay.iterate_ts():
@@ -67,30 +68,49 @@ class PoseIndex:
             return self._data[idx - 1]
         return self._data[idx]
 
+    def __iter__(self) -> Iterator[tuple[float, Any]]:
+        return iter(zip(self._timestamps, self._data, strict=False))
+
 
 @pytest.fixture(scope="module")
-def video_replay() -> TimedSensorReplay:
-    return TimedSensorReplay("unitree_go2_bigoffice/video")
+def video_replay() -> LegacyPickleStore[Image]:
+    return LegacyPickleStore("unitree_go2_bigoffice/video")
 
 
 @pytest.fixture(scope="module")
 def odom_index() -> PoseIndex:
-    return PoseIndex(TimedSensorReplay("unitree_go2_bigoffice/odom"))
+    return PoseIndex(LegacyPickleStore("unitree_go2_bigoffice/odom"))
 
 
 @pytest.fixture(scope="module")
-def lidar_replay() -> TimedSensorReplay:
-    return TimedSensorReplay("unitree_go2_bigoffice/lidar")
+def lidar_replay() -> LegacyPickleStore[PointCloud2]:
+    return LegacyPickleStore("unitree_go2_bigoffice/lidar")
 
 
 @pytest.mark.tool
 class TestImportReplay:
     """Import legacy pickle replay data into a memory2 SqliteStore."""
 
+    def test_import_odom(
+        self,
+        session: SqliteStore,
+        odom_index: PoseIndex,
+    ) -> None:
+        with session.stream("odom", Odometry) as odom:
+            count = 0
+            for ts, data in odom_index:
+                print(data)
+                odom.append(data, ts=ts, pose=data)
+                count += 1
+
+            assert count > 0
+            assert odom.count() == count
+            print(f"Imported {count} odom frames")
+
     def test_import_video(
         self,
         session: SqliteStore,
-        video_replay: TimedSensorReplay,  # type: ignore[type-arg]
+        video_replay: LegacyPickleStore,  # type: ignore[type-arg]
         odom_index: PoseIndex,
     ) -> None:
         with session.stream("color_image", Image) as video:
@@ -108,7 +128,7 @@ class TestImportReplay:
     def test_import_lidar(
         self,
         session: SqliteStore,
-        lidar_replay: TimedSensorReplay,  # type: ignore[type-arg]
+        lidar_replay: LegacyPickleStore,  # type: ignore[type-arg]
         odom_index: PoseIndex,
     ) -> None:
         # can also be explicit here

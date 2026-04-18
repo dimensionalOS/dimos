@@ -26,9 +26,9 @@ from dimos.protocol.pubsub.impl.rospubsub import DimosROS, ROSTopic
 
 # Add msg_name to LCM PointStamped for testing nested message conversion
 PointStamped.msg_name = "geometry_msgs.PointStamped"
+from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.utils.data import get_data
 from dimos.utils.testing.collector import CallbackCollector
-from dimos.utils.testing.replay import TimedSensorReplay
 
 
 def ros_node():
@@ -82,7 +82,7 @@ def test_pointcloud2_pubsub(publisher, subscriber):
     dir_name = get_data("unitree_go2_bigoffice")
 
     # Load real lidar data from replay (5 seconds in)
-    replay = TimedSensorReplay(f"{dir_name}/lidar")
+    replay = LegacyPickleStore(f"{dir_name}/lidar")
     original = replay.find_closest_seek(5.0)
 
     assert original is not None, "Failed to load lidar data from replay"

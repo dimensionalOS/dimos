@@ -15,9 +15,9 @@
 import pytest
 
 from dimos.memory.embedding import EmbeddingMemory, SpatialEntry
+from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.data import get_data
-from dimos.utils.testing.replay import TimedSensorReplay
 
 dir_name = "unitree_go2_bigoffice"
 
@@ -26,7 +26,7 @@ dir_name = "unitree_go2_bigoffice"
 def test_embed_frame() -> None:
     """Test embedding a single frame."""
     # Load a frame from recorded data
-    video = TimedSensorReplay(get_data(dir_name) / "video")
+    video = LegacyPickleStore(get_data(dir_name) / "video")
     frame = video.find_closest_seek(10)
 
     # Create memory and embed

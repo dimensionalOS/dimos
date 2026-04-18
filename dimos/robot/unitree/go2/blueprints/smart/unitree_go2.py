@@ -52,7 +52,6 @@ class Go2Memory(Recorder):
         embedded = self._store.stream("color_image_embedded", Image)
         clip = self.register_disposable(CLIPModel())
 
-        print(self._store.streams.color_image)
         # fmt: off
         self.register_disposable(
             self._store.streams.color_image \

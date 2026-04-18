@@ -24,13 +24,13 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.memory2.codecs.base import Codec, codec_for
 from dimos.memory2.codecs.jpeg import JpegCodec
 from dimos.memory2.codecs.lcm import LcmCodec
 from dimos.memory2.codecs.pickle import PickleCodec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.utils.testing.replay import TimedSensorReplay
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -123,7 +123,7 @@ def _jpeg_case() -> Case | None:
 
         TurboJPEG()  # fail fast if native lib is missing
 
-        replay = TimedSensorReplay("unitree_go2_bigoffice/video")
+        replay = LegacyPickleStore("unitree_go2_bigoffice/video")
         frames = [replay.find_closest_seek(float(i)) for i in range(1, 4)]
         codec = JpegCodec(quality=95)
     except (ImportError, RuntimeError):
