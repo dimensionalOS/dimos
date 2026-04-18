@@ -325,6 +325,33 @@ class TestMultiTBuffer:
         assert latest is not None
         assert latest.translation.x == 2.0
 
+    def test_subscribe_receives_transform_updates(self) -> None:
+        ttbuffer = MultiTBuffer()
+        received: list[str] = []
+        unsubscribe = ttbuffer.subscribe(lambda transform: received.append(transform.child_frame_id))
+
+        ttbuffer.receive_transform(
+            Transform(frame_id="world", child_frame_id="robot", ts=time.time()),
+            Transform(frame_id="robot", child_frame_id="camera", ts=time.time()),
+        )
+
+        unsubscribe()
+
+        assert received == ["robot", "camera"]
+
+    def test_entity_path_for_frame_reconstructs_chain(self) -> None:
+        ttbuffer = MultiTBuffer()
+        base_time = time.time()
+
+        ttbuffer.receive_transform(
+            Transform(frame_id="world", child_frame_id="robot", ts=base_time),
+            Transform(frame_id="robot", child_frame_id="camera", ts=base_time),
+            Transform(frame_id="camera", child_frame_id="camera_optical", ts=base_time),
+        )
+
+        assert ttbuffer.get_frame_chain("camera_optical") == ["world", "robot", "camera", "camera_optical"]
+        assert ttbuffer.entity_path_for_frame("camera_optical") == "world/tf/robot/camera/camera_optical"
+
     def test_get_transform_at_time(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
