@@ -69,25 +69,27 @@ BRIDGE_PORT = 8090
 #   - Interior walls divide kitchen/bedroom from living/dining
 #
 # (name, x, y, z, timeout_sec, reach_threshold_m)
+#
+# Robot spawns at ~(3.0, 2.0) in the living room.
 WAYPOINTS = [
-    # Phase 1: Open corridor — straight drive forward from start, no obstacles
-    ("p0_open", 4.0, 2.0, 0.0, 40, 1.5),
+    # Phase 1: Open corridor — straight drive, no obstacles nearby
+    ("p0_open", 6.0, 2.0, 0.0, 45, 2.0),
 
-    # Phase 2: Furniture — navigate through dining area with table and chairs
-    ("p1_furniture", 4.0, -0.5, 0.0, 60, 2.0),
+    # Phase 2: Furniture — navigate into the hallway/dining area past furniture
+    ("p1_furniture", 2.0, 0.0, 0.0, 90, 2.0),
 
-    # Phase 3: Explore wall — drive along kitchen/bedroom divider wall
-    # Maps the hallway side of the wall
-    ("p2_wall_side_a", 0.5, -1.0, 0.0, 60, 2.0),
-    # Maps the kitchen side
-    ("p3_wall_side_b", 0.5, -4.0, 0.0, 60, 2.0),
+    # Phase 3: Explore wall — drive to map the divider wall from hallway side
+    ("p2_wall_side_a", -1.0, 0.0, 0.0, 90, 2.0),
+    # Then explore from the kitchen/bedroom side
+    ("p3_wall_side_b", -1.0, -3.0, 0.0, 90, 2.0),
 
-    # Phase 4: Cross-wall — goal in bedroom, behind the wall from dining area.
-    # Greedy planner would try straight-line through the wall. Must use doorway.
-    ("p4_cross_wall", -2.5, -2.5, 0.0, 120, 2.0),
+    # Phase 4: Cross-wall — goal in bedroom, on the other side of the wall.
+    # From the kitchen side, the greedy path to this point crosses through
+    # the bedroom wall. The planner must route through a doorway.
+    ("p4_cross_wall", -3.0, -2.0, 0.0, 120, 2.5),
 ]
 
-WARMUP_SEC = 25.0  # Let nav stack build initial voxel map
+WARMUP_SEC = 20.0  # Let nav stack build initial voxel map
 ODOM_WAIT_SEC = 180.0  # Rapier snapshot init can take 2-3 min on CPU rendering
 
 
