@@ -116,8 +116,6 @@ class LocalPlannerConfig(NativeModuleConfig):
         if not self.paths_dir:
             self.paths_dir = _default_paths_dir()
 
-    # --- Vehicle geometry ---
-
     # Vehicle length for collision checking (m).
     vehicle_length: float | None = None
     # Vehicle width for collision checking (m).
@@ -161,8 +159,6 @@ class LocalPlannerConfig(NativeModuleConfig):
     laser_voxel_size: float | None = None
     # Voxel size for terrain cloud downsampling (m).
     terrain_voxel_size: float | None = None
-
-    # --- Path evaluation ---
 
     # Direction weight for path scoring.
     dir_weight: float | None = None
@@ -215,8 +211,6 @@ class LocalPlannerConfig(NativeModuleConfig):
     # Goal y-coordinate in local frame (m). None = omit from CLI (binary default).
     goal_y: float | None = None
 
-    # --- Joystick ---
-
     # Delay before speed command overrides joystick (s).
     joy_to_speed_delay: float | None = None
     # Delay before obstacle check override from autonomy (s).
@@ -242,7 +236,6 @@ class LocalPlanner(NativeModule):
 
     config: LocalPlannerConfig
 
-    # --- Inputs ---
     registered_scan: In[PointCloud2]
     odometry: In[Odometry]
     terrain_map: In[PointCloud2]
@@ -255,7 +248,6 @@ class LocalPlanner(NativeModule):
     check_obstacle: In[Bool]
     cancel_goal: In[Bool]
 
-    # --- Outputs ---
     path: Out[NavPath]
     obstacle_cloud: Out[PointCloud2]
     free_paths: Out[PointCloud2]
