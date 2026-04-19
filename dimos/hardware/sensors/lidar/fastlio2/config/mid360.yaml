@@ -17,6 +17,10 @@ mapping:
     b_gyr_cov: 0.0001
     fov_degree:    360
     det_range:     100.0
+    # Extend IMU init window to 2s (400 samples @ 200Hz). M20 servo flutter
+    # during robot startup corrupts gravity/bias estimation if the window
+    # is too short — codex review 2026-04-18.
+    imu_init_num: 400
     extrinsic_est_en:  false      # true: enable the online estimation of IMU-LiDAR extrinsic
     extrinsic_T: [ -0.011, -0.02329, 0.04412 ]
     extrinsic_R: [ 1, 0, 0,

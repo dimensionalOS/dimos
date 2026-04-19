@@ -34,6 +34,11 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
+def sec_nsec(ts):  # type: ignore[no-untyped-def]
+    s = int(ts)
+    return [s, int((ts - s) * 1_000_000_000)]
+
+
 class Odometry(Timestamped):
     """Odometry message with pose, twist, and frame information."""
 

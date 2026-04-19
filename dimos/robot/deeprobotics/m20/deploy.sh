@@ -10,24 +10,25 @@
 #   NOS user has passwordless sudo (or set SUDO_PASS env var)
 #
 # Usage:
+#   ./deploy.sh provision [--host <hostname>]     # ONE-TIME: persistent setup per dog
 #   ./deploy.sh sync [--host <hostname>]          # Sync dimos source to NOS
-#   ./deploy.sh setup [--host <hostname>]         # NOS prerequisites (after reboot)
 #   ./deploy.sh start [--host <hostname>]         # Start smartnav on NOS
 #   ./deploy.sh stop [--host <hostname>]          # Stop smartnav
 #   ./deploy.sh restart [--host <hostname>]       # Stop + start
-#   ./deploy.sh bridge-start [--host <hostname>]  # Start drdds SHM bridge
+#   ./deploy.sh bridge-start [--host <hostname>]  # Restart drdds SHM bridge
 #   ./deploy.sh bridge-stop [--host <hostname>]   # Stop bridge
 #   ./deploy.sh status [--host <hostname>]        # Show status
 #   ./deploy.sh viewer [--host <hostname>]        # Start tunnels + dimos-viewer
 #
-# Quick deploy after code changes:
-#   ./deploy.sh sync --host m20-770-gogo && ./deploy.sh restart --host m20-770-gogo
+# First time on a new M20 (requires interactive sudo password, one-time):
+#   ./deploy.sh provision --host m20-770-gogo
 #
-# Full deploy after reboot:
-#   ./deploy.sh setup --host m20-770-gogo
-#   ./deploy.sh bridge-start --host m20-770-gogo
+# After reboot (no-op — provision makes everything persistent):
 #   ./deploy.sh start --host m20-770-gogo
 #   ./deploy.sh viewer --host m20-770-gogo
+#
+# Quick deploy after code changes:
+#   ./deploy.sh sync --host m20-770-gogo && ./deploy.sh restart --host m20-770-gogo
 #
 # Options:
 #   --host <hostname>   Access robot via Tailscale (e.g., m20-770-gogo)
@@ -94,6 +95,15 @@ RSYNC_EXCLUDES=(
     --exclude 'data'
     --exclude 'logs'
     --exclude '.claude'
+    # CMake build artifacts live on NOS only — mustn't be wiped by --delete.
+    # Exclude without trailing / so symlinks named `result` (nix output links)
+    # are also preserved — trailing / would only match directories.
+    --exclude 'build'
+    --exclude 'CMakeFiles'
+    --exclude 'CMakeCache.txt'
+    --exclude 'cmake_install.cmake'
+    --exclude '_deps'
+    --exclude 'result'
 )
 
 case "${CMD}" in
@@ -113,6 +123,11 @@ case "${CMD}" in
             for store_path in /nix/store/*-drdds_lidar_bridge-*/bin/drdds_lidar_bridge; do
                 [ -f \"\$store_path\" ] && ln -sf \"\$store_path\" ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/result/bin/drdds_lidar_bridge
             done
+            # airy_imu_bridge: built from the same flake as drdds_lidar_bridge,
+            # so the store path shares the same hash.
+            for store_path in /nix/store/*-drdds_lidar_bridge-*/bin/airy_imu_bridge; do
+                [ -f \"\$store_path\" ] && ln -sf \"\$store_path\" ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/result/bin/airy_imu_bridge
+            done
             for store_path in /nix/store/*-smartnav-arise-slam-*/bin/arise_slam; do
                 [ -f \"\$store_path\" ] && ln -sf \"\$store_path\" ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/arise_slam/result/bin/arise_slam
             done
@@ -125,46 +140,206 @@ case "${CMD}" in
             for store_path in /nix/store/*-smartnav-path-follower-*/bin/path_follower; do
                 [ -f \"\$store_path\" ] && ln -sf \"\$store_path\" ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/path_follower/result/bin/path_follower
             done
-            # nav_cmd_pub (built via cmake, not nix)
-            [ -f /tmp/drdds_bridge_build/build/nav_cmd_pub ] && \
-                ln -sf /tmp/drdds_bridge_build/build/nav_cmd_pub ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/result/bin/nav_cmd_pub
+            # nav_cmd_pub (built via cmake, not nix — needs /usr/local/lib/libdrdds.so)
+            # Build dir lives in the synced source tree so it survives reboots (ext4).
+            nav_cmd_pub_bin=${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/build/nav_cmd_pub
+            [ -f \"\$nav_cmd_pub_bin\" ] && \
+                ln -sf \"\$nav_cmd_pub_bin\" ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/result/bin/nav_cmd_pub
         "
         echo "=== Sync Complete ==="
         ;;
 
-    setup)
-        echo "=== Setting up NOS prerequisites ==="
-        remote_sudo ip link set lo multicast on
-        remote_sudo ip route add 224.0.0.0/4 dev lo 2>/dev/null || true
-        remote_sudo ip route add 10.21.33.103/32 via 10.21.31.103 2>/dev/null || true
-        remote_sudo mount --bind /var/opt/robot/data/nix /nix 2>/dev/null || true
-        echo "=== Setup Complete ==="
+    provision)
+        echo "=== Provisioning NOS for persistent M20 nav ==="
+        echo "You will be prompted for sudo password on the NOS (once)."
+        echo ""
+
+        # Generate the provisioning script locally, then run it on NOS under sudo.
+        # Everything is idempotent and survives reboot.
+        PROVISION_SCRIPT=$(cat <<'PROVISION_EOF'
+#!/bin/bash
+# M20 NOS persistent provisioning — idempotent
+set -e
+
+echo "[provision] Installing /nix bind mount in /etc/fstab..."
+FSTAB_LINE="/var/opt/robot/data/nix /nix none bind 0 0"
+if ! grep -qF "/var/opt/robot/data/nix /nix" /etc/fstab; then
+    echo "${FSTAB_LINE}" >> /etc/fstab
+    echo "  added"
+else
+    echo "  already present"
+fi
+mkdir -p /nix
+if ! mountpoint -q /nix; then
+    mount /nix
+    echo "  /nix mounted"
+else
+    echo "  /nix already mounted"
+fi
+
+echo "[provision] Installing drdds-recv.service..."
+cat > /etc/systemd/system/drdds-recv.service <<'UNIT'
+[Unit]
+Description=drdds bridge receiver (drdds SHM -> POSIX SHM for dimos)
+Documentation=file:///var/opt/robot/data/dimos/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/drdds_recv.cpp
+After=network-online.target m20-nav-net.service
+Wants=network-online.target
+Before=rsdriver.service
+
+[Service]
+Type=simple
+ExecStart=/opt/drdds_bridge/lib/drdds_bridge/drdds_recv
+Restart=on-failure
+RestartSec=3
+StandardOutput=append:/var/log/drdds_recv.log
+StandardError=append:/var/log/drdds_recv.log
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+echo "[provision] Installing rsdriver ordering dropin..."
+mkdir -p /etc/systemd/system/rsdriver.service.d
+cat > /etc/systemd/system/rsdriver.service.d/10-drdds-order.conf <<'DROPIN'
+[Unit]
+# drdds_recv must open SHM before rsdriver starts publishing — otherwise
+# rsdriver's drdds SHM segments never get discovered by the reader.
+After=drdds-recv.service
+Requires=drdds-recv.service
+DROPIN
+
+echo "[provision] Installing m20-nav-net.service (loopback multicast + DDS routes)..."
+cat > /etc/systemd/system/m20-nav-net.service <<'UNIT'
+[Unit]
+Description=M20 nav networking (loopback multicast + DDS routes)
+After=network-online.target
+Wants=network-online.target
+Before=rsdriver.service drdds-recv.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '/sbin/ip link set lo multicast on'
+ExecStart=/bin/sh -c '/sbin/ip route add 224.0.0.0/4 dev lo 2>/dev/null || true'
+ExecStart=/bin/sh -c '/sbin/ip route add 10.21.33.103/32 via 10.21.31.103 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+echo "[provision] Installing sysctl tuning for LCM (large UDP packets)..."
+cat > /etc/sysctl.d/99-m20-nav.conf <<'SYSCTL'
+# LCM carries 2.8MB lidar PointCloud2 fragments over UDP multicast.
+# Default 208KB recv buffer drops fragments → incomplete scans → SLAM fails.
+# Recommended by https://lcm-proj.github.io/lcm/content/multicast-setup.html
+net.core.rmem_max=33554432
+net.core.rmem_default=33554432
+net.core.wmem_max=33554432
+net.core.wmem_default=33554432
+SYSCTL
+sysctl --system | grep -E 'rmem|wmem' | head -4 || true
+
+echo "[provision] Installing /usr/local/sbin/m20-clean-shm..."
+cat > /usr/local/sbin/m20-clean-shm <<'SCRIPT'
+#!/bin/bash
+# Clean stale FastRTPS + drdds SHM segments. Safe to run any time bridge is stopped.
+rm -f /dev/shm/fastrtps_* /dev/shm/fast_datasharing_* /dev/shm/sem.fastrtps_* \
+      /dev/shm/drdds_bridge_* /dev/shm/sem.drdds_bridge_*
+SCRIPT
+chmod 755 /usr/local/sbin/m20-clean-shm
+
+echo "[provision] Installing sudoers rule for deploy.sh..."
+cat > /etc/sudoers.d/m20-nav <<'SUDOERS'
+# Allow the 'user' account to manage the nav services from deploy.sh without a password.
+user ALL=(root) NOPASSWD: /bin/systemctl stop rsdriver, /bin/systemctl start rsdriver, /bin/systemctl restart rsdriver
+user ALL=(root) NOPASSWD: /bin/systemctl stop drdds-recv, /bin/systemctl start drdds-recv, /bin/systemctl restart drdds-recv
+user ALL=(root) NOPASSWD: /bin/systemctl status rsdriver, /bin/systemctl status drdds-recv, /bin/systemctl is-active rsdriver, /bin/systemctl is-active drdds-recv
+user ALL=(root) NOPASSWD: /usr/local/sbin/m20-clean-shm
+SUDOERS
+chmod 440 /etc/sudoers.d/m20-nav
+# Validate sudoers; if invalid, remove it rather than lock out sudo.
+if ! visudo -c -f /etc/sudoers.d/m20-nav >/dev/null; then
+    echo "[provision] ERROR: sudoers file invalid — removing"
+    rm /etc/sudoers.d/m20-nav
+    exit 1
+fi
+
+echo "[provision] Reloading systemd..."
+systemctl daemon-reload
+
+echo "[provision] Enabling + starting services..."
+systemctl enable m20-nav-net.service drdds-recv.service
+systemctl start m20-nav-net.service
+# drdds-recv will be started by rsdriver dependency on next boot; start now too
+if ! systemctl is-active --quiet drdds-recv.service; then
+    # Kill any manually-started drdds_recv first
+    pkill -f '/opt/drdds_bridge/lib/drdds_bridge/drdds_recv' 2>/dev/null || true
+    sleep 1
+    systemctl start drdds-recv.service
+fi
+
+echo "[provision] Done. Summary:"
+systemctl is-enabled drdds-recv.service m20-nav-net.service
+systemctl is-active drdds-recv.service m20-nav-net.service rsdriver.service
+echo ""
+echo "Persistent config installed:"
+echo "  /etc/fstab:                              /nix bind mount"
+echo "  /etc/systemd/system/drdds-recv.service:  drdds SHM receiver"
+echo "  /etc/systemd/system/rsdriver.service.d/: ordering after drdds-recv"
+echo "  /etc/systemd/system/m20-nav-net.service: multicast + routes"
+echo "  /etc/sudoers.d/m20-nav:                  NOPASSWD for service control"
+echo "  /usr/local/sbin/m20-clean-shm:           SHM cleanup helper"
+PROVISION_EOF
+)
+
+        # Copy script to NOS, then run under sudo with a TTY so password prompts work.
+        echo "  Copying provision script to NOS..."
+        remote_ssh "cat > /tmp/m20-provision.sh" <<< "${PROVISION_SCRIPT}"
+        remote_ssh "chmod +x /tmp/m20-provision.sh"
+        echo "  Running provision script (sudo password required, one time)..."
+        ssh -t ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "sudo bash /tmp/m20-provision.sh"
+        remote_ssh "rm -f /tmp/m20-provision.sh"
+        echo "=== Provision Complete — reboots will now Just Work ==="
         ;;
 
     start)
         echo "=== Starting smartnav ==="
-        remote_ssh "pkill -f m20_smartnav 2>/dev/null" || true
-        sleep 3
-        remote_ssh "pkill -9 -f m20_smartnav 2>/dev/null; pkill -9 -f dimos-venv 2>/dev/null" || true
-        sleep 1
-        remote_ssh "fuser -k 9877/tcp 2>/dev/null; fuser -k 3030/tcp 2>/dev/null; fuser -k 7779/tcp 2>/dev/null" || true
-        remote_ssh "cd ${DEPLOY_DIR} && ${VENV}/bin/python -m ${SMARTNAV_MODULE} > ${SMARTNAV_LOG} 2>&1 &"
-        echo "  Waiting for startup..."
-        sleep 30
+        remote_ssh "
+            # Clear old log first so the readiness poll only sees this boot.
+            : > ${SMARTNAV_LOG}
+            cd ${DEPLOY_DIR} && ${VENV}/bin/python -m ${SMARTNAV_MODULE} > ${SMARTNAV_LOG} 2>&1 &
+        "
+        # Poll for readiness signals instead of a blind 30s sleep.
+        # We require: (a) nav_cmd_pub matched=1 (FastDDS path to AOS alive)
+        #             (b) first lidar frame flowing through drdds_bridge
+        echo -n "  Waiting for startup"
+        for i in $(seq 1 40); do
+            echo -n "."
+            sleep 0.5
+            ready=$(remote_ssh "grep -ac 'matched=1' ${SMARTNAV_LOG} 2>/dev/null" || echo 0)
+            lidar=$(remote_ssh "grep -ac 'drdds_bridge.*lidar #' ${SMARTNAV_LOG} 2>/dev/null" || echo 0)
+            if [ "${ready}" -ge 1 ] && [ "${lidar}" -ge 1 ]; then
+                echo " ready (${i}x 0.5s)"
+                break
+            fi
+        done
         echo "  Status:"
-        remote_ssh "grep -a -E 'matched|gRPC|Navigation|error' ${SMARTNAV_LOG} | grep -v sec_nsec | grep -v wireframe | head -5" || true
+        remote_ssh "grep -a -E 'matched|keyframe|Running' ${SMARTNAV_LOG} | grep -v sec_nsec | grep -v wireframe | head -5" || true
         echo "=== Started ==="
         ;;
 
     stop)
         echo "=== Stopping smartnav ==="
-        # Graceful shutdown first (sends sit-down command to robot)
+        # Graceful shutdown first (sends sit-down command to robot).
         remote_ssh "pkill -f m20_smartnav 2>/dev/null" || true
-        sleep 5
-        # Force kill if still running
-        remote_ssh "pkill -9 -f m20_smartnav 2>/dev/null; pkill -9 -f dimos-venv 2>/dev/null" || true
-        sleep 1
-        remote_ssh "fuser -k 9877/tcp 2>/dev/null; fuser -k 3030/tcp 2>/dev/null; fuser -k 7779/tcp 2>/dev/null" || true
+        # Poll for process exit (100ms), cap 5s.
+        for i in $(seq 1 50); do
+            sleep 0.1
+            alive=$(remote_ssh "pgrep -f m20_smartnav 2>/dev/null | wc -l" || echo 0)
+            [ "${alive}" = "0" ] && break
+        done
+        # Force-kill if still alive, then release ports.
+        remote_ssh "pkill -9 -f m20_smartnav 2>/dev/null; pkill -9 -f dimos-venv 2>/dev/null; fuser -k 9877/tcp 9877/tcp 3030/tcp 7779/tcp 2>/dev/null" || true
         echo "=== Stopped ==="
         ;;
 
@@ -199,21 +374,20 @@ case "${CMD}" in
         ;;
 
     bridge-start)
-        echo "=== Starting drdds bridge ==="
+        echo "=== Restarting drdds bridge (with rsdriver ordering) ==="
 
-        echo "  Stopping rsdriver for discovery ordering..."
-        remote_sudo systemctl stop rsdriver 2>/dev/null || true
+        echo "  Stopping rsdriver..."
+        remote_ssh "sudo systemctl stop rsdriver" || true
         sleep 2
 
-        echo "  Cleaning stale SHM segments..."
-        remote_sudo rm -f /dev/shm/fastrtps_* /dev/shm/fast_datasharing_* /dev/shm/sem.fastrtps_* /dev/shm/drdds_bridge_* /dev/shm/sem.drdds_bridge_*
-
-        echo "  Starting drdds_recv..."
-        remote_sudo "nohup /opt/drdds_bridge/lib/drdds_bridge/drdds_recv > /var/log/drdds_recv.log 2>&1 &"
+        echo "  Restarting drdds-recv (and cleaning stale SHM)..."
+        remote_ssh "sudo systemctl stop drdds-recv" || true
+        remote_ssh "sudo /usr/local/sbin/m20-clean-shm" || true
+        remote_ssh "sudo systemctl start drdds-recv"
         sleep 3
 
-        echo "  Restarting rsdriver (30s init delay)..."
-        remote_sudo systemctl start rsdriver
+        echo "  Starting rsdriver (30s init delay)..."
+        remote_ssh "sudo systemctl start rsdriver"
         sleep 35
 
         echo "  Verifying bridge data flow..."
@@ -224,13 +398,16 @@ case "${CMD}" in
 
     bridge-stop)
         echo "Stopping drdds bridge..."
-        remote_ssh "pkill -f drdds_recv 2>/dev/null" || true
+        remote_ssh "sudo systemctl stop drdds-recv" || true
         echo "Bridge stopped."
         ;;
 
     status)
-        echo "=== drdds bridge ==="
-        remote_ssh "pgrep -a drdds_recv 2>/dev/null" || echo "  NOT RUNNING"
+        echo "=== systemd services ==="
+        remote_ssh "for s in drdds-recv rsdriver m20-nav-net; do printf '  %-20s %s\n' \$s \$(systemctl is-active \$s); done"
+        echo ""
+        echo "=== /nix bind mount ==="
+        remote_ssh "mountpoint -q /nix && echo '  /nix mounted OK' || echo '  /nix NOT mounted'"
         echo ""
         echo "=== dimos processes ==="
         remote_ssh "pgrep -a -f m20_smartnav 2>/dev/null" || echo "  smartnav not running"
@@ -249,18 +426,19 @@ case "${CMD}" in
         echo "Usage: $0 <command> [--host <hostname>]"
         echo ""
         echo "Commands:"
+        echo "  provision    - ONE-TIME: install persistent systemd units, fstab, sudoers"
         echo "  sync         - Sync dimos source to NOS + fix nix symlinks"
-        echo "  setup        - NOS prerequisites (multicast, nix mount, route)"
         echo "  start        - Start smartnav on NOS"
         echo "  stop         - Stop smartnav"
         echo "  restart      - Stop + start"
         echo "  viewer       - Start SSH tunnels + dimos-viewer locally"
-        echo "  bridge-start - Start drdds SHM bridge (with rsdriver ordering)"
+        echo "  bridge-start - Restart drdds SHM bridge (with rsdriver ordering)"
         echo "  bridge-stop  - Stop drdds bridge"
         echo "  status       - Show status"
         echo ""
-        echo "Quick deploy:  $0 sync --host m20-770-gogo && $0 restart --host m20-770-gogo"
-        echo "After reboot:  $0 setup && $0 bridge-start && $0 start && $0 viewer"
+        echo "First time per dog:  $0 provision --host m20-770-gogo"
+        echo "Quick deploy:        $0 sync --host m20-770-gogo && $0 restart --host m20-770-gogo"
+        echo "After reboot:        $0 start --host m20-770-gogo && $0 viewer --host m20-770-gogo"
         echo ""
         echo "Options:"
         echo "  --host <hostname>  Access robot via Tailscale (e.g., m20-770-gogo)"

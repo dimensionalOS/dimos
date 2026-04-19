@@ -1,18 +1,33 @@
 // Copyright 2026 Dimensional Inc.
 // SPDX-License-Identifier: Apache-2.0
 //
-// FAST-LIO2 + Livox Mid-360 native module for dimos NativeModule framework.
+// FAST-LIO2 native SLAM module for dimos NativeModule framework.
 //
-// Binds Livox SDK2 directly into FAST-LIO-NON-ROS: SDK callbacks feed
-// CustomMsg/Imu to FastLio, which performs EKF-LOAM SLAM.  Registered
-// (world-frame) point clouds and odometry are published on LCM.
+// Two input modes:
+//   livox_sdk (default) — binds Livox SDK2 directly, SDK callbacks feed
+//                         CustomMsg/Imu to FastLio. Used with Livox Mid-360.
+//   lcm                 — subscribes to externally-published LCM PointCloud2
+//                         + Imu streams (e.g. from DrddsLidarBridge on M20).
+//                         No Livox hardware required.
 //
-// Usage:
+// FastLio performs EKF-LOAM SLAM; registered (world-frame) point clouds +
+// odometry are published on LCM.
+//
+// Usage (Livox mode, default):
 //   ./fastlio2_native \
 //       --lidar '/lidar#sensor_msgs.PointCloud2' \
 //       --odometry '/odometry#nav_msgs.Odometry' \
 //       --config_path /path/to/mid360.yaml \
 //       --host_ip 192.168.1.5 --lidar_ip 192.168.1.155
+//
+// Usage (LCM input mode, e.g. M20 RSAIRY via DrddsLidarBridge):
+//   ./fastlio2_native \
+//       --input_mode lcm \
+//       --raw_points '/raw_points#sensor_msgs.PointCloud2' \
+//       --imu '/imu#sensor_msgs.Imu' \
+//       --lidar '/registered_scan#sensor_msgs.PointCloud2' \
+//       --odometry '/odometry#nav_msgs.Odometry' \
+//       --config_path /path/to/velodyne.yaml
 
 #include <lcm/lcm-cpp.hpp>
 
@@ -257,6 +272,343 @@ static void publish_odometry(const custom_messages::Odometry& odom, double times
 }
 
 // ---------------------------------------------------------------------------
+// LCM input handlers (--input_mode lcm)
+//
+// Convert externally-published PointCloud2 + Imu (e.g. from DrddsLidarBridge
+// on M20) into Livox-style CustomMsg + custom_messages::Imu and feed them
+// into FAST-LIO. No Livox hardware / SDK required in this mode.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Resolved offsets of the fields we care about inside a PointCloud2 point.
+struct Pc2FieldOffsets {
+    int x = -1, y = -1, z = -1;
+    int intensity = -1;
+    int time = -1;
+    int ring = -1;
+    int8_t time_datatype = 0;  // FLOAT32 or FLOAT64
+    int8_t ring_datatype = 0;
+};
+
+Pc2FieldOffsets resolve_pc2_fields(const sensor_msgs::PointCloud2& pc) {
+    Pc2FieldOffsets o;
+    for (const auto& f : pc.fields) {
+        if (f.name == "x") o.x = f.offset;
+        else if (f.name == "y") o.y = f.offset;
+        else if (f.name == "z") o.z = f.offset;
+        else if (f.name == "intensity") o.intensity = f.offset;
+        else if (f.name == "time" || f.name == "t" || f.name == "timestamp") {
+            o.time = f.offset;
+            o.time_datatype = f.datatype;
+        }
+        else if (f.name == "ring") {
+            o.ring = f.offset;
+            o.ring_datatype = f.datatype;
+        }
+    }
+    return o;
+}
+
+}  // namespace
+
+// When true, trust the sensor-provided timestamps on lidar+IMU directly
+// instead of applying the wall-clock-anchor + frame_ts-rewrite workarounds
+// that were introduced to paper over the yesense↔rsdriver clock-domain
+// mismatch (FASTLIO2_LOG Findings #7–#9). With the Airy IMU path, both
+// lidar and IMU are PTP-locked to the same hardware clock, so the raw
+// sensor_ts pair is already consistent and the rewrite would corrupt it.
+// Set via `--native_clock true` CLI flag.
+static std::atomic<bool> g_native_clock{false};
+
+// Debug state for the first N frames, to diagnose timebase/IMU sync.
+static std::atomic<int> g_lcm_pc_frames{0};
+static std::atomic<double> g_last_imu_ts{0.0};
+
+// Monotonicity guard: drdds bridge occasionally emits duplicate or
+// out-of-order scans (dual-lidar merge artifact). Feeding non-monotonic
+// scans to FAST-LIO's EKF makes it diverge immediately. Track the last
+// accepted scan timestamp (seconds) and drop anything older or equal.
+static std::atomic<double> g_last_scan_ts{0.0};
+static std::atomic<uint64_t> g_dropped_dup_scans{0};
+static std::atomic<uint64_t> g_dropped_stale_scans{0};
+
+// Second monotonicity guard for the REWRITTEN (wall-clock anchored) stamp.
+// Scans alternate between 100ms and 200ms spans (front lidar only vs both
+// lidars merged). Anchoring at `imu_latest - max_offset` makes a 200ms scan
+// timestamp 100ms EARLIER than the preceding 100ms scan even when the
+// sensor-domain stamps are monotonic. FAST-LIO's syncPackage silently
+// corrupts EKF state when this happens. Codex review 2026-04-18.
+static std::atomic<double> g_last_frame_ts{0.0};
+static std::atomic<uint64_t> g_dropped_regressed_rewritten{0};
+
+// Stationary preroll gate. FAST-LIO's IMU_init averages ~20 samples (100ms
+// @ 200Hz) to estimate gravity + gyro bias. M20 servo flutter during
+// startup poisons both estimates permanently, producing ~1m/s² residual
+// accel bias that integrates into hundreds of meters of drift within
+// seconds. Buffer lidar scans until we see `PREROLL_STATIONARY_S` seconds
+// of IMU with gyro and accel below the noise thresholds — only then feed
+// scans to FAST-LIO so its IMU_init window falls on clean data.
+static std::atomic<bool> g_seeded{false};
+static std::atomic<double> g_stationary_since{0.0};
+static std::atomic<uint64_t> g_imu_samples{0};
+static constexpr double PREROLL_STATIONARY_S = 2.0;
+static constexpr double STATIONARY_GYRO_RAD = 0.02;   // ~1.1 deg/s
+static constexpr double STATIONARY_ACC_DEV  = 0.5;    // m/s² deviation from |g|
+
+static void on_lcm_point_cloud(const lcm::ReceiveBuffer* /*rbuf*/,
+                               const std::string& /*channel*/,
+                               const sensor_msgs::PointCloud2* pc) {
+    if (!g_fastlio || !g_running.load() || pc == nullptr) return;
+    if (pc->data_length == 0) return;
+
+    // Drop scans until the stationary preroll window has been observed.
+    // Prevents FAST-LIO's IMU_init from sampling bias during servo flutter.
+    if (!g_seeded.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    const auto off = resolve_pc2_fields(*pc);
+    if (off.x < 0 || off.y < 0 || off.z < 0) {
+        static std::atomic<int> warn_count{0};
+        if (warn_count.fetch_add(1) < 3) {
+            fprintf(stderr, "[fastlio2] PointCloud2 missing x/y/z fields, skipping.\n");
+        }
+        return;
+    }
+
+    const int32_t npoints = pc->width * pc->height;
+    const int32_t step = pc->point_step;
+    if (npoints <= 0 || step <= 0 ||
+        pc->data_length < static_cast<int32_t>(npoints) * step) {
+        return;
+    }
+
+    // Sensor-domain timestamp from drdds bridge, used only for dup/stale detection.
+    const double sensor_ts = static_cast<double>(pc->header.stamp.sec) +
+                             static_cast<double>(pc->header.stamp.nsec) * 1e-9;
+
+    // Drop EXACT duplicate scans only (identical sensor_ts). drdds bridge
+    // emits real scans with slightly non-monotonic sensor_ts due to
+    // dual-lidar interleaving, but those are still valid lidar data — we
+    // re-anchor them to wall_now below so FAST-LIO sees them as "current".
+    // Being too strict here starved the EKF of data (only 5 scans in 15s).
+    const double last_ts = g_last_scan_ts.load(std::memory_order_acquire);
+    if (sensor_ts == last_ts) {
+        g_dropped_dup_scans.fetch_add(1);
+        return;
+    }
+    g_last_scan_ts.store(sensor_ts, std::memory_order_release);
+
+    // First pass to compute max offset (needed for the native-clock path's
+    // sanity check and for the wall-clock anchor used in the legacy path).
+    const uint8_t* pc_data = pc->data.data();
+    double max_offset_s = 0.0;
+    if (off.time >= 0 && off.time_datatype == sensor_msgs::PointField::FLOAT32) {
+        for (int32_t i = 0; i < npoints; ++i) {
+            const uint8_t* p = pc_data + static_cast<size_t>(i) * step;
+            float t_rel = *reinterpret_cast<const float*>(p + off.time);
+            if (t_rel > max_offset_s) max_offset_s = t_rel;
+        }
+    }
+
+    double frame_ts;
+    double imu_latest;
+    if (g_native_clock.load(std::memory_order_acquire)) {
+        // Airy IMU path: sensor timestamps are PTP-locked and already in a
+        // shared hardware-clock domain with the IMU. Trust `sensor_ts` as the
+        // floor for `header.stamp`, but enforce a strict monotonic floor.
+        //
+        // Why the floor: rsdriver merges two async Airy lidars and stamps the
+        // cloud with `ts_first_point = true` → first-point time. First points
+        // from the two lidars interleave, so header.stamp can regress by
+        // hundreds of ms across consecutive merged scans. FAST-LIO's EKF sees
+        // lidar moving backward in time and blows up. Codex review 2026-04-19.
+        imu_latest = g_last_imu_ts.load(std::memory_order_acquire);
+        const double prev_frame_ts = g_last_frame_ts.load(std::memory_order_acquire);
+        frame_ts = std::max(sensor_ts, prev_frame_ts + 1e-4);
+        if (frame_ts > sensor_ts) {
+            uint64_t n = g_dropped_regressed_rewritten.fetch_add(1);
+            if (n < 5) {
+                fprintf(stderr,
+                        "[fastlio2] clamping regressed sensor_ts (native_clock): "
+                        "sensor_ts=%.6f prev=%.6f → frame_ts=%.6f\n",
+                        sensor_ts, prev_frame_ts, frame_ts);
+            }
+        }
+        g_last_frame_ts.store(frame_ts, std::memory_order_release);
+    } else {
+        // Legacy yesense path: the raw drdds lidar header stamp is sensor
+        // time (~0.8s behind wall clock), while the IMU stream is stamped at
+        // wall clock in on_lcm_imu below. Comparing cross-domain values
+        // diverges the EKF. Anchor scan end at imu_latest so FAST-LIO's
+        // syncPackage sees IMU data bracketing the whole scan (Finding #8).
+        const double wall_now = static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count()) * 1e-9;
+        imu_latest = g_last_imu_ts.load(std::memory_order_acquire);
+        const double frame_end = (imu_latest > 0.0) ? imu_latest : wall_now;
+        frame_ts = frame_end - max_offset_s;
+
+        // Variable max_offset_s (100ms vs 200ms when scans alternate between
+        // single-lidar and merged-dual) can make frame_ts jump backwards even
+        // with monotonic sensor_ts. Drop regressed rewrites (Finding #9).
+        const double prev_frame_ts = g_last_frame_ts.load(std::memory_order_acquire);
+        if (frame_ts <= prev_frame_ts) {
+            uint64_t n = g_dropped_regressed_rewritten.fetch_add(1);
+            if (n < 5) {
+                fprintf(stderr,
+                        "[fastlio2] dropping regressed rewritten scan: frame_ts=%.6f prev=%.6f "
+                        "max_offset=%.3fs imu_latest=%.6f\n",
+                        frame_ts, prev_frame_ts, max_offset_s, imu_latest);
+            }
+            return;
+        }
+        g_last_frame_ts.store(frame_ts, std::memory_order_release);
+    }
+
+    // Build a custom_messages::PointCloud2 copy of the incoming dimos LCM
+    // PointCloud2 and feed it to FAST-LIO's Velodyne/PC2 path (rather than
+    // stuffing into a Livox CustomMsg). This lets FAST-LIO's preprocess pick
+    // up our ring+time fields correctly under `lidar_type: 2` (Velodyne).
+    //
+    // Only `header.stamp` is rewritten (wall-clock anchor per the timing
+    // analysis above); all other fields copy through 1:1 because
+    // custom_messages::PointCloud2 is structurally identical to ROS PC2.
+    auto lidar_msg = boost::make_shared<custom_messages::PointCloud2>();
+    lidar_msg->header.seq = 0;
+    lidar_msg->header.stamp = custom_messages::Time().fromSec(frame_ts);
+    lidar_msg->header.frame_id = "lidar";
+    lidar_msg->height = pc->height;
+    lidar_msg->width = pc->width;
+    lidar_msg->is_bigendian = pc->is_bigendian ? true : false;
+    lidar_msg->point_step = pc->point_step;
+    lidar_msg->row_step = pc->row_step;
+    lidar_msg->is_dense = pc->is_dense ? true : false;
+
+    // Copy PointField descriptors. FAST-LIO matches by NAME, not index, so
+    // whatever ordering drdds bridge emits (x, y, z, intensity, ring, time)
+    // is fine.
+    lidar_msg->fields.clear();
+    lidar_msg->fields.reserve(pc->fields.size());
+    for (const auto& f : pc->fields) {
+        custom_messages::PointField pf;
+        pf.name = f.name;
+        pf.offset = static_cast<uli>(f.offset);
+        pf.datatype = static_cast<usi>(f.datatype);
+        pf.count = static_cast<uli>(f.count);
+        lidar_msg->fields.push_back(pf);
+    }
+
+    // Copy packed bytes. custom_messages::PointCloud2::data is unfortunately
+    // typed as std::vector<usi> (unsigned short) even though it's meant for
+    // byte-packed PointCloud2 data — FAST-LIO's pcl_custom::toPCL truncates
+    // each element back to uint8 before feeding PCL. We replicate that
+    // pattern byte-for-byte.
+    const size_t bytes = static_cast<size_t>(pc->data_length);
+    lidar_msg->data.resize(bytes);
+    for (size_t i = 0; i < bytes; ++i) {
+        lidar_msg->data[i] = static_cast<usi>(pc_data[i]);
+    }
+
+    // Log the first 30 frames for sync debugging.
+    int frame_idx = g_lcm_pc_frames.fetch_add(1);
+    if (frame_idx < 30) {
+        double imu_ts = g_last_imu_ts.load();
+        fprintf(stderr,
+                "[fastlio2] frame #%d  path=pc2  timebase=%.6f  max_offset=%.3fs  imu_latest=%.6f  "
+                "imu_vs_frame_end=%+.3fs  npts=%d\n",
+                frame_idx, frame_ts, max_offset_s, imu_ts,
+                (imu_ts - (frame_ts + max_offset_s)),
+                npoints);
+    }
+
+    g_fastlio->feed_lidar_pc2(lidar_msg);
+}
+
+static void on_lcm_imu(const lcm::ReceiveBuffer* /*rbuf*/,
+                       const std::string& /*channel*/,
+                       const sensor_msgs::Imu* imu) {
+    if (!g_fastlio || !g_running.load() || imu == nullptr) return;
+
+    // Timestamp source depends on --native_clock:
+    //   false (yesense legacy): wall-clock at LCM arrival — matches the
+    //     lidar callback's wall-clock anchor. Works around the dual-clock
+    //     mismatch between rsdriver (~0.8s lag) and yesense (~0.225s lag).
+    //   true (Airy path): use the incoming Imu message's header.stamp,
+    //     which airy_imu_bridge fills with the Airy's PTP-UTC timestamp.
+    //     Same clock domain as the lidar points, so syncPackage is correct.
+    double ts;
+    if (g_native_clock.load(std::memory_order_acquire)) {
+        ts = static_cast<double>(imu->header.stamp.sec) +
+             static_cast<double>(imu->header.stamp.nsec) * 1e-9;
+    } else {
+        ts = static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count()) * 1e-9;
+    }
+    g_last_imu_ts.store(ts);
+
+    // Stationarity tracker: if any axis exceeds the threshold, reset the
+    // clock on "how long have we been still". Only once the robot has been
+    // stationary for PREROLL_STATIONARY_S do we flip g_seeded, which
+    // unblocks lidar feeding and lets FAST-LIO's IMU_init run on clean data.
+    if (!g_seeded.load(std::memory_order_acquire)) {
+        const double ax = imu->linear_acceleration.x;
+        const double ay = imu->linear_acceleration.y;
+        const double az = imu->linear_acceleration.z;
+        const double a_mag = std::sqrt(ax*ax + ay*ay + az*az);
+        const double gx = std::fabs(imu->angular_velocity.x);
+        const double gy = std::fabs(imu->angular_velocity.y);
+        const double gz = std::fabs(imu->angular_velocity.z);
+        const bool moving = gx > STATIONARY_GYRO_RAD || gy > STATIONARY_GYRO_RAD ||
+                            gz > STATIONARY_GYRO_RAD ||
+                            std::fabs(a_mag - 9.81) > STATIONARY_ACC_DEV;
+        if (moving) {
+            g_stationary_since.store(ts, std::memory_order_release);
+        } else {
+            double since = g_stationary_since.load(std::memory_order_acquire);
+            if (since == 0.0) {
+                g_stationary_since.store(ts, std::memory_order_release);
+                since = ts;
+            }
+            if (ts - since >= PREROLL_STATIONARY_S) {
+                g_seeded.store(true, std::memory_order_release);
+                fprintf(stderr,
+                        "[fastlio2] stationary preroll complete after %.2fs — "
+                        "releasing lidar scans to FAST-LIO\n",
+                        ts - since);
+            }
+        }
+        uint64_t s = g_imu_samples.fetch_add(1);
+        if (s == 0) {
+            fprintf(stderr, "[fastlio2] first IMU sample received (ts=%.3f) — starting preroll\n", ts);
+        }
+    }
+
+    auto imu_msg = boost::make_shared<custom_messages::Imu>();
+    imu_msg->header.seq = 0;
+    imu_msg->header.stamp = custom_messages::Time().fromSec(ts);
+    imu_msg->header.frame_id = "imu_link";
+
+    imu_msg->orientation.x = imu->orientation.x;
+    imu_msg->orientation.y = imu->orientation.y;
+    imu_msg->orientation.z = imu->orientation.z;
+    imu_msg->orientation.w = imu->orientation.w;
+    for (int j = 0; j < 9; ++j) imu_msg->orientation_covariance[j] = 0.0;
+
+    imu_msg->angular_velocity.x = imu->angular_velocity.x;
+    imu_msg->angular_velocity.y = imu->angular_velocity.y;
+    imu_msg->angular_velocity.z = imu->angular_velocity.z;
+    for (int j = 0; j < 9; ++j) imu_msg->angular_velocity_covariance[j] = 0.0;
+
+    imu_msg->linear_acceleration.x = imu->linear_acceleration.x;
+    imu_msg->linear_acceleration.y = imu->linear_acceleration.y;
+    imu_msg->linear_acceleration.z = imu->linear_acceleration.z;
+    for (int j = 0; j < 9; ++j) imu_msg->linear_acceleration_covariance[j] = 0.0;
+
+    g_fastlio->feed_imu(imu_msg);
+}
+
+// ---------------------------------------------------------------------------
 // Livox SDK callbacks
 // ---------------------------------------------------------------------------
 
@@ -371,8 +723,12 @@ static void signal_handler(int /*sig*/) {
 int main(int argc, char** argv) {
     dimos::NativeModule mod(argc, argv);
 
-    // Required: LCM topics for output ports
-    g_lidar_topic = mod.has("lidar") ? mod.topic("lidar") : "";
+    // Required: LCM topics for output ports.
+    // Accept both `--lidar` (legacy / Livox wrapper) and `--registered_scan`
+    // (smart_nav convention used by AriseSLAM and the LCM-input wrapper).
+    g_lidar_topic = mod.has("lidar") ? mod.topic("lidar")
+                  : mod.has("registered_scan") ? mod.topic("registered_scan")
+                  : "";
     g_odometry_topic = mod.has("odometry") ? mod.topic("odometry") : "";
     g_map_topic = mod.has("global_map") ? mod.topic("global_map") : "";
 
@@ -392,7 +748,41 @@ int main(int argc, char** argv) {
     double msr_freq = mod.arg_float("msr_freq", 50.0f);
     double main_freq = mod.arg_float("main_freq", 5000.0f);
 
-    // Livox hardware config
+    // Input mode: "livox_sdk" (default) or "lcm" (M20 / external PointCloud2+Imu)
+    const std::string input_mode = mod.arg("input_mode", "livox_sdk");
+    // Trust sensor timestamps on lidar+IMU instead of wall-clock-rewriting
+    // them. Required when the IMU and lidar share a PTP-locked hardware
+    // clock (e.g. the Airy integrated IMU path); wrong for the yesense
+    // legacy path, which has separate clock domains.
+    // Parse bool manually — the lidar-common dimos::NativeModule header lacks
+    // arg_bool (unlike the smart_nav one). Match the Python blueprint, which
+    // sends "true"/"false" lowercased.
+    {
+        std::string nc = mod.arg("native_clock", "false");
+        g_native_clock.store(nc == "true" || nc == "1",
+                             std::memory_order_release);
+    }
+    fprintf(stderr, "[fastlio2] native_clock = %s\n",
+            g_native_clock.load() ? "true" : "false");
+    if (input_mode != "livox_sdk" && input_mode != "lcm") {
+        fprintf(stderr, "Error: --input_mode must be 'livox_sdk' or 'lcm' (got '%s')\n",
+                input_mode.c_str());
+        return 1;
+    }
+
+    // LCM-input topics (required when input_mode=lcm, ignored otherwise)
+    std::string raw_points_topic;
+    std::string imu_input_topic;
+    if (input_mode == "lcm") {
+        if (!mod.has("raw_points") || !mod.has("imu")) {
+            fprintf(stderr, "Error: input_mode=lcm requires --raw_points and --imu topics\n");
+            return 1;
+        }
+        raw_points_topic = mod.topic("raw_points");
+        imu_input_topic = mod.topic("imu");
+    }
+
+    // Livox hardware config (ignored when input_mode=lcm)
     std::string host_ip = mod.arg("host_ip", "192.168.1.5");
     std::string lidar_ip = mod.arg("lidar_ip", "192.168.1.155");
     g_frequency = mod.arg_float("frequency", 10.0f);
@@ -440,10 +830,18 @@ int main(int argc, char** argv) {
         }
     }
 
-    printf("[fastlio2] Starting FAST-LIO2 + Livox Mid-360 native module\n");
+    printf("[fastlio2] Starting FAST-LIO2 native module (input_mode=%s)\n",
+           input_mode.c_str());
     if (has_init_pose()) {
         printf("[fastlio2] init_pose: xyz=(%.3f, %.3f, %.3f) quat=(%.4f, %.4f, %.4f, %.4f)\n",
                g_init_x, g_init_y, g_init_z, g_init_qx, g_init_qy, g_init_qz, g_init_qw);
+    }
+    if (input_mode == "lcm") {
+        printf("[fastlio2] raw_points topic: %s\n", raw_points_topic.c_str());
+        printf("[fastlio2] imu topic: %s\n", imu_input_topic.c_str());
+    } else {
+        printf("[fastlio2] host_ip: %s  lidar_ip: %s  frequency: %.1f Hz\n",
+               host_ip.c_str(), lidar_ip.c_str(), g_frequency);
     }
     printf("[fastlio2] lidar topic: %s\n",
            g_lidar_topic.empty() ? "(disabled)" : g_lidar_topic.c_str());
@@ -452,8 +850,6 @@ int main(int argc, char** argv) {
     printf("[fastlio2] global_map topic: %s\n",
            g_map_topic.empty() ? "(disabled)" : g_map_topic.c_str());
     printf("[fastlio2] config: %s\n", config_path.c_str());
-    printf("[fastlio2] host_ip: %s  lidar_ip: %s  frequency: %.1f Hz\n",
-           host_ip.c_str(), lidar_ip.c_str(), g_frequency);
     printf("[fastlio2] pointcloud_freq: %.1f Hz  odom_freq: %.1f Hz\n",
            pointcloud_freq, odom_freq);
     printf("[fastlio2] voxel_size: %.3f  sor_mean_k: %d  sor_stddev: %.1f\n",
@@ -480,24 +876,34 @@ int main(int argc, char** argv) {
     g_fastlio = &fast_lio;
     printf("[fastlio2] FAST-LIO initialized.\n");
 
-    // Init Livox SDK (in-memory config, no temp files)
-    if (!livox_common::init_livox_sdk(host_ip, lidar_ip, ports)) {
-        return 1;
+    if (input_mode == "livox_sdk") {
+        // Init Livox SDK (in-memory config, no temp files)
+        if (!livox_common::init_livox_sdk(host_ip, lidar_ip, ports)) {
+            return 1;
+        }
+
+        // Register SDK callbacks
+        SetLivoxLidarPointCloudCallBack(on_point_cloud, nullptr);
+        SetLivoxLidarImuDataCallback(on_imu_data, nullptr);
+        SetLivoxLidarInfoChangeCallback(on_info_change, nullptr);
+
+        // Start SDK
+        if (!LivoxLidarSdkStart()) {
+            fprintf(stderr, "Error: LivoxLidarSdkStart failed\n");
+            LivoxLidarSdkUninit();
+            return 1;
+        }
+
+        printf("[fastlio2] Livox SDK started, waiting for device...\n");
+    } else {
+        // LCM input mode: subscribe to raw_points + imu streams.
+        // Callbacks feed FastLio directly; no frame accumulation needed.
+        // Explicit template params required: free-function pointers don't
+        // deduce through LCM's std::function<HandlerFunction<T>> overload.
+        lcm.subscribe<sensor_msgs::PointCloud2>(raw_points_topic, &on_lcm_point_cloud);
+        lcm.subscribe<sensor_msgs::Imu>(imu_input_topic, &on_lcm_imu);
+        printf("[fastlio2] LCM subscribers active, waiting for data...\n");
     }
-
-    // Register SDK callbacks
-    SetLivoxLidarPointCloudCallBack(on_point_cloud, nullptr);
-    SetLivoxLidarImuDataCallback(on_imu_data, nullptr);
-    SetLivoxLidarInfoChangeCallback(on_info_change, nullptr);
-
-    // Start SDK
-    if (!LivoxLidarSdkStart()) {
-        fprintf(stderr, "Error: LivoxLidarSdkStart failed\n");
-        LivoxLidarSdkUninit();
-        return 1;
-    }
-
-    printf("[fastlio2] SDK started, waiting for device...\n");
 
     // Main loop
     auto frame_interval = std::chrono::microseconds(
@@ -526,9 +932,13 @@ int main(int argc, char** argv) {
     while (g_running.load()) {
         auto loop_start = std::chrono::high_resolution_clock::now();
 
-        // At frame rate: build CustomMsg from accumulated points and feed to FAST-LIO
         auto now = std::chrono::steady_clock::now();
-        if (now - last_emit >= frame_interval) {
+
+        // Livox-mode frame accumulation: SDK packets arrive as small chunks;
+        // batch them into full scans at frame_interval. LCM mode receives
+        // complete PointCloud2 messages per frame and feeds directly from
+        // the subscriber callback, so this block is skipped.
+        if (input_mode == "livox_sdk" && now - last_emit >= frame_interval) {
             std::vector<custom_messages::CustomPoint> points;
             uint64_t frame_start = 0;
 
@@ -618,7 +1028,9 @@ int main(int argc, char** argv) {
     // Cleanup
     printf("[fastlio2] Shutting down...\n");
     g_fastlio = nullptr;
-    LivoxLidarSdkUninit();
+    if (input_mode == "livox_sdk") {
+        LivoxLidarSdkUninit();
+    }
     g_lcm = nullptr;
 
     printf("[fastlio2] Done.\n");

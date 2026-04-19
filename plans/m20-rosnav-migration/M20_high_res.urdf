@@ -1,0 +1,504 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot name="M20">
+    <mujoco>
+        <compiler meshdir="../meshes/" balanceinertia="false" discardvisual="false"/>
+    </mujoco>
+    <link name="base_link">
+        <inertial>
+            <origin xyz="0.00355105878308153 0.0016507579200937 -0.00346462146571654" rpy="0 0 0"/>
+            <mass value="15.882"/>
+            <inertia ixx="0.087919" ixy="0.001396" ixz="0.000111" iyy="0.533522" iyz="0.000519" izz="0.563492"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/base_link.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.75 0.09 0.14"/>
+            </geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 0.045 0" rpy="0 1.57079632 0"/>
+            <geometry>
+                <cylinder length="0.75" radius="0.07"/>
+            </geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 -0.045 0" rpy="0 1.57079632 0"/>
+            <geometry>
+                <cylinder length="0.75" radius="0.07"/>
+            </geometry>
+        </collision>
+    </link>
+    <link name="fl_hipx">
+        <inertial>
+            <origin xyz="-0.0111893129496933 0.00891693461032669 0.000405665689861192" rpy="0 0 0"/>
+            <mass value="0.259964"/>
+            <inertia ixx="0.000184" ixy="0.000026" ixz="-0.000012" iyy="0.000370" iyz="-0.000007" izz="0.000286"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/fl_hipx.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0.055 0" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.14" radius="0.048"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="fl_hipx_joint" type="revolute">
+        <origin xyz="0.3141 0.0685 0" rpy="0 0 0"/>
+        <parent link="base_link"/>
+        <child link="fl_hipx"/>
+        <axis xyz="-1 0 0"/>
+        <limit lower="-0.436" upper="0.611" effort="76.4" velocity="22.4"/>
+    </joint>
+    <link name="fl_hipy">
+        <inertial>
+            <origin xyz="-0.00199374763010413 0.0984389609045802 -0.130663565833427" rpy="0 0 0"/>
+            <mass value="2.618"/>
+            <inertia ixx="0.040808" ixy="-0.000024" ixz="-0.000039" iyy="0.039948" iyz="-0.006286" izz="0.004042"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/fl_hipy.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="-0.01 0.11 -0.125" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.07 0.02 0.25"/>
+            </geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 0.11 -0.25" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.09" radius="0.05"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="fl_hipy_joint" type="revolute">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <parent link="fl_hipx"/>
+        <child link="fl_hipy"/>
+        <axis xyz="0 -1 0"/>
+        <limit lower="-2.286" upper="2.583" effort="76.4" velocity="22.4"/>
+    </joint>
+    <link name="fl_knee">
+        <inertial>
+            <origin xyz="0.00341916513259743 0.0026912421076368 -0.181265498605881" rpy="0 0 0"/>
+            <mass value="1.145"/>
+            <inertia ixx="0.011736" ixy="-0.000049" ixz="0.000204" iyy="0.011903" iyz="-0.001525" izz="0.001164"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/fl_knee.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0.015 -0.015 -0.125" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.06 0.025 0.25"/>
+            </geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 0.02 -0.25" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.1" radius="0.04"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="fl_knee_joint" type="revolute">
+        <origin xyz="0 0.0984 -0.25" rpy="0 0 0"/>
+        <parent link="fl_hipy"/>
+        <child link="fl_knee"/>
+        <axis xyz="0 -1 0"/>
+        <limit lower="-2.809" upper="2.792" effort="76.4" velocity="22.4"/>
+    </joint>
+    <link name="fl_wheel">
+        <inertial>
+            <origin xyz="-3.11398454355682E-07 0.000279001520740008 5.70329233673394E-07" rpy="0 0 0"/>
+            <mass value="0.638"/>
+            <inertia ixx="0.001535" ixy="0.0" ixz="0.0" iyy="0.002853" iyz="0.0" izz="0.001535"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/fl_wheel.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.054" radius="0.09"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="fl_wheel_joint" type="continuous">
+        <origin xyz="0 0.059676 -0.25" rpy="0 0 0"/>
+        <parent link="fl_knee"/>
+        <child link="fl_wheel"/>
+        <axis xyz="0 -1 0"/>
+        <limit effort="21.6" velocity="79.3"/>
+    </joint>
+    <link name="fr_hipx">
+        <inertial>
+            <origin xyz="-0.0110900940309543 -0.0087503473771439 0.000521421017057358" rpy="0 0 0"/>
+            <mass value="0.259964"/>
+            <inertia ixx="0.000184" ixy="-0.000026" ixz="-0.000012" iyy="0.000370" iyz="0.000007" izz="0.000286"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/fr_hipx.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 -0.055 0" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.14" radius="0.048"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="fr_hipx_joint" type="revolute">
+        <origin xyz="0.3141 -0.0685 0" rpy="0 0 0"/>
+        <parent link="base_link"/>
+        <child link="fr_hipx"/>
+        <axis xyz="-1 0 0"/>
+        <limit lower="-0.611" upper="0.436" effort="76.4" velocity="22.4"/>
+    </joint>
+    <link name="fr_hipy">
+        <inertial>
+            <origin xyz="-0.00229991904853988 -0.0989709441053532 -0.130925037640537" rpy="0 0 0"/>
+            <mass value="2.618"/>
+            <inertia ixx="0.040538" ixy="0.000006" ixz="-0.000066" iyy="0.039720" iyz="0.006161" izz="0.004047"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/fr_hipy.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="-0.01 -0.11 -0.125" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.07 0.02 0.25"/>
+            </geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 -0.11 -0.25" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.09" radius="0.05"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="fr_hipy_joint" type="revolute">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <parent link="fr_hipx"/>
+        <child link="fr_hipy"/>
+        <axis xyz="0 -1 0"/>
+        <limit lower="-2.286" upper="2.583" effort="76.4" velocity="22.4"/>
+    </joint>
+    <link name="fr_knee">
+        <inertial>
+            <origin xyz="0.0035494546955584 -0.002478843181213 -0.180089236444296" rpy="0 0 0"/>
+            <mass value="1.145"/>
+            <inertia ixx="0.011856" ixy="0.000049" ixz="0.000200" iyy="0.012030" iyz="0.001532" izz="0.001167"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/fr_knee.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0.015 0.015 -0.125" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.06 0.025 0.25"/>
+            </geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 -0.02 -0.25" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.1" radius="0.04"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="fr_knee_joint" type="revolute">
+        <origin xyz="0 -0.0984 -0.25" rpy="0 0 0"/>
+        <parent link="fr_hipy"/>
+        <child link="fr_knee"/>
+        <axis xyz="0 -1 0"/>
+        <limit lower="-2.809" upper="2.792" effort="76.4" velocity="22.4"/>
+    </joint>
+    <link name="fr_wheel">
+        <inertial>
+            <origin xyz="-6.4732687427016E-07 -0.000279012463466427 -4.62420470803693E-08" rpy="0 0 0"/>
+            <mass value="0.638"/>
+            <inertia ixx="0.001535" ixy="0.0" ixz="0.0" iyy="0.002853" iyz="0.0" izz="0.001535"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/fr_wheel.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.054" radius="0.09"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="fr_wheel_joint" type="continuous">
+        <origin xyz="0 -0.059676 -0.25" rpy="0 0 0"/>
+        <parent link="fr_knee"/>
+        <child link="fr_wheel"/>
+        <axis xyz="0 -1 0"/>
+        <limit effort="21.6" velocity="79.3"/>
+    </joint>
+    <link name="hl_hipx">
+        <inertial>
+            <origin xyz="0.0110900940233134 0.00875014035040743 0.000524883746291591" rpy="0 0 0"/>
+            <mass value="0.259964"/>
+            <inertia ixx="0.000184" ixy="-0.000026" ixz="0.000012" iyy="0.000370" iyz="-0.000007" izz="0.000286"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/hl_hipx.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0.055 0" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.14" radius="0.048"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="hl_hipx_joint" type="revolute">
+        <origin xyz="-0.3141 0.0685 0" rpy="0 0 0"/>
+        <parent link="base_link"/>
+        <child link="hl_hipx"/>
+        <axis xyz="-1 0 0"/>
+        <limit lower="-0.436" upper="0.611" effort="76.4" velocity="22.4"/>
+    </joint>
+    <link name="hl_hipy">
+        <inertial>
+            <origin xyz="0.00204343366218146 0.0990227473833045 -0.13069726691312" rpy="0 0 0"/>
+            <mass value="2.618"/>
+            <inertia ixx="0.040625" ixy="0.000031" ixz="0.000011" iyy="0.039791" iyz="-0.006194" izz="0.004040"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/hl_hipy.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0.01 0.11 -0.125" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.07 0.02 0.25"/>
+            </geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 0.11 -0.25" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.09" radius="0.05"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="hl_hipy_joint" type="revolute">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <parent link="hl_hipx"/>
+        <child link="hl_hipy"/>
+        <axis xyz="0 -1 0"/>
+        <limit lower="-2.583" upper="2.286" effort="76.4" velocity="22.4"/>
+    </joint>
+    <link name="hl_knee">
+        <inertial>
+            <origin xyz="-0.00354945209738589 0.00247884637205834 -0.180089257150601" rpy="0 0 0"/>
+            <mass value="1.145"/>
+            <inertia ixx="0.011856" ixy="0.000049" ixz="-0.000200" iyy="0.012030" iyz="-0.001532" izz="0.001167"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/hl_knee.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="-0.015 0.015 -0.125" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.06 0.025 0.25"/>
+            </geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 0.02 -0.25" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.1" radius="0.04"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="hl_knee_joint" type="revolute">
+        <origin xyz="0 0.0984 -0.25" rpy="0 0 0"/>
+        <parent link="hl_hipy"/>
+        <child link="hl_knee"/>
+        <axis xyz="0 -1 0"/>
+        <limit lower="-2.792" upper="2.809" effort="76.4" velocity="22.4"/>
+    </joint>
+    <link name="hl_wheel">
+        <inertial>
+            <origin xyz="-6.07889369508285E-07 0.000279009097070765 2.10489879304276E-07" rpy="0 0 0"/>
+            <mass value="0.638"/>
+            <inertia ixx="0.001535" ixy="0.0" ixz="0.0" iyy="0.002853" iyz="0.0" izz="0.001535"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/hl_wheel.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.054" radius="0.09"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="hl_wheel_joint" type="continuous">
+        <origin xyz="0 0.059676 -0.25" rpy="0 0 0"/>
+        <parent link="hl_knee"/>
+        <child link="hl_wheel"/>
+        <axis xyz="0 -1 0"/>
+        <limit effort="21.6" velocity="79.3"/>
+    </joint>
+    <link name="hr_hipx">
+        <inertial>
+            <origin xyz="0.0110901558226165 -0.00875011717083631 0.000524936954718227" rpy="0 0 0"/>
+            <mass value="0.259964"/>
+            <inertia ixx="0.000184" ixy="0.000026" ixz="0.000012" iyy="0.000370" iyz="0.000007" izz="0.000286"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/hr_hipx.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 -0.055 0" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.14" radius="0.048"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="hr_hipx_joint" type="revolute">
+        <origin xyz="-0.3141 -0.0685 0" rpy="0 0 0"/>
+        <parent link="base_link"/>
+        <child link="hr_hipx"/>
+        <axis xyz="-1 0 0"/>
+        <limit lower="-0.611" upper="0.436" effort="76.4" velocity="22.4"/>
+    </joint>
+    <link name="hr_hipy">
+        <inertial>
+            <origin xyz="0.00199199678434109 -0.0983704174694303 -0.13056065751366" rpy="0 0 0"/>
+            <mass value="2.618"/>
+            <inertia ixx="0.040804" ixy="-0.000023" ixz="0.000039" iyy="0.039939" iyz="0.006291" izz="0.004046"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/hr_hipy.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0.01 -0.11 -0.125" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.07 0.02 0.25"/>
+            </geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 -0.11 -0.25" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.09" radius="0.05"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="hr_hipy_joint" type="revolute">
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <parent link="hr_hipx"/>
+        <child link="hr_hipy"/>
+        <axis xyz="0 -1 0"/>
+        <limit lower="-2.583" upper="2.286" effort="76.4" velocity="22.4"/>
+    </joint>
+    <link name="hr_knee">
+        <inertial>
+            <origin xyz="-0.00341053036115846 -0.0027020185369851 -0.181287492263963" rpy="0 0 0"/>
+            <mass value="1.145"/>
+            <inertia ixx="0.011740" ixy="-0.000048" ixz="-0.000204" iyy="0.011908" iyz="0.001526" izz="0.001165"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/hr_knee.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="-0.015 0.015 -0.125" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.06 0.025 0.25"/>
+            </geometry>
+        </collision>
+        <collision>
+            <origin xyz="0 -0.02 -0.25" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.1" radius="0.04"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="hr_knee_joint" type="revolute">
+        <origin xyz="0 -0.0984 -0.25" rpy="0 0 0"/>
+        <parent link="hr_hipy"/>
+        <child link="hr_knee"/>
+        <axis xyz="0 -1 0"/>
+        <limit lower="-2.792" upper="2.809" effort="76.4" velocity="22.4"/>
+    </joint>
+    <link name="hr_wheel">
+        <inertial>
+            <origin xyz="6.09746291457824E-07 -0.00027900886004309 2.0131377032051E-07" rpy="0 0 0"/>
+            <mass value="0.638"/>
+            <inertia ixx="0.001535" ixy="0.0" ixz="0.0" iyy="0.002853" iyz="0.0" izz="0.001535"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <mesh filename="../meshes/hr_wheel.dae"/>
+            </geometry>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="1.57079632 0 0"/>
+            <geometry>
+                <cylinder length="0.054" radius="0.09"/>
+            </geometry>
+        </collision>
+    </link>
+    <joint name="hr_wheel_joint" type="continuous">
+        <origin xyz="0 -0.059676 -0.25" rpy="0 0 0"/>
+        <parent link="hr_knee"/>
+        <child link="hr_wheel"/>
+        <axis xyz="0 -1 0"/>
+        <limit effort="21.6" velocity="79.3"/>
+    </joint>
+</robot>

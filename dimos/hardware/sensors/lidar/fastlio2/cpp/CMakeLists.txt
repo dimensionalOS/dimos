@@ -3,7 +3,7 @@ project(fastlio2_native CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2")
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
   set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/result" CACHE PATH "" FORCE)
@@ -82,9 +82,17 @@ add_executable(fastlio2_native
   ${FASTLIO_DIR}/include/ikd-Tree/ikd_Tree.cpp
 )
 
-# Shared Livox common headers (livox_sdk_config.hpp etc.)
+# Shared Livox common headers (livox_sdk_config.hpp etc.).
+# When building via nix, the sandbox only contains this flake's source dir,
+# so `../../common` is unreachable. A vendored copy lives in
+# livox_common_vendor/ and is used as the in-tree fallback. For non-nix builds
+# pass -DLIVOX_COMMON_DIR=<abs path> to override.
 if(NOT LIVOX_COMMON_DIR)
-  set(LIVOX_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
+  if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/livox_common_vendor/livox_sdk_config.hpp)
+    set(LIVOX_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/livox_common_vendor)
+  else()
+    set(LIVOX_COMMON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../common)
+  endif()
 endif()
 
 target_include_directories(fastlio2_native PRIVATE

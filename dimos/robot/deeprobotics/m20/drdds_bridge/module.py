@@ -78,6 +78,38 @@ class DrddsLidarBridge(
     imu: Out[Imu]
 
 
+class AiryImuBridgeConfig(NativeModuleConfig):
+    """Config for the Airy integrated-IMU multicast → LCM bridge."""
+
+    cwd: str | None = "cpp"
+    executable: str = "result/bin/airy_imu_bridge"
+    build_command: str | None = "nix build .#drdds_lidar_bridge"
+    which: str = "front"  # "front" or "rear"
+
+
+class AiryImuBridge(NativeModule[AiryImuBridgeConfig], perception.IMU):
+    """Taps the RoboSense Airy integrated IMU (front or rear) from its UDP
+    multicast stream and publishes a base_link-frame LCM sensor_msgs/Imu.
+
+    Parses the 51-byte RSAIRY IMU packet per rs_driver's decoder_RSAIRY.hpp,
+    applies FSR-aware unit conversion (g → m/s², dps → rad/s), rotates the
+    accel + gyro into base_link using the lidar→base transform from rsdriver
+    config, and drops packets failing a PTP-lock sanity gate (UTC < 2024-01-01).
+
+    Unlike the yesense path, Airy's IMU shares a PTP-locked hardware clock
+    with the Airy lidar optics — eliminating the clock-domain mismatch that
+    plagued earlier FAST-LIO2 runs (FASTLIO2_LOG Findings #7, #8).
+
+    Ports:
+        imu (Out[Imu]): base_link-frame IMU samples at 200 Hz.
+    """
+
+    config: AiryImuBridgeConfig
+    default_config = AiryImuBridgeConfig
+
+    imu: Out[Imu]
+
+
 class NavCmdPubConfig(NativeModuleConfig):
     """Config for the raw FastDDS /NAV_CMD publisher."""
 
@@ -105,4 +137,5 @@ class NavCmdPub(NativeModule[NavCmdPubConfig]):
 
 if TYPE_CHECKING:
     DrddsLidarBridge()
+    AiryImuBridge()
     NavCmdPub()

@@ -8,6 +8,11 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
   set(CMAKE_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/result" CACHE PATH "" FORCE)
 endif()
 
+# Shared helpers (dimos_native_module.hpp) are vendored into ./include/ so the
+# nix build doesn't need to reach the rest of the dimos tree. Keep the vendor
+# copy in sync with dimos/navigation/smart_nav/common/dimos_native_module.hpp
+# whenever that canonical header changes.
+
 # Fetch dimos-lcm for C++ message headers
 include(FetchContent)
 FetchContent_Declare(dimos_lcm
@@ -41,7 +46,12 @@ target_link_directories(drdds_lidar_bridge PRIVATE
 )
 
 # nav_cmd_pub: raw FastDDS publisher for /NAV_CMD (no ROS, no drdds wrapper)
-# Subscribes to cmd_vel on LCM, publishes to rt/NAV_CMD via FastDDS
+# Subscribes to cmd_vel on LCM, publishes to rt/NAV_CMD via FastDDS.
+# Skipped in the nix build because FastDDS + libdrdds live at /usr/local on
+# NOS and aren't reachable from the nix sandbox. Built via the local-cmake
+# path (build/) instead — see deploy.sh.
+option(BUILD_NAV_CMD_PUB "Build the nav_cmd_pub FastDDS bridge (requires /usr/local/{include,lib})" ON)
+if(BUILD_NAV_CMD_PUB)
 add_executable(nav_cmd_pub nav_cmd_pub.cpp)
 
 target_include_directories(nav_cmd_pub PRIVATE
@@ -68,5 +78,31 @@ target_link_directories(nav_cmd_pub PRIVATE
   ${LCM_LIBRARY_DIRS}
   /usr/local/lib
 )
+endif()  # BUILD_NAV_CMD_PUB
 
-install(TARGETS drdds_lidar_bridge nav_cmd_pub DESTINATION bin)
+# airy_imu_bridge: taps the RoboSense Airy integrated IMU directly from its
+# UDP multicast stream (rsdriver doesn't republish it to drdds despite the
+# config key). Parses the 51B rs_driver packet format and publishes LCM
+# sensor_msgs::Imu in base_link frame.
+add_executable(airy_imu_bridge airy_imu_bridge.cpp)
+
+target_include_directories(airy_imu_bridge PRIVATE
+  ${dimos_lcm_SOURCE_DIR}/generated/cpp_lcm_msgs
+  ${LCM_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(airy_imu_bridge PRIVATE
+  ${LCM_LIBRARIES}
+  pthread
+)
+
+target_link_directories(airy_imu_bridge PRIVATE
+  ${LCM_LIBRARY_DIRS}
+)
+
+set(INSTALL_TARGETS drdds_lidar_bridge airy_imu_bridge)
+if(BUILD_NAV_CMD_PUB)
+  list(APPEND INSTALL_TARGETS nav_cmd_pub)
+endif()
+install(TARGETS ${INSTALL_TARGETS} DESTINATION bin)

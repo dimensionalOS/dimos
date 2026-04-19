@@ -204,3 +204,117 @@ Key discoveries along the way:
 3. ROS2 `rmw_fastrtps` prefixes DDS topics with `rt/` — the key to matching basic_server
 4. Raw FastDDS publisher with `rt/NAV_CMD` + `initialPeersList` to 10.21.33.103 works
 5. Host route `10.21.33.103/32 via 10.21.31.103` bridges the subnet gap for DDS discovery
+
+---
+
+## Post-Working Cleanup + Review (2026-04-14 → 2026-04-16)
+
+### Connection Simplification
+`M20Connection` shrank from 482 → 190 lines. Removed velocity controller,
+`cmd_vel` port (moved to NavCmdPub), ROS sensor wrappers, lidar handling,
+and TF publishing. What's left: RTSP camera + UDP protocol (heartbeat, gait,
+mode). Auto stand + navigation mode + agile gait on `start`; sit on `stop`.
+
+### Directory Rename
+`blueprints/rosnav/` → `blueprints/nav/`. The name "rosnav" was a lie after
+the migration; nothing here is ROS anymore.
+
+### Codex Review — All Findings Fixed
+Review pass with Codex (GPT-5.4) on the full native-nav patchset. Fixes
+landed in `5cac36f87`:
+
+| ID | Fix |
+|----|-----|
+| H2 | `deploy.sh restart` guards against empty `--host` (would SSH to localhost) |
+| H3 | Removed dead `_publish_tf` method + undeclared `self.tf` attribute in M20Connection |
+| M4 | Documented 10Hz keepalive intent in `nav_cmd_pub.cpp` — basic_server requires periodic commands; zero-velocity acts as safety keepalive |
+| M5 | `deploy.sh stop` sends SIGTERM, waits 3s, falls back to SIGKILL (was SIGKILL-only) |
+| M7 | Fixed stale import in cleaned-up `__init__.py` (deploy hit it after rsync --delete) |
+| L2 | Removed unused `g_vel_seq` counter |
+| L5 | Updated stale comments referencing the old drdds-via-UDP approach |
+
+### Deploy Script Improvements
+`deploy.sh` rewritten from a 700-line grab-bag into a ~230-line tool with a
+clear command surface:
+
+| Command | Purpose |
+|---------|---------|
+| `sync` | rsync code to NOS (excludes nix store, preserves symlinks, `--delete` for stale files) |
+| `setup` | First-run: install nix, build all NativeModules, install drdds_recv systemd service |
+| `bridge-start` / `bridge-stop` | Manage drdds_recv host service (must start BEFORE rsdriver for SHM discovery) |
+| `start` / `stop` | Start/stop the dimos nav process |
+| `restart` | stop → sync → start (the common inner loop) |
+| `status` | Process + systemd health |
+| `viewer` | Launch dimos-viewer in `--connect` mode pointing at NOS |
+
+`remote_sudo()` helper uses NOPASSWD where configured, prompts interactively
+otherwise. No more wrestling with the single-quote sudo password.
+
+---
+
+## Next Phase: Click-to-Goal Navigation
+
+All infrastructure is already wired — this phase is about verification and
+tuning, not new code.
+
+### Existing Pipeline (to verify end-to-end)
+
+```
+dimos-viewer click
+  → WebSocket {"type":"click", x, y, z}       (viewer → RerunWebSocketServer)
+  → clicked_point: PointStamped               (LCM)
+  → ClickToGoal                                (validates, caches odom)
+  → way_point + goal: PointStamped             (LCM)
+  → SimplePlanner                              (m20 uses use_simple_planner=True)
+  → goal_path                                  (LCM)
+  → PathFollower                               (nav_cmd_vel)
+  → CmdVelMux                                  (cmd_vel)
+  → NavCmdPub                                  (FastDDS rt/NAV_CMD)
+  → AOS basic_server → motors
+```
+
+### Open Questions
+
+1. **SimplePlanner vs way_point remapping** — `smart_nav/main.py:237` remaps
+   `ClickToGoal.way_point` to `_click_way_point_unused` unconditionally
+   (designed for FarPlanner/TARE ownership). Need to confirm SimplePlanner
+   reads `goal` (not `way_point`) so clicks actually reach it. If not,
+   we'll need a `use_simple_planner` branch in that remapping list.
+2. **Click coordinate frame** — viewer clicks arrive tagged with
+   `entity_path` as `frame_id`. ClickToGoal passes the PointStamped through
+   as-is. Need to confirm SimplePlanner treats these as map-frame points
+   (they should be — viewer renders in map frame).
+3. **Out-of-range rejection bounds** — ClickToGoal rejects clicks with
+   `|x|>500`, `|y|>500`, `|z|>50`. M20 operational range is much smaller;
+   leave as-is for now (rejecting sky-clicks / NaN is the main job).
+4. **Stop-on-click-off** — `stop_movement` via teleop anchors goal at
+   current pose. Need to verify keyboard teleop interrupts an active
+   autonomous drive cleanly.
+
+### Tuning Parameters (already set in m20_smartnav_native.py)
+
+```python
+simple_planner={
+    "cell_size": 0.3,
+    "obstacle_height_threshold": 0.20,
+    "inflation_radius": 0.4,
+    "lookahead_distance": 2.0,
+    "replan_rate": 5.0,
+    "replan_cooldown": 2.0,
+}
+```
+
+Expect to iterate on `inflation_radius` (M20 is 0.45m wide + rotation
+diameter 0.6m) and `lookahead_distance` once we see real indoor paths.
+
+### Test Plan
+
+1. Start full stack, confirm lidar + odom + terrain_map streaming in viewer
+2. Click a nearby point (~2m in front), watch for:
+   - `[click_to_goal] Goal: (x, y, z)` log line
+   - `goal_path` entity in viewer
+   - Robot turns and drives toward click
+3. Click during motion — verify replan
+4. WASD during autonomous drive — verify stop_movement cancels goal
+5. Click beyond the current terrain_map edge — verify graceful handling
+6. Click on an obstacle — verify inflation_radius prevents collision path

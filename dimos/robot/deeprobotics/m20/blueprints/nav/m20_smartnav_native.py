@@ -17,7 +17,7 @@
 
 All modules run on the NOS host via nix:
 - DrddsLidarBridge: reads drdds SHM (lidar + IMU) and publishes to LCM
-- AriseSLAM: C++ NativeModule for lidar-inertial SLAM
+- SLAM: either AriseSLAM or FastLio2 (C++ NativeModule, env-selectable)
 - SmartNav: full planning stack (terrain analysis, local planner, path
   follower, simple planner, PGO, CmdVelMux, ClickToGoal)
 - NavCmdPub: raw FastDDS publisher for /NAV_CMD (no rclpy needed)
@@ -26,27 +26,84 @@ All modules run on the NOS host via nix:
 Data flow:
     drdds_recv (host) → POSIX SHM
     → DrddsLidarBridge → raw_points + imu (LCM)
-    → AriseSLAM → registered_scan + odometry
+    → SLAM backend → registered_scan + odometry
     → SmartNav (TerrainAnalysis → LocalPlanner → PathFollower)
     → CmdVelMux → cmd_vel → NavCmdPub → rt/NAV_CMD (FastDDS) → AOS motors
+
+SLAM backend is selected by the `M20_SLAM_BACKEND` env var:
+    arise (default) — AriseSLAM single-pass laser-mapping (current state;
+        indoor yaw tracking broken pending Option C 4-node port, bead di-ony5x)
+    fastlio2        — FAST-LIO2 (native, LCM-input, tight IMU coupling) —
+        the click-to-goal unblocker tracked by bead di-857dn
 """
+
+import os
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.navigation.smart_nav.main import smart_nav, smart_nav_rerun_config
 from dimos.navigation.smart_nav.modules.arise_slam.arise_slam import AriseSLAM
+from dimos.navigation.smart_nav.modules.fastlio2.fastlio2 import FastLio2
 from dimos.robot.deeprobotics.m20.blueprints.nav.m20_rerun import (
     camera_info_override,
     m20_rerun_blueprint,
     static_robot,
 )
 from dimos.robot.deeprobotics.m20.connection import m20_connection
-from dimos.robot.deeprobotics.m20.drdds_bridge.module import DrddsLidarBridge, NavCmdPub
+from dimos.robot.deeprobotics.m20.drdds_bridge.module import (
+    AiryImuBridge,
+    DrddsLidarBridge,
+    NavCmdPub,
+)
 from dimos.visualization.vis_module import vis_module
 
 # M20 physical dimensions
 M20_HEIGHT_CLEARANCE = 0.57  # 570mm standing height
 M20_LIDAR_HEIGHT = 0.47  # lidar at 47cm in agile stance
+
+_SLAM_BACKEND = os.environ.get("M20_SLAM_BACKEND", "arise").strip().lower()
+if _SLAM_BACKEND not in {"arise", "fastlio2"}:
+    raise ValueError(
+        f"M20_SLAM_BACKEND must be 'arise' or 'fastlio2' (got {_SLAM_BACKEND!r})"
+    )
+
+# Which IMU feeds FAST-LIO2:
+#   yesense (legacy): DeepRobotics body IMU on /IMU via DrddsLidarBridge SHM.
+#       Unknown IMU↔lidar extrinsic + cross-clock-domain timestamps with
+#       rsdriver caused the 20–30 m/15 s stationary drift documented in
+#       FASTLIO2_LOG Findings #7–#17.
+#   airy: Front RoboSense Airy integrated IMU, tapped via AiryImuBridge
+#       multicast (224.10.10.201:6681). Shares a PTP-locked hardware clock
+#       with the Airy lidar optics; rotated into base_link at the bridge so
+#       the FAST-LIO2 extrinsic is identity. This is the codex-recommended
+#       clean test replacing yesense.
+_FASTLIO2_IMU = os.environ.get("M20_FASTLIO2_IMU", "airy").strip().lower()
+if _FASTLIO2_IMU not in {"yesense", "airy"}:
+    raise ValueError(
+        f"M20_FASTLIO2_IMU must be 'yesense' or 'airy' (got {_FASTLIO2_IMU!r})"
+    )
+
+if _SLAM_BACKEND == "fastlio2":
+    # FAST-LIO2 via the Velodyne PointCloud2 path (aphexcx/FAST-LIO-NON-ROS
+    # branch dimos-integration-velodyne). `velodyne.yaml` has the Airy IMU
+    # extrinsic baked as identity — valid ONLY when the IMU input is the
+    # AiryImuBridge output (which rotates into base_link). With yesense,
+    # the extrinsic is wrong and drift will be significant.
+    _slam_module = FastLio2.blueprint(
+        build_command=None,
+        config="velodyne.yaml",
+        native_clock=(_FASTLIO2_IMU == "airy"),
+    )
+else:
+    _slam_module = AriseSLAM.blueprint(
+        build_command=None,
+        scan_voxel_size=0.1,
+        max_range=50.0,
+    )
+
+_extra_imu_modules: tuple = ()
+if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy":
+    _extra_imu_modules = (AiryImuBridge.blueprint(build_command=None, which="front"),)
 
 m20_smartnav_native = (
     autoconnect(
@@ -56,11 +113,8 @@ m20_smartnav_native = (
         ),
         NavCmdPub.blueprint(),
         DrddsLidarBridge.blueprint(build_command=None),
-        AriseSLAM.blueprint(
-            build_command=None,
-            scan_voxel_size=0.1,
-            max_range=50.0,
-        ),
+        *_extra_imu_modules,
+        _slam_module,
         smart_nav(
             use_simple_planner=True,
             vehicle_height=M20_HEIGHT_CLEARANCE,
@@ -102,8 +156,22 @@ m20_smartnav_native = (
     )
     .remappings(
         [
-            # DrddsLidarBridge outputs "lidar"; AriseSLAM expects "raw_points"
+            # DrddsLidarBridge outputs "lidar"; SLAM backends expect "raw_points"
             (DrddsLidarBridge, "lidar", "raw_points"),
+            # When the Airy IMU path is active, two IMU publishers coexist —
+            # rename both to distinct topics and pin FAST-LIO2 to the Airy one
+            # so autoconnect isn't ambiguous. AriseSLAM (the other SLAM option)
+            # stays on the default `imu` topic since it's never co-scheduled
+            # with AiryImuBridge.
+            *(
+                [
+                    (DrddsLidarBridge, "imu", "yesense_imu"),
+                    (AiryImuBridge, "imu", "airy_imu_front"),
+                    (FastLio2, "imu", "airy_imu_front"),
+                ]
+                if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy"
+                else []
+            ),
         ]
     )
     .global_config(

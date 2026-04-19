@@ -21,26 +21,28 @@
 
           src = ./.;
 
-          # Workaround: nix's coreutils (glibc 2.42) uses fchmodat2 which
-          # kernel 5.10 doesn't have. Override phases that use cp/chmod
-          # to use host binaries (linked against host glibc 2.31).
-          unpackPhase = ''
-            /usr/bin/cp -r $src source
-            /usr/bin/chmod -R u+w source
-            cd source
-          '';
-          fixupPhase = ''
-            /usr/bin/find $out -type f -executable -exec /usr/bin/chmod 0755 {} \;
-            /usr/bin/find $out -type d -exec /usr/bin/chmod 0755 {} \;
+          # Kernel 5.10 on NOS lacks fchmodat2; nix's default unpackPhase
+          # and `cp -r` both trip that syscall via glibc 2.42 coreutils,
+          # and /usr/bin/cp isn't visible inside the nix build sandbox on
+          # this host. Match the FAST-LIO2 flake's workaround: skip the
+          # copy-into-build-dir entirely and have cmake read $src directly.
+          dontUnpack = true;
+          dontFixup = true;
+          configurePhase = ''
+            runHook preConfigure
+            mkdir -p build
+            cd build
+            cmake $src \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX=$out \
+              -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+              -DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm} \
+              -DBUILD_NAV_CMD_PUB=OFF
+            runHook postConfigure
           '';
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
           buildInputs = [ pkgs.lcm pkgs.glib ];
-
-          cmakeFlags = [
-            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-            "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
-          ];
         };
       in {
         packages = {

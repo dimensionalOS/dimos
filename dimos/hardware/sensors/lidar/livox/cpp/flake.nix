@@ -28,6 +28,22 @@
 
           nativeBuildInputs = [ pkgs.cmake ];
 
+          # Workaround for kernel 5.10 (Rockchip RK3588) missing fchmodat2 syscall.
+          # nixpkgs coreutils is built against glibc 2.42 which uses fchmodat2;
+          # kernel 5.10 returns ENOSYS for it.  Use host coreutils (glibc 2.31
+          # on Ubuntu 22.04) via absolute paths to bypass the syscall.  Mirrors
+          # the pattern applied in drdds_bridge and fastlio2 flakes — see
+          # plans/m20-rosnav-migration/06-simplify-remove-container/nix-arm64-kernel510-workaround.md
+          unpackPhase = ''
+            /usr/bin/cp -r $src source
+            /usr/bin/chmod -R u+w source
+            cd source
+          '';
+          fixupPhase = ''
+            /usr/bin/find $out -type f -executable -exec /usr/bin/chmod 0755 {} \;
+            /usr/bin/find $out -type d -exec /usr/bin/chmod 0755 {} \;
+          '';
+
           cmakeFlags = [
             "-DBUILD_SHARED_LIBS=ON"
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
