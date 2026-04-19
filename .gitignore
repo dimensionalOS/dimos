@@ -73,6 +73,9 @@ CLAUDE.MD
 /.mcp.json
 *.speedscope.json
 
+# SLAM eval output
+**/slam_eval/metrics.json
+
 # Coverage
 htmlcov/
 .coverage
