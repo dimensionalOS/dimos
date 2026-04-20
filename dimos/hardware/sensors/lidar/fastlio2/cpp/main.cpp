@@ -35,9 +35,11 @@
 #include <boost/make_shared.hpp>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -356,19 +358,126 @@ static constexpr double PREROLL_STATIONARY_S = 2.0;
 static constexpr double STATIONARY_GYRO_RAD = 0.02;   // ~1.1 deg/s
 static constexpr double STATIONARY_ACC_DEV  = 0.5;    // m/s² deviation from |g|
 
+// ---------------------------------------------------------------------------
+// Two-stage LCM transport (codex review 2026-04-21).
+//
+// Previously, on_lcm_point_cloud() did all the expensive work — max-offset
+// scan, ring remap, time relativization, the full 2.6MB byte-copy into
+// FAST-LIO's message type, and feed_lidar_pc2() — synchronously on LCM's
+// single handle-loop thread. That same thread also dispatches on_lcm_imu().
+// A 100ms lidar callback blocked ~20 IMU messages per cycle in the socket
+// buffer; once the queue spilled, imu_latest stalled for seconds and
+// FAST-LIO's EKF propagated on stale IMU → runaway drift after ~50s.
+//
+// Fix: subscriber callbacks now only COPY raw bytes into a small struct
+// and push onto a bounded queue. A dedicated owner thread drains the
+// queues (IMU priority: all pending IMU first, then one lidar frame) and
+// does all the feed_imu/feed_lidar_pc2 work serially. This keeps
+// LCM callback latency near-zero so IMU delivery tracks actual publish
+// timestamps even during heavy lidar processing.
+// ---------------------------------------------------------------------------
+
+struct FieldDescr {
+    std::string name;
+    uint32_t offset;
+    uint8_t datatype;
+    uint32_t count;
+};
+
+struct LidarBuf {
+    double sensor_ts;
+    double wall_now;          // captured at callback entry for the legacy yesense anchor path
+    uint32_t height, width, point_step, row_step;
+    uint8_t is_dense, is_bigendian;
+    std::vector<FieldDescr> fields;
+    std::vector<uint8_t> data;
+};
+
+struct ImuBuf {
+    double sensor_ts;
+    double wall_now;          // captured at callback entry
+    double ox, oy, oz, ow;
+    double gx, gy, gz;
+    double ax, ay, az;
+};
+
+static std::deque<LidarBuf> g_lidar_queue;
+static std::deque<ImuBuf>   g_imu_queue;
+static std::mutex           g_queue_mutex;
+static std::condition_variable g_queue_cv;
+static std::atomic<uint64_t> g_lidar_dropped_full{0};
+static std::atomic<uint64_t> g_imu_dropped_full{0};
+static constexpr size_t MAX_LIDAR_QUEUE = 3;       // ~300ms of headroom at 10Hz
+static constexpr size_t MAX_IMU_QUEUE   = 400;     // 2s at 200Hz
+
+// Thin subscriber: copy raw bytes + metadata, enqueue, return.
+// All heavy work (max_offset scan, monotonic floor, feed_lidar_pc2) runs
+// on the owner thread in process_lidar_buf().
 static void on_lcm_point_cloud(const lcm::ReceiveBuffer* /*rbuf*/,
                                const std::string& /*channel*/,
                                const sensor_msgs::PointCloud2* pc) {
     if (!g_fastlio || !g_running.load() || pc == nullptr) return;
     if (pc->data_length == 0) return;
 
+    LidarBuf buf;
+    buf.sensor_ts = static_cast<double>(pc->header.stamp.sec) +
+                    static_cast<double>(pc->header.stamp.nsec) * 1e-9;
+    buf.wall_now = static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count()) * 1e-9;
+    buf.height = pc->height;
+    buf.width = pc->width;
+    buf.point_step = pc->point_step;
+    buf.row_step = pc->row_step;
+    buf.is_dense = pc->is_dense ? 1 : 0;
+    buf.is_bigendian = pc->is_bigendian ? 1 : 0;
+    buf.fields.reserve(pc->fields.size());
+    for (const auto& f : pc->fields) {
+        buf.fields.push_back({f.name,
+                              static_cast<uint32_t>(f.offset),
+                              static_cast<uint8_t>(f.datatype),
+                              static_cast<uint32_t>(f.count)});
+    }
+    buf.data.assign(pc->data.begin(), pc->data.begin() + pc->data_length);
+
+    {
+        std::lock_guard<std::mutex> lk(g_queue_mutex);
+        while (g_lidar_queue.size() >= MAX_LIDAR_QUEUE) {
+            g_lidar_queue.pop_front();
+            g_lidar_dropped_full.fetch_add(1);
+        }
+        g_lidar_queue.push_back(std::move(buf));
+    }
+    g_queue_cv.notify_one();
+}
+
+// Heavy lidar processing (ex-callback body). Runs on the owner thread.
+static void process_lidar_buf(LidarBuf& buf) {
+    // Rebuild a sensor_msgs::PointCloud2-style view so the existing logic
+    // downstream still uses the same offsets / types. Most of the below
+    // code is verbatim from the pre-refactor callback; only the message
+    // ownership model changed (LidarBuf instead of the LCM pointer).
+    const double sensor_ts = buf.sensor_ts;
+
     // Drop scans until the stationary preroll window has been observed.
-    // Prevents FAST-LIO's IMU_init from sampling bias during servo flutter.
     if (!g_seeded.load(std::memory_order_acquire)) {
         return;
     }
 
-    const auto off = resolve_pc2_fields(*pc);
+    // Resolve field offsets (x/y/z/intensity/ring/time) from the copied descriptors.
+    Pc2FieldOffsets off;
+    for (const auto& f : buf.fields) {
+        if      (f.name == "x")         off.x = f.offset;
+        else if (f.name == "y")         off.y = f.offset;
+        else if (f.name == "z")         off.z = f.offset;
+        else if (f.name == "intensity") off.intensity = f.offset;
+        else if (f.name == "time" || f.name == "t" || f.name == "timestamp") {
+            off.time = f.offset;
+            off.time_datatype = f.datatype;
+        } else if (f.name == "ring") {
+            off.ring = f.offset;
+            off.ring_datatype = f.datatype;
+        }
+    }
     if (off.x < 0 || off.y < 0 || off.z < 0) {
         static std::atomic<int> warn_count{0};
         if (warn_count.fetch_add(1) < 3) {
@@ -377,16 +486,12 @@ static void on_lcm_point_cloud(const lcm::ReceiveBuffer* /*rbuf*/,
         return;
     }
 
-    const int32_t npoints = pc->width * pc->height;
-    const int32_t step = pc->point_step;
+    const int32_t npoints = static_cast<int32_t>(buf.width * buf.height);
+    const int32_t step = static_cast<int32_t>(buf.point_step);
     if (npoints <= 0 || step <= 0 ||
-        pc->data_length < static_cast<int32_t>(npoints) * step) {
+        static_cast<int32_t>(buf.data.size()) < npoints * step) {
         return;
     }
-
-    // Sensor-domain timestamp from drdds bridge, used only for dup/stale detection.
-    const double sensor_ts = static_cast<double>(pc->header.stamp.sec) +
-                             static_cast<double>(pc->header.stamp.nsec) * 1e-9;
 
     // Drop EXACT duplicate scans only (identical sensor_ts). drdds bridge
     // emits real scans with slightly non-monotonic sensor_ts due to
@@ -402,7 +507,7 @@ static void on_lcm_point_cloud(const lcm::ReceiveBuffer* /*rbuf*/,
 
     // First pass to compute max offset (needed for the native-clock path's
     // sanity check and for the wall-clock anchor used in the legacy path).
-    const uint8_t* pc_data = pc->data.data();
+    const uint8_t* pc_data = buf.data.data();
     double max_offset_s = 0.0;
     if (off.time >= 0 && off.time_datatype == sensor_msgs::PointField::FLOAT32) {
         for (int32_t i = 0; i < npoints; ++i) {
@@ -443,8 +548,10 @@ static void on_lcm_point_cloud(const lcm::ReceiveBuffer* /*rbuf*/,
         // wall clock in on_lcm_imu below. Comparing cross-domain values
         // diverges the EKF. Anchor scan end at imu_latest so FAST-LIO's
         // syncPackage sees IMU data bracketing the whole scan (Finding #8).
-        const double wall_now = static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count()) * 1e-9;
+        // wall_now was captured at subscriber-callback time (not here in
+        // the owner thread) so the fallback matches the old semantics when
+        // IMU hasn't arrived yet.
+        const double wall_now = buf.wall_now;
         imu_latest = g_last_imu_ts.load(std::memory_order_acquire);
         const double frame_end = (imu_latest > 0.0) ? imu_latest : wall_now;
         frame_ts = frame_end - max_offset_s;
@@ -478,19 +585,19 @@ static void on_lcm_point_cloud(const lcm::ReceiveBuffer* /*rbuf*/,
     lidar_msg->header.seq = 0;
     lidar_msg->header.stamp = custom_messages::Time().fromSec(frame_ts);
     lidar_msg->header.frame_id = "lidar";
-    lidar_msg->height = pc->height;
-    lidar_msg->width = pc->width;
-    lidar_msg->is_bigendian = pc->is_bigendian ? true : false;
-    lidar_msg->point_step = pc->point_step;
-    lidar_msg->row_step = pc->row_step;
-    lidar_msg->is_dense = pc->is_dense ? true : false;
+    lidar_msg->height = buf.height;
+    lidar_msg->width = buf.width;
+    lidar_msg->is_bigendian = buf.is_bigendian ? true : false;
+    lidar_msg->point_step = buf.point_step;
+    lidar_msg->row_step = buf.row_step;
+    lidar_msg->is_dense = buf.is_dense ? true : false;
 
     // Copy PointField descriptors. FAST-LIO matches by NAME, not index, so
     // whatever ordering drdds bridge emits (x, y, z, intensity, ring, time)
     // is fine.
     lidar_msg->fields.clear();
-    lidar_msg->fields.reserve(pc->fields.size());
-    for (const auto& f : pc->fields) {
+    lidar_msg->fields.reserve(buf.fields.size());
+    for (const auto& f : buf.fields) {
         custom_messages::PointField pf;
         pf.name = f.name;
         pf.offset = static_cast<uli>(f.offset);
@@ -504,7 +611,7 @@ static void on_lcm_point_cloud(const lcm::ReceiveBuffer* /*rbuf*/,
     // byte-packed PointCloud2 data — FAST-LIO's pcl_custom::toPCL truncates
     // each element back to uint8 before feeding PCL. We replicate that
     // pattern byte-for-byte.
-    const size_t bytes = static_cast<size_t>(pc->data_length);
+    const size_t bytes = buf.data.size();
     lidar_msg->data.resize(bytes);
     for (size_t i = 0; i < bytes; ++i) {
         lidar_msg->data[i] = static_cast<usi>(pc_data[i]);
@@ -525,26 +632,42 @@ static void on_lcm_point_cloud(const lcm::ReceiveBuffer* /*rbuf*/,
     g_fastlio->feed_lidar_pc2(lidar_msg);
 }
 
+// Thin subscriber: copy IMU fields, enqueue, return. Heavy lifting (stationary
+// preroll gate, timestamp selection, feed_imu) runs on the owner thread in
+// process_imu_buf().
 static void on_lcm_imu(const lcm::ReceiveBuffer* /*rbuf*/,
                        const std::string& /*channel*/,
                        const sensor_msgs::Imu* imu) {
     if (!g_fastlio || !g_running.load() || imu == nullptr) return;
 
-    // Timestamp source depends on --native_clock:
-    //   false (yesense legacy): wall-clock at LCM arrival — matches the
-    //     lidar callback's wall-clock anchor. Works around the dual-clock
-    //     mismatch between rsdriver (~0.8s lag) and yesense (~0.225s lag).
-    //   true (Airy path): use the incoming Imu message's header.stamp,
-    //     which airy_imu_bridge fills with the Airy's PTP-UTC timestamp.
-    //     Same clock domain as the lidar points, so syncPackage is correct.
-    double ts;
-    if (g_native_clock.load(std::memory_order_acquire)) {
-        ts = static_cast<double>(imu->header.stamp.sec) +
-             static_cast<double>(imu->header.stamp.nsec) * 1e-9;
-    } else {
-        ts = static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count()) * 1e-9;
+    ImuBuf b;
+    b.sensor_ts = static_cast<double>(imu->header.stamp.sec) +
+                  static_cast<double>(imu->header.stamp.nsec) * 1e-9;
+    b.wall_now = static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count()) * 1e-9;
+    b.ox = imu->orientation.x; b.oy = imu->orientation.y;
+    b.oz = imu->orientation.z; b.ow = imu->orientation.w;
+    b.gx = imu->angular_velocity.x; b.gy = imu->angular_velocity.y; b.gz = imu->angular_velocity.z;
+    b.ax = imu->linear_acceleration.x; b.ay = imu->linear_acceleration.y; b.az = imu->linear_acceleration.z;
+
+    {
+        std::lock_guard<std::mutex> lk(g_queue_mutex);
+        while (g_imu_queue.size() >= MAX_IMU_QUEUE) {
+            g_imu_queue.pop_front();
+            g_imu_dropped_full.fetch_add(1);
+        }
+        g_imu_queue.push_back(b);
     }
+    g_queue_cv.notify_one();
+}
+
+// Heavy IMU processing (ex-callback body). Runs on the owner thread.
+static void process_imu_buf(const ImuBuf& b) {
+    // Timestamp source — same semantics as before: sensor stamp (PTP) in
+    // native_clock mode, subscriber-side wall clock in legacy mode.
+    const double ts = g_native_clock.load(std::memory_order_acquire)
+                          ? b.sensor_ts
+                          : b.wall_now;
     g_last_imu_ts.store(ts);
 
     // Stationarity tracker: if any axis exceeds the threshold, reset the
@@ -552,15 +675,10 @@ static void on_lcm_imu(const lcm::ReceiveBuffer* /*rbuf*/,
     // stationary for PREROLL_STATIONARY_S do we flip g_seeded, which
     // unblocks lidar feeding and lets FAST-LIO's IMU_init run on clean data.
     if (!g_seeded.load(std::memory_order_acquire)) {
-        const double ax = imu->linear_acceleration.x;
-        const double ay = imu->linear_acceleration.y;
-        const double az = imu->linear_acceleration.z;
-        const double a_mag = std::sqrt(ax*ax + ay*ay + az*az);
-        const double gx = std::fabs(imu->angular_velocity.x);
-        const double gy = std::fabs(imu->angular_velocity.y);
-        const double gz = std::fabs(imu->angular_velocity.z);
-        const bool moving = gx > STATIONARY_GYRO_RAD || gy > STATIONARY_GYRO_RAD ||
-                            gz > STATIONARY_GYRO_RAD ||
+        const double a_mag = std::sqrt(b.ax*b.ax + b.ay*b.ay + b.az*b.az);
+        const bool moving = std::fabs(b.gx) > STATIONARY_GYRO_RAD ||
+                            std::fabs(b.gy) > STATIONARY_GYRO_RAD ||
+                            std::fabs(b.gz) > STATIONARY_GYRO_RAD ||
                             std::fabs(a_mag - 9.81) > STATIONARY_ACC_DEV;
         if (moving) {
             g_stationary_since.store(ts, std::memory_order_release);
@@ -588,24 +706,54 @@ static void on_lcm_imu(const lcm::ReceiveBuffer* /*rbuf*/,
     imu_msg->header.seq = 0;
     imu_msg->header.stamp = custom_messages::Time().fromSec(ts);
     imu_msg->header.frame_id = "imu_link";
-
-    imu_msg->orientation.x = imu->orientation.x;
-    imu_msg->orientation.y = imu->orientation.y;
-    imu_msg->orientation.z = imu->orientation.z;
-    imu_msg->orientation.w = imu->orientation.w;
+    imu_msg->orientation.x = b.ox; imu_msg->orientation.y = b.oy;
+    imu_msg->orientation.z = b.oz; imu_msg->orientation.w = b.ow;
     for (int j = 0; j < 9; ++j) imu_msg->orientation_covariance[j] = 0.0;
-
-    imu_msg->angular_velocity.x = imu->angular_velocity.x;
-    imu_msg->angular_velocity.y = imu->angular_velocity.y;
-    imu_msg->angular_velocity.z = imu->angular_velocity.z;
+    imu_msg->angular_velocity.x = b.gx;
+    imu_msg->angular_velocity.y = b.gy;
+    imu_msg->angular_velocity.z = b.gz;
     for (int j = 0; j < 9; ++j) imu_msg->angular_velocity_covariance[j] = 0.0;
-
-    imu_msg->linear_acceleration.x = imu->linear_acceleration.x;
-    imu_msg->linear_acceleration.y = imu->linear_acceleration.y;
-    imu_msg->linear_acceleration.z = imu->linear_acceleration.z;
+    imu_msg->linear_acceleration.x = b.ax;
+    imu_msg->linear_acceleration.y = b.ay;
+    imu_msg->linear_acceleration.z = b.az;
     for (int j = 0; j < 9; ++j) imu_msg->linear_acceleration_covariance[j] = 0.0;
 
     g_fastlio->feed_imu(imu_msg);
+}
+
+// Owner thread: drains the IMU + lidar queues. IMU priority — all pending
+// IMU is drained before each lidar frame so g_last_imu_ts tracks the most
+// recent publisher timestamp instead of stalling during heavy lidar work
+// (previously ran synchronously on the LCM callback thread).
+static void fastlio_owner_loop() {
+    using namespace std::chrono_literals;
+    std::unique_lock<std::mutex> lk(g_queue_mutex);
+    while (g_running.load()) {
+        g_queue_cv.wait_for(lk, 50ms, [] {
+            return !g_imu_queue.empty() || !g_lidar_queue.empty() ||
+                   !g_running.load();
+        });
+        if (!g_running.load()) break;
+
+        // Priority 1: drain all pending IMU.
+        while (!g_imu_queue.empty()) {
+            ImuBuf b = std::move(g_imu_queue.front());
+            g_imu_queue.pop_front();
+            lk.unlock();
+            process_imu_buf(b);
+            lk.lock();
+        }
+
+        // Priority 2: process at most one lidar frame per wake, then go
+        // around so any freshly-arrived IMU drains before the next scan.
+        if (!g_lidar_queue.empty()) {
+            LidarBuf b = std::move(g_lidar_queue.front());
+            g_lidar_queue.pop_front();
+            lk.unlock();
+            process_lidar_buf(b);
+            lk.lock();
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -905,6 +1053,16 @@ int main(int argc, char** argv) {
         printf("[fastlio2] LCM subscribers active, waiting for data...\n");
     }
 
+    // Decouple LCM subscriber thread from FAST-LIO state updates: subscribers
+    // just push bytes onto bounded queues; fastlio_owner_loop drains them
+    // with IMU priority and calls feed_imu / feed_lidar_pc2 serially on its
+    // own thread. Prevents slow lidar processing from starving IMU delivery
+    // (codex review 2026-04-21).
+    std::thread fastlio_owner_thread;
+    if (input_mode == "lcm") {
+        fastlio_owner_thread = std::thread(fastlio_owner_loop);
+    }
+
     // Main loop
     auto frame_interval = std::chrono::microseconds(
         static_cast<int64_t>(1e6 / g_frequency));
@@ -1027,6 +1185,10 @@ int main(int argc, char** argv) {
 
     // Cleanup
     printf("[fastlio2] Shutting down...\n");
+    g_queue_cv.notify_all();
+    if (fastlio_owner_thread.joinable()) {
+        fastlio_owner_thread.join();
+    }
     g_fastlio = nullptr;
     if (input_mode == "livox_sdk") {
         LivoxLidarSdkUninit();

@@ -53,8 +53,16 @@ struct SlotHeader {
 static_assert(sizeof(SlotHeader) == 64, "SlotHeader must be cache-line aligned");
 
 static constexpr uint32_t SHM_READY_MAGIC = 0xDEADBEEF;
-static constexpr const char* SHM_LIDAR_NAME = "/drdds_bridge_lidar";
-static constexpr const char* SHM_IMU_NAME = "/drdds_bridge_imu";
+// In rsdriver's merged mode (send_separately: false), LIDAR receives the
+// merged dual-Airy cloud on /LIDAR/POINTS and IMU receives the yesense
+// stream on /IMU. In separate mode, LIDAR receives the front Airy cloud
+// alone on /LIDAR/POINTS and rear Airy on /LIDAR/POINTS2; IMU streams for
+// each Airy are on /LIDAR/IMU201 and /LIDAR/IMU202.
+static constexpr const char* SHM_LIDAR_NAME = "/drdds_bridge_lidar";        // /LIDAR/POINTS
+static constexpr const char* SHM_LIDAR2_NAME = "/drdds_bridge_lidar2";      // /LIDAR/POINTS2 (rear)
+static constexpr const char* SHM_IMU_NAME = "/drdds_bridge_imu";            // /IMU (yesense)
+static constexpr const char* SHM_IMU_AIRY_FRONT_NAME = "/drdds_bridge_imu_airy_front";  // /LIDAR/IMU201
+static constexpr const char* SHM_IMU_AIRY_REAR_NAME = "/drdds_bridge_imu_airy_rear";    // /LIDAR/IMU202
 static constexpr const char* SHM_NOTIFY_NAME = "/drdds_bridge_notify";
 
 // Slot size: 4MB per lidar message (M20 dual RSAIRY lidars merged = ~3MB per scan)

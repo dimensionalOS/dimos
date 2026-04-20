@@ -103,7 +103,13 @@ else:
 
 _extra_imu_modules: tuple = ()
 if _SLAM_BACKEND == "fastlio2" and _FASTLIO2_IMU == "airy":
-    _extra_imu_modules = (AiryImuBridge.blueprint(build_command=None, which="front"),)
+    # rsdriver in send_separately:true mode publishes FRONT Airy alone on
+    # /LIDAR/POINTS (in base_link frame, its extrinsic applied). Pair with
+    # the front Airy IMU rotated into base_link — both streams in the same
+    # frame, so velodyne.yaml's identity extrinsic is honest.
+    _extra_imu_modules = (
+        AiryImuBridge.blueprint(build_command=None, which="front", frame="base_link"),
+    )
 
 m20_smartnav_native = (
     autoconnect(

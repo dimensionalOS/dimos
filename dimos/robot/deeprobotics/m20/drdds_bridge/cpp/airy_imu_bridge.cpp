@@ -239,6 +239,12 @@ int main(int argc, char** argv) {
     }
     const std::string imu_topic = mod.topic("imu");
     const std::string which = mod.arg("which", "front");
+    // When "sensor" is passed, publish accel+gyro in the Airy's own sensor
+    // frame (no rotation). Used for the strict single-lidar clean test where
+    // the lidar cloud is also kept in sensor frame (rsdriver extrinsic zeroed)
+    // so FAST-LIO2's extrinsic is truly identity without any rotation-math
+    // dependencies. Default "base_link" path applies R_base_from_{front|rear}.
+    const std::string out_frame = mod.arg("frame", "base_link");
 
     const char*  mgroup;
     uint16_t     mport;
@@ -255,6 +261,13 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "--which must be 'front' or 'rear', got '%s'\n", which.c_str());
         return 1;
     }
+
+    const bool rotate_to_base = (out_frame == "base_link");
+    if (!rotate_to_base && out_frame != "sensor") {
+        std::fprintf(stderr, "--frame must be 'base_link' or 'sensor', got '%s'\n", out_frame.c_str());
+        return 1;
+    }
+    const char* header_frame_id = rotate_to_base ? "base_link" : "airy_sensor";
 
     lcm::LCM lcm;
     if (!lcm.good()) {
@@ -295,26 +308,43 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // NOTE on bias: front Airy shows ~+0.3 m/s² persistent Y offset in
-        // base_link frame at rest. Earlier attempt subtracted 0.19 from sensor
-        // Y — WRONG: sensor Y maps to base Z under R_base_from_front (not base
-        // Y). Base Y bias = -sensor_X, so a correction would add to sensor X.
-        // Leaving uncorrected for now until a proper mount-aware calibration
-        // pass. FAST-LIO's online gravity estimate should absorb most of it.
 
-        // Rotate accel + gyro from sensor frame into base_link.
+        // Optionally rotate accel + gyro from sensor frame into base_link.
+        // In `--frame sensor` mode, pass through unchanged so the downstream
+        // FAST-LIO2 sees IMU and lidar cloud in the same raw Airy sensor
+        // frame — the strict single-sensor clean test.
+        //
         // NOTE: translation lever-arm term ω × (ω × r) + α × r is NOT subtracted
-        // here. For front Airy at (+0.32, 0, -0.013) m from base, centripetal at
-        // |ω|=2 rad/s contributes ~1.3 m/s² on worst axis — not negligible, but
-        // FAST-LIO2's extrinsic_est_en + online bias estimation should soak it
-        // up. Revisit if measurements show persistent accel bias correlated
-        // with rotation rate.
+        // here when rotating to base_link. For front Airy at (+0.32, 0, -0.013)
+        // m from base, centripetal at |ω|=2 rad/s contributes ~1.3 m/s² on
+        // worst axis — FAST-LIO2's extrinsic_est_en should soak it up.
         double ax, ay, az, gx, gy, gz;
-        rotate(*R_base_from_sensor, s.accel_ms2[0], s.accel_ms2[1], s.accel_ms2[2], ax, ay, az);
-        rotate(*R_base_from_sensor, s.gyro_rads[0], s.gyro_rads[1], s.gyro_rads[2], gx, gy, gz);
+        if (rotate_to_base) {
+            rotate(*R_base_from_sensor, s.accel_ms2[0], s.accel_ms2[1], s.accel_ms2[2], ax, ay, az);
+            rotate(*R_base_from_sensor, s.gyro_rads[0], s.gyro_rads[1], s.gyro_rads[2], gx, gy, gz);
+        } else {
+            ax = s.accel_ms2[0]; ay = s.accel_ms2[1]; az = s.accel_ms2[2];
+            gx = s.gyro_rads[0]; gy = s.gyro_rads[1]; gz = s.gyro_rads[2];
+        }
+
+        // Subtract persistent stationary accel bias in base_link frame.
+        // Measured empirically on this M20 (robot at rest): front Airy rotated
+        // into base_link gives ~(0.13, 0.35, 10.03) m/s² — a 0.13 m/s² x bias,
+        // 0.35 y bias, and 0.22 z bias (= |a|-g). Integrating the y-axis bias
+        // twice over 180s was producing thousands of meters of drift. FAST-
+        // LIO's init averages mean_acc for its gravity estimate; subtracting
+        // here before FAST-LIO sees the data leaves a cleaner gravity vector
+        // and a smaller initial bias for the EKF's random-walk state to
+        // track. Skip the correction in sensor frame since it's a base-frame
+        // observation; revisit with a per-robot calibration file later.
+        if (rotate_to_base && which == "front") {
+            ax -= 0.13;
+            ay -= 0.35;
+            az -= 0.22;
+        }
 
         sensor_msgs::Imu msg;
-        msg.header = dimos::make_header("base_link", s.stamp_s);
+        msg.header = dimos::make_header(header_frame_id, s.stamp_s);
         // Airy IMU packets carry no orientation — mark unavailable per ROS convention.
         msg.orientation.x = 0;
         msg.orientation.y = 0;

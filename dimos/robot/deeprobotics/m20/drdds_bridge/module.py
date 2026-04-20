@@ -85,6 +85,12 @@ class AiryImuBridgeConfig(NativeModuleConfig):
     executable: str = "result/bin/airy_imu_bridge"
     build_command: str | None = "nix build .#drdds_lidar_bridge"
     which: str = "front"  # "front" or "rear"
+    # Output IMU frame. "base_link" (default) rotates into the body frame
+    # via R_base_from_{front|rear}. "sensor" passes the raw Airy-frame
+    # measurements through unchanged — pair with rsdriver's per-lidar
+    # extrinsic zeroed so the lidar cloud stays in the same sensor frame
+    # and FAST-LIO2's extrinsic is truly identity.
+    frame: str = "base_link"
 
 
 class AiryImuBridge(NativeModule[AiryImuBridgeConfig], perception.IMU):

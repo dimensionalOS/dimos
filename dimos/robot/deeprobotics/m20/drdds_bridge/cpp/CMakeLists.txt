@@ -80,6 +80,34 @@ target_link_directories(nav_cmd_pub PRIVATE
 )
 endif()  # BUILD_NAV_CMD_PUB
 
+# drdds_recv: FastDDS SHM subscriber for rsdriver/yesense → POSIX SHM. Same
+# BUILD_NAV_CMD_PUB reasoning — depends on host /usr/local FastDDS which isn't
+# in the nix sandbox. Built via the cpp/build/ path, installed to
+# /opt/drdds_bridge/lib/drdds_bridge/ by deploy.sh.
+if(BUILD_NAV_CMD_PUB)  # share the host-libs gate
+add_executable(drdds_recv drdds_recv.cpp)
+
+target_include_directories(drdds_recv PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  /usr/local/include
+  /usr/local/include/dridl
+)
+file(GLOB DRDDS_RECV_MSG_DIRS "/usr/local/include/dridl/*/msg")
+target_include_directories(drdds_recv PRIVATE ${DRDDS_RECV_MSG_DIRS})
+
+target_link_libraries(drdds_recv PRIVATE
+  fastrtps
+  fastcdr
+  drdds
+  rt
+  pthread
+)
+
+target_link_directories(drdds_recv PRIVATE
+  /usr/local/lib
+)
+endif()  # BUILD_NAV_CMD_PUB (drdds_recv)
+
 # airy_imu_bridge: taps the RoboSense Airy integrated IMU directly from its
 # UDP multicast stream (rsdriver doesn't republish it to drdds despite the
 # config key). Parses the 51B rs_driver packet format and publishes LCM
@@ -103,6 +131,6 @@ target_link_directories(airy_imu_bridge PRIVATE
 
 set(INSTALL_TARGETS drdds_lidar_bridge airy_imu_bridge)
 if(BUILD_NAV_CMD_PUB)
-  list(APPEND INSTALL_TARGETS nav_cmd_pub)
+  list(APPEND INSTALL_TARGETS nav_cmd_pub drdds_recv)
 endif()
 install(TARGETS ${INSTALL_TARGETS} DESTINATION bin)
