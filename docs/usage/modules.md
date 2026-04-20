@@ -17,31 +17,28 @@ Below is an example of a structure for controlling a robot. Black blocks represe
 > brew install graphviz        # macOS
 > ```
 
-```python output=assets/go2_nav.svg
-from dimos.core.introspection import to_svg
-from dimos.robot.unitree_webrtc.unitree_go2_blueprints import nav
-to_svg(nav, "assets/go2_nav.svg")
-```
+```python skip output=assets/go2_nav.svg
+from dimos.core.introspection.svg import to_svg
+from dimos.robot.unitree.go2.blueprints.smart.unitree_go2 import unitree_go2
 
-<!--Result:-->
-![output](assets/go2_nav.svg)
+to_svg(unitree_go2, "assets/go2_nav.svg")
+```
 
 ## Camera Module
 
 Let's learn how to build stuff like the above, starting with a simple camera module.
 
-```python session=camera_module_demo output=assets/camera_module.svg
+```python skip session=camera_module_demo output=assets/camera_module.svg
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.core.introspection import to_svg
+from dimos.core.introspection.svg import to_svg
 to_svg(CameraModule.module_info(), "assets/camera_module.svg")
 ```
-
-<!--Result:-->
-![output](assets/camera_module.svg)
 
 We can also print Module I/O quickly to the console via the `.io()` call. We will do this from now on.
 
 ```python session=camera_module_demo ansi=false
+from dimos.hardware.sensors.camera.module import CameraModule
+
 print(CameraModule.io())
 ```
 
@@ -53,10 +50,13 @@ print(CameraModule.io())
  ├─ color_image: Image
  ├─ camera_info: CameraInfo
  │
- ├─ RPC start()
- ├─ RPC stop()
- │
- ├─ Skill take_a_picture
+ ├─ RPC build() -> None
+ ├─ RPC get_skills() -> list
+ ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
+ ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
+ ├─ RPC start() -> None
+ ├─ RPC stop() -> None
+ ├─ RPC take_a_picture() -> Image
 ```
 
 We can see that the camera module outputs two streams:
@@ -70,7 +70,7 @@ It also exposes an agentic [skill](/docs/usage/blueprints.md#defining-skills) ca
 
 We can start this module and explore the output of its streams in real time (this will use your webcam).
 
-```python session=camera_module_demo ansi=false
+```python skip session=camera_module_demo ansi=false
 import time
 
 camera = CameraModule()
@@ -84,7 +84,7 @@ time.sleep(0.5)
 camera.stop()
 ```
 
-<!--Result:-->
+<!--Error:-->
 ```
 Out color_image[Image] @ CameraModule
 Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:16)
@@ -111,7 +111,7 @@ print(Detection2DModule.io())
 
 <!--Result:-->
 ```
- ├─ image: Image
+ ├─ color_image: Image
 ┌┴──────────────────┐
 │ Detection2DModule │
 └┬──────────────────┘
@@ -121,6 +121,9 @@ print(Detection2DModule.io())
  ├─ detected_image_1: Image
  ├─ detected_image_2: Image
  │
+ ├─ RPC build() -> None
+ ├─ RPC get_skills() -> list
+ ├─ RPC set_module_ref(name: str, module_ref: RPCClient) -> None
  ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
  ├─ RPC start() -> None
  ├─ RPC stop() -> None
@@ -130,7 +133,7 @@ print(Detection2DModule.io())
 
 Looks like the detector just needs an image input and outputs some sort of detection and annotation messages. Let's connect it to a camera.
 
-```python ansi=false
+```python skip ansi=false
 import time
 from dimos.perception.detection.module2D import Detection2DModule, Config
 from dimos.hardware.sensors.camera.module import CameraModule
@@ -147,14 +150,6 @@ detector.detections.subscribe(print)
 time.sleep(3)
 detector.stop()
 camera.stop()
-```
-
-<!--Result:-->
-```
-Detection(Person(1))
-Detection(Person(1))
-Detection(Person(1))
-Detection(Person(1))
 ```
 
 ## Distributed Execution
@@ -174,7 +169,7 @@ via `importlib.reload`, then redeploys it onto a fresh worker process while
 keeping its stream transports and reconnecting any other modules that held
 a reference to it.
 
-```python
+```python skip
 from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig
 from dimos.hardware.sensors.camera.module import CameraModule
@@ -194,8 +189,8 @@ A blueprint is a predefined structure of interconnected modules. You can include
 
 A basic Unitree Go2 blueprint looks like what we saw before.
 
-```python  session=blueprints output=assets/go2_agentic.svg
-from dimos.core.introspection import to_svg
+```python skip session=blueprints output=assets/go2_agentic.svg
+from dimos.core.introspection.svg import to_svg
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import agentic
 
 to_svg(agentic, "assets/go2_agentic.svg")

@@ -78,7 +78,9 @@ The `Transform` class at [`geometry_msgs/Transform.py`](/dimos/msgs/geometry_msg
 - `ts` - Timestamp for temporal lookups
 
 ```python
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # Camera 0.5m forward and 0.3m up from base, no rotation
 camera_transform = Transform(
@@ -103,7 +105,9 @@ base_link -> camera_link
 Transforms can be composed and inverted:
 
 ```python
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # Create two transforms
 t1 = Transform(
@@ -142,7 +146,9 @@ Inverse: camera_link -> base_link
 For integration with libraries like NumPy or OpenCV:
 
 ```python
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 t = Transform(
     translation=Vector3(1.0, 2.0, 3.0),
@@ -221,8 +227,10 @@ import reactivex as rx
 from reactivex import operators as ops
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 
 class RobotBaseModule(Module):
     """Publishes the robot's position in the world frame at 10Hz."""
@@ -241,9 +249,7 @@ class RobotBaseModule(Module):
             )
             self.tf.publish(robot_pose)
 
-        self._disposables.add(
-            rx.interval(0.1).subscribe(publish_pose)
-        )
+        self.register_disposable(rx.interval(0.1).subscribe(publish_pose))
 
 class CameraModule(Module):
     """Publishes camera transforms at 10Hz."""
@@ -268,15 +274,15 @@ class CameraModule(Module):
             )
             self.tf.publish(camera_mount, optical_frame)
 
-        self._disposables.add(
-            rx.interval(0.1).subscribe(publish_transforms)
-        )
+        self.register_disposable(rx.interval(0.1).subscribe(publish_transforms))
 
 
 class PerceptionModule(Module):
     """Receives transforms and performs lookups."""
 
+    @rpc
     def start(self) -> None:
+        super().start()
         # This is just to init the transforms system.
         # Touching the property for the first time enables the system for this module.
         # Transform lookups normally happen in fast loops in IRL modules.
@@ -313,7 +319,8 @@ if __name__ == "__main__":
 
     dimos.start_all_modules()
 
-    time.sleep(1.0)
+    # Give worker TF publishers a moment to populate the buffer before querying.
+    time.sleep(2.5)
 
     perception.lookup()
 
@@ -323,14 +330,23 @@ if __name__ == "__main__":
 
 <!--Result:-->
 ```
-Initialized dimos local cluster with 3 workers, memory limit: auto
-2025-12-29T12:47:01.433394Z [info     ] Deployed module.                                             [dimos/core/__init__.py] module=RobotBaseModule worker_id=1
-2025-12-29T12:47:01.603269Z [info     ] Deployed module.                                             [dimos/core/__init__.py] module=CameraModule worker_id=0
-2025-12-29T12:47:01.698970Z [info     ] Deployed module.                                             [dimos/core/__init__.py] module=PerceptionModule worker_id=2
+16:21:45.203 [inf][ation/worker_manager_python.py] Worker pool started. n_workers=2
+16:21:45.445 [inf][/coordination/python_worker.py] Deployed module. module=RobotBaseModule module_id=0 worker_id=0
+16:21:45.451 [inf][/coordination/python_worker.py] Deployed module. module=CameraModule module_id=1 worker_id=1
+16:21:45.452 [inf][/coordination/python_worker.py] Deployed module. module=PerceptionModule module_id=2 worker_id=0
+16:21:47.968 [inf][dination/module_coordinator.py] Stopping module... module=PerceptionModule
+16:21:48.022 [inf][dination/module_coordinator.py] Module stopped. module=PerceptionModule
+16:21:48.022 [inf][dination/module_coordinator.py] Stopping module... module=CameraModule
+16:21:48.041 [inf][dination/module_coordinator.py] Module stopped. module=CameraModule
+16:21:48.041 [inf][dination/module_coordinator.py] Stopping module... module=RobotBaseModule
+16:21:48.062 [inf][dination/module_coordinator.py] Module stopped. module=RobotBaseModule
+16:21:48.062 [inf][ation/worker_manager_python.py] Shutting down all workers...
+16:21:48.062 [inf][/coordination/python_worker.py] Worker stopping module... module=CameraModule module_id=1 worker_id=1
+16:21:48.063 [inf][/coordination/python_worker.py] Worker module stopped. module=CameraModule module_id=1 worker_id=1
 LCMTF(3 buffers):
-  TBuffer(world -> base_link, 10 msgs, 0.90s [2025-12-29 20:47:01 - 2025-12-29 20:47:02])
-  TBuffer(base_link -> camera_link, 9 msgs, 0.80s [2025-12-29 20:47:01 - 2025-12-29 20:47:02])
-  TBuffer(camera_link -> camera_optical, 9 msgs, 0.80s [2025-12-29 20:47:01 - 2025-12-29 20:47:02])
+  TBuffer(base_link -> camera_link, 24 msgs, 2.37s [2026-04-21 01:21:45 - 2026-04-21 01:21:47])
+  TBuffer(camera_link -> camera_optical, 24 msgs, 2.37s [2026-04-21 01:21:45 - 2026-04-21 01:21:47])
+  TBuffer(world -> base_link, 24 msgs, 2.37s [2026-04-21 01:21:45 - 2026-04-21 01:21:47])
 Direct: robot is at (2.5, 3.0)m in world
 
 Chained: world -> camera_optical
@@ -413,11 +429,14 @@ text "CameraModule" italic at ((CL.x + CO.x)/2, CL.s.y - 0.25in)
 `self.tf` on module is a transform buffer. This is a standalone class that maintains a temporal buffer of transforms (default 10 seconds) allowing queries at past timestamps, you can use it directly:
 
 ```python
-from dimos.protocol.tf import TF
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
 import time
 
-tf = TF(autostart=False)
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.tf.tf import MultiTBuffer
+
+tf = MultiTBuffer()
 
 # Simulate transforms at different times
 for i in range(5):

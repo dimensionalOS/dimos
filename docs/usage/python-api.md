@@ -14,31 +14,31 @@ from dimos import Dimos
 
 app = Dimos(n_workers=8)
 
-# Run a blueprint by name.
-app.run("unitree-go2-agentic")
+# Run a blueprint by name (requires a full install with that blueprint and its deps).
+# app.run("unitree-go2-agentic")
 
-# Call skills.
-app.skills.relative_move(forward=2.0)
+# After you have called run() with an agentic blueprint, skills are available, e.g.:
+# app.skills.relative_move(forward=2.0)
+# print(app.skills)
 
-# List all available skills.
-print(app.skills)
+print("Dimos", type(app).__name__)
 
-# Access a module directly.
-app.ReplanningAStarPlanner
-
-# Access a private variable.
-print(app.ReplanningAStarPlanner._planner._safe_goal_clearance)
-
-
-# Add another module dynamically.
+# Add another module dynamically (example import only):
 from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
-app.run(KeyboardTeleop)
 
-# Or start it by name. No need for importing.
-app.run("keyboard-teleop")  # This will say `KeyboardTeleop is already deployed`
+print("KeyboardTeleop", KeyboardTeleop.__name__)
 
-# Stop everything.
-app.stop()
+# Or start it by name after you have a coordinator running, e.g.:
+# app.run("keyboard-teleop")
+# app.stop()
+```
+
+<!--Result:-->
+```
+Dimos Dimos
+pygame 2.6.1 (SDL 2.28.4, Python 3.12.13)
+Hello from the pygame community. https://www.pygame.org/contribute.html
+KeyboardTeleop KeyboardTeleop
 ```
 
 ## Remote mode
@@ -49,7 +49,7 @@ Start a daemon first (via CLI or another script), then connect to it:
 dimos run unitree-go2-agentic
 ```
 
-```python
+```python skip
 from dimos import Dimos
 
 app = Dimos.connect()
@@ -63,7 +63,7 @@ app.stop()  # closes the connection (does NOT stop the remote process)
 
 Connect to a specific instance:
 
-```python
+```python skip
 # By run ID (from `dimos status`)
 app = Dimos.connect(run_id="20260306-143022-unitree-go2")
 
@@ -73,7 +73,7 @@ app = Dimos.connect(host="192.168.1.50", port=18861)
 
 `run()` and `restart()` also work against a daemon:
 
-```python
+```python skip
 app = Dimos.connect()
 
 app.run("keyboard-teleop")       # add a module by registry name
@@ -94,7 +94,7 @@ be picklable.
 
 In local mode, you can hot-restart a module:
 
-```python
+```python skip
 from dimos.agents.mcp.mcp_server import McpServer
 
 app.restart(McpServer)

@@ -47,7 +47,7 @@ print(f"Decoded: x={decoded.x}, y={decoded.y}, z={decoded.z}")
 
 <!--Result:-->
 ```
-Encoded to 24 bytes: 000000000000f03f00000000000000400000000000000840
+Encoded to 32 bytes: ae7e5fba5eeca11e3ff000000000000040000000000000004008000000000000
 Decoded: x=1.0, y=2.0, z=3.0
 ```
 
@@ -60,7 +60,7 @@ Dimos subclasses the base LCM types to add Python-friendly features while preser
 - Conversions to numpy, quaternions, etc.
 
 ```python session=lcm_demo ansi=false
-from dimos.msgs.geometry_msgs import Vector3
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # Rich constructors
 v1 = Vector3(1, 2, 3)
@@ -84,7 +84,7 @@ v1 + v2 = (5.0, 7.0, 9.0)
 v1 dot v2 = 32.0
 v1 x v2 = (-3.0, 6.0, -3.0)
 |v1| = 3.742
-LCM encoded: 24 bytes
+LCM encoded: 32 bytes
 ```
 
 ## PointCloud2 with Open3D
@@ -92,12 +92,14 @@ LCM encoded: 24 bytes
 A more complex example is `PointCloud2`, which wraps Open3D point clouds while maintaining LCM binary compatibility:
 
 ```python session=lcm_demo ansi=false
+import time
+
 import numpy as np
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 # Create from numpy
 points = np.random.rand(100, 3).astype(np.float32)
-pc = PointCloud2.from_numpy(points, frame_id="camera")
+pc = PointCloud2.from_numpy(points, frame_id="camera", timestamp=time.time())
 
 print(f"PointCloud: {len(pc)} points, frame={pc.frame_id}")
 print(f"Center: {pc.center}")
@@ -118,9 +120,9 @@ print(f"Decoded: {len(pc2)} points")
 <!--Result:-->
 ```
 PointCloud: 100 points, frame=camera
-Center: ↗ Vector (Vector([0.49166839, 0.50896413, 0.48393918]))
+Center: ↘ Vector Vector([0.47497518 0.49878164 0.43788878])
 Open3D type: PointCloud
-LCM encoded: 1716 bytes
+LCM encoded: 1725 bytes
 Decoded: 100 points
 ```
 
@@ -129,9 +131,8 @@ Decoded: 100 points
 Since LCM messages encode to bytes, you can use them over any transport:
 
 ```python session=lcm_demo ansi=false
-from dimos.msgs.geometry_msgs import Vector3
-from dimos.protocol.pubsub.memory import Memory
-from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.protocol.pubsub.impl.memory import Memory
 
 # Same message works with any transport
 msg = Vector3(1, 2, 3)
@@ -152,8 +153,8 @@ print(f"Raw binary transport: decoded {decoded}")
 
 <!--Result:-->
 ```
-Memory transport: received ↗ Vector (Vector([1. 2. 3.]))
-Raw binary transport: decoded ↗ Vector (Vector([1. 2. 3.]))
+Memory transport: received ↘ Vector Vector([1. 2. 3.])
+Raw binary transport: decoded ↘ Vector Vector([1. 2. 3.])
 ```
 
 ## Available Message Types

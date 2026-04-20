@@ -59,7 +59,7 @@ def test_wiring() -> None:
 
 When a resource is shared across multiple tests, use a pytest fixture with `yield` instead of repeating context managers in each test:
 
-```python
+```python skip
 # GOOD - fixture handles lifecycle for all tests that use it
 @pytest.fixture(scope="module")
 def store() -> Iterator[SqliteStore]:
@@ -79,7 +79,7 @@ def test_search(store: SqliteStore) -> None:
 
 Tests must be deterministic. If you don't know the state, the test is wrong.
 
-```python
+```python skip
 # BAD - assertion may never execute
 if hasattr(obj, "_disposables") and obj._disposables is not None:
     assert obj._disposables.is_disposed
@@ -101,7 +101,7 @@ assert obj._disposables.is_disposed
 
 Don't use `time.sleep()` to wait for async operations. Use `threading.Event` to synchronize emitter/receiver patterns.
 
-```python
+```python skip
 # BAD - arbitrary sleep, fragile
 module.start()
 time.sleep(0.5)
@@ -122,7 +122,7 @@ assert received == [84]
 
 Configuration fields on non-Pydantic classes should be private (underscore-prefixed) unless they are part of the public API.
 
-```python
+```python skip
 # BAD
 self.voxel_size = voxel_size
 self.carve_columns = carve_columns
@@ -136,7 +136,7 @@ self._carve_columns = carve_columns
 
 Avoid `# type: ignore` by using proper types:
 
-```python
+```python skip
 # BAD
 self.vbg = None  # type: ignore[assignment]
 

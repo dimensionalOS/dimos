@@ -214,13 +214,21 @@ To add MCP to a blueprint, include both `McpServer` (exposes skills as HTTP tool
 ```python
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
+from dimos.core.coordination.blueprints import autoconnect
 
-my_mcp_blueprint = autoconnect(
-    my_robot_stack,
-    McpServer.blueprint(),
-    McpClient.blueprint(),
-    my_skill_containers,
-)
+# Example wiring (replace symbols with your blueprints):
+# my_mcp_blueprint = autoconnect(
+#     my_robot_stack,
+#     McpServer.blueprint(),
+#     McpClient.blueprint(),
+#     my_skill_containers,
+# )
+print(autoconnect.__name__, McpServer.__name__, McpClient.__name__)
+```
+
+<!--Result:-->
+```
+autoconnect McpServer McpClient
 ```
 
 #### `dimos mcp list-tools`

@@ -54,8 +54,8 @@ jobs:
       - name: Install Python dependencies
         run: |
           uv sync --extra dev --frozen --no-extra dds
-          # Matplotlib examples live in docs but matplotlib is not in the dev extra alone.
-          uv pip install matplotlib
+          # Matplotlib and httpx are used by docs but are not always pulled by dev-only sync.
+          uv pip install matplotlib httpx
 
       - name: Execute documentation code blocks
         run: ./bin/run-doc-codeblocks --ci
