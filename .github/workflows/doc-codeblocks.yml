@@ -35,19 +35,19 @@ jobs:
         run: |
           sudo chown -R $USER:$USER ${{ github.workspace }} || true
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - uses: astral-sh/setup-uv@v8
+      - uses: astral-sh/setup-uv@v4
         with:
           enable-cache: true
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
@@ -61,6 +61,6 @@ jobs:
         run: ./bin/run-doc-codeblocks --ci
 
       - name: Commit doc updates
-        uses: stefanzweifel/git-auto-commit-action@v7
+        uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "CI: execute documentation code blocks"
