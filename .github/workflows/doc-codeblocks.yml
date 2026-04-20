@@ -1,0 +1,66 @@
+# Issue #1759 - execute documentation code blocks in CI (md-babel-py).
+#
+# Policy (matches issue author):
+# - Behavior and fence flags (`skip`, `expected-error`, sessions, etc.) follow
+#   docs/agents/docs/codeblocks.md.
+# - If a block is broken and the fix is not obvious, contributors may mark the
+#   fence with `skip` (or `expected-error` where appropriate) and fix later;
+#   until then, this job fails on execution errors so drift is visible.
+# - Like .github/workflows/code-cleanup.yml: refreshed <!--Result:--> / generated
+#   assets are committed onto the PR branch so devs are not required to run this
+#   locally for output-only churn.
+name: doc-codeblocks
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'docs/**'
+      - 'README.md'
+      - 'bin/run-doc-codeblocks'
+      - '.github/workflows/doc-codeblocks.yml'
+      - 'pyproject.toml'
+      - 'uv.lock'
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: read
+
+jobs:
+  md-babel:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: self-hosted
+    steps:
+      - name: Fix permissions
+        run: |
+          sudo chown -R $USER:$USER ${{ github.workspace }} || true
+
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install Python dependencies
+        run: |
+          uv sync --extra dev --frozen --no-extra dds
+          # Matplotlib examples live in docs but matplotlib is not in the dev extra alone.
+          uv pip install matplotlib
+
+      - name: Execute documentation code blocks
+        run: ./bin/run-doc-codeblocks --ci
+
+      - name: Commit doc updates
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: "CI: execute documentation code blocks"
