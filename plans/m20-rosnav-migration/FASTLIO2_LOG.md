@@ -599,6 +599,208 @@ wip: airy_imu_bridge on NOS
 
 ---
 
+## Finding #19: rsdriver separate mode works — discovery ordering was the gate (2026-04-21)
+
+SHM discovery ordering (ROSNAV_MIGRATION_LOG Finding #5) blocked the whole
+earlier investigation. When I first flipped `send_separately: true`, the
+probe showed `matched=1` on `/LIDAR/POINTS` / `/LIDAR/POINTS2` but 0 msgs
+— indistinguishable from "separate mode broken." After a clean sequence
+(stop rsdriver/yesense, `pkill -9 drdds_recv`, clean `/dev/shm/fastrtps_*`,
+start drdds-bridge first, then rsdriver + yesense), both streams flowed.
+
+Empirically confirmed in separate mode (rsdriver's DeepRobotics-custom
+flag, not upstream):
+
+| Topic              | Content                      | Rate | Frame                |
+|---|---|---|---|
+| `/LIDAR/POINTS`    | Front Airy cloud             | 10 Hz| base_link (extrinsic applied) |
+| `/LIDAR/POINTS2`   | Rear Airy cloud              | 10 Hz| base_link (extrinsic applied) |
+| `/LIDAR/IMU201`    | Front Airy integrated IMU    | ~60 Hz| raw sensor frame, g-units    |
+| `/LIDAR/IMU202`    | Rear Airy integrated IMU     | ~60 Hz| raw sensor frame, g-units    |
+| `/IMU`             | Yesense IMU                  | 200 Hz| m/s², base-ish frame          |
+
+Airy IMUs via rsdriver are too low-rate and in wrong units for FAST-LIO —
+`airy_imu_bridge` (direct multicast tap at 224.10.10.20{1,2}:668{1,2})
+stays as the IMU source, at 200 Hz m/s² base_link after rotation.
+
+PTP sync across the two Airys is sub-microsecond (stamps on adjacent
+front/rear pairs differ by ~3 µs).
+
+`drdds_recv` extended with 5 subscriptions (existing lidar + IMU + 3 new
+channels). Each writes to its own POSIX SHM segment for downstream
+independent consumption. Built via the local-cmake path (not nix —
+depends on host FastDDS at `/usr/local`).
+
+---
+
+## Finding #20: LCM Transport Split Killed the 50s-Explode Pattern (2026-04-21)
+
+Finding #18 left the blocker at "fastlio2's LCM subscriber stalls 2-4s
+during heavy lidar callbacks." Codex review pinned the pattern: single
+`lcm.handle()` loop serializes lidar and IMU callbacks. The lidar callback
+did all the heavy work synchronously (max-offset scan, ring remap, time
+relativize, 2.6MB byte-copy into FAST-LIO's message type, `feed_lidar_pc2`),
+which blocked ~20 IMU messages per cycle in the socket buffer. When the
+queue spilled, `imu_latest` stalled for seconds and FAST-LIO propagated
+on stale IMU → runaway drift after ~50s.
+
+Fix in `dimos/hardware/sensors/lidar/fastlio2/cpp/main.cpp`:
+
+- Subscriber callbacks now only copy raw bytes into a simple struct and
+  push onto bounded `std::deque` (lidar cap 3, IMU cap 400 ≈ 2s at 200 Hz).
+  Drop-oldest on overflow.
+- New `fastlio_owner_loop` thread drains queues with IMU priority: all
+  pending IMU is drained before each lidar frame so `g_last_imu_ts` tracks
+  actual publish timestamps even during heavy processing.
+- All former callback-body logic (preroll gate, native-clock monotonic
+  floor, ring remap, `feed_lidar_pc2`) moved to the owner thread.
+
+Commit `84b91fa0e`.
+
+---
+
+## Finding #21: Accel Bias Subtraction is a Bandaid — Proper Fix is DIFOP C.17 (2026-04-21)
+
+With the LCM split in place, 5-min stationary drift dropped from the
+earlier 2000 m runaway to ~2000 m (still runaway) because the IMU now
+delivered on time but was still biased. Base-frame stationary output:
+`acc=(0.13, 0.35, 10.03)` m/s². Integrated twice over 180 s the 0.35 m/s²
+Y bias alone produces ~5700 m of drift — matched the observation.
+
+**First attempt: hardcode the bias.** Subtracted `(0.13, 0.35, 0.22)` from
+the rotated base-frame accel in `airy_imu_bridge`. With the LCM split +
+this subtraction, 5+ minute stationary holds at **1 keyframe at origin,
+no additional keyframes**. Commit `84b91fa0e`. Producible and durable
+for stationary testing but a known bandaid.
+
+**Why bandaid:** hardcoded constants from one stationary snapshot.
+Doesn't generalize across robots, temperatures, post-impact bias shifts,
+or robot orientation (we measured upright on carpet; tilt the body and
+the "bias" direction rotates). FAST-LIO2's own bias-random-walk state
+can track slow accel drift, but not a fixed rotation error masquerading
+as bias.
+
+**Real fix:** RSAIRY publishes a factory IMU-to-lidar rigid transform in
+DIFOP register C.17 (`IMU_CALIB_DATA`). Per the Airy user guide + rs_driver
+source (`decoder_RSAIRY.hpp`), it's 7 `uint32_t` fields big-endian at
+offset 1092 in the 1248-byte DIFOP packet, bit-cast to float32:
+
+```
+q_x, q_y, q_z, q_w, x, y, z   (quaternion + lever-arm translation)
+```
+
+Codex review confirmed: (1) C.17 is geometric extrinsic, not bias; (2) a
+1-2° tilt between the nominal sensor frame and the factory-mounted IMU
+axes is the most likely source of our residual; (3) quaternion direction
+is almost certainly IMU→lidar (inferred — not documented publicly); (4)
+translation is lever-arm between IMU and lidar origins, used for
+centripetal correction during motion (skip for v1); (5) each Airy has
+per-unit calibration, must parse DIFOP separately for front and rear.
+
+**Plan for v1 (front Airy only, stationary validation first):**
+
+1. **DIFOP reader at startup in `airy_imu_bridge`**
+   - Bind second UDP multicast socket on 224.10.10.201:7781 (front) or
+     `:7782` (rear) per `--which`. DIFOP is ~1 Hz so a blocking `recv`
+     with a 5-second timeout is fine.
+   - Validate magic `0xA5 0xFF 0x00 0x5A 0x11 0x11 0x55 0x55` at offset 0
+     and tail `0x0F 0xF0` at offset 1246.
+   - Extract offsets 1092..1119 (28 bytes).
+   - Parse 7 × `uint32_t` big-endian with `ntohl`, bit-cast each to float32.
+   - Normalize the quaternion (defensive — factory values might have
+     tiny denormalization).
+
+2. **Build `R_imu_to_lidar` (3×3 rotation matrix) from quaternion**
+   - Standard xyzw → rotation-matrix formula.
+   - **Renormalize defensively** before converting to matrix: rs_driver's
+     `decodeDifopPkt()` does no normalization, and a slightly non-unit
+     quaternion produces a non-orthonormal matrix — not just scale drift
+     but shear / axis-coupling. Reject + log if `||q| − 1| > 0.01`.
+   - Log the derived matrix + its frobenius-norm distance from identity
+     at startup. Expect small rotation (≤ few degrees); if it's larger,
+     direction convention (IMU→lidar vs lidar→IMU) becomes more load-
+     bearing. Disambiguation test: quasi-static in-place yaw — pick the
+     convention whose corrected gyro lands on a single base axis with
+     expected sign and minimum cross-axis energy.
+
+3. **Precompute the composed `R_imu_to_base = R_base_lidar · R_imu_to_lidar`**
+   - `R_base_lidar` stays hardcoded per lidar side — geometrically
+     determined from the physical mount on M20:
+     - front: `[[0,0,1],[-1,0,0],[0,-1,0]]` (dome→+X_base, cable→-Z_base)
+     - rear:  `[[0,0,-1],[1,0,0],[0,-1,0]]` (dome→-X_base, cable→-Z_base)
+   - rsdriver config's `(yaw, pitch, roll)` uses a non-standard Euler
+     encoding we couldn't reverse-engineer; none of ZYX/XYZ/ZXY/YZX/ZYZ/
+     XZX decompositions of `(−π, −π/2, 0)` produce the observed matrix.
+     Physical mount is unambiguous so we skip the reverse-engineering.
+
+4. **Apply `R_imu_to_base` per sample in `process_airy_imu_sample`**
+   - Replaces both the existing `R_base_from_sensor` rotate step AND the
+     hardcoded `(0.13, 0.35, 0.22)` subtraction.
+   - Delete the subtraction block.
+
+5. **Fallback if DIFOP doesn't arrive — degraded startup, not blocking**
+   - Main IMU path starts immediately with `R_imu_to_lidar = identity`.
+     Log loudly (`[airy_imu_bridge] DIFOP not yet received — running
+     DEGRADED (no factory IMU-lidar calibration applied). Drift may be
+     large.`) and publish a health flag (a new status line in the 5s
+     status report: `cal=PENDING | cal=OK`).
+   - Background thread keeps retrying DIFOP every 2 s. When a valid C.17
+     is received, hot-swap the rotation matrix via atomic pointer load
+     on the next IMU sample and log `cal=OK`.
+   - Never block startup indefinitely — factory pilot needs robustness
+     over correctness at boot. The 1 Hz DIFOP race against our startup
+     would be a flaky boot under degraded network conditions.
+   - Do NOT fall back to the hardcoded (0.13, 0.35, 0.22) subtraction.
+
+6. **Skip the lever-arm translation `(x, y, z)` for v1**
+   - Correct formula is `a_imu = a_body + ω × (ω × r) + α × r` where
+     `r = lever arm from IMU to body origin`. At `|ω| = 2 rad/s` and
+     `r = 0.32 m`, the term is ~1.3 m/s² — not negligible during motion.
+     But stationary test doesn't exercise it. Revisit after motion
+     drift appears.
+
+7. **Validation**
+   - Stationary test: base-frame accel should read approximately
+     `(ε, ε, 9.81)` with |ε| < 0.05 m/s² (vs today's 0.35 Y / 0.22 Z
+     residual). If still 0.3+ m/s² off, our assumption that the
+     residual is frame tilt was wrong — the fix didn't help and we
+     need to revisit.
+   - 5-min stationary holds at ≤ 1 keyframe at origin (current baseline
+     from the bandaid path).
+   - Motion test (walk the robot): position drift should not grow with
+     orientation — the bandaid would break when the bias vector rotates
+     with the robot; the proper fix should not.
+   - **If a ≥0.2 m/s² residual persists after applying C.17**, rank
+     candidate causes (per codex review):
+     1. `R_base_lidar` off by a few degrees (mount not perfectly aligned).
+        Test: quasi-static ±pitch / ±roll — mount-frame error flips
+        predictably with tilt direction, true bias does not.
+     2. True accel bias (temperature / mount-stress). Test: hold still
+        several minutes cold-to-warm; persists or drifts with temperature,
+        not pose sign.
+     3. FSR mismatch. Test: log live `accelFsr` / `gyroFsr` bytes from
+        every Airy IMU packet; wrong FSR shows as uniform scale error
+        across all tilts, `|a|` consistently wrong.
+     4. FAST-LIO2 `extrinsic_est_en` state absorbing something — lowest
+        probability; the residual is visible at the `airy_imu_bridge`
+        topic BEFORE FAST-LIO2 ingests it, so FAST-LIO2 can't cause it.
+
+8. **Rear Airy (follow-up)**
+   - Same machinery: `--which rear` reads DIFOP at `:7782`, applies its
+     own per-unit `Q`, composes with the rear-specific `R_base_lidar`.
+
+9. **Hardcoded-matrix caveat, documented**
+   - Hardcoding `R_base_lidar` per front/rear is acceptable for the M20
+     pilot where mount geometry is invariant. Real failure modes if we
+     reuse this code elsewhere: different Airy bracket revision, front/
+     rear swapped, physical rework of mount orientation. Mitigation:
+     document the assumption in `airy_imu_bridge.cpp` header comment.
+     Reading from URDF / env var would buy portability but doesn't solve
+     rsdriver's non-standard Euler encoding problem — it's a separate
+     concern. Revisit if we ever ship to a second robot model.
+
+---
+
 ## Open Questions for Next Session / Jeff
 
 - Does FAST-LIO2's preprocess.cpp + ikd-Tree actually support `scan_line: 192`? Upstream hku-mars tested up to 128 per README.

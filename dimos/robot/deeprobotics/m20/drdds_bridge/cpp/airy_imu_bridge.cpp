@@ -12,9 +12,14 @@
 // path. We subscribe directly to the multicast to avoid that.
 //
 // Clean pairing: the Airy integrated IMU shares a PTP-locked hardware clock
-// with the Airy lidar optics. Combined with rsdriver's known lidar→base
-// extrinsic (applied here as R_base_from_sensor), this gives FAST-LIO2 a
-// single, physically consistent IMU stream in base_link frame.
+// with the Airy lidar optics. The IMU→base rotation is composed from two
+// pieces: (1) R_imu_to_lidar, a per-unit factory calibration read from
+// DIFOP register C.17 (quaternion at packet offset 1092), and (2)
+// R_base_lidar, the physical mount rotation determined by the M20 chassis
+// geometry (hardcoded per front/rear). DIFOP is ~1 Hz so we start in a
+// degraded mode with R_imu_to_lidar = identity and hot-swap once the
+// factory cal arrives. This gives FAST-LIO2 a single, physically
+// consistent IMU stream in base_link frame.
 //
 // Usage: ./airy_imu_bridge --imu <topic> [--which front|rear]
 
@@ -33,6 +38,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <thread>
 
 #include "dimos_native_module.hpp"
 #include "sensor_msgs/Imu.hpp"
@@ -75,6 +81,17 @@ constexpr uint16_t    PORT_FRONT      = 6681;
 constexpr const char* MULTICAST_REAR  = "224.10.10.202";
 constexpr uint16_t    PORT_REAR       = 6682;
 
+// DIFOP (device info) packets are ~1 Hz on a separate port. Register C.17
+// (IMU_CALIB_DATA) holds the factory IMU→lidar quaternion + lever-arm at
+// packet offset 1092.
+constexpr uint16_t DIFOP_PORT_FRONT = 7781;
+constexpr uint16_t DIFOP_PORT_REAR  = 7782;
+constexpr size_t   DIFOP_PACKET_SIZE = 1248;
+constexpr size_t   DIFOP_C17_OFFSET  = 1092;  // 7×uint32 BE → float32
+constexpr uint8_t  DIFOP_MAGIC[8] = {0xA5, 0xFF, 0x00, 0x5A, 0x11, 0x11, 0x55, 0x55};
+constexpr size_t   DIFOP_TAIL_OFFSET = 1246;
+constexpr uint8_t  DIFOP_TAIL[2]  = {0x0F, 0xF0};
+
 // ---------------------------------------------------------------------------
 // Big-endian readers. rs_driver decodes all multi-byte fields via ntohl/ntohs.
 // ---------------------------------------------------------------------------
@@ -94,35 +111,31 @@ uint64_t rd_be_u48(const uint8_t* p) {
 }
 
 // ---------------------------------------------------------------------------
-// Rotation matrices — Airy sensor frame → M20 base_link.
+// Rotation matrices — Airy lidar frame → M20 base_link.
 //
-// Derived empirically from the FRONT Airy stationary accel reading: raw
-// sensor-frame accel at rest was (0.063, -9.859, 0.113) m/s², meaning the
-// Airy IMU measures gravity (proper accel = +Z_world) along its own -Y axis.
-// That pins the sensor axis mapping:
-//   FRONT:  sensor X → base -Y, sensor Y → base -Z (down),
-//           sensor Z (dome) → base +X (forward)
-//   REAR:   the housing is 180° about Y relative to front (dome points -X),
-//           so R_rear = R_front · Ry(π). sensor X → base +Y,
-//           sensor Y → base -Z, sensor Z → base -X (backward).
+// These describe the PHYSICAL mount of the lidar housing on the M20 and are
+// invariant across units / temperature / time. The IMU-to-lidar rotation is
+// a separate per-unit factory calibration read from DIFOP register C.17 at
+// runtime (see read_difop_c17()).
 //
-// The rsdriver config's (yaw, pitch, roll) fields do NOT decode cleanly to
-// these via the ZYX Tait-Bryan convention — either the driver uses a
-// non-standard euler order or the sensor's own axis convention differs
-// from the documented "X cable, Y perp, Z dome". Rather than guess, we
-// pin the rotation to what the stationary-gravity measurement shows.
-// Columns of R are the sensor axes expressed in base_link.
+//   FRONT:  lidar dome → base +X (forward), cable port → base -Z (down).
+//           Mapping: lidar X → base -Y, lidar Y → base -Z, lidar Z → base +X.
+//   REAR:   housing 180° about Z relative to front: dome → base -X,
+//           cable → base -Z. Mapping: lidar X → base +Y, lidar Y → base -Z,
+//           lidar Z → base -X.
+//
+// Columns of R_BASE_LIDAR_* are lidar axes expressed in base_link.
 // ---------------------------------------------------------------------------
 
 struct Mat3 { double m[3][3]; };
 
-constexpr Mat3 R_BASE_FROM_FRONT = {{
+constexpr Mat3 R_BASE_LIDAR_FRONT = {{
     {0,  0,  1},
     {-1, 0,  0},
     {0, -1,  0},
 }};
 
-constexpr Mat3 R_BASE_FROM_REAR = {{
+constexpr Mat3 R_BASE_LIDAR_REAR = {{
     {0,  0, -1},
     {1,  0,  0},
     {0, -1,  0},
@@ -132,6 +145,108 @@ void rotate(const Mat3& R, double vx, double vy, double vz, double& ox, double& 
     ox = R.m[0][0] * vx + R.m[0][1] * vy + R.m[0][2] * vz;
     oy = R.m[1][0] * vx + R.m[1][1] * vy + R.m[1][2] * vz;
     oz = R.m[2][0] * vx + R.m[2][1] * vy + R.m[2][2] * vz;
+}
+
+Mat3 matmul(const Mat3& A, const Mat3& B) {
+    Mat3 C{};
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            C.m[i][j] = A.m[i][0]*B.m[0][j] + A.m[i][1]*B.m[1][j] + A.m[i][2]*B.m[2][j];
+    return C;
+}
+
+double frobenius_distance_from_identity(const Mat3& R) {
+    double s = 0.0;
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) {
+            double d = R.m[i][j] - (i == j ? 1.0 : 0.0);
+            s += d * d;
+        }
+    return std::sqrt(s);
+}
+
+// ---------------------------------------------------------------------------
+// DIFOP C.17 parsing: 7 × uint32 big-endian at offset 1092, bit-cast to
+// float32. Layout: q_x, q_y, q_z, q_w, t_x, t_y, t_z. Quaternion is
+// IMU→lidar (inferred — not publicly documented); direction can be
+// disambiguated via a quasi-static yaw test after calibration is applied.
+// ---------------------------------------------------------------------------
+
+struct DifopCalib {
+    double qx, qy, qz, qw;  // normalized
+    double tx, ty, tz;      // lever-arm, meters (unused in v1)
+};
+
+float bit_cast_u32_to_f32(uint32_t u) {
+    float f;
+    std::memcpy(&f, &u, sizeof(f));
+    return f;
+}
+
+bool parse_difop_c17(const uint8_t* p, size_t n, DifopCalib& out) {
+    if (n < DIFOP_PACKET_SIZE) return false;
+    if (std::memcmp(p + 0, DIFOP_MAGIC, sizeof(DIFOP_MAGIC)) != 0) return false;
+    if (std::memcmp(p + DIFOP_TAIL_OFFSET, DIFOP_TAIL, sizeof(DIFOP_TAIL)) != 0) return false;
+
+    const uint8_t* q = p + DIFOP_C17_OFFSET;
+    float f[7];
+    for (int i = 0; i < 7; ++i) {
+        f[i] = bit_cast_u32_to_f32(rd_be_u32(q + i * 4));
+    }
+    for (int i = 0; i < 7; ++i) {
+        if (!std::isfinite(f[i])) return false;
+    }
+
+    double qx = f[0], qy = f[1], qz = f[2], qw = f[3];
+    double norm_sq = qx*qx + qy*qy + qz*qz + qw*qw;
+    if (norm_sq < 0.25) return false;  // clearly junk (all zeros etc.)
+    double norm = std::sqrt(norm_sq);
+    if (std::fabs(norm - 1.0) > 0.01) {
+        // Reject rather than silently renormalize — a large norm deviation is
+        // our signal that we're reading junk (wrong offset, byte order, etc.)
+        // or that direction-convention inference is off. Safer to stay in
+        // degraded mode than hot-swap a bogus rotation.
+        std::fprintf(stderr, "[airy_imu_bridge] DIFOP C.17 quaternion norm %.4f off by >0.01 — "
+                             "rejecting packet, keeping cal=PENDING\n", norm);
+        return false;
+    }
+    out.qx = qx / norm;
+    out.qy = qy / norm;
+    out.qz = qz / norm;
+    out.qw = qw / norm;
+    out.tx = f[4];
+    out.ty = f[5];
+    out.tz = f[6];
+    return true;
+}
+
+Mat3 quat_to_matrix(const DifopCalib& q) {
+    const double x = q.qx, y = q.qy, z = q.qz, w = q.qw;
+    const double xx = x*x, yy = y*y, zz = z*z;
+    const double xy = x*y, xz = x*z, yz = y*z;
+    const double wx = w*x, wy = w*y, wz = w*z;
+    Mat3 R{};
+    R.m[0][0] = 1 - 2*(yy + zz);
+    R.m[0][1] =     2*(xy - wz);
+    R.m[0][2] =     2*(xz + wy);
+    R.m[1][0] =     2*(xy + wz);
+    R.m[1][1] = 1 - 2*(xx + zz);
+    R.m[1][2] =     2*(yz - wx);
+    R.m[2][0] =     2*(xz - wy);
+    R.m[2][1] =     2*(yz + wx);
+    R.m[2][2] = 1 - 2*(xx + yy);
+    return R;
+}
+
+void log_matrix(const char* label, const Mat3& R) {
+    std::fprintf(stderr, "[airy_imu_bridge] %s =\n"
+                         "  [% .5f % .5f % .5f]\n"
+                         "  [% .5f % .5f % .5f]\n"
+                         "  [% .5f % .5f % .5f]\n",
+                 label,
+                 R.m[0][0], R.m[0][1], R.m[0][2],
+                 R.m[1][0], R.m[1][1], R.m[1][2],
+                 R.m[2][0], R.m[2][1], R.m[2][2]);
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +340,68 @@ int open_multicast(const char* group, uint16_t port) {
 std::atomic<bool> g_running{true};
 void signal_handler(int) { g_running = false; }
 
+// Hot-swappable R_imu_to_base. Initialized at startup to R_base_lidar (i.e.
+// R_imu_to_lidar = identity → degraded mode), replaced when DIFOP C.17
+// arrives. Pointer ownership: we allocate exactly two Mat3 over the
+// process lifetime (initial + one DIFOP swap) and deliberately never free
+// the stale pointer to avoid racing the IMU hot path's dereference.
+std::atomic<Mat3*> g_R_imu_to_base{nullptr};
+std::atomic<bool>  g_cal_ok{false};
+
+// Background retry thread: polls DIFOP multicast every ~2s until a valid
+// C.17 record arrives, then hot-swaps g_R_imu_to_base and sets g_cal_ok.
+void difop_retry_loop(const char* mgroup, uint16_t difop_port, Mat3 R_base_lidar,
+                      const std::string& which) {
+    using namespace std::chrono_literals;
+    while (g_running) {
+        int sock = open_multicast(mgroup, difop_port);
+        if (sock < 0) {
+            std::fprintf(stderr, "[airy_imu_bridge] DIFOP socket bind failed on %s:%u: %s — "
+                                 "retrying in 2s\n", mgroup, difop_port, std::strerror(errno));
+            for (int i = 0; i < 20 && g_running; ++i) std::this_thread::sleep_for(100ms);
+            continue;
+        }
+
+        uint8_t buf[2048];
+        bool got_it = false;
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (g_running && std::chrono::steady_clock::now() < deadline) {
+            ssize_t n = ::recv(sock, buf, sizeof(buf), 0);
+            if (n < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
+                break;
+            }
+            if (n != static_cast<ssize_t>(DIFOP_PACKET_SIZE)) continue;
+
+            DifopCalib cal;
+            if (!parse_difop_c17(buf, n, cal)) continue;
+
+            Mat3 R_imu_to_lidar = quat_to_matrix(cal);
+            Mat3 R_imu_to_base  = matmul(R_base_lidar, R_imu_to_lidar);
+            double dist = frobenius_distance_from_identity(R_imu_to_lidar);
+
+            std::fprintf(stderr,
+                "[airy_imu_bridge] DIFOP C.17 received for %s Airy: "
+                "q=(%.5f,%.5f,%.5f,%.5f) lever=(%.4f,%.4f,%.4f) "
+                "|R_imu_to_lidar - I|_F=%.4f — cal=OK\n",
+                which.c_str(), cal.qx, cal.qy, cal.qz, cal.qw,
+                cal.tx, cal.ty, cal.tz, dist);
+            log_matrix("R_imu_to_lidar (from C.17)", R_imu_to_lidar);
+            log_matrix("R_imu_to_base (composed)",   R_imu_to_base);
+
+            Mat3* fresh = new Mat3(R_imu_to_base);
+            g_R_imu_to_base.store(fresh, std::memory_order_release);
+            g_cal_ok.store(true, std::memory_order_release);
+            got_it = true;
+            break;
+        }
+        ::close(sock);
+        if (got_it) return;
+
+        for (int i = 0; i < 20 && g_running; ++i) std::this_thread::sleep_for(100ms);
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -243,20 +420,24 @@ int main(int argc, char** argv) {
     // frame (no rotation). Used for the strict single-lidar clean test where
     // the lidar cloud is also kept in sensor frame (rsdriver extrinsic zeroed)
     // so FAST-LIO2's extrinsic is truly identity without any rotation-math
-    // dependencies. Default "base_link" path applies R_base_from_{front|rear}.
+    // dependencies. Default "base_link" path applies R_imu_to_base composed
+    // from R_base_lidar × R_imu_to_lidar (DIFOP C.17).
     const std::string out_frame = mod.arg("frame", "base_link");
 
     const char*  mgroup;
     uint16_t     mport;
-    const Mat3*  R_base_from_sensor;
+    uint16_t     difop_port;
+    Mat3         R_base_lidar;
     if (which == "front") {
         mgroup = MULTICAST_FRONT;
         mport  = PORT_FRONT;
-        R_base_from_sensor = &R_BASE_FROM_FRONT;
+        difop_port = DIFOP_PORT_FRONT;
+        R_base_lidar = R_BASE_LIDAR_FRONT;
     } else if (which == "rear") {
         mgroup = MULTICAST_REAR;
         mport  = PORT_REAR;
-        R_base_from_sensor = &R_BASE_FROM_REAR;
+        difop_port = DIFOP_PORT_REAR;
+        R_base_lidar = R_BASE_LIDAR_REAR;
     } else {
         std::fprintf(stderr, "--which must be 'front' or 'rear', got '%s'\n", which.c_str());
         return 1;
@@ -284,6 +465,18 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "[airy_imu_bridge] %s Airy IMU → LCM topic '%s' (multicast %s:%u)\n",
                  which.c_str(), imu_topic.c_str(), mgroup, mport);
 
+    // Seed g_R_imu_to_base with R_base_lidar (= R_base_lidar · I): assumes
+    // IMU frame is perfectly aligned with lidar frame until DIFOP arrives.
+    // Accepting degraded boot over blocking — factory pilot robustness.
+    std::thread difop_thread;
+    if (rotate_to_base) {
+        Mat3* seed = new Mat3(R_base_lidar);
+        g_R_imu_to_base.store(seed, std::memory_order_release);
+        std::fprintf(stderr, "[airy_imu_bridge] DIFOP not yet received — running DEGRADED "
+                             "(no factory IMU-lidar calibration applied). Drift may be large.\n");
+        difop_thread = std::thread(difop_retry_loop, mgroup, difop_port, R_base_lidar, which);
+    }
+
     uint8_t buf[128];
     uint64_t n_pkts = 0;
     uint64_t n_bad  = 0;
@@ -295,6 +488,8 @@ int main(int argc, char** argv) {
         if (got < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) continue;
             std::fprintf(stderr, "[airy_imu_bridge] recv error: %s\n", std::strerror(errno));
+            // Signal the DIFOP retry thread so join() below doesn't hang.
+            g_running.store(false, std::memory_order_release);
             break;
         }
         if (got != static_cast<ssize_t>(AIRY_IMU_PACKET_SIZE)) {
@@ -309,38 +504,26 @@ int main(int argc, char** argv) {
         }
 
 
-        // Optionally rotate accel + gyro from sensor frame into base_link.
-        // In `--frame sensor` mode, pass through unchanged so the downstream
-        // FAST-LIO2 sees IMU and lidar cloud in the same raw Airy sensor
-        // frame — the strict single-sensor clean test.
+        // Rotate accel + gyro from IMU frame into base_link via the
+        // hot-swappable R_imu_to_base (= R_base_lidar · R_imu_to_lidar).
+        // R_imu_to_lidar comes from DIFOP C.17 factory calibration; until
+        // DIFOP arrives, the atomic pointer holds R_base_lidar alone (i.e.
+        // R_imu_to_lidar = identity → degraded). In `--frame sensor` mode
+        // we pass through unchanged so downstream FAST-LIO2 sees IMU and
+        // lidar cloud in the raw Airy sensor frame.
         //
-        // NOTE: translation lever-arm term ω × (ω × r) + α × r is NOT subtracted
-        // here when rotating to base_link. For front Airy at (+0.32, 0, -0.013)
-        // m from base, centripetal at |ω|=2 rad/s contributes ~1.3 m/s² on
-        // worst axis — FAST-LIO2's extrinsic_est_en should soak it up.
+        // NOTE: the translation lever-arm term ω × (ω × r) + α × r is NOT
+        // subtracted here. For front Airy at ~(+0.32, 0, -0.013) m from
+        // base, centripetal at |ω|=2 rad/s contributes ~1.3 m/s² worst-
+        // axis — deferred to v2 (see FASTLIO2_LOG Finding #21).
         double ax, ay, az, gx, gy, gz;
         if (rotate_to_base) {
-            rotate(*R_base_from_sensor, s.accel_ms2[0], s.accel_ms2[1], s.accel_ms2[2], ax, ay, az);
-            rotate(*R_base_from_sensor, s.gyro_rads[0], s.gyro_rads[1], s.gyro_rads[2], gx, gy, gz);
+            const Mat3* R = g_R_imu_to_base.load(std::memory_order_acquire);
+            rotate(*R, s.accel_ms2[0], s.accel_ms2[1], s.accel_ms2[2], ax, ay, az);
+            rotate(*R, s.gyro_rads[0], s.gyro_rads[1], s.gyro_rads[2], gx, gy, gz);
         } else {
             ax = s.accel_ms2[0]; ay = s.accel_ms2[1]; az = s.accel_ms2[2];
             gx = s.gyro_rads[0]; gy = s.gyro_rads[1]; gz = s.gyro_rads[2];
-        }
-
-        // Subtract persistent stationary accel bias in base_link frame.
-        // Measured empirically on this M20 (robot at rest): front Airy rotated
-        // into base_link gives ~(0.13, 0.35, 10.03) m/s² — a 0.13 m/s² x bias,
-        // 0.35 y bias, and 0.22 z bias (= |a|-g). Integrating the y-axis bias
-        // twice over 180s was producing thousands of meters of drift. FAST-
-        // LIO's init averages mean_acc for its gravity estimate; subtracting
-        // here before FAST-LIO sees the data leaves a cleaner gravity vector
-        // and a smaller initial bias for the EKF's random-walk state to
-        // track. Skip the correction in sensor frame since it's a base-frame
-        // observation; revisit with a per-robot calibration file later.
-        if (rotate_to_base && which == "front") {
-            ax -= 0.13;
-            ay -= 0.35;
-            az -= 0.22;
         }
 
         sensor_msgs::Imu msg;
@@ -374,20 +557,24 @@ int main(int argc, char** argv) {
                 std::chrono::duration_cast<std::chrono::nanoseconds>(
                     std::chrono::system_clock::now().time_since_epoch()).count()) * 1e-9;
             const double pkt_vs_wall = s.stamp_s - wall_now;
+            const char* cal_tag = rotate_to_base
+                ? (g_cal_ok.load(std::memory_order_acquire) ? "cal=OK" : "cal=PENDING")
+                : "cal=N/A";
             std::fprintf(stderr, "[airy_imu_bridge] %.1f Hz over 5s (pkts=%lu bad=%lu ptp_drop=%lu) "
                                  "last acc=(%.3f,%.3f,%.3f) gyro=(%.4f,%.4f,%.4f) "
-                                 "pkt_vs_wall=%+.3fs\n",
+                                 "pkt_vs_wall=%+.3fs %s\n",
                          rate,
                          static_cast<unsigned long>(n_pkts),
                          static_cast<unsigned long>(n_bad),
                          static_cast<unsigned long>(n_drop_ptp),
-                         ax, ay, az, gx, gy, gz, pkt_vs_wall);
+                         ax, ay, az, gx, gy, gz, pkt_vs_wall, cal_tag);
             n_pkts = 0;
             last_status = now;
         }
     }
 
     ::close(sock);
+    if (difop_thread.joinable()) difop_thread.join();
     std::fprintf(stderr, "[airy_imu_bridge] Shutting down\n");
     return 0;
 }
