@@ -2,7 +2,7 @@
 
 ## What is DimOS
 
-The agentic operating system for generalist robotics. `Modules` communicate via typed streams over LCM, ROS2, DDS, or other transports. `Blueprints` compose modules into runnable robot stacks. `Skills` give agents the ability to execute physical on-hardware function like `grab()`, `follow_object()`, or `jump()`
+The agentic operating system for generalist robotics. `Modules` communicate via typed streams over LCM, ROS2, DDS, or other transports. `Blueprints` compose modules into runnable robot stacks. `Skills` give agents the ability to execute physical on-hardware functions like `grab()`, `follow_object()`, or `jump()`.
 
 ---
 
@@ -41,7 +41,8 @@ dimos restart          # stop + re-run with same original args
 | `unitree-go2-agentic` | Go2 | real | via McpClient | ✓ | McpServer live |
 | `unitree-g1-agentic-sim` | G1 | sim | GPT-4o (G1 prompt) | — | Full agentic sim, no real robot needed |
 | `xarm-perception-agent` | xArm | real | GPT-4o | — | Manipulation + perception + agent |
-| `xarm7-trajectory-sim` | xArm7 | sim | — | — | Trajectory planning sim |
+| `xarm-perception-sim-agent` | xArm | sim | GPT-4o | — | Manipulation + perception + agent, sim |
+| `xarm7-planner-coordinator` | xArm7 | real | — | — | Trajectory planner coordinator |
 | `teleop-quest-xarm7` | xArm7 | real | — | — | Quest VR teleop |
 | `dual-xarm6-planner` | xArm6×2 | real | — | — | Dual-arm motion planner |
 
@@ -95,8 +96,15 @@ Reference: `dimos/robot/unitree/go2/blueprints/agentic/unitree_go2_agentic.py`
 ```
 dimos/
 ├── core/                    # Module system, blueprints, workers, transports
-│   ├── module.py            # Module base class, In/Out streams, @rpc, @skill
-│   ├── blueprints.py        # Blueprint composition (autoconnect)
+│   ├── module.py            # Module base class, In/Out streams
+│   ├── core.py              # @rpc decorator
+│   ├── stream.py            # In[T], Out[T], Transport[T]
+│   ├── transport.py         # LCM/SHM/ROS/DDS/Jpeg transports
+│   ├── coordination/
+│   │   ├── blueprints.py           # Blueprint, autoconnect()
+│   │   ├── module_coordinator.py   # Deploy + lifecycle orchestration
+│   │   ├── python_worker.py        # Forkserver workers + Actor IPC
+│   │   └── worker_manager_*.py     # Python / docker worker pools
 │   ├── global_config.py     # GlobalConfig (env vars, CLI flags, .env)
 │   └── run_registry.py      # Per-run tracking + log paths
 ├── robot/
@@ -163,7 +171,7 @@ class MyModule(Module):
 Compose modules with `autoconnect()`. Streams auto-connect by `(name, type)` matching.
 
 ```python
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 
 my_blueprint = autoconnect(module_a(), module_b(), module_c())
 ```
@@ -267,6 +275,7 @@ class MySkillContainer(Module):
         return f"Moving at {x} m/s for {duration}s"
 
 my_skill_container = MySkillContainer.blueprint
+```
 
 ### System Prompts
 
@@ -301,7 +310,7 @@ class MySkillContainer(Module):
         return "Navigating"
 ```
 
-If multiple modules match the spec, use `.remappings()` to resolve. Source: `dimos/spec/utils.py`, `dimos/core/blueprints.py`.
+If multiple modules match the spec, use `.remappings()` to resolve. Source: `dimos/spec/utils.py`, `dimos/core/coordination/blueprints.py`.
 
 ### Adding a New Skill
 
