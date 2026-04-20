@@ -306,7 +306,7 @@ MAD is the safe default when you expect a few real peaks in a mostly-noisy
 signal; switch to Otsu if the distribution is visibly bimodal; avoid `gap`
 unless peaks are clearly separated from noise.
 
-## 3D Projection
+## Semantic peak analysis
 
 Let's focus on those two peaks. load all images in the vicinity of a detection,
 
@@ -413,3 +413,9 @@ drawing.to_svg("assets/peak_detections.svg")
 ```
 
 ![output](assets/peak_detections.svg)
+
+# TODO further steps
+
+- some basic statistical outlier filters - we have many overlaping detections here and we can be pretty sure there are plants right of the robot, but unclear about left.
+
+- now that we have 3d locations in space, we can load all camera images observing detections in space (not just rely on radius around the embedding peak) see in how many of these images we actually detect an object. (another strategy for false positive filtering)
