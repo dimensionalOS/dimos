@@ -1,5 +1,5 @@
 
-# color cycle
+## color cycle
 
 You add streams, system auto assigns colors
 
@@ -50,7 +50,7 @@ p.to_svg("assets/plot_named.svg")
 
 ![output](assets/plot_named.svg)
 
-# speed plot
+## speed plot
 
 you can assign different axes to different time series, label them etc
 
@@ -90,7 +90,7 @@ plot.to_svg("assets/plot_robot_data.svg")
 
 ![output](assets/plot_robot_data.svg)
 
-# Filling in gaps
+## Filling in gaps
 
 Let's find some plants!
 
@@ -243,19 +243,15 @@ t= 279.6s score=0.230 prominence=0.030
 ![output](assets/plot_plantness_autopeaks.svg)
 ![output](assets/plants_auto.png)
 
-
-# Which peaks are actually real?
+## Which peaks are significant?
 
 We got 15 peaks back but eyeballing the prominences, most sit around
 0.02–0.03 and only a couple (0.067 at t=37s, 0.047 at t=240s) really stand
-out. The `peaks(prominence=...)` floor is an *absolute* knob — pick it too
-low and noise leaks through, too high and faint peaks disappear, and the
-right value depends on the signal's range.
+out.
 
-`significant()` replaces that guesswork by thresholding on the
-*distribution of prominences* itself. Three methods:
+`significant()` replaces that guesswork by thresholding on the distribution of prominences itself. Three methods:
 
-- `"mad"`  — outlier detection via median absolute deviation. Robust default.
+- `"mad"`  — (default) outlier detection via median absolute deviation. Robust default.
 - `"otsu"` — 1D Otsu, classic bimodal split.
 - `"gap"`  — largest ratio gap between consecutive sorted prominences.
 
@@ -308,9 +304,11 @@ MAD is the safe default when you expect a few real peaks in a mostly-noisy
 signal; switch to Otsu if the distribution is visibly bimodal; avoid `gap`
 unless peaks are clearly separated from noise.
 
-# Localizing objects
+## Localizing objects
 
-Let's focus on those two peaks. load all images in their vicinity
+Let's focus on those two peaks. load all images in the vicinity of a detection,
+
+Reconstruct a global map for that area
 
 ```python session=robotdata
 
@@ -354,6 +352,7 @@ m.data.save("assets/plants_peak_detections.png")
 ![output](assets/peak_space.svg)
 ![output](assets/plants_peak_detections.png)
 
+## 3D Projection
 
 ```python session=robotdata output=none
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
