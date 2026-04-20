@@ -410,7 +410,7 @@ See [`pubsub/impl/memory.py`](/dimos/protocol/pubsub/impl/memory.py) for the com
 
 Transports often need to serialize messages before sending and deserialize after receiving.
 
-`PubSubEncoderMixin` at [`pubsub/encoders.py`](/dimos/protocol/pubsub/encoders.py) provides a clean way to add encoding/decoding to any pubsub implementation.
+`PubSubEncoderMixin` at [`pubsub/encoders.py`](/dimos/protocol/pubsub/encoders.py#L39) provides a clean way to add encoding/decoding to any pubsub implementation.
 
 ### Available mixins
 

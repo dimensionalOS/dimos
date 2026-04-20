@@ -39,8 +39,8 @@ Config(x=3, hello='world')
 Config(x=3, hello='override')
 Error: 1 validation error for Config
 something
-  Extra inputs are not permitted 
-    For further information visit 
+  Extra inputs are not permitted
+    For further information visit
 https://errors.pydantic.dev/2.12/v/extra_forbidden
 ```
 
