@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Execute md-babel-py on Markdown documentation (see docs/agents/docs/codeblocks.md).
+# CI uses --ci (python, shell, Node only) so native diagram toolchains are not required on runners.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+LANG_FILTER="python,sh,node"
+declare -a USER_PATHS=()
+
+usage() {
+  cat >&2 <<'EOF'
+Usage: bin/run-doc-codeblocks [options] [path ...]
+
+  --ci          Same as --lang python,sh,node (default; for CI runners).
+  --lang LIST   Comma-separated languages for md-babel-py (default: python,sh,node).
+  --all-langs   Run all block languages (requires local native tools; see codeblocks.md).
+
+With no paths: runs on ./docs (recursive) and ./README.md when present.
+
+Examples:
+  bin/run-doc-codeblocks --ci
+  bin/run-doc-codeblocks --all-langs docs/agents/docs/index.md
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --ci)
+      LANG_FILTER="python,sh,node"
+      shift
+      ;;
+    --lang)
+      LANG_FILTER="${2:?--lang requires a value}"
+      shift 2
+      ;;
+    --all-langs)
+      LANG_FILTER=""
+      shift
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 2
+      ;;
+    *)
+      USER_PATHS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+resolve_md_babel() {
+  # Prefer `uv run` so md-babel's session subprocess uses this project's interpreter
+  # (plain .venv/bin/md-babel-py can pick up the wrong Python on some machines).
+  if command -v uv &>/dev/null && [[ -f pyproject.toml ]]; then
+    MB=(uv run md-babel-py)
+  elif [[ -x .venv/bin/md-babel-py ]]; then
+    MB=(.venv/bin/md-babel-py)
+  elif command -v md-babel-py &>/dev/null; then
+    MB=(md-babel-py)
+  else
+    echo "Error: md-babel-py not found. Install dev deps: uv sync --extra dev" >&2
+    exit 1
+  fi
+}
+
+resolve_md_babel
+
+run_one_target() {
+  local target=$1
+  local -a cmd=("${MB[@]}" run)
+  if [[ -n "$LANG_FILTER" ]]; then
+    cmd+=(--lang "$LANG_FILTER")
+  fi
+  if [[ -d "$target" ]]; then
+    cmd+=("$target" --recursive)
+  else
+    cmd+=("$target")
+  fi
+  "${cmd[@]}"
+}
+
+if [[ ${#USER_PATHS[@]} -gt 0 ]]; then
+  for p in "${USER_PATHS[@]}"; do
+    if [[ -d "$p" ]] || [[ -f "$p" ]]; then
+      run_one_target "$p"
+    else
+      echo "Error: not a file or directory: $p" >&2
+      exit 1
+    fi
+  done
+else
+  if [[ -d ./docs ]]; then
+    run_one_target ./docs
+  fi
+  if [[ -f README.md ]]; then
+    run_one_target README.md
+  fi
+fi
