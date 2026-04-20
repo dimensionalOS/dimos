@@ -285,12 +285,17 @@ disposed
 
 ```python session=rx
 import time
+
+import reactivex as rx
 from dimos.core.module import Module
 
+
 class MyModule(Module):
-    def start(self):
+    def start(self) -> None:
+        super().start()
         source = rx.interval(0.05)
         self.register_disposable(source.subscribe(lambda x: print(f"got {x}")))
+
 
 module = MyModule()
 module.start()

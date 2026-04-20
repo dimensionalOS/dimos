@@ -15,27 +15,39 @@ Dimos uses reactive streams (RxPY) to handle sensor data. This approach naturall
 ## Quick Example
 
 ```python
-from reactivex import operators as ops
+from __future__ import annotations
+
+import time
+
+import reactivex as rx
+
+from dimos.types.timestamped import Timestamped, align_timestamped
 from dimos.utils.reactive import backpressure
-from dimos.types.timestamped import align_timestamped
-from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 
-# Camera at 30fps, lidar at 10Hz
-camera_stream = camera.observable()
-lidar_stream = lidar.observable()
 
-# Pipeline: filter blurry frames -> align with lidar -> handle slow consumers
-processed = (
-    camera_stream.pipe(
-        sharpness_barrier(10.0),  # Keep sharpest frame per 100ms window (10Hz)
-    )
-)
+class SampleMsg(Timestamped):
+    def __init__(self, ts: float, label: str = "") -> None:
+        super().__init__(ts)
+        self.label = label
 
+
+# Stand in for camera/lidar hardware streams: same pipeline shape, no device required.
+camera_stream = rx.of(SampleMsg(0.00), SampleMsg(0.03), SampleMsg(0.06))
+lidar_stream = rx.of(SampleMsg(0.02), SampleMsg(0.11))
+
+processed = camera_stream
 aligned = align_timestamped(
-    backpressure(processed),     # Camera as primary
-    lidar_stream,                # Lidar as secondary
-    match_tolerance=0.1,
+    backpressure(processed),
+    lidar_stream,
+    match_tolerance=0.15,
 )
+out: list[tuple[SampleMsg, ...]] = []
+aligned.subscribe(on_next=out.append)
+time.sleep(0.25)
+print("pairs", len(out))
+```
 
-aligned.subscribe(lambda pair: process_frame_with_pointcloud(*pair))
+<!--Result:-->
+```
+pairs 3
 ```

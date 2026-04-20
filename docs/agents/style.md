@@ -38,7 +38,7 @@ something/
 
 Never add imports to `__init__.py` files. Re-exporting from `__init__.py` makes imports too wide and slow — importing one symbol pulls in the entire package tree.
 
-```python
+```python skip
 # BAD — dimos/memory2/__init__.py
 from dimos.memory2.store import Store, SqliteStore
 from dimos.memory2.stream import Stream

@@ -38,7 +38,7 @@ You can read more about [sensor storage here](/docs/usage/sensor_streams/storage
 
 ```python session=align no-result
 from reactivex import Subject
-from dimos.utils.testing import TimedSensorReplay
+from dimos.utils.testing.replay import TimedSensorReplay
 from dimos.types.timestamped import Timestamped, align_timestamped
 from reactivex import operators as ops
 import reactivex as rx

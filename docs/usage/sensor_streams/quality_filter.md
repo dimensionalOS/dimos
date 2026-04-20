@@ -53,11 +53,11 @@ For camera streams, we provide `sharpness_barrier` which uses the image's sharpn
 Let's use real camera data from the Unitree Go2 robot to demonstrate. We use the [Sensor Storage & Replay](/docs/usage/sensor_streams/storage_replay.md) toolkit, which provides access to recorded robot data:
 
 ```python session=qb
-from dimos.utils.testing import TimedSensorReplay
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
+from dimos.utils.testing.replay import TimedSensorReplay
 
-# Load recorded Go2 camera frames
-video_replay = TimedSensorReplay("go2_sf_office/video")
+# Load recorded camera frames (bundled test data path)
+video_replay = TimedSensorReplay("unitree_go2_bigoffice/video")
 
 # Use stream() with seek to skip blank frames, speed=10x to collect faster
 input_frames = video_replay.stream(seek=5.0, duration=1.4, speed=10.0).pipe(
