@@ -86,7 +86,6 @@ class TestStatusCLI:
 
         result = CliRunner().invoke(main, ["status"])
         assert result.exit_code == 0
-        assert "status-test-001" in result.output
         assert str(proc.pid) in result.output
         assert "unitree-go2" in result.output
 
@@ -125,6 +124,22 @@ class TestStatusCLI:
 
         result = CliRunner().invoke(main, ["status"])
         assert "No running" in result.output
+
+    def test_status_json_output(self, sleeper):
+        proc = sleeper()
+        _entry("json-test", proc.pid, blueprint="unitree-go2")
+
+        result = CliRunner().invoke(main, ["status", "--json"])
+        assert result.exit_code == 0
+
+        import json
+
+        data = json.loads(result.output)
+        assert len(data) == 1
+        assert data[0]["pid"] == proc.pid
+        assert data[0]["blueprint"] == "unitree-go2"
+        assert data[0]["status"] == "Healthy"
+        assert data[0]["run_id"] == "json-test"
 
 
 class TestStopCLI:
@@ -177,3 +192,5 @@ class TestStopCLI:
                 break
             time.sleep(0.1)
         assert proc.poll() is not None, "Process should be dead after SIGTERM"
+
+

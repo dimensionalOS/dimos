@@ -37,7 +37,8 @@ from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.core.resource_monitor.stats import collect_process_stats
+from dimos.core.run_registry import get_most_recent, is_pid_alive, list_runs, stop_entry
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -331,27 +332,78 @@ def run(
 
 
 @main.command()
-def status() -> None:
-    """Show the running DimOS instance."""
-    entry = get_most_recent(alive_only=True)
-    if not entry:
+def status(
+    json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output"),
+) -> None:
+    """Show running DimOS instances."""
+    entries = list_runs(alive_only=True)
+    if not entries:
         typer.echo("No running DimOS instance")
         return
 
-    try:
-        started = datetime.fromisoformat(entry.started_at)
-        age = datetime.now(timezone.utc) - started
-        hours, remainder = divmod(int(age.total_seconds()), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        uptime = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m {seconds}s"
-    except Exception:
-        uptime = "unknown"
+    def _format_uptime(started_at: str) -> str:
+        try:
+            started = datetime.fromisoformat(started_at)
+            age = datetime.now(timezone.utc) - started
+            hours, remainder = divmod(int(age.total_seconds()), 3600)
+            minutes, seconds = divmod(remainder, 60)
+            return f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m {seconds}s"
+        except Exception:
+            return "unknown"
 
-    typer.echo(f"  Run ID:    {entry.run_id}")
-    typer.echo(f"  PID:       {entry.pid}")
-    typer.echo(f"  Blueprint: {entry.blueprint}")
-    typer.echo(f"  Uptime:    {uptime}")
-    typer.echo(f"  Log:       {entry.log_dir}")
+    # Build a single list of data dictionaries
+    rows: list[dict[str, object]] = []
+    for entry in entries:
+        try:
+            stats = collect_process_stats(entry.pid)
+        except Exception:
+            stats = None
+
+        alive = stats.alive if stats is not None else is_pid_alive(entry.pid)
+        pss_mb = (stats.pss / 1024**2) if stats is not None else 0.0
+
+        rows.append(
+            {
+                "pid": entry.pid,
+                "run_id": entry.run_id,
+                "blueprint": entry.blueprint,
+                "uptime": _format_uptime(entry.started_at),
+                "status": "Healthy" if alive else "Dead",
+                "log_dir": entry.log_dir,
+                "memory_mb": round(pss_mb, 1),
+            }
+        )
+
+    # 1. Output JSON if requested
+    if json_output:
+        typer.echo(json.dumps(rows, indent=2))
+        return
+
+    # 2. Output Table if JSON was NOT requested
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    table = Table(title="DimOS Status")
+    table.add_column("PID", justify="right")
+    table.add_column("BLUEPRINT")
+    table.add_column("UPTIME", justify="right")
+    table.add_column("STATUS")
+    table.add_column("LOG DIR")
+    table.add_column("MEMORY", justify="right")
+
+    for row in rows:
+        table.add_row(
+            str(row["pid"]),
+            str(row["blueprint"]),
+            str(row["uptime"]),
+            str(row["status"]),
+            str(row["log_dir"]),
+            f"{row['memory_mb']:.1f} MB",
+        )
+
+    console.print()
+    console.print(table)
 
 
 @main.command()
@@ -675,3 +727,6 @@ def rerun_bridge_cmd(
 
 if __name__ == "__main__":
     main()
+
+
+
