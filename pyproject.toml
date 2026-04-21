@@ -333,7 +333,7 @@ docker = [
 ]
 
 base = [
-    "dimos[agents,web,perception,visualization,sim]",
+    "dimos[agents,web,perception,visualization]",
 ]
 
 [tool.ruff]
