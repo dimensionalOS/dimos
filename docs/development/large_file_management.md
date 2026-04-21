@@ -88,7 +88,7 @@ Checkpoint: yolo11n.pt (5482KB)
 
 ### Loading Recorded Data for Replay
 
-```python
+```python skip
 from dimos.utils.data import get_data
 from dimos.utils.testing.replay import TimedSensorReplay
 
@@ -112,7 +112,7 @@ Replay <dimos.memory.timeseries.legacy.LegacyPickleStore object at 0x1099cad80> 
 
 ### Loading Point Clouds
 
-```python
+```python skip
 from dimos.utils.data import get_data
 from dimos.mapping.pointclouds.util import read_pointcloud
 
