@@ -38,6 +38,9 @@ Examples:
 - Walk backward: `move(x=-0.3, duration=2.0)`
 - Turn right 90°: `move(x=0.0, yaw=-1.57, duration=1.0)`
 - Turn left 90°: `move(x=0.0, yaw=1.57, duration=1.0)`
+- For 3D offsets use `navigate_3d(x, y, z, speed=...)` so elevation changes are handled explicitly.
+- For stair traversal use `climb_stairs(steps, step_height=0.17, speed=0.2)`.
+- Keep stair requests realistic (typical `step_height` around 0.15-0.20m, avoid very large step counts).
 
 ## Arm Gestures
 Use `execute_arm_command` with one of these command names:
