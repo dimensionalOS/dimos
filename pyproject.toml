@@ -173,11 +173,6 @@ agents = [
     "faster-whisper>=1.0.0",
 ]
 
-whisper = [
-    "dimos[agents]",
-    "openai-whisper",
-]
-
 web = [
     "fastapi>=0.115.6",
     "sse-starlette>=2.2.1",
