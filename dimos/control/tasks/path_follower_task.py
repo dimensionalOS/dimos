@@ -318,9 +318,7 @@ class PathFollowerTask(BaseControlTask):
         self._cached_output = None
         self._last_compute_time = 0.0
 
-        logger.info(
-            f"PathFollowerTask '{self._name}' started ({len(path.poses)} poses)"
-        )
+        logger.info(f"PathFollowerTask '{self._name}' started ({len(path.poses)} poses)")
         return True
 
     def update_odom(self, odom: PoseStamped) -> None:

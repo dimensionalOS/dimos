@@ -24,7 +24,6 @@ Each channel (vx, vy, wz) has an independent PID with anti-windup.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 
@@ -133,8 +132,12 @@ class VelocityTrackingPID:
 
     def compute(
         self,
-        desired_vx: float, desired_vy: float, desired_wz: float,
-        actual_vx: float, actual_vy: float, actual_wz: float,
+        desired_vx: float,
+        desired_vy: float,
+        desired_wz: float,
+        actual_vx: float,
+        actual_vy: float,
+        actual_wz: float,
     ) -> tuple[float, float, float]:
         """Compute adjusted commands for all three channels.
 
@@ -162,7 +165,7 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 
 
 __all__ = [
-    "VelocityTrackingPID",
-    "VelocityTrackingConfig",
     "VelocityPIDConfig",
+    "VelocityTrackingConfig",
+    "VelocityTrackingPID",
 ]

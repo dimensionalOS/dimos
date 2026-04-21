@@ -27,8 +27,8 @@ Usage:
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
+import math
 
 import numpy as np
 from numpy.typing import NDArray
@@ -48,7 +48,6 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.utils.trigonometry import angle_diff
 
-
 # ---------------------------------------------------------------------------
 # Test paths
 # ---------------------------------------------------------------------------
@@ -56,10 +55,15 @@ from dimos.utils.trigonometry import angle_diff
 
 def _straight(length: float = 5.0, step: float = 0.1) -> Path:
     n = int(length / step) + 1
-    return Path(poses=[
-        PoseStamped(position=Vector3(i * step, 0, 0), orientation=Quaternion.from_euler(Vector3(0, 0, 0)))
-        for i in range(n)
-    ])
+    return Path(
+        poses=[
+            PoseStamped(
+                position=Vector3(i * step, 0, 0),
+                orientation=Quaternion.from_euler(Vector3(0, 0, 0)),
+            )
+            for i in range(n)
+        ]
+    )
 
 
 def _s_curve(amp: float = 1.0, length: float = 6.0, step: float = 0.1) -> Path:
@@ -69,18 +73,27 @@ def _s_curve(amp: float = 1.0, length: float = 6.0, step: float = 0.1) -> Path:
         x = i * step
         y = amp * math.sin(2 * math.pi * x / length)
         yaw = math.atan2(amp * 2 * math.pi / length * math.cos(2 * math.pi * x / length), 1.0)
-        poses.append(PoseStamped(position=Vector3(x, y, 0), orientation=Quaternion.from_euler(Vector3(0, 0, yaw))))
+        poses.append(
+            PoseStamped(
+                position=Vector3(x, y, 0), orientation=Quaternion.from_euler(Vector3(0, 0, yaw))
+            )
+        )
     return Path(poses=poses)
 
 
 def _right_angle(leg: float = 3.0, step: float = 0.1) -> Path:
     n = int(leg / step)
     poses = [
-        PoseStamped(position=Vector3(i * step, 0, 0), orientation=Quaternion.from_euler(Vector3(0, 0, 0)))
+        PoseStamped(
+            position=Vector3(i * step, 0, 0), orientation=Quaternion.from_euler(Vector3(0, 0, 0))
+        )
         for i in range(n + 1)
     ]
     poses += [
-        PoseStamped(position=Vector3(leg, i * step, 0), orientation=Quaternion.from_euler(Vector3(0, 0, math.pi / 2)))
+        PoseStamped(
+            position=Vector3(leg, i * step, 0),
+            orientation=Quaternion.from_euler(Vector3(0, 0, math.pi / 2)),
+        )
         for i in range(1, n + 1)
     ]
     return Path(poses=poses)
@@ -151,8 +164,13 @@ def _tangent_yaw(path_arr: NDArray, idx: int) -> float:
 
 
 def run_pure_pursuit(
-    path: Path, plant: Go2PlantSim, dt: float = 0.1, max_steps: int = 2000,
-    start_x: float | None = None, start_y: float | None = None, start_yaw: float | None = None,
+    path: Path,
+    plant: Go2PlantSim,
+    dt: float = 0.1,
+    max_steps: int = 2000,
+    start_x: float | None = None,
+    start_y: float | None = None,
+    start_yaw: float | None = None,
 ) -> RunResult:
     pp = PurePursuitController(global_config, control_frequency=10.0, max_linear_speed=0.8)
     pid = PIDCrossTrackController(control_frequency=10.0, k_p=1.5, k_i=0.1, k_d=0.2)
@@ -198,7 +216,7 @@ def run_pure_pursuit(
         result.vy_list.append(vy)
 
         plant.step(vx, vy, wz, dt)
-        dist += math.sqrt((plant.x - px)**2 + (plant.y - py)**2)
+        dist += math.sqrt((plant.x - px) ** 2 + (plant.y - py) ** 2)
         px, py = plant.x, plant.y
 
     result.total_time = len(result.cte_list) * dt
@@ -207,8 +225,13 @@ def run_pure_pursuit(
 
 
 def run_lyapunov(
-    path: Path, plant: Go2PlantSim, dt: float = 0.1, max_steps: int = 2000,
-    start_x: float | None = None, start_y: float | None = None, start_yaw: float | None = None,
+    path: Path,
+    plant: Go2PlantSim,
+    dt: float = 0.1,
+    max_steps: int = 2000,
+    start_x: float | None = None,
+    start_y: float | None = None,
+    start_yaw: float | None = None,
 ) -> RunResult:
     ctrl = LyapunovPathController(LyapunovPathControllerConfig(v_max=0.6))
     distancer = PathDistancer(path)
@@ -245,7 +268,7 @@ def run_lyapunov(
         result.vy_list.append(out.vy)
 
         plant.step(out.vx, out.vy, out.wz, dt)
-        dist += math.sqrt((plant.x - px)**2 + (plant.y - py)**2)
+        dist += math.sqrt((plant.x - px) ** 2 + (plant.y - py) ** 2)
         px, py = plant.x, plant.y
 
     result.total_time = len(result.cte_list) * dt
@@ -272,7 +295,11 @@ def _print_comparison(pp: RunResult, ly: RunResult, scenario: str) -> None:
         ("Max |CTE| (m)", f"{pp.max_cte:.4f}", f"{ly.max_cte:.4f}"),
         ("RMS CTE (m)", f"{pp.rms_cte:.4f}", f"{ly.rms_cte:.4f}"),
         ("Mean speed (m/s)", f"{pp.mean_speed:.3f}", f"{ly.mean_speed:.3f}"),
-        ("Max speed (recovery)", f"{pp.max_speed_during_recovery:.3f}", f"{ly.max_speed_during_recovery:.3f}"),
+        (
+            "Max speed (recovery)",
+            f"{pp.max_speed_during_recovery:.3f}",
+            f"{ly.max_speed_during_recovery:.3f}",
+        ),
         ("Angular smoothness", f"{pp.angular_smoothness:.2f}", f"{ly.angular_smoothness:.2f}"),
         ("Mean |vy| (m/s)", f"{pp.mean_abs_vy:.4f}", f"{ly.mean_abs_vy:.4f}"),
     ]
@@ -295,7 +322,11 @@ def main() -> None:
         ("90° turn (on path)", _right_angle(), {}),
         ("Straight — 0.5m lateral offset", _straight(5.0), {"start_y": 0.5}),
         ("Straight — 45° heading error", _straight(5.0), {"start_yaw": math.pi / 4}),
-        ("S-curve — 0.3m offset + 30° heading", _s_curve(), {"start_y": 0.3, "start_yaw": math.pi / 6}),
+        (
+            "S-curve — 0.3m offset + 30° heading",
+            _s_curve(),
+            {"start_y": 0.3, "start_yaw": math.pi / 6},
+        ),
     ]
 
     for name, path, kwargs in scenarios:

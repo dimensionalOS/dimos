@@ -30,8 +30,8 @@ from __future__ import annotations
 
 import argparse
 import csv
-import math
 from dataclasses import dataclass
+import math
 
 import numpy as np
 from numpy.typing import NDArray
@@ -69,7 +69,9 @@ def _zero_phase_lowpass(signal: NDArray, dt_arr: NDArray, cutoff_hz: float = 2.0
     return filtfilt(b, a, signal)
 
 
-def fopdt_step_response(t: NDArray, K: float, tau: float, theta: float, amplitude: float) -> NDArray:
+def fopdt_step_response(
+    t: NDArray, K: float, tau: float, theta: float, amplitude: float
+) -> NDArray:
     """Analytical FOPDT step response.
 
     y(t) = K * amplitude * (1 - exp(-(t - theta) / tau))  for t >= theta
@@ -114,7 +116,7 @@ def remove_outlier_trials(trials: list[TrialData]) -> list[TrialData]:
         groups.setdefault((t.channel, t.amplitude), []).append(t)
 
     clean: list[TrialData] = []
-    for (channel, amplitude), group in groups.items():
+    for (_channel, _amplitude), group in groups.items():
         if len(group) < 2:
             clean.extend(group)
             continue
@@ -148,7 +150,7 @@ def remove_outlier_trials(trials: list[TrialData]) -> list[TrialData]:
             # Only apply percentage rejection if steady-state is large enough
             # to make percentages meaningful (>0.05 m/s or rad/s)
             if abs(ss_med) > 0.05:
-                for t, ss in zip(stage1, ss_values):
+                for t, ss in zip(stage1, ss_values, strict=False):
                     ss_dev = abs(ss - ss_med) / abs(ss_med)
                     if ss_dev <= 0.25:
                         clean.append(t)
@@ -199,7 +201,7 @@ def load_trials(csv_path: str, channel_filter: str | None = None) -> list[TrialD
         x = x[unique_mask]
         y = y[unique_mask]
         yaw = yaw[unique_mask]
-        phases = [p for p, m in zip(phases, unique_mask) if m]
+        phases = [p for p, m in zip(phases, unique_mask, strict=False) if m]
 
         # Compute body-frame velocity from world-frame odom.
         # World displacement (dx, dy) must be rotated into the robot's
@@ -248,15 +250,17 @@ def load_trials(csv_path: str, channel_filter: str | None = None) -> list[TrialD
         t0 = ts[step_indices[0]] if step_indices else ts[0]
         t_rel = ts - t0
 
-        trials.append(TrialData(
-            channel=channel,
-            amplitude=amplitude,
-            trial=trial_num,
-            time=t_rel,
-            cmd=cmd,
-            actual=vel,
-            phase=phases,
-        ))
+        trials.append(
+            TrialData(
+                channel=channel,
+                amplitude=amplitude,
+                trial=trial_num,
+                time=t_rel,
+                cmd=cmd,
+                actual=vel,
+                phase=phases,
+            )
+        )
 
     return trials
 
@@ -275,7 +279,9 @@ def identify_fopdt(trial: TrialData) -> FOPDTParams:
         y = -y
 
     if len(t) < 10 or amplitude < 1e-6:
-        return FOPDTParams(K=1.0, tau=0.1, theta=0.0, channel=trial.channel, amplitude=trial.amplitude)
+        return FOPDTParams(
+            K=1.0, tau=0.1, theta=0.0, channel=trial.channel, amplitude=trial.amplitude
+        )
 
     t = t - t[0]  # zero at step start
 
@@ -306,16 +312,20 @@ def identify_fopdt(trial: TrialData) -> FOPDTParams:
 
     try:
         popt, _ = curve_fit(
-            model, t, y,
+            model,
+            t,
+            y,
             p0=[K_est, tau_est, theta_est],
             bounds=([0.001, 0.001, 0.0], [10.0, 5.0, 2.0]),
             maxfev=5000,
         )
-        return FOPDTParams(K=popt[0], tau=popt[1], theta=popt[2],
-                           channel=trial.channel, amplitude=trial.amplitude)
+        return FOPDTParams(
+            K=popt[0], tau=popt[1], theta=popt[2], channel=trial.channel, amplitude=trial.amplitude
+        )
     except Exception:
-        return FOPDTParams(K=K_est, tau=tau_est, theta=theta_est,
-                           channel=trial.channel, amplitude=trial.amplitude)
+        return FOPDTParams(
+            K=K_est, tau=tau_est, theta=theta_est, channel=trial.channel, amplitude=trial.amplitude
+        )
 
 
 def _get_ylim(channel: str, amplitude: float) -> tuple[float, float]:
@@ -362,12 +372,18 @@ def plot_step_responses(
 
         for td in group_trials:
             color = "C0" if td.trial == 1 else ("C1" if td.trial == 2 else "C2")
-            ax.plot(td.time, td.actual, color=color, alpha=0.6, linewidth=0.8,
-                    label=f"Trial {td.trial}")
+            ax.plot(
+                td.time, td.actual, color=color, alpha=0.6, linewidth=0.8, label=f"Trial {td.trial}"
+            )
 
         # Command level
-        ax.axhline(y=amplitude, color="red", linestyle="--", alpha=0.5,
-                    label=f"Commanded: {amplitude} {unit}")
+        ax.axhline(
+            y=amplitude,
+            color="red",
+            linestyle="--",
+            alpha=0.5,
+            label=f"Commanded: {amplitude} {unit}",
+        )
         ax.axhline(y=0, color="gray", linestyle=":", alpha=0.3)
 
         # Phase boundary
@@ -439,10 +455,21 @@ def plot_averaged_responses(
         std_vel = np.std(all_interp, axis=0) if len(all_interp) > 1 else np.zeros_like(mean_vel)
 
         ax.plot(t_common, mean_vel, "b-", linewidth=1.5, label="Mean (averaged)")
-        ax.fill_between(t_common, mean_vel - std_vel, mean_vel + std_vel,
-                         color="blue", alpha=0.15, label="±1 std")
-        ax.axhline(y=amplitude, color="red", linestyle="--", alpha=0.5,
-                    label=f"Commanded: {amplitude} {unit}")
+        ax.fill_between(
+            t_common,
+            mean_vel - std_vel,
+            mean_vel + std_vel,
+            color="blue",
+            alpha=0.15,
+            label="±1 std",
+        )
+        ax.axhline(
+            y=amplitude,
+            color="red",
+            linestyle="--",
+            alpha=0.5,
+            label=f"Commanded: {amplitude} {unit}",
+        )
         ax.axvline(x=0, color="green", linestyle="-", alpha=0.4, label="Step onset")
         ax.axhline(y=0, color="gray", linestyle=":", alpha=0.3)
 
@@ -522,10 +549,20 @@ def plot_fopdt_overlay(trials: list[TrialData], output: str = "step_response_fop
 
         # Plot
         ax.plot(t_common, mean_vel, "b-", linewidth=1.5, label="Actual (averaged)")
-        ax.plot(t_common, model_vel, "r--", linewidth=1.5,
-                label=f"FOPDT (K={K_avg:.2f}, τ={tau_avg:.2f}s, θ={theta_avg:.2f}s)")
-        ax.axhline(y=amplitude, color="green", linestyle=":", alpha=0.5,
-                    label=f"Commanded: {amplitude} {unit}")
+        ax.plot(
+            t_common,
+            model_vel,
+            "r--",
+            linewidth=1.5,
+            label=f"FOPDT (K={K_avg:.2f}, τ={tau_avg:.2f}s, θ={theta_avg:.2f}s)",
+        )
+        ax.axhline(
+            y=amplitude,
+            color="green",
+            linestyle=":",
+            alpha=0.5,
+            label=f"Commanded: {amplitude} {unit}",
+        )
         ax.axvline(x=0, color="gray", linestyle="-", alpha=0.3, label="Step onset")
         ax.axhline(y=0, color="gray", linestyle=":", alpha=0.2)
 
@@ -550,7 +587,9 @@ def plot_fopdt_overlay(trials: list[TrialData], output: str = "step_response_fop
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plant identification from step-response CSV")
     parser.add_argument("--data", required=True, help="Path to step_response_data.csv")
-    parser.add_argument("--channel", type=str, default=None, help="Filter to single channel (vx/vy/wz)")
+    parser.add_argument(
+        "--channel", type=str, default=None, help="Filter to single channel (vx/vy/wz)"
+    )
     parser.add_argument("--fopdt", action="store_true", help="Also fit FOPDT models")
     args = parser.parse_args()
 
@@ -569,6 +608,7 @@ def main() -> None:
     # Always plot (with outliers removed)
     try:
         import matplotlib
+
         matplotlib.use("Agg")
         plot_step_responses(trials)
         plot_averaged_responses(trials)

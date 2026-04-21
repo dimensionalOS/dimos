@@ -149,7 +149,9 @@ def main() -> None:
     parser.add_argument("--K", type=float, help="Steady-state gain")
     parser.add_argument("--tau", type=float, help="Time constant (s)")
     parser.add_argument("--theta", type=float, help="Dead time (s)")
-    parser.add_argument("--tau-c", type=float, default=None, help="Desired closed-loop time constant")
+    parser.add_argument(
+        "--tau-c", type=float, default=None, help="Desired closed-loop time constant"
+    )
     parser.add_argument("--from-csv", type=str, help="Load FOPDT params from step_response CSV")
     parser.add_argument("--sweep", action="store_true", help="Sweep tau_c and show range of gains")
     args = parser.parse_args()
@@ -159,7 +161,7 @@ def main() -> None:
 
         results = load_and_identify(args.from_csv)
         print("\nIdentified plant parameters:")
-        for ch, params in sorted(results.items()):
+        for _ch, params in sorted(results.items()):
             print(f"  {params}")
 
         # Use vx channel for cross-track tuning (lateral correction acts through vx)
@@ -194,7 +196,11 @@ def main() -> None:
         print("-" * 70)
         sweep = sweep_tau_c(K, tau, theta)
         for tc, gains in sweep:
-            label = "aggressive" if tc < 4 * theta else ("moderate" if tc < 8 * theta else "conservative")
+            label = (
+                "aggressive"
+                if tc < 4 * theta
+                else ("moderate" if tc < 8 * theta else "conservative")
+            )
             print(f"{tc:>8.3f}  {gains.Kp:>8.4f}  {gains.Ki:>8.4f}  {gains.Kd:>8.4f}  {label:>16}")
         print("=" * 70)
 

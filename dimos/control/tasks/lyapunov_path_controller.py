@@ -23,9 +23,9 @@ Error decomposition (Frenet frame of closest path point):
     e_θ  — heading error      (robot heading vs path tangent)
 
 Control law:
-    v_ref = v_max · σ(e_d, e_θ, κ, d_goal)      — reactive reference speed
+    v_ref = v_max · s(e_d, e_θ, κ, d_goal)      — reactive reference speed
     vx    = v_ref · cos(e_θ) + k_s · e_s         — forward (+ along-track catch-up)
-    vy    = −k_d · e_d                            — lateral correction (holonomic)
+    vy    = -k_d · e_d                            — lateral correction (holonomic)
     wz    = v_ref · κ + k_θ · sin(e_θ)           — feedforward curvature + feedback heading
 
 Stability: Lyapunov candidate V = ½(e_s² + e_d² + e_θ²) yields dV/dt < 0
@@ -34,12 +34,11 @@ for appropriate gain selection → exponential error convergence.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
+import math
 from typing import TYPE_CHECKING
 
 import numpy as np
-from numpy.typing import NDArray
 
 from dimos.utils.trigonometry import angle_diff
 
@@ -160,8 +159,13 @@ class LyapunovPathController:
         wz = float(np.clip(wz, -cfg.wz_max, cfg.wz_max))
 
         return ControlOutput(
-            vx=vx, vy=vy, wz=wz,
-            e_s=e_s, e_d=e_d, e_theta=e_theta, v_ref=v_ref,
+            vx=vx,
+            vy=vy,
+            wz=wz,
+            e_s=e_s,
+            e_d=e_d,
+            e_theta=e_theta,
+            v_ref=v_ref,
         )
 
     @staticmethod
@@ -180,7 +184,7 @@ class LyapunovPathController:
 
 
 __all__ = [
+    "ControlOutput",
     "LyapunovPathController",
     "LyapunovPathControllerConfig",
-    "ControlOutput",
 ]

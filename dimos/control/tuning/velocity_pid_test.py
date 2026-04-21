@@ -32,9 +32,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import dataclass
 import math
 import time
-from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -56,9 +56,17 @@ CONTROL_DT = 0.1  # 10 Hz
 SETTLE_DURATION = 2.0  # seconds at zero before each test
 
 CSV_FIELDS = [
-    "timestamp", "channel", "target_vel", "mode", "trial",
-    "desired", "adjusted_cmd", "actual_vel",
-    "odom_x", "odom_y", "odom_yaw",
+    "timestamp",
+    "channel",
+    "target_vel",
+    "mode",
+    "trial",
+    "desired",
+    "adjusted_cmd",
+    "actual_vel",
+    "odom_x",
+    "odom_y",
+    "odom_yaw",
 ]
 
 # Test velocities per channel
@@ -130,10 +138,12 @@ class OdomTracker:
 
 
 def _send_twist(pub: LCMTransport, vx: float, vy: float, wz: float) -> None:
-    pub.publish(Twist(
-        linear=Vector3(x=vx, y=vy, z=0.0),
-        angular=Vector3(x=0.0, y=0.0, z=wz),
-    ))
+    pub.publish(
+        Twist(
+            linear=Vector3(x=vx, y=vy, z=0.0),
+            angular=Vector3(x=0.0, y=0.0, z=wz),
+        )
+    )
 
 
 def run_test(
@@ -179,8 +189,12 @@ def run_test(
         # Compute command
         if pid and mode == "closed_loop":
             cmd_vx, cmd_vy, cmd_wz = pid.compute(
-                des_vx, des_vy, des_wz,
-                actual_vx, actual_vy, actual_wz,
+                des_vx,
+                des_vy,
+                des_wz,
+                actual_vx,
+                actual_vy,
+                actual_wz,
             )
         else:
             cmd_vx, cmd_vy, cmd_wz = des_vx, des_vy, des_wz
@@ -190,19 +204,21 @@ def run_test(
         # Get actual for the channel we care about
         actual = {"vx": actual_vx, "vy": actual_vy, "wz": actual_wz}[channel]
 
-        rows.append({
-            "timestamp": time.perf_counter(),
-            "channel": channel,
-            "target_vel": target,
-            "mode": mode,
-            "trial": trial,
-            "desired": target,
-            "adjusted_cmd": {"vx": cmd_vx, "vy": cmd_vy, "wz": cmd_wz}[channel],
-            "actual_vel": actual,
-            "odom_x": odom.state.x,
-            "odom_y": odom.state.y,
-            "odom_yaw": odom.state.yaw,
-        })
+        rows.append(
+            {
+                "timestamp": time.perf_counter(),
+                "channel": channel,
+                "target_vel": target,
+                "mode": mode,
+                "trial": trial,
+                "desired": target,
+                "adjusted_cmd": {"vx": cmd_vx, "vy": cmd_vy, "wz": cmd_wz}[channel],
+                "actual_vel": actual,
+                "odom_x": odom.state.x,
+                "odom_y": odom.state.y,
+                "odom_yaw": odom.state.yaw,
+            }
+        )
 
         time.sleep(CONTROL_DT)
 
@@ -230,6 +246,7 @@ def _filter_velocity(ts: np.ndarray, vel: np.ndarray, cutoff_hz: float = 2.0) ->
 def plot_results(csv_path: str, channel: str) -> None:
     """Plot open-loop vs closed-loop velocity tracking."""
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -243,7 +260,9 @@ def plot_results(csv_path: str, channel: str) -> None:
 
     targets = sorted(set(k[0] for k in rows_by_key.keys()))
     unit = "rad/s" if channel == "wz" else "m/s"
-    label = {"vx": "Forward velocity (vx)", "vy": "Lateral velocity (vy)", "wz": "Yaw rate (wz)"}[channel]
+    label = {"vx": "Forward velocity (vx)", "vy": "Lateral velocity (vy)", "wz": "Yaw rate (wz)"}[
+        channel
+    ]
 
     n = len(targets)
     fig, axes = plt.subplots(n, 1, figsize=(10, 4 * n), squeeze=False)
@@ -251,7 +270,7 @@ def plot_results(csv_path: str, channel: str) -> None:
     for idx, target in enumerate(targets):
         ax = axes[idx][0]
 
-        for mode, color, ls in [("open_loop", "C0", "-"), ("closed_loop", "C1", "-")]:
+        for mode, color, _ls in [("open_loop", "C0", "-"), ("closed_loop", "C1", "-")]:
             key = (target, mode)
             if key not in rows_by_key:
                 continue
@@ -265,14 +284,21 @@ def plot_results(csv_path: str, channel: str) -> None:
             actual = _filter_velocity(ts, actual_raw, cutoff_hz=2.0)
 
             ax.plot(ts_rel, actual_raw, color=color, linewidth=0.4, alpha=0.25)
-            ax.plot(ts_rel, actual, color=color, linewidth=1.5,
-                    label=f"{mode} actual (filtered)")
+            ax.plot(ts_rel, actual, color=color, linewidth=1.5, label=f"{mode} actual (filtered)")
             if mode == "closed_loop":
-                ax.plot(ts_rel, adjusted, color="C2", linewidth=0.8, alpha=0.6,
-                        linestyle="--", label="PID adjusted cmd")
+                ax.plot(
+                    ts_rel,
+                    adjusted,
+                    color="C2",
+                    linewidth=0.8,
+                    alpha=0.6,
+                    linestyle="--",
+                    label="PID adjusted cmd",
+                )
 
-        ax.axhline(y=target, color="red", linestyle=":", alpha=0.5,
-                    label=f"Target: {target} {unit}")
+        ax.axhline(
+            y=target, color="red", linestyle=":", alpha=0.5, label=f"Target: {target} {unit}"
+        )
         ax.set_xlabel("Time (s)")
         ax.set_ylabel(f"Velocity ({unit})")
         ax.set_title(f"{label} @ {target} {unit} — Open Loop vs PID")
@@ -304,8 +330,11 @@ def main() -> None:
 
     # Build PID config for the tested channel
     pid_cfg = VelocityPIDConfig(
-        kp=args.kp, ki=args.ki, kd=args.kd,
-        output_min=-1.5, output_max=1.5,
+        kp=args.kp,
+        ki=args.ki,
+        kd=args.kd,
+        output_min=-1.5,
+        output_max=1.5,
     )
     tracking_cfg = VelocityTrackingConfig(dt=CONTROL_DT)
     if args.channel == "vx":

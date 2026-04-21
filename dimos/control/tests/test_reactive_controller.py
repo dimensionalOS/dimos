@@ -94,8 +94,7 @@ def test_lateral_offset_slows_vx():
     off_path = ctrl.compute(_pose(1.0, 0.5, 0.0), dist, distance_to_goal=4.0)
 
     assert off_path.vx < on_path.vx, (
-        f"Off-path vx ({off_path.vx:.3f}) should be less than "
-        f"on-path vx ({on_path.vx:.3f})"
+        f"Off-path vx ({off_path.vx:.3f}) should be less than on-path vx ({on_path.vx:.3f})"
     )
 
 
@@ -109,8 +108,7 @@ def test_heading_error_slows_vx():
     misaligned = ctrl.compute(_pose(1.0, 0.0, math.pi / 4), dist, distance_to_goal=4.0)
 
     assert misaligned.vx < aligned.vx, (
-        f"Misaligned vx ({misaligned.vx:.3f}) should be less than "
-        f"aligned vx ({aligned.vx:.3f})"
+        f"Misaligned vx ({misaligned.vx:.3f}) should be less than aligned vx ({aligned.vx:.3f})"
     )
 
 
@@ -138,8 +136,7 @@ def test_goal_deceleration():
     near = ctrl.compute(_pose(4.5, 0.0, 0.0), dist, distance_to_goal=0.3)
 
     assert near.vx < far.vx, (
-        f"Near-goal vx ({near.vx:.3f}) should be less than "
-        f"far vx ({far.vx:.3f})"
+        f"Near-goal vx ({near.vx:.3f}) should be less than far vx ({far.vx:.3f})"
     )
 
 
@@ -157,8 +154,7 @@ def test_curvature_slows_vx():
     out_c = ctrl.compute(_pose(2.0, 0.0, 0.0), dist_c, distance_to_goal=2.0)
 
     assert out_c.v_ref < out_s.v_ref, (
-        f"Curved v_ref ({out_c.v_ref:.3f}) should be less than "
-        f"straight v_ref ({out_s.v_ref:.3f})"
+        f"Curved v_ref ({out_c.v_ref:.3f}) should be less than straight v_ref ({out_s.v_ref:.3f})"
     )
 
 
@@ -176,7 +172,7 @@ def test_error_convergence_simulation():
 
     for _ in range(50):
         odom = _pose(x, y, yaw)
-        d2g = dist.distance_to_goal((__import__("numpy").array([x, y])))
+        d2g = dist.distance_to_goal(__import__("numpy").array([x, y]))
         out = ctrl.compute(odom, dist, distance_to_goal=d2g)
 
         # Unicycle integration
@@ -187,8 +183,7 @@ def test_error_convergence_simulation():
 
     final_cte = abs(dist.get_signed_cross_track_error(__import__("numpy").array([x, y])))
     assert final_cte < initial_error * 0.3, (
-        f"Expected error convergence: initial CTE≈{initial_error:.3f}, "
-        f"final CTE={final_cte:.3f}"
+        f"Expected error convergence: initial CTE≈{initial_error:.3f}, final CTE={final_cte:.3f}"
     )
 
 
@@ -220,8 +215,7 @@ def test_lyapunov_function_decreasing():
 
     # Allow small numerical bumps but overall trend must be decreasing
     assert V_values[-1] < V_values[0] * 0.5, (
-        f"Lyapunov function should decrease: V_0={V_values[0]:.4f}, "
-        f"V_final={V_values[-1]:.4f}"
+        f"Lyapunov function should decrease: V_0={V_values[0]:.4f}, V_final={V_values[-1]:.4f}"
     )
 
 

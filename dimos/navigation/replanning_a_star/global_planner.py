@@ -208,9 +208,7 @@ class GlobalPlanner(Resource):
 
         if self._coordinator is not None and self._path_follower_task_name is not None:
             try:
-                self._coordinator.task_invoke(
-                    self._path_follower_task_name, "cancel", {}
-                )
+                self._coordinator.task_invoke(self._path_follower_task_name, "cancel", {})
             except Exception as e:
                 logger.warning(f"Failed to cancel PathFollowerTask: {e}")
 

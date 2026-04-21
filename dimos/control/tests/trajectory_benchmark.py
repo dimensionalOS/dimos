@@ -24,9 +24,9 @@ Usage:
 
 from __future__ import annotations
 
-import math
 from collections import deque
 from dataclasses import dataclass, field
+import math
 
 import numpy as np
 from numpy.typing import NDArray
@@ -35,14 +35,12 @@ from dimos.control.tasks.path_controllers import PIDCrossTrackController, PurePu
 from dimos.control.tasks.path_distancer import PathDistancer
 from dimos.control.tasks.velocity_profiler import VelocityProfiler
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.replanning_a_star.controllers import PController
 from dimos.utils.trigonometry import angle_diff
-
 
 # ---------------------------------------------------------------------------
 # FOPDT Plant Simulator
@@ -78,9 +76,15 @@ class Go2PlantSim:
 
     def __init__(
         self,
-        K_vx: float = 1.0, tau_vx: float = 0.1, theta_vx: float = 0.03,
-        K_vy: float = 1.0, tau_vy: float = 0.1, theta_vy: float = 0.03,
-        K_wz: float = 1.0, tau_wz: float = 0.05, theta_wz: float = 0.02,
+        K_vx: float = 1.0,
+        tau_vx: float = 0.1,
+        theta_vx: float = 0.03,
+        K_vy: float = 1.0,
+        tau_vy: float = 0.1,
+        theta_vy: float = 0.03,
+        K_wz: float = 1.0,
+        tau_wz: float = 0.05,
+        theta_wz: float = 0.02,
     ) -> None:
         self.ch_vx = FOPDTChannel(K_vx, tau_vx, theta_vx)
         self.ch_vy = FOPDTChannel(K_vy, tau_vy, theta_vy)
@@ -161,10 +165,12 @@ def make_straight_path(length: float = 5.0, step: float = 0.1) -> Path:
     poses = []
     for i in range(n + 1):
         x = i * step
-        poses.append(PoseStamped(
-            position=Vector3(x, 0.0, 0.0),
-            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, 0.0)),
-        ))
+        poses.append(
+            PoseStamped(
+                position=Vector3(x, 0.0, 0.0),
+                orientation=Quaternion.from_euler(Vector3(0.0, 0.0, 0.0)),
+            )
+        )
     return Path(poses=poses)
 
 
@@ -174,13 +180,13 @@ def make_s_curve_path(amplitude: float = 1.0, length: float = 6.0, step: float =
     for i in range(n + 1):
         x = i * step
         y = amplitude * math.sin(2 * math.pi * x / length)
-        yaw = math.atan2(
-            amplitude * 2 * math.pi / length * math.cos(2 * math.pi * x / length), 1.0
+        yaw = math.atan2(amplitude * 2 * math.pi / length * math.cos(2 * math.pi * x / length), 1.0)
+        poses.append(
+            PoseStamped(
+                position=Vector3(x, y, 0.0),
+                orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
+            )
         )
-        poses.append(PoseStamped(
-            position=Vector3(x, y, 0.0),
-            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, yaw)),
-        ))
     return Path(poses=poses)
 
 
@@ -188,15 +194,19 @@ def make_right_angle_path(leg: float = 3.0, step: float = 0.1) -> Path:
     poses = []
     n = int(leg / step)
     for i in range(n + 1):
-        poses.append(PoseStamped(
-            position=Vector3(i * step, 0.0, 0.0),
-            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, 0.0)),
-        ))
+        poses.append(
+            PoseStamped(
+                position=Vector3(i * step, 0.0, 0.0),
+                orientation=Quaternion.from_euler(Vector3(0.0, 0.0, 0.0)),
+            )
+        )
     for i in range(1, n + 1):
-        poses.append(PoseStamped(
-            position=Vector3(leg, i * step, 0.0),
-            orientation=Quaternion.from_euler(Vector3(0.0, 0.0, math.pi / 2)),
-        ))
+        poses.append(
+            PoseStamped(
+                position=Vector3(leg, i * step, 0.0),
+                orientation=Quaternion.from_euler(Vector3(0.0, 0.0, math.pi / 2)),
+            )
+        )
     return Path(poses=poses)
 
 
@@ -257,7 +267,7 @@ def simulate_old_controller(
         cte = distancer.get_signed_cross_track_error(pos)
         tangent = get_path_tangent_yaw(path_arr, idx)
         he = angle_diff(plant.yaw, tangent)
-        speed = math.sqrt(twist.linear.x ** 2 + twist.linear.y ** 2)
+        speed = math.sqrt(twist.linear.x**2 + twist.linear.y**2)
         result.record(cte, he, speed, twist.angular.z)
 
         plant.step(twist.linear.x, twist.linear.y, twist.angular.z, dt)
@@ -272,8 +282,13 @@ def simulate_old_controller(
 
 
 def simulate_new_controller(
-    path: Path, plant: Go2PlantSim, dt: float = 0.1, max_steps: int = 2000,
-    ct_kp: float = 1.5, ct_ki: float = 0.1, ct_kd: float = 0.2,
+    path: Path,
+    plant: Go2PlantSim,
+    dt: float = 0.1,
+    max_steps: int = 2000,
+    ct_kp: float = 1.5,
+    ct_ki: float = 0.1,
+    ct_kd: float = 0.2,
 ) -> BenchmarkResult:
     """Simulate PurePursuit + PID cross-track at 10 Hz."""
     gc = GlobalConfig()
@@ -314,7 +329,7 @@ def simulate_new_controller(
 
         tangent = get_path_tangent_yaw(path_arr, idx)
         he = angle_diff(plant.yaw, tangent)
-        speed = math.sqrt(twist.linear.x ** 2 + twist.linear.y ** 2)
+        speed = math.sqrt(twist.linear.x**2 + twist.linear.y**2)
         result.record(cte, he, speed, wz)
 
         plant.step(twist.linear.x, twist.linear.y, wz, dt)

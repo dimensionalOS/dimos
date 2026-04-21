@@ -188,11 +188,13 @@ class ReactivePathFollowerTask(BaseControlTask):
 
             # Final rotation: use heading-only control
             cfg = self._config.controller
-            wz = float(np.clip(
-                cfg.k_theta * np.sin(yaw_err),
-                -cfg.wz_max,
-                cfg.wz_max,
-            ))
+            wz = float(
+                np.clip(
+                    cfg.k_theta * np.sin(yaw_err),
+                    -cfg.wz_max,
+                    cfg.wz_max,
+                )
+            )
             return JointCommandOutput(
                 joint_names=self._joint_names_list,
                 velocities=[0.0, 0.0, wz],
@@ -221,7 +223,9 @@ class ReactivePathFollowerTask(BaseControlTask):
 
     def start_path(self, path: Path, current_odom: PoseStamped) -> bool:
         if path is None or len(path.poses) < 2:
-            logger.warning(f"ReactivePathFollowerTask '{self._name}': invalid path (need >= 2 poses)")
+            logger.warning(
+                f"ReactivePathFollowerTask '{self._name}': invalid path (need >= 2 poses)"
+            )
             return False
 
         self._path = path

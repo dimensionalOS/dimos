@@ -26,9 +26,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.global_config import GlobalConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.utils.trigonometry import angle_diff
 
 
@@ -88,7 +88,9 @@ class PIDCrossTrackController:
         # Derivative
         d_term = self._k_d * (error - self._prev_error) / self._dt
 
-        correction = float(np.clip(p_term + i_term + d_term, -self._max_correction, self._max_correction))
+        correction = float(
+            np.clip(p_term + i_term + d_term, -self._max_correction, self._max_correction)
+        )
         self._prev_error = error
         return correction
 
@@ -158,7 +160,11 @@ class PurePursuitController:
         heading_error = angle_diff(angle_to_lookahead, robot_yaw)
 
         # Pure Pursuit curvature: kappa = 2 * sin(alpha) / L
-        curvature = 0.0 if abs(heading_error) < 1e-6 else 2.0 * np.sin(heading_error) / distance_to_lookahead
+        curvature = (
+            0.0
+            if abs(heading_error) < 1e-6
+            else 2.0 * np.sin(heading_error) / distance_to_lookahead
+        )
 
         current_speed = min(current_speed, self._max_linear_speed)
 
@@ -168,7 +174,9 @@ class PurePursuitController:
         else:
             angular_velocity = self._k_angular * heading_error
 
-        angular_velocity = float(np.clip(angular_velocity, -self._max_angular_velocity, self._max_angular_velocity))
+        angular_velocity = float(
+            np.clip(angular_velocity, -self._max_angular_velocity, self._max_angular_velocity)
+        )
 
         linear_velocity = current_speed
 
@@ -196,7 +204,9 @@ class PurePursuitController:
     def rotate(self, yaw_error: float) -> Twist:
         """Rotate in place to correct heading."""
         angular_velocity = float(
-            np.clip(self._k_angular * yaw_error, -self._max_angular_velocity, self._max_angular_velocity)
+            np.clip(
+                self._k_angular * yaw_error, -self._max_angular_velocity, self._max_angular_velocity
+            )
         )
         linear_x = 0.18 if self._global_config.simulation else 0.0
         return Twist(

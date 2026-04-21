@@ -32,8 +32,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import dataclass
 import time
-from dataclasses import dataclass, field
 
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -54,8 +54,17 @@ DECAY_DURATION = 3.0  # seconds
 SAMPLE_RATE = 0.02  # 50 Hz polling (odom arrives ~10-30Hz via WebRTC)
 
 CSV_FIELDS = [
-    "timestamp", "channel", "amplitude", "trial", "phase",
-    "cmd_vx", "cmd_vy", "cmd_wz", "odom_x", "odom_y", "odom_yaw",
+    "timestamp",
+    "channel",
+    "amplitude",
+    "trial",
+    "phase",
+    "cmd_vx",
+    "cmd_vy",
+    "cmd_wz",
+    "odom_x",
+    "odom_y",
+    "odom_yaw",
 ]
 
 
@@ -98,10 +107,12 @@ class StepResponseRecorder:
 
 
 def _send_twist(pub: LCMTransport, vx: float, vy: float, wz: float) -> None:
-    pub.publish(Twist(
-        linear=Vector3(x=vx, y=vy, z=0.0),
-        angular=Vector3(x=0.0, y=0.0, z=wz),
-    ))
+    pub.publish(
+        Twist(
+            linear=Vector3(x=vx, y=vy, z=0.0),
+            angular=Vector3(x=0.0, y=0.0, z=wz),
+        )
+    )
 
 
 def _cmd_for_channel(channel: str, amplitude: float) -> tuple[float, float, float]:
@@ -128,19 +139,21 @@ def run_single_trial(
         s = recorder.latest
         if s is None:
             return
-        rows.append({
-            "timestamp": s.timestamp,
-            "channel": channel,
-            "amplitude": amplitude,
-            "trial": trial,
-            "phase": phase,
-            "cmd_vx": cvx,
-            "cmd_vy": cvy,
-            "cmd_wz": cwz,
-            "odom_x": s.x,
-            "odom_y": s.y,
-            "odom_yaw": s.yaw,
-        })
+        rows.append(
+            {
+                "timestamp": s.timestamp,
+                "channel": channel,
+                "amplitude": amplitude,
+                "trial": trial,
+                "phase": phase,
+                "cmd_vx": cvx,
+                "cmd_vy": cvy,
+                "cmd_wz": cwz,
+                "odom_x": s.x,
+                "odom_y": s.y,
+                "odom_yaw": s.yaw,
+            }
+        )
 
     # Phase 1: baseline (zero command)
     logger.info(f"  Baseline ({BASELINE_DURATION}s)...")
@@ -172,16 +185,16 @@ def run_single_trial(
 
 def _wait_for_ready(channel: str, amp: float, trial: int, total_trials: int) -> None:
     _DIR = {
-        ("vx", True): "FORWARD", ("vx", False): "BACKWARD",
-        ("vy", True): "LEFT", ("vy", False): "RIGHT",
-        ("wz", True): "ROTATE CCW", ("wz", False): "ROTATE CW",
+        ("vx", True): "FORWARD",
+        ("vx", False): "BACKWARD",
+        ("vy", True): "LEFT",
+        ("vy", False): "RIGHT",
+        ("wz", True): "ROTATE CCW",
+        ("wz", False): "ROTATE CW",
     }
     direction = _DIR.get((channel, amp > 0), channel)
     unit = "rad/s" if channel == "wz" else "m/s"
-    print(
-        f"\n>>> Next: {direction} at {abs(amp)} {unit} "
-        f"(trial {trial + 1}/{total_trials})"
-    )
+    print(f"\n>>> Next: {direction} at {abs(amp)} {unit} (trial {trial + 1}/{total_trials})")
     input("    Walk robot back to start position, then press ENTER... ")
 
 
@@ -189,8 +202,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Go2 step-response plant characterisation")
     parser.add_argument("--output", default="step_response_data.csv", help="Output CSV path")
     parser.add_argument("--trials", type=int, default=TRIALS_PER_AMPLITUDE)
-    parser.add_argument("--channels", nargs="+", default=["vx", "vy", "wz"],
-                        help="Channels to test (default: vx vy wz)")
+    parser.add_argument(
+        "--channels",
+        nargs="+",
+        default=["vx", "vy", "wz"],
+        help="Channels to test (default: vx vy wz)",
+    )
     parser.add_argument("--no-pause", action="store_true")
     args = parser.parse_args()
 
@@ -215,7 +232,9 @@ def main() -> None:
                 for trial in range(args.trials):
                     if not args.no_pause:
                         _wait_for_ready(channel, amp, trial, args.trials)
-                    logger.info(f"Channel={channel}, amplitude={amp}, trial={trial + 1}/{args.trials}")
+                    logger.info(
+                        f"Channel={channel}, amplitude={amp}, trial={trial + 1}/{args.trials}"
+                    )
                     rows = run_single_trial(cmd_pub, recorder, channel, amp, trial + 1)
                     all_rows.extend(rows)
                     time.sleep(0.5)

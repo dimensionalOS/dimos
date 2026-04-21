@@ -36,15 +36,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+from dataclasses import dataclass
 import math
 import select
 import sys
 import termios
 import time
 import tty
-from dataclasses import dataclass
-
-import numpy as np
 
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -60,8 +58,17 @@ SETTLE_DURATION = 1.5  # seconds at zero between trials
 SAMPLE_RATE = 0.02  # 50 Hz
 
 CSV_FIELDS = [
-    "timestamp", "channel", "amplitude", "trial", "phase",
-    "cmd_vx", "cmd_vy", "cmd_wz", "odom_x", "odom_y", "odom_yaw",
+    "timestamp",
+    "channel",
+    "amplitude",
+    "trial",
+    "phase",
+    "cmd_vx",
+    "cmd_vy",
+    "cmd_wz",
+    "odom_x",
+    "odom_y",
+    "odom_yaw",
 ]
 
 # Velocity targets
@@ -118,10 +125,12 @@ class NonBlockingKeyReader:
 
 
 def _send_twist(pub: LCMTransport, vx: float, vy: float, wz: float) -> None:
-    pub.publish(Twist(
-        linear=Vector3(x=vx, y=vy, z=0.0),
-        angular=Vector3(x=0.0, y=0.0, z=wz),
-    ))
+    pub.publish(
+        Twist(
+            linear=Vector3(x=vx, y=vy, z=0.0),
+            angular=Vector3(x=0.0, y=0.0, z=wz),
+        )
+    )
 
 
 def _cmd_for_channel(channel: str, amplitude: float) -> tuple[float, float, float]:
@@ -180,19 +189,21 @@ def run_trial(
         # Record
         s = odom.latest
         if s is not None:
-            rows.append({
-                "timestamp": s.timestamp,
-                "channel": channel,
-                "amplitude": amplitude,
-                "trial": trial,
-                "phase": "step",
-                "cmd_vx": cmd_vx,
-                "cmd_vy": cmd_vy,
-                "cmd_wz": cmd_wz,
-                "odom_x": s.x,
-                "odom_y": s.y,
-                "odom_yaw": s.yaw,
-            })
+            rows.append(
+                {
+                    "timestamp": s.timestamp,
+                    "channel": channel,
+                    "amplitude": amplitude,
+                    "trial": trial,
+                    "phase": "step",
+                    "cmd_vx": cmd_vx,
+                    "cmd_vy": cmd_vy,
+                    "cmd_wz": cmd_wz,
+                    "odom_x": s.x,
+                    "odom_y": s.y,
+                    "odom_yaw": s.yaw,
+                }
+            )
 
         time.sleep(SAMPLE_RATE)
 
@@ -205,19 +216,21 @@ def run_trial(
         _send_twist(cmd_pub, 0.0, 0.0, 0.0)
         s = odom.latest
         if s is not None:
-            rows.append({
-                "timestamp": s.timestamp,
-                "channel": channel,
-                "amplitude": amplitude,
-                "trial": trial,
-                "phase": "decay",
-                "cmd_vx": 0.0,
-                "cmd_vy": 0.0,
-                "cmd_wz": 0.0,
-                "odom_x": s.x,
-                "odom_y": s.y,
-                "odom_yaw": s.yaw,
-            })
+            rows.append(
+                {
+                    "timestamp": s.timestamp,
+                    "channel": channel,
+                    "amplitude": amplitude,
+                    "trial": trial,
+                    "phase": "decay",
+                    "cmd_vx": 0.0,
+                    "cmd_vy": 0.0,
+                    "cmd_wz": 0.0,
+                    "odom_x": s.x,
+                    "odom_y": s.y,
+                    "odom_yaw": s.yaw,
+                }
+            )
         time.sleep(SAMPLE_RATE)
 
     return rows, stop_reason
@@ -265,10 +278,19 @@ def main() -> None:
     parser.add_argument("--channel", required=True, choices=["vx", "vy", "wz"])
     parser.add_argument("--output", default="velocity_sweep.csv")
     parser.add_argument("--trials", type=int, default=TRIALS_PER_VELOCITY)
-    parser.add_argument("--max-distance", type=float, default=3.0,
-                        help="Max distance (m) before auto-stop per trial")
-    parser.add_argument("--velocities", nargs="+", type=float, default=None,
-                        help="Custom velocity list (overrides defaults)")
+    parser.add_argument(
+        "--max-distance",
+        type=float,
+        default=3.0,
+        help="Max distance (m) before auto-stop per trial",
+    )
+    parser.add_argument(
+        "--velocities",
+        nargs="+",
+        type=float,
+        default=None,
+        help="Custom velocity list (overrides defaults)",
+    )
     args = parser.parse_args()
 
     if args.velocities:
@@ -297,22 +319,24 @@ def main() -> None:
         print(f"  Velocities: {velocities} {unit}")
         print(f"  Trials per velocity: {args.trials}")
         print(f"  Max distance: {args.max_distance}m")
-        print(f"  Press 'q' during any trial to EMERGENCY STOP")
+        print("  Press 'q' during any trial to EMERGENCY STOP")
         print("=" * 50)
 
         with NonBlockingKeyReader() as keys:
             for vel in velocities:
                 for trial in range(1, args.trials + 1):
-                    print(
-                        f"\n>>> {args.channel}={vel} {unit} "
-                        f"(trial {trial}/{args.trials})"
-                    )
+                    print(f"\n>>> {args.channel}={vel} {unit} (trial {trial}/{args.trials})")
                     _walk_back_mode(cmd_pub, keys)
 
                     logger.info(f"Running {args.channel}={vel} trial {trial}...")
                     rows, reason = run_trial(
-                        cmd_pub, odom, keys,
-                        args.channel, vel, trial, args.max_distance,
+                        cmd_pub,
+                        odom,
+                        keys,
+                        args.channel,
+                        vel,
+                        trial,
+                        args.max_distance,
                     )
                     all_rows.extend(rows)
 
@@ -336,7 +360,9 @@ def main() -> None:
 
     logger.info(f"Saved {len(all_rows)} samples to {args.output}")
     print(f"\nDone! Saved to {args.output}")
-    print(f"Plot with: .venv/bin/python -m dimos.control.tuning.plant_identification --data {args.output}")
+    print(
+        f"Plot with: .venv/bin/python -m dimos.control.tuning.plant_identification --data {args.output}"
+    )
 
 
 if __name__ == "__main__":

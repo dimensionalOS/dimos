@@ -84,11 +84,13 @@ class PathDistancer:
     ) -> NDArray[np.float64]:
         """Adaptive lookahead: faster speed -> longer lookahead distance."""
         lookahead_gain = 0.5
-        adaptive_dist = float(np.clip(
-            min_lookahead + lookahead_gain * current_speed,
-            min_lookahead,
-            max_lookahead,
-        ))
+        adaptive_dist = float(
+            np.clip(
+                min_lookahead + lookahead_gain * current_speed,
+                min_lookahead,
+                max_lookahead,
+            )
+        )
         original = self._lookahead_dist
         self._lookahead_dist = adaptive_dist
         try:
