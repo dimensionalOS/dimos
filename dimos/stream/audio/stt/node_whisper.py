@@ -14,7 +14,6 @@
 # limitations under the License.
 
 from typing import Any
-import warnings
 
 from reactivex import Observable, create, disposable
 
