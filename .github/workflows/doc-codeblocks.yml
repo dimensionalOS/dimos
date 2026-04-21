@@ -23,29 +23,27 @@ on:
 
 permissions:
   contents: write
-  packages: write
+  packages: read
   pull-requests: read
 
 jobs:
   md-babel:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: self-hosted
-    steps:
-      - name: Fix permissions
-        run: |
-          sudo chown -R $USER:$USER ${{ github.workspace }} || true
+    timeout-minutes: 60
+    runs-on: [self-hosted, Linux]
+    container:
+      image: ghcr.io/dimensionalos/ros-dev:dev
 
+    steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          clean: false
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
+      - name: Fix permissions
+        run: |
+          git config --global --add safe.directory '*'
+          git clean -ffdx -e .venv
 
       - uses: actions/setup-node@v4
         with:
@@ -53,9 +51,12 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          uv sync --extra dev --frozen --no-extra dds
-          # Matplotlib and httpx are used by docs but are not always pulled by dev-only sync.
+          uv sync --all-extras --no-extra dds --frozen
           uv pip install matplotlib httpx
+
+      - name: Remove pydrake stubs
+        run: |
+          find .venv/lib/*/site-packages/pydrake -name '*.pyi' -delete 2>/dev/null || true
 
       - name: Execute documentation code blocks
         run: ./bin/run-doc-codeblocks --ci

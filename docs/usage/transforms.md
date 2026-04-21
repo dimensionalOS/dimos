@@ -221,7 +221,7 @@ This example demonstrates how multiple modules publish and receive transforms. T
 2. **CameraModule** - Publishes `base_link -> camera_link` (camera mounting position) and `camera_link -> camera_optical` (optical frame convention)
 3. **PerceptionModule** - Looks up transforms between any frames
 
-```python ansi=false
+```python skip ansi=false
 import time
 import reactivex as rx
 from reactivex import operators as ops

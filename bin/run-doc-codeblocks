@@ -65,7 +65,7 @@ resolve_md_babel() {
   elif command -v md-babel-py &>/dev/null; then
     MB=(md-babel-py)
   else
-    echo "Error: md-babel-py not found. Install dev deps: uv sync --extra dev" >&2
+    echo "Error: md-babel-py not found. Install project deps (e.g. uv sync --extra dev or uv sync --all-extras)." >&2
     exit 1
   fi
 }
