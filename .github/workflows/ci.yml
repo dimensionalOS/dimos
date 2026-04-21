@@ -58,7 +58,6 @@ jobs:
           /entrypoint.sh bash -c "source .venv/bin/activate && MYPYPATH=/opt/ros/humble/lib/python3.10/site-packages mypy dimos"
 
       - name: Upload coverage to Codecov
-        if: github.event_name == 'push' && !cancelled()
         uses: codecov/codecov-action@v5
         with:
           disable_search: true
