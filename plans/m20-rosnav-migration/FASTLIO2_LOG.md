@@ -801,6 +801,101 @@ per-unit calibration, must parse DIFOP separately for front and rear.
 
 ---
 
+## Finding #22: Mount Matrix Was Wrong — Fixed, DIFOP Now Works End-to-End (2026-04-21)
+
+Shipping Finding #21 revealed the rotation pipeline was broken: base-frame
+stationary accel landed on **-Y_base** instead of **+Z_base**. Codex ranked
+the candidates (H1 most likely: the original empirical `R_BASE_LIDAR_FRONT`
+was actually `R_base_from_IMU`, not `R_base_from_lidar` — double-applied
+the IMU-lidar rotation once we added DIFOP).
+
+**Root cause was the mount geometry assumption.** User confirmed: "Airy
+mounted horizontally, dome forward, cable exits upward through the top of
+the housing into the robot." That pins:
+
+```
+lidar Z (dome)  → base +X  (forward)
+lidar X (cable) → base +Z  (up)
+lidar Y         → base -Y  (right, by right-hand rule)
+```
+
+The OLD matrix `[[0,0,1],[-1,0,0],[0,-1,0]]` had lidar X → base -Y, which
+was consistent with "cable pointing SIDEWAYS" — wrong. It worked pre-DIFOP
+only because it was implicitly also absorbing the IMU-chip rotation.
+
+**Derivation back from observation**: DIFOP Q × raw_imu → gravity on
+`+X_lidar` (≈9.86). Right-hand rotation with `+X_lidar → +Z_base` and
+`+Z_lidar → +X_base` forces col_1 = col_2 × col_0 = `(1,0,0) × (0,0,1) =
+(0,-1,0)`. Codex verified the cross-product, the `Rz(180°)·FRONT = REAR`
+identity, and the composition order `R_base_from_imu = R_base_lidar ·
+R_imu_to_lidar`.
+
+**Corrected matrices:**
+
+```cpp
+R_BASE_LIDAR_FRONT = {{0,0,1}, {0,-1,0}, {1,0,0}};  // det = +1
+R_BASE_LIDAR_REAR  = {{0,0,-1},{0, 1,0}, {1,0,0}};  // det = +1 (front rotated 180° about +Z_base)
+```
+
+**Result — stationary base-frame accel (front Airy, M20 upright):**
+
+```
+(0.101, -0.066, 9.831) m/s²
+(0.119, -0.071, 9.845) m/s²
+(0.114, -0.058, 9.844) m/s²
+```
+
+Residuals ≤ 0.15 m/s² on X/Y (IMU noise floor), gravity ~9.84 on +Z.
+**Better than the old bandaid + no bandaid needed.** Per-unit factory
+correct, tilt-invariant in principle (bias no longer masquerades as
+rotation).
+
+---
+
+## Finding #23: Dual drdds_recv Processes Saturated NOS, Hid the Real Drift State (2026-04-22)
+
+After shipping the DIFOP + corrected-mount fix, the initial smartnav
+restart showed catastrophic runaway drift — 83 keyframes in 3 min,
+positions at `(-5192, -9205, -9377)` m. Base-frame stationary accel
+looked fine (`(0.12, -0.07, 9.84)`), so the 180m/s "velocity" the
+keyframes implied had to come from somewhere else.
+
+Root cause: **two systemd services were running `drdds_recv` simultaneously.**
+
+- `drdds-bridge.service` (original, from upstream rig provisioning).
+  ExecStart: `/opt/drdds_bridge/lib/drdds_bridge/drdds_recv`.
+- `drdds-recv.service` (installed by our `deploy.sh provision`).
+  ExecStart: `/opt/drdds_bridge/lib/drdds_bridge/drdds_recv`. Same binary.
+
+Both were enabled + active, both competing for the same FastDDS SHM
+subscriptions and writing to the same `/dev/shm/drdds_bridge_*` segments.
+`top` showed two `drdds_recv` PIDs each consuming ~28% CPU, and the
+5-minute load average was **38 on an 8-core NOS** (system thrashing).
+
+Symptom in fastlio2: `imu_vs_frame_end` grew from ~-0.1 s to **-0.7 s**
+as the lidar/IMU pipeline couldn't drain fast enough. FAST-LIO2
+propagated its EKF on increasingly stale IMU data, treated the IMU
+residual as motion, and emitted keyframes at runaway rates.
+
+**Fix:** `sudo systemctl disable drdds-bridge` (keeping the deploy.sh-
+provisioned `drdds-recv`). Load immediately dropped 38 → 1.2.
+`imu_vs_frame_end` now stays in the -0.05 to -0.09 s band with a single
+`drdds_recv`. Keyframes hold at 1 at origin when stationary (matching
+the pre-compaction bandaid baseline, minus the bandaid).
+
+**Secondary finding — deploy.sh symlink loop:** the `for store_path in
+/nix/store/*-drdds_lidar_bridge-*/bin/airy_imu_bridge; do ln -sf ...;
+done` loop in `deploy.sh sync` iterates over all matching nix store
+paths alphabetically, so the symlink ends up pointing at whichever hash
+sorts LAST, not the most recently built one. On a host with many stale
+builds this silently reverts to an old binary after every `sync`.
+Workaround for now: manually `ln -sfn <fresh-store-path>` after every
+rebuild; long-term fix is to either (a) use `nix profile` to track the
+latest output, (b) parse `result` symlink that `nix build` creates, or
+(c) sort globs by mtime in the deploy script. Noted as TODO.
+
+---
+
 ## Open Questions for Next Session / Jeff
 
 - Does FAST-LIO2's preprocess.cpp + ikd-Tree actually support `scan_line: 192`? Upstream hku-mars tested up to 128 per README.

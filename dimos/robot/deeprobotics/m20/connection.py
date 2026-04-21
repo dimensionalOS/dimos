@@ -23,6 +23,7 @@ Reference: M20 Software Development Guide
 """
 
 import logging
+import os
 import time
 from threading import Thread
 from typing import Any
@@ -124,13 +125,27 @@ class M20Connection(Module, spec.Camera):
                 )
                 self._camera_info_thread.start()
 
-            # Stand up in navigation mode with agile gait
-            self._protocol.send_motion_state(MotionState.STAND)
-            time.sleep(1.0)
+            # Always put the robot into Navigation Mode — in other usage
+            # modes the lidars can be powered off, which breaks SLAM. The
+            # stand-up command (MotionState.STAND) is what physically raises
+            # her; that can be skipped via M20_SKIP_STAND=1 for drift/IMU
+            # testing while she's on the charging dock. We still send
+            # NAVIGATION + AGILE_FLAT so the sensor stack is live.
+            skip_stand = os.environ.get("M20_SKIP_STAND", "").lower() in ("1", "true", "yes")
+            if skip_stand:
+                logger.warning(
+                    "M20_SKIP_STAND set — skipping MotionState.STAND. Navigation "
+                    "mode + agile gait still applied so lidars stay powered."
+                )
+            else:
+                self._protocol.send_motion_state(MotionState.STAND)
+                time.sleep(1.0)
             self._protocol.send_usage_mode(UsageMode.NAVIGATION)
             self._protocol.send_gait_switch(GaitType.AGILE_FLAT)
-
-            logger.info("M20Connection started in Navigation Mode")
+            logger.info(
+                "M20Connection started in Navigation Mode%s",
+                " (standing skipped)" if skip_stand else "",
+            )
         except Exception:
             logger.exception("M20Connection.start() failed — cleaning up")
             self.stop()
@@ -138,13 +153,24 @@ class M20Connection(Module, spec.Camera):
 
     @rpc
     def stop(self) -> None:
-        """Sit down, stop camera, and close UDP connection."""
+        """Stop camera and close UDP connection.
+
+        With M20_SKIP_STAND=1 she was never told to stand, so skip the
+        sit-down command too. We still drop the Navigation usage mode so
+        the controller isn't left expecting /NAV_CMD velocity inputs.
+        """
+        skip_stand = os.environ.get("M20_SKIP_STAND", "").lower() in ("1", "true", "yes")
         try:
             self._protocol.send_usage_mode(UsageMode.REGULAR)
-            self._protocol.send_motion_state(MotionState.SIT)
-            time.sleep(1.0)
+            if not skip_stand:
+                self._protocol.send_motion_state(MotionState.SIT)
+                time.sleep(1.0)
+            else:
+                logger.warning(
+                    "M20_SKIP_STAND set — skipping SIT command. Pose left as-is."
+                )
         except Exception:
-            logger.exception("Failed to send sit-down during stop")
+            logger.exception("Failed to send regular-mode / sit-down during stop")
 
         try:
             if self._camera:

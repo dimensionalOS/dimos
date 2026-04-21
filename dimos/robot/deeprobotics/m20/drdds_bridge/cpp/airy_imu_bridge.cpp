@@ -12,14 +12,24 @@
 // path. We subscribe directly to the multicast to avoid that.
 //
 // Clean pairing: the Airy integrated IMU shares a PTP-locked hardware clock
-// with the Airy lidar optics. The IMU→base rotation is composed from two
-// pieces: (1) R_imu_to_lidar, a per-unit factory calibration read from
-// DIFOP register C.17 (quaternion at packet offset 1092), and (2)
-// R_base_lidar, the physical mount rotation determined by the M20 chassis
-// geometry (hardcoded per front/rear). DIFOP is ~1 Hz so we start in a
-// degraded mode with R_imu_to_lidar = identity and hot-swap once the
-// factory cal arrives. This gives FAST-LIO2 a single, physically
-// consistent IMU stream in base_link frame.
+// with the Airy lidar optics, so no clock-domain mismatch with the cloud.
+//
+// IMU→base rotation is composed from two pieces:
+//   (1) R_imu_to_lidar — per-unit factory calibration from DIFOP register
+//       C.17 (quaternion at packet offset 1092). Observed on the M20 front
+//       Airy as a ~180° rotation, meaning the IMU chip is physically
+//       installed in a very different orientation from the RoboSense
+//       lidar frame convention. This is factory-correct; each unit has
+//       its own value. Read at startup; hot-swapped via atomic pointer.
+//   (2) R_base_lidar — geometric mount rotation determined by how the
+//       lidar housing is bolted to the M20 chassis. Front: dome forward
+//       (lidar Z → base +X), cable out the top (lidar X → base +Z),
+//       side → base -Y. Rear: 180° about base Z from front.
+//
+// Composed as R_imu_to_base = R_base_lidar · R_imu_to_lidar. Without DIFOP
+// (boot-time degraded mode) the pointer holds R_base_lidar alone, which is
+// *wrong* for our IMU (the IMU frame is ~180° off the lidar frame), so the
+// status line reports cal=PENDING loudly until the factory Q arrives.
 //
 // Usage: ./airy_imu_bridge --imu <topic> [--which front|rear]
 
@@ -116,29 +126,34 @@ uint64_t rd_be_u48(const uint8_t* p) {
 // These describe the PHYSICAL mount of the lidar housing on the M20 and are
 // invariant across units / temperature / time. The IMU-to-lidar rotation is
 // a separate per-unit factory calibration read from DIFOP register C.17 at
-// runtime (see read_difop_c17()).
+// runtime (see parse_difop_c17()).
 //
-//   FRONT:  lidar dome → base +X (forward), cable port → base -Z (down).
-//           Mapping: lidar X → base -Y, lidar Y → base -Z, lidar Z → base +X.
-//   REAR:   housing 180° about Z relative to front: dome → base -X,
-//           cable → base -Z. Mapping: lidar X → base +Y, lidar Y → base -Z,
-//           lidar Z → base -X.
+// M20 mount geometry (derived from "Airy mounted horizontally, dome forward,
+// cable exits upward through the top of the housing"):
+//   FRONT:  lidar Z (dome)  → base +X (forward)
+//           lidar X (cable) → base +Z (up)
+//           lidar Y         → base -Y (right, by right-hand rule)
+//   REAR:   housing rotated 180° about base_Z from front:
+//           lidar Z → base -X (dome backward)
+//           lidar X → base +Z (up, same as front)
+//           lidar Y → base +Y (left, sign-flipped from front)
 //
 // Columns of R_BASE_LIDAR_* are lidar axes expressed in base_link.
+// Both matrices have det = +1 (proper rotations).
 // ---------------------------------------------------------------------------
 
 struct Mat3 { double m[3][3]; };
 
 constexpr Mat3 R_BASE_LIDAR_FRONT = {{
-    {0,  0,  1},
-    {-1, 0,  0},
-    {0, -1,  0},
+    {0,  0,  1},   // base X row: lidar Z contributes, lidar X/Y don't
+    {0, -1,  0},   // base Y row: lidar Y contributes with -1
+    {1,  0,  0},   // base Z row: lidar X contributes with +1
 }};
 
 constexpr Mat3 R_BASE_LIDAR_REAR = {{
-    {0,  0, -1},
-    {1,  0,  0},
-    {0, -1,  0},
+    {0,  0, -1},   // dome backward
+    {0,  1,  0},   // Y flipped vs front
+    {1,  0,  0},   // X (up) same as front
 }};
 
 void rotate(const Mat3& R, double vx, double vy, double vz, double& ox, double& oy, double& oz) {
