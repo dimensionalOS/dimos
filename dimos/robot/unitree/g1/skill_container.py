@@ -18,6 +18,9 @@ Dynamically generates skills for G1 humanoid robot including arm controls and mo
 """
 
 import difflib
+import math
+from collections.abc import Callable
+from typing import Any
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -59,6 +62,11 @@ _ARM_COMMANDS: dict[str, tuple[int, str]] = {
 _MODE_COMMANDS: dict[str, tuple[int, str]] = {
     name: (id_, description) for name, id_, description in G1_MODE_CONTROLS
 }
+
+_MIN_SPEED_MPS = 0.05
+_MAX_SPEED_MPS = 0.5
+_DEFAULT_YAW_RATE_RADPS = 0.8
+_MAX_STAIR_STEPS = 30
 
 
 class UnitreeG1SkillContainer(Module):
@@ -102,6 +110,83 @@ class UnitreeG1SkillContainer(Module):
     @skill
     def execute_mode_command(self, command_name: str) -> str:
         return self._execute_g1_command(_MODE_COMMANDS, 7101, "rt/api/sport/request", command_name)
+
+    @skill
+    def navigate_3d(self, x: float, y: float, z: float, speed: float = 0.25) -> str:
+        """Navigate in 3D by first yaw-aligning, then moving in the XY plane, then handling elevation.
+
+        This helper uses the existing low-level `move` RPC and is designed to work in both
+        simulation and real robot stacks. Elevation (`z`) is handled by a dedicated
+        stair-climbing sequence to keep behavior explicit and safe.
+
+        Args:
+            x: Forward target offset in meters in the robot frame.
+            y: Left target offset in meters in the robot frame.
+            z: Vertical target offset in meters. Positive means moving up.
+            speed: Nominal linear speed in m/s used to convert distance into duration.
+        """
+        move_rpc = self.get_rpc_calls("G1ConnectionBase.move")
+        safe_speed = min(max(speed, _MIN_SPEED_MPS), _MAX_SPEED_MPS)
+
+        # Step 1: yaw align to the 2D target direction.
+        yaw = 0.0 if (abs(x) < 1e-3 and abs(y) < 1e-3) else float(math.atan2(y, x))
+        if abs(yaw) > 1e-2:
+            yaw_rate = math.copysign(_DEFAULT_YAW_RATE_RADPS, yaw)
+            move_rpc(
+                Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0.0, 0.0, yaw_rate)),
+                duration=abs(yaw) / _DEFAULT_YAW_RATE_RADPS,
+            )
+
+        # Step 2: move in XY.
+        planar_distance = (x**2 + y**2) ** 0.5
+        if planar_distance > 1e-3:
+            duration = planar_distance / safe_speed
+            move_rpc(
+                Twist(linear=Vector3(safe_speed if x >= 0 else -safe_speed, 0.0, 0.0), angular=Vector3()),
+                duration=duration,
+            )
+
+        # Step 3: if height change requested, run stair traversal routine.
+        if abs(z) > 1e-3:
+            self._run_stair_sequence(move_rpc, z, safe_speed=safe_speed)
+
+        return (
+            f"3D navigation completed to offset ({x:.2f}, {y:.2f}, {z:.2f}) "
+            f"with nominal speed {safe_speed:.2f} m/s."
+        )
+
+    @skill
+    def climb_stairs(self, steps: int, step_height: float = 0.17, speed: float = 0.2) -> str:
+        """Climb or descend stairs in simulation-safe incremental segments.
+
+        Args:
+            steps: Number of steps to traverse. Positive climbs up; negative goes down.
+            step_height: Height of one stair step in meters.
+            speed: Forward speed in m/s for each stair segment.
+        """
+        if steps == 0:
+            return "No stair traversal requested because steps=0."
+        if abs(steps) > _MAX_STAIR_STEPS:
+            return f"Refusing stair traversal: steps exceeds safety limit of {_MAX_STAIR_STEPS}."
+        if not 0.05 <= step_height <= 0.25:
+            return "Refusing stair traversal: step_height must be within [0.05, 0.25] meters."
+
+        move_rpc = self.get_rpc_calls("G1ConnectionBase.move")
+        safe_speed = min(max(speed, _MIN_SPEED_MPS), _MAX_SPEED_MPS)
+        self._run_stair_sequence(move_rpc, z=steps * step_height, safe_speed=safe_speed)
+        direction = "up" if steps > 0 else "down"
+        return f"Completed stair traversal {direction} for {abs(steps)} steps."
+
+    def _run_stair_sequence(self, move_rpc: Callable[..., Any], z: float, safe_speed: float) -> None:
+        # Segment elevation motion into short chunks for smoother simulation and easier interruption.
+        step_count = max(1, int(round(abs(z) / 0.17)))
+        segment_distance = max(abs(z) * 1.2 / step_count, 0.25)
+        signed_speed = safe_speed if z >= 0 else -safe_speed
+        for _ in range(step_count):
+            move_rpc(
+                Twist(linear=Vector3(signed_speed, 0.0, 0.0), angular=Vector3()),
+                duration=segment_distance / max(safe_speed, _MIN_SPEED_MPS),
+            )
 
     def _execute_g1_command(
         self,
