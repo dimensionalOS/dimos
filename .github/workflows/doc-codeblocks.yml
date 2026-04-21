@@ -39,11 +39,17 @@ jobs:
         with:
           fetch-depth: 0
           clean: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          token: ${{ github.token }}
 
       - name: Fix permissions
         run: |
           git config --global --add safe.directory '*'
           git clean -ffdx -e .venv
+
+      - name: Branch ref for git-auto-commit
+        run: git checkout -B "${{ github.head_ref }}"
 
       - uses: actions/setup-node@v4
         with:
