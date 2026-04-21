@@ -30,6 +30,7 @@ from dimos.manipulation.planning.spec.config import RobotModelConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
 
@@ -281,3 +282,126 @@ class TestRobotModelConfigMapping:
         # URDF -> Coordinator
         assert config.get_coordinator_joint_name("joint1") == "left/joint1"
         assert config.get_coordinator_joint_name("unknown") == "unknown"
+
+
+def _make_module_with_monitor(*configs: RobotModelConfig) -> ManipulationModule:
+    """Create a ManipulationModule with a mocked world monitor and robots configured."""
+    module = _make_module()
+    module._world_monitor = MagicMock()
+    module._init_joints = {}
+    for config in configs:
+        robot_id = f"robot_{config.name}"
+        module._robots[config.name] = (robot_id, config, MagicMock())
+    return module
+
+
+class TestOnJointState:
+    """Test _on_joint_state routing, splitting, and init capture."""
+
+    def test_routes_positions_to_monitor(self, robot_config_with_mapping):
+        """Joint positions from aggregated message are routed to the correct monitor."""
+        module = _make_module_with_monitor(robot_config_with_mapping)
+
+        msg = JointState(
+            name=["left/joint1", "left/joint2", "left/joint3"],
+            position=[0.1, 0.2, 0.3],
+            velocity=[1.0, 2.0, 3.0],
+        )
+        module._on_joint_state(msg)
+
+        # Verify world_monitor received the sub-message
+        module._world_monitor.on_joint_state.assert_called_once()
+        call_args = module._world_monitor.on_joint_state.call_args
+        sub_msg = call_args[0][0]
+        assert sub_msg.position == [0.1, 0.2, 0.3]
+        assert sub_msg.velocity == [1.0, 2.0, 3.0]
+        assert call_args[1]["robot_id"] == "robot_left_arm"
+
+    def test_skips_robot_with_missing_joints(self, robot_config_with_mapping):
+        """Robots whose joints are absent from the message are skipped."""
+        module = _make_module_with_monitor(robot_config_with_mapping)
+
+        # Message has none of left_arm's joints
+        msg = JointState(
+            name=["right/joint1", "right/joint2"],
+            position=[0.5, 0.6],
+        )
+        module._on_joint_state(msg)
+
+        module._world_monitor.on_joint_state.assert_not_called()
+
+    def test_captures_init_joints_on_first_call(self, robot_config_with_mapping):
+        """First joint state is stored as init joints; subsequent calls don't overwrite."""
+        module = _make_module_with_monitor(robot_config_with_mapping)
+
+        first_msg = JointState(
+            name=["left/joint1", "left/joint2", "left/joint3"],
+            position=[0.1, 0.2, 0.3],
+        )
+        module._on_joint_state(first_msg)
+        assert "left_arm" in module._init_joints
+        assert module._init_joints["left_arm"].position == [0.1, 0.2, 0.3]
+
+        # Second call should NOT overwrite
+        second_msg = JointState(
+            name=["left/joint1", "left/joint2", "left/joint3"],
+            position=[0.9, 0.8, 0.7],
+        )
+        module._on_joint_state(second_msg)
+        assert module._init_joints["left_arm"].position == [0.1, 0.2, 0.3]
+
+    def test_multi_robot_splits_correctly(self):
+        """With two robots, each gets only its own joints from the aggregated message."""
+        left_config = RobotModelConfig(
+            name="left",
+            model_path=Path("/path/to/robot.urdf"),
+            base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+            joint_names=["j1", "j2"],
+            end_effector_link="ee",
+            base_link="base",
+            joint_name_mapping={"left/j1": "j1", "left/j2": "j2"},
+            coordinator_task_name="traj_left",
+        )
+        right_config = RobotModelConfig(
+            name="right",
+            model_path=Path("/path/to/robot.urdf"),
+            base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
+            joint_names=["j1", "j2"],
+            end_effector_link="ee",
+            base_link="base",
+            joint_name_mapping={"right/j1": "j1", "right/j2": "j2"},
+            coordinator_task_name="traj_right",
+        )
+        module = _make_module_with_monitor(left_config, right_config)
+
+        msg = JointState(
+            name=["left/j1", "left/j2", "right/j1", "right/j2"],
+            position=[1.0, 2.0, 3.0, 4.0],
+            velocity=[0.1, 0.2, 0.3, 0.4],
+        )
+        module._on_joint_state(msg)
+
+        assert module._world_monitor.on_joint_state.call_count == 2
+
+        # Collect calls by robot_id
+        calls = {
+            call[1]["robot_id"]: call[0][0]
+            for call in module._world_monitor.on_joint_state.call_args_list
+        }
+        assert calls["robot_left"].position == [1.0, 2.0]
+        assert calls["robot_right"].position == [3.0, 4.0]
+        assert calls["robot_left"].velocity == [0.1, 0.2]
+        assert calls["robot_right"].velocity == [0.3, 0.4]
+
+    def test_no_monitor_returns_early(self, robot_config_with_mapping):
+        """When world_monitor is None, _on_joint_state returns without error."""
+        module = _make_module()
+        module._robots = {"left_arm": ("id", robot_config_with_mapping, MagicMock())}
+        module._world_monitor = None
+
+        # Should not raise
+        msg = JointState(
+            name=["left/joint1", "left/joint2", "left/joint3"],
+            position=[0.1, 0.2, 0.3],
+        )
+        module._on_joint_state(msg)

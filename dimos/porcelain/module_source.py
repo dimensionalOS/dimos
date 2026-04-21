@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,16 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for GlobalConfig security defaults."""
+from __future__ import annotations
+
+from typing import Any, Protocol
 
 
-class TestGlobalConfigSecurityDefaults:
-    """Network services must bind to localhost by default (not 0.0.0.0)."""
+class ModuleSource(Protocol):
+    """Common interface for local and remote module sources."""
 
-    def test_listen_host_defaults_to_localhost(self) -> None:
-        from dimos.core.global_config import GlobalConfig
+    is_remote: bool
 
-        config = GlobalConfig()
-        assert config.listen_host == "127.0.0.1", (
-            f"listen_host must default to 127.0.0.1, got {config.listen_host}"
-        )
+    def list_module_names(self) -> list[str]: ...
+
+    def get_rpyc_module(self, name: str) -> Any: ...
+
+    def close(self) -> None: ...
