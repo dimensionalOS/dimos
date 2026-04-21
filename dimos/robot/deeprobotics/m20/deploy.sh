@@ -113,38 +113,46 @@ case "${CMD}" in
             -e "ssh ${SSH_OPTS}" \
             "${RSYNC_EXCLUDES[@]}" \
             "${DIMOS_ROOT}/" "${NOS_USER}@${NOS_HOST}:${DEPLOY_DIR}/"
-        # Ensure nix binary symlinks exist
+        # Ensure nix binary symlinks exist. Pick the NEWEST store directory
+        # by mtime (not alphabetical — the old `for store_path in ... do
+        # ln -sf; done` loop silently reverted to whichever hash sorted
+        # last, which routinely pointed at stale binaries after a rebuild).
+        # `ls -dt` sorts directories by mtime descending; head -1 picks
+        # the most recently created nix store output.
         remote_ssh "
             mkdir -p ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/result/bin
             mkdir -p ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/arise_slam/result/bin
             mkdir -p ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/terrain_analysis/result/bin
             mkdir -p ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/local_planner/result/bin
             mkdir -p ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/path_follower/result/bin
-            for store_path in /nix/store/*-drdds_lidar_bridge-*/bin/drdds_lidar_bridge; do
-                [ -f \"\$store_path\" ] && ln -sf \"\$store_path\" ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/result/bin/drdds_lidar_bridge
-            done
-            # airy_imu_bridge: built from the same flake as drdds_lidar_bridge,
-            # so the store path shares the same hash.
-            for store_path in /nix/store/*-drdds_lidar_bridge-*/bin/airy_imu_bridge; do
-                [ -f \"\$store_path\" ] && ln -sf \"\$store_path\" ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/result/bin/airy_imu_bridge
-            done
-            for store_path in /nix/store/*-smartnav-arise-slam-*/bin/arise_slam; do
-                [ -f \"\$store_path\" ] && ln -sf \"\$store_path\" ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/arise_slam/result/bin/arise_slam
-            done
-            for store_path in /nix/store/*-smartnav-terrain-analysis-*/bin/terrain_analysis; do
-                [ -f \"\$store_path\" ] && ln -sf \"\$store_path\" ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/terrain_analysis/result/bin/terrain_analysis
-            done
-            for store_path in /nix/store/*-smartnav-local-planner-*/bin/local_planner; do
-                [ -f \"\$store_path\" ] && ln -sf \"\$store_path\" ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/local_planner/result/bin/local_planner
-            done
-            for store_path in /nix/store/*-smartnav-path-follower-*/bin/path_follower; do
-                [ -f \"\$store_path\" ] && ln -sf \"\$store_path\" ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/path_follower/result/bin/path_follower
-            done
+
+            link_newest() {
+                # \$1 = store glob (directory pattern), \$2 = bin name, \$3 = dest symlink
+                local store=\$(ls -dt \$1 2>/dev/null | head -1)
+                [ -n \"\$store\" ] && [ -f \"\${store%/}/bin/\$2\" ] && \
+                    ln -sfn \"\${store%/}/bin/\$2\" \"\$3\"
+            }
+
+            link_newest '/nix/store/*-drdds_lidar_bridge-*/' drdds_lidar_bridge \
+                ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/result/bin/drdds_lidar_bridge
+            # airy_imu_bridge ships from the same flake as drdds_lidar_bridge,
+            # so both resolve from the same store path.
+            link_newest '/nix/store/*-drdds_lidar_bridge-*/' airy_imu_bridge \
+                ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/result/bin/airy_imu_bridge
+            link_newest '/nix/store/*-smartnav-arise-slam-*/' arise_slam \
+                ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/arise_slam/result/bin/arise_slam
+            link_newest '/nix/store/*-smartnav-terrain-analysis-*/' terrain_analysis \
+                ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/terrain_analysis/result/bin/terrain_analysis
+            link_newest '/nix/store/*-smartnav-local-planner-*/' local_planner \
+                ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/local_planner/result/bin/local_planner
+            link_newest '/nix/store/*-smartnav-path-follower-*/' path_follower \
+                ${DEPLOY_DIR}/dimos/navigation/smart_nav/modules/path_follower/result/bin/path_follower
+
             # nav_cmd_pub (built via cmake, not nix — needs /usr/local/lib/libdrdds.so)
             # Build dir lives in the synced source tree so it survives reboots (ext4).
             nav_cmd_pub_bin=${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/build/nav_cmd_pub
             [ -f \"\$nav_cmd_pub_bin\" ] && \
-                ln -sf \"\$nav_cmd_pub_bin\" ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/result/bin/nav_cmd_pub
+                ln -sfn \"\$nav_cmd_pub_bin\" ${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/result/bin/nav_cmd_pub
         "
         echo "=== Sync Complete ==="
         ;;
@@ -175,6 +183,22 @@ if ! mountpoint -q /nix; then
     echo "  /nix mounted"
 else
     echo "  /nix already mounted"
+fi
+
+echo "[provision] Disabling legacy drdds-bridge.service (if present)..."
+# Older rig provisioning installed drdds-bridge.service, which runs the
+# same drdds_recv binary as our drdds-recv.service. Leaving both enabled
+# produces two drdds_recv processes fighting over the FastDDS SHM
+# subscription (load avg spike, imu_vs_frame_end growing to -0.7s,
+# catastrophic SLAM drift — see FASTLIO2_LOG Finding #23). Disable and
+# stop the legacy unit if it exists.
+if systemctl list-unit-files drdds-bridge.service >/dev/null 2>&1 \
+   && systemctl list-unit-files drdds-bridge.service | grep -q drdds-bridge; then
+    systemctl stop drdds-bridge.service 2>/dev/null || true
+    systemctl disable drdds-bridge.service 2>/dev/null || true
+    echo "  legacy drdds-bridge.service stopped + disabled"
+else
+    echo "  not present"
 fi
 
 echo "[provision] Installing drdds-recv.service..."

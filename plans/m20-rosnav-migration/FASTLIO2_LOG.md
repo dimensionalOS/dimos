@@ -659,7 +659,16 @@ Commit `84b91fa0e`.
 
 ---
 
-## Finding #21: Accel Bias Subtraction is a Bandaid — Proper Fix is DIFOP C.17 (2026-04-21)
+## Finding #21: Accel Bias Subtraction is a Bandaid — Proper Fix is DIFOP C.17 (2026-04-21, superseded by #22)
+
+**Superseded by Finding #22.** When this entry was written we thought the
+DIFOP C.17 quaternion direction or convention was the blocker. It wasn't
+— the real blocker was that the empirical `R_BASE_LIDAR_FRONT` matrix
+was actually `R_base_from_IMU` (collapsed the lidar-housing-to-IMU-chip
+rotation into the mount rotation), so composing DIFOP on top double-
+applied it. Keep this entry for history; see #22 for the real fix.
+
+
 
 With the LCM split in place, 5-min stationary drift dropped from the
 earlier 2000 m runaway to ~2000 m (still runaway) because the IMU now
