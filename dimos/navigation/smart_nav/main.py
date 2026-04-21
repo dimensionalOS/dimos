@@ -56,6 +56,8 @@ def smart_nav(
     use_simple_planner: bool = False,
     vehicle_height: float | None = None,
     max_speed: float | None = None,
+    terrain_voxel_size: float = 0.2,
+    replan_rate: float = 0.5,
     terrain_analysis: dict[str, Any] | None = None,
     terrain_map_ext: dict[str, Any] | None = None,
     local_planner: dict[str, Any] | None = None,
@@ -125,7 +127,7 @@ def smart_nav(
                 # Input filtering
                 "scan_voxel_size": 0.05,
                 # Voxel grid
-                "terrain_voxel_size": 0.2,
+                "terrain_voxel_size": terrain_voxel_size,
                 "terrain_voxel_half_width": 10,
                 # Obstacle/ground classification
                 "obstacle_height_threshold": 0.1,
@@ -190,6 +192,7 @@ def smart_nav(
             [
                 SimplePlanner.blueprint(
                     **{
+                        "replan_rate": replan_rate,
                         **(
                             {"ground_offset_below_robot": vehicle_height}
                             if vehicle_height is not None
@@ -209,15 +212,10 @@ def smart_nav(
         modules.append(
             TerrainMapExt.blueprint(
                 **{
-                    "voxel_size": 0.1,
-                    # Walls are static — keep them around long enough that
-                    # a global planner (SimplePlanner / FarPlanner) doesn't
-                    # see freshly-empty cells behind the robot and route
-                    # paths straight through the walls it can't currently
-                    # see. 8 s was way too aggressive for that.
-                    # "decay_time": 300.0,
+                    # Note: stale obstacles may appear and take a bit to clear if this voxel_size is different than the terrain_voxel_size
+                    "voxel_size": terrain_voxel_size,
                     "decay_time": 30.0,
-                    "publish_rate": 2.0,
+                    "publish_rate": replan_rate,
                     "max_range": 40.0,
                     **(terrain_map_ext or {}),
                 }

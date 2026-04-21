@@ -1,5 +1,7 @@
 This mostly to track when conventions change (with regard to codebase updates) because this codebase is under heavy development. Note: this is a non-exhaustive list of conventions.
 
+- while there may be exceptions, as a default rule modules shouldn't have a `__setstate__` or `__getstate__`
+- The convention in the codebase is to put tests next to where the tested code is (unless it doesn't make sense, like for e2e tests)
 - When adding visualization tools to a blueprint/autoconnect, instead of using RerunBridge or WebsocketVisModule directly we should always use `vis_module`, which right now should look something like `vis_module(viewer_backend=global_config.viewer, rerun_config={}),`
 - `DEFAULT_THREAD_JOIN_TIMEOUT` is used for all thread.join timeouts
 - Module configs should be specified as `config: ModuleSpecificConfigClass`
