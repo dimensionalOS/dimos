@@ -104,7 +104,7 @@ Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54
 
 Let's load a standard 2D detector module and hook it up to a camera.
 
-```python ansi=false session=detection_module
+```python skip ansi=false session=detection_module
 from dimos.perception.detection.module2D import Detection2DModule, Config
 print(Detection2DModule.io())
 ```

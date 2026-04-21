@@ -393,7 +393,7 @@ This means **no manual registration is needed** — just having the `register()`
 
 You can verify discovery works:
 
-```python
+```python skip
 from dimos.hardware.manipulators.registry import adapter_registry
 print(adapter_registry.available())  # Should include "yourarm"
 ```
@@ -420,7 +420,7 @@ dimos/robot/
 
 Create `dimos/robot/yourarm/blueprints.py` with your coordinator and (optionally) planning blueprints:
 
-```python
+```python skip
 """Blueprints for YourArm robot.
 
 Usage:
@@ -619,7 +619,7 @@ adapter = adapter_registry.create("yourarm", address="192.168.1.100", dof=6)
 
 You can test coordinator logic without hardware by using `unittest.mock`:
 
-```python
+```python skip
 import pytest
 from unittest.mock import MagicMock
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
