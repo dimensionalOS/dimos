@@ -193,6 +193,10 @@ perception = [
     "hydra-core>=1.3.0",
 ]
 
+twitch = [
+    "twitchio>=2,<3",
+]
+
 unitree = [
     "dimos[base]",
     "unitree-webrtc-connect-leshy>=2.0.7"
@@ -382,7 +386,7 @@ incremental = true
 strict = true
 warn_unused_ignores = false
 explicit_package_bases = true
-exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/conftest.py*|.*/native/build(/|$)"
 
 [[tool.mypy.overrides]]
 module = [
