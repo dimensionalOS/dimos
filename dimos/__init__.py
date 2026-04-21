@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,16 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for GlobalConfig security defaults."""
 
+def __getattr__(name: str) -> object:
+    if name == "Dimos":
+        from dimos.porcelain.dimos import Dimos
 
-class TestGlobalConfigSecurityDefaults:
-    """Network services must bind to localhost by default (not 0.0.0.0)."""
-
-    def test_listen_host_defaults_to_localhost(self) -> None:
-        from dimos.core.global_config import GlobalConfig
-
-        config = GlobalConfig()
-        assert config.listen_host == "127.0.0.1", (
-            f"listen_host must default to 127.0.0.1, got {config.listen_host}"
-        )
+        return Dimos
+    raise AttributeError(f"module 'dimos' has no attribute {name!r}")

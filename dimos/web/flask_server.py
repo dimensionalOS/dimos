@@ -19,6 +19,7 @@ from flask import Flask, Response, render_template
 from reactivex import operators as ops
 from reactivex.disposable import SingleAssignmentDisposable
 
+from dimos.core.global_config import global_config
 from dimos.web.edge_io import EdgeIO
 
 
@@ -100,6 +101,7 @@ class FlaskServer(EdgeIO):
                 view_func=make_response_generator(key),  # type: ignore[no-untyped-call]
             )
 
-    def run(self, host: str = "0.0.0.0", port: int = 5555, threaded: bool = True) -> None:
+    def run(self, host: str | None = None, port: int = 5555, threaded: bool = True) -> None:
         self.port = port
-        self.app.run(host=host, port=self.port, debug=False, threaded=threaded)
+        _host = host if host is not None else global_config.listen_host
+        self.app.run(host=_host, port=self.port, debug=False, threaded=threaded)

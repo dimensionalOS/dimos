@@ -1704,6 +1704,7 @@ dependencies = [
     { name = "pyturbojpeg" },
     { name = "reactivex" },
     { name = "rerun-sdk" },
+    { name = "rpyc" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sortedcontainers" },
@@ -1749,14 +1750,11 @@ base = [
     { name = "langchain-text-splitters" },
     { name = "lap" },
     { name = "moondream" },
-    { name = "mujoco" },
     { name = "ollama" },
     { name = "omegaconf" },
     { name = "openai" },
     { name = "openai-whisper" },
     { name = "pillow" },
-    { name = "playground" },
-    { name = "pygame" },
     { name = "rerun-sdk" },
     { name = "sounddevice" },
     { name = "soundfile" },
@@ -1955,14 +1953,11 @@ unitree = [
     { name = "langchain-text-splitters" },
     { name = "lap" },
     { name = "moondream" },
-    { name = "mujoco" },
     { name = "ollama" },
     { name = "omegaconf" },
     { name = "openai" },
     { name = "openai-whisper" },
     { name = "pillow" },
-    { name = "playground" },
-    { name = "pygame" },
     { name = "rerun-sdk" },
     { name = "sounddevice" },
     { name = "soundfile" },
@@ -1997,7 +1992,7 @@ requires-dist = [
     { name = "ctransformers", extras = ["cuda"], marker = "extra == 'cuda'", specifier = "==0.2.27" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
-    { name = "dimos", extras = ["agents", "web", "perception", "visualization", "sim"], marker = "extra == 'base'" },
+    { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["dev"], marker = "extra == 'dds'" },
     { name = "dimos-lcm" },
@@ -2096,6 +2091,7 @@ requires-dist = [
     { name = "rerun-sdk", specifier = ">=0.20.0" },
     { name = "rerun-sdk", marker = "extra == 'docker'" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = ">=0.20.0" },
+    { name = "rpyc", specifier = ">=6.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.14.3" },
     { name = "scikit-learn", marker = "extra == 'misc'" },
     { name = "scipy", specifier = ">=1.15.1" },
@@ -2171,18 +2167,18 @@ wheels = [
 
 [[package]]
 name = "dimos-viewer"
-version = "0.30.0a6.dev99"
+version = "0.30.0a6"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3d/0e/d363be05f172bafe5f41a95db318891637e902c50edfdc642edec6bb5111/dimos_viewer-0.30.0a6.dev99-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:cfa57e68e8f4094d4a38d202414046fd2419ff2875ace3f16b8581c3106feca4", size = 35405401, upload-time = "2026-04-17T04:19:10.126Z" },
-    { url = "https://files.pythonhosted.org/packages/e7/ab/0730fed402b3b92e35194f11b76119754d619fa6bab00a1932b5c78f87b3/dimos_viewer-0.30.0a6.dev99-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:f3bc243342131c8c2b653cc6b76f04d65aad525f5560829b78aa1a7d31a9d375", size = 39167146, upload-time = "2026-04-17T04:19:14.177Z" },
-    { url = "https://files.pythonhosted.org/packages/bb/d9/1415d5d7e609d69b05e8e1167a66dd7cb78f3933205f9b321ae18233384c/dimos_viewer-0.30.0a6.dev99-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:b954083fcb8951641554fdea95425b3b5ac9415cd1b65410a137d38d3dd57b8a", size = 41536165, upload-time = "2026-04-17T04:19:17.379Z" },
-    { url = "https://files.pythonhosted.org/packages/93/7c/7ee6049a753c01ccbe8357f9c5f789378103b87331e5ca7977f05adf5c42/dimos_viewer-0.30.0a6.dev99-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:0387201efd1260f968853f0d7863876b6db375b2af15b22f221a893fcce6549c", size = 35405408, upload-time = "2026-04-17T04:19:20.08Z" },
-    { url = "https://files.pythonhosted.org/packages/de/2e/9b4252a12c4b641ab1479a6a4d3d576e75fc42ca2a797d88e2e0626abda0/dimos_viewer-0.30.0a6.dev99-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:a0fae6f2077fc6ceb25e1ed33fb7ccf183ef3e2a30456aa5462b953c1419e547", size = 39167138, upload-time = "2026-04-17T04:19:23.292Z" },
-    { url = "https://files.pythonhosted.org/packages/46/2a/4bd02c3d79df2aefc5be47afda6b95121937cef0a3f6b15d071691ec3ca7/dimos_viewer-0.30.0a6.dev99-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:e844015f3ad193d50201c39abd3e3f34abbf03adbfb1075468696c1236df1409", size = 41536172, upload-time = "2026-04-17T04:19:26.421Z" },
-    { url = "https://files.pythonhosted.org/packages/1b/b1/efcea9b9e21c4ab75e2df016a27e5045e30d91a494465ab0cc627d8d8bc3/dimos_viewer-0.30.0a6.dev99-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:dc82061c2c025684c0fbed5392f793d137b1b0fc3aa1b601988bf4d2ee88aa27", size = 35405409, upload-time = "2026-04-17T04:19:29.574Z" },
-    { url = "https://files.pythonhosted.org/packages/2d/8e/d482b0b9379c40ddd7547600543ce726fc3b5d10e396a876f22b2d76d0e6/dimos_viewer-0.30.0a6.dev99-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:0f6acfa0de3083e746ac43fe0d0a328d624bcb859dc698b1bbc592f444f52f15", size = 39167144, upload-time = "2026-04-17T04:19:32.301Z" },
-    { url = "https://files.pythonhosted.org/packages/6d/eb/08922721c74ceaa99a824258db02c438d50f77c22ff80332cbc4b1a8db7b/dimos_viewer-0.30.0a6.dev99-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:56fa9139c49ec4bf96b12d6e98d3de3319a66876374ae57bda4534ab7a347765", size = 41536171, upload-time = "2026-04-17T04:19:35.29Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/90/ad6d0e1e177a10a0b4f7e736436b6d2741acaeb402ab59504347236744f4/dimos_viewer-0.30.0a6-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:e623a21e6992e263513847e12809a0d234d73fc7af42a6428e84ca165ba682d0", size = 35309553, upload-time = "2026-03-18T15:22:26.874Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/84/1c8f41ff2bd5b6ee143eb6119107397dac284fa4f1f8335623c498bd1d9c/dimos_viewer-0.30.0a6-cp310-cp310-manylinux_2_28_aarch64.whl", hash = "sha256:36068a3293cb1c7f4db9f4e6c9fea2d7dd2a2527025f803585f4d3aaad9aedbd", size = 39072034, upload-time = "2026-03-18T15:22:29.592Z" },
+    { url = "https://files.pythonhosted.org/packages/58/e6/d6214245e5b99e1da262d037f52d3d39c6b87c65acb516fb08f11378e932/dimos_viewer-0.30.0a6-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:2bf36e8c8bd9dd822bedd1cb2d80ee2bf74b58184ba33872494baed0395fa7ff", size = 41447599, upload-time = "2026-03-18T15:22:32.699Z" },
+    { url = "https://files.pythonhosted.org/packages/48/04/80f566400776cab9af68b4a3c0132f55786acd1641ea39d8b75e797a2e22/dimos_viewer-0.30.0a6-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:947cfa10c583b357d589c10cb466c63b3651a83d1013a254c0ba03fc2959bef7", size = 35309552, upload-time = "2026-03-18T15:22:35.395Z" },
+    { url = "https://files.pythonhosted.org/packages/4c/c3/72157e0806951c2c71c70dcd783e27be8d694344d7ecdb94eaef1066cf99/dimos_viewer-0.30.0a6-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:53ca4ac1f0778f1d9afb317b6268c941c02b20af86dd2aaaf1ea79f2c1d1eeb8", size = 39072018, upload-time = "2026-03-18T15:22:38.043Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/92/959fc1e9cdcb5fd8d793b2c8515a6086c9f913ba470baad1f3182ae4c242/dimos_viewer-0.30.0a6-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:27e108060a942c92f7869a0e45693dfe1798896bd90cbac6d1ce019a682f8ba7", size = 41447647, upload-time = "2026-03-18T15:22:41.003Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/d6/d76763b60d82539e92777500551116306cfea462f6976ad814a3bdf57e1d/dimos_viewer-0.30.0a6-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:f4f49f973c51055cfd594b68a8e9d183c706f94b1513b6b69db900d05850f741", size = 35309553, upload-time = "2026-03-18T15:22:43.681Z" },
+    { url = "https://files.pythonhosted.org/packages/26/ab/6ea7686c467caecdc74dd8d3a0267053ac74229b3afebc64cff180d5074c/dimos_viewer-0.30.0a6-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:791ef1c1d8d41db69a7d2b701ed3f0b6bc39cb3264aaef7300eddb576c8df7ed", size = 39072062, upload-time = "2026-03-18T15:22:46.264Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/87/fce7aac56d8a234d3d7c0911928bb3471d7852e35263b966d2aac5be42cd/dimos_viewer-0.30.0a6-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:dd976c39c38718b8373e1894d55b78c10bcb8c5716c8dbd5fba59141bc08ab3c", size = 41447667, upload-time = "2026-03-18T15:22:49.214Z" },
 ]
 
 [[package]]
@@ -6872,6 +6868,18 @@ wheels = [
 ]
 
 [[package]]
+name = "plumbum"
+version = "1.10.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pywin32", marker = "platform_python_implementation != 'PyPy' and sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dc/c8/11a5f792704b70f071a3dbc329105a98e9cc8d25daaf09f733c44eb0ef8e/plumbum-1.10.0.tar.gz", hash = "sha256:f8cbf0ecec0b73ff4e349398b65112a9e3f9300e7dc019001217dcc148d5c97c", size = 320039, upload-time = "2025-10-31T05:02:48.697Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/79/ad/45312df6b63ba64ea35b8d8f5f0c577aac16e6b416eafe8e1cb34e03f9a7/plumbum-1.10.0-py3-none-any.whl", hash = "sha256:9583d737ac901c474d99d030e4d5eec4c4e6d2d7417b1cf49728cf3be34f6dc8", size = 127383, upload-time = "2025-10-31T05:02:47.002Z" },
+]
+
+[[package]]
 name = "polars"
 version = "1.38.1"
 source = { registry = "https://pypi.org/simple" }
@@ -8676,6 +8684,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/13/64/b4d76f227d5c45a7e0b796c674fd81b0a6c4fbd48dc29271857d8219571c/rpds_py-0.30.0-pp311-pypy311_pp73-musllinux_1_2_aarch64.whl", hash = "sha256:dff13836529b921e22f15cb099751209a60009731a68519630a24d61f0b1b30a", size = 573981, upload-time = "2025-11-30T20:24:32.934Z" },
     { url = "https://files.pythonhosted.org/packages/20/91/092bacadeda3edf92bf743cc96a7be133e13a39cdbfd7b5082e7ab638406/rpds_py-0.30.0-pp311-pypy311_pp73-musllinux_1_2_i686.whl", hash = "sha256:1b151685b23929ab7beec71080a8889d4d6d9fa9a983d213f07121205d48e2c4", size = 599782, upload-time = "2025-11-30T20:24:35.169Z" },
     { url = "https://files.pythonhosted.org/packages/d1/b7/b95708304cd49b7b6f82fdd039f1748b66ec2b21d6a45180910802f1abf1/rpds_py-0.30.0-pp311-pypy311_pp73-musllinux_1_2_x86_64.whl", hash = "sha256:ac37f9f516c51e5753f27dfdef11a88330f04de2d564be3991384b2f3535d02e", size = 562191, upload-time = "2025-11-30T20:24:36.853Z" },
+]
+
+[[package]]
+name = "rpyc"
+version = "6.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "plumbum" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8b/e7/1c17410673b634f4658bb5d2232d0c4507432a97508b2c6708e59481644a/rpyc-6.0.2.tar.gz", hash = "sha256:8e780a6a71b842128a80a337c64adfb6f919014e069951832161c9efc630c93b", size = 62321, upload-time = "2025-04-18T16:33:21.693Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/99/2e119d541d596daea39643eb9312b47c7847383951300f889166938035b1/rpyc-6.0.2-py3-none-any.whl", hash = "sha256:8072308ad30725bc281c42c011fc8c922be15f3eeda6eafb2917cafe1b6f00ec", size = 74768, upload-time = "2025-04-18T16:33:20.147Z" },
 ]
 
 [[package]]
