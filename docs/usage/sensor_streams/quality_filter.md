@@ -52,7 +52,7 @@ For camera streams, we provide `sharpness_barrier` which uses the image's sharpn
 
 Let's use real camera data from the Unitree Go2 robot to demonstrate. We use the [Sensor Storage & Replay](/docs/usage/sensor_streams/storage_replay.md) toolkit, which provides access to recorded robot data:
 
-```python session=qb
+```python skip session=qb
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.utils.testing.replay import TimedSensorReplay
 
@@ -93,7 +93,7 @@ Sharpness scores:
 
 Using `sharpness_barrier` to select the sharpest frames:
 
-```python session=qb
+```python skip session=qb
 # Create a stream from the recorded frames
 
 sharp_frames = video_replay.stream(seek=5.0, duration=1.5, speed=1.0).pipe(
@@ -116,7 +116,7 @@ Output: 3 frame(s) (selected sharpest per window)
 <details>
 <summary>Visualization helpers</summary>
 
-```python session=qb fold no-result
+```python skip session=qb fold no-result
 import matplotlib
 import matplotlib.pyplot as plt
 import math
@@ -163,14 +163,14 @@ def plot_sharpness(frames, selected, path):
 
 Visualizing which frames were selected (green border = selected as sharpest in window):
 
-```python session=qb output=assets/frame_mosaic.jpg
+```python skip session=qb output=assets/frame_mosaic.jpg
 plot_mosaic(input_frames, sharp_frames, '{output}')
 ```
 
 <!--Result:-->
 ![output](assets/frame_mosaic.jpg)
 
-```python session=qb output=assets/sharpness_graph.svg
+```python skip session=qb output=assets/sharpness_graph.svg
 plot_sharpness(input_frames, sharp_frames, '{output}')
 ```
 
@@ -179,7 +179,7 @@ plot_sharpness(input_frames, sharp_frames, '{output}')
 
 Let's request a higher frequency.
 
-```python session=qb
+```python skip session=qb
 sharp_frames = video_replay.stream(seek=5.0, duration=1.5, speed=1.0).pipe(
     sharpness_barrier(4.0),
     ops.to_list()
@@ -200,7 +200,7 @@ Output: 6 frame(s) (selected sharpest per window)
   Frame 5: 0.329
 ```
 
-```python session=qb output=assets/frame_mosaic2.jpg
+```python skip session=qb output=assets/frame_mosaic2.jpg
 plot_mosaic(input_frames, sharp_frames, '{output}')
 ```
 
@@ -208,7 +208,7 @@ plot_mosaic(input_frames, sharp_frames, '{output}')
 ![output](assets/frame_mosaic2.jpg)
 
 
-```python session=qb output=assets/sharpness_graph2.svg
+```python skip session=qb output=assets/sharpness_graph2.svg
 plot_sharpness(input_frames, sharp_frames, '{output}')
 ```
 
@@ -245,7 +245,7 @@ The sharpness score (0.0 to 1.0) is computed using Sobel edge detection:
 
 from [`Image.py`](/dimos/msgs/sensor_msgs/Image.py)
 
-```python session=qb
+```python skip session=qb
 import cv2
 
 # Get a frame and show the calculation
