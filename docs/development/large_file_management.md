@@ -73,7 +73,7 @@ Image shape: (771, 1024, 3)
 
 ### Loading Model Checkpoints
 
-```python
+```python skip
 from dimos.utils.data import get_data
 
 model_dir = get_data("models_yolo")
