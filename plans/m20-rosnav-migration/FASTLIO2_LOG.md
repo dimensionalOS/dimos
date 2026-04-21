@@ -905,6 +905,132 @@ latest output, (b) parse `result` symlink that `nix build` creates, or
 
 ---
 
+## Finding #24: Rotation Breaks SLAM — Cloud Is in Raw Sensor Frame + Yaw DOF in IMU Rotation (2026-04-22)
+
+Stationary SLAM is rock solid (1 KF at origin, 5+ min, cal=OK, DIFOP
+applied) but any meaningful rotation causes catastrophic drift —
+keyframes explode to thousands of meters within a few seconds of yaw.
+
+### Experiments run
+
+**Expt 1: `extrinsic_est_en: true → false` in velodyne.yaml**
+
+Hypothesis (codex H1): FAST-LIO2's online estimator was destabilizing
+under rotation because DIFOP already pins IMU↔lidar extrinsic — two
+processes fighting. With `extrinsic_est_en: false`, early rotation KFs
+stayed within ~0.3 m for the first few seconds (big improvement from
+instant 10,000 m explosion). **Partial fix.** KFs then drifted
+gradually, with a sudden 80 m teleport at KF 16 (scan-match lost lock)
+and runaway after. Instant-explode mode eliminated but underlying frame
+mismatch remains.
+
+**Expt 2: Cloud-frame probe (the key data)**
+
+Wrote a Python probe that reads `/dev/shm/drdds_bridge_lidar` directly
+and dumps X/Y/Z min/max/mean/std for a single cloud frame. Important
+note: `sizeof(ShmHeader) = 56` (not 64 — no `static_assert` catches
+this, compiler packs to 56). My first probe was 8 bytes off.
+
+Zeroed rsdriver's `pitch=-π/2 yaw=-π roll=0` → all zero, for both front
+and rear Airy stanzas. Restarted pipeline. Probe showed (front lidar):
+
+```
+zeroed config:  x spans +0.37..+3.27 (mean+1.61), y spans -4.47..+12.86, z spans -0.61..+2.29
+normal config:  x spans +0.37..+3.39 (mean+1.61), y spans -4.41..+14.53, z spans -0.61..+2.31
+```
+
+**The clouds are identical.** rsdriver does NOT apply the
+roll/pitch/yaw to the cloud — it only tags frame_id and passes through.
+The `roll/pitch/yaw` knobs in rsdriver config may be used for other
+purposes (TF publishing, motion compensation) but not for cloud
+transform. **The published cloud has always been in raw sensor frame.**
+
+### Frame analysis
+
+Cloud geometry from the probe:
+- X: positive-only (0.37→3.39) → dome axis (hemispherical lidar only
+  sees forward-of-dome half-space)
+- Y: symmetric spread (±14m) → horizontal plane, room extent
+- Z: symmetric narrow (±2m) → vertical axis (floor→ceiling)
+
+User's physical mount: "horizontal, dome forward, cable up". Maps:
+- +X_sensor (dome) → +X_base (forward)
+- +Z_sensor → +Z_base (up)
+- +Y_sensor → +Y_base (left, by right-hand rule)
+→ **cloud-sensor frame = base_link** (identity rotation)
+
+Separate from this, DIFOP's R_imu_to_lidar routes raw IMU gravity to
+`+X_canonical_lidar`. That's the CABLE direction in world (up). So DIFOP's
+"lidar frame" has cable = +X. In the cloud frame, cable = +Z.
+
+**Two distinct "lidar frames" exist**:
+1. DIFOP canonical: cable = +X_canonical, dome = +Z_canonical (probably)
+2. Cloud sensor: dome = +X_sensor, cable = +Z_sensor
+
+They're 90° rotated about the Y axis from each other. Our
+`R_base_lidar = [[0,0,1],[0,-1,0],[1,0,0]]` was tuned to map DIFOP's
+canonical → base, producing correct gravity on +Z_base stationary.
+But the cloud was never in canonical frame — it was in sensor frame
+all along.
+
+### Why rotation fails
+
+Even though cloud_sensor frame ≈ base_link and IMU output is in
+base_link (gravity-correct), the COMPOSITION R_base_imu has a yaw DOF
+pinned by an arbitrary assumption rather than by physical reality.
+Gravity alignment pins roll + pitch but leaves yaw free. Any yaw
+offset between "our claimed base frame" and "actual world-vertical-
+aligned-with-cloud's-X" manifests as angular-rate mixing: physical yaw
+about world-up appears as some combination of gyro X/Y/Z in the
+"claimed base" frame. Observed during yaw test:
+
+```
+gyro_base = (-0.21, +0.10, -0.77) rad/s
+rho = sqrt(gx² + gy²) / |gz| = 0.30
+```
+
+30% off-axis signal during hand-yaw. Some of that is real tilt (user
+holding her and moving), but 30% is high and suggests a frame rotation
+error in the 10° range. FAST-LIO2's filter then propagates with IMU
+while scan-matching in the different frame → gradual Z drift → scan
+match eventually fails → runaway.
+
+### Plan for next session (not under rush — correctness > speed)
+
+1. **Diagnostic: gyro purity test**. User holds M20 as level as possible
+   and rotates ~45°/s about world-vertical for 10s. Log gyro_base. If
+   rho > 0.1 consistently, confirms yaw DOF error.
+
+2. **Fix candidate A**: publish airy_imu_bridge in `--frame sensor`
+   (pass raw IMU through), compute correct R_cloud_to_raw_imu, set
+   velodyne.yaml `extrinsic_R` to that rotation. Lets FAST-LIO2
+   rotate cloud into IMU frame internally; `extrinsic_est_en: true`
+   might then be safe (good prior rather than identity prior).
+
+3. **Fix candidate B**: re-derive R_base_lidar from physical mount +
+   cloud geometry jointly (not just from DIFOP+gravity), so the yaw
+   DOF is physically pinned rather than arbitrary.
+
+4. **Fix candidate C**: investigate whether FAST-LIO2's "lidar frame"
+   and our cloud frame ARE the same, and whether something in the
+   drdds_lidar_bridge ring remap / time-dekew might be corrupting
+   angular motion.
+
+### Related cleanups shipped
+
+- `deploy.sh sync` now picks newest nix store output by mtime (not
+  alphabetical) — avoids stale symlinks after rebuild.
+- `deploy.sh provision` disables legacy `drdds-bridge.service` (which
+  ran a duplicate `drdds_recv` and saturated NOS → Finding #23).
+- `M20_SKIP_STAND=1` env on `M20Connection` lets smartnav run while
+  robot is sitting / on dock. Navigation mode still applied so lidars
+  stay powered.
+- `rsdriver` config left with `pitch=-π/2 yaw=-π roll=0` (original) —
+  has no functional effect on the cloud (per Expt 2 above) but
+  cheaper to leave than re-edit every session.
+
+---
+
 ## Open Questions for Next Session / Jeff
 
 - Does FAST-LIO2's preprocess.cpp + ikd-Tree actually support `scan_line: 192`? Upstream hku-mars tested up to 128 per README.

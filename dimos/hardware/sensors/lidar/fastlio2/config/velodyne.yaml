@@ -27,13 +27,17 @@ mapping:
     # When using M20's Airy integrated IMU path:
     #   airy_imu_bridge already rotates accel + gyro into base_link, and the
     #   drdds-merged lidar cloud is published in base_link as well. Extrinsic
-    #   is therefore identity; enable online refinement to absorb any mm-scale
-    #   residuals (Airy IMU is inside the lidar housing, factory-calibrated).
+    #   is therefore identity — DO NOT let FAST-LIO2 also estimate it. The
+    #   DIFOP C.17 factory calibration already resolves the IMU→lidar
+    #   rotation once at startup. Leaving `extrinsic_est_en: true` under
+    #   rapid yaw destabilizes the filter (the estimator drifts the
+    #   extrinsic as it tries to reconcile IMU predictions with the
+    #   scan match, and pose explodes). See FASTLIO2_LOG Finding #24.
     # When using the yesense IMU path (legacy), the extrinsic is unknown and
     # we have no better value than the Velodyne default. The old value
     # `extrinsic_T: [0, 0, 0.28]` caused 20–30 m stationary drift per 15 s
     # (FASTLIO2_LOG Finding #17). Switching to the Airy IMU path is the fix.
-    extrinsic_est_en:  true
+    extrinsic_est_en:  false
     extrinsic_T: [ 0, 0, 0]
     extrinsic_R: [ 1, 0, 0,
                    0, 1, 0,
