@@ -58,6 +58,14 @@ logger = logging.getLogger(__name__)
 
 class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
+    rage_mode: bool = Field(
+        default=False,
+        description=(
+            "Enable Rage Mode on connect. Toggles FsmRageMode via mcf AI "
+            "controller (api_id 2059) + SwitchJoystick. Widens forward "
+            "envelope to ~2.5 m/s. See data/notes/go2_firmware_modes.md."
+        ),
+    )
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -73,6 +81,7 @@ class Go2ConnectionProtocol(Protocol):
     def liedown(self) -> bool: ...
     def balance_stand(self) -> bool: ...
     def set_obstacle_avoidance(self, enabled: bool = True) -> None: ...
+    def set_rage_mode(self, enable: bool) -> bool: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
 
 
@@ -141,6 +150,9 @@ class ReplayConnection(UnitreeWebRTCConnection):
 
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
+
+    def set_rage_mode(self, enable: bool) -> bool:
+        return True
 
     @simple_mcache
     def lidar_stream(self):  # type: ignore[no-untyped-def]
@@ -252,6 +264,9 @@ class GO2Connection(Module, Camera, Pointcloud):
         time.sleep(3)
         self.connection.balance_stand()
         self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
+
+        if self.config.rage_mode:
+            self.connection.set_rage_mode(True)
 
         # self.record("go2_bigoffice")
 
