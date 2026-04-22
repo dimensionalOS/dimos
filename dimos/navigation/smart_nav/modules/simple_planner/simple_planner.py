@@ -14,14 +14,7 @@
 
 """SimplePlanner: grid-based A* alternative to FarPlanner.
 
-Consumes a classified terrain pointcloud, voxelises it into an occupancy
-grid (2D costmap in the XY plane), and runs A* from the robot's current
-pose to the goal. Publishes the full path on ``goal_path`` and a
-look-ahead waypoint on ``way_point`` for the local planner to track.
-
-This is intentionally small and readable — no visibility graph, no
-smoothing, no dynamic obstacle handling — to serve as a baseline against
-FarPlanner.
+Temporary, will be broken up and combined with ReplanningAStarPlanner
 """
 
 from __future__ import annotations
