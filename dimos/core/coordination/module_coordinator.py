@@ -29,7 +29,7 @@ from dimos.core.coordination.worker_manager_python import WorkerManagerPython
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
-from dimos.core.transport import LCMTransport, PubSubTransport, ZENOH_AVAILABLE, pLCMTransport
+from dimos.core.transport import ZENOH_AVAILABLE, LCMTransport, PubSubTransport, pLCMTransport
 from dimos.spec.utils import spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -553,7 +553,9 @@ def _get_transport_for(blueprint: Blueprint, name: str, stream_type: type) -> Pu
 
         zenoh_topic = f"dimos{topic}"
         transport = (
-            pZenohTransport(zenoh_topic) if use_pickled else ZenohTransport(zenoh_topic, stream_type)
+            pZenohTransport(zenoh_topic)
+            if use_pickled
+            else ZenohTransport(zenoh_topic, stream_type)
         )
     else:
         transport = pLCMTransport(topic) if use_pickled else LCMTransport(topic, stream_type)

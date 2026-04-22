@@ -417,4 +417,6 @@ if ZENOH_AVAILABLE:
             with self._start_lock:
                 if not self._started:
                     self.start()
-                return self.zenoh.subscribe(ZenohTopic(self.topic), lambda msg, topic: callback(msg))
+                return self.zenoh.subscribe(
+                    ZenohTopic(self.topic), lambda msg, topic: callback(msg)
+                )

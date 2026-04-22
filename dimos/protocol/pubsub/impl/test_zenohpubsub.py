@@ -16,8 +16,8 @@
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Callable
+import threading
 
 import pytest
 

@@ -148,7 +148,7 @@ testdata.append(
 from dimos.core.transport import ZENOH_AVAILABLE
 
 if ZENOH_AVAILABLE:
-    from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh, PickleZenoh
+    from dimos.protocol.pubsub.impl.zenohpubsub import PickleZenoh, Zenoh
     from dimos.protocol.service.zenohservice import _sessions as _zenoh_sessions
 
     @contextmanager

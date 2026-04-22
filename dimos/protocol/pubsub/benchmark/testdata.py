@@ -275,7 +275,7 @@ except (ConnectionError, ImportError):
 from dimos.core.transport import ZENOH_AVAILABLE
 
 if ZENOH_AVAILABLE:
-    from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh, Topic as ZenohTopic
+    from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
     from dimos.protocol.service.zenohservice import _sessions as _zenoh_sessions
 
     @contextmanager
