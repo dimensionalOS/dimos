@@ -99,7 +99,7 @@ class DirectCmdVelExplorer:
                 None,
                 Twist(linear=Vector3(linear, 0, 0), angular=Vector3(0, 0, angular)),
             )
-        self._stop()
+        self.stop()
 
     def follow_points(self, waypoints: list[tuple[float, float]]) -> None:
         self._wait_for_pose()

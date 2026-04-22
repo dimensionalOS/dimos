@@ -96,16 +96,22 @@ def test_process_crash_triggers_stop() -> None:
     mod.pointcloud.transport = LCMTransport("/pc", PointCloud2)
     mod.start()
 
-    assert mod._process is not None
-    pid = mod._process.pid
+    assert mod._proc is not None
+    assert mod._proc.is_alive
+    pid = mod._proc.pid
 
-    # Wait for the process to die and the watchdog to call stop()
+    # Wait for the process to die and the on_exit callback to call stop()
     for _ in range(30):
         time.sleep(0.1)
-        if mod._process is None:
+        if mod._proc is None or not mod._proc.is_alive:
             break
 
-    assert mod._process is None, f"Watchdog did not clean up after process {pid} died"
+    assert mod._proc is None or not mod._proc.is_alive, (
+        f"Watchdog did not clean up after process {pid} died"
+    )
+
+    # stop() is idempotent
+    mod.stop()
 
     # Wait for background threads (run_forever, _lcm_loop, _watch_process) to finish
     # after the watchdog-triggered stop(). Without this, monitor_threads catches them.

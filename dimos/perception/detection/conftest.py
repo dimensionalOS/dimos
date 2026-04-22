@@ -221,7 +221,7 @@ def get_moment_2d(get_moment) -> Generator[Callable[[], Moment2D], None, None]:
     yield moment_provider
 
     moment_provider.cache_clear()
-    module._close_module()
+    module.stop()
 
 
 @pytest.fixture(scope="session")
@@ -256,7 +256,7 @@ def get_moment_3dpc(get_moment_2d) -> Generator[Callable[[], Moment3D], None, No
     yield moment_provider
     moment_provider.cache_clear()
     if module is not None:
-        module._close_module()
+        module.stop()
 
 
 @pytest.fixture(scope="session")
@@ -290,9 +290,9 @@ def object_db_module(get_moment):
 
     yield moduleDB
 
-    module2d._close_module()
-    module3d._close_module()
-    moduleDB._close_module()
+    module2d.stop()
+    module3d.stop()
+    moduleDB.stop()
 
 
 @pytest.fixture(scope="session")

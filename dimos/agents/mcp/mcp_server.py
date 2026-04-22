@@ -180,8 +180,7 @@ class McpServer(Module):
     def stop(self) -> None:
         if self._uvicorn_server:
             self._uvicorn_server.should_exit = True
-            loop = self._loop
-            if loop is not None and self._serve_future is not None:
+            if self._serve_future is not None:
                 self._serve_future.result(timeout=5.0)
             self._uvicorn_server = None
             self._serve_future = None
@@ -251,6 +250,5 @@ class McpServer(Module):
         config = uvicorn.Config(app, host=_host, port=_port, log_level="info")
         server = uvicorn.Server(config)
         self._uvicorn_server = server
-        loop = self._loop
-        assert loop is not None
+        loop = self._async_thread.loop
         self._serve_future = asyncio.run_coroutine_threadsafe(server.serve(), loop)

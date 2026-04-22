@@ -40,5 +40,5 @@ def test_reid_ingress(imageDetections2d) -> None:
     print("Processing detections through ReidModule...")
     reid_module.annotations._transport = LCMTransport("/annotations", ImageAnnotations)
     reid_module.ingress(imageDetections2d)
-    reid_module._close_module()
+    reid_module.stop()
     print("✓ ReidModule ingress test completed successfully")

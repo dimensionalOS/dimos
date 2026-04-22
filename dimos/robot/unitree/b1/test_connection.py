@@ -82,7 +82,7 @@ class TestB1Connection:
             conn.watchdog_running = False
             conn.send_thread.join(timeout=1.0)
             conn.watchdog_thread.join(timeout=1.0)
-            conn._close_module()
+            conn.stop()
 
     def test_watchdog_resets_on_new_command(self) -> None:
         """Test that watchdog timeout resets when new command arrives."""
@@ -114,7 +114,7 @@ class TestB1Connection:
             conn.watchdog_running = False
             conn.send_thread.join(timeout=1.0)
             conn.watchdog_thread.join(timeout=1.0)
-            conn._close_module()
+            conn.stop()
 
     def test_watchdog_thread_efficiency(self) -> None:
         """Test that watchdog uses only one thread regardless of command rate."""
@@ -148,7 +148,7 @@ class TestB1Connection:
         conn.watchdog_running = False
         conn.send_thread.join(timeout=0.5)
         conn.watchdog_thread.join(timeout=0.5)
-        conn._close_module()
+        conn.stop()
 
     def test_watchdog_with_send_loop_blocking(self) -> None:
         """Test that watchdog still works if send loop blocks."""
@@ -200,7 +200,7 @@ class TestB1Connection:
             conn.watchdog_running = False
             conn.send_thread.join(timeout=1.0)
             conn.watchdog_thread.join(timeout=1.0)
-            conn._close_module()
+            conn.stop()
 
     def test_continuous_commands_prevent_timeout(self) -> None:
         """Test that continuous commands prevent watchdog timeout."""
@@ -238,7 +238,7 @@ class TestB1Connection:
             conn.watchdog_running = False
             conn.send_thread.join(timeout=1.0)
             conn.watchdog_thread.join(timeout=1.0)
-            conn._close_module()
+            conn.stop()
 
     def test_watchdog_timing_accuracy(self) -> None:
         """Test that watchdog zeros commands at approximately 200ms."""
@@ -280,7 +280,7 @@ class TestB1Connection:
         conn.watchdog_running = False
         conn.send_thread.join(timeout=0.5)
         conn.watchdog_thread.join(timeout=0.5)
-        conn._close_module()
+        conn.stop()
 
     def test_mode_changes_with_watchdog(self) -> None:
         """Test that mode changes work correctly with watchdog."""
@@ -323,7 +323,7 @@ class TestB1Connection:
         conn.watchdog_running = False
         conn.send_thread.join(timeout=0.5)
         conn.watchdog_thread.join(timeout=0.5)
-        conn._close_module()
+        conn.stop()
 
     def test_watchdog_stops_movement_when_commands_stop(self) -> None:
         """Verify watchdog zeros commands when packets stop being sent."""
@@ -390,7 +390,7 @@ class TestB1Connection:
             conn.watchdog_running = False
             conn.send_thread.join(timeout=1.0)
             conn.watchdog_thread.join(timeout=1.0)
-            conn._close_module()
+            conn.stop()
 
     def test_rapid_command_thread_safety(self) -> None:
         """Test thread safety with rapid commands from multiple threads."""
@@ -439,4 +439,4 @@ class TestB1Connection:
         conn.watchdog_running = False
         conn.send_thread.join(timeout=0.5)
         conn.watchdog_thread.join(timeout=0.5)
-        conn._close_module()
+        conn.stop()

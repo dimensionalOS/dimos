@@ -16,9 +16,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
+import time
 from unittest.mock import MagicMock
 
-from dimos.agents.mcp.mcp_server import handle_request
+import requests
+
+from dimos.agents.mcp.mcp_server import McpServer, handle_request
 from dimos.core.module import SkillInfo
 
 
@@ -111,3 +115,56 @@ def test_mcp_module_initialize_and_unknown() -> None:
 
     response = asyncio.run(handle_request({"method": "unknown/method", "id": 2}, [], {}))
     assert response["error"]["code"] == -32601
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+def test_mcp_server_lifecycle() -> None:
+    """Start a real McpServer, hit the HTTP endpoint, then stop it.
+
+    This exercises the AsyncModuleThread event loop integration that the
+    unit tests above do not cover.
+    """
+    port = _free_port()
+
+    server = McpServer()
+    server._start_server(port=port)
+    url = f"http://127.0.0.1:{port}/mcp"
+
+    # Wait for the server to be ready
+    for _ in range(40):
+        try:
+            resp = requests.post(
+                url,
+                json={"jsonrpc": "2.0", "method": "initialize", "id": 1},
+                timeout=0.5,
+            )
+            if resp.status_code == 200:
+                break
+        except requests.ConnectionError:
+            time.sleep(0.1)
+    else:
+        server.stop()
+        raise AssertionError("McpServer did not become ready")
+
+    # Verify it responds
+    data = resp.json()
+    assert data["result"]["serverInfo"]["name"] == "dimensional"
+
+    # Stop and verify it shuts down
+    server.stop()
+    time.sleep(0.3)
+
+    with socket.socket() as s:
+        # Port should be released after stop
+        try:
+            s.connect(("127.0.0.1", port))
+            s.close()
+            # If we could connect, the server is still up — that's a bug
+            raise AssertionError("McpServer still listening after stop()")
+        except ConnectionRefusedError:
+            pass  # expected — server is down

@@ -89,7 +89,7 @@ def test_classmethods() -> None:
     )
     assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
 
-    nav._close_module()
+    nav.stop()
 
 
 @pytest.mark.slow
