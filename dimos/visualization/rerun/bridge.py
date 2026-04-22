@@ -179,15 +179,23 @@ def _default_pubsubs(config: Any = None) -> list[SubscribeAllCapable[Any, Any]]:
     When transport is Zenoh, we listen on BOTH Zenoh and LCM because
     TF (transform frames) is currently hardcoded to LCM in the Module
     base class. Without LCM, the robot pose won't update in the viewer.
+
+    If transport is zenoh but eclipse-zenoh is not installed, raises
+    ``RuntimeError`` (same message as stream transport selection) instead of
+    falling back to LCM only.
     """
     transport = getattr(config, "transport", None) or global_config.transport
     if transport == "zenoh":
         from dimos.core.transport import ZENOH_AVAILABLE
 
-        if ZENOH_AVAILABLE:
-            from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
+        if not ZENOH_AVAILABLE:
+            raise RuntimeError(
+                "transport='zenoh' but eclipse-zenoh is not installed. "
+                "Install with: uv sync --extra zenoh"
+            )
+        from dimos.protocol.pubsub.impl.zenohpubsub import Zenoh
 
-            return [Zenoh(), LCM()]
+        return [Zenoh(), LCM()]
     return [LCM()]
 
 
