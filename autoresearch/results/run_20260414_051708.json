@@ -1,0 +1,15 @@
+{
+  "score": 2.042,
+  "real": 11.057510237005772,
+  "user": 1.795,
+  "sys": 0.247,
+  "ttfm": -1.0,
+  "peak_cpu_pct": 0.0,
+  "peak_memory_mb": 859.80078125,
+  "avg_threads": 34.666666666666664,
+  "total_io_read_mb": 0.0,
+  "total_io_write_mb": 0.015625,
+  "context_switches": 374,
+  "validation": "PASS",
+  "validation_detail": "basic (process exited cleanly)"
+}

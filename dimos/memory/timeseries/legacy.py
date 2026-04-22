@@ -21,7 +21,9 @@ import glob
 import os
 from pathlib import Path
 import pickle
+import queue
 import re
+import threading
 import time
 from typing import Any, cast
 
@@ -32,6 +34,10 @@ from reactivex.scheduler import TimeoutScheduler
 
 from dimos.memory.timeseries.base import T, TimeSeriesStore
 from dimos.utils.data import get_data, get_data_dir
+
+
+_REPLAY_PREFETCH = int(os.environ.get("DIMOS_REPLAY_PREFETCH", "0"))
+_SENTINEL = object()  # marks end of prefetch queue
 
 
 class LegacyPickleStore(TimeSeriesStore[T]):
@@ -157,7 +163,14 @@ class LegacyPickleStore(TimeSeriesStore[T]):
 
         Handles both timed format (timestamp, data) and non-timed format (just data).
         For non-timed data, uses file index as synthetic timestamp.
+
+        When DIMOS_REPLAY_PREFETCH > 0, a background thread prefetches the next
+        N pickle files so disk I/O overlaps with emission scheduling.
         """
+        if _REPLAY_PREFETCH > 0:
+            yield from self._iter_items_prefetch(start, end)
+            return
+
         for idx, filepath in enumerate(self._iter_files()):
             try:
                 with open(filepath, "rb") as f:
@@ -173,6 +186,46 @@ class LegacyPickleStore(TimeSeriesStore[T]):
                     data = raw
             except Exception:
                 continue
+
+            if start is not None and ts < start:
+                continue
+            if end is not None and ts >= end:
+                break
+
+            if self._autocast is not None:
+                data = self._autocast(data)
+            yield (ts, cast("T", data))
+
+    def _iter_items_prefetch(
+        self, start: float | None = None, end: float | None = None
+    ) -> Iterator[tuple[float, T]]:
+        """Prefetching variant: background thread loads pickle files into a queue."""
+        q: queue.Queue = queue.Queue(maxsize=_REPLAY_PREFETCH)
+
+        def _producer() -> None:
+            for idx, filepath in enumerate(self._iter_files()):
+                try:
+                    with open(filepath, "rb") as f:
+                        raw = pickle.load(f)
+                    if isinstance(raw, tuple) and len(raw) == 2:
+                        ts, data = raw
+                        ts = float(ts)
+                    else:
+                        ts = float(idx)
+                        data = raw
+                    q.put((ts, data))
+                except Exception:
+                    continue
+            q.put(_SENTINEL)
+
+        t = threading.Thread(target=_producer, daemon=True)
+        t.start()
+
+        while True:
+            item = q.get()
+            if item is _SENTINEL:
+                break
+            ts, data = item
 
             if start is not None and ts < start:
                 continue

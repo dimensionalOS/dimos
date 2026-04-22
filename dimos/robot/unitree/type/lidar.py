@@ -18,9 +18,8 @@ import time
 from typing import TypedDict
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
 
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2, o3d  # noqa: F401
 
 # Backwards compatibility alias for pickled data
 LidarMessage = PointCloud2

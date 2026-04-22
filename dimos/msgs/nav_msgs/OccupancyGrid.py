@@ -24,7 +24,6 @@ from dimos_lcm.nav_msgs import (
     OccupancyGrid as LCMOccupancyGrid,
 )
 from dimos_lcm.std_msgs import Time as LCMTime
-import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
@@ -36,6 +35,7 @@ from dimos.types.timestamped import Timestamped
 @lru_cache(maxsize=16)
 def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
     """Get a matplotlib colormap by name (cached for performance)."""
+    import matplotlib.pyplot as plt
     return plt.get_cmap(name)
 
 

@@ -25,8 +25,30 @@ from dimos_lcm.sensor_msgs.PointCloud2 import (
 from dimos_lcm.sensor_msgs.PointField import PointField
 from dimos_lcm.std_msgs.Header import Header
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
-import open3d.core as o3c  # type: ignore[import-untyped]
+
+# Lazy-load open3d: importing PointCloud2 is cheap; open3d loads on first use.
+# open3d pulls in sklearn + scipy (~1.4s cold import) so we defer it.
+import importlib.util as _importlib_util
+import sys as _sys
+
+
+def _lazy_import(name):  # type: ignore[no-untyped-def]
+    spec = _importlib_util.find_spec(name)
+    module = _importlib_util.module_from_spec(spec)
+    loader = _importlib_util.LazyLoader(spec.loader)
+    loader.exec_module(module)
+    _sys.modules[name] = module
+    return module
+
+
+o3d = _lazy_import("open3d")  # type: ignore[assignment]
+# o3c alias — resolves when open3d actually loads
+class _O3CProxy:
+    def __getattr__(self, name):  # type: ignore[no-untyped-def]
+        return getattr(o3d.core, name)
+
+
+o3c = _O3CProxy()  # type: ignore[assignment]
 
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3

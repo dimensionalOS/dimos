@@ -35,6 +35,7 @@ class GlobalConfig(BaseSettings):
     simulation: bool = False
     replay: bool = False
     replay_dir: str = "go2_sf_office"
+    exit_on_eof: bool = False
     new_memory: bool = False
     viewer: ViewerBackend = "rerun"
     n_workers: int = 2

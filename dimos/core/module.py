@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from functools import partial
 import inspect
 import json
+import os
 import sys
 import threading
 from typing import (
@@ -62,6 +63,13 @@ class SkillInfo:
     class_name: str
     func_name: str
     args_schema: str
+
+
+_LAZY_ASYNCIO = os.environ.get("DIMOS_LAZY_ASYNCIO") == "1"
+
+if os.environ.get("DIMOS_DISABLE_GC") == "1":
+    import gc as _gc
+    _gc.disable()
 
 
 def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
@@ -116,7 +124,10 @@ class ModuleBase(Configurable, CompositeResource):
     def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
         self._module_closed_lock = threading.Lock()
-        self._loop, self._loop_thread = get_loop()
+        if _LAZY_ASYNCIO:
+            self._loop, self._loop_thread = None, None
+        else:
+            self._loop, self._loop_thread = get_loop()
         try:
             self.rpc = self.config.rpc_transport(  # type: ignore[call-arg]
                 rpc_timeouts=self.config.rpc_timeouts,
@@ -126,6 +137,13 @@ class ModuleBase(Configurable, CompositeResource):
             self.rpc.start()  # type: ignore[attr-defined]
         except ValueError:
             ...
+
+    @property
+    def loop(self) -> asyncio.AbstractEventLoop:
+        """Lazily create asyncio event loop on first access."""
+        if self._loop is None:
+            self._loop, self._loop_thread = get_loop()
+        return self._loop
 
     @classproperty
     def name(self) -> str:

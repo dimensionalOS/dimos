@@ -14,31 +14,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import platform
 from typing import Any
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.transport import pSHMTransport
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
 from dimos.robot.unitree.go2.connection import GO2Connection
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+
+if os.environ.get("DIMOS_SKIP_CLOCK_SYNC") != "1":
+    from dimos.protocol.service.system_configurator.clock_sync import ClockSyncConfigurator
+
+if os.environ.get("DIMOS_SKIP_WEBSOCKET_VIS") != "1":
+    from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 # Mac has some issue with high bandwidth UDP, so we use pSHMTransport for color_image
 # actually we can use pSHMTransport for all platforms, and for all streams
 # TODO need a global transport toggle on blueprints/global config
-_mac_transports: dict[tuple[str, type], pSHMTransport[Image]] = {
-    ("color_image", Image): pSHMTransport(
-        "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-    ),
-}
-
-_transports_base = (
-    autoconnect() if platform.system() == "Linux" else autoconnect().transports(_mac_transports)
-)
+if platform.system() == "Linux":
+    _transports_base = autoconnect()
+else:
+    from dimos.core.transport import pSHMTransport
+    from dimos.msgs.sensor_msgs.Image import Image
+    _mac_transports: dict[tuple[str, type], pSHMTransport[Image]] = {
+        ("color_image", Image): pSHMTransport(
+            "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        ),
+    }
+    _transports_base = autoconnect().transports(_mac_transports)
 
 
 def _convert_camera_info(camera_info: Any) -> Any:
@@ -134,15 +139,17 @@ elif global_config.viewer.startswith("rerun"):
 else:
     with_vis = _transports_base
 
-unitree_go2_basic = (
-    autoconnect(
-        with_vis,
-        GO2Connection.blueprint(),
-        WebsocketVisModule.blueprint(),
-    )
-    .global_config(n_workers=4, robot_model="unitree_go2")
-    .configurators(ClockSyncConfigurator())
-)
+_include_websocket_vis = os.environ.get("DIMOS_SKIP_WEBSOCKET_VIS") != "1"
+_include_clock_sync = os.environ.get("DIMOS_SKIP_CLOCK_SYNC") != "1"
+
+_modules = [with_vis, GO2Connection.blueprint()]
+if _include_websocket_vis:
+    _modules.append(WebsocketVisModule.blueprint())
+
+unitree_go2_basic = autoconnect(*_modules).global_config(n_workers=4, robot_model="unitree_go2")
+
+if _include_clock_sync:
+    unitree_go2_basic = unitree_go2_basic.configurators(ClockSyncConfigurator())
 
 __all__ = [
     "unitree_go2_basic",

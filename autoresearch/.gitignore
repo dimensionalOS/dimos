@@ -1,0 +1,14 @@
+# transient per-run stdout (overwritten each run)
+# results.txt
+
+# legacy per-run result files (superseded by results.jsonl)
+# results/
+
+# regenerated monkeypatch scaffolding
+# _patches/
+_startup_patch.py
+
+# generated profiling artifacts
+profile.svg
+profile.prof
+profile_output.txt

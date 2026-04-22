@@ -222,6 +222,19 @@ def run(
 
     cli_config_overrides: dict[str, Any] = ctx.obj
 
+    # Apply CLI overrides to global_config BEFORE importing blueprints. Some
+    # blueprint modules (e.g. unitree_go2_basic.py) branch on
+    # global_config.viewer at module top-level, so the override must be live
+    # before autoconnect() pulls in the blueprint.
+    from dimos.core.global_config import global_config
+
+    if cli_config_overrides:
+        global_config.update(**cli_config_overrides)
+
+    # Record main pid so worker-process modules can signal graceful shutdown
+    # (used by --exit-on-eof replay to interrupt coordinator.loop()).
+    os.environ["DIMOS_MAIN_PID"] = str(os.getpid())
+
     # Clean stale registry entries
     stale = cleanup_stale()
     if stale:

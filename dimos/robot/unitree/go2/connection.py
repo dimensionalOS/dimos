@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import logging
 import sys
 from threading import Thread
@@ -19,13 +21,12 @@ import time
 from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import Field
+from reactivex import operators as ops
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
-import rerun.blueprint as rrb
 
 from dimos.agents.annotation import skill
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
-from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module, ModuleConfig
@@ -34,6 +35,7 @@ from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.spec.perception import Camera, Pointcloud
 
 if TYPE_CHECKING:
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.core.rpc_client import ModuleProxy
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -43,7 +45,13 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+import os as _os_boot
+if _os_boot.environ.get("DIMOS_REPLAY_ONLY") == "1":
+    # Skip heavy WebRTC imports — ReplayConnection stands alone.
+    class UnitreeWebRTCConnection:  # type: ignore[no-redef]
+        pass
+else:
+    from dimos.robot.unitree.connection import UnitreeWebRTCConnection
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.testing.replay import TimedSensorReplay, TimedSensorStorage
@@ -99,7 +107,7 @@ def make_connection(ip: str | None, cfg: GlobalConfig) -> Go2ConnectionProtocol:
 
     if ip in ("fake", "mock", "replay") or connection_type == "replay":
         dataset = cfg.replay_dir
-        return ReplayConnection(dataset=dataset)
+        return ReplayConnection(dataset=dataset, exit_on_eof=cfg.exit_on_eof)
     elif ip == "mujoco" or connection_type == "mujoco":
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
@@ -114,20 +122,36 @@ class ReplayConnection(UnitreeWebRTCConnection):
     def __init__(  # type: ignore[no-untyped-def]
         self,
         dataset: str = "go2_sf_office",
+        exit_on_eof: bool = False,
         **kwargs,
     ) -> None:
         self.dir_name = dataset
         get_data(self.dir_name)
+        # When exit_on_eof is set, replay streams run once and complete at EOF
+        # so the coordinator can be signalled to shut down for fixed-work benches.
+        import os as _os
+        default_loop = not exit_on_eof
+        _speed_env = _os.environ.get("DIMOS_REPLAY_SPEED")
         self.replay_config = {
-            "loop": kwargs.get("loop", True),
+            "loop": kwargs.get("loop", default_loop),
             "seek": kwargs.get("seek"),
             "duration": kwargs.get("duration"),
+            "speed": float(_speed_env) if _speed_env else kwargs.get("speed", 1.0),
         }
+        logging.getLogger(__name__).info(
+            "ReplayConnection init: dataset=%s exit_on_eof=%s loop=%s",
+            dataset,
+            exit_on_eof,
+            self.replay_config["loop"],
+        )
 
     def connect(self) -> None:
         pass
 
     def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
         pass
 
     def standup(self) -> bool:
@@ -155,6 +179,11 @@ class ReplayConnection(UnitreeWebRTCConnection):
     # we don't have raw video stream in the data set
     @simple_mcache
     def video_stream(self):  # type: ignore[no-untyped-def]
+        import os as _os
+        if _os.environ.get("DIMOS_SKIP_VIDEO_AUTOCAST") == "1":
+            video_store = TimedSensorReplay(f"{self.dir_name}/video")  # type: ignore[var-annotated]
+            return video_store.stream(**self.replay_config)
+
         # Legacy Unitree recordings can have RGB bytes that were tagged/assumed as BGR.
         # Fix at replay-time by coercing everything to RGB before publishing/logging.
         def _autocast_video(x):  # type: ignore[no-untyped-def]
@@ -201,6 +230,7 @@ class GO2Connection(Module, Camera, Pointcloud):
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
         """Return Rerun view blueprints for GO2 camera visualization."""
+        import rerun.blueprint as rrb
         return [
             rrb.Spatial2DView(
                 name="Camera",
@@ -233,31 +263,93 @@ class GO2Connection(Module, Camera, Pointcloud):
             return
         self.connection.start()
 
+        import os as _os
+        _skip_publish = _os.environ.get("DIMOS_SKIP_SENSOR_PUBLISH") == "1"
+
         def onimage(image: Image) -> None:
-            self.color_image.publish(image)
+            if not _skip_publish:
+                self.color_image.publish(image)
             self._latest_video_frame = image
 
-        self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
-        self.register_disposable(self.connection.odom_stream().subscribe(self._publish_tf))
-        self.register_disposable(self.connection.video_stream().subscribe(onimage))
-        self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
+        lidar_stream = self.connection.lidar_stream()
+        odom_stream = self.connection.odom_stream()
+        video_stream = self.connection.video_stream()
 
-        self._camera_info_thread = Thread(
-            target=self.publish_camera_info,
-            daemon=True,
+        logging.getLogger(__name__).info(
+            "GO2Connection.start: exit_on_eof=%s", self.config.g.exit_on_eof
         )
-        self._camera_info_thread.start()
+        if self.config.g.exit_on_eof:
+            import os
+            import signal
+            import threading
 
-        self.standup()
-        time.sleep(3)
-        self.connection.balance_stand()
-        self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
+            pending = {"count": 3}
+            lock = threading.Lock()
+            main_pid_str = os.environ.get("DIMOS_MAIN_PID")
+            main_pid = int(main_pid_str) if main_pid_str else os.getppid()
+
+            def _on_stream_complete(name: str) -> None:
+                with lock:
+                    pending["count"] -= 1
+                    remaining = pending["count"]
+                logging.getLogger(__name__).info(
+                    "replay stream completed (%s); %d remaining", name, remaining
+                )
+                if remaining == 0:
+                    logging.getLogger(__name__).info(
+                        "all replay streams reached EOF; signalling main process pid=%d",
+                        main_pid,
+                    )
+                    try:
+                        os.kill(main_pid, signal.SIGINT)
+                    except ProcessLookupError:
+                        pass
+
+            lidar_stream = lidar_stream.pipe(
+                ops.do_action(on_completed=lambda: _on_stream_complete("lidar"))
+            )
+            odom_stream = odom_stream.pipe(
+                ops.do_action(on_completed=lambda: _on_stream_complete("odom"))
+            )
+            video_stream = video_stream.pipe(
+                ops.do_action(on_completed=lambda: _on_stream_complete("video"))
+            )
+
+        _skip_tf = _os.environ.get("DIMOS_SKIP_TF") == "1"
+        _lidar_sub = (lambda _m: None) if _skip_publish else self.lidar.publish
+        _odom_sub = (lambda _m: None) if (_skip_publish and _skip_tf) else self._publish_tf
+        self.register_disposable(lidar_stream.subscribe(_lidar_sub))
+        self.register_disposable(odom_stream.subscribe(_odom_sub))
+        self.register_disposable(video_stream.subscribe(onimage))
+        if _os.environ.get("DIMOS_SKIP_CMDVEL_SUB") != "1":
+            self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
+
+        _ci_mode = _os.environ.get("DIMOS_CAMERA_INFO_MODE")
+        if _ci_mode == "skip":
+            self._camera_info_thread = None
+        elif _ci_mode == "once":
+            self.publish_camera_info()
+            self._camera_info_thread = None
+        else:
+            self._camera_info_thread = Thread(
+                target=self.publish_camera_info,
+                daemon=True,
+            )
+            self._camera_info_thread.start()
+
+        if _os.environ.get("DIMOS_SKIP_ROBOT_INIT") != "1":
+            self.standup()
+            time.sleep(3)
+            self.connection.balance_stand()
+            self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
         # self.record("go2_bigoffice")
 
     @rpc
     def stop(self) -> None:
-        self.liedown()
+        import os as _os
+        if _os.environ.get("DIMOS_SKIP_ROBOT_INIT") != "1":
+            self.liedown()
 
         if self.connection:
             self.connection.stop()
@@ -292,15 +384,25 @@ class GO2Connection(Module, Camera, Pointcloud):
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        transforms = self._odom_to_tf(msg)
-        self.tf.publish(*transforms)
-        if self.odom.transport:
+        import os as _os
+        if _os.environ.get("DIMOS_SKIP_TF") != "1":
+            transforms = self._odom_to_tf(msg)
+            self.tf.publish(*transforms)
+        if self.odom.transport and _os.environ.get("DIMOS_SKIP_SENSOR_PUBLISH") != "1":
             self.odom.publish(msg)
 
     def publish_camera_info(self) -> None:
+        import os as _os
+        mode = _os.environ.get("DIMOS_CAMERA_INFO_MODE", "default")
+        if mode == "skip":
+            return
+        if mode == "once":
+            self.camera_info.publish(self.camera_info_static)
+            return
+        interval = 10.0 if mode == "slow" else 1.0
         while True:
             self.camera_info.publish(self.camera_info_static)
-            time.sleep(1.0)
+            time.sleep(interval)
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> bool:

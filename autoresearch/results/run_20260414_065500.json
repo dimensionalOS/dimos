@@ -1,0 +1,15 @@
+{
+  "score": 0.414,
+  "real": 5.00560167900403,
+  "user": 0.364,
+  "sys": 0.05,
+  "ttfm": -1.0,
+  "peak_cpu_pct": 0.0,
+  "peak_memory_mb": 0.0,
+  "avg_threads": 0,
+  "total_io_read_mb": 0.0,
+  "total_io_write_mb": 0.0,
+  "context_switches": 0,
+  "validation": "FAIL",
+  "validation_detail": "exit code 1"
+}

@@ -1,0 +1,24 @@
+OPTIMIZATIONS: applied (cli_args=[], env_keys=['DIMOS_LOG_LEVEL', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'DIMOS_SKIP_WEBSOCKET_VIS', 'DIMOS_SKIP_CLOCK_SYNC', 'DIMOS_LAZY_ASYNCIO', 'DIMOS_CAMERA_INFO_MODE', 'DIMOS_SKIP_ROBOT_INIT', 'DIMOS_DISABLE_GC', 'DIMOS_REPLAY_ONLY', 'MALLOC_ARENA_MAX'], startup_code=no)
+RUNNING: time test-venv/bin/dimos --replay --viewer=none --exit-on-eof --replay-dir=unitree_go2_bigoffice run unitree-go2
+TIMEOUT: 600s
+TTFM: first message detected at 5.01s
+TIMING: user=19.97s sys=87.49s wall=304.70s
+TIMING: avg_cpu=0.0% peak_cpu=0.0%
+TIMING: score (user+sys) = 107.47s
+TIMING: ttfm = 5.01s
+
+==================================================
+SCORE: 107.47
+TTFM: 5.01
+VALIDATION: PASS (basic (process exited cleanly))
+REAL: 304.70
+USER: 19.97
+SYS: 87.49
+PEAK_CPU_PCT: 0.0
+PEAK_MEMORY_MB: 2721.9
+AVG_THREADS: 135.8
+IO_READ_MB: 1942.3
+IO_WRITE_MB: 0.0
+CTX_SWITCHES: 24576
+==================================================
+SAVED: /home/ruthwik/Documents/dimos/autoresearch/results/run_20260414_165555.json
