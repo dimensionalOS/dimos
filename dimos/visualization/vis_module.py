@@ -17,7 +17,7 @@
 
 from typing import Any
 
-from dimos.core.blueprints import Blueprint, autoconnect
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.global_config import ViewerBackend
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 

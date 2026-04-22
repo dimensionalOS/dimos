@@ -45,7 +45,7 @@ class ScanCorrectorConfig(ModuleConfig):
     """XY grid resolution (metres) for z-column clearing."""
 
 
-class ScanCorrector(Module[ScanCorrectorConfig]):
+class ScanCorrector(Module):
     """Overlay PGO-corrected lidar scans onto PGO's global map.
 
     Inputs:
@@ -59,6 +59,7 @@ class ScanCorrector(Module[ScanCorrectorConfig]):
                        replaced by the latest corrected lidar frame.
     """
 
+    config: ScanCorrectorConfig
     default_config = ScanCorrectorConfig
 
     registered_scan: In[PointCloud2]

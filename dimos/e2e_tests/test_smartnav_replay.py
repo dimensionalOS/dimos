@@ -28,11 +28,11 @@ import time
 
 import pytest
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
-from dimos.mapping.costmapper import cost_mapper
-from dimos.mapping.voxels import VoxelGridMapper, voxel_mapper
+from dimos.mapping.costmapper import CostMapper
+from dimos.mapping.voxels import VoxelGridMapper
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -70,8 +70,8 @@ def smartnav_coordinator():
         autoconnect(
             unitree_go2_basic,
             PGO.blueprint(),
-            voxel_mapper(voxel_size=0.1),
-            cost_mapper(),
+            VoxelGridMapper.blueprint(voxel_size=0.1),
+            CostMapper.blueprint(),
         )
         .global_config(
             n_workers=1,

@@ -54,7 +54,7 @@ class Config(ModuleConfig):
     port: int = 3030
 
 
-class RerunWebSocketServer(Module[Config]):
+class RerunWebSocketServer(Module):
     """Receives dimos-viewer WebSocket events and publishes them as DimOS streams.
 
     The viewer connects to this module (not the other way around) when running
@@ -67,6 +67,7 @@ class RerunWebSocketServer(Module[Config]):
         tele_cmd_vel: Twist velocity commands from keyboard teleop, including stop events.
     """
 
+    config: Config
     default_config = Config
 
     clicked_point: Out[PointStamped]

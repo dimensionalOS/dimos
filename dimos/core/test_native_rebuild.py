@@ -57,7 +57,8 @@ class _RebuildConfig(NativeModuleConfig):
     rebuild_on_change: list[PathEntry] | None = None
 
 
-class _RebuildModule(NativeModule[_RebuildConfig]):
+class _RebuildModule(NativeModule):
+    config: _RebuildConfig
     default_config = _RebuildConfig
 
 
