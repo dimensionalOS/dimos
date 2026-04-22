@@ -129,7 +129,7 @@ class TestGetTransportForBranching:
 
     def test_zenoh_raises_when_not_available(self, mocker) -> None:
         mocker.patch.object(global_config, "transport", "zenoh")
-        mocker.patch("dimos.core.transport.ZENOH_AVAILABLE", False)
+        mocker.patch("dimos.core.coordination.module_coordinator.ZENOH_AVAILABLE", False)
 
         bp = self._make_blueprint()
         with pytest.raises(RuntimeError, match="eclipse-zenoh is not installed"):

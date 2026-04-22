@@ -46,8 +46,8 @@ class ZenohConfig(BaseConfig):
         return f"{self.mode}|{json.dumps(sorted(self.connect))}|{json.dumps(sorted(self.listen))}"
 
 
-class ZenohService(Service[ZenohConfig]):
-    default_config = ZenohConfig
+class ZenohService(Service):
+    config: ZenohConfig
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
