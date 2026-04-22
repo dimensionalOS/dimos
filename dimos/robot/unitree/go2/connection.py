@@ -58,14 +58,7 @@ logger = logging.getLogger(__name__)
 
 class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
-    rage_mode: bool = Field(
-        default=False,
-        description=(
-            "Enable Rage Mode on connect. Toggles FsmRageMode via mcf AI "
-            "controller (api_id 2059) + SwitchJoystick. Widens forward "
-            "envelope to ~2.5 m/s. See data/notes/go2_firmware_modes.md."
-        ),
-    )
+    rage_mode: bool = False
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -81,7 +74,7 @@ class Go2ConnectionProtocol(Protocol):
     def liedown(self) -> bool: ...
     def balance_stand(self) -> bool: ...
     def set_obstacle_avoidance(self, enabled: bool = True) -> None: ...
-    def set_rage_mode(self, enable: bool) -> bool: ...
+    def enable_rage_mode(self) -> bool: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
 
 
@@ -151,7 +144,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
 
-    def set_rage_mode(self, enable: bool) -> bool:
+    def enable_rage_mode(self) -> bool:
         return True
 
     @simple_mcache
@@ -263,10 +256,11 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.standup()
         time.sleep(3)
         self.connection.balance_stand()
-        self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
         if self.config.rage_mode:
-            self.connection.set_rage_mode(True)
+            self.connection.enable_rage_mode()
+
+        self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
         # self.record("go2_bigoffice")
 
@@ -331,6 +325,13 @@ class GO2Connection(Module, Camera, Pointcloud):
     def liedown(self) -> bool:
         """Make the robot lie down."""
         return self.connection.liedown()
+
+    @rpc
+    def enable_rage_mode(self) -> bool:
+        """Enable Rage Mode (~2.5 m/s forward velocity envelope)."""
+        result = self.connection.enable_rage_mode()
+        logger.info("Rage Mode enabled")
+        return result
 
     @rpc
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:

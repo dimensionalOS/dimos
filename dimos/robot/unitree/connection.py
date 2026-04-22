@@ -298,31 +298,23 @@ class UnitreeWebRTCConnection(Resource):
         """Activate FreeWalk locomotion mode — enables walking and velocity commands."""
         return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["FreeWalk"]}))
 
-    def set_rage_mode(self, enable: bool) -> bool:
-        """Toggle Rage Mode on the Go2 via WebRTC"""
+    def enable_rage_mode(self) -> bool:
+        """Enable Rage Mode on the Go2 via WebRTC.
+        Assumes the robot is already in BalanceStand.
+        """
         self.publish_request(
             RTC_TOPIC["SPORT_MOD"],
-            {"api_id": SPORT_CMD["BalanceStand"]},
+            {"api_id": self._SPORT_API_ID_RAGEMODE, "parameter": {"data": True}},
         )
-        time.sleep(0.3)
-
-        self.publish_request(
-            RTC_TOPIC["SPORT_MOD"],
-            {"api_id": self._SPORT_API_ID_RAGEMODE, "parameter": {"data": bool(enable)}},
-        )
-
-        if enable:
-            time.sleep(2.0)
+        time.sleep(2.0)
 
         self.publish_request(
             RTC_TOPIC["SPORT_MOD"],
             {
                 "api_id": SPORT_CMD["SwitchJoystick"],
-                "parameter": {"data": bool(enable)},
+                "parameter": {"data": True},
             },
         )
-
-        print(f"[Go2 WebRTC] Rage Mode {'enabled' if enable else 'disabled'}")
         return True
 
     def liedown(self) -> bool:

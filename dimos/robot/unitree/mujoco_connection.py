@@ -241,8 +241,7 @@ class MujocoConnection:
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
 
-    def set_rage_mode(self, enable: bool) -> bool:
-        # No Rage equivalent in simulation — stub the protocol surface.
+    def enable_rage_mode(self) -> bool:
         return True
 
     def get_video_frame(self) -> NDArray[Any] | None:
