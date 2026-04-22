@@ -49,3 +49,14 @@ responses:
       `dimos_check_message()`, `dimos_message_topic()`, `dimos_message_data()`,
       `dimos_message_len()`. Removed references to nonexistent `dimos_poll()`
       and `dimos_on_receive()`.
+
+  - comment_id: 4272491345
+    author: leshy
+    path: null
+    body: >
+      Architectural feedback requiring in-person discussion. Key points from
+      leshy: (1) use dimos-lcm cpp encoder/decoder for serial instead of custom
+      DSP framing — LCM proto gives pubsub, topic encoding, packets for serial,
+      (2) same cpp API on arduino side with subscribe pattern and hardware
+      interrupt-based message parsing, (3) separate comms from autobuilds.
+      Needs Jeff's response after in-person discussion with leshy.
