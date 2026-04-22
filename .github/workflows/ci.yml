@@ -21,6 +21,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+      GIT_LFS_SKIP_SMUDGE: "1"
 
     steps:
       - uses: actions/checkout@v5
