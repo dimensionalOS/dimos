@@ -376,6 +376,10 @@ class ModuleBase(Configurable, CompositeResource):
 
 
 class Module(ModuleBase):
+    def __class_getitem__(cls, item: Any) -> type:
+        """Allow Module[Config] syntax for backwards compatibility."""
+        return cls
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Set class-level None attributes for In/Out type annotations.
 

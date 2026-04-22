@@ -18,6 +18,7 @@ from abc import abstractmethod
 from collections import deque
 from dataclasses import field
 from functools import reduce
+from typing import Any
 
 from dimos.memory.timeseries.inmemory import InMemoryStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -36,6 +37,10 @@ class TFConfig(BaseConfig):
 
 # generic specification for transform service
 class TFSpec(Service):
+    def __class_getitem__(cls, item: Any) -> type:
+        """Allow TFSpec[T] syntax for backwards compatibility."""
+        return cls
+
     config: TFConfig
 
     @abstractmethod
