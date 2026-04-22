@@ -29,6 +29,7 @@ from typing import (
 )
 
 from pydantic import Field
+from reactivex.disposable import CompositeDisposable
 
 from dimos.core.core import T, rpc
 from dimos.core.global_config import GlobalConfig, global_config
