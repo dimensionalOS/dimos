@@ -123,6 +123,25 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _wait_for_mcp(url: str, timeout: float = 4.0) -> requests.Response:
+    """Poll *url* until it answers an ``initialize`` RPC or *timeout* expires."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            resp = requests.post(
+                url,
+                json={"jsonrpc": "2.0", "method": "initialize", "id": 1},
+                timeout=0.5,
+            )
+            if resp.status_code == 200:
+                return resp
+        except requests.ConnectionError:
+            pass
+        if time.monotonic() >= deadline:
+            raise AssertionError("McpServer did not become ready")
+        time.sleep(0.1)
+
+
 def test_mcp_server_lifecycle() -> None:
     """Start a real McpServer, hit the HTTP endpoint, then stop it.
 
@@ -133,30 +152,16 @@ def test_mcp_server_lifecycle() -> None:
 
     server = McpServer()
     server._start_server(port=port)
-    url = f"http://127.0.0.1:{port}/mcp"
+    try:
+        url = f"http://127.0.0.1:{port}/mcp"
+        resp = _wait_for_mcp(url)
 
-    # Wait for the server to be ready
-    for _ in range(40):
-        try:
-            resp = requests.post(
-                url,
-                json={"jsonrpc": "2.0", "method": "initialize", "id": 1},
-                timeout=0.5,
-            )
-            if resp.status_code == 200:
-                break
-        except requests.ConnectionError:
-            time.sleep(0.1)
-    else:
+        # Verify it responds
+        data = resp.json()
+        assert data["result"]["serverInfo"]["name"] == "dimensional"
+    finally:
         server.stop()
-        raise AssertionError("McpServer did not become ready")
 
-    # Verify it responds
-    data = resp.json()
-    assert data["result"]["serverInfo"]["name"] == "dimensional"
-
-    # Stop and verify it shuts down
-    server.stop()
     time.sleep(0.3)
 
     with socket.socket() as s:
@@ -164,7 +169,6 @@ def test_mcp_server_lifecycle() -> None:
         try:
             s.connect(("127.0.0.1", port))
             s.close()
-            # If we could connect, the server is still up — that's a bug
             raise AssertionError("McpServer still listening after stop()")
         except ConnectionRefusedError:
             pass  # expected — server is down
