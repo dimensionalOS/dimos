@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import Enum
 import logging
 import sys
 from threading import Thread
@@ -56,9 +57,14 @@ else:
 logger = logging.getLogger(__name__)
 
 
+class Go2Mode(str, Enum):
+    DEFAULT = "default"
+    RAGE = "rage"
+
+
 class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
-    rage_mode: bool = False
+    mode: Go2Mode = Go2Mode.DEFAULT
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -257,7 +263,7 @@ class GO2Connection(Module, Camera, Pointcloud):
         time.sleep(3)
         self.connection.balance_stand()
 
-        if self.config.rage_mode:
+        if self.config.mode == Go2Mode.RAGE:
             self.connection.enable_rage_mode()
 
         self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)

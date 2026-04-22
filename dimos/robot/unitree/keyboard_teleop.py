@@ -29,10 +29,10 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 # Force X11 driver to avoid OpenGL threading issues
 os.environ["SDL_VIDEODRIVER"] = "x11"
 
-DEFAULT_LINEAR_SPEED: float = 0.5  # m/s, WASD/QE base magnitude
-DEFAULT_ANGULAR_SPEED: float = 0.8  # rad/s, A/D yaw-rate magnitude
-DEFAULT_BOOST_MULTIPLIER: float = 2.0  # Shift multiplier
-DEFAULT_SLOW_MULTIPLIER: float = 0.5  # Ctrl multiplier
+DEFAULT_LINEAR_SPEED: float = 0.5  # m/s
+DEFAULT_ANGULAR_SPEED: float = 0.8  # rad/s
+DEFAULT_BOOST_MULTIPLIER: float = 2.0
+DEFAULT_SLOW_MULTIPLIER: float = 0.5
 
 
 class KeyboardTeleop(Module):
