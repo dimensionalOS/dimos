@@ -81,7 +81,7 @@ class JacobianIK:
         damping: float = 0.05,
         max_iterations: int = 200,
         singularity_threshold: float = 1e-6,
-    ):
+    ) -> None:
         """Create Jacobian IK solver.
 
         Args:

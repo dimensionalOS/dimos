@@ -7,7 +7,7 @@ from dimos.rxpy_backpressure.observer import Observer
 
 
 class DropBackPressureStrategy(Observer):
-    def __init__(self, wrapped_observer: Observer, cache_size: int):
+    def __init__(self, wrapped_observer: Observer, cache_size: int) -> None:
         self.wrapped_observer: Observer = wrapped_observer
         self.__function_runner = thread_function_runner
         self.__lock: Lock = BooleanLock()
@@ -15,7 +15,7 @@ class DropBackPressureStrategy(Observer):
         self.__message_cache: list = []
         self.__error_cache: list = []
 
-    def on_next(self, message):
+    def on_next(self, message) -> None:
         if self.__lock.is_locked():
             self.__update_cache(self.__message_cache, message)
         else:
@@ -23,14 +23,14 @@ class DropBackPressureStrategy(Observer):
             self.__function_runner(self, self.__on_next, message)
 
     @staticmethod
-    def __on_next(self, message: any):
+    def __on_next(self, message: any) -> None:
         self.wrapped_observer.on_next(message)
         if len(self.__message_cache) > 0:
             self.__function_runner(self, self.__on_next, self.__message_cache.pop(0))
         else:
             self.__lock.unlock()
 
-    def on_error(self, error: any):
+    def on_error(self, error: any) -> None:
         if self.__lock.is_locked():
             self.__update_cache(self.__error_cache, error)
         else:
@@ -38,21 +38,21 @@ class DropBackPressureStrategy(Observer):
             self.__function_runner(self, self.__on_error, error)
 
     @staticmethod
-    def __on_error(self, error: any):
+    def __on_error(self, error: any) -> None:
         self.wrapped_observer.on_error(error)
         if len(self.__error_cache) > 0:
             self.__function_runner(self, self.__on_error, self.__error_cache.pop(0))
         else:
             self.__lock.unlock()
 
-    def __update_cache(self, cache: list, item: Any):
+    def __update_cache(self, cache: list, item: Any) -> None:
         if self.__cache_size is None or len(cache) < self.__cache_size:
             cache.append(item)
         else:
             cache.pop(0)
             cache.append(item)
 
-    def on_completed(self):
+    def on_completed(self) -> None:
         self.wrapped_observer.on_completed()
 
     def is_locked(self):

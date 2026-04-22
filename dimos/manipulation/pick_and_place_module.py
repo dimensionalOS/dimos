@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 from dimos.agents.annotation import skill
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
-from dimos.core.docker_runner import DockerModule as DockerRunner
+from dimos.core.docker_module import DockerModuleProxy as DockerRunner
 from dimos.core.stream import In
 from dimos.manipulation.grasping.graspgen_module import GraspGenModule
 from dimos.manipulation.manipulation_module import (
@@ -94,9 +94,6 @@ class PickAndPlaceModule(ManipulationModule):
     - @skill: pick, place, place_back, pick_and_place, scan_objects, get_scene_info
     """
 
-    default_config = PickAndPlaceModuleConfig
-
-    # Type annotation for the config attribute (mypy uses this)
     config: PickAndPlaceModuleConfig
 
     # Input: Objects from perception (for obstacle integration)
@@ -123,7 +120,7 @@ class PickAndPlaceModule(ManipulationModule):
 
         # Subscribe to objects port for perception obstacle integration
         if self.objects is not None:
-            self.objects.observable().subscribe(self._on_objects)  # type: ignore[no-untyped-call]
+            self.objects.observable().subscribe(self._on_objects)
             logger.info("Subscribed to objects port (async)")
 
         # Start obstacle monitor for perception integration
@@ -287,9 +284,17 @@ class PickAndPlaceModule(ManipulationModule):
 
         # First pass: match by object_id (supports both full and truncated IDs)
         if object_id:
-            for det in self._detection_snapshot:
-                if det.object_id == object_id or det.object_id.startswith(object_id):
-                    return det
+            matches = [
+                det
+                for det in self._detection_snapshot
+                if det.object_id == object_id or det.object_id.startswith(object_id)
+            ]
+            if len(matches) == 1:
+                return matches[0]
+            if len(matches) > 1:
+                ids = [det.object_id for det in matches]
+                logger.warning(f"Ambiguous object_id prefix '{object_id}' matches {ids}")
+                return None
 
         # Second pass: match by name
         for det in self._detection_snapshot:

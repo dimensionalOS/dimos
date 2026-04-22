@@ -18,7 +18,7 @@ import platform
 from typing import Any
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import pSHMTransport
 from dimos.msgs.sensor_msgs.Image import Image
@@ -48,10 +48,6 @@ def _convert_camera_info(camera_info: Any) -> Any:
     )
 
 
-def _convert_global_map(grid: Any) -> Any:
-    return grid.to_rerun(voxel_size=0.1, mode="boxes")
-
-
 def _convert_navigation_costmap(grid: Any) -> Any:
     return grid.to_rerun(
         colormap="Accent",
@@ -74,14 +70,24 @@ def _static_base_link(rr: Any) -> list[Any]:
 
 def _go2_rerun_blueprint() -> Any:
     """Split layout: camera feed + 3D world view side by side."""
+    import rerun as rr
     import rerun.blueprint as rrb
 
     return rrb.Blueprint(
         rrb.Horizontal(
             rrb.Spatial2DView(origin="world/color_image", name="Camera"),
-            rrb.Spatial3DView(origin="world", name="3D"),
+            rrb.Spatial3DView(
+                origin="world",
+                name="3D",
+                background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
+                line_grid=rrb.LineGrid3D(
+                    plane=rr.components.Plane3D.XY.with_distance(0.5),
+                ),
+            ),
             column_shares=[1, 2],
         ),
+        rrb.TimePanel(state="hidden"),
+        rrb.SelectionPanel(state="hidden"),
     )
 
 
@@ -97,8 +103,12 @@ rerun_config = {
     # This is unsustainable once we move to multi robot etc
     "visual_override": {
         "world/camera_info": _convert_camera_info,
-        "world/global_map": _convert_global_map,
         "world/navigation_costmap": _convert_navigation_costmap,
+    },
+    "max_hz": {
+        "world/global_map": 0,  # publishes at ~7.8 Hz
+        "world/color_image": 0,  # publishes at ~14 Hz
+        "world/global_costmap": 0,  # publishes at ~7.6 Hz
     },
     # slapping a go2 shaped box on top of tf/base_link
     "static": {

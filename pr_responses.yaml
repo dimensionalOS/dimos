@@ -1,0 +1,26 @@
+- pr: 1663
+  comment_id: 3002702496
+  author: paul-nechifor
+  file: dimos/agents/mcp/test_mcp_server.py
+  line: 120
+  problem: "This _free_port() helper already exists as _find_free_port in the codebase. Don't add a 4th copy."
+  solution: "The inline _free_port() duplicates existing helpers. Should use the shared _find_free_port or paul's fixture. Not fixed in this pass — the test file wasn't part of the merge conflict."
+  commit: null
+
+- pr: 1663
+  comment_id: 3002714331
+  author: paul-nechifor
+  file: dimos/agents/mcp/test_mcp_server.py
+  line: 149
+  problem: "Stash already has 3 instances of wait_for_mcp — don't add a 4th inlined."
+  solution: "The inlined polling loop duplicates existing wait_for_mcp functions. Should use the shared version. Not fixed — same reason."
+  commit: null
+
+- pr: 1663
+  comment_id: 3002720334
+  author: paul-nechifor
+  file: dimos/agents/mcp/test_mcp_server.py
+  line: 159
+  problem: "The server should be stopped even if the test fails. Use a fixture."
+  solution: "The test creates the MCP server inline without try/finally or a fixture. Should use a pytest fixture for reliable cleanup. Not fixed — same reason."
+  commit: null

@@ -21,12 +21,13 @@ import signal
 import sys
 from typing import TYPE_CHECKING
 
+from dimos.core.coordination.process_lifecycle import kill_run_processes
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from dimos.core.module_coordinator import ModuleCoordinator
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
     from dimos.core.run_registry import RunEntry
 
 logger = setup_logger()
@@ -74,8 +75,18 @@ def daemonize(log_dir: Path) -> None:
     devnull.close()
 
 
-def install_signal_handlers(entry: RunEntry, coordinator: ModuleCoordinator) -> None:
-    """Install SIGTERM/SIGINT handlers that stop the coordinator and clean the registry."""
+def install_signal_handlers(
+    entry: RunEntry,
+    coordinator: ModuleCoordinator,
+    *,
+    sigint: bool = True,
+) -> None:
+    """Install SIGTERM/SIGINT handlers that stop the coordinator and clean the registry.
+
+    When `sigint` is False, only SIGTERM is wired. This is useful for foreground
+    mode where the default SIGINT behavior (`KeyboardInterrupt`) should be
+    preserved so Ctrl+C produces a visible traceback.
+    """
 
     def _shutdown(signum: int, frame: object) -> None:
         logger.info("Received signal, shutting down", signal=signum)
@@ -83,8 +94,13 @@ def install_signal_handlers(entry: RunEntry, coordinator: ModuleCoordinator) -> 
             coordinator.stop()
         except Exception:
             logger.error("Error during coordinator stop", exc_info=True)
+        try:
+            kill_run_processes(entry.run_id)
+        except Exception:
+            logger.error("Error during run-process sweep", exc_info=True)
         entry.remove()
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, _shutdown)
-    signal.signal(signal.SIGINT, _shutdown)
+    if sigint:
+        signal.signal(signal.SIGINT, _shutdown)

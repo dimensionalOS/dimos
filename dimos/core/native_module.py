@@ -27,15 +27,16 @@ Example usage::
         some_param: float = 1.0
 
     class MyCppModule(NativeModule):
-        default_config = MyConfig
+        config: MyConfig
         pointcloud: Out[PointCloud2]
         cmd_vel: In[Twist]
 
     # Works with autoconnect, remappings, etc.
-    autoconnect(
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    ModuleCoordinator.build(autoconnect(
         MyCppModule.blueprint(),
         SomeConsumer.blueprint(),
-    ).build().loop()
+    )).loop()
 """
 
 from __future__ import annotations
@@ -111,10 +112,10 @@ class NativeModuleConfig(ModuleConfig):
 _NativeConfig = TypeVar("_NativeConfig", bound=NativeModuleConfig, default=NativeModuleConfig)
 
 
-class NativeModule(Module[_NativeConfig]):
+class NativeModule(Module):
     """Module that wraps a native executable as a managed subprocess.
 
-    Subclass this, declare In/Out ports, and set ``default_config`` to a
+    Subclass this, declare In/Out ports, and annotate ``config`` with a
     :class:`NativeModuleConfig` subclass pointing at the executable.
 
     On ``start()``, the binary is launched with CLI args::

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from dimos.models.embedding.base import Embedding
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 T = TypeVar("T")
 
@@ -51,6 +52,15 @@ class Observation(Generic[T]):
     _data_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     @property
+    def pose_stamped(self) -> PoseStamped:
+        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+
+        if self.pose is None:
+            raise LookupError("No pose set on this observation")
+        x, y, z, qx, qy, qz, qw = self.pose
+        return PoseStamped(ts=self.ts, position=(x, y, z), orientation=(qx, qy, qz, qw))
+
+    @property
     def data(self) -> T:
         val = self._data
         if isinstance(val, _Unloaded):
@@ -64,7 +74,7 @@ class Observation(Generic[T]):
                     self._data = loaded
                     self._loader = None  # release closure
                     return loaded
-            return val  # type: ignore[return-value]
+            return val
         return val
 
     def derive(self, *, data: Any, **overrides: Any) -> Observation[Any]:

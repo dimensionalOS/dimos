@@ -1,0 +1,210 @@
+name: docker-build
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'docker/**'
+      - '.github/workflows/docker-build.yml'
+      - '.github/workflows/_docker-build-template.yml'
+  schedule:
+    - cron: '0 4 * * 1' # Weekly Monday 4am UTC for base image security patches
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  check-changes:
+    runs-on: [self-hosted, Linux]
+    outputs:
+      ros:        ${{ steps.force.outputs.force == 'true' && 'true' || steps.filter.outputs.ros }}
+      python:     ${{ steps.force.outputs.force == 'true' && 'true' || steps.filter.outputs.python }}
+      dev:        ${{ steps.force.outputs.force == 'true' && 'true' || steps.filter.outputs.dev }}
+      navigation: ${{ steps.force.outputs.force == 'true' && 'true' || steps.filter.outputs.navigation }}
+      branch-tag: ${{ steps.set-tag.outputs.branch_tag }}
+    steps:
+      - name: Fix permissions
+        run: |
+          sudo chown -R $USER:$USER ${{ github.workspace }} || true
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check if full rebuild
+        id: force
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" || "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "force=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "force=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: filter
+        if: steps.force.outputs.force != 'true'
+        uses: dorny/paths-filter@v4
+        with:
+          base: ${{ github.event.before }}
+          filters: |
+            ros:
+              - .github/workflows/_docker-build-template.yml
+              - .github/workflows/docker-build.yml
+              - docker/ros/**
+
+            python:
+              - .github/workflows/_docker-build-template.yml
+              - .github/workflows/docker-build.yml
+              - docker/python/**
+
+            dev:
+              - docker/dev/**
+
+            navigation:
+              - .github/workflows/_docker-build-template.yml
+              - .github/workflows/docker-build.yml
+              - docker/navigation/**
+
+      - name: Determine Branch Tag
+        id: set-tag
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            main) branch_tag="latest" ;;
+            dev)    branch_tag="dev"    ;;
+            *)
+              branch_tag=$(echo "${GITHUB_REF_NAME}" \
+                  | tr '[:upper:]' '[:lower:]' \
+                  | sed -E 's#[^a-z0-9_.-]+#_#g' \
+                  | sed -E 's#^-+|-+$##g')
+              ;;
+          esac
+          echo "branch tag determined: ${branch_tag}"
+          echo branch_tag="${branch_tag}" >> "$GITHUB_OUTPUT"
+
+  ros:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.ros == 'true'
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      should-run: true
+      from-image: ubuntu:22.04
+      to-image: ghcr.io/dimensionalos/ros:${{ needs.check-changes.outputs.branch-tag }}
+      dockerfile:  ros
+
+  ros-python:
+    needs: [check-changes, ros]
+    if: always()
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      should-run: ${{
+        needs.check-changes.outputs.python == 'true' &&
+        needs.check-changes.result != 'error' &&
+        needs.ros.result != 'error'
+        }}
+
+      from-image: ghcr.io/dimensionalos/ros:${{ needs.ros.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      to-image: ghcr.io/dimensionalos/ros-python:${{ needs.check-changes.outputs.branch-tag }}
+      dockerfile:  python
+
+  python:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.python == 'true'
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      should-run: true
+      dockerfile:  python
+      from-image: ubuntu:22.04
+      to-image: ghcr.io/dimensionalos/python:${{ needs.check-changes.outputs.branch-tag }}
+
+  dev:
+    needs: [check-changes, python]
+    if: always()
+
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      should-run: ${{
+        needs.check-changes.result == 'success' &&
+        ((needs.python.result == 'success') ||
+        (needs.python.result == 'skipped' &&
+        needs.check-changes.outputs.dev == 'true')) }}
+      from-image: ghcr.io/dimensionalos/python:${{ needs.python.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      to-image: ghcr.io/dimensionalos/dev:${{ needs.check-changes.outputs.branch-tag }}
+      dockerfile: dev
+
+  navigation:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.navigation == 'true'
+    runs-on: [self-hosted, Linux]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Fix permissions
+        run: |
+          sudo chown -R $USER:$USER ${{ github.workspace }} || true
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Checkout ros-navigation-autonomy-stack
+        uses: actions/checkout@v5
+        with:
+          repository: dimensionalOS/ros-navigation-autonomy-stack
+          ref: fastlio2
+          path: docker/navigation/ros-navigation-autonomy-stack
+          fetch-depth: 1
+          lfs: false
+          token: ${{ secrets.NAV_REPO_READ_TOKEN }}
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: crazy-max/ghaction-github-runtime@v3
+
+      - uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          install: true
+          use: true
+
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          context: .
+          file: docker/navigation/Dockerfile
+          tags: ghcr.io/dimensionalos/navigation:${{ needs.check-changes.outputs.branch-tag }}
+          cache-from: type=gha,scope=navigation
+          cache-to: type=gha,mode=max,scope=navigation
+          build-args: |
+            ROS_DISTRO=humble
+
+  ros-dev:
+    needs: [check-changes, ros-python]
+    if: always()
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      should-run: ${{
+        needs.check-changes.result == 'success' &&
+        (needs.check-changes.outputs.dev == 'true' ||
+         (needs.ros-python.result == 'success' && (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.ros == 'true')))
+        }}
+      from-image: ghcr.io/dimensionalos/ros-python:${{ needs.ros-python.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      to-image: ghcr.io/dimensionalos/ros-dev:${{ needs.check-changes.outputs.branch-tag }}
+      dockerfile: dev
+
+  build-complete:
+    needs: [check-changes, ros, python, ros-python, dev, ros-dev, navigation]
+    runs-on: [self-hosted, Linux]
+    if: always()
+    steps:
+      - name: Build gate
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "One or more build jobs failed or were cancelled"
+          exit 1
+      - name: Build passed
+        run: echo "All build jobs passed or were intentionally skipped"

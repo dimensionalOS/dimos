@@ -537,7 +537,7 @@ def _make_yourarm_config(
 
     return RobotModelConfig(
         name=name,
-        urdf_path=_YOURARM_URDF_PATH,
+        model_path=_YOURARM_URDF_PATH,
         base_pose=_make_base_pose(y=y_offset),
         joint_names=joint_names,
         end_effector_link="link6",      # Last link in your URDF's kinematic chain
@@ -574,7 +574,7 @@ yourarm_planner = manipulation_module(
 
 | Field | Description |
 |-------|-------------|
-| `urdf_path` | Path to `.urdf` or `.xacro` file |
+| `model_path` | Path to `.urdf` or `.xacro` file |
 | `joint_names` | Ordered list of controlled joints (must match URDF) |
 | `end_effector_link` | Link to use as the end-effector for IK |
 | `base_link` | Root link of the robot model |

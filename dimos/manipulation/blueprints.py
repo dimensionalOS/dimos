@@ -28,254 +28,33 @@ Quick start:
 """
 
 import math
-from pathlib import Path
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
-from dimos.control.components import HardwareComponent, HardwareType, make_joints
-from dimos.control.coordinator import ControlCoordinator, TaskConfig
-from dimos.core.blueprints import autoconnect
+from dimos.control.coordinator import ControlCoordinator
+from dimos.core.coordination.blueprints import autoconnect
+from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
-from dimos.manipulation.planning.spec.config import RobotModelConfig
-from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.perception.object_scene_registration import ObjectSceneRegistrationModule
+from dimos.robot.catalog.ufactory import xarm6 as _catalog_xarm6, xarm7 as _catalog_xarm7
 from dimos.robot.foxglove_bridge import FoxgloveBridge  # TODO: migrate to rerun
-from dimos.utils.data import get_data
-
-
-def _make_base_pose(
-    x: float = 0.0,
-    y: float = 0.0,
-    z: float = 0.0,
-    roll: float = 0.0,
-    pitch: float = 0.0,
-    yaw: float = 0.0,
-) -> PoseStamped:
-    """Create a base pose with optional xyz offset and rpy orientation.
-
-    Args:
-        x, y, z: Position offset in meters
-        roll, pitch, yaw: Orientation in radians (Euler angles)
-    """
-    return PoseStamped(
-        position=Vector3(x=x, y=y, z=z),
-        orientation=Quaternion.from_euler(Vector3(x=roll, y=pitch, z=yaw)),
-    )
-
-
-def _get_xarm_urdf_path() -> Path:
-    """Get path to xarm URDF."""
-    return get_data("xarm_description") / "urdf/xarm_device.urdf.xacro"
-
-
-def _get_xarm_package_paths() -> dict[str, Path]:
-    """Get package paths for xarm xacro resolution."""
-    return {"xarm_description": get_data("xarm_description")}
-
-
-def _get_piper_urdf_path() -> Path:
-    """Get path to piper URDF."""
-    return get_data("piper_description") / "urdf/piper_description.xacro"
-
-
-def _get_piper_package_paths() -> dict[str, Path]:
-    """Get package paths for piper xacro resolution."""
-    return {"piper_description": get_data("piper_description")}
-
-
-# Piper gripper collision exclusions (parallel jaw gripper)
-# The gripper fingers (link7, link8) can touch each other and gripper_base
-PIPER_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
-    ("gripper_base", "link7"),
-    ("gripper_base", "link8"),
-    ("link7", "link8"),
-    ("link6", "gripper_base"),
-]
-
-
-# XArm gripper collision exclusions (parallel linkage mechanism)
-# The gripper uses mimic joints where non-adjacent links can overlap legitimately
-XARM_GRIPPER_COLLISION_EXCLUSIONS: list[tuple[str, str]] = [
-    # Inner knuckle <-> outer knuckle (parallel linkage)
-    ("right_inner_knuckle", "right_outer_knuckle"),
-    ("left_inner_knuckle", "left_outer_knuckle"),
-    # Inner knuckle <-> finger (parallel linkage)
-    ("right_inner_knuckle", "right_finger"),
-    ("left_inner_knuckle", "left_finger"),
-    # Cross-finger pairs (mimic joint symmetry)
-    ("left_finger", "right_finger"),
-    ("left_outer_knuckle", "right_outer_knuckle"),
-    ("left_inner_knuckle", "right_inner_knuckle"),
-    # Outer knuckle <-> opposite finger
-    ("left_outer_knuckle", "right_finger"),
-    ("right_outer_knuckle", "left_finger"),
-    # Gripper base <-> all moving parts (can touch at limits)
-    ("xarm_gripper_base_link", "left_inner_knuckle"),
-    ("xarm_gripper_base_link", "right_inner_knuckle"),
-    ("xarm_gripper_base_link", "left_finger"),
-    ("xarm_gripper_base_link", "right_finger"),
-    # Arm link6 <-> gripper (attached via fixed joint, can touch)
-    ("link6", "xarm_gripper_base_link"),
-    ("link6", "left_outer_knuckle"),
-    ("link6", "right_outer_knuckle"),
-]
-
-
-def _make_xarm6_config(
-    name: str = "arm",
-    y_offset: float = 0.0,
-    joint_prefix: str = "",
-    coordinator_task: str | None = None,
-    add_gripper: bool = True,
-) -> RobotModelConfig:
-    """Create XArm6 robot config.
-
-    Args:
-        name: Robot name in Drake world
-        y_offset: Y-axis offset for base pose (for multi-arm setups)
-        joint_prefix: Prefix for joint name mapping (e.g., "left_" or "right_")
-        coordinator_task: Task name for coordinator RPC execution
-        add_gripper: Whether to add the xarm gripper
-    """
-    joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
-    joint_mapping = {f"{joint_prefix}{j}": j for j in joint_names} if joint_prefix else {}
-
-    xacro_args: dict[str, str] = {
-        "dof": "6",
-        "limited": "true",
-        "attach_xyz": f"0 {y_offset} 0",
-    }
-    if add_gripper:
-        xacro_args["add_gripper"] = "true"
-
-    return RobotModelConfig(
-        name=name,
-        urdf_path=_get_xarm_urdf_path(),
-        base_pose=_make_base_pose(y=y_offset),
-        joint_names=joint_names,
-        end_effector_link="link_tcp" if add_gripper else "link6",
-        base_link="link_base",
-        package_paths=_get_xarm_package_paths(),
-        xacro_args=xacro_args,
-        collision_exclusion_pairs=XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
-        auto_convert_meshes=True,
-        max_velocity=1.0,
-        max_acceleration=2.0,
-        joint_name_mapping=joint_mapping,
-        coordinator_task_name=coordinator_task,
-        home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    )
-
-
-def _make_xarm7_config(
-    name: str = "arm",
-    y_offset: float = 0.0,
-    z_offset: float = 0.0,
-    pitch: float = 0.0,
-    joint_prefix: str = "",
-    coordinator_task: str | None = None,
-    add_gripper: bool = False,
-    gripper_hardware_id: str | None = None,
-    tf_extra_links: list[str] | None = None,
-) -> RobotModelConfig:
-    """Create XArm7 robot config.
-
-    Args:
-        name: Robot name in Drake world
-        y_offset: Y-axis offset for base pose (for multi-arm setups)
-        z_offset: Z-axis offset for base pose (e.g., table height)
-        pitch: Base pitch angle in radians (e.g., tilted mount)
-        joint_prefix: Prefix for joint name mapping (e.g., "left_" or "right_")
-        coordinator_task: Task name for coordinator RPC execution
-        add_gripper: Whether to add the xarm gripper
-        gripper_hardware_id: Coordinator hardware ID for gripper control
-        tf_extra_links: Additional links to publish TF for (e.g., ["link7"] for camera mount)
-    """
-    joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"]
-    joint_mapping = {f"{joint_prefix}{j}": j for j in joint_names} if joint_prefix else {}
-
-    xacro_args: dict[str, str] = {
-        "dof": "7",
-        "limited": "true",
-        "attach_xyz": f"0 {y_offset} {z_offset}",
-        "attach_rpy": f"0 {pitch} 0",
-    }
-    if add_gripper:
-        xacro_args["add_gripper"] = "true"
-
-    return RobotModelConfig(
-        name=name,
-        urdf_path=_get_xarm_urdf_path(),
-        base_pose=_make_base_pose(y=y_offset, z=z_offset, pitch=pitch),
-        joint_names=joint_names,
-        end_effector_link="link_tcp" if add_gripper else "link7",
-        base_link="link_base",
-        package_paths=_get_xarm_package_paths(),
-        xacro_args=xacro_args,
-        collision_exclusion_pairs=XARM_GRIPPER_COLLISION_EXCLUSIONS if add_gripper else [],
-        auto_convert_meshes=True,
-        max_velocity=1.0,
-        max_acceleration=2.0,
-        joint_name_mapping=joint_mapping,
-        coordinator_task_name=coordinator_task,
-        gripper_hardware_id=gripper_hardware_id,
-        tf_extra_links=tf_extra_links or [],
-        # Home configuration: arm extended forward, elbow up (safe observe pose)
-        home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    )
-
-
-def _make_piper_config(
-    name: str = "piper",
-    y_offset: float = 0.0,
-    joint_prefix: str = "",
-    coordinator_task: str | None = None,
-) -> RobotModelConfig:
-    """Create Piper robot config.
-
-    Args:
-        name: Robot name in Drake world
-        y_offset: Y-axis offset for base pose (for multi-arm setups)
-        joint_prefix: Prefix for joint name mapping (e.g., "piper_")
-        coordinator_task: Task name for coordinator RPC execution
-
-    Note:
-        Piper has 6 revolute joints (joint1-joint6) for the arm and 2 prismatic
-        joints (joint7, joint8) for the parallel jaw gripper.
-    """
-    # Piper arm joints (6-DOF)
-    joint_names = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"]
-    joint_mapping = {f"{joint_prefix}{j}": j for j in joint_names} if joint_prefix else {}
-
-    return RobotModelConfig(
-        name=name,
-        urdf_path=_get_piper_urdf_path(),
-        base_pose=_make_base_pose(y=y_offset),
-        joint_names=joint_names,
-        end_effector_link="gripper_base",  # End of arm, before gripper fingers
-        base_link="arm_base",
-        package_paths=_get_piper_package_paths(),
-        xacro_args={},  # Piper xacro doesn't need special args
-        collision_exclusion_pairs=PIPER_GRIPPER_COLLISION_EXCLUSIONS,
-        auto_convert_meshes=True,
-        max_velocity=1.0,
-        max_acceleration=2.0,
-        joint_name_mapping=joint_mapping,
-        coordinator_task_name=coordinator_task,
-        home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    )
-
 
 # Single XArm6 planner (standalone, no coordinator)
+_xarm6_planner_cfg = _catalog_xarm6(
+    name="arm",
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip,
+)
+
 xarm6_planner_only = ManipulationModule.blueprint(
-    robots=[_make_xarm6_config()],
+    robots=[_xarm6_planner_cfg.to_robot_model_config()],
     planning_timeout=10.0,
     enable_viz=True,
 ).transports(
@@ -287,14 +66,23 @@ xarm6_planner_only = ManipulationModule.blueprint(
 
 # Dual XArm6 planner with coordinator integration
 # Usage: Start with coordinator_dual_mock, then plan/execute via RPC
+_left_arm_cfg = _catalog_xarm6(
+    name="left_arm",
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip,
+    y_offset=0.5,
+)
+_right_arm_cfg = _catalog_xarm6(
+    name="right_arm",
+    adapter_type="xarm" if global_config.xarm6_ip else "mock",
+    address=global_config.xarm6_ip,
+    y_offset=-0.5,
+)
+
 dual_xarm6_planner = ManipulationModule.blueprint(
     robots=[
-        _make_xarm6_config(
-            "left_arm", y_offset=0.5, joint_prefix="left_", coordinator_task="traj_left"
-        ),
-        _make_xarm6_config(
-            "right_arm", y_offset=-0.5, joint_prefix="right_", coordinator_task="traj_right"
-        ),
+        _left_arm_cfg.to_robot_model_config(),
+        _right_arm_cfg.to_robot_model_config(),
     ],
     planning_timeout=10.0,
     enable_viz=True,
@@ -305,11 +93,17 @@ dual_xarm6_planner = ManipulationModule.blueprint(
 )
 
 
-# Single XArm7 planner + mock coordinator (standalone, no external coordinator needed)
-# Usage: dimos run xarm7-planner-coordinator
+# Single XArm7 planner + coordinator (uses real hardware when XARM7_IP is set)
+# Usage: XARM7_IP=<ip> dimos run xarm7-planner-coordinator
+_xarm7_cfg = _catalog_xarm7(
+    name="arm",
+    adapter_type="xarm" if global_config.xarm7_ip else "mock",
+    address=global_config.xarm7_ip,
+)
+
 xarm7_planner_coordinator = autoconnect(
     ManipulationModule.blueprint(
-        robots=[_make_xarm7_config("arm", joint_prefix="arm_", coordinator_task="traj_arm")],
+        robots=[_xarm7_cfg.to_robot_model_config()],
         planning_timeout=10.0,
         enable_viz=True,
     ),
@@ -317,22 +111,8 @@ xarm7_planner_coordinator = autoconnect(
         tick_rate=100.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
-        hardware=[
-            HardwareComponent(
-                hardware_id="arm",
-                hardware_type=HardwareType.MANIPULATOR,
-                joints=make_joints("arm", 7),
-                adapter_type="mock",
-            ),
-        ],
-        tasks=[
-            TaskConfig(
-                name="traj_arm",
-                type="trajectory",
-                joint_names=[f"arm_joint{i + 1}" for i in range(7)],
-                priority=10,
-            ),
-        ],
+        hardware=[_xarm7_cfg.to_hardware_component()],
+        tasks=[_xarm7_cfg.to_task_config()],
     ),
 ).transports(
     {
@@ -387,20 +167,19 @@ _XARM_PERCEPTION_CAMERA_TRANSFORM = Transform(
     rotation=Quaternion(0.70513398, 0.00535696, 0.70897578, -0.01052180),  # xyzw
 )
 
+_xarm7_perception_cfg = _catalog_xarm7(
+    name="arm",
+    adapter_type="xarm" if global_config.xarm7_ip else "mock",
+    address=global_config.xarm7_ip,
+    pitch=math.radians(45),
+    add_gripper=True,
+    tf_extra_links=["link7"],
+)
+
 xarm_perception = (
     autoconnect(
         PickAndPlaceModule.blueprint(
-            robots=[
-                _make_xarm7_config(
-                    "arm",
-                    pitch=math.radians(45),
-                    joint_prefix="arm_",
-                    coordinator_task="traj_arm",
-                    add_gripper=True,
-                    gripper_hardware_id="arm",
-                    tf_extra_links=["link7"],
-                ),
-            ],
+            robots=[_xarm7_perception_cfg.to_robot_model_config()],
             planning_timeout=10.0,
             enable_viz=True,
             floor_z=-0.02,
@@ -504,13 +283,68 @@ xarm_perception_agent = autoconnect(
 )
 
 
+# Sim perception: MujocoSimModule owns the MujocoEngine and publishes both
+# camera streams and joint state via shared memory.
+# ShmMujocoAdapter attaches to the same SHM buffers by MJCF path.
+
+from dimos.robot.catalog.ufactory import XARM7_SIM_PATH
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
+from dimos.visualization.rerun.bridge import RerunBridgeModule, _resolve_viewer_mode
+
+_xarm7_sim_cfg = _catalog_xarm7(
+    name="arm",
+    adapter_type="sim_mujoco",
+    address=str(XARM7_SIM_PATH),
+    add_gripper=True,
+    pitch=math.radians(45),
+    tf_extra_links=["link7"],
+    home_joints=[0.0, 0.0, 0.0, 0.0, 0.0, -0.7, 0.0],
+    pre_grasp_offset=0.05,
+)
+
+xarm_perception_sim = autoconnect(
+    PickAndPlaceModule.blueprint(
+        robots=[_xarm7_sim_cfg.to_robot_model_config()],
+        planning_timeout=10.0,
+        enable_viz=True,
+    ),
+    MujocoSimModule.blueprint(
+        address=str(XARM7_SIM_PATH),
+        headless=False,
+        dof=7,
+        camera_name="wrist_camera",
+        base_frame_id="link7",
+    ),
+    ObjectSceneRegistrationModule.blueprint(target_frame="world"),
+    ControlCoordinator.blueprint(
+        tick_rate=100.0,
+        publish_joint_state=True,
+        joint_state_frame_id="coordinator",
+        hardware=[_xarm7_sim_cfg.to_hardware_component()],
+        tasks=[_xarm7_sim_cfg.to_task_config()],
+    ),
+    RerunBridgeModule.blueprint(viewer_mode=_resolve_viewer_mode()),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
+    }
+)
+
+
+xarm_perception_sim_agent = autoconnect(
+    xarm_perception_sim,
+    McpServer.blueprint(),
+    McpClient.blueprint(system_prompt=_MANIPULATION_AGENT_SYSTEM_PROMPT),
+)
+
+
 __all__ = [
-    "PIPER_GRIPPER_COLLISION_EXCLUSIONS",
-    "XARM_GRIPPER_COLLISION_EXCLUSIONS",
     "dual_xarm6_planner",
     "xarm6_planner_only",
     "xarm7_planner_coordinator",
     "xarm7_planner_coordinator_agent",
     "xarm_perception",
     "xarm_perception_agent",
+    "xarm_perception_sim",
+    "xarm_perception_sim_agent",
 ]

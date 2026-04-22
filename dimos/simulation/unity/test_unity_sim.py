@@ -45,9 +45,6 @@ _is_linux_x86 = platform.system() == "Linux" and platform.machine() in ("x86_64"
 _has_display = bool(os.environ.get("DISPLAY"))
 
 
-# Helpers
-
-
 class _MockTransport:
     def __init__(self):
         self._messages = []
@@ -64,6 +61,9 @@ class _MockTransport:
     def subscribe(self, cb, *_a):
         self._subscribers.append(cb)
         return lambda: self._subscribers.remove(cb)
+
+    def stop(self):
+        pass
 
 
 def _wire(module) -> dict[str, _MockTransport]:
@@ -128,11 +128,8 @@ def _recv_tcp(sock) -> tuple[str, bytes]:
     return d, buf
 
 
-# Config & Platform — fast, runs everywhere
-
-
 class TestConfig:
-    def test_default_config(self):
+    def test_defaults(self):
         cfg = UnityBridgeConfig()
         assert cfg.unity_port == 10000
         assert cfg.sim_rate == 200.0
@@ -157,9 +154,6 @@ class TestPlatformValidation:
     def test_rejects_unsupported_platform(self):
         with pytest.raises(RuntimeError, match="requires"):
             _validate_platform()
-
-
-# ROS1 Deserialization — fast, runs everywhere
 
 
 class TestROS1Deserialization:
@@ -209,10 +203,8 @@ class TestROS1Deserialization:
         assert r.f64() == pytest.approx(1.0)  # qw
 
 
-# TCP Bridge — needs sockets, ~1s, runs everywhere
-
-
 class TestTCPBridge:
+    @pytest.mark.slow
     def test_handshake_and_data_flow(self):
         """Mock Unity connects, sends a PointCloud2, verifies bridge publishes it."""
         port = _find_free_port()
@@ -245,9 +237,6 @@ class TestTCPBridge:
         np.testing.assert_allclose(received_pts, pts, atol=0.01)
 
 
-# Kinematic Sim — needs threading, ~1s, runs everywhere
-
-
 class TestKinematicSim:
     def test_odometry_published(self):
         m = UnityBridgeModule(unity_binary="", sim_rate=100.0)
@@ -276,9 +265,6 @@ class TestKinematicSim:
         assert last_odom.x == pytest.approx(1.0, abs=0.01)
 
 
-# Rerun Config — fast, runs everywhere
-
-
 class TestRerunConfig:
     def test_static_pinhole_returns_list(self):
         import rerun as rr
@@ -289,10 +275,6 @@ class TestRerunConfig:
 
     def test_suppress_returns_none(self):
         assert UnityBridgeModule.rerun_suppress_camera_info(None) is None
-
-
-# Live Unity — slow, requires Linux x86_64 + DISPLAY
-# These are skipped in CI and on unsupported platforms.
 
 
 @pytest.mark.slow

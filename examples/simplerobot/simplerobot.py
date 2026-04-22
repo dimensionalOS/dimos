@@ -56,23 +56,23 @@ class SimpleRobotConfig(ModuleConfig):
     cmd_timeout: float = 0.5
 
 
-class SimpleRobot(Module[SimpleRobotConfig]):
+class SimpleRobot(Module):
     """A 2D robot that integrates velocity commands into pose."""
 
+    config: SimpleRobotConfig
     cmd_vel: In[Twist]
     pose: Out[PoseStamped]
-    default_config = SimpleRobotConfig
     _pose = Pose()
     _vel = Twist()
     _vel_time = 0.0
 
     @rpc
     def start(self) -> None:
-        self._disposables.add(self.cmd_vel.observable().subscribe(self._on_twist))
-        self._disposables.add(
+        self.register_disposable(self.cmd_vel.observable().subscribe(self._on_twist))
+        self.register_disposable(
             rx.interval(1.0 / self.config.update_rate).subscribe(lambda _: self._update())
         )
-        self._disposables.add(
+        self.register_disposable(
             rx.interval(1.0).subscribe(lambda _: print(f"\033[34m{self._pose}\033[0m"))
         )
 

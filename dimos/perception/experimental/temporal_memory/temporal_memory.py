@@ -33,6 +33,7 @@ from reactivex import Subject, interval
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
+from dimos.constants import STATE_DIR
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -53,7 +54,7 @@ from .window_analyzer import WindowAnalyzer
 try:
     from .clip_filter import CLIPFrameFilter
 except ImportError:
-    CLIPFrameFilter = type(None)  # type: ignore[misc,assignment]
+    CLIPFrameFilter = type(None)  # type: ignore[assignment, misc]
 
 logger = setup_logger()
 
@@ -67,7 +68,7 @@ class TemporalMemoryConfig(ModuleConfig):
     tune cost / latency / accuracy without touching code.
     """
 
-    vlm: VlModel[Any] | None = None
+    vlm: VlModel | None = None
 
     # Frame processing
     fps: float = 1.0
@@ -104,14 +105,14 @@ class TemporalMemoryConfig(ModuleConfig):
     nearby_distance_meters: float = 5.0
 
 
-class TemporalMemory(Module[TemporalMemoryConfig]):
+class TemporalMemory(Module):
     """Thin orchestrator that wires frames → window accumulator → VLM → state + DB.
 
     Uses RxPY reactive streams for the frame pipeline and ``interval`` for
     periodic window analysis.
     """
 
-    default_config = TemporalMemoryConfig
+    config: TemporalMemoryConfig
 
     color_image: In[Image]
     odom: In[PoseStamped]
@@ -161,11 +162,7 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
         if self.config.db_dir:
             db_dir = Path(self.config.db_dir)
         else:
-            # Default: ~/.local/state/dimos/temporal_memory/
-            # XDG state dir — predictable, works for pip install and git clone.
-            xdg = os.environ.get("XDG_STATE_HOME")
-            state_root = Path(xdg) if xdg else Path.home() / ".local" / "state"
-            db_dir = state_root / "dimos" / "temporal_memory"
+            db_dir = STATE_DIR / "temporal_memory"
         db_dir.mkdir(parents=True, exist_ok=True)
         db_path = db_dir / "entity_graph.db"
         if self.config.new_memory and db_path.exists():
@@ -204,7 +201,7 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
         )
 
     @property
-    def vlm(self) -> VlModel[Any]:
+    def vlm(self) -> VlModel:
         if self._vlm_raw is None:
             from dimos.models.vl.openai import OpenAIVlModel
 
@@ -297,11 +294,11 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
                     f"buffered={len(self._accumulator._buffer)}"
                 )
 
-        self._disposables.add(
+        self.register_disposable(
             frame_subject.pipe(sharpness_barrier(self.config.fps)).subscribe(_on_frame)
         )
         unsub_image = self.color_image.subscribe(frame_subject.on_next)
-        self._disposables.add(Disposable(unsub_image))
+        self.register_disposable(Disposable(unsub_image))
 
         # Odometry tracking for entity world positioning (optional —
         # module works without it, entities just won't have world positions)
@@ -313,14 +310,14 @@ class TemporalMemory(Module[TemporalMemoryConfig]):
 
         if self.odom.transport is not None:
             unsub_odom = self.odom.subscribe(_on_odom)
-            self._disposables.add(Disposable(unsub_odom))
+            self.register_disposable(Disposable(unsub_odom))
         else:
             logger.warning(
                 "[temporal-memory] odom stream not connected — entity positions will be (0,0,0)"
             )
 
         # Periodic window analysis
-        self._disposables.add(
+        self.register_disposable(
             interval(self.config.stride_s).subscribe(lambda _: self._analyze_window())
         )
         logger.info("TemporalMemory started")

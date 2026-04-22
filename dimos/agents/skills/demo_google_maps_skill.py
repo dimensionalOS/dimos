@@ -17,7 +17,7 @@ from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.mcp.mcp_server import McpServer
 from dimos.agents.skills.demo_robot import DemoRobot
 from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 
 demo_google_maps_skill = autoconnect(
     DemoRobot.blueprint(),

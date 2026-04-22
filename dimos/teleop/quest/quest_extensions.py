@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import Field
 
+from dimos.core.core import rpc
 from dimos.core.stream import Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
@@ -38,7 +39,7 @@ class TwistTeleopConfig(QuestTeleopConfig):
 
 
 # Example implementation to show how to extend QuestTeleopModule for different teleop behaviors and outputs.
-class TwistTeleopModule(QuestTeleopModule[TwistTeleopConfig]):
+class TwistTeleopModule(QuestTeleopModule):
     """Quest teleop that outputs TwistStamped instead of PoseStamped.
 
     Config:
@@ -51,10 +52,18 @@ class TwistTeleopModule(QuestTeleopModule[TwistTeleopConfig]):
         - buttons: Buttons (inherited)
     """
 
-    default_config = TwistTeleopConfig
+    config: TwistTeleopConfig
 
     left_twist: Out[TwistStamped]
     right_twist: Out[TwistStamped]
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _publish_msg(self, hand: Hand, output_msg: PoseStamped) -> None:
         """Convert PoseStamped to TwistStamped, apply scaling, and publish."""
@@ -82,7 +91,7 @@ class ArmTeleopConfig(QuestTeleopConfig):
     task_names: dict[str, str] = Field(default_factory=dict)
 
 
-class ArmTeleopModule(QuestTeleopModule[ArmTeleopConfig]):
+class ArmTeleopModule(QuestTeleopModule):
     """Quest teleop with per-hand press-and-hold engage and task name routing.
 
     Each controller's primary button (X for left, A for right)
@@ -98,7 +107,15 @@ class ArmTeleopModule(QuestTeleopModule[ArmTeleopConfig]):
         - buttons: Buttons (inherited)
     """
 
-    default_config = ArmTeleopConfig
+    config: ArmTeleopConfig
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)

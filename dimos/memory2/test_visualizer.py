@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import pickle
 from typing import TYPE_CHECKING
 
 import pytest
@@ -24,8 +25,12 @@ from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.transform import Batch, QualityWindow
 from dimos.models.embedding.clip import CLIPModel
 from dimos.models.vl.florence import Florence2Model
+from dimos.models.vl.moondream import MoondreamVlModel
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.utils.data import get_data_dir
+from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
+from dimos.robot.unitree.go2.connection import GO2Connection
+from dimos.utils.data import get_data, get_data_dir
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -105,13 +110,11 @@ class TestVisualizer:
     # VIS GOAL: draw 2d detections somehow, or project into 3d, draw 3d bounding boxes
     def test_detect_objects(self, store: SqliteStore, clip: CLIPModel) -> None:
         """CLIP pre-filter + VLM detection on top candidates."""
-        from dimos.models.vl.moondream import MoondreamVlModel
-
         vlm = MoondreamVlModel()
         embedded = store.streams.color_image_embedded
         lidar = store.streams.lidar
 
-        for obs in embedded.search(clip.embed_text("bottle"), k=10).map(
+        for obs in embedded.search(clip.embed_text("bottle"), k=1).map(
             lambda obs: obs.derive(data=vlm.query_detections(obs.data, "bottle"))
         ):
             print(f"ts={obs.ts:.2f} sim={obs.similarity:.3f} pose={obs.pose}")
@@ -135,13 +138,65 @@ class TestVisualizer:
     def test_agent_visual_description_passive(self, store: SqliteStore) -> None:
         florence = Florence2Model()
         with florence:
-            pipeline = store.streams.color_image.transform(
-                QualityWindow(lambda img: img.sharpness, window=5.0)
-                # we are batch processing images here,
-                # so we can use the more efficient batch captioning API
-                # (instead of using .map() and calling caption() for each image,
-            ).transform(Batch(lambda imgs: florence.caption_batch(*imgs)))
+            pipeline = (
+                store.streams.color_image.limit(200)
+                .transform(
+                    QualityWindow(lambda img: img.sharpness, window=5.0)
+                    # we are batch processing images here,
+                    # so we can use the more efficient batch captioning API
+                    # (instead of using .map() and calling caption() for each image,
+                )
+                .transform(Batch(lambda imgs: florence.caption_batch(*imgs)))
+            )
             # this can be stored, further embedded etc
 
             for obs in pipeline:
                 print(obs.ts, obs.data)
+
+    def test_build_global_map(self, store: SqliteStore) -> None:
+        global_map = pickle.loads(get_data("unitree_go2_bigoffice_map.pickle").read_bytes())
+        print(f"Global map: {len(global_map)}")
+
+    # we semantically search, then detect with a detection model
+    #
+    # VIS GOAL: draw 2d detections somehow, or project into 3d, draw 3d bounding boxes
+    def test_detect_objects_smart(self, store: SqliteStore, clip: CLIPModel) -> None:
+        """CLIP pre-filter + VLM detection on top candidates."""
+        vlm = MoondreamVlModel()
+        embedded = store.streams.color_image_embedded
+        lidar = store.streams.lidar
+
+        # find a location in the world with highest semantic similarity to a bottle
+        bottle_pos = embedded.search(clip.embed_text("bottle"), k=1).first().pose_stamped
+
+        for obs in (
+            store.streams.color_image
+            # find all frames within 60 seconds of the semantic hotspot
+            .at(bottle_pos.ts, tolerance=60.0)
+            # filter the frames within 1m radius near the semantic hotspot
+            .near(bottle_pos, radius=1.0)
+            # select highest quality frames from these results (based on sharpness)
+            .transform(QualityWindow(lambda img: img.sharpness, window=1.0))
+            # run detection on these frames to find bottles
+            .map(lambda obs: obs.derive(data=vlm.query_detections(obs.data, "bottle")))
+        ):
+            print(f"ts={obs.ts:.2f} pose={obs.pose_stamped}")
+
+            # find the lidar frame captured closest in time to an image
+            lidar_frame = lidar.at(obs.ts).first().data
+
+            for det in obs.data.detections:
+                print(det)
+                # project each bottle into 3D using lidar frame
+                # known camera intrinsics + extrinsics
+                det3d = Detection3DPC.from_2d(
+                    det,
+                    lidar_frame,
+                    camera_info=GO2Connection.camera_info_static,
+                    world_to_optical_transform=Transform(
+                        ts=obs.ts,
+                        translation=obs.pose_stamped.position,
+                        rotation=obs.pose_stamped.orientation,
+                    ).inverse(),
+                )
+                print(det3d)

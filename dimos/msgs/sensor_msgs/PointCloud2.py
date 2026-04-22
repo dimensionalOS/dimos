@@ -22,8 +22,8 @@ from typing import TYPE_CHECKING, Any
 from dimos_lcm.sensor_msgs.PointCloud2 import (
     PointCloud2 as LCMPointCloud2,
 )
-from dimos_lcm.sensor_msgs.PointField import PointField  # type: ignore[import-untyped]
-from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs.PointField import PointField
+from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
@@ -45,6 +45,33 @@ def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
     import matplotlib.pyplot as plt
 
     return plt.get_cmap(name)
+
+
+@functools.lru_cache(maxsize=16)
+def _get_colormap_lut(name: str) -> np.ndarray:
+    """Build a 256-entry uint8 LUT from a matplotlib colormap (one-time cost)."""
+    cmap = _get_matplotlib_cmap(name)
+    t = np.linspace(0, 1, 256)
+    return (cmap(t)[:, :3] * 255).astype(np.uint8)  # type: ignore[no-any-return]
+
+
+def register_colormap_annotation(name: str = "turbo") -> None:
+    """Register a colormap as AnnotationContext so Rerun resolves colors viewer-side."""
+    import rerun as rr
+
+    lut = _get_colormap_lut(name)
+    rr.log(
+        "/",
+        rr.AnnotationContext(
+            [
+                rr.datatypes.ClassDescription(
+                    info=rr.datatypes.AnnotationInfo(id=i, color=lut[i].tolist())
+                )
+                for i in range(256)
+            ]
+        ),
+        static=True,
+    )
 
 
 # TODO: encode/decode need to be updated to work with full spectrum of pointcloud2 fields
@@ -100,9 +127,10 @@ class PointCloud2(Timestamped):
         # Remove non-picklable objects
         del state["_pcd_tensor"]
         state["_pcd_legacy_cache"] = None
-        # Remove cached_property entries that hold unpicklable Open3D types
-        state.pop("oriented_bounding_box", None)
-        state.pop("axis_aligned_bounding_box", None)
+        # Remove all cached_property entries
+        for key in list(state):
+            if isinstance(getattr(type(self), key, None), functools.cached_property):
+                del state[key]
         return state
 
     def __setstate__(self, state: dict[str, object]) -> None:
@@ -142,7 +170,7 @@ class PointCloud2(Timestamped):
     @classmethod
     def from_numpy(
         cls,
-        points: np.ndarray,  # type: ignore[type-arg]
+        points: np.ndarray,
         frame_id: str = "world",
         timestamp: float | None = None,
     ) -> PointCloud2:
@@ -366,6 +394,14 @@ class PointCloud2(Timestamped):
         points = np.asarray(self.pointcloud.points)
         colors = np.asarray(self.pointcloud.colors) if self.pointcloud.has_colors() else None
         return points, colors
+
+    def points_f32(self) -> np.ndarray:
+        """Get positions as float32 numpy array, bypassing legacy float64 conversion."""
+        self._ensure_tensor_initialized()
+        if "positions" in self._pcd_tensor.point:
+            arr = self._pcd_tensor.point["positions"].numpy()
+            return arr.astype(np.float32) if arr.dtype != np.float32 else arr  # type: ignore[no-any-return]
+        return np.zeros((0, 3), dtype=np.float32)
 
     @functools.cached_property
     def axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
@@ -613,9 +649,8 @@ class PointCloud2(Timestamped):
     def to_rerun(
         self,
         voxel_size: float = 0.05,
-        colormap: str | None = None,
         colors: list[int] | None = None,
-        mode: str = "points",
+        mode: str = "spheres",
         size: float | None = None,
         fill_mode: str = "solid",
         **kwargs: object,
@@ -624,8 +659,9 @@ class PointCloud2(Timestamped):
 
         Args:
             voxel_size: size for visualization
-            colormap: Optional colormap name (e.g., "turbo", "viridis") to color by height
-            colors: Optional RGB color [r, g, b] for all points (0-255)
+            colors: Optional RGB color [r, g, b] for all points (0-255).
+                If None, uses height-based turbo colormap via class_ids
+                (requires register_colormap_annotation() called once).
             mode: "points" for raw points, "boxes" for cubes (default), or "spheres" for sized spheres
             size: Box size for mode="boxes" (e.g., voxel_size). Defaults to radii*2.
             fill_mode: Fill mode for boxes - "solid", "majorwireframe", or "densewireframe"
@@ -636,39 +672,34 @@ class PointCloud2(Timestamped):
         """
         import rerun as rr
 
-        points, _ = self.as_numpy()
+        points = self.points_f32()
         if len(points) == 0:
             return rr.Points3D([]) if mode != "boxes" else rr.Boxes3D(centers=[])
 
-        if colors is None and colormap is None:
-            colormap = "turbo"  # Default colormap if no colors provided
-        # Determine colors
+        # Use class_ids for height-based colormap (viewer resolves colors via AnnotationContext)
+        # Fall back to explicit colors when provided
+        class_ids = None
         point_colors = None
-        if colormap is not None:
-            z = points[:, 2]
-            z_norm = (z - z.min()) / (z.max() - z.min() + 1e-8)
-            cmap = _get_matplotlib_cmap(colormap)
-            point_colors = (cmap(z_norm)[:, :3] * 255).astype(np.uint8)
-        elif colors is not None:
+        if colors is not None:
             point_colors = colors
+        else:
+            z = points[:, 2]
+            class_ids = ((z - z.min()) / (z.max() - z.min() + 1e-8) * 255).astype(np.uint8)
 
         if mode == "points":
             return rr.Points3D(
                 positions=points,
                 colors=point_colors,
+                class_ids=class_ids,
             )
         elif mode == "boxes":
             box_size = size if size is not None else voxel_size
             half = box_size / 2
-            # Snap points to voxel grid centers so boxes tile properly
-            points = np.floor(points / box_size) * box_size + half
-            points, unique_idx = np.unique(points, axis=0, return_index=True)
-            if point_colors is not None and isinstance(point_colors, np.ndarray):
-                point_colors = point_colors[unique_idx]
             return rr.Boxes3D(
                 centers=points,
                 half_sizes=[half, half, half],
                 colors=point_colors,
+                class_ids=class_ids,
                 fill_mode=fill_mode,  # type: ignore[arg-type]
             )
         else:
@@ -676,6 +707,7 @@ class PointCloud2(Timestamped):
                 positions=points,
                 radii=voxel_size / 2,
                 colors=point_colors,
+                class_ids=class_ids,
             )
 
     def filter_by_height(

@@ -31,9 +31,11 @@ import threading
 import time
 from typing import Any
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
+from dimos.manipulation.control.arm_driver_spec import ArmDriverSpec
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -50,8 +52,6 @@ logger = setup_logger()
 
 class CartesianMotionControllerConfig(ModuleConfig):
     """Configuration for Cartesian motion controller."""
-
-    arm_driver: Any = None
 
     # Control loop parameters
     control_frequency: float = 20.0  # Hz - Cartesian control loop rate
@@ -84,7 +84,7 @@ class CartesianMotionControllerConfig(ModuleConfig):
     control_frame: str = "world"  # Frame for target poses (world, base_link, etc.)
 
 
-class CartesianMotionController(Module[CartesianMotionControllerConfig]):
+class CartesianMotionController(Module):
     """
     Hardware-agnostic Cartesian motion controller.
 
@@ -99,13 +99,9 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
     provides IK/FK RPC methods and JointState/RobotState outputs.
     """
 
-    default_config = CartesianMotionControllerConfig
+    config: CartesianMotionControllerConfig
 
-    # RPC methods to request from other modules (resolved at blueprint build time)
-    rpc_calls = [
-        "XArmDriver.get_forward_kinematics",
-        "XArmDriver.get_inverse_kinematics",
-    ]
+    _arm_driver: ArmDriverSpec
 
     # Input topics (initialized by Module base class)
     joint_state: In[JointState] = None  # type: ignore[assignment]
@@ -118,17 +114,7 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
     current_pose: Out[PoseStamped] = None  # type: ignore[assignment]
 
     def __init__(self, **kwargs: Any) -> None:
-        """
-        Initialize the Cartesian motion controller.
-
-        Args:
-            arm_driver: (Optional) Hardware driver reference (legacy mode).
-                       When using blueprints, this is resolved automatically via rpc_calls.
-        """
         super().__init__(**kwargs)
-
-        # Hardware driver reference - set via arm_driver param (legacy) or RPC wiring (blueprint)
-        self._arm_driver_legacy = self.config.arm_driver
 
         # State tracking
         self._latest_joint_state: JointState | None = None
@@ -197,34 +183,12 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
         )
 
     def _call_fk(self, joint_positions: list[float]) -> tuple[int, list[float] | None]:
-        """Call FK - uses blueprint RPC wiring or legacy arm_driver reference."""
-        try:
-            result: tuple[int, list[float] | None] = self.get_rpc_calls(
-                "XArmDriver.get_forward_kinematics"
-            )(joint_positions)
-            return result
-        except (ValueError, KeyError):
-            if self._arm_driver_legacy:
-                result_fk: tuple[int, list[float] | None] = (
-                    self._arm_driver_legacy.get_forward_kinematics(joint_positions)  # type: ignore[attr-defined]
-                )
-                return result_fk
-            raise RuntimeError("No arm driver available - use blueprint or pass arm_driver param")
+        """Call FK via the arm driver spec (resolved at blueprint build time)."""
+        return self._arm_driver.get_forward_kinematics(joint_positions)
 
     def _call_ik(self, pose: list[float]) -> tuple[int, list[float] | None]:
-        """Call IK - uses blueprint RPC wiring or legacy arm_driver reference."""
-        try:
-            result: tuple[int, list[float] | None] = self.get_rpc_calls(
-                "XArmDriver.get_inverse_kinematics"
-            )(pose)
-            return result
-        except (ValueError, KeyError):
-            if self._arm_driver_legacy:
-                result_ik: tuple[int, list[float] | None] = (
-                    self._arm_driver_legacy.get_inverse_kinematics(pose)  # type: ignore[attr-defined]
-                )
-                return result_ik
-            raise RuntimeError("No arm driver available - use blueprint or pass arm_driver param")
+        """Call IK via the arm driver spec (resolved at blueprint build time)."""
+        return self._arm_driver.get_inverse_kinematics(pose)
 
     @rpc
     def start(self) -> None:
@@ -273,7 +237,7 @@ class CartesianMotionController(Module[CartesianMotionControllerConfig]):
 
         # Wait for control thread
         if self._control_thread and self._control_thread.is_alive():
-            self._control_thread.join(timeout=2.0)
+            self._control_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
         logger.info("CartesianMotionController stopped")

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels import VoxelGridMapper
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
@@ -25,7 +25,7 @@ from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_g
 
 unitree_go2 = autoconnect(
     unitree_go2_basic,
-    VoxelGridMapper.blueprint(voxel_size=0.1),
+    VoxelGridMapper.blueprint(),
     CostMapper.blueprint(),
     ReplanningAStarPlanner.blueprint(),
     WavefrontFrontierExplorer.blueprint(),

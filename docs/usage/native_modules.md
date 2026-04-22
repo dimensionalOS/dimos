@@ -29,8 +29,8 @@ class MyLidarConfig(NativeModuleConfig):
     host_ip: str = "192.168.1.5"
     frequency: float = 10.0
 
-class MyLidar(NativeModule[MyLidarConfig]):
-    default_config = MyLidarConfig
+class MyLidar(NativeModule):
+    config: MyLidarConfig
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
 
@@ -131,7 +131,7 @@ class FastLio2Config(NativeModuleConfig):
 Native modules work with `autoconnect` exactly like Python modules:
 
 ```python skip
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 
 class PointCloudConsumer(Module):
     pointcloud: In[PointCloud2]
@@ -239,8 +239,8 @@ class Mid360Config(NativeModuleConfig):
     frame_id: str = "lidar_link"
     # ... SDK port configuration
 
-class Mid360(NativeModule[Mid360Config], perception.Lidar, perception.IMU):
-    default_config = Mid360Config
+class Mid360(NativeModule, perception.Lidar, perception.IMU):
+    config: Mid360Config
     lidar: Out[PointCloud2]
     imu: Out[Imu]
 ```
