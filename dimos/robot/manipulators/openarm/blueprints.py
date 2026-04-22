@@ -12,19 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenArm coordinator blueprints (single-arm + bimanual).
-
-Usage:
-    dimos run coordinator-openarm-mock         # Bimanual, mock adapters
-    dimos run coordinator-openarm-left         # Single arm, real CAN
-    dimos run coordinator-openarm-right        # Single arm, real CAN
-    dimos run coordinator-openarm-bimanual     # Both arms, real CAN
-
-The CAN interface each arm uses is set by the ``LEFT_CAN``/``RIGHT_CAN``
-constants below. Linux enumerates gs_usb adapters in USB-discovery order
-which isn't guaranteed stable, so if your arms come up "swapped" just flip
-these two values and rerun — no other code changes needed.
-"""
+"""OpenArm blueprints. Flip LEFT_CAN / RIGHT_CAN below if arms come up swapped."""
 
 from __future__ import annotations
 

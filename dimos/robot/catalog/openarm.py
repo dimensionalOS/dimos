@@ -12,16 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenArm v10 robot configurations.
-
-Ships in bimanual form — two 7-DOF arms on a shared torso. We load the
-full bimanual URDF and select each arm's 7 joints via ``joint_names``.
-Drake handles the rest.
-
-The URDF is referenced from the in-tree ``data/openarm_description/``
-folder during bring-up; the plan is to migrate it to LFS at the end of
-the integration (only the ``_OPENARM_MODEL_PATH`` constant below changes).
-"""
+"""OpenArm v10 robot configurations."""
 
 from __future__ import annotations
 
@@ -62,20 +53,7 @@ def openarm_arm(
     address: str | None = None,
     **overrides: Any,
 ) -> RobotConfig:
-    """Create an OpenArm v10 config for one side of the bimanual rig.
-
-    Both sides share the bimanual URDF (built with ``bimanual:=true``) and
-    pick out their 7 arm joints via ``joint_names``. Drake's SetAutoRenaming
-    handles duplicate model names when both configs go into one planning
-    world.
-
-    Args:
-        side: ``"left"`` or ``"right"``.
-        name: Robot name (defaults to ``f"{side}_arm"``).
-        adapter_type: ``"mock"`` for dry runs, ``"openarm"`` for real CAN.
-        address: SocketCAN channel (e.g. ``"can0"``) — required for real hw.
-        **overrides: Override any ``RobotConfig`` field.
-    """
+    """OpenArm v10 config for one side. Uses per-side URDF (arm + torso only)."""
     if side not in ("left", "right"):
         raise ValueError(f"side must be 'left' or 'right', got {side!r}")
 
@@ -119,11 +97,7 @@ def openarm_single(
     address: str | None = None,
     **overrides: Any,
 ) -> RobotConfig:
-    """Single-arm (non-bimanual) config for keyboard teleop / cartesian IK.
-
-    Uses the pre-expanded single-arm URDF (bimanual:=false). Joint names are
-    ``openarm_joint1..7``. For bimanual planning use :func:`openarm_arm`.
-    """
+    """Single-arm config (keyboard teleop, cartesian IK). Use openarm_arm() for bimanual."""
     defaults: dict[str, Any] = {
         "name": name,
         "model_path": OPENARM_V10_FK_MODEL,

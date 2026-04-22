@@ -12,24 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Reachability / manipulability workspace analysis for any serial robot.
+"""Reachability + Yoshikawa-manipulability workspace analysis via Pinocchio.
 
-Samples joint configurations uniformly within URDF limits, runs FK, and
-collects (a) end-effector Cartesian positions and (b) the Yoshikawa
-manipulability index ``sqrt(det(J·Jᵀ))`` at each pose. Backed by Pinocchio.
-
-Library use:
-    from dimos.utils.workspace import WorkspaceMap
-    ws = WorkspaceMap("path/to/robot.urdf", n_samples=100_000)
-    result = ws.query((0.1, 0.3, 0.5))
-    if result["reachable"]:
-        print(result["best_config"])
-
-CLI:
-    python -m dimos.utils.workspace path/to/robot.urdf                     # visualize
-    python -m dimos.utils.workspace path/to/robot.urdf query 0.1 0.3 0.5
-    python -m dimos.utils.workspace path/to/robot.urdf suggest 0.1 0.3 0.5
-    python -m dimos.utils.workspace path/to/robot.urdf interactive
+Run ``python -m dimos.utils.workspace <urdf> [viz|query|suggest|interactive]``.
 """
 
 from __future__ import annotations
@@ -44,11 +29,7 @@ import numpy as np
 
 
 class WorkspaceMap:
-    """Precomputed reachability + manipulability map with spatial lookup.
-
-    Not specific to any robot — works on any serial-chain URDF that
-    Pinocchio can load.
-    """
+    """Sampled reachability + manipulability map. Works on any URDF Pinocchio can load."""
 
     def __init__(
         self,
@@ -58,17 +39,6 @@ class WorkspaceMap:
         ee_joint_id: int | None = None,
         seed: int = 42,
     ) -> None:
-        """Build the workspace map.
-
-        Args:
-            urdf_path: Path to a URDF parseable by Pinocchio (no xacro, no
-                ``package://`` URIs unless the mesh dirs resolve relative to
-                ``urdf_path``).
-            n_samples: Number of random joint configurations to sample.
-            ee_joint_id: Pinocchio joint index to treat as the end-effector.
-                Defaults to the last joint in the model.
-            seed: RNG seed for reproducibility.
-        """
         import pinocchio
 
         self._pin = pinocchio

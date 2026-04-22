@@ -12,22 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Damiao MIT-mode CAN driver for OpenArm.
+"""Damiao MIT-mode CAN driver for OpenArm. SI units throughout.
 
-Standalone module — zero dimos dependencies. Implements the subset of the
-Damiao DM-J CAN protocol needed for MIT-mode position / velocity / torque
-control, matching the reference C++ implementation in
-`enactic/openarm_can/src/openarm/damiao_motor/dm_motor_control.cpp`.
-
-Unit tests use ``can.Bus(interface="virtual")`` for loopback.
-
-All user-facing values are SI units:
-    angles   in radians
-    angular  velocity in rad/s
-    torque   in Nm
-
-See ``docs/capabilities/manipulation/openarm_integration.md`` for protocol
-byte-level documentation and motor tables.
+Ported from ``enactic/openarm_can`` (C++). No dimos deps — testable with
+``can.Bus(interface="virtual")``.
 """
 
 from __future__ import annotations
@@ -110,19 +98,12 @@ def _clamp(x: float, lo: float, hi: float) -> float:
 
 
 def float_to_uint(x: float, lo: float, hi: float, bits: int) -> int:
-    """Quantize `x` in `[lo, hi]` to a `bits`-wide unsigned int.
-
-    Matches ``CanPacketEncoder::double_to_uint`` from the reference library.
-    """
     x = _clamp(x, lo, hi)
-    span = hi - lo
-    return int((x - lo) / span * ((1 << bits) - 1))
+    return int((x - lo) / (hi - lo) * ((1 << bits) - 1))
 
 
 def uint_to_float(u: int, lo: float, hi: float, bits: int) -> float:
-    """Inverse of :func:`float_to_uint`."""
-    span = hi - lo
-    return u / ((1 << bits) - 1) * span + lo
+    return u / ((1 << bits) - 1) * (hi - lo) + lo
 
 
 def pack_mit_frame(
@@ -133,7 +114,6 @@ def pack_mit_frame(
     kd: float,
     tau: float,
 ) -> bytes:
-    """Pack a Damiao MIT-mode control frame into 8 bytes."""
     p_max, v_max, t_max = _MOTOR_LIMITS[motor_type]
     q_u = float_to_uint(q, -p_max, p_max, 16)
     dq_u = float_to_uint(dq, -v_max, v_max, 12)
@@ -212,15 +192,7 @@ def pack_write_param_frame(send_id: int, rid: int, value_u32: int) -> bytes:
 
 @dataclass(frozen=True)
 class DamiaoMotor:
-    """A single motor on a shared CAN bus.
-
-    Attributes:
-        send_id: CAN arbitration ID we send commands to (e.g. 0x01..0x08).
-        motor_type: Determines q/dq/tau scaling.
-        recv_id: CAN ID the motor replies on. Defaults to ``send_id | 0x10``,
-            which is the OpenArm convention and matches the pattern used by
-            ``enactic/openarm_can``.
-    """
+    """One Damiao motor on a CAN bus. recv_id defaults to send_id | 0x10."""
 
     send_id: int
     motor_type: MotorType
@@ -232,7 +204,6 @@ class DamiaoMotor:
 
     @property
     def limits(self) -> tuple[float, float, float]:
-        """``(p_max, v_max, t_max)`` in rad / rad·s⁻¹ / Nm."""
         return _MOTOR_LIMITS[self.motor_type]
 
 
@@ -242,26 +213,7 @@ class DamiaoMotor:
 
 
 class OpenArmBus:
-    """Manage one SocketCAN bus carrying a set of Damiao motors.
-
-    Spawns a background thread that continuously drains the bus and caches
-    the latest :class:`MotorState` per motor. Callers fan out commands via
-    :meth:`send_mit_many` at their chosen control rate and pull fresh state
-    via :meth:`get_states` / :meth:`get_state`.
-
-    Parameters
-    ----------
-    channel:
-        SocketCAN interface name (e.g. ``"can0"``).
-    motors:
-        Motors present on this bus.
-    fd:
-        True to use CAN-FD (adapter must support it). OpenArm ships fine on
-        classical CAN @ 1 Mbit — keep this False unless you know you need FD.
-    interface:
-        python-can interface name. ``"socketcan"`` for real hardware,
-        ``"virtual"`` for unit tests.
-    """
+    """One SocketCAN bus with a background RX thread caching latest state."""
 
     def __init__(
         self,
@@ -344,14 +296,10 @@ class OpenArmBus:
             time.sleep(0.002)
 
     def set_zero(self, send_id: int) -> None:
-        """Set current physical position as the motor's zero.
-
-        Destructive — don't call this unless you know what you're doing.
-        """
+        """Set current physical position as the motor's zero. Destructive."""
         self._send_raw(send_id, _pack_control_command(_CMD_SET_ZERO))
 
     def write_ctrl_mode(self, send_id: int, mode: int = CTRL_MODE_MIT) -> None:
-        """Write the persistent CTRL_MODE register (e.g. to switch to MIT)."""
         self._send_raw(
             _BROADCAST_ID,
             pack_write_param_frame(send_id, _RID_CTRL_MODE, mode),
@@ -366,7 +314,6 @@ class OpenArmBus:
         kd: float,
         tau: float,
     ) -> None:
-        """Send one MIT command frame to `send_id`."""
         motor = next((m for m in self._motors if m.send_id == send_id), None)
         if motor is None:
             raise KeyError(f"motor 0x{send_id:02X} not on bus {self._channel}")
@@ -377,10 +324,7 @@ class OpenArmBus:
         self,
         commands: list[tuple[float, float, float, float, float]],
     ) -> None:
-        """Fan out one MIT frame per motor, in the order motors were registered.
-
-        ``commands[i] = (q, dq, kp, kd, tau)`` is sent to ``self.motors[i]``.
-        """
+        """One MIT frame per motor; commands[i] → self.motors[i] = (q, dq, kp, kd, tau)."""
         if len(commands) != len(self._motors):
             raise ValueError(
                 f"expected {len(self._motors)} commands, got {len(commands)}"
@@ -410,12 +354,10 @@ class OpenArmBus:
             return self._states.get(motor.effective_recv_id)
 
     def get_states(self) -> list[MotorState | None]:
-        """Latest cached state in motor-registration order."""
         with self._state_lock:
             return [self._states.get(m.effective_recv_id) for m in self._motors]
 
     def wait_all_states(self, timeout: float = 0.5) -> bool:
-        """Block until every motor has reported at least once (or timeout)."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             with self._state_lock:

@@ -12,19 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""OpenArm adapter — implements the ManipulatorAdapter protocol.
-
-Wraps the from-scratch Damiao MIT-mode CAN driver in :mod:`.driver`. All
-physics-level work (frame packing, bus threading, motor state caching)
-lives in the driver; this file just maps the dimos protocol methods to
-driver calls and handles per-joint sign/offset convention.
-
-Units: radians, rad/s, Nm (matching the driver and the protocol).
-
-Default wiring matches the OpenArm v10 BOM (send IDs 1..7 + gripper 8,
-motor types DM8006/DM4340/DM4310, recv = send | 0x10). See
-``docs/capabilities/manipulation/openarm_integration.md``.
-"""
+"""OpenArm ManipulatorAdapter — wraps the Damiao MIT-mode driver. SI units."""
 
 from __future__ import annotations
 
@@ -51,16 +39,11 @@ if TYPE_CHECKING:
 
 
 def _socketcan_iface_up(name: str) -> bool:
-    """Return True if a SocketCAN interface is present and in the UP state.
-
-    Reads /sys directly instead of shelling out to ip(8) — no subprocess,
-    no sudo, works in containers.
-    """
+    """Return True if SocketCAN interface is present and UP. Reads /sys directly."""
     try:
         flags_path = Path("/sys/class/net") / name / "flags"
         if not flags_path.exists():
             return False
-        # IFF_UP is bit 0 of the interface flags register.
         return (int(flags_path.read_text().strip(), 16) & 0x1) == 0x1
     except OSError:
         return False
@@ -98,35 +81,14 @@ _DEFAULT_KD = [1.5, 1.5, 1.0, 1.0, 0.8, 0.8, 0.8]
 class OpenArmAdapter:
     """Adapter for one OpenArm (7 DOF) on a single SocketCAN bus.
 
-    Implements ``ManipulatorAdapter`` via duck typing — no inheritance.
-
-    Parameters
-    ----------
-    address:
-        SocketCAN channel, e.g. ``"can0"``.
-    dof:
-        Must be 7 (OpenArm is fixed-DOF). Kept as a parameter for adapter-
-        protocol uniformity.
-    side:
-        ``"left"`` or ``"right"``. Currently only stored for logging; no sign
-        flips are applied (the URDF handles left/right mirroring).
-    fd:
-        CAN-FD. Defaults to False because the gs_usb adapters we have don't
-        support FD, and OpenArm runs fine on classical 1 Mbit CAN.
-    interface:
-        python-can interface name. Use ``"virtual"`` for unit tests.
-    kp / kd:
-        Optional per-joint overrides of the POSITION-mode MIT gains.
-    gravity_comp:
-        Enable Pinocchio-based gravity compensation feedforward. Computes
-        ``tau_gravity = G(q_current)`` each tick and adds it as the tau_ff
-        term in the MIT frame, so the PD gains only handle transient
-        tracking — not fighting gravity. Eliminates steady-state error.
-    auto_set_mit_mode:
-        If True (default), write ``CTRL_MODE=MIT`` to every motor during
-        ``connect()``. Idempotent — safe to leave on. Set False to verify
-        a previous write persisted across power cycles (i.e. to confirm
-        motors stay in MIT mode without the adapter re-setting it).
+    Key kwargs:
+        address: SocketCAN channel, e.g. "can0"
+        side: "left" or "right" (picks URDF for gravity comp)
+        kp / kd: per-joint MIT gains (optional override)
+        gravity_comp: Pinocchio G(q) feedforward torque (default True)
+        auto_set_mit_mode: write CTRL_MODE=MIT on connect (idempotent, default True)
+        fd: CAN-FD (False for gs_usb adapters, which don't support FD)
+        interface: python-can backend; "virtual" for unit tests
     """
 
     # Per-side URDFs for Pinocchio gravity model
@@ -355,10 +317,7 @@ class OpenArmAdapter:
     # ------------------------------------------------------------------
 
     def _compute_gravity_torques(self, q: list[float]) -> list[float]:
-        """Compute per-joint gravity torques at configuration q using Pinocchio.
-
-        Returns [0.0]*dof if gravity comp is disabled or model not loaded.
-        """
+        """Pinocchio G(q), clamped to motor torque limits. Zero if model not loaded."""
         if self._pin_model is None or self._pin_data is None:
             return [0.0] * self._dof
         import pinocchio
