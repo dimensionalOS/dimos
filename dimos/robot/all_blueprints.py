@@ -16,6 +16,9 @@
 # Run `pytest dimos/robot/test_all_blueprints_generation.py` to regenerate.
 
 all_blueprints = {
+    "aruco-servo-mock": "dimos.manipulation.dynamic_tracking.blueprints:aruco_servo_mock",
+    "aruco-servo-xarm6": "dimos.manipulation.dynamic_tracking.blueprints:aruco_servo_xarm6",
+    "aruco-tracker": "dimos.manipulation.dynamic_tracking.blueprints:aruco_tracker_realsense",
     "arm-teleop": "dimos.teleop.quest.blueprints:arm_teleop",
     "arm-teleop-dual": "dimos.teleop.quest.blueprints:arm_teleop_dual",
     "arm-teleop-piper": "dimos.teleop.quest.blueprints:arm_teleop_piper",
