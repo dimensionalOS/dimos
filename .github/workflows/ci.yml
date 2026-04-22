@@ -42,9 +42,9 @@ jobs:
         run: |
           find .venv/lib/*/site-packages/pydrake -name '*.pyi' -delete 2>/dev/null || true
 
-      - name: Run tests with coverage
+      - name: Run tests
         run: |
-          /entrypoint.sh bash -c "source .venv/bin/activate && _DIMOS_COV=1 coverage run -m pytest --durations=0 -m 'not (tool or mujoco)' && coverage combine && coverage xml && coverage report"
+          /entrypoint.sh bash -c "source .venv/bin/activate && _DIMOS_COV=1 coverage run -m pytest --durations=0 -m 'not (tool or mujoco)' && coverage xml && coverage report"
 
       - name: Run mypy
         if: ${{ !cancelled() }}
