@@ -1,0 +1,51 @@
+pr_number: 1879
+
+responses:
+  - comment_id: 3106141416
+    path: dimos/protocol/rpc/pubsubrpc.py
+    body: >
+      Verified: this file is identical to `origin/dev` on this branch. The diff
+      visible in the PR is an artifact of the merge-base being behind `dev` --
+      no commits on `jeff/feat/arduino` touch this file. No changes to revert.
+
+  - comment_id: 3106141794
+    path: dimos/robot/all_blueprints.py
+    line: 171
+    body: >
+      Renamed `twist-echo` to `arduino-twist-echo` in the `all_modules`
+      registry to match the blueprint name (`arduino-twist-echo-virtual`) and
+      to distinguish it from non-Arduino modules. Also moved the entry to
+      maintain alphabetical order.
+
+  - comment_id: 3106142023
+    path: dimos/simulation/engines/mujoco_shm.py
+    body: >
+      Verified: this file is identical to `origin/dev` on this branch. The diff
+      visible in the PR is an artifact of the merge-base being behind `dev` --
+      no commits on `jeff/feat/arduino` touch this file. No changes to revert.
+
+  - comment_id: 3104205977
+    path: dimos/core/arduino_module.py
+    line: 37
+    body: >
+      Moved `import fcntl` from module-level into `_build_bridge()`, the only
+      method that uses it. Importing `arduino_module.py` on Windows will no
+      longer raise `ModuleNotFoundError`.
+
+  - comment_id: 3104206004
+    path: dimos/core/arduino_module.py
+    line: 801
+    body: >
+      Replaced `core_id in list_result.stdout` with a line-aware check that
+      splits each line and compares only the first column to `core_id`. This
+      prevents false positives from prefix matches (e.g. "arduino:avr"
+      matching "arduino:avr-plus").
+
+  - comment_id: 3104206006
+    path: dimos/hardware/arduino/common/dsp_protocol.h
+    line: 16
+    body: >
+      Updated the header doc comment to list the actual public API:
+      `dimos_check_message()`, `dimos_message_topic()`, `dimos_message_data()`,
+      `dimos_message_len()`. Removed references to nonexistent `dimos_poll()`
+      and `dimos_on_receive()`.
