@@ -64,7 +64,8 @@ from dimos.utils.logging_config import setup_logger
 if sys.platform.startswith("linux"):
     import ctypes
 
-    _LIBC = ctypes.CDLL("libc.so.6", use_errno=True)
+    from ctypes.util import find_library
+    _LIBC = ctypes.CDLL(find_library("c"), use_errno=True)
     _PR_SET_PDEATHSIG = 1
 
     def _child_preexec_linux() -> None:
