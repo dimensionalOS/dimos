@@ -90,8 +90,6 @@ class LogFormat(enum.Enum):
 
 
 class NativeModuleConfig(ModuleConfig):
-    """Configuration for a native (C/C++) subprocess module."""
-
     executable: str
     build_command: str | None = None
     cwd: str | None = None
@@ -101,21 +99,10 @@ class NativeModuleConfig(ModuleConfig):
     log_format: LogFormat = LogFormat.TEXT
     auto_build: bool = False
 
-    # Override in subclasses to exclude fields from CLI arg generation
     cli_exclude: frozenset[str] = frozenset()
-    # Override in subclasses to map field names to custom CLI arg names
-    # (bypasses the automatic snake_case → camelCase conversion).
     cli_name_override: dict[str, str] = Field(default_factory=dict)
 
     def to_cli_args(self) -> list[str]:
-        """Convert subclass config fields to CLI args.
-
-        Iterates fields defined on the concrete subclass (not NativeModuleConfig
-        or its parents) and converts them to ``["--name", str(value)]`` pairs.
-        Field names are passed as-is (snake_case) unless overridden via
-        ``cli_name_override``.
-        Skips fields whose values are ``None`` and fields in ``cli_exclude``.
-        """
         ignore_fields = {f for f in NativeModuleConfig.model_fields}
         args: list[str] = []
         for f in self.__class__.model_fields:
@@ -140,19 +127,6 @@ _NativeConfig = TypeVar("_NativeConfig", bound=NativeModuleConfig, default=Nativ
 
 
 class NativeModule(Module):
-    """Module that wraps a native executable as a managed subprocess.
-
-    Subclass this, declare In/Out ports, and annotate ``config`` with a
-    :class:`NativeModuleConfig` subclass pointing at the executable.
-
-    On ``start()``, the binary is launched with CLI args::
-
-        <executable> --<port_name> <lcm_topic_string> ... <extra_args>
-
-    The native process should parse these args and pub/sub on the given
-    LCM topics directly.  On ``stop()``, the process receives SIGTERM.
-    """
-
     config: NativeModuleConfig
 
     _process: subprocess.Popen[bytes] | None = None
@@ -162,7 +136,6 @@ class NativeModule(Module):
 
     @functools.cached_property
     def _mod_label(self) -> str:
-        """Short human-readable label: ClassName(executable_basename)."""
         exe = Path(self.config.executable).name if self.config.executable else "?"
         return f"{type(self).__name__}({exe})"
 
@@ -170,7 +143,6 @@ class NativeModule(Module):
         super().__init__(**kwargs)
         self._stop_lock = threading.Lock()
 
-        # Resolve relative cwd and executable against the subclass's source file.
         if self.config.cwd is not None and not Path(self.config.cwd).is_absolute():
             base_dir = Path(inspect.getfile(type(self))).resolve().parent
             self.config.cwd = str(base_dir / self.config.cwd)
@@ -207,11 +179,6 @@ class NativeModule(Module):
             cwd=cwd,
         )
 
-        # start_new_session=True is the thread-safe way to isolate the child
-        # from terminal signals (SIGINT from the tty).  preexec_fn is unsafe
-        # in the presence of threads (subprocess docs), so we only use it on
-        # Linux where prctl(PR_SET_PDEATHSIG) has no alternative — see
-        # _set_process_to_die_when_parent_dies defined at module scope.
         self._process = subprocess.Popen(
             cmd,
             env=env,
@@ -239,13 +206,8 @@ class NativeModule(Module):
 
     @rpc
     def stop(self) -> None:
-        # Two callers can race here: the RPC stop() and the watchdog calling
-        # self.stop() after it detects an unexpected exit.  Serialize on a
-        # per-instance lock and let the second caller no-op via the
-        # _stopping flag.  We capture the proc/watchdog refs under the lock
-        # but do the actual signal/wait/join *outside* it — joining the
-        # watchdog while holding the lock would deadlock with the watchdog's
-        # own stop() call waiting on the same lock.
+        # Capture refs under lock, but signal/wait/join outside it to avoid
+        # deadlocking with the watchdog's own stop() call.
         with self._stop_lock:
             if self._stopping:
                 return
@@ -288,9 +250,6 @@ class NativeModule(Module):
         super().stop()
 
     def _watch_process(self) -> None:
-        """Block until the native process exits; trigger stop() if it crashed."""
-        # Cache the Popen reference and pid locally so a concurrent stop()
-        # setting self._process = None can't race us into an AttributeError.
         proc = self._process
         if proc is None:
             return
@@ -325,7 +284,6 @@ class NativeModule(Module):
         level: str,
         pid: int,
     ) -> threading.Thread:
-        """Spawn a daemon thread that pipes a subprocess stream through the logger."""
         t = threading.Thread(
             target=self._read_log_stream,
             args=(stream, level, pid),
@@ -360,13 +318,6 @@ class NativeModule(Module):
         stream.close()
 
     def _maybe_build(self) -> None:
-        """Run ``build_command`` if the executable is missing or auto_build is enabled.
-
-        When the executable already exists and ``auto_build`` is False, skip
-        rebuilding (avoids expensive nix invocations when you have many native
-        modules).  When the executable is missing, always build regardless of
-        ``auto_build`` — this covers first-run in prod (like pip building wheels).
-        """
         exe = Path(self.config.executable)
 
         if self.config.build_command is None:
@@ -390,8 +341,6 @@ class NativeModule(Module):
             build_command=self.config.build_command,
         )
         build_start = time.perf_counter()
-        # shell=True is required for nix build commands that use shell features.
-        # build_command comes from the config dataclass default — trusted source only.
         proc = subprocess.Popen(
             self.config.build_command,
             shell=True,
@@ -431,7 +380,6 @@ class NativeModule(Module):
         )
 
     def _collect_topics(self) -> dict[str, str]:
-        """Extract LCM topic strings from blueprint-assigned stream transports."""
         topics: dict[str, str] = {}
         for name in list(self.inputs) + list(self.outputs):
             stream = getattr(self, name, None)
