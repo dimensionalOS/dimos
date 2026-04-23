@@ -17,6 +17,8 @@ from __future__ import annotations
 import importlib
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
+from dimos.msgs.sensor_msgs.Image import Image
+
 T = TypeVar("T")
 
 
@@ -33,8 +35,6 @@ def codec_for(payload_type: type[Any] | None = None) -> Codec[Any]:
     from dimos.memory2.codecs.pickle import PickleCodec
 
     if payload_type is not None:
-        from dimos.msgs.sensor_msgs.Image import Image
-
         if issubclass(payload_type, Image):
             from dimos.memory2.codecs.jpeg import JpegCodec
 

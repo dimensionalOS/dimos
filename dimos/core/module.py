@@ -19,6 +19,7 @@ import inspect
 import json
 import sys
 import threading
+import time
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -39,10 +40,12 @@ from dimos.core.introspection.module.render import render_module_io
 from dimos.core.resource import CompositeResource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteOut, Transport
+from dimos.memory2.store.sqlite import SqliteStore
 from dimos.protocol.rpc.pubsubrpc import LCMRPC
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, RPCSpec
 from dimos.protocol.service.spec import BaseConfig, Configurable
 from dimos.protocol.tf.tf import LCMTF, TFSpec
+from dimos.types.timestamped import Timestamped
 from dimos.utils import colors
 from dimos.utils.generic import classproperty
 
@@ -50,6 +53,7 @@ if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint
     from dimos.core.introspection.module.info import ModuleInfo
     from dimos.core.rpc_client import RPCClient
+    from dimos.memory2.stream import Stream
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar
@@ -112,9 +116,11 @@ class ModuleBase(Configurable, CompositeResource):
     _module_closed: bool = False
     _module_closed_lock: threading.Lock
     _loop_thread_timeout: float = 2.0
+    _rec_store: SqliteStore | None = None
 
     def __init__(self, config_args: dict[str, Any]) -> None:
         super().__init__(**config_args)
+        self._rec_unsubs: list[Callable[[], None]] = []
         self._module_closed_lock = threading.Lock()
         self._loop, self._loop_thread = get_loop()
         try:
@@ -155,6 +161,7 @@ class ModuleBase(Configurable, CompositeResource):
     @rpc
     def stop(self) -> None:
         super().stop()
+        self._stop_recording()
         self._close_module()
 
     def _close_module(self) -> None:
@@ -375,6 +382,36 @@ class ModuleBase(Configurable, CompositeResource):
         from dimos.core.coordination.blueprints import Blueprint
 
         return partial(Blueprint.create, self)  # type: ignore[arg-type]
+
+    @rpc
+    def start_recording(self, db_path: str) -> None:
+        from dimos.memory2.store.sqlite import SqliteStore
+
+        self._rec_store = SqliteStore(path=db_path)
+        for name, out in self.outputs.items():
+            stream = self._rec_store.stream(name, out.type)
+            reg = self._rec_store._registry.get(name)
+            if reg and "channel" not in reg:
+                reg["channel"] = f"/{name}#{out.type.msg_name}"
+                self._rec_store._registry.put(name, reg)
+
+            def cb(msg: Any, _stream: "Stream[object]" = stream) -> None:
+                ts = msg.ts if isinstance(msg, Timestamped) else time.time()
+                _stream.append(msg, ts=ts)
+
+            self._rec_unsubs.append(out.subscribe(cb))
+
+    @rpc
+    def stop_recording(self) -> None:
+        self._stop_recording()
+
+    def _stop_recording(self) -> None:
+        for unsub in self._rec_unsubs:
+            unsub()
+        self._rec_unsubs = []
+        if self._rec_store is not None:
+            self._rec_store.stop()
+            self._rec_store = None
 
     @rpc
     def set_module_ref(self, name: str, module_ref: "RPCClient") -> None:

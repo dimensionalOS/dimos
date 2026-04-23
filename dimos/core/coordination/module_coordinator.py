@@ -14,12 +14,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from collections.abc import Mapping, MutableMapping
+import dataclasses
 import importlib
+from pathlib import Path
 import shutil
 import sys
-import threading
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
 from dimos.core.coordination.rpyc_server import RpycServer
@@ -30,6 +33,7 @@ from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import ModuleBase, ModuleSpec
 from dimos.core.resource import Resource
 from dimos.core.transport import LCMTransport, PubSubTransport, pLCMTransport
+from dimos.record.record_replay import RecordReplay
 from dimos.spec.utils import spec_annotation_compliance, spec_structural_compliance
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
@@ -256,6 +260,25 @@ class ModuleCoordinator(Resource):
         if "g" in blueprint_args:
             global_config.update(**blueprint_args.pop("g"))
 
+        # Auto-replay if --replay-file is set
+        replay_file = global_config.replay_file
+        if replay_file:
+            logger.info("Auto-replay from %s", replay_file)
+            # Strip replay_file from all override sources so the nested build()
+            # inside replay() does not re-enter this branch.
+            global_config.replay_file = None
+            clean_bp = dataclasses.replace(
+                blueprint,
+                global_config_overrides=MappingProxyType(
+                    {
+                        k: v
+                        for k, v in blueprint.global_config_overrides.items()
+                        if k != "replay_file"
+                    }
+                ),
+            )
+            return cls.replay(clean_bp, replay_file, blueprint_args=dict(blueprint_args))
+
         _run_configurators(blueprint)
         _check_requirements(blueprint)
         _verify_no_name_conflicts(blueprint)
@@ -271,7 +294,65 @@ class ModuleCoordinator(Resource):
         coordinator.build_all_modules()
         coordinator.start_all_modules()
 
+        if global_config.record_path:
+            # Delete existing file, don't append to it.
+            Path(global_config.record_path).unlink(missing_ok=True)
+            record_modules = blueprint.record_modules
+            for bp in blueprint.active_blueprints:
+                if bp.module in record_modules:
+                    instance = coordinator.get_instance(bp.module)
+                    if instance is not None:
+                        instance.start_recording(global_config.record_path)
+
         _log_blueprint_graph(blueprint, coordinator)
+
+        return coordinator
+
+    @classmethod
+    def replay(
+        cls,
+        blueprint: Blueprint,
+        recording_path: str,
+        *,
+        speed: float = 1.0,
+        blueprint_args: MutableMapping[str, Any] | None = None,
+    ) -> ModuleCoordinator:
+        """Build with a recording replacing some module outputs."""
+        recording = RecordReplay(recording_path)
+        recorded_streams = set(recording.store.list_streams())
+        if not recorded_streams:
+            raise ValueError("Recording is empty — no streams to replay")
+
+        modules_to_disable: list[type[ModuleBase]] = []
+        for bp in blueprint.blueprints:
+            out_names = {c.name for c in bp.streams if c.direction == "out"}
+            if not out_names:
+                continue
+            covered = out_names & recorded_streams
+            if covered:
+                modules_to_disable.append(bp.module)
+                uncovered = out_names - covered
+                if uncovered:
+                    logger.warning(
+                        "Replay: disabling %s (partial: replaying %s, missing %s)",
+                        bp.module.__name__,
+                        covered,
+                        uncovered,
+                    )
+                else:
+                    logger.info("Replay: disabling %s (all OUTs covered)", bp.module.__name__)
+
+        if not modules_to_disable:
+            logger.warning(
+                "Replay: no modules disabled - recording streams %s"
+                "don't match any module OUT names",
+                recorded_streams,
+            )
+
+        patched = blueprint.disabled_modules(*modules_to_disable)
+        coordinator = cls.build(patched, blueprint_args)
+
+        recording.play(speed=speed)
 
         return coordinator
 
@@ -511,10 +592,10 @@ class ModuleCoordinator(Resource):
 
         return new_proxy
 
-    def loop(self) -> None:
-        stop = threading.Event()
+    async def loop(self) -> None:
+        stop = asyncio.Event()
         try:
-            stop.wait()
+            await stop.wait()
         except KeyboardInterrupt:
             return
         finally:

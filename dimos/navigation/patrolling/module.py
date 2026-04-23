@@ -14,6 +14,7 @@
 
 
 import threading
+import time
 
 from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
@@ -138,6 +139,8 @@ class PatrollingModule(Module):
         # Publish current position as goal to cancel in-progress navigation.
         pose = self._latest_pose
         if pose is not None:
+            # We want to update timestamps, otherwise recordings etc. would fail
+            pose.ts = time.time()
             self.goal_request.publish(pose)
         with self._patrol_lock:
             if self._patrol_thread is not None:

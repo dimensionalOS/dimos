@@ -741,7 +741,6 @@ class WavefrontFrontierExplorer(Module):
                 position=self.latest_odometry.position,
                 orientation=self.latest_odometry.orientation,
                 frame_id="world",
-                ts=self.latest_odometry.ts,
             )
             self.goal_request.publish(goal)
 
@@ -782,7 +781,6 @@ class WavefrontFrontierExplorer(Module):
                 goal_msg.position.z = 0.0
                 goal_msg.orientation.w = 1.0  # No rotation
                 goal_msg.frame_id = "world"
-                goal_msg.ts = self.latest_costmap.ts
 
                 self.goal_request.publish(goal_msg)
                 logger.info(f"Published frontier goal: ({goal.x:.2f}, {goal.y:.2f})")

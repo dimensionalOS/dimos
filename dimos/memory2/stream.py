@@ -352,6 +352,14 @@ class Stream(CompositeResource, Generic[T]):
             )
         )
 
+    def delete_range(self, t1: float, t2: float) -> int:
+        """Delete all observations with timestamps in [t1, t2]. Returns count deleted."""
+        if isinstance(self._source, Stream):
+            raise TypeError("Cannot delete from a transform stream.")
+        if self._source is None:
+            raise TypeError("No source available.")
+        return self._source.delete_range(t1, t2)
+
     def publish(self, out: Any) -> DisposableBase:
         """Publish each observation's data to a Module ``Out`` port.
 

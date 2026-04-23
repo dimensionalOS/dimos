@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from contextlib import suppress
 from datetime import datetime, timezone
@@ -37,7 +38,12 @@ from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.core.run_registry import (
+    get_most_recent,
+    is_pid_alive,
+    stop_entry,
+)
+from dimos.utils.cli.recorder.run_recorder import main as recorder_main
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -188,17 +194,14 @@ def load_config_args(config: type[BaseModel], args: Iterable[str], path: Path) -
     return kwargs  # type: ignore[no-any-return]
 
 
-@main.command()
-def run(
+async def _run(
     ctx: typer.Context,
-    robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
-    daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
-    disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
-    blueprint_args: list[str] = typer.Option((), "--option", "-o"),
-    config_path: Path = typer.Option(
-        CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
-    ),
-    show_help: bool = typer.Option(False, "--help"),
+    robot_types: list[str],
+    daemon: bool,
+    disable: list[str],
+    blueprint_args: list[str],
+    config_path: Path,
+    show_help: bool,
 ) -> None:
     """Start a robot blueprint"""
     logger.info("Starting DimOS")
@@ -221,6 +224,11 @@ def run(
     setup_exception_handler()
 
     cli_config_overrides: dict[str, Any] = ctx.obj
+
+    # Apply overrides early so blueprint module-level code (e.g. viewer
+    # selection) sees the correct global_config values at import time.
+    if cli_config_overrides:
+        global_config.update(**cli_config_overrides)
 
     # Clean stale registry entries
     stale = cleanup_stale()
@@ -304,7 +312,7 @@ def run(
         entry.save()
         spawn_watchdog(run_id, log_dir=log_dir)
         install_signal_handlers(entry, coordinator)
-        coordinator.loop()
+        await coordinator.loop()
     else:
         rpyc_port = coordinator.start_rpyc_service()
         entry = RunEntry(
@@ -325,9 +333,26 @@ def run(
         # runs with a visible traceback.
         install_signal_handlers(entry, coordinator, sigint=False)
         try:
-            coordinator.loop()
+            await coordinator.loop()
         finally:
             entry.remove()
+
+
+@main.command()
+def run(
+    ctx: typer.Context,
+    robot_types: list[str] = typer.Argument(..., help="Blueprints or modules to run"),
+    daemon: bool = typer.Option(False, "--daemon", "-d", help="Run in background"),
+    disable: list[str] = typer.Option([], "--disable", help="Module names to disable"),
+    blueprint_args: list[str] = typer.Option((), "--option", "-o"),
+    config_path: Path = typer.Option(
+        CONFIG_DIR / "dimos", "--config", "-c", help="Path to config file"
+    ),
+    show_help: bool = typer.Option(False, "--help"),
+) -> None:
+    """Start a robot blueprint"""
+    logger.info("Starting DimOS")
+    asyncio.run(_run(ctx, robot_types, daemon, disable, blueprint_args, config_path, show_help))
 
 
 @main.command()
@@ -629,6 +654,13 @@ def top(ctx: typer.Context) -> None:
 
     sys.argv = ["dtop", *ctx.args]
     dtop_main()
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def recorder(ctx: typer.Context) -> None:
+    """Record and replay tool — terminal VLC for dimos recordings."""
+    sys.argv = ["recorder", *ctx.args]
+    recorder_main()
 
 
 topic_app = typer.Typer(help="Topic commands for pub/sub")
