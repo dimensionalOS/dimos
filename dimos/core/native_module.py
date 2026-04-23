@@ -160,6 +160,21 @@ class NativeModule(Module):
         self._tail_lock = threading.Lock()
         self._resolve_paths()
 
+    def __getstate__(self) -> dict:
+        state = super().__getstate__()
+        for key in ("_tail_lock", "_process", "_watchdog"):
+            state.pop(key, None)
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        super().__setstate__(state)
+        self._stderr_tail = collections.deque(maxlen=50)
+        self._stdout_tail = collections.deque(maxlen=50)
+        self._tail_lock = threading.Lock()
+        self._process = None
+        self._watchdog = None
+        self._stopping = False
+
     @rpc
     def start(self) -> None:
         if self._process is not None and self._process.poll() is None:

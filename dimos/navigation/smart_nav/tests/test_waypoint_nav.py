@@ -182,7 +182,7 @@ class SimVehicle(Module):
 
 def test_waypoint_nav_produces_path_and_movement():
     """Send waypoint at (10,0), verify terrain_map + path + non-zero cmd_vel."""
-    from dimos.core.blueprints import autoconnect
+    from dimos.core.coordination.blueprints import autoconnect
     from dimos.msgs.geometry_msgs.PointStamped import PointStamped
     from dimos.navigation.smart_nav.modules.local_planner.local_planner import LocalPlanner
     from dimos.navigation.smart_nav.modules.path_follower.path_follower import PathFollower

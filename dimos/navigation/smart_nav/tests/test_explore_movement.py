@@ -263,7 +263,7 @@ class Collector:
 
 def test_explore_produces_movement():
     """End-to-end: TARE planner drives robot movement via full pipeline."""
-    from dimos.core.blueprints import autoconnect
+    from dimos.core.coordination.blueprints import autoconnect
     from dimos.msgs.geometry_msgs.PointStamped import PointStamped
     from dimos.msgs.nav_msgs.Path import Path as NavPath
     from dimos.navigation.smart_nav.modules.local_planner.local_planner import LocalPlanner

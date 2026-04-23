@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.navigation.smart_nav.modules.local_planner.local_planner import LocalPlanner

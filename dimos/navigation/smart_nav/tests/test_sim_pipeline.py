@@ -22,6 +22,7 @@ import pickle
 import time
 
 import numpy as np
+import pytest
 
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
@@ -51,7 +52,7 @@ class TestModulePickling:
         m = UnityBridgeModule(sim_rate=200.0)
         m2 = pickle.loads(pickle.dumps(m))
         assert hasattr(m2, "_cmd_lock")
-        assert m2._running is False
+        assert not m2._running.is_set()
 
     def test_tui_control_pickles(self):
         m = TUIControlModule(max_speed=2.0)
@@ -140,7 +141,10 @@ class TestTransportWiring:
                 orientation=[quat.x, quat.y, quat.z, quat.w],
             ),
         )
-        odom_transport.publish(odom)
+        try:
+            odom_transport.publish(odom)
+        except OSError:
+            pytest.skip("LCM multicast socket unavailable")
         time.sleep(0.05)
 
         # Publish a point cloud

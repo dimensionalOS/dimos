@@ -73,3 +73,6 @@ class OdomAdapter(Module):
             ],
         )
         self.odom._transport.publish(ps)
+
+    def stop(self) -> None:
+        pass

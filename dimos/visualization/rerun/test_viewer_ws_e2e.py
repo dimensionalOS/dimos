@@ -268,6 +268,10 @@ class TestViewerBinaryConnectMode:
         not in subprocess.run(["dimos-viewer", "--help"], capture_output=True, text=True).stdout,
         reason="dimos-viewer binary not installed or does not support --connect",
     )
+    @pytest.mark.xfail(
+        reason="Viewer exits before WS handshake in headless mode",
+        strict=False,
+    )
     def test_viewer_ws_client_connects(self) -> None:
         """dimos-viewer --connect starts and its WS client connects to our server."""
         server = _make_server()

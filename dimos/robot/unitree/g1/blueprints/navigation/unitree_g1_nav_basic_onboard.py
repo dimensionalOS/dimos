@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import os
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.navigation.smart_nav.modules.sensor_scan_generation.sensor_scan_generation import (
     SensorScanGeneration,

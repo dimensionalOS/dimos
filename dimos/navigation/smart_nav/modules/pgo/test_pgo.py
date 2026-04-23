@@ -542,20 +542,17 @@ class TestPGOWrapper:
         """PGO config should have sensible defaults."""
         from dimos.navigation.smart_nav.modules.pgo.pgo import PGOConfig
 
-        # NativeModuleConfig is Pydantic; check model_fields for defaults
         fields = PGOConfig.model_fields
         assert fields["key_pose_delta_trans"].default == 0.5
         assert fields["key_pose_delta_deg"].default == 10.0
         assert fields["loop_search_radius"].default == 15.0
         assert fields["loop_score_thresh"].default == 0.3
         assert fields["global_map_voxel_size"].default == 0.15
-        assert "pgo" in fields["executable"].default
 
-    def test_pgo_config_build_command(self):
-        """PGO config should specify nix build command."""
+    def test_pgo_config_icp_defaults(self):
+        """PGO config should have ICP defaults."""
         from dimos.navigation.smart_nav.modules.pgo.pgo import PGOConfig
 
         fields = PGOConfig.model_fields
-        assert fields["build_command"].default is not None
-        assert "nix build" in fields["build_command"].default
-        assert "pgo" in fields["build_command"].default
+        assert fields["max_icp_iterations"].default == 50
+        assert fields["max_icp_correspondence_dist"].default == 10.0

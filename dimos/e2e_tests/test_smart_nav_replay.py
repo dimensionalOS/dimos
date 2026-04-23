@@ -27,7 +27,7 @@ import time
 
 import pytest
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.mapping.costmapper import CostMapper
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped

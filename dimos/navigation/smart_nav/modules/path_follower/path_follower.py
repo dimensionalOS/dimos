@@ -52,7 +52,7 @@ class PathFollowerConfig(NativeModuleConfig):
         "slow_down_distance_threshold": "slowDwnDisThre",
     }
 
-    # --- Pure pursuit parameters ---
+    # Pure pursuit parameters
 
     # Look-ahead distance for the pure pursuit controller (m).
     look_ahead_distance: float = 0.5
@@ -61,24 +61,24 @@ class PathFollowerConfig(NativeModuleConfig):
     # Maximum yaw rate for turning (rad/s).
     max_yaw_rate: float = 1.5
 
-    # --- Goal ---
+    # Goal
 
     # Distance from goal at which the follower considers it reached (m).
     goal_tolerance: float = 0.3
 
-    # --- Vehicle ---
+    # Vehicle
 
     # Vehicle kinematics model: "omniDir" for mecanum, "standard" for ackermann.
     vehicle_config: str = "omniDir"
 
-    # --- Mode flags ---
+    # Mode flags
 
     # Enable fully autonomous path-following mode.
     autonomy_mode: bool | None = None
     # Velocity cap during autonomous navigation (m/s).
     autonomy_speed: float | None = None
 
-    # --- Acceleration / slowdown ---
+    # Acceleration / slowdown
 
     # Maximum linear acceleration (m/s²).
     max_acceleration: float | None = None
@@ -98,8 +98,15 @@ class PathFollower(NativeModule):
         cmd_vel (Out[Twist]): Velocity commands for the vehicle.
     """
 
+    config: PathFollowerConfig
     default_config: type[PathFollowerConfig] = PathFollowerConfig  # type: ignore[assignment]
 
     path: In[Path]
     odometry: In[Odometry]
     cmd_vel: Out[Twist]
+
+    def start(self) -> None:
+        super().start()
+
+    def stop(self) -> None:
+        super().stop()

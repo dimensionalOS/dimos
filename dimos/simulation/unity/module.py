@@ -359,6 +359,34 @@ class UnityBridgeModule(Module):
         self._send_queue: Queue[tuple[str, bytes]] = Queue()
         self._binary_path = self._resolve_binary()
 
+    def __getstate__(self) -> dict:
+        state = super().__getstate__()
+        for key in (
+            "_cmd_lock",
+            "_state_lock",
+            "_running",
+            "_sim_thread",
+            "_unity_thread",
+            "_unity_ready",
+            "_unity_process",
+            "_send_queue",
+        ):
+            state.pop(key, None)
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        super().__setstate__(state)
+        from queue import Queue
+
+        self._cmd_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._running = threading.Event()
+        self._sim_thread = None
+        self._unity_thread = None
+        self._unity_ready = threading.Event()
+        self._unity_process = None
+        self._send_queue = Queue()
+
     @rpc
     def start(self) -> None:
         super().start()

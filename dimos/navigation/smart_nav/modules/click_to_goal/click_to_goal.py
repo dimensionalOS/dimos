@@ -148,3 +148,6 @@ class ClickToGoal(Module):
         here = PointStamped(ts=time.time(), frame_id="map", x=rx, y=ry, z=rz)
         self.way_point.publish(here)
         self.goal.publish(here)
+
+    def stop(self) -> None:
+        pass

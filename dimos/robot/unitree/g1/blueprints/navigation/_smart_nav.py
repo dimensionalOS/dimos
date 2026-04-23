@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.navigation.cmd_vel_mux import CmdVelMux
 from dimos.navigation.smart_nav.blueprints._rerun_helpers import (
     global_map_override,
@@ -49,9 +49,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.robot.unitree.g1.config import G1
 
 
-# ---------------------------------------------------------------------------
 # Rerun visualization
-# ---------------------------------------------------------------------------
 def _rerun_blueprint_3d() -> Any:
     import rerun.blueprint as rrb
 
@@ -80,9 +78,7 @@ _rerun_config = {
 }
 
 
-# ---------------------------------------------------------------------------
 # Onboard (real hardware)
-# ---------------------------------------------------------------------------
 _smart_nav = autoconnect(
     TerrainAnalysis.blueprint(
         # Input filtering
@@ -166,9 +162,7 @@ _smart_nav = autoconnect(
     ]
 )
 
-# ---------------------------------------------------------------------------
 # Simulation
-# ---------------------------------------------------------------------------
 _smart_nav_sim = autoconnect(
     TerrainAnalysis.blueprint(
         obstacle_height_threshold=0.2,

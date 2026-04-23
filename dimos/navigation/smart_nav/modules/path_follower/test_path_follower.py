@@ -40,8 +40,8 @@ class TestPathFollowerConfig:
             max_speed=1.0,
         )
         args = config.to_cli_args()
-        assert "--look_ahead_distance" in args
-        assert "--max_speed" in args
+        assert "--lookAheadDis" in args
+        assert "--maxSpeed" in args
 
 
 class TestPathFollowerModule:

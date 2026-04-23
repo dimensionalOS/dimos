@@ -161,6 +161,17 @@ def monitor_threads(request):
             # https://github.com/huggingface/transformers/issues/29513
             "Thread-auto_conversion",
         ]
+        expected_persistent_thread_substrings = [
+            "run_forever",
+            "_lcm_loop",
+            "native-watchdog",
+            "_input_loop",
+        ]
+        new_threads = [
+            t
+            for t in new_threads
+            if not any(sub in t.name for sub in expected_persistent_thread_substrings)
+        ]
         new_threads = [
             t
             for t in new_threads

@@ -118,6 +118,7 @@ class AriseSLAM(NativeModule):
         local_map (Out[PointCloud2]): Local map visualization (optional).
     """
 
+    config: AriseSLAMConfig
     default_config: type[AriseSLAMConfig] = AriseSLAMConfig  # type: ignore[assignment]
 
     raw_points: In[PointCloud2]
@@ -125,3 +126,9 @@ class AriseSLAM(NativeModule):
     registered_scan: Out[PointCloud2]
     odometry: Out[Odometry]
     local_map: Out[PointCloud2]
+
+    def start(self) -> None:
+        super().start()
+
+    def stop(self) -> None:
+        super().stop()

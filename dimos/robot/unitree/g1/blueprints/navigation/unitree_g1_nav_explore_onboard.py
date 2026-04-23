@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import os
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.navigation.smart_nav.modules.click_to_goal.click_to_goal import ClickToGoal
 from dimos.navigation.smart_nav.modules.global_map.global_map import GlobalMap

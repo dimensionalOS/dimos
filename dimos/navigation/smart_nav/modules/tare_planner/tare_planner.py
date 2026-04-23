@@ -55,8 +55,15 @@ class TarePlanner(NativeModule):
         way_point (Out[PointStamped]): Exploration waypoint for local planner.
     """
 
+    config: TarePlannerConfig
     default_config: type[TarePlannerConfig] = TarePlannerConfig  # type: ignore[assignment]
 
     registered_scan: In[PointCloud2]
     odometry: In[Odometry]
     way_point: Out[PointStamped]
+
+    def start(self) -> None:
+        super().start()
+
+    def stop(self) -> None:
+        super().stop()

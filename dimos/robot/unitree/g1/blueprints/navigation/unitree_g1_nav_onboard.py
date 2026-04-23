@@ -43,7 +43,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
 from dimos.navigation.cmd_vel_mux import CmdVelMux
 from dimos.navigation.smart_nav.blueprints._rerun_helpers import (

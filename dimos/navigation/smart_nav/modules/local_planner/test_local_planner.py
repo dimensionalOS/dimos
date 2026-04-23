@@ -40,7 +40,7 @@ class TestLocalPlannerConfig:
             paths_dir="/custom/paths",
         )
         args = config.to_cli_args()
-        assert "--max_speed" in args
+        assert "--maxSpeed" in args
         assert "1.5" in args
         assert "--paths_dir" in args
         assert "/custom/paths" in args

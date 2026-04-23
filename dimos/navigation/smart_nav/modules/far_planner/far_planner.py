@@ -63,9 +63,16 @@ class FarPlanner(NativeModule):
         way_point (Out[PointStamped]): Intermediate waypoint for local planner.
     """
 
+    config: FarPlannerConfig
     default_config: type[FarPlannerConfig] = FarPlannerConfig  # type: ignore[assignment]
 
     registered_scan: In[PointCloud2]
     odometry: In[Odometry]
     goal: In[PointStamped]
     way_point: Out[PointStamped]
+
+    def start(self) -> None:
+        super().start()
+
+    def stop(self) -> None:
+        super().stop()

@@ -42,6 +42,9 @@ class _MockTransport:
 
         return unsub
 
+    def stop(self):
+        pass
+
 
 class TestTUIControl:
     """Test TUI controller key handling and output."""

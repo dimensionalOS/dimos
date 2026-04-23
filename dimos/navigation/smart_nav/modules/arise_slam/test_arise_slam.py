@@ -37,9 +37,9 @@ class TestAriseSLAMConfig:
             max_icp_iterations=8,
         )
         args = config.to_cli_args()
-        assert "--edge_threshold" in args
+        assert "--edgeThreshold" in args
         assert "2.0" in args
-        assert "--max_icp_iterations" in args
+        assert "--maxICPIterations" in args
         assert "8" in args
 
 

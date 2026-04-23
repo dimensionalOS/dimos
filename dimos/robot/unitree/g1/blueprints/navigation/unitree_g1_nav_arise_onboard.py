@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import os
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.livox.module import Mid360
 from dimos.navigation.smart_nav.modules.arise_slam.arise_slam import AriseSLAM
 from dimos.navigation.smart_nav.modules.global_map.global_map import GlobalMap

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.navigation.smart_nav.blueprints._rerun_helpers import (
     path_override,

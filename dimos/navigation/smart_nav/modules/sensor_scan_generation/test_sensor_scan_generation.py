@@ -53,6 +53,9 @@ class _MockTransport:
 
         return unsub
 
+    def stop(self):
+        pass
+
 
 def make_pointcloud(points: np.ndarray, frame_id: str = "map") -> PointCloud2:
     """Create a PointCloud2 from an Nx3 numpy array."""

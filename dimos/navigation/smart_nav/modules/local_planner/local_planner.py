@@ -75,21 +75,21 @@ class LocalPlannerConfig(NativeModuleConfig):
     # Vehicle config: "omniDir" for mecanum, "standard" for ackermann.
     vehicle_config: str = "omniDir"
 
-    # --- Speed limits ---
+    # Speed limits
 
     # Maximum velocity the planner will command (m/s).
     max_speed: float = 2.0
     # Velocity cap during autonomous navigation (m/s).
     autonomy_speed: float = 1.0
 
-    # --- Mode flags ---
+    # Mode flags
 
     # Enable fully autonomous waypoint-following mode.
     autonomy_mode: bool | None = None
     # Use terrain analysis cost map for obstacle avoidance.
     use_terrain_analysis: bool | None = None
 
-    # --- Obstacle detection ---
+    # Obstacle detection
 
     # Points higher than this above ground are classified as obstacles (m).
     obstacle_height_threshold: float = 0.15
@@ -98,7 +98,7 @@ class LocalPlannerConfig(NativeModuleConfig):
     # Height-band filter: minimum z relative to robot (m).
     min_relative_z: float | None = None
 
-    # --- Goal parameters ---
+    # Goal parameters
 
     # Minimum clearance around goal position for path planning (m).
     goal_clearance: float = 0.5
@@ -125,6 +125,7 @@ class LocalPlanner(NativeModule):
         path (Out[Path]): Selected local path for path follower.
     """
 
+    config: LocalPlannerConfig
     default_config: type[LocalPlannerConfig] = LocalPlannerConfig  # type: ignore[assignment]
 
     registered_scan: In[PointCloud2]
@@ -133,3 +134,9 @@ class LocalPlanner(NativeModule):
     joy_cmd: In[Twist]
     way_point: In[PointStamped]
     path: Out[Path]
+
+    def start(self) -> None:
+        super().start()
+
+    def stop(self) -> None:
+        super().stop()

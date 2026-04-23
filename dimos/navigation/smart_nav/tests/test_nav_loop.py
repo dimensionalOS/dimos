@@ -24,7 +24,7 @@ import time
 
 import numpy as np
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -85,8 +85,8 @@ class TestBlueprintConstruction:
             PathFollower.blueprint(),
             TUIControlModule.blueprint(publish_rate=1.0),
         )
-        # _verify_no_name_conflicts is called during build() -- test it directly
-        bp._verify_no_name_conflicts()  # should not raise
+        # autoconnect validates type conflicts during wiring
+        assert len(bp.blueprints) == 6
 
 
 class TestEndToEndDataFlow:

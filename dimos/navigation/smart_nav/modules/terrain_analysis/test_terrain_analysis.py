@@ -31,19 +31,19 @@ class TestTerrainAnalysisConfig:
         """Default config should have sensible values."""
         config = TerrainAnalysisConfig()
         assert config.obstacle_height_threshold == 0.15
-        assert config.voxel_size == 0.05
+        assert config.scan_voxel_size == 0.05
         assert config.sensor_range == 20.0
 
     def test_cli_args_generation(self):
         """Config should generate CLI args for the native binary."""
         config = TerrainAnalysisConfig(
             obstacle_height_threshold=0.2,
-            voxel_size=0.1,
+            scan_voxel_size=0.1,
         )
         args = config.to_cli_args()
-        assert "--obstacle_height_threshold" in args
+        assert "--obstacleHeightThre" in args
         assert "0.2" in args
-        assert "--voxel_size" in args
+        assert "--scanVoxelSize" in args
         assert "0.1" in args
 
 
