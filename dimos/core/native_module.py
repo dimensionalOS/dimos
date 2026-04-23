@@ -328,12 +328,9 @@ class NativeModule(Module):
                 )
             return
 
-        # If the exe already exists: in prod, never rebuild; in dev, only
-        # rebuild if the developer opted in via auto_build for this module
-        # (avoids expensive nix invocations when you have many native modules).
-        if exe.exists():
-            if global_config.prod or not self.config.auto_build:
-                return
+        if global_config.prod and exe.exists():
+            # no build
+            return
 
         logger.info(
             "Building native module",
