@@ -22,6 +22,9 @@ Tests the conditional logic added to support Zenoh alongside LCM:
 
 from __future__ import annotations
 
+from typing import cast
+
+from pydantic import ValidationError
 import pytest
 
 from dimos.core.coordination.blueprints import autoconnect
@@ -84,6 +87,15 @@ class TestGlobalConfigTransportField:
         config = GlobalConfig()
         config.update(transport="zenoh")
         assert config.transport == "zenoh"
+
+    def test_invalid_transport_is_rejected_at_init(self) -> None:
+        with pytest.raises(ValidationError, match="transport"):
+            GlobalConfig(transport=cast("object", "invalid"))
+
+    def test_invalid_transport_is_rejected_on_update(self) -> None:
+        config = GlobalConfig()
+        with pytest.raises(ValidationError, match="transport"):
+            config.update(transport=cast("object", "invalid"))
 
 
 class TestZenohAvailableGuard:
