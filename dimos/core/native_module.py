@@ -86,8 +86,17 @@ class NativeModuleConfig(ModuleConfig):
     log_format: LogFormat = LogFormat.TEXT
     rebuild_on_change: list[PathEntry] | None = None
 
+    # CPU affinity mask applied to the native process (and inherited by its
+    # threads/children) via os.sched_setaffinity in the child preexec hook.
+    # Useful on hosts with `isolcpus=…` in the kernel cmdline to bind the
+    # latency-critical native path to dedicated CPUs and keep Python workers
+    # off those same cores. Expressed as a set of CPU indices, e.g.
+    # `cpu_affinity={4, 5, 6, 7}` for an M20 NOS with isolcpus=4,5,6,7.
+    # None → inherit parent affinity (default scheduler placement).
+    cpu_affinity: frozenset[int] | None = None
+
     # Override in subclasses to exclude fields from CLI arg generation
-    cli_exclude: frozenset[str] = frozenset({"rebuild_on_change"})
+    cli_exclude: frozenset[str] = frozenset({"rebuild_on_change", "cpu_affinity"})
     # Override in subclasses to map field names to custom CLI arg names
     # (bypasses the automatic snake_case → camelCase conversion).
     cli_name_override: dict[str, str] = Field(default_factory=dict)
@@ -193,8 +202,11 @@ class NativeModule(Module[_NativeConfig]):
             cmd=" ".join(cmd),
             cwd=cwd,
         )
+        affinity_mask = self.config.cpu_affinity
         def _child_preexec() -> None:
-            """Ensure child is killed when parent dies (Linux only)."""
+            """Ensure child is killed when parent dies (Linux only) and
+            optionally pin it to a CPU subset before the subprocess image
+            loads."""
             import os as _os
 
             try:
@@ -207,6 +219,13 @@ class NativeModule(Module[_NativeConfig]):
                 pass
             # Also start a new session so terminal SIGINT doesn't reach child.
             _os.setsid()
+            # Bind the new process (pid=0 means "the calling process") to a
+            # subset of CPUs. Spawned threads of the binary will inherit.
+            if affinity_mask:
+                try:
+                    _os.sched_setaffinity(0, set(affinity_mask))
+                except (OSError, AttributeError):
+                    pass
 
         self._process = subprocess.Popen(
             cmd,
