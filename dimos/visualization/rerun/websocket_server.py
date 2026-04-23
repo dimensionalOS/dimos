@@ -96,8 +96,8 @@ class RerunWebSocketServer(Module):
         clicked_point: 3-D world-space point from the most recent viewer click.
         tele_cmd_vel: Twist velocity commands from keyboard teleop, including stop events.
 
-    Note: ``stop_movement`` is owned by ``CmdVelMux`` — it will fire that
-    signal when it sees the first teleop twist arrive here.
+    Note: ``stop_movement`` is owned by ``MovementManager`` — it will fire
+    that signal when it sees the first teleop twist arrive here.
     """
 
     config: Config

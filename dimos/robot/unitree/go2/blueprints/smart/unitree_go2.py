@@ -16,12 +16,12 @@
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.mapping.costmapper import CostMapper
 from dimos.mapping.voxels import VoxelGridMapper
-from dimos.navigation.cmd_vel_mux import CmdVelMux
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
 from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.navigation.smart_nav.modules.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
 unitree_go2 = autoconnect(
@@ -31,7 +31,7 @@ unitree_go2 = autoconnect(
     ReplanningAStarPlanner.blueprint(),
     WavefrontFrontierExplorer.blueprint(),
     PatrollingModule.blueprint(),
-    CmdVelMux.blueprint(),
+    MovementManager.blueprint(),
 ).global_config(n_workers=7, robot_model="unitree_go2")
 
 __all__ = ["unitree_go2"]
