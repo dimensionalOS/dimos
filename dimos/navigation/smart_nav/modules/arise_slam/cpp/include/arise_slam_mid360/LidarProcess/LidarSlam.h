@@ -126,6 +126,7 @@ namespace arise_slam {
             // 6-DoF uncertainty
             double uncertainty_x = 0.0, uncertainty_y = 0.0, uncertainty_z = 0.0;
             double uncertainty_roll = 0.0, uncertainty_pitch = 0.0, uncertainty_yaw = 0.0;
+            double average_distance = 0.0;
         };
 
         //! Estimation of registration error

@@ -3,8 +3,6 @@
 #include <fstream>
 #include <vector>
 #include <Eigen/Dense>
-#include <opencv2/core/eigen.hpp>
-#include <opencv2/opencv.hpp>
 #include "arise_slam_mid360/utils/Twist.h"
 
 #include <algorithm>

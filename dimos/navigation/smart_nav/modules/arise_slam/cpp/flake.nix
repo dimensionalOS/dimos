@@ -8,9 +8,10 @@
       url = "github:dimensionalOS/dimos-lcm/main";
       flake = false;
     };
-    gtsam-src = {
-      url = "github:borglab/gtsam/develop";
-      flake = false;
+    gtsam-extended = {
+      url = "github:jeff-hykin/gtsam-extended";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
     };
     sophus-src = {
       url = "github:strasdat/Sophus/1.22.10";
@@ -23,34 +24,29 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, dimos-lcm, gtsam-src, sophus-src, lcm-extended, ... }:
+  outputs = { self, nixpkgs, flake-utils, dimos-lcm, gtsam-extended, sophus-src, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
         lcm = lcm-extended.packages.${system}.default;
 
-        gtsam = pkgs.stdenv.mkDerivation {
-          pname = "gtsam";
-          version = "4.2";
-          src = gtsam-src;
-
-          nativeBuildInputs = with pkgs; [ cmake pkg-config ];
-          buildInputs = with pkgs; [ eigen boost tbb ];
-
-          cmakeFlags = [
-            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-            "-DCMAKE_POLICY_DEFAULT_CMP0167=OLD"
-            "-DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF"
-            "-DGTSAM_BUILD_TESTS=OFF"
+        # Use gtsam-extended's C++ library but:
+        # 1. Fix stale source hash (develop branch moves)
+        # 2. Enable unstable (needed for iSAM2)
+        gtsam-base = gtsam-extended.packages.${system}.gtsam-cpp;
+        gtsam = gtsam-base.overrideAttrs (old: {
+          src = pkgs.fetchFromGitHub {
+            owner = "borglab";
+            repo = "gtsam";
+            rev = "develop";
+            sha256 = "sha256-IoXNMb6xwoxGgjWl/urzLPUvCMG3d8cOfxmvsE0p1bc=";
+          };
+          # GCC 15 + Eigen 3.4 SSE intrinsics trigger false-positive array-bounds
+          env.NIX_CFLAGS_COMPILE = "-Wno-error=array-bounds";
+          cmakeFlags = (builtins.filter (f: f != "-DGTSAM_BUILD_UNSTABLE=OFF") old.cmakeFlags) ++ [
             "-DGTSAM_BUILD_UNSTABLE=ON"
-            "-DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF"
-            "-DGTSAM_INSTALL_MATLAB_TOOLBOX=OFF"
-            "-DGTSAM_INSTALL_CYTHON_TOOLBOX=OFF"
-            "-DGTSAM_USE_SYSTEM_EIGEN=ON"
-            "-DGTSAM_WITH_TBB=OFF"
-            "-DBoost_NO_BOOST_CMAKE=OFF"
           ];
-        };
+        });
 
         sophus = pkgs.stdenv.mkDerivation {
           pname = "sophus";
@@ -59,6 +55,9 @@
 
           nativeBuildInputs = with pkgs; [ cmake ];
           buildInputs = with pkgs; [ eigen ];
+
+          # GCC 15 + Eigen 3.4 SSE intrinsics trigger false-positive array-bounds
+          env.NIX_CFLAGS_COMPILE = "-Wno-error=array-bounds";
 
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
@@ -84,7 +83,7 @@
             pkgs.pcl
             pkgs.boost
             pkgs.tbb
-            pkgs.glib
+            pkgs.glib  # needed for LCM pkg-config resolution
             pkgs.llvmPackages.openmp
             pkgs.ceres-solver
             pkgs.glog

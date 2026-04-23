@@ -12,7 +12,7 @@ Preprocess::Preprocess()
   SCAN_RATE = 10;
   group_size = 8;
   disA = 0.01;
-  disA = 0.1;
+  disB = 0.1;
   p2l_ratio = 225;
   limit_maxmid = 6.25;
   limit_midmin = 6.25;
@@ -401,7 +401,7 @@ void Preprocess::livoxros_handler(const pcl::PointCloud<livox_ros::Point>& pl_or
         pl_full[i].z = pl_orig.points[i].z;
         pl_full[i].intensity = pl_orig.points[i].intensity;
 
-        if ((abs(pl_full[i].x - pl_full[i - 1].x) > 1e-7) || (abs(pl_full[i].y - pl_full[i - 1].y) > 1e-7) || (abs(pl_full[i].z - pl_full[i - 1].z) > 1e-7) && (pl_full[i].x * pl_full[i].x + pl_full[i].y * pl_full[i].y + pl_full[i].z * pl_full[i].z > (blind * blind)))
+        if (((abs(pl_full[i].x - pl_full[i - 1].x) > 1e-7) || (abs(pl_full[i].y - pl_full[i - 1].y) > 1e-7) || (abs(pl_full[i].z - pl_full[i - 1].z) > 1e-7)) && (pl_full[i].x * pl_full[i].x + pl_full[i].y * pl_full[i].y + pl_full[i].z * pl_full[i].z > (blind * blind)))
         {
           pl_surf.push_back(pl_full[i]);
         }
@@ -420,10 +420,11 @@ void Preprocess::give_feature(pcl::PointCloud<PointType> &pl, vector<orgtype> &t
     return;
   }
   uint head = 0;
-  while (types[head].range < blind)
+  while (head < (uint)plsize && types[head].range < blind)
   {
     head++;
   }
+  if (head >= (uint)plsize) return;
 
   // Surf
   plsize2 = (plsize > group_size) ? (plsize - group_size) : 0;
@@ -656,6 +657,7 @@ void Preprocess::give_feature(pcl::PointCloud<PointType> &pl, vector<orgtype> &t
       if (last_surface != -1)
       {
         PointType ap;
+        ap.x = 0; ap.y = 0; ap.z = 0; ap.intensity = 0; ap.curvature = 0;
         for (uint k = last_surface; k < j; k++)
         {
           ap.x += pl[k].x;

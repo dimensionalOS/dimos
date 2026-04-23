@@ -54,7 +54,7 @@ void TGRS::cluster(const std::vector<PointAPRI>& apri_vec_,
             }
         }
 
-        neighbors.swap(neighbors);
+        // neighbors dedup removed (was a no-op self-swap)
         if(neighbors.size() > 0){
             for(int n = 0; n < neighbors.size(); n++){
                 int oc = clusterIdxs[i];

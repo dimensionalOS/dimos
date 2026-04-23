@@ -47,7 +47,8 @@ void transformPointCloud(const CloudT& cloudIn_, const Eigen::Affine3f& transCur
 
 // ---------- End standalone definitions ----------
 
-#define SENSOR_HEIGHT 0.4  // FIXME: move it to yaml  # zyf
+// Configurable via CLI --sensor_height (default 1.5)
+inline double SENSOR_HEIGHT = 1.5;
 
 #define MIN_DIS 1.0
 #define MAX_DIS 50.0
@@ -65,7 +66,7 @@ void transformPointCloud(const CloudT& cloudIn_, const Eigen::Affine3f& transCur
 #define AZIMUTH_NUM (int)std::ceil((MAX_AZIMUTH - MIN_AZIMUTH) / AZIMUTH_RES)
 #define BIN_NUM RANGE_NUM * SECTOR_NUM * AZIMUTH_NUM
 
-#define PD_HEIGHT (double)(SENSOR_HEIGHT + 0.5)
+#define PD_HEIGHT (SENSOR_HEIGHT + 0.5)
 
 #define HD_RATIO (float)0.7  // FIXME: check
 

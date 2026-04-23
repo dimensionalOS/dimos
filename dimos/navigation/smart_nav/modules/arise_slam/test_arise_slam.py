@@ -35,7 +35,7 @@ class TestAriseSlamConfig:
         assert config.min_range == 0.1
         assert config.max_range == 130.0
         assert config.provide_point_time == 1
-        assert config.mapping_skip_frame == 1
+        assert config.skip_frame == 1
         assert config.use_imu_roll_pitch is False
         # Laser mapping defaults
         assert config.mapping_line_resolution == 0.1
@@ -57,16 +57,16 @@ class TestAriseSlamConfig:
         assert config.smooth_factor == 0.9
         # IMU bias offsets
         assert config.imu_acc_x_offset == 0.04
-        assert config.imu_acc_y_offset == 0.04
-        assert config.imu_acc_z_offset == 0.04
-        assert config.imu_acc_x_limit == 0.3
-        assert config.imu_acc_y_limit == 0.3
+        assert config.imu_acc_y_offset == 0.0
+        assert config.imu_acc_z_offset == 0.0
+        assert config.imu_acc_x_limit == 1.0
+        assert config.imu_acc_y_limit == 1.0
         assert config.imu_acc_z_limit == 1.0
         # Blind zone defaults
         assert config.blind_front == 0.2
-        assert config.blind_back == 0.2
+        assert config.blind_back == -0.2
         assert config.blind_left == 0.3
-        assert config.blind_right == 0.3
+        assert config.blind_right == -0.3
         assert config.blind_disk_radius == 0.5
 
     def test_cli_args_generation(self):
@@ -117,20 +117,26 @@ class TestAriseSlamModule:
 
         assert "lidar" in in_ports
         assert "imu" in in_ports
+        assert "fallback_odometry" in in_ports
         assert "odometry" in out_ports
         assert "registered_scan" in out_ports
+        assert "surround_map" in out_ports
+        assert "global_map" in out_ports
+        assert "laser_odometry" in out_ports
+        assert "incremental_odometry" in out_ports
+        assert "slam_stats" in out_ports
 
     def test_no_extra_out_ports(self):
-        """AriseSlam should have exactly 2 output ports."""
+        """AriseSlam should have exactly 7 output ports."""
         hints = get_type_hints(AriseSlam)
         out_ports = {k for k, v in hints.items() if get_origin(v) is Out}
-        assert len(out_ports) == 2, f"Expected 2 out ports, got {out_ports}"
+        assert len(out_ports) == 7, f"Expected 7 out ports, got {out_ports}"
 
     def test_no_extra_in_ports(self):
-        """AriseSlam should have exactly 2 input ports."""
+        """AriseSlam should have exactly 3 input ports."""
         hints = get_type_hints(AriseSlam)
         in_ports = {k for k, v in hints.items() if get_origin(v) is In}
-        assert len(in_ports) == 2, f"Expected 2 in ports, got {in_ports}"
+        assert len(in_ports) == 3, f"Expected 3 in ports, got {in_ports}"
 
     def test_executable_path_is_relative_to_module(self):
         """Config cwd/executable resolves against the module's own directory."""

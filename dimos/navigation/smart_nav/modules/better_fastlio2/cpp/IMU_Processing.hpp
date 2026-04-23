@@ -65,7 +65,7 @@ private:
 };
 
 ImuProcess::ImuProcess()
-    : b_first_frame_(true), imu_need_init_(true), start_timestamp_(-1)
+    : b_first_frame_(true), imu_need_init_(true), start_timestamp_(-1), last_lidar_end_time_(0)
 {
   init_iter_num = 1;
   Q = process_noise_cov();

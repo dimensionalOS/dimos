@@ -111,7 +111,7 @@ private:
     int num_rings_ = 30;
     int num_sectors_ = 108;
     int num_zones_ = 4;
-    int num_rings_of_interest_ = 2.7;
+    int num_rings_of_interest_ = 2;
 
     double sensor_height_;  // 1.732
     double th_seeds_ = 0.3;  // 0.5

@@ -30,23 +30,44 @@ module's config via per-module kwarg dicts (e.g.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import ModuleBase
 from dimos.spec.utils import Spec
 
 logger = logging.getLogger(__name__)
+from dimos.navigation.smart_nav.modules.arise_slam.arise_slam import AriseSlam
+from dimos.navigation.smart_nav.modules.better_fastlio2.better_fastlio2 import BetterFastLio2
 from dimos.navigation.smart_nav.modules.far_planner.far_planner import FarPlanner
 from dimos.navigation.smart_nav.modules.local_planner.local_planner import LocalPlanner
 from dimos.navigation.smart_nav.modules.movement_manager.movement_manager import MovementManager
 from dimos.navigation.smart_nav.modules.path_follower.path_follower import PathFollower
-from dimos.navigation.smart_nav.modules.pgo.pgo import PGO
 from dimos.navigation.smart_nav.modules.simple_planner.simple_planner import SimplePlanner
 from dimos.navigation.smart_nav.modules.tare_planner.tare_planner import TarePlanner
 from dimos.navigation.smart_nav.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
 from dimos.navigation.smart_nav.modules.terrain_map_ext.terrain_map_ext import TerrainMapExt
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+
+def _get_pgo_class() -> type:
+    """Lazy-import PGO to avoid requiring gtsam Python when using other SLAM backends."""
+    from dimos.navigation.smart_nav.modules.pgo.pgo import PGO
+    return PGO
+
+
+SlamChoice = Literal["pgo", "better_fastlio2", "arise_slam"]
+"""SLAM backend selection for smart_nav.
+
+- ``"pgo"``: PGO (Pose Graph Optimization) — lightweight loop-closure
+  correction on top of upstream odometry. Default.
+- ``"better_fastlio2"``: Enhanced FAST-LIO2 with iESKF, iKdtree, Scan
+  Context loop closure, GTSAM, and dynamic object removal. Requires raw
+  lidar + IMU inputs (use with a sim adapter for Unity).
+- ``"arise_slam"``: ARISE-SLAM — LOAM-based LiDAR-inertial SLAM with
+  Ceres ICP + GTSAM IMU preintegration, curvature-based feature
+  extraction, rolling grid local map, and degeneracy detection.
+  Requires raw lidar + IMU inputs.
+"""
 
 
 def smart_nav(
@@ -54,6 +75,7 @@ def smart_nav(
     use_tare: bool = False,
     use_terrain_map_ext: bool = True,
     use_simple_planner: bool = False,
+    slam: SlamChoice = "pgo",
     vehicle_height: float | None = None,
     body_frame: str | None = None,
     terrain_analysis: dict[str, Any] | None = None,
@@ -63,6 +85,8 @@ def smart_nav(
     far_planner: dict[str, Any] | None = None,
     simple_planner: dict[str, Any] | None = None,
     pgo: dict[str, Any] | None = None,
+    better_fastlio2: dict[str, Any] | None = None,
+    arise_slam: dict[str, Any] | None = None,
     movement_manager: dict[str, Any] | None = None,
     tare_planner: dict[str, Any] | None = None,
 ) -> Blueprint:
@@ -92,6 +116,11 @@ def smart_nav(
             of LocalPlanner's waypoint input.
         use_terrain_map_ext: Add TerrainMapExt — the persistent extended terrain
             accumulator used for visualization and wider-range planning.
+        slam: SLAM backend selection. ``"pgo"`` (default) uses PGO for
+            loop-closure correction. ``"better_fastlio2"`` uses enhanced
+            FAST-LIO2 with iESKF, iKdtree, Scan Context + GTSAM, and
+            dynamic object removal. The ``better_fastlio2`` backend requires
+            raw lidar + IMU inputs (use a sim adapter for Unity).
         vehicle_height: Ignore terrain points above this height (m). Threaded
             into TerrainAnalysis's `vehicle_height` config. Defaults to 1.2m.
         body_frame: TF child frame for the robot body. Defaults to ``"body"``
@@ -99,8 +128,8 @@ def smart_nav(
             publishes TF with ``child_frame_id="sensor"``. Threaded into
             SimplePlanner and MovementManager configs.
         terrain_analysis, terrain_map_ext, local_planner, path_follower,
-        far_planner, pgo, movement_manager, tare_planner:
-        Per-module config override dicts. Merged on top
+        far_planner, pgo, better_fastlio2, arise_slam, movement_manager,
+        tare_planner: Per-module config override dicts. Merged on top
         of the SmartNav defaults.
 
     Returns:
@@ -204,7 +233,13 @@ def smart_nav(
             if use_simple_planner
             else [FarPlanner.blueprint(**(far_planner or {}))]
         ),
-        PGO.blueprint(**(pgo or {})),
+        *(
+            [BetterFastLio2.blueprint(**(better_fastlio2 or {}))]
+            if slam == "better_fastlio2"
+            else [AriseSlam.blueprint(**(arise_slam or {}))]
+            if slam == "arise_slam"
+            else [_get_pgo_class().blueprint(**(pgo or {}))]
+        ),
         MovementManager.blueprint(
             **{
                 **({"body_frame": body_frame} if body_frame is not None else {}),
@@ -236,18 +271,37 @@ def smart_nav(
     remappings: list[tuple[type[ModuleBase], str, str | type[ModuleBase] | type[Spec]]] = [
         # PathFollower cmd_vel → MovementManager nav input (avoid collision with mux output)
         (PathFollower, "cmd_vel", "nav_cmd_vel"),
-        # NativeModule compat: C++ binaries (TerrainAnalysis, FarPlanner)
-        # subscribe to LCM topics directly and cannot query the TF tree.
-        # They still receive PGO's corrected_odometry stream until a
-        # TF-to-Odometry bridge is added to their Python wrappers.
-        # Python modules (SimplePlanner, MovementManager) use
-        # self.tf.get("map", "body") and need no remapping.
-        *([] if use_simple_planner else [(FarPlanner, "odometry", "corrected_odometry")]),
-        (TerrainAnalysis, "odometry", "corrected_odometry"),
         # Planner owns way_point — disconnect MovementManager's click relay.
         (MovementManager, "way_point", "_mgr_way_point_unused"),
-        (PGO, "global_map", "global_map_pgo"),
     ]
+
+    if slam == "better_fastlio2":
+        # BetterFastLio2 publishes odometry directly; remap downstream
+        # modules to use it as corrected_odometry. Its registered_scan
+        # output serves as the world-frame cloud for terrain analysis.
+        remappings.extend([
+            (BetterFastLio2, "odometry", "corrected_odometry"),
+            *([] if use_simple_planner else [(FarPlanner, "odometry", "corrected_odometry")]),
+            (TerrainAnalysis, "odometry", "corrected_odometry"),
+            # BetterFastLio2's global_map is the accumulated keyframe map
+            (BetterFastLio2, "global_map", "global_map_slam"),
+        ])
+    elif slam == "arise_slam":
+        # AriseSlam publishes odometry directly (IMU-fused); remap
+        # downstream modules to use it as corrected_odometry.
+        remappings.extend([
+            (AriseSlam, "odometry", "corrected_odometry"),
+            *([] if use_simple_planner else [(FarPlanner, "odometry", "corrected_odometry")]),
+            (TerrainAnalysis, "odometry", "corrected_odometry"),
+        ])
+    else:
+        # PGO remappings: corrected_odometry for global planners
+        PGO = _get_pgo_class()
+        remappings.extend([
+            *([] if use_simple_planner else [(FarPlanner, "odometry", "corrected_odometry")]),
+            (TerrainAnalysis, "odometry", "corrected_odometry"),
+            (PGO, "global_map", "global_map_pgo"),
+        ])
 
     return autoconnect(*modules).remappings(remappings)
 

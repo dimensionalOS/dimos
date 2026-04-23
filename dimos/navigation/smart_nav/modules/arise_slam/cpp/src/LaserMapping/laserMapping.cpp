@@ -436,6 +436,20 @@ namespace arise_slam {
             t_w_curr = T_w_lidar.pos;
         }
 
+        // When trust_fallback_odom is true, override SLAM's initial guess with
+        // the fallback odometry position BEFORE ICP runs. This ensures the local
+        // map is built at the correct world position, producing clean registered
+        // scans. ICP still refines the alignment but starts from ground truth.
+        if (config_.trust_fallback_odom && !imu_odom_buf.empty()) {
+            Eigen::Vector3d t_odom;
+            Eigen::Quaterniond q_odom;
+            getOdometryFromTimestamp(imu_odom_buf, timeLaserOdometry, t_odom, q_odom);
+            t_w_curr = t_odom;
+            q_w_curr = q_odom;
+            T_w_lidar.pos = t_odom;
+            T_w_lidar.rot = q_odom;
+        }
+
     }
 
     void laserMapping::selectposePrediction()
@@ -630,6 +644,13 @@ namespace arise_slam {
         prediction_source = PredictionSource::IMU_ODOM;
         Transformd T_pre_cur;
         extractRelativeTransform(imu_odom_buf, T_pre_cur,true);
+        if (frameCount <= 5 || frameCount % 50 == 0) {
+            fprintf(stderr, "[arise_slam] ICP initial guess: T_pre_cur pos=(%.3f,%.3f,%.3f), "
+                    "T_w_lidar pos=(%.3f,%.3f,%.3f), imu_odom_buf size=%zu\n",
+                    T_pre_cur.pos.x(), T_pre_cur.pos.y(), T_pre_cur.pos.z(),
+                    T_w_lidar.pos.x(), T_w_lidar.pos.y(), T_w_lidar.pos.z(),
+                    imu_odom_buf.getSize());
+        }
         T_w_lidar = T_w_lidar * T_pre_cur;
 
         if(use_imu_roll_pitch_this_step)
@@ -644,6 +665,20 @@ namespace arise_slam {
 
     LaserMappingOutput laserMapping::getLatestOutput() const {
         return latest_output_;
+    }
+
+    // Diagnostic getters — upstream: laserMapping.cpp publishTopic() lines 944-952
+    pcl::PointCloud<PointType> laserMapping::getSurroundMap() const {
+        return slam.localMap.get5x5LocalMap(slam.pos_in_localmap);
+    }
+
+    // Upstream: laserMapping.cpp publishTopic() lines 955-962
+    pcl::PointCloud<PointType> laserMapping::getGlobalMap() const {
+        return slam.localMap.getAllLocalMap();
+    }
+
+    int laserMapping::getPredictionSource() const {
+        return static_cast<int>(prediction_source);
     }
 
     void laserMapping::save_debug_statistic (const std::string file_name)
@@ -882,8 +917,19 @@ namespace arise_slam {
                 }
 
 
-                q_w_curr = slam.T_w_lidar.rot;
-                t_w_curr = slam.T_w_lidar.pos;
+                // When trust_fallback_odom, keep the odom position (set in
+                // setInitialGuess) instead of ICP's result. ICP ran and updated
+                // the local map, but we trust the external position source.
+                if (config_.trust_fallback_odom && !imu_odom_buf.empty()) {
+                    // ICP may have refined orientation, keep that
+                    q_w_curr = slam.T_w_lidar.rot;
+                    // But position comes from fallback odom (set before ICP)
+                    t_w_curr = T_w_lidar.pos;
+                    slam.T_w_lidar.pos = T_w_lidar.pos;
+                } else {
+                    q_w_curr = slam.T_w_lidar.rot;
+                    t_w_curr = slam.T_w_lidar.pos;
+                }
 
                 T_w_lidar.rot=slam.T_w_lidar.rot;
                 T_w_lidar.pos=slam.T_w_lidar.pos;
@@ -933,6 +979,35 @@ namespace arise_slam {
                 latest_output_.orientation = q_w_curr;
                 latest_output_.is_degenerate = slam.isDegenerate;
                 latest_output_.registered_scan = laserCloudFullRes;
+
+                // Diagnostic: prediction source (upstream line 930-942)
+                latest_output_.prediction_source = static_cast<int>(prediction_source);
+
+                // Diagnostic: surround map — upstream line 944-952 (every 5 frames)
+                if (frameCount % 5 == 0) {
+                    latest_output_.surround_map = pcl::PointCloud<PointType>::Ptr(
+                        new pcl::PointCloud<PointType>(
+                            slam.localMap.get5x5LocalMap(slam.pos_in_localmap)));
+                }
+
+                // Diagnostic: global map — upstream line 955-962 (every 20 frames)
+                if (frameCount % 20 == 0) {
+                    latest_output_.global_map = pcl::PointCloud<PointType>::Ptr(
+                        new pcl::PointCloud<PointType>(
+                            slam.localMap.getAllLocalMap()));
+                }
+
+                // Diagnostic: incremental odometry — upstream line 1042-1075
+                if (initialization) {
+                    latest_output_.incremental_position = laser_incremental_T.pos;
+                    latest_output_.incremental_orientation = laser_incremental_T.rot;
+                } else {
+                    latest_output_.incremental_position = t_w_curr;
+                    latest_output_.incremental_orientation = q_w_curr;
+                }
+
+                // Diagnostic: optimization stats — upstream line 1097-1111
+                latest_output_.stats = slam.stats;
 
                 if (output_callback_) {
                     output_callback_(latest_output_);

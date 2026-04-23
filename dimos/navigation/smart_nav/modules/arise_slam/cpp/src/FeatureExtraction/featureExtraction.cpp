@@ -373,6 +373,10 @@ namespace arise_slam {
         latest_result_.q_w_original_l = q_w_original_l;
         latest_result_.timestamp = lidar_start_time;
         latest_result_.valid = true;
+        // Upstream: featureExtraction.cpp:1121 sets imu_available = true after
+        // successful feature extraction (always true when we reach this point)
+        latest_result_.imu_available = true;
+        latest_result_.odom_available = false;  // no visual odometry source
         has_new_result_ = true;
 
         if (t_whole.toc() > 100)
@@ -381,6 +385,11 @@ namespace arise_slam {
         lidarBuf.clean(lidar_start_time);
     }
 
+    // Upstream: featureExtraction.cpp:1126-1159 — undistortionAndscanregistration()
+    // checks IMU/visual odom synchronization before processing.
+    // Upstream guards: LASER_IMU_SYNC_SCCUESS (line 1128) and
+    //   LASER_CAMERA_SYNC_SUCCESS (line 1130-1135)
+    // In upstream, also checks frameCount > 100 for visual odom.
     void featureExtraction::undistortionAndscanregistration()
     {
         LASER_IMU_SYNC_SCCUESS = synchronize_measurements<Imu::Ptr>(imuBuf, lidarBuf);
@@ -418,6 +427,8 @@ namespace arise_slam {
                 latest_result_.q_w_original_l = q_w_original_l;
                 latest_result_.timestamp = lidar_start_time;
                 latest_result_.valid = true;
+                latest_result_.imu_available = true;
+                latest_result_.odom_available = false;
                 has_new_result_ = true;
 
             }else

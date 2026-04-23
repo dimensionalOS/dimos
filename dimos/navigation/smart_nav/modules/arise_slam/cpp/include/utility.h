@@ -3,8 +3,6 @@
 #define _UTILITY_LIDAR_ODOMETRY_H_
 
 #include <Eigen/Dense>
-
-#include <opencv2/core.hpp>
 #include <pcl/common/common.h>
 #include <pcl/common/transforms.h>
 #include <pcl/filters/crop_box.h>

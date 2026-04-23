@@ -91,14 +91,18 @@ namespace arise_slam {
     typedef feature_extraction_config feature_extraction_config;
 
     // Output struct for processed features
+    // Upstream: published as arise_slam_mid360_msgs::LaserFeature message
+    // (see arise_slam_mid360_msgs/msg/LaserFeature.msg)
     struct FeatureExtractionResult {
-        pcl::PointCloud<PointType>::Ptr edgePoints;
-        pcl::PointCloud<PointType>::Ptr plannerPoints;
-        pcl::PointCloud<PointType>::Ptr depthPoints;
-        pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr undistortedCloud;
-        Eigen::Quaterniond q_w_original_l;
+        pcl::PointCloud<PointType>::Ptr edgePoints;       // cloud_corner
+        pcl::PointCloud<PointType>::Ptr plannerPoints;    // cloud_surface
+        pcl::PointCloud<PointType>::Ptr depthPoints;      // cloud_realsense
+        pcl::PointCloud<point_os::PointcloudXYZITR>::Ptr undistortedCloud;  // cloud_nodistortion
+        Eigen::Quaterniond q_w_original_l;                // initial_quaternion_*
         double timestamp;
         bool valid;
+        bool imu_available;   // upstream LaserFeature.imu_available
+        bool odom_available;  // upstream LaserFeature.odom_available
     };
 
     class featureExtraction {

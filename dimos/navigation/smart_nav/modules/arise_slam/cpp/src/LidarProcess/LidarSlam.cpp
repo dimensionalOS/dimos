@@ -261,7 +261,8 @@ namespace arise_slam {
                     information(4, 4) = std::max(10, int(Good_Planner_Feature_Num*0.01)) * Visual_confidence_factor;
                     information(5, 5) = std::max(5, int(Good_Planner_Feature_Num*0.001)) * 0;
                     
-                    if (predictodom == PredictionSource::VISUAL_ODOM and isDegenerate == true and Visual_confidence_factor!=0) {
+                    if ((predictodom == PredictionSource::VISUAL_ODOM || predictodom == PredictionSource::IMU_ODOM)
+                        and isDegenerate == true and Visual_confidence_factor!=0) {
                         printf("[arise_slam] ADD Absolute factor in lasermapping.\n");
                         SE3AbsolutatePoseFactor *absolutatePoseFactor =
                                 new SE3AbsolutatePoseFactor(position, information);
@@ -941,10 +942,13 @@ namespace arise_slam {
         covarianceSolver.Compute(covarianceBlocks, &problem);
         covarianceSolver.GetCovarianceBlockInTangentSpace(paramBlock, paramBlock,
                                                           err.Covariance.data());
-        // Eigen::Matrix<double, 6, 1> matX;
-        // matX << 1, 1, 1, 1, 1, 1;
-        // Eigen::Matrix<double, 6, 6, Eigen::RowMajor> JtJ = err.Covariance.inverse();
-        // DegeneracyDetection(100, JtJ, matX);
+        // Degeneracy detection: check if any eigenvalue of the Hessian is too small
+        // (indicating unconstrained directions, e.g. XY translation with plane-only features).
+        // When degenerate + visual odom available, adds an absolute pose prior to ICP.
+        Eigen::Matrix<double, 6, 1> matX;
+        matX << 1, 1, 1, 1, 1, 1;
+        Eigen::Matrix<double, 6, 6, Eigen::RowMajor> JtJ = err.Covariance.inverse();
+        isDegenerate = DegeneracyDetection(Pos_degeneracy_threshold, JtJ, matX);
 
 
 

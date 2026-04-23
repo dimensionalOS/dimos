@@ -21,7 +21,7 @@
 #include <gtsam/slam/BetweenFactor.h>
 #include <gtsam/slam/PriorFactor.h>
 #include <gtsam/nonlinear/ISAM2.h>
-#include <gtsam_unstable/nonlinear/IncrementalFixedLagSmoother.h>
+#include <gtsam/nonlinear/IncrementalFixedLagSmoother.h>
 #include "arise_slam_mid360/utils/Twist.h"
 #include "arise_slam_mid360/container/MapRingBuffer.h"
 #include "arise_slam_mid360/config/parameter.h"

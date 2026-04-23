@@ -13,6 +13,8 @@
 // pcl
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <pcl/common/transforms.h>
+#include <pcl/common/eigen.h>
 
 // std
 #include <stdio.h>
@@ -310,4 +312,46 @@ inline M3D Exp(const V3D &ang)
 inline M3D Exp(const V3D &ang_vel, const double &dt)
 {
     return Exp(ang_vel * dt);
+}
+
+// Exp from roll/pitch/yaw (used in upstream for R from euler angles)
+inline M3D Exp(double roll, double pitch, double yaw)
+{
+    Eigen::AngleAxisd rollAngle(roll, Eigen::Vector3d::UnitX());
+    Eigen::AngleAxisd pitchAngle(pitch, Eigen::Vector3d::UnitY());
+    Eigen::AngleAxisd yawAngle(yaw, Eigen::Vector3d::UnitZ());
+    Eigen::Quaterniond q = yawAngle * pitchAngle * rollAngle;
+    return q.toRotationMatrix();
+}
+
+// Affine3f helpers (from upstream common_lib.h)
+inline Eigen::Affine3f pclPointToAffine3f(PointTypePose thisPoint)
+{
+    return pcl::getTransformation(thisPoint.x, thisPoint.y, thisPoint.z,
+                                  thisPoint.roll, thisPoint.pitch, thisPoint.yaw);
+}
+
+inline Eigen::Affine3f trans2Affine3f(float transformIn[])
+{
+    return pcl::getTransformation(transformIn[3], transformIn[4], transformIn[5],
+                                  transformIn[0], transformIn[1], transformIn[2]);
+}
+
+// constraintTransformation (from upstream laserMapping.cpp)
+inline float constraintTransformation(float value, float limit)
+{
+    if (value < -limit) value = -limit;
+    if (value > limit) value = limit;
+    return value;
+}
+
+// EulerToQuat (from upstream common_lib.h)
+inline Eigen::Quaterniond EulerToQuat(float roll_, float pitch_, float yaw_)
+{
+    Eigen::AngleAxisd roll(double(roll_), Eigen::Vector3d::UnitX());
+    Eigen::AngleAxisd pitch(double(pitch_), Eigen::Vector3d::UnitY());
+    Eigen::AngleAxisd yaw(double(yaw_), Eigen::Vector3d::UnitZ());
+    Eigen::Quaterniond q = yaw * pitch * roll;
+    q.normalize();
+    return q;
 }

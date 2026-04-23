@@ -65,7 +65,8 @@ namespace arise_slam {
         float init_roll;
         float init_pitch;
         float init_yaw;
-        float read_pose_file;
+        bool read_pose_file;
+        bool trust_fallback_odom;  // Override SLAM position with fallback odom (for sim)
     };
 
     struct OdometryData {
@@ -94,6 +95,15 @@ namespace arise_slam {
         Eigen::Vector3d velocity;
         bool is_degenerate;
         pcl::PointCloud<PointType>::Ptr registered_scan;
+
+        // Diagnostic data — upstream: laserMapping.cpp publishTopic() lines 927-1111
+        pcl::PointCloud<PointType>::Ptr surround_map;   // local map around robot (5x5 chunks)
+        pcl::PointCloud<PointType>::Ptr global_map;     // full accumulated map
+        Eigen::Vector3d incremental_position = Eigen::Vector3d::Zero();
+        Eigen::Quaterniond incremental_orientation = Eigen::Quaterniond::Identity();
+        int prediction_source = 0;  // 0=IMU_ORIENTATION, 1=IMU_ODOM, 2=VISUAL_ODOM
+        // Stats from optimization
+        LidarSLAM::OptimizationStats stats;
     };
 
     class laserMapping {
@@ -190,6 +200,11 @@ namespace arise_slam {
 
         // Get the latest output after process()
         LaserMappingOutput getLatestOutput() const;
+
+        // Diagnostic getters — upstream: laserMapping.cpp publishTopic() lines 927-1111
+        pcl::PointCloud<PointType> getSurroundMap() const;   // slam.localMap.get5x5LocalMap()
+        pcl::PointCloud<PointType> getGlobalMap() const;     // slam.localMap.getAllLocalMap()
+        int getPredictionSource() const;
 
         // Set callback for output (optional, alternative to polling)
         void setOutputCallback(std::function<void(const LaserMappingOutput&)> callback) {

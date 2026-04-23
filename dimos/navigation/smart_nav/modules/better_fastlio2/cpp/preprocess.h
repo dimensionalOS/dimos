@@ -164,7 +164,7 @@ public:
   pcl::PointCloud<PointType> pl_buff[128];    // maximum 128 line lidar
   vector<orgtype> typess[128];                // maximum 128 line lidar
   float time_unit_scale;
-  int lidar_type, livox_type, point_filter_num, N_SCANS, SCAN_RATE, time_unit;
+  int lidar_type, livox_type, point_filter_num, N_SCANS, SCAN_RATE, time_unit = SEC;
   double blind;
   bool feature_enabled, given_offset_time;
 
