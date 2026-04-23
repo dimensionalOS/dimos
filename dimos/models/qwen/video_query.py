@@ -161,7 +161,8 @@ def query_single_frame(
 
 
 def get_bbox_from_qwen(
-    video_stream: Observable, object_name: str | None = None  # type: ignore[type-arg]
+    video_stream: Observable,
+    object_name: str | None = None,  # type: ignore[type-arg]
 ) -> tuple[BBox, float] | None:
     """Get bounding box coordinates from Qwen for a specific object or any object.
 

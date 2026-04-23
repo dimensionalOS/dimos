@@ -12,8 +12,10 @@ from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 
+
 class Config(VlModelConfig):
     api_key: str | None = None
+
 
 class MoondreamHostedVlModel(VlModel):
     config: Config
@@ -56,7 +58,9 @@ class MoondreamHostedVlModel(VlModel):
         result = self._client.caption(pil_image, length=length)
         return result.get("caption", str(result))  # type: ignore[no-any-return]
 
-    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D[Detection2DBBox]:  # type: ignore[no-untyped-def]
+    def query_detections(
+        self, image: Image, query: str, **kwargs
+    ) -> ImageDetections2D[Detection2DBBox]:  # type: ignore[no-untyped-def]
         """Detect objects using Moondream's hosted detect method.
 
         Args:
@@ -146,4 +150,3 @@ class MoondreamHostedVlModel(VlModel):
 
     def stop(self) -> None:
         pass
-

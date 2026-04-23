@@ -17,12 +17,14 @@ from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 # Moondream works well with 512x512 max
 MOONDREAM_DEFAULT_AUTO_RESIZE = (512, 512)
 
+
 class MoondreamConfig(HuggingFaceModelConfig, VlModelConfig):
     """Configuration for MoondreamVlModel."""
 
     model_name: str = "vikhyatk/moondream2"
     dtype: torch.dtype = torch.bfloat16
     auto_resize: tuple[int, int] | None = MOONDREAM_DEFAULT_AUTO_RESIZE
+
 
 class MoondreamVlModel(HuggingFaceModel, VlModel):
     config: MoondreamConfig

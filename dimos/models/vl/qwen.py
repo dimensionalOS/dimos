@@ -8,11 +8,13 @@ from openai import OpenAI
 from dimos.models.vl.base import VlModel, VlModelConfig
 from dimos.msgs.sensor_msgs.Image import Image
 
+
 class QwenVlModelConfig(VlModelConfig):
     """Configuration for Qwen VL model."""
 
     model_name: str = "qwen2.5-vl-72b-instruct"
     api_key: str | None = None
+
 
 class QwenVlModel(VlModel):
     config: QwenVlModelConfig
@@ -66,17 +68,23 @@ class QwenVlModel(VlModel):
         return response.choices[0].message.content  # type: ignore[return-value]
 
     def query_batch(
-        self, images: list[Image], query: str, response_format: dict[str, Any] | None = None, **kwargs: Any
+        self,
+        images: list[Image],
+        query: str,
+        response_format: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> list[str]:
         """Query VLM with multiple images using a single API call."""
         if not images:
             return []
 
         content: list[dict[str, Any]] = [
-                {
-                    "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"},
-                }
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{self._prepare_image(img)[0].to_base64()}"
+                },
+            }
             for img in images
         ]
         content.append({"type": "text", "text": query})
