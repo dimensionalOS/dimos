@@ -333,8 +333,17 @@ class GO2Connection(Module, Camera, Pointcloud):
         return self.connection.liedown()
 
     @rpc
+    def balance_stand(self) -> bool:
+        """Enter BalanceStand: neutral state for switching locomotion modes"""
+        return self.connection.balance_stand()
+
+    @rpc
     def enable_rage_mode(self) -> bool:
-        """Enable Rage Mode (~2.5 m/s forward velocity envelope)."""
+        """Enable Rage Mode (~2.5 m/s forward velocity envelope).
+        Ensures BalanceStand precondition regardless of current FSM state.
+        """
+        self.connection.balance_stand()
+        time.sleep(0.3)
         result = self.connection.enable_rage_mode()
         logger.info("Rage Mode enabled")
         return result

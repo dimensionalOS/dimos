@@ -302,20 +302,24 @@ class UnitreeWebRTCConnection(Resource):
         """Enable Rage Mode on the Go2 via WebRTC.
         Assumes the robot is already in BalanceStand.
         """
-        self.publish_request(
-            RTC_TOPIC["SPORT_MOD"],
-            {"api_id": self._SPORT_API_ID_RAGEMODE, "parameter": {"data": True}},
+        rage_ok = bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {"api_id": self._SPORT_API_ID_RAGEMODE, "parameter": {"data": True}},
+            )
         )
         time.sleep(2.0)
 
-        self.publish_request(
-            RTC_TOPIC["SPORT_MOD"],
-            {
-                "api_id": SPORT_CMD["SwitchJoystick"],
-                "parameter": {"data": True},
-            },
+        joystick_ok = bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {
+                    "api_id": SPORT_CMD["SwitchJoystick"],
+                    "parameter": {"data": True},
+                },
+            )
         )
-        return True
+        return rage_ok and joystick_ok
 
     def liedown(self) -> bool:
         return bool(
