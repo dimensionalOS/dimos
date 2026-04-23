@@ -330,7 +330,7 @@ scene.add(model);
 {collider_js}
 return {{ name: model.name, uuid: model.uuid, collider: col, scaleFactor }};
 """
-        return cast(dict[str, Any], self.exec(code))
+        return cast("dict[str, Any]", self.exec(code))
 
     def remove_object(self, name: str) -> bool:
         """Remove a named object from the scene.
@@ -356,7 +356,7 @@ obj.traverse(c => {{ if (c.isMesh) {{ c.geometry?.dispose(); c.material?.dispose
 scene.remove(obj);
 return true;
 """
-        return cast(bool, self.exec(code))
+        return cast("bool", self.exec(code))
 
     def add_npc(
         self,
@@ -404,7 +404,7 @@ return true;
             opts["rotation"] = rotation
         if scale is not None:
             opts["scale"] = scale
-        return cast(dict[str, Any], self.exec(f"return await addNPC({json.dumps(opts)});"))
+        return cast("dict[str, Any]", self.exec(f"return await addNPC({json.dumps(opts)});"))
 
     def remove_npc(self, name: str) -> bool:
         """Remove an NPC by name. Stops animation and removes collider.
@@ -419,7 +419,7 @@ return true;
         bool
             True if NPC was found and removed.
         """
-        return cast(bool, self.exec(f"return removeNPC({json.dumps(name)});"))
+        return cast("bool", self.exec(f"return removeNPC({json.dumps(name)});"))
 
     def add_collider(
         self,
@@ -445,7 +445,7 @@ const obj = scene.getObjectByName({json.dumps(name)});
 if (!obj) throw new Error("Object not found: {name}");
 return addCollider(obj, {json.dumps(shape)});
 """
-        return cast(dict[str, Any], self.exec(code))
+        return cast("dict[str, Any]", self.exec(code))
 
     def remove_collider(self, name: str) -> bool:
         """Remove collider from a named scene object.
@@ -465,7 +465,7 @@ const obj = scene.getObjectByName({json.dumps(name)});
 if (!obj) throw new Error("Object not found: {name}");
 return removeCollider(obj);
 """
-        return cast(bool, self.exec(code))
+        return cast("bool", self.exec(code))
 
     def add_object(
         self,
@@ -543,7 +543,7 @@ scene.add(mesh);
 {collider_js}
 return {{ name: mesh.name, uuid: mesh.uuid, collider: col }};
 """
-        return cast(dict[str, Any], self.exec(code))
+        return cast("dict[str, Any]", self.exec(code))
 
     def set_embodiment(
         self,
@@ -727,7 +727,7 @@ for (const obj of toRemove) {
 }
 return count;
 """
-        return cast(int, self.exec(code))
+        return cast("int", self.exec(code))
 
     def get_scene_info(self) -> dict[str, Any]:
         """Get info about the current scene (object names, counts).
@@ -745,7 +745,7 @@ scene.traverse(obj => {
 });
 return { objectCount: objects.length, objects: objects.slice(0, 100) };
 """
-        return cast(dict[str, Any], self.exec(code))
+        return cast("dict[str, Any]", self.exec(code))
 
     def set_agent_position(
         self,
@@ -781,4 +781,4 @@ return { objectCount: objects.length, objects: objects.slice(0, 100) };
 const p = agent.group.position;
 return { x: p.x, y: p.y, z: p.z };
 """
-        return cast(dict[str, Any], self.exec(code))
+        return cast("dict[str, Any]", self.exec(code))

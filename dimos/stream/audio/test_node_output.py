@@ -12,28 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
-
 import pytest
+import reactivex as rx
+
+from dimos.stream.audio.node_output import SounddeviceAudioOutput
 
 
-@pytest.mark.slow
-def test_dim_sim(lcm_spy, start_blueprint, human_input) -> None:
-    start_blueprint(
-        "run",
-        "--disable",
-        "spatial-memory",
-        "--disable",
-        "security-module",
-        "unitree-go2-agentic",
-        simulator="dimsim",
+@pytest.fixture
+def sound_device():
+    out = SounddeviceAudioOutput()
+    yield out
+    out.stop()
+
+
+def test_consume_audio_survives_missing_device(mocker, sound_device) -> None:
+    mocker.patch(
+        "dimos.stream.audio.node_output.sd.OutputStream",
+        side_effect=Exception("Error querying device -1"),
     )
-    lcm_spy.save_topic("/rpc/McpClient/on_system_modules/res")
-    lcm_spy.wait_for_saved_topic("/rpc/McpClient/on_system_modules/res", timeout=1200.0)
 
-    time.sleep(3)
+    sound_device.consume_audio(rx.empty())
 
-    # Starts at (3, 2)
-    human_input("move forward 1 meter")
-
-    lcm_spy.wait_until_odom_position(4, 2, threshold=0.4)
+    assert sound_device._stream is None
+    assert not sound_device._running.is_set()
+    assert sound_device._subscription is not None

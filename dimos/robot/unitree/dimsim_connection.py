@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import functools
 from collections.abc import Callable
+import functools
 from typing import Any
 
 from reactivex import Observable, Subject
@@ -93,6 +93,9 @@ class DimSimConnection:
 
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
+
+    def enable_rage_mode(self) -> bool:
+        return True
 
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         return {}

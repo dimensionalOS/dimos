@@ -61,6 +61,8 @@ class GlobalConfig(BaseSettings):
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"
     listen_host: str = "127.0.0.1"
+    dimsim_scene: str = "apt"
+    dimsim_port: int = 8090
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -74,9 +76,6 @@ class GlobalConfig(BaseSettings):
             if not hasattr(self, key):
                 raise AttributeError(f"GlobalConfig has no field '{key}'")
             setattr(self, key, value)
-
-    dimsim_scene: str = "apt"
-    dimsim_port: int = 8090
 
     @property
     def unitree_connection_type(self) -> str:
