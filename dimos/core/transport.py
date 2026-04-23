@@ -19,6 +19,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     TypeVar,
+    cast,
 )
 
 from dimos.core.stream import In, Out, Stream, Transport
@@ -378,7 +379,7 @@ if ZENOH_AVAILABLE:
             with self._start_lock:
                 if not self._started:
                     self.start()
-                return self.zenoh.subscribe(self.topic, lambda msg, topic: callback(msg))
+                return self.zenoh.subscribe(self.topic, lambda msg, topic: callback(cast("T", msg)))
 
     class pZenohTransport(PubSubTransport[T]):
         """Zenoh transport with pickle encoding for arbitrary Python objects."""
