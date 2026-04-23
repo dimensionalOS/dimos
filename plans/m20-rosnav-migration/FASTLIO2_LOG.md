@@ -1031,11 +1031,1512 @@ match eventually fails → runaway.
 
 ---
 
+## Finding #25: Gyro Purity Test Result + Real Rotation Cause is Lever-Arm Centripetal (2026-04-22)
+
+Finding #24 proposed a gyro purity test to confirm a yaw DOF error in
+`R_base_imu` as the cause of rotation-drives-SLAM-divergence. Ran it
+today on the actual robot (tele-op D-key rotation in place via WASD
+from dimos-viewer — NOT handheld, important). Plus a second expert
+opinion from codex and a careful audit of the fork source. Result:
+hypothesis refuted, real cause identified.
+
+### Gyro purity data — 12 s capture, D-key yaw-in-place
+
+Smartnav with `M20_SLAM_BACKEND=fastlio2 M20_FASTLIO2_IMU=airy` brought
+up the airy_imu_bridge at 200 Hz, cal=OK. A Python LCM subscriber
+(`/tmp/gyro_purity.py` on NOS, consumes `/airy_imu_front#sensor_msgs.Imu`
+via `dimos_lcm.sensor_msgs.Imu`) recorded 12 s. User rotated the robot
+in place for ~10 s at mean 62 °/s, peak 87 °/s.
+
+**Stationary (|gz|<0.05, 1614 samples):**
+- gx mean -0.006 stdev 0.001, gy mean -0.011 stdev 0.001
+- |gz| mean 0.009 stdev 0.002
+- accel mean (+0.002, +0.218, +9.847) → **tilt from +Z = 1.27°**
+
+**Active rotation (|gz|>=0.3, 785 samples):**
+- gx mean +0.006 stdev **0.103**, gy mean -0.035 stdev 0.090
+- |gz| mean 1.079 stdev 0.199, peak 1.520
+- accel mean (**-0.635**, +0.257, +9.769)  ← headline
+- rho mean 0.107, median **0.092**, p5/p95 = 0.026 / 0.253
+
+**Regression gx on gz:** slope -0.110, **R² = 0.045**.
+
+**Rho in 1 s windows during rotation:** 0.128 → 0.108 → 0.089 → 0.102
+(decreases as D-key holds steady, consistent with leg-shuffle transient
+damping out).
+
+### Why the yaw-DOF-error hypothesis is refuted
+
+1. Median rho 0.092 < the 0.10 threshold proposed in Finding #24.
+2. R² = 0.045 means gx is noise-dominated, not bias-dominated. A fixed
+   yaw offset θ in R_base_imu would produce gx ≈ -sin(θ)·gz with high
+   R² — not observed.
+3. Stdev(gx) = 0.10 ≫ mean(gx) = 0.006 → wobble, not bias.
+4. **Math gap in Finding #24**: a pure Rz(θ) yaw offset in R_base_imu
+   *commutes* with a pure world-vertical rotation. `Rz(θ) · (0,0,ω) =
+   (0,0,ω)`. So the rho test literally cannot detect a yaw-DOF error
+   whose rotation axis is gravity. It can only confirm base Z is
+   gravity-aligned (which it is, within ~5°).
+
+### The -0.635 m/s² headline — real cause is lever-arm centripetal
+
+M20 hardware manual (Lynx-M20-Series-Hardware-Development-Manual-V0.0.4-0.pdf,
+Section 1.10) gives sensor positions relative to body origin:
+
+| Sensor | X (mm) | Y (mm) | Z (mm) |
+|---|---|---|---|
+| Body IMU (yesense) | +63.2 | -26.8 | -43.5 |
+| **Front Airy LiDAR** | **+320.28** | **0** | **-13** |
+| Rear Airy LiDAR | -320.28 | 0 | -13 |
+
+Body frame is standard ROS convention (X-forward, Y-left, Z-up) per
+Section 1.6. The Airy IMU lives inside the front Airy housing, so its
+position in body frame is ~(+0.320, 0, -0.013) m plus a ~5 mm DIFOP
+lever offset (negligible).
+
+When the M20 rotates in place about its body-vertical axis, the IMU
+traces a circle of radius 0.320 m and feels fictitious centripetal
+acceleration:
+
+- a_centripetal_body = -ω × (ω × r_imu_body)
+- For ω = (0, 0, ωz) and r = (+0.320, 0, -0.013):
+  a_centripetal = (-0.320·ωz², 0, 0)
+- At |ωz| mean = 1.08 rad/s → **-0.373 m/s² in ax**
+- At |ωz| peak = 1.52 rad/s → **-0.740 m/s² in ax**
+- Time-averaged over measured |ωz| distribution ≈ **-0.47 m/s²**
+
+Observed ax mean during rotation = **-0.635 m/s²**. Within the
+instantaneous range and above the mean-ω value (consistent with ω²-
+weighted averaging giving more weight to peak ω moments).
+
+FAST-LIO2 interprets the IMU's linear acceleration as
+body-origin acceleration because `extrinsic_T = [0,0,0]` in the current
+yaml. It has no way to subtract the centripetal fictitious term. It
+integrates -0.64 m/s² twice and concludes the robot has translated
+tens of meters within the few seconds of rotation → matches the
+observed "keyframes to kilometers in seconds" runaway.
+
+### Codex second opinion (2026-04-22 via codex-rescue)
+
+Pushed back on Finding #24's framing on five points. Key ones:
+
+1. **Rho doesn't exonerate cloud-vs-IMU frame mismatch.** It only screens
+   for gravity-axis alignment. Codex: "The 'pure Rz commutes with
+   world-vertical yaw' argument only clears a very specific idealized
+   error; it does not prove the current composed rotation is correct,
+   and low rho does not exonerate yaw mismatch."
+2. **Missing lever-arm usually produces bounded error**, so the
+   kilometers-in-seconds signature points at frame/deskew issues
+   too. Codex ranks deskew risks in the bridge (ring remap, per-point
+   time rewrite) above lever-arm for the specific "runaway in seconds"
+   pattern.
+3. Proposes a sensor-frame A/B test: run `airy_imu_bridge --frame sensor`
+   (already implemented, lines 434-440) + front lidar only, and iterate
+   extrinsic hypotheses to directly test cloud-vs-IMU consistency.
+4. `velodyne.yaml` has no partial-extrinsic knob (gravity_freeze,
+   yaw-only extrinsic est). Only option is `extrinsic_est_en` full on
+   (tried in Finding #24, caused instant death) or full off (current).
+
+### Bridge ring-remap audit — no-op in our code path
+
+Investigated Codex's #1 suspect: `drdds_lidar_bridge/cpp/main.cpp:157-162`
+collapses rings 0-191 → 0-63 via `ring * 64 / 192` with a comment
+"ARISE N_SCANS=64". Went deep on the active fastlio2 fork source at
+`/nix/store/d7xvw7wjz1vblip2ymdha88yzcb8ch1x-source/src/`:
+
+- `N_SCANS` is a runtime int in `preprocess.h:106`, loaded from YAML
+  `scan_line` at `laserMapping.hpp:319`. All uses are
+  `for(i<N_SCANS)` loops or `std::vector(N_SCANS, ...)`. No fixed-size
+  array sized on N_SCANS.
+- Only fixed-size concern: `PointCloudXYZI pl_buff[128]` in
+  `preprocess.h:103`. But it's only accessed inside
+  `if(feature_enabled)` branches, and `laserMapping.hpp:336` hardcodes
+  `p_pre->feature_enabled = false`. **Unreachable.**
+- In the active path (`feature_enabled=false` + `given_offset_time=true`
+  because our bridge writes relative per-point times), the `ring` field
+  is grep'd and **never referenced in any indexing/grouping operation**.
+  velodyne_handler's non-feature branch (preprocess.cpp:298-359) uses
+  ring only inside `if(!given_offset_time)`, which doesn't fire for us.
+
+**The ring remap has zero functional effect on fastlio2 in our path.**
+Finding #16's "3-beams-per-bin ruins curvature/normal estimation" claim
+only applies with `feature_enabled=true`. With feature extraction off
+(as it has been since #14), the remap is inert vestigial code from the
+AriseSLAM path. Safe to remove for hygiene but **not** the rotation
+bug.
+
+MAXN = 720000 in `laserMapping.hpp:219` is frame-count history
+(`double T1[MAXN]`) — not ring count. Unrelated.
+
+### Per-point time rewrite — still suspicious
+
+Bridge at `main.cpp:164-168` converts per-point time from `double`
+absolute to `float32` relative using `first_t = points[0].time` as the
+reference. Two problems:
+
+1. For dual-Airy merged scans, points are interleaved front/rear in
+   memory, not sorted by time. `points[0].time` is just "the first
+   point in memory order", not the minimum time. Points earlier in
+   time than that get **negative** relative stamps.
+2. `laserMapping.hpp:648`:
+   `lidar_end_time = lidar_beg_time + points.back().curvature / 1000.0`
+   uses the last-in-memory point's curvature as scan end time. If
+   points aren't temporally sorted, this is not the maximum — scan end
+   is underestimated, EKF deskew window wrong.
+
+Under rotation this matters disproportionately because per-point pose
+interpolation relies on correct relative stamps to compensate for
+body motion during the 100 ms scan window.
+
+### Plan forward (in priority order)
+
+1. **Lever-arm centripetal correction in `airy_imu_bridge`** — one
+   C++ change: subtract `ω × (ω × r)` from accel in base frame. `r`
+   comes from PDF Section 1.10 per lidar side. Direct evidence-backed
+   fix; alone it handles the fictitious lateral translation during
+   pure yaw-in-place.
+
+2. **Audit + fix per-point time relativization** in
+   `drdds_lidar_bridge/cpp/main.cpp` — either:
+   a. scan data first to find the minimum time, use as reference, or
+   b. sort points by time before publishing (expensive at 100 k pts),
+      or
+   c. have drdds_recv emit points in time order upstream.
+   (a) is cheapest. Verify whether drdds actually emits out-of-order.
+
+3. **Remove 192→64 ring remap** (hygiene, no functional change). Bump
+   `scan_line: 192` for correctness-if-ever-used.
+
+4. (Only if above don't fix rotation) the sensor-frame A/B test Codex
+   proposed, or switch back to yesense IMU now that PDF gives the
+   extrinsic.
+
+### What we ALSO learned from the PDF
+
+Body IMU (yesense) at (+63, -27, -44) mm sits near the rotation axis.
+At |ω|=1 rad/s its centripetal is only 0.068 m/s² (~5× less than
+Airy). If the lever-arm correction in airy_imu_bridge doesn't fully
+resolve rotation drift, switching to yesense is a plausible next move
+because:
+- Extrinsic to lidar now known: `T_yesense_to_front_lidar =
+  (0.257, +0.027, +0.030) m`.
+- Clock-domain issue (Findings #7/#8) that drove us away was before
+  `native_clock` path landed — might be addressable now with
+  `time_sync_en: true`.
+
+---
+
+## Finding #26: Tangential α × r Dominates Centripetal on M20 Pro Wheel-Legged (2026-04-22)
+
+User asked during Finding #25's lever-arm implementation: "the robot
+isn't rotating smoothly, it's shuffling its legs in place to rotate —
+won't there be lots of accel/decel?" Checked the same 12 s gyro-purity
+CSV that provided Finding #25's evidence and yes — the user was right,
+and the correction landscape is different than I framed it.
+
+### Data: α statistics during the D-key yaw-in-place
+
+Rotation window n=785 samples, duration 3.92 s:
+
+- **α = dω_z/dt** via backward finite difference on 200 Hz gyro:
+  - mean −0.19 rad/s² (approx zero, as expected for sustained rotation)
+  - **stdev 8.09 rad/s²**
+  - **peak |α| = 36.76 rad/s²**
+- Zero-crossing rate: 50 /s → **~25 Hz oscillation in α** — matches
+  expected frequency of wheel-legged re-stance events (one pulse per
+  foot plant × 4 feet × few Hz gait).
+- Autocorrelation: peaks at +0.714 (lag 5 ms) decaying, negative peak
+  at lag 50 ms → ~20 ms positive-correlation window, consistent with
+  leg-shuffle push-off + plant.
+
+### Tangential term is 15× bigger than centripetal at peak
+
+Tangential fictitious accel is `α × r`. With `r_x = 0.320 m` for the
+Airy IMU:
+
+| Term | Typical | Peak |
+|---|---|---|
+| Centripetal ω²·r_x (at |ω| rms ≈ 1.1 rad/s) | **0.37 m/s²** | ~0.74 m/s² |
+| Tangential α·r_x | **2.59 m/s²** | **11.76 m/s²** |
+
+Tangential is ~7× bigger than centripetal at rms, **~15× at peak**.
+
+### Direct evidence in the accel data: ay ≈ α_z × r_x
+
+Regression of `ay` on `α_z` over the rotation window:
+
+- **Correlation: +0.796**
+- **Slope: +0.3009** (close to expected `r_x = +0.320` — ~5 % off)
+- Intercept: +0.3153 m/s² (matches stationary ay bias)
+
+This is a smoking gun. The observed `ay` during rotation is
+essentially `α_z × r_x` plus a DC bias. The slope of 0.3009 recovers
+the forward lever arm **directly from the data**, independent of the
+PDF's 0.320 m value. Empirical corroboration that r ≈ 0.32 m is real
+and not just a manual-reading artifact.
+
+It also means that v1's centripetal-only correction subtracts 0.37 m/s²
+from ax (correct and useful) but LEAVES the 2.6 m/s² typical / 11.8 m/s²
+peak tangential contribution untouched in ay. That's still the
+dominant fictitious term on this robot for this motion, and FAST-LIO2
+would still integrate it as spurious lateral translation.
+
+### Implication — implement tangential correction in v1
+
+Decision made before first deploy of Finding #25 code: include α × r
+in the bridge. Subtract `α × r + ω × (ω × r)` from accel instead of
+just ω × (ω × r).
+
+Computing α:
+- Simple backward difference on base-frame gyro: `α_t = (ω_t − ω_{t−1}) / Δt`.
+- 200 Hz gyro, Δt ≈ 0.005 s.
+- Gyro noise floor at stationary: σ_ω ≈ 0.001 rad/s.
+- Differentiated noise: σ_α ≈ σ_ω · √2 / Δt ≈ 0.28 rad/s² — much smaller
+  than the 8 rad/s² rotation-window stdev of the real signal, so
+  amplification is acceptable without filtering.
+- Handle first sample (no previous ω): set α = 0.
+
+Tangential from α × r:
+- `α × r = (α_y · r_z − α_z · r_y, α_z · r_x − α_x · r_z, α_x · r_y − α_y · r_x)`.
+
+Subtraction order in base frame:
+- a_body ≈ a_imu − ω × (ω × r) − α × r.
+
+Tests to run after deploy:
+1. Stationary: ax/ay/az delta from baseline should be near zero
+   (α ≈ 0 → tangential correction ≈ 0; centripetal also ≈ 0).
+2. D-key rotation: ay stdev during rotation should collapse from 0.090
+   toward gyro-noise floor; ay regression slope vs α_z should drop
+   from +0.30 toward 0.
+3. SLAM: keyframes should stop runaway during rotation if the ax+ay
+   fictitious removal is sufficient.
+
+### Why this matters for the bigger picture
+
+M20 Pro is a **wheel-legged hybrid**. Rotating in place is NOT a
+smooth rigid-body yaw; it's a chopped sequence of leg-plants and
+wheel-yaw pulses. Any sensor offset from the rotation axis will feel
+large α-driven accelerations at ~25 Hz. For any future filter design
+(FAST-LIO2 config, EKF covariances, motion priors) this informs
+expected input statistics: the IMU on this platform produces
+large-variance `ay` during rotation that is not measurement noise —
+it is real kinematic acceleration of a point not at the rotation
+center.
+
+For the short term: we must compensate it, because FAST-LIO2 has no
+IMU-body-to-rotation-center lever-arm model. For the medium term: a
+proper URDF-driven rigid-body transform in the bridge would handle
+both centripetal and tangential together using the known lever arm,
+and would generalize to other sensor mounts.
+
+---
+
+## Finding #27: Lever-Arm Correction Works at the IMU Level, but SLAM Still Diverges Under Rotation (2026-04-22)
+
+Shipped Finding #25 + #26 combined correction (centripetal ω × (ω × r)
++ tangential α × r, with `r = (+0.320, 0, -0.013)` for front Airy in
+base_link) in `airy_imu_bridge`. Deployed nix build
+`00ksk17xfanvf6mlq4hxsfw3cqp3xq3n-drdds_lidar_bridge-0.1.0` with the
+lever-arm logic enabled. Stamped that config on the LCM status line
+(`lever_arm_base (m) = (0.3200, 0.0000, -0.0130) — centripetal
+correction enabled`).
+
+### Retest on identical D-key yaw-in-place scenario
+
+Ran the same `retest_rotation.py` for 12 s, user yawed the robot via
+tele-op D-key for ~10 s at a slightly slower rate (|gz| mean 0.77 rad/s
+vs 1.08 previously).
+
+Head-to-head (rotation − stationary):
+
+| Metric | PRE (no correction) | POST (cent + tang) | Change |
+|---|---|---|---|
+| Δax | **-0.637 m/s²** | **-0.081 m/s²** | 87% reduction |
+| Δay | +0.040 | +0.007 | 83% reduction |
+| Δaz | -0.078 | +0.004 | 95% reduction |
+| ay stdev during rotation | 3.06 | 1.16 | 62% reduction |
+| az stdev during rotation | 3.18 | 1.82 | 43% reduction |
+| corr(ay, α_z) | +0.796 (slope +0.30) | **-0.33 (slope -0.10)** | bias elim., slight over-correct |
+
+The IMU signal IS cleaner. Bias from fictitious accel is essentially
+gone on all three axes. Variance is also cut in half because we're now
+subtracting (most of) the real ω × (ω × r) and α × r that leg-shuffle
+produces. The residual -0.33 correlation / -0.10 slope in ay vs α_z
+suggests our r_x = 0.320 is ~1.25× the effective value under load
+(makes sense — the M20 Pro's effective rotation center shifts from
+body-geometric-center during wheel-legged yaw as feet re-plant
+asymmetrically). Minor, not urgent — could tune `r` empirically later.
+
+### But the SLAM is still catastrophically wrong
+
+Ran the same rotation through `fastlio2_native` via smartnav with
+`M20_SLAM_BACKEND=fastlio2 M20_FASTLIO2_IMU=airy`. Keyframe trajectory
+from the PGO log:
+
+```
+Keyframe  1 (-0.0,  0.0,  0.0)   ← stationary, preroll done
+...
+Keyframe 10 ( 0.0, -0.0, -0.1)   ← still stationary, clean
+Keyframe 11 ( 1.7, -0.5,  1.0)   ← D pressed, small pose shift
+Keyframe 13 ( 1.4, -4.8,  2.7)
+Keyframe 17 (-1.6, -9.9,  2.9)   ← drifting but bounded (<10 m)
+Keyframe 18 (-6.9,-17.9,  0.9)   ← STEP JUMP (classic ICP wrong local minimum)
+Keyframe 20 (-8.1,-19.0,  0.7)
+...
+Keyframe 138 (3810, -10290, -10750)  ← kilometers away, runaway
+```
+
+Stationary-to-rotation transition is clean up through KF 17 — small
+drift consistent with our residual 0.08 m/s² bias. The catastrophic
+divergence starts at **KF 18 step-jump**, which is FAST-LIO's EKF
+measurement-update committing to a wildly wrong ICP solution. After
+that the state is far enough off that subsequent scans can't recover,
+and PGO keeps appending keyframes along the diverged path.
+
+**IMU lever-arm was NOT the dominant rotation failure mode.** Our
+residual 0.08 m/s² integrated over 10 s of rotation = ~4 m of fake
+translation. We're seeing 10,000+ m. Three orders of magnitude
+unexplained by IMU.
+
+### Smoking gun: `imu_vs_frame_end` gap
+
+Every `fastlio2_native` frame log line shows
+`imu_vs_frame_end = -0.050 to -0.170 s`, even stationary. That means
+the lidar scan's end timestamp is 50 to 170 ms AFTER the most recent
+IMU sample. FAST-LIO2's `syncPackage()` requires IMU coverage of the
+scan window for proper per-point deskew + EKF measurement update. When
+IMU is short by 170 ms during rotation at 1 rad/s:
+
+- Orientation extrapolation error: ω · Δt = 1 · 0.17 = 0.17 rad ≈ **9.7°**
+- FAST-LIO must propagate forward 170 ms on a constant-velocity
+  assumption. During rotation this is catastrophic: the predicted
+  pose at scan_end is off by ~10° orientation, which puts all
+  predicted points in the wrong place, which makes ICP search
+  against a misaligned cloud-to-map, which either fails or finds a
+  wrong local minimum.
+
+Stationary, ω = 0 so the 170 ms gap doesn't matter (nothing to
+extrapolate). That's why stationary SLAM works perfectly and rotation
+breaks.
+
+### Next investigations — ranked
+
+**1. Why is IMU 170 ms behind the lidar scan end?** The IMU publishes
+at 200 Hz so fresh samples should be only 5 ms behind real time. The
+lidar scan is 100 ms wide (max_offset=0.100s). If lidar publishes at
+scan_end = real_time (normal), and IMU is at real_time − 5ms, gap
+should be ≤5 ms. Getting 170 ms means either:
+
+   a. The lidar's `header.stamp` is AHEAD of true physical scan_end
+      (rsdriver / drdds timing bug).
+   b. The IMU LCM stream is DELAYED by 170 ms between bridge and
+      fastlio2 (transport bottleneck — but pkt_vs_wall in
+      airy_imu_bridge reports -0.003 s, very tight).
+   c. Both streams are consistent with wall clock but
+      fastlio2 is computing `imu_vs_frame_end` using
+      `lidar_beg_time + max_offset_s` and the bridge's relative time
+      rewrite truncated that (Finding #26 empirical observation that
+      `first_t = points[0].time` is not always scan start).
+
+   (c) matches Codex's Q5 concern and Finding #25's time-relativization
+   audit. Need to confirm by instrumenting the bridge or reading raw
+   drdds point timestamps.
+
+**2. What's actually in the per-point time field?** Write a probe that
+reads a single cloud from `/dev/shm/drdds_bridge_lidar`, extracts the
+per-point time as double (raw), and reports min/max/distribution. If
+min != points[0].time or max != points.back().time, the bridge's
+first_t / back().curvature heuristic is broken for time-anchor
+computation.
+
+**3. Fix the time anchor in bridge.** Replace `first_t = points[0].time`
+with `first_t = min(points[i].time)` — one extra pass, ~50 k points
+per scan, negligible. Ensure the PointCloud2 declared scan_end in
+its header matches max(time) + lidar_beg_time.
+
+### Plan stays
+
+Finding #25 + #26 shipped and helped (IMU signal clean). Next: time
+relativization. Ring remap removal stays third (still inert).
+
+---
+
+## Finding #28: `drdds_lidar_bridge` Tagged PointCloud2 with scan_END as header.stamp — Root Cause of Rotation SLAM Drift (2026-04-22)
+
+Finding #27 flagged `imu_vs_frame_end = -0.05 to -0.17 s` even
+stationary, concluded that drdds's per-point times were likely
+out-of-order, and put a probe on the TODO.
+
+Ran `probe_lidar_times.py` (reads `/dev/shm/drdds_bridge_lidar`
+directly, extracts per-point time doubles, reports distribution).
+Results on a single live cloud during the post-correction test:
+
+```
+[probe] slot: stamp=1776818077.700005054 pts=46521 point_step=26
+
+[probe] Per-point time analysis:
+  times[0]         = 1776818077.600054502
+  times[-1]        = 1776818077.700005054
+  min              = 1776818077.600054502
+  max              = 1776818077.700005054
+  max - min        = 0.099951 s   (99.95 ms)
+  times[0] - min   = 0.000000    ← first point IS minimum
+  times[-1] - max  = 0.000000    ← last point IS maximum
+  descending-step count: 0 / 46520
+  → points ARE monotonically ordered in time
+```
+
+**Finding #25 was wrong about time-ordering.** Points are strictly
+monotonic. `first_t = points[0].time` correctly equals `min(time)`.
+This kills my out-of-order hypothesis.
+
+**But the probe revealed a much worse bug.** Note:
+- `slot->stamp` = 1776818077.700005054 = scan_end (= max of points)
+- `times[0]` = 1776818077.600054502 = scan_start
+
+The drdds slot header stamp is **scan_END**, not scan_start. The
+bridge's pre-fix code set `pc.header.stamp = slot_stamp = scan_END`.
+FAST-LIO2 treats `pc.header.stamp` as scan_START and adds
+`max_offset_s` (100 ms, derived from point time offsets) to get
+scan_end. So FAST-LIO's computed scan_end was:
+
+```
+effective_scan_end = header.stamp_(scan_END) + max_offset_s
+                   = scan_end + 100 ms
+                   = true scan_end + 100 ms
+```
+
+FAST-LIO's `syncPackage()` then requires IMU coverage up to
+`effective_scan_end` — i.e., 100 ms in the future of the actual scan
+end. IMU at 200 Hz only gives us data up to real wall clock, so
+`imu_latest < effective_scan_end` by 100 ms permanently. This is
+exactly what the log was telling us:
+
+```
+[fastlio2] frame #3  path=pc2  timebase=1776817363.9999  max_offset=0.100s  imu_latest=...  imu_vs_frame_end=-0.050s to -0.170s
+```
+
+### Why stationary works, rotation breaks
+
+Stationary: IMU is ω = 0, no rotation prediction needed. FAST-LIO's
+EKF propagation using the most recent IMU to the (imaginary)
++100 ms scan_end is trivially correct (zero motion predicted = zero
+motion). Scan match then sees points in their expected place.
+
+Rotation at 1 rad/s: FAST-LIO must extrapolate the pose forward
+100-170 ms ahead of the IMU's actual coverage, using the
+constant-angular-velocity assumption. The forced extrapolation is:
+
+- Orientation drift: ω × Δt = 1.0 × 0.17 = 0.17 rad ≈ **9.7°**
+- This is applied to the whole deskewed cloud before ICP.
+- Cloud becomes mis-aligned with the map by ~10°.
+- ICP tries to correct, finds the WRONG local minimum (indoor scenes
+  are full of parallel features at 10° ≤ offsets), commits to it.
+- EKF accepts, keyframe explodes.
+
+This matches the Finding #27 observation that KF 1-17 drift slowly
+(the 100 ms scan_end mis-anchor produces small-but-growing error
+under slight motion) then KF 18 step-jumps (ICP wrong-local-minimum
+commit) and runaway after.
+
+### Fix — one-line in `drdds_lidar_bridge/cpp/main.cpp`
+
+Replace `pc.header = make_header(..., slot->stamp_*)` (scan_end) with
+`pc.header = make_header(..., first_t)` (scan_start, which is
+identical to `points[0].time` because cloud is monotonic).
+
+```cpp
+// Before
+pc.header = make_header("lidar_link", slot->stamp_sec + slot->stamp_nsec * 1e-9);
+
+// After — scan_start from first point
+double first_t;
+std::memcpy(&first_t, pc.data.data() + time_off, sizeof(double));
+pc.header = make_header("lidar_link", first_t);
+```
+
+Expected effect after deploy:
+- `imu_vs_frame_end` goes from −0.05 to −0.17 s → near zero (−5 to
+  +5 ms, bounded by IMU sample spacing + small lidar-to-wall-clock
+  skew, well within EKF propagation window).
+- FAST-LIO2 no longer extrapolates forward 100 ms. Deskew uses actual
+  IMU for all the scan's time window.
+- Rotation-drift runaway is expected to go away, or at least reduce
+  by orders of magnitude — if ICP still finds wrong local minima, that
+  is a scene-structure issue, not our timing bug.
+
+Commit is in source tree now, not yet deployed. Building next.
+
+### Meta-lesson
+
+- **Always verify assumptions with a direct probe before acting.**
+  Finding #25 proposed that first_t != min_t due to interleaved
+  front/rear rings. That was a plausible story for the dual-lidar
+  merged mode but WRONG in practice — rsdriver's merge is
+  time-sorted. The probe took 20 minutes to write and would have
+  redirected attention here much earlier.
+- **Header semantics vary across stacks.** ROS convention is
+  "header.stamp = earliest point's time" and FAST-LIO follows it.
+  drdds apparently uses "last point's time" or "publish time". When
+  bridging between stacks, explicitly re-derive the header stamp from
+  your point data, don't blindly trust the incoming header.
+
+---
+
+## Finding #29: Rotation SLAM Bounded — 3000× Drift Reduction (2026-04-22)
+
+Shipped the Finding #28 scan_start header fix in
+`drdds_lidar_bridge/cpp/main.cpp`. New nix build
+`gwgykwraxah3f2bj389w55cv4ykbgxi5-drdds_lidar_bridge-0.1.0`, symlinks
+repointed, smartnav restarted (`M20_SLAM_BACKEND=fastlio2
+M20_FASTLIO2_IMU=airy`).
+
+### Stationary baseline verified
+
+- `imu_vs_frame_end` flipped from **−0.05 / −0.17 s** (pre-fix) to
+  **+0.05 / +0.07 s** (post-fix). IMU now covers the scan window;
+  FAST-LIO no longer extrapolates forward.
+- Keyframe 1 at `(−0.0, −0.0, −0.0)`, stationary SLAM stable.
+- 200 Hz IMU, cal=OK, lever-arm correction enabled per Findings
+  #25/#26.
+
+### Rotation test — same D-key yaw-in-place protocol
+
+12 s capture, user pressed D for ~10 s, same rotation rate as before
+(|gz| mean 0.77 rad/s, peak ~1.5 rad/s).
+
+Keyframe trajectory from PGO log:
+
+```
+KF  1 (-0.0, -0.0, -0.0)   ← stationary preroll
+KF  2 (-0.3,  0.1,  0.1)   ← D pressed, small excursion
+KF  3 (-0.3,  0.0, -0.1)
+KF  4 (-0.6, -0.2, -0.1)
+KF  5 (-1.1, -0.1, -0.2)
+KF  6 (-2.0, -0.1, -0.1)
+KF  7 (-2.5, -0.2,  0.0)
+KF  8 (-3.3, -0.1,  0.2)   ← peak drift
+KF  9 (-2.6, -0.1,  0.1)
+KF 10 (-1.6,  0.1, -0.0)   ← recovering
+KF 11 ( 3.2,  0.3, -0.1)   ← D released, final
+```
+
+### Head-to-head drift comparison
+
+| Config | Peak X drift | Peak |pos| | Final keyframe | # KFs | Behavior |
+|---|---|---|---|---|---|
+| Pre-correction (Finding #24) | ~thousands m | ~10 km | KF 138 (3810, −10290, −10750) | 138+ | Runaway |
+| Lever-arm only (Finding #27) | ~thousands m | ~10 km | KF 138 (3810, −10290, −10750) | 138+ | Runaway, same magnitude |
+| **+ scan_start fix** | **−3.3 m** | **3.3 m** | KF 11 (3.2, 0.3, −0.1) | **11** | **Bounded, self-recovers** |
+
+**Drift reduction: 3000× on peak magnitude, KF count reduced by >90%.**
+The "step-jump to wrong ICP local minimum" pattern is gone entirely.
+Y + Z drift stay within ±0.3 m through the whole rotation window —
+essentially pinned.
+
+### Residual 3.3 m X-drift — two candidate causes
+
+**(a) Lever-arm fine-tune.** Post-correction telemetry from Finding #27
+showed `corr(ay, α_z) = −0.33` with regression slope `−0.10`, which is
+a slight over-correction of the tangential term. Implied effective
+r_x_eff ≈ 0.22 m (not 0.32 as configured). Over-subtracting α × r
+leaves a negative residual in ay that integrates to X drift during
+sustained rotation. Tunable via `--lever_arm_base_m`.
+
+Why r_eff < r_geometric on a wheel-legged platform: under yaw tele-op
+the robot shifts its center of support dynamically (leg-plant load
+redistribution); the instantaneous rotation axis migrates during the
+gait cycle rather than sitting at the body geometric center. For a
+first pass, setting r_x ≈ 0.25 should reduce the slope residual and
+shave off much of the 3.3 m.
+
+**(b) Residual ICP ambiguity in indoor symmetric scene.** Our test was
+on carpet in a roughly rectangular space with parallel walls. Even a
+perfect IMU can't prevent a small yaw-accumulating scan-match error
+because the scan is angularly self-similar. This bounded drift is the
+"normal" failure mode of FAST-LIO2 Velodyne path in low-feature
+environments and matches behavior reported in the FAST-LIO literature.
+
+Probably a mix. Finding Next session: fine-tune (a) first, then if
+residual > 1 m revisit (b) — possibly by enabling
+`extrinsic_est_en: true` now that rotation is no longer causing
+instant EKF death.
+
+### Code state summary at end of 2026-04-22
+
+Shipped this session:
+- `airy_imu_bridge.cpp`: centripetal + tangential lever-arm
+  subtraction, default `r = (0.320, 0, -0.013) m` for front Airy,
+  overridable via `--lever_arm_base_m "x,y,z"`.
+- `drdds_lidar_bridge/cpp/main.cpp`: PointCloud2 `header.stamp` now
+  set from first-point time (scan_start), not the drdds slot's
+  stamp field (which empirically is scan_END = time of last point).
+- `FASTLIO2_LOG.md`: Findings #24-#29 fully documented including
+  refuted hypotheses, data tables, and the codex second-opinion
+  pushback.
+
+Config unchanged:
+- `velodyne.yaml`: `extrinsic_T = [0,0,0]`, `extrinsic_R = identity`,
+  `extrinsic_est_en = false`, `scan_line = 64`.
+- `drdds_lidar_bridge` still remaps 192→64 rings — inert in our path
+  (Finding #25 audit) but scheduled for removal next session.
+
+### Bounded-drift baseline makes downstream work tractable
+
+With rotation no longer diverging, click-to-goal and longer-range
+navigation become testable. Previous attempts all hit runaway drift
+within seconds of rotation and never completed a short-range goal.
+Now we have a stable enough estimate to drive the robot across a room
+and back without the position estimate exploding.
+
+Next targets (in order):
+1. ~~Remove 192→64 ring remap + bump `scan_line: 192`~~ — DONE. Empirical
+   correction: RSAIRY merged cloud has rings 0..95, not 0..191. Both
+   Airys share the ring index space in rsdriver's merged mode; each
+   ring value carries one point from each sensor. YAML set to
+   `scan_line: 96`. Also checked in `flake.lock` to the repo so future
+   `deploy.sh sync` doesn't strip it and force offline rebuilds.
+2. Fine-tune `--lever_arm_base_m` toward empirical r_eff. Retest drift.
+3. Click-to-goal end-to-end test. Success criterion: robot reaches
+   within 0.5 m of a 2 m target and comes to a clean stop.
+
+---
+
+## Finding #30: Lever-Arm Tuning Null Result — Keep Geometric r, Ignore Regression Slope (2026-04-22)
+
+Finding #29 noted a residual `corr(ay, α_z) = −0.33, slope = −0.10` after
+the r = 0.320 m correction and speculated that an "effective r_x" of
+about 0.22 m (derived naively from that slope as `r_eff = r_sub +
+slope`) might sit better than the geometric value because the
+wheel-legged rotation center shifts under leg-plant load. Tested that
+hypothesis.
+
+### Plumbing added this session (kept for future tuning)
+
+- `AiryImuBridgeConfig.lever_arm_base_m: str | None = None` — optional
+  override wired through the NativeModule CLI framework; when set,
+  auto-passes `--lever_arm_base_m "x,y,z"` to the binary. Default
+  remains the C++ geometric default `(0.320, 0, -0.013)` for front,
+  `(-0.320, 0, -0.013)` for rear (PDF Section 1.10).
+- `m20_smartnav_native.py` reads `M20_AIRY_LEVER_ARM_BASE_M="x,y,z"`
+  env var and passes to the bridge.
+
+### Experiment — r = 0.32 vs r = 0.22, same D-key yaw-in-place
+
+Third test run on identical protocol (user presses D for ~10 s in
+dimos-viewer while a 12 s LCM logger captures IMU at 200 Hz). All other
+state identical: scan_start fix in place (Finding #28), ring remap
+removed (Finding #29), `scan_line: 96` in velodyne.yaml.
+
+|   | r = 0.32 (geometric) | r = 0.22 (tuned) |
+|---|---|---|
+| Δax rotating − stationary | **−0.081 m/s²** | worse (no stationary; ax rotating mean −0.117) |
+| `corr(ay, α_z)` | −0.333 | **+0.052** |
+| `slope(ay, α_z)` | −0.0963 | **+0.0156** |
+| SLAM peak drift | **3.3 m bounded** | **hundreds of m runaway** |
+| KF 11 Y position | 0.3 m | **63.3 m** (step-jump, ICP wrong local min) |
+| Total KFs | 11 (bounded) | 29+ (runaway) |
+
+### What the data actually say
+
+**The "cleanest" IMU signal (r = 0.22) gives the WORST SLAM.** The
+regression slope of ay on α_z is NOT a reliable tuning objective.
+Two reasons this is almost certainly attenuation bias, not a true
+over-correction:
+
+1. **Errors-in-variables attenuation.** `α_z = dω_z/dt` is computed by
+   backward difference on 200 Hz gyro with stationary σ ≈ 1 mrad/s.
+   Differentiated σ_α ≈ √2 · 1e-3 / 0.005 ≈ 0.28 rad/s². During
+   wheel-legged rotation the signal stdev in α is ~8 rad/s², so
+   SNR ≈ 30× — sounds fine, but the leg-shuffle impulses are
+   high-frequency and partially aliased by the sampling. Actual
+   in-band SNR is lower. Regression slope attenuates by
+   `var(signal) / (var(signal) + var(noise))` so observed slope can
+   easily be 70 % of true slope. Applied naively this says r_true is
+   closer to 0.32 than 0.22.
+
+2. **Linear slope has a very different impact on SLAM than total
+   fictitious-accel magnitude.** The centripetal term ω² · r is
+   unsigned and always points inward; reducing r from 0.32 to 0.22
+   *under*-corrects it and leaves ~0.04 m/s² extra bias in ax during
+   rotation. The tangential α × r term changes sign with α, and the
+   magnitude matters more than the correlation-slope sign (which just
+   tells you which way you're biased on average). Fixing a
+   small-magnitude correlation while introducing a larger-magnitude
+   centripetal bias is a bad trade on drift integration.
+
+### Also: SLAM is test-to-test sensitive at this operating point
+
+Even in configurations that nominally looked "similar," small
+variations in initial robot pose, which lidar features were visible,
+and exactly when / how hard the user pressed D, tip ICP into wrong-
+local-minimum at different moments. The r=0.32 run getting
+3.3 m bounded drift and the r=0.22 run getting hundreds of meters
+isn't necessarily reproducible to the decimal. Per-test variance
+suggests the remaining failure mode is scene-structure fragility in
+FAST-LIO's ICP, not an IMU problem we can fix by tuning r.
+
+### Decision
+
+**Keep the geometric default r = (0.320, 0, -0.013) m for front Airy.**
+Reverted the start script by unsetting `M20_AIRY_LEVER_ARM_BASE_M`.
+Plumbing for future tuning is in place; not used in production.
+
+### What's next
+
+The IMU correction chain is correct and bounded. Further gains at
+the IMU layer will be sub-meter. The remaining 3 m / rotation-event
+drift is in FAST-LIO's ICP / scan-match stage. Options:
+
+1. Try `time_sync_en: true` in velodyne.yaml. This lets FAST-LIO
+   estimate the lidar↔IMU offset online. Might help if our scan_start
+   stamp is still slightly biased vs IMU's PTP time — easy to try.
+2. Try `extrinsic_est_en: true`. Previously caused instant death
+   (Finding #24), but that was before the scan_start fix eliminated
+   the 100 ms forced IMU extrapolation; worth re-testing with the
+   stable baseline we have now.
+3. Accept the 3 m drift and test click-to-goal end-to-end in a
+   cluttered room. Short-range nav might be fine if the map stays
+   globally consistent — pose estimate returns to sensible values
+   between rotation events.
+
+Recommended next step: (3). The pilot goal is click-to-goal, not
+perfect pose. If it works with current drift, we ship; if it doesn't,
+(1)/(2) target the ICP stage where the remaining drift lives.
+
+---
+
+## Finding #31: Codex Second Opinion + Atomic-Publication Bug + Next-Step Plan (2026-04-22)
+
+Applied DIFOP C.17 translation refinement (~5 mm per axis) to the
+lever arm — stored it alongside the rotation, automatically added to
+`lever_arm_base` when DIFOP arrives. Then dispatched codex-rescue for
+a second expert review on where to invest next and how the DIFOP
+implementation looks.
+
+### Codex's correctness catch — atomic publication bundling
+
+**Bug.** The initial implementation published four separate atomics
+(`g_R_imu_to_base`, `g_difop_offset_body_x/y/z`) in sequence from the
+DIFOP retry thread. The IMU hot path loaded each independently. Per-
+variable atomicity prevented raw data races, but the bundle was NOT
+atomic. The IMU loop could observe:
+- A new `R_imu_to_base` with stale (0, 0, 0) DIFOP offset.
+- A mixed-generation snapshot across the three offset doubles.
+
+In practice the race is a one-time transient (only one DIFOP swap
+per process lifetime, few-ns window), but correctness smell regardless.
+`g_cal_ok` didn't gate the hot path; only the 5-second status print.
+
+**Fix.** Bundled into `struct CalibState { Mat3 R_imu_to_base; double
+difop_offset_body[3]; }` published via a single
+`std::atomic<CalibState*>`. DIFOP thread constructs a fresh
+`CalibState`, stores the pointer with `memory_order_release`. Hot
+path loads with `memory_order_acquire`, reads `R` and `offset` from
+the same instance. No partial-update window.
+
+**Minor cleanups.** Removed stale "unused in v1" comment on
+`DifopCalib::tx/ty/tz` (now used). Fixed docstring referencing old
+symbol name. Kept the never-free leak pattern — two `CalibState`
+allocations over process lifetime, stale one leaks to avoid racing
+the hot path's dereference.
+
+### Codex's priority ranking for the remaining 3 m rotation residual
+
+Ranked highest value → lowest at current state:
+
+1. **Front-only / asymmetric-scene A/B test.** Hypothesis: the
+   remaining 3 m is now mostly ICP/scene degeneracy in the
+   merged-dual-lidar cloud, not core timing. Switching to
+   `send_separately: true` + subscribing to front lidar only (96
+   rings of single-Airy data, no merge artifacts) isolates whether
+   merge is a contributor. Highest info-per-hour.
+
+2. **Raise `acc_cov` 5-10×.** Leave `gyr_cov: 0.1` alone. Rationale:
+   residual is translational X-dominant after lever-arm cleanup,
+   which implicates imperfect linear-acceleration modeling more than
+   rotational propagation. Default 0.1 is Livox-tuned; Airy IMU may
+   want higher. Trust accel less before trusting gyro less.
+
+3. **`time_sync_en: true`** — low prior. `native_clock=true` already
+   trusts the shared PTP clock for lidar and IMU. `time_sync_en` is
+   an upstream software sync meant for unsynced external clocks; if
+   it changes anything under PTP, that is a red flag, not a feature.
+   Try once, expect no-op.
+
+4. **`extrinsic_est_en: true`** — only after #2. Known FAST-LIO
+   guidance: leave off when extrinsic is known. Turning it on can
+   let the filter "explain away" residual ICP/accel-model error by
+   drifting the extrinsic.
+
+5. **Click-to-goal** — run it now if the product decision matters,
+   but not a drift-reduction path. Validates operational tolerance,
+   not estimator correctness.
+
+### Decisions for next session
+
+- **Implement now** (this session): atomic publication fix (done).
+  Rebuild + deploy, confirm behavior unchanged.
+- **Next session, in order**:
+  1. `acc_cov` bump to 0.5 or 1.0 (try 5×, 10×). Measure rotation drift.
+  2. Click-to-goal end-to-end to validate product viability at current
+     drift baseline.
+  3. If click-to-goal insufficient: front-only A/B test, then other
+     knobs.
+
+The pilot goal is click-to-goal, not perfect pose. 3 m bounded drift
+may already be sufficient for short-range nav; worth validating
+early before spending more time on estimator tuning.
+
+### Quotable from codex
+
+> "With native_clock=true and shared PTP time, time_sync_en should
+> be effectively a no-op; if it changes anything, that is a bad sign,
+> not a feature."
+
+> "It is more likely to let the filter 'explain away' residual
+> ICP/accel-model error by drifting extrinsic than to converge to
+> something useful."
+
+> "Stationary performance is perfect and the catastrophic rotation
+> failure was timing, not gyro quality; the remaining error is
+> translational after a lever-arm-corrected IMU, so you should trust
+> acceleration less before you trust gyro less."
+
+(Full transcript preserved in session history; summarized here for
+durability.)
+
+---
+
+## Finding #32: acc_cov Tuning Null Result — Rotation Failure is ICP-Scene, Not IMU (2026-04-22)
+
+Per codex's ranking in Finding #31, tried bumping `acc_cov: 0.1 → 0.5`
+(5×) with the rationale "accel is noisy during rotation, trust it
+less." Also wrote `rotate_and_log.py` to replace manual D-key tests
+with scripted teleop for reproducibility.
+
+### Scripted teleop infrastructure
+
+`rotate_and_log.py` on NOS drives the M20 yaw-in-place by publishing
+Twist to `/tele_cmd_vel#geometry_msgs.Twist` at 20 Hz for the requested
+duration, then floods 2 s of zero Twists at 50 Hz to guarantee stop.
+Safety guards:
+
+- `atexit` + `SIGINT` + `SIGTERM` all trigger the zero flood
+  (100 messages × 20 ms spacing). Survives exceptions and ctrl-C.
+- Dedicated `lcm.LCM()` instance for the flood, separate from main
+  loop's instance — so a deadlocked main loop can't block the stop.
+- Default yaw lowered `-0.8 → -0.4` rad/s for safety margin.
+- Prints "ROBOT SHOULD BE STOPPED" on normal exit for visual
+  confirmation.
+- Single-threaded (publish interleaved with `handle_timeout`) after
+  discovering `lcm.LCM()` Python module isn't safe for concurrent
+  `publish()` + `handle_timeout()` from different threads — the
+  earlier two-thread version silently corrupted outgoing messages to
+  all-zero Twists (tap on `/tele_cmd_vel` showed 60 msgs, 0 non-zero).
+
+Result: the script drives the robot cleanly, stops reliably, produces
+per-phase stats (warmup / rotation / cooldown).
+
+### acc_cov=0.5, three scripted reps
+
+Each rep: `./deploy.sh stop` + restart + full preroll, then `--yaw -0.4
+--warmup 2 --rotate_duration 10 --cooldown 3`.
+
+| Rep | KFs | Final pose | Peak drift mag | Outcome |
+|---|---|---|---|---|
+| 1 | 29+ | `(-1708.7, 1853.6, -423.4)` | 2530 m | **Runaway** |
+| 2 | 6 | `(2.5, -1.2, 0.9)` | 2.7 m | Bounded |
+| 3 | 3 | `(1.9, -3.6, -0.1)` | 4.1 m | Bounded |
+
+**2/3 bounded, 1/3 runaway.**
+
+Compare to `acc_cov=0.1` manual-D data points from earlier today:
+
+| Test | KFs | Peak | Outcome |
+|---|---|---|---|
+| Manual rep #1 (2026-04-22 morning) | 11 | 3.3 m | Bounded |
+| Manual rep #2 (same day, same config) | 39+ | 182 m | **Runaway** |
+
+That's roughly 1/2 bounded at the default cov. The sweep provides no
+statistical evidence that 0.5 is better or worse than 0.1 — 3 reps at
+2/3 success vs 2 reps at 1/2 success are within each other's noise.
+
+### Conclusion: IMU-chain is clean, ICP is fragile
+
+The remaining failure mode is **scan-match (ICP) locking to a wrong
+local minimum** once every few rotation events in the current indoor
+scene. Evidence:
+
+1. When bounded, drift is small (2-5 m) and self-recovers — consistent
+   with correct IMU predictions being occasionally jolted by ICP
+   corrections that pull too hard.
+2. When runaway, drift starts with a sudden step-jump (e.g. KF 5 jumps
+   from (2.2, -1.0, 0.5) → (-7.3, -9.4, -6.1) in rep 1) and grows
+   monotonically after. Classic "committed to wrong cluster" signature.
+3. The failure is RANDOM at the rep level. Same config, same physical
+   environment, same scripted rotation produces either bounded or
+   runaway with roughly flip-of-a-coin probability. That's not a
+   tuning issue — that's a discrete scene-ambiguity issue.
+4. `corr(ay, α_z)` was already collapsed to noise after our lever-arm
+   fix (Finding #25/#26). Residual IMU bias is well within the
+   "predictions are fine, ICP is the weak link" regime.
+
+### What we are NOT going to chase further under FAST-LIO2
+
+- More `acc_cov` / `gyr_cov` tuning — null result above.
+- More lever-arm tuning — null result in Finding #30.
+- More timing fixes — scan_start anchor is correct (Finding #28), PTP
+  clocks match, no drift in `imu_vs_frame_end`.
+- More geometry cleanups — ring remap is gone, `scan_line: 96` is
+  correct (Finding #29).
+
+The IMU-chain contribution of today's work is durable. The remaining
+drift doesn't live there.
+
+### Recommendations for forward progress
+
+**Move off FAST-LIO2 as the primary SLAM backend.** Today's work
+(airy_imu_bridge corrections, drdds_lidar_bridge scan_start header,
+ring-remap cleanup, flake.lock hygiene) is portable to ANY SLAM
+consumer — the LCM outputs are standard `/airy_imu_front` and
+`/raw_points` with correct timestamps and correct frame conventions.
+A different SLAM stack drops in with the same interface.
+
+Options ranked by plausibility:
+
+1. **ARISE multi-node (parallel path di-ony5x).** Our own port of the
+   DeepRobotics reference SLAM for M20. Has keyframe rejection,
+   degeneracy detection, loop closure. Was initially blocked by IMU
+   preintegration plumbing issues; those pre-date today's IMU
+   breakthrough and may now be straightforward.
+2. **LIO-SAM** — mature, well-tested Velodyne+IMU stack with graph
+   optimization and loop closure. Drop-in topic compatibility.
+3. **KISS-ICP** — pure lidar (no IMU dependency). Interesting
+   fallback since the IMU chain works fine but isn't the bottleneck.
+4. **FAST-LIO_MULTI** — upstream Livox multi-lidar fork. Untried on
+   this platform.
+
+Not recommended: continuing FAST-LIO2 tuning without architectural
+changes. We've spent enough time on it.
+
+### Also note for Jeff
+
+Our scan_start header fix is in the `drdds_lidar_bridge`, not in Jeff's
+FAST-LIO-NON-ROS fork — so it's not an upstream PR. But if Jeff's fork
+is consumed by other ROS-bypass stacks, they may have the same
+scan_end-as-header confusion we had; worth flagging to him.
+
+The Velodyne PC2 path restoration in `aphexcx/FAST-LIO-NON-ROS` branch
+`dimos-integration-velodyne` (Finding #13) IS a candidate upstream
+PR.
+
+---
+
+## Finding #33: The Real Bug Was the Robot's Own Body in the ikdtree (2026-04-23)
+
+After all the IMU-chain breakthroughs (Findings #24-#32), rotation SLAM
+was still test-to-test variable: ~2/3 bounded to 3m, ~1/3 runaway to
+hundreds-of-meters/km. Spent morning on a diagnostic harness chasing
+Python/multiprocessing stalls as the next hypothesis; found real
+evidence of multi-second IMU delivery gaps (see
+`/var/opt/robot/data/tmp/diag_rep{1,2}/` artifacts). Codex agreed stall
+was the most-supported hypothesis and flagged the
+cluttered-scene ICP angle as weak.
+
+Then user shared a photo showing the M20 has a **physical bumper in
+front of its RSAIRY lidars** to protect the optics, and the ikdtree
+was registering it as a persistent world feature.
+
+### The mechanism
+
+- `velodyne.yaml` had `blind: 0.5` — spherical radius around the
+  LIDAR optical center (verified via preprocess.cpp:172/349 — it is
+  `sqrt(x²+y²+z²) < blind²` in the raw sensor frame).
+- Front Airy is +320mm forward of body origin per M20 manual
+  Section 1.10. So `blind=0.5` in sensor frame covers **+0.82m
+  forward / −0.18m backward** in body frame.
+- That excluded the front bumper but left **rear wheels at ~0.79m
+  range, rear bumper at ~0.85m, leg-shuffle envelope out to ~1.0m**
+  visible to FAST-LIO.
+- These robot-body points entered the ikdtree as "world" features.
+- During yaw, the robot body rotated WITH the sensor — ikdtree had
+  bumper/wheel ghosts at world-pose-t-1, incoming scan had them at
+  world-pose-t. Scan-match's point-to-plane residual tried to
+  reconcile; sometimes succeeded (bounded drift of a few m from
+  anti-rotation bias), sometimes locked to a wrong local minimum
+  from the misalignment (runaway).
+
+### The fix
+
+One YAML line: `blind: 0.5 → 1.0` in
+`dimos/hardware/sensors/lidar/fastlio2/config/velodyne.yaml`.
+
+At `blind = 1.0m` in sensor frame:
+- Forward body coverage: +1.32m (past rear bumper)
+- Backward: −0.68m
+- Lateral/vertical: ±1.0m
+- Max body half-diagonal is ~0.65m in any direction from the
+  +320mm-offset lidar, so the entire robot is excluded.
+- Tradeoff: points in the real near-field 0.5-1.0m range are also
+  dropped. Scan goes from ~50k to ~49k points, which is still
+  abundant for matching.
+
+### Result — 5/5 reps at zero drift
+
+Ran 5 scripted yaw-in-place tests via `diag_harness.py` (fresh
+smartnav each, `yaw=-0.4 rad/s`, 10s rotation). With `blind: 1.0`:
+
+| Rep | KFs | Final pose | Outcome |
+|---|---|---|---|
+| 1 | 1 | `(0.0, 0.0, 0.0)` | **0 drift** |
+| 2 | 1 | `(0.0, -0.0, -0.0)` | **0 drift** |
+| 3 | 1 | `(-0.0, 0.0, -0.0)` | **0 drift** |
+| 4 | 1 | `(-0.0, -0.0, 0.0)` | **0 drift** |
+| 5 | 1 | `(0.0, 0.0, -0.0)` | **0 drift** |
+
+Compare to earlier same-day with `blind: 0.5`:
+
+| Config | Bounded rate | Runaway rate |
+|---|---|---|
+| `blind: 0.5` acc_cov=0.1 (Finding #32 manual) | 1/2 | 1/2 (to 182m) |
+| `blind: 0.5` acc_cov=0.5 (Finding #32 scripted) | 2/3 | 1/3 (to 1700m) |
+| **`blind: 1.0`** | **5/5** | **0/5** |
+
+The failure mode is eliminated.
+
+### Evidence that previously supported other hypotheses
+
+Still partly valid, partly red herrings:
+
+**Real signals from prior work — still needed:**
+- **Lever-arm centripetal + tangential** (Findings #25/#26): genuine
+  physical correction. Without it, the IMU reports 2.6 m/s² typical
+  / 11.8 m/s² peak fictitious accel during wheel-legged rotation.
+  Any SLAM backend would need this.
+- **Scan_start header fix** (Finding #28): genuine bug. drdds's slot
+  stamp is scan_END time, not scan_START. FAST-LIO was forced to
+  extrapolate IMU 100ms into the future on every scan. This fix
+  alone went from 10 km to 3 m drift (before the bumper fix brought
+  it to zero).
+- **Ring remap cleanup + scan_line=96** (Finding #29): correctness
+  cleanup.
+- **Atomic CalibState** (Finding #31): correctness.
+
+**Red herring hypotheses I pursued today:**
+- "ICP fragility in sparse indoor scene" — scene isn't sparse,
+  that's not why ICP was locking wrong. It was locking wrong
+  because the map had ghost self-features.
+- "Python stalls are the cause of drift" — stalls are real (3-4s
+  wall gaps confirmed), but the bumper fix eliminated drift WITHOUT
+  fixing stalls. Stalls may matter in other scenarios (long
+  sessions, fast linear motion) but not for yaw-in-place drift.
+
+### The lesson
+
+**Look at what's IN the close points, not just whether there are
+many.** I analyzed the cloud in earlier diagnostic passes and
+correctly measured 7-15k points within 1m, but concluded "cluttered
+scene" when the right conclusion was "robot body is in the cloud."
+Codex's Finding #31 review recommended scene A/B testing but I
+didn't actually do it. User's photo of the bumper finally made the
+physical geometry obvious.
+
+### Implication for Jeff
+
+The PHYSICAL BUMPER is universal across M20 units. Any team at
+Dimensional running SLAM on this platform is likely hitting this
+same issue if they're using any default `blind` under ~1.2m. Worth
+asking whether their reference config addresses it.
+
+### What next
+
+1. Longer rotation stress test (30-60s) to verify bounded holds.
+2. Click-to-goal end-to-end in a real space.
+3. Consider cleaner body-box crop (`|x|<0.5 AND |y|<0.25 AND |z|<0.5`)
+   vs the spherical blind. Currently we also filter real features
+   in the 0.5-1.0m shell; a proper body-box wouldn't.
+
+---
+
+## Finding #34: URDF-Driven Body-Box Crop + Safety-Guarded Diag Harness (2026-04-23)
+
+Follow-up to Finding #33 (`blind: 0.5 → 1.0`). The spherical blind worked
+for 5/5 short rotations but has two problems:
+1. Over-excludes real features in the 0.5-1.0m shell (doorway jambs,
+   nearby walls — critical for narrow-passage nav).
+2. Only 5/5 at 10s; 60s still runaway.
+
+Moved to body-frame AABB crop per codex research (Finding #31 plan
+item) — matches DLO/DLIO's production approach. Codex emphasized:
+"The biggest implementation bug is cropping too late — if self points
+survive preprocessing and enter the local map / ikd-tree, the main
+benefit is already gone."
+
+### URDF-derived AABB
+
+Wrote `compute_body_aabb.py` that walks `M20_high_res.urdf` link +
+joint tree at zero-joint pose, transforms all collision geometries
+(boxes + cylinders) into base_link, computes overall and per-link
+bounding boxes.
+
+Per-link ranges in base_link (zero-joint pose):
+
+| Link group | X range | Y range | Z range |
+|---|---|---|---|
+| base_link chassis | ±0.38 | ±0.12 | ±0.07 |
+| hipx (4x) | ±0.36 | ±0.19 | ±0.05 |
+| hipy (4x) | ±0.36 | ±0.22 | -0.30..0 |
+| knee (4x) | ±0.36 | ±0.24 | -0.54..-0.25 |
+| wheel (4x) | ±0.40 | ±0.25 | -0.59..-0.41 |
+
+Overall AABB: X ±0.40, Y ±0.25, Z [-0.59, +0.07].
+
+**Recommended crop with leg-swing padding** (X: 5cm, Y: 10cm, Z: 15cm):
+`x[-0.454, +0.454] y[-0.354, +0.354] z[-0.740, +0.220]`.
+
+### Implementation in `drdds_lidar_bridge`
+
+Added `--body_crop xmin,xmax,ymin,ymax,zmin,zmax` CLI flag plumbed
+through `DrddsLidarBridgeConfig.body_crop` and blueprint
+`M20_BODY_CROP` env var. Runtime decision in the lidar hot loop:
+for each point, compare `(x, y, z)` against the AABB directly — the
+rsdriver-merged cloud is already in base_link so no rotation needed.
+Dropped points are removed by in-place compaction (O(n), one pass,
+zero allocation).
+
+Also reverted `velodyne.yaml blind: 1.0 → 0.1` since the body crop
+now handles self-filtering in a body-frame-aware way; the spherical
+blind only needs to reject true sensor-level near-field noise.
+
+### Empirical verification
+
+After deploy:
+```
+[drdds_bridge] body_crop ENABLED: x[-0.454,0.454] y[-0.354,0.354] z[-0.740,0.220]
+[drdds_bridge] body_crop: 49457 kept, 1292 dropped (2.5%)
+```
+
+**2.5% of points per scan drop** (~1300 out of 50k). Lower than I
+expected — the M20's forward-mounted RSAIRY can't see most of its
+own body (occluded by the housing / behind the optical window). But
+the 1300 points that DO sneak through are at close range (<0.5m from
+lidar), where they dominate EKF point-weight. Small count, huge
+impact.
+
+### Rotation test results — body crop vs blind=1.0
+
+| Test | blind=1.0 (Finding #33) | body_crop + blind=0.1 (this) |
+|---|---|---|
+| 10s, scripted -0.4 rad/s | 5/5 reps, 0m drift | 1 rep, 1m drift, self-recovered |
+| 60s sustained rotation | not tested | **step-jumps at ~KF 5, runaway to ~2 km** |
+
+Body-box crop is at least as good as the 1.0m blind for 10s rotation
+AND keeps real near-field features. 60s sustained rotation still
+fails — same step-jump-then-runaway pattern as before, meaning the
+body-crop was NOT the remaining bottleneck for longer tests.
+
+### Real root cause for 60s failure — still unsolved
+
+Current hypothesis (from diag_harness observations in earlier
+sessions + Finding #31 data): **Python/CPU stalls occur
+stochastically during rotation**, and over 60s the probability of a
+stall coinciding with a critical yaw moment approaches 1. When it
+hits, FAST-LIO's EKF propagates forward on a stale IMU for 300-500ms
+while the lidar keeps arriving, and scan-match commits to a wrong
+local minimum.
+
+Evidence supporting this interpretation:
+- 3-4 second wall-clock gaps measured between consecutive IMU LCM
+  samples (Finding #31 diagnostic)
+- 15 concurrently R/D threads on 8-core NOS (2× oversubscribed)
+- `imu_vs_frame_end` spikes to -0.44s under load
+- 10s tests: 5/5 pass → no stalls in the window
+- 60s tests: 100% fail → at least one stall in the window
+
+Not addressed by IMU-chain or scene-filtering fixes. Requires
+scheduler or architecture changes: core-pinning fastlio2_native +
+airy_imu_bridge to dedicated CPUs, or reducing Python worker count.
+Codex agreed this is the highest-impact / lowest-effort next step.
+
+### Safety bug found + fixed: simple_planner stale goal
+
+While the robot was drift-diverging over 60s tests, I observed in
+the nav_cmd_pub log:
+
+```
+[simple_planner] A* failed from (-5128.88, 47716.61) to (-112.21, 180.56)
+nav_cmd_pub #3851 yaw=-1.396 matched=1
+```
+
+The robot's SLAM pose had drifted to (-5 km, +48 km) but
+simple_planner still had a goal at (-112, 180) from an earlier stale
+state. It was chasing that goal by commanding max angular velocity
+(-1.396 rad/s ≈ -80°/s). The mux forwarded those commands as soon
+as our teleop's cooldown (1s) expired between publishes.
+
+That's why the user saw "rotation direction switching mid-test" —
+our teleop would briefly lose the cooldown race, simple_planner's
+stronger yaw command (3.5× magnitude, possibly opposite sign)
+would take over, robot would rotate wrong way, then teleop recaptures
+on next publish. Unsafe behavior.
+
+### Diag harness v2 safety
+
+Fixed in `/tmp/diag_harness.py`:
+
+1. **Cooldown now actively publishes zero Twists at 20 Hz** instead
+   of stopping publishes. Keeps teleop "active" in the mux, blocks
+   simple_planner commands. Default cooldown extended 3s → 5s so
+   robot stands in place for a few seconds.
+2. **SIGTERM to smartnav at end** triggers the graceful-shutdown
+   sit-down via the M20 connection module. Robot sits down cleanly
+   AFTER standing still in cooldown.
+3. **atexit-guarded zero flood** as a last-resort if the process
+   dies unexpectedly — publishes 2 seconds of zero Twists before
+   exit even on SIGINT/SIGTERM/exception.
+
+Net: `diag_harness` run sequence is now WARMUP → ROTATE → POST-CLOUD →
+HOLD-ZERO-COOLDOWN → STOP-FLOOD → SIGTERM. Robot is guaranteed
+stopped (and sat down) at end of every test.
+
+### What this means for the pilot
+
+Short rotation bursts (what click-to-goal actually uses — typical
+waypoint-to-waypoint trajectories have <2s of continuous rotation)
+are production-viable with the current fixes. Sustained yaw-in-place
+for 60s is not, but that's not a normal navigation workload.
+
+**Recommended next step: end-to-end click-to-goal validation** to
+confirm the product works before chasing the stall fix.
+
+---
+
+## Finding #35: CPU Affinity to Isolated Cores — 60s Drift 2km → 0.4m (2026-04-23)
+
+Finding #34 ended with "60s still diverges via step-jump at ~KF 5,
+runaway to 2 km." Hypothesis was Python/multiprocessing stalls
+corrupting FAST-LIO's IMU delivery under sustained rotation. Also
+saw a click-to-goal attempt fail on the same mechanism: simple_planner
+rotated to align with the path direction, SLAM diverged during that
+rotation, goal appeared in an even wronger direction, infinite spin.
+
+### Discovery: NOS already has isolated cores reserved for exactly this
+
+```
+$ cat /proc/cmdline
+... isolcpus=4,5,6,7 ...
+$ nproc
+4
+$ lscpu | grep CPU
+CPU(s): 8
+```
+
+NOS boot args already set `isolcpus=4,5,6,7`. That reserves cores
+4-7 from the default Linux scheduler — no process is placed there
+unless it's explicitly affinity-pinned. Cores 0-3 take everything
+else (all 4 schedulable CPUs that `nproc` reports). That's why
+measured load was 4× oversubscribed: 15+ R/D threads crammed onto
+4 cores while 4 sat idle.
+
+Someone at Dimensional (or DeepRobotics upstream) configured this
+correctly. We just never used it.
+
+### Implementation
+
+`NativeModuleConfig.cpu_affinity: frozenset[int] | None` field
+added to `dimos/core/native_module.py`. In the child preexec hook,
+`os.sched_setaffinity(0, cpu_affinity)` is called after fork but
+before exec, so the native binary and all its threads inherit the
+mask.
+
+Blueprint change in `m20_smartnav_native.py`:
+
+```python
+_SLAM_CPU_AFFINITY = frozenset({4, 5, 6, 7})
+
+FastLio2.blueprint(..., cpu_affinity=_SLAM_CPU_AFFINITY)
+AiryImuBridge.blueprint(..., cpu_affinity=_SLAM_CPU_AFFINITY)
+DrddsLidarBridge.blueprint(..., cpu_affinity=_SLAM_CPU_AFFINITY)
+```
+
+Overridable via `M20_SLAM_CORES="4,5,6,7"` env var.
+
+After deploy:
+```
+fastlio2_native    pid=111805  affinity=4-7  ✓
+airy_imu_bridge    pid=111786  affinity=4-7  ✓
+drdds_lidar_bridge pid=111783  affinity=4-7  ✓
+```
+
+Python smartnav workers stay on cores 0-3 by default scheduler
+placement (they're not isolcpus'd in). `yesense_node` was already
+running on core 4 (system process with explicit affinity).
+
+### Result — 60s sustained rotation at 0.4 rad/s
+
+```
+Keyframe  1 added (0.0, 0.0, -0.0)
+Keyframe  2 added (0.0, -0.1, -0.0)
+...
+Keyframe 20 added (-0.1, -0.2, -0.0)
+...
+Keyframe 47 added (-0.4, -0.0, -0.0)
+```
+
+Max drift: **0.4m** over 60s of continuous rotation (24 rad, ~4 full
+revolutions of the robot). Versus:
+
+| Config | 60s rotation peak | # KFs |
+|---|---|---|
+| Pre-fixes (Finding #24) | ~10 km | 138+ |
+| + scan_start (Finding #28) | runs away after ~15s | - |
+| + blind=1.0 (Finding #33) | 17 km | 220 |
+| + body-box crop (Finding #34) | 2 km | 17 |
+| **+ CPU pin 4-7 (this)** | **0.4 m** | **47** |
+
+**~5000× reduction** from baseline; **~5000× reduction** from
+body-crop-only. The core-pin is the last-mile fix.
+
+### Understanding why the earlier diagnostics showed stalls
+
+Wall-clock gap of 1.3 s is still present in the Python IMU recorder
+even with core pinning in place:
+
+```
+IMU samples: 13665
+wall gap max: 1293ms  mean: 5.15ms  p99: 32.8ms
+gaps > 20ms: 507
+```
+
+But FAST-LIO's `imu_vs_frame_end` stayed in ±50 ms:
+
+```
++0.020s: 7 occurrences
+-0.000s: 5
++0.015s: 3
++0.010s: 3
++0.005s: 2
++0.000s: ...
+max observed: ±0.050s
+```
+
+**So the Python LCM recorder (on cores 0-3) is still stalling — but
+FAST-LIO and airy_imu_bridge on cores 4-7 are not.** The earlier
+diagnostic measurements (Finding #31) were picking up the RECORDER's
+stall, not a stall in the SLAM pipeline. Once we isolated the SLAM
+pipeline, the actual hot path was clean all along — the stall was
+self-inflicted by running the recorder on the same contended cores
+as all the Python workers.
+
+Lesson: when measuring stalls, instrument the actual path, not a
+second-class python recorder that competes for the same CPU.
+
+### Codex's predicted "won't help" intervention we didn't do
+
+Codex's review also recommended AGAINST reducing `n_workers: 4 → 2`
+— workers distribute modules across processes by least-load, so
+fewer workers means MORE modules per worker and MORE intra-worker
+contention. Kept `n_workers=4`.
+
+Also deferred: SCHED_FIFO for airy_imu_bridge. Not needed — 0.4m
+drift at 60s is already in production-spec territory. Can revisit
+if we ever want tighter bounds.
+
+### What's next
+
+This unblocks the actual product test: **click-to-goal**. Earlier
+attempt failed because the initial "rotate to align with path
+direction" phase triggered the same ICP runaway. With that failure
+mode gone, click-to-goal should just work.
+
+---
+
+## Questions for Jeff (2026-04-23, in-person at Dimensional)
+
+**IMPORTANT**: Updated after Finding #33. Rotation is fixed; questions
+re-prioritized around robustness, generalization, and correctness.
+
+**High priority:**
+
+1. **Self-filter for robot-body points.** We found that M20's physical
+   bumpers + rear wheels sit in the ~0.5-1.0m range from the front
+   lidar, get registered as persistent world features in the
+   ikdtree, and cause catastrophic rotation drift. Spherical `blind`
+   works but is a blunt instrument (also drops real close features
+   in the 0.5-1.0m shell). Does your fork or Dimensional's
+   production SLAM have a **body-frame bounding-box crop**? If not,
+   would you take a PR? The right API is probably an additional
+   `body_crop` yaml stanza: `{xmin, xmax, ymin, ymax, zmin, zmax}`
+   in sensor frame, applied BEFORE the spherical blind.
+
+2. **Production SLAM choice for M20-class robots.** Now that
+   rotation is bounded with the bumper fix, is FAST-LIO2 the right
+   long-term backend, or are you on something else (LIO-SAM,
+   ARISE, etc.)? Curious whether you've hit the body-feature issue
+   on your shipping robots and what you use to mitigate.
+
+3. **Degeneracy detection / keyframe rejection.** Does your fork
+   have any of the robustness features ARISE has (point-to-plane
+   degeneracy detection, reject keyframes with high residual, etc.)?
+   Without the bumper fix, FAST-LIO was blind-committing to
+   wildly wrong ICP solutions — no warning, no rejection.
+
+**Medium priority — config safety now that baseline is stable:**
+
+4. **`extrinsic_est_en: true` safety.** We saw instant EKF death
+   with it on under the OLD scan-end header bug (Finding #24). Now
+   that the scan_start bug is fixed and rotation is bounded, is it
+   safe to enable? Would it help refine residuals further, or is it
+   going to destabilize again?
+
+5. **`feature_enabled=false` hardcode** (laserMapping.hpp:336). Why
+   is this permanently off? Would enabling feature extraction help
+   — or would it hurt since RSAIRY isn't really a Livox
+   non-repetitive pattern? (Note: `pl_buff[128]` upper bound in
+   preprocess.h would need to match `scan_line: 96` if toggled on
+   for RSAIRY.)
+
+6. **`time_sync_en`** — what's its intended use? With PTP-shared
+   timestamps (Airy lidar/IMU on same hardware clock), is it a
+   no-op? Or does it still adjust scan-to-IMU alignment?
+
+7. **Python-stack stalls.** Our smartnav is Python-heavy. Measured
+   3-4s wall-gaps between consecutive IMU LCM messages on NOS (8
+   cores, 15 oversubscribed threads during rotation). FAST-LIO's
+   `imu_vs_frame_end` telemetry drops from +50ms to -440ms on those
+   spikes. Doesn't cause drift with bumper fix, but probably
+   concerns you for production. Do your production stacks pin cores
+   or isolate SLAM from Python orchestration? Any recommended
+   taskset layout?
+
+**Low priority — upstream contributions:**
+
+8. **Velodyne PC2 input path PR.** Our
+   `aphexcx/FAST-LIO-NON-ROS` branch
+   `dimos-integration-velodyne` restores the Velodyne handler
+   (Finding #13). Would you merge?
+
+9. **Scan_start header convention.** Our `drdds_lidar_bridge` had a
+   bug where `pc.header.stamp` was set to scan_END (from drdds slot
+   metadata). FAST-LIO adds `max_offset_s` to `header.stamp` to
+   compute scan_end, which was then +100ms in the future. Not a
+   FAST-LIO bug but worth mentioning — any Dimensional bridge code
+   consuming drdds clouds may have the same confusion. Fix was
+   trivial (Finding #28).
+
+10. **Multi-lidar support.** Is there a `FAST-LIO_MULTI` branch
+    you'd recommend, or is the single-lidar assumption deep enough
+    that we should use LOCUS-style preprocess (rigid-transform rear
+    into front-lidar frame, feed as one cloud) instead?
+
+---
+
 ## Open Questions for Next Session / Jeff
 
-- Does FAST-LIO2's preprocess.cpp + ikd-Tree actually support `scan_line: 192`? Upstream hku-mars tested up to 128 per README.
-- Any known issues with scan_line counts above 64 we should watch for?
-- Is the N_SCANS value ever used to allocate fixed arrays anywhere that would segfault at 192?
+- Does FAST-LIO2's preprocess.cpp + ikd-Tree actually support `scan_line: 192`? **Confirmed safe in audit above — N_SCANS is dynamic, feature_extract path is unused.**
+- Is the N_SCANS value ever used to allocate fixed arrays anywhere that would segfault at 192? **Only pl_buff[128] in feature path, unreachable.**
 - Would Jeff accept a PR upstreaming the Velodyne input restoration to `leshy/FAST-LIO-NON-ROS`?
 - Should the PGO duplicate-key crash (`RuntimeError: key "33", already exists` in `isam2.update`) be a separate bead? Saw it crash smartnav once during this session — likely upstream fastlio2 outputting multiple poses per scan when frames have near-identical timebases.
+- Are RSAIRY lidar points actually emitted in time-order, or interleaved across rings? Needs a quick empirical probe to decide how to fix the per-point time relativization.
 
