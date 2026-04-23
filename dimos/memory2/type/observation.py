@@ -14,9 +14,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
+import sys
 import threading
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -25,6 +31,7 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 T = TypeVar("T")
+R = TypeVar("R")
 
 
 class _Unloaded:
@@ -78,49 +85,32 @@ class Observation(Generic[T]):
             return val  # type: ignore[return-value]
         return val
 
-    def derive(self, *, data: Any, **overrides: Any) -> Observation[Any]:
-        """Create a new observation preserving ts/pose/tags, replacing data.
+    def derive(self, *, data: R, **overrides: Any) -> Observation[R]:
+        """New observation with replaced ``data``; other fields carry over.
 
-        If ``embedding`` is passed, promotes the result to
+        Passing ``embedding`` on a plain :class:`Observation` promotes it to
         :class:`EmbeddedObservation`.
         """
-        if "embedding" in overrides:
-            return EmbeddedObservation(
-                id=self.id,
-                ts=overrides.get("ts", self.ts),
-                data_type=type(data),
-                pose=overrides.get("pose", self.pose),
-                tags=overrides.get("tags", self.tags),
-                _data=data,
-                embedding=overrides["embedding"],
-                similarity=overrides.get("similarity"),
-            )
-        return Observation(
-            id=self.id,
-            ts=overrides.get("ts", self.ts),
-            data_type=type(data),
-            pose=overrides.get("pose", self.pose),
-            tags=overrides.get("tags", self.tags),
-            _data=data,
+        cls: type[Observation[Any]] = (
+            EmbeddedObservation
+            if "embedding" in overrides and not isinstance(self, EmbeddedObservation)
+            else type(self)
         )
+        kwargs: dict[str, Any] = {f.name: getattr(self, f.name) for f in fields(self)}
+        kwargs.update(overrides)
+        kwargs.update(data_type=type(data), _data=data, _loader=None, _data_lock=threading.Lock())
+        return cast("Observation[R]", cls(**kwargs))
 
-    def tag(self, **tags: Any) -> Observation[T]:
-        """Return a new observation with tags merged in.
-
-        Kwargs become tag keys; they merge with the existing tags, overriding
-        on collision. The new observation delegates data access back to this
-        one via a lambda loader, so no blob fetch is triggered here — both
-        observations will resolve to the same underlying value on first access.
-        """
-        return Observation(
-            id=self.id,
-            ts=self.ts,
-            data_type=self.data_type,
-            pose=self.pose,
+    def tag(self, **tags: Any) -> Self:
+        """Return a new observation with tags merged in."""
+        kwargs: dict[str, Any] = {f.name: getattr(self, f.name) for f in fields(self)}
+        kwargs.update(
             tags={**self.tags, **tags},
             _data=_UNLOADED,
             _loader=lambda: self.data,
+            _data_lock=threading.Lock(),
         )
+        return type(self)(**kwargs)
 
 
 @dataclass
@@ -129,30 +119,3 @@ class EmbeddedObservation(Observation[T]):
 
     embedding: Embedding | None = None
     similarity: float | None = None
-
-    def derive(self, *, data: Any, **overrides: Any) -> EmbeddedObservation[Any]:
-        """Preserve embedding unless explicitly replaced."""
-        return EmbeddedObservation(
-            id=self.id,
-            ts=overrides.get("ts", self.ts),
-            data_type=type(data),
-            pose=overrides.get("pose", self.pose),
-            tags=overrides.get("tags", self.tags),
-            _data=data,
-            embedding=overrides.get("embedding", self.embedding),
-            similarity=overrides.get("similarity", self.similarity),
-        )
-
-    def tag(self, **tags: Any) -> EmbeddedObservation[T]:
-        """Like :meth:`Observation.tag` but preserves embedding and similarity."""
-        return EmbeddedObservation(
-            id=self.id,
-            ts=self.ts,
-            data_type=self.data_type,
-            pose=self.pose,
-            tags={**self.tags, **tags},
-            _data=_UNLOADED,
-            _loader=lambda: self.data,
-            embedding=self.embedding,
-            similarity=self.similarity,
-        )

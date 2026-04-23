@@ -19,6 +19,7 @@ import pytest
 
 from dimos.mapping.pointclouds.occupancy import OCCUPANCY_ALGOS
 from dimos.mapping.voxels import VoxelGrid
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.cli.plot import bar
 from dimos.utils.data import get_data, get_data_dir
 from dimos.utils.testing.replay import TimedSensorReplay
@@ -27,8 +28,6 @@ from dimos.utils.testing.replay import TimedSensorReplay
 @pytest.mark.tool
 def test_build_map():
     grid = VoxelGrid()
-
-    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
     replay: TimedSensorReplay[PointCloud2] = TimedSensorReplay("go2_bigoffice/lidar")
     for _ts, frame in replay.iterate_ts():
