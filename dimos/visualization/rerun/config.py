@@ -12,12 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Rerun visualization defaults and type aliases.
+
+This module is intentionally free of ``import rerun`` so it can be
+imported from lightweight entry-points like ``global_config`` and
+``dimos --help`` without pulling in the full Rerun SDK.
+"""
+
 from typing import Literal, TypeAlias
 
 ViewerBackend: TypeAlias = Literal["rerun", "foxglove", "none"]
 RerunOpenOption: TypeAlias = Literal["none", "web", "native", "both"]
 
 RERUN_OPEN_DEFAULT: RerunOpenOption = "native"
-RERUN_ENABLE_WEB = True
+RERUN_ENABLE_WEB = False
 RERUN_GRPC_PORT = 9876
 RERUN_WEB_PORT = 9090
