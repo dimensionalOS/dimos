@@ -59,7 +59,24 @@ class ConsumerModule(Module):
 
 
 class TestGlobalConfigTransportField:
-    def test_default_transport_is_lcm(self) -> None:
+    def test_default_transport_is_lcm_on_linux(self, mocker) -> None:  # type: ignore[no-untyped-def]
+        mocker.patch("dimos.core.global_config.platform.system", return_value="Linux")
+        mocker.patch("dimos.core.global_config.ZENOH_AVAILABLE", True)
+
+        config = GlobalConfig()
+        assert config.transport == "lcm"
+
+    def test_default_transport_is_zenoh_on_macos_when_available(self, mocker) -> None:  # type: ignore[no-untyped-def]
+        mocker.patch("dimos.core.global_config.platform.system", return_value="Darwin")
+        mocker.patch("dimos.core.global_config.ZENOH_AVAILABLE", True)
+
+        config = GlobalConfig()
+        assert config.transport == "zenoh"
+
+    def test_default_transport_stays_lcm_on_macos_without_zenoh(self, mocker) -> None:  # type: ignore[no-untyped-def]
+        mocker.patch("dimos.core.global_config.platform.system", return_value="Darwin")
+        mocker.patch("dimos.core.global_config.ZENOH_AVAILABLE", False)
+
         config = GlobalConfig()
         assert config.transport == "lcm"
 

@@ -3,7 +3,7 @@
 For development, you should install all dependencies so that tests have access to them.
 
 ```bash
-uv sync --all-extras --no-extra dds
+uv sync --all-extras --no-extra dds --no-extra cuda --frozen
 ```
 
 ## Types of tests
@@ -37,7 +37,7 @@ For the purposes of DimOS, slow tests are marked with `@pytest.mark.slow` and fa
 Run the fast tests:
 
 ```bash
-./bin/pytest-fast
+CI=1 ./bin/pytest-fast
 ```
 
 This is the same as:
@@ -48,15 +48,19 @@ pytest dimos
 
 The default `addopts` in `pyproject.toml` includes a `-m` filter that excludes the `slow`/`mujoco`/`tool`. So plain `pytest dimos` only runs fast tests.
 
+For non-interactive runs, especially on macOS, prefer `CI=1`. This skips system configurator prompts and avoids test runs trying to change local multicast or sysctl state.
+
 ### Slow tests
 
 Run the slow tests:
 
 ```bash
-./bin/pytest-slow
+CI=1 ./bin/pytest-slow
 ```
 
 (This is just a shortcut for `pytest -m 'not (tool or mujoco)' dimos`. I.e., run both fast tests and slow tests, but not `tool` or `mujoco`.)
+
+This includes slow agent and MCP-style integration tests in addition to slower transport and module tests. If one of those paths is broken, a failure can take close to a minute to surface because the harness waits for the agent flow to finish before timing out.
 
 When writing or debugging a specific slow test, override `-m` yourself to run it:
 

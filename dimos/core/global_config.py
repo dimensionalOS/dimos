@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import platform
 import re
 from typing import Literal, TypeAlias
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from dimos.core.transport import ZENOH_AVAILABLE
 from dimos.models.vl.types import VlModelName
 
 ViewerBackend: TypeAlias = Literal["rerun", "rerun-web", "rerun-connect", "foxglove", "none"]
@@ -24,6 +27,12 @@ ViewerBackend: TypeAlias = Literal["rerun", "rerun-web", "rerun-connect", "foxgl
 
 def _get_all_numbers(s: str) -> list[float]:
     return [float(x) for x in re.findall(r"-?\d+\.?\d*", s)]
+
+
+def _default_transport() -> str:
+    if platform.system() == "Darwin" and ZENOH_AVAILABLE:
+        return "zenoh"
+    return "lcm"
 
 
 class GlobalConfig(BaseSettings):
@@ -52,7 +61,7 @@ class GlobalConfig(BaseSettings):
     nerf_speed: float = 1.0
     planner_robot_speed: float | None = None
     mcp_port: int = 9990
-    transport: str = "lcm"
+    transport: str = Field(default_factory=_default_transport)
     dtop: bool = False
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"

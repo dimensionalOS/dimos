@@ -39,3 +39,19 @@ uv run mypy dimos
 # tests (around a minute to run)
 uv run pytest dimos
 ```
+
+## Transport note for macOS
+
+LCM over UDP can be unreliable on macOS for large or high-rate replay workloads. If you are running heavy replay traffic, prefer Zenoh:
+
+```sh
+dimos --transport=zenoh --dtop --replay --replay-dir=unitree_go2_bigoffice run unitree-go2
+```
+
+If you are developing on the repository, prefer syncing the full environment with the checked-in lockfile:
+
+```sh
+uv sync --all-extras --no-extra dds --no-extra cuda --frozen
+```
+
+Do not rely on `uv sync --extra zenoh` in an existing full development environment. That can re-resolve the environment in a way that removes unrelated packages you already had installed.
