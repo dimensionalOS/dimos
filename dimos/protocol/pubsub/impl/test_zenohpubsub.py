@@ -16,11 +16,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import threading
 
 import pytest
 
+pytest.importorskip("zenoh")
+
+from dimos.core.test_utils import retry_until
 from dimos.protocol.pubsub.impl.lcmpubsub import Topic
 from dimos.protocol.pubsub.impl.zenohpubsub import ZenohPubSubBase
 from dimos.protocol.service.zenohservice import _sessions
@@ -44,32 +46,6 @@ def pubsub():
     _sessions.clear()
 
 
-def _retry_until(
-    event: threading.Event,
-    action: Callable[[], None],
-    timeout: float = 2.0,
-    interval: float = 0.01,
-) -> None:
-    """Retry an action until an Event fires.
-
-    Zenoh's Python API does not expose a "subscriber ready" signal.
-    After declare_subscriber(), there is a brief window where published
-    messages may not be delivered (peers need to exchange interest
-    declarations). Instead of sleeping a fixed duration, we re-run
-    the action in a tight loop until the callback sets the event.
-    """
-    deadline = threading.Event()
-    timer = threading.Timer(timeout, deadline.set)
-    timer.start()
-    try:
-        while not event.is_set() and not deadline.is_set():
-            action()
-            event.wait(interval)
-    finally:
-        timer.cancel()
-    assert event.is_set(), f"Timed out after {timeout}s waiting for event"
-
-
 class TestZenohPubSubBase:
     def test_publish_and_subscribe(self, pubsub) -> None:
         received = []
@@ -81,7 +57,7 @@ class TestZenohPubSubBase:
             event.set()
 
         pubsub.subscribe(topic, callback)
-        _retry_until(event, lambda: pubsub.publish(topic, b"hello zenoh"))
+        retry_until(event, lambda: pubsub.publish(topic, b"hello zenoh"))
         assert received[0] == b"hello zenoh"
 
     def test_multiple_subscribers(self, pubsub) -> None:
@@ -101,7 +77,7 @@ class TestZenohPubSubBase:
 
         pubsub.subscribe(topic, callback_a)
         pubsub.subscribe(topic, callback_b)
-        _retry_until(both_received, lambda: pubsub.publish(topic, b"broadcast"))
+        retry_until(both_received, lambda: pubsub.publish(topic, b"broadcast"))
         assert received_a[-1:] == [b"broadcast"]
         assert received_b[-1:] == [b"broadcast"]
 
@@ -115,7 +91,7 @@ class TestZenohPubSubBase:
             event.set()
 
         unsub = pubsub.subscribe(topic, callback)
-        _retry_until(event, lambda: pubsub.publish(topic, b"before"))
+        retry_until(event, lambda: pubsub.publish(topic, b"before"))
         assert received == [b"before"]
 
         # Unsubscribe and verify no more messages arrive
@@ -156,7 +132,7 @@ class TestZenohPubSubBase:
             event.set()
 
         pubsub.subscribe_all(callback)
-        _retry_until(event, lambda: pubsub.publish(topic, b"wildcard"))
+        retry_until(event, lambda: pubsub.publish(topic, b"wildcard"))
         assert received[-1] == b"wildcard"
 
 
