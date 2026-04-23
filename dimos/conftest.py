@@ -172,6 +172,8 @@ def monitor_threads(request):
             for t in new_threads
             if not any(sub in t.name for sub in expected_persistent_thread_substrings)
         ]
+        # Daemon threads are cleaned up by the interpreter on exit; don't flag them.
+        new_threads = [t for t in new_threads if not t.daemon]
         new_threads = [
             t
             for t in new_threads

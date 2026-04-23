@@ -110,51 +110,48 @@ class TestTransportWiring:
 
     def test_sensor_scan_subscribes_and_publishes_via_transport(self):
         """SensorScanGeneration should work entirely through transports."""
-        m = SensorScanGeneration()
-
-        # Wire transports (topic string must NOT include #type suffix -- type is the 2nd arg)
-        odom_transport = LCMTransport("/_test/smart_nav/scan_gen/odom", Odometry)
-        scan_in_transport = LCMTransport("/_test/smart_nav/scan_gen/registered_scan", PointCloud2)
-        scan_out_transport = LCMTransport("/_test/smart_nav/scan_gen/sensor_scan", PointCloud2)
-        odom_out_transport = LCMTransport("/_test/smart_nav/scan_gen/odom_at_scan", Odometry)
-
-        m.odometry._transport = odom_transport
-        m.registered_scan._transport = scan_in_transport
-        m.sensor_scan._transport = scan_out_transport
-        m.odometry_at_scan._transport = odom_out_transport
-
-        # Start the module (subscribes via transport)
-        m.start()
-
-        # Collect outputs
-        scan_results = []
-        scan_out_transport.subscribe(lambda msg: scan_results.append(msg))
-
-        # Publish odometry
-        quat = Quaternion.from_euler(Vector3(0.0, 0.0, 0.0))
-        odom = Odometry(
-            ts=time.time(),
-            frame_id="map",
-            child_frame_id="sensor",
-            pose=Pose(
-                position=[0.0, 0.0, 0.0],
-                orientation=[quat.x, quat.y, quat.z, quat.w],
-            ),
-        )
         try:
+            m = SensorScanGeneration()
+
+            odom_transport = LCMTransport("/_test/smart_nav/scan_gen/odom", Odometry)
+            scan_in_transport = LCMTransport(
+                "/_test/smart_nav/scan_gen/registered_scan", PointCloud2
+            )
+            scan_out_transport = LCMTransport("/_test/smart_nav/scan_gen/sensor_scan", PointCloud2)
+            odom_out_transport = LCMTransport("/_test/smart_nav/scan_gen/odom_at_scan", Odometry)
+
+            m.odometry._transport = odom_transport
+            m.registered_scan._transport = scan_in_transport
+            m.sensor_scan._transport = scan_out_transport
+            m.odometry_at_scan._transport = odom_out_transport
+
+            m.start()
+
+            scan_results: list = []
+            scan_out_transport.subscribe(lambda msg: scan_results.append(msg))
+
+            quat = Quaternion.from_euler(Vector3(0.0, 0.0, 0.0))
+            odom = Odometry(
+                ts=time.time(),
+                frame_id="map",
+                child_frame_id="sensor",
+                pose=Pose(
+                    position=[0.0, 0.0, 0.0],
+                    orientation=[quat.x, quat.y, quat.z, quat.w],
+                ),
+            )
             odom_transport.publish(odom)
+            time.sleep(0.05)
+
+            points = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
+            cloud = PointCloud2.from_numpy(points, frame_id="map", timestamp=time.time())
+            scan_in_transport.publish(cloud)
+            time.sleep(0.2)
+
+            assert len(scan_results) >= 1
+            assert scan_results[0].frame_id == "sensor_at_scan"
         except OSError:
             pytest.skip("LCM multicast socket unavailable")
-        time.sleep(0.05)
-
-        # Publish a point cloud
-        points = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float32)
-        cloud = PointCloud2.from_numpy(points, frame_id="map", timestamp=time.time())
-        scan_in_transport.publish(cloud)
-        time.sleep(0.2)
-
-        assert len(scan_results) >= 1
-        assert scan_results[0].frame_id == "sensor_at_scan"
 
     def test_tui_publishes_twist_via_transport(self):
         """TUI module should publish cmd_vel through its transport."""
