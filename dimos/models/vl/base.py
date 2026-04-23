@@ -18,6 +18,7 @@ from dimos.utils.llm_utils import extract_json
 
 logger = logging.getLogger(__name__)
 
+
 class Captioner(ABC):
     """Interface for models that can generate image captions."""
 
@@ -47,8 +48,10 @@ class Captioner(ABC):
         """
         return [self.caption(img) for img in images]
 
+
 # Type alias for VLM detection format: [label, x1, y1, x2, y2]
 VlmDetection = tuple[str, float, float, float, float]
+
 
 def vlm_detection_to_detection2d(
     vlm_detection: VlmDetection | list[str | float],
@@ -103,8 +106,10 @@ def vlm_detection_to_detection2d(
         image=image,
     )
 
+
 # Type alias for VLM point format: [label, x, y]
 VlmPoint = tuple[str, float, float]
+
 
 def vlm_point_to_detection2d_point(
     vlm_point: VlmPoint | list[str | float],
@@ -152,11 +157,13 @@ def vlm_point_to_detection2d_point(
         track_id=track_id,
     )
 
+
 class VlModelConfig(BaseConfig):
     """Configuration for VlModel."""
 
     auto_resize: tuple[int, int] | None = None
     """Optional (width, height) tuple. If set, images are resized to fit."""
+
 
 class VlModel(Captioner, Resource, Configurable):
     """Vision-language model that can answer questions about images.

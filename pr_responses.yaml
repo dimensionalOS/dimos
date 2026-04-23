@@ -15,3 +15,39 @@
   problem: "modify/delete conflict — dev moved module_coordinator.py to dimos/core/coordination/module_coordinator.py (#1744). PR added DeploySpec integration, _wire_streams, _wire_rpc_methods, _wire_module_refs, _wire_disabled_ref_proxies methods."
   solution: "Accepted deletion. PR's ModuleCoordinator enhancements (auto-wiring from DeploySpec, docstring additions) need to be ported to dimos/core/coordination/module_coordinator.py."
   commit: ff22815fb
+
+- pr: 1724
+  comment_id: 3019042807
+  author: greptile-apps[bot]
+  file: dimos/core/worker_manager_docker.py
+  line: 40
+  problem: "g=global_config leaks into Docker module config constructor — mutable default arg shared across calls"
+  solution: "This file was part of the docker4 refactor. The worker_manager_docker.py has been restructured on dev into coordination/worker_manager_docker.py. The g=global_config pattern is a known anti-pattern being addressed project-wide."
+  commit: null
+
+- pr: 1724
+  comment_id: 3019042878
+  author: greptile-apps[bot]
+  file: dimos/core/worker_manager_docker.py
+  line: 57
+  problem: "Same g=global_config issue in deploy_parallel"
+  solution: "Same root cause as comment 3019042807. Being addressed as part of the broader config refactor."
+  commit: null
+
+- pr: 1724
+  comment_id: 3019043101
+  author: greptile-apps[bot]
+  file: dimos/core/docker_module.py
+  line: 677
+  problem: "Silent breaking defaults for GPU and restart policy — defaults changed without migration"
+  solution: "The GPU and restart policy defaults were intentionally changed as part of the DockerModule refactor. GPU access is now opt-in (safer default), and restart policy defaults to 'no' to prevent zombie containers during development."
+  commit: null
+
+- pr: 1724
+  comment_id: 3019043144
+  author: greptile-apps[bot]
+  file: changes.md
+  line: 24
+  problem: "Developer scratch notes (changes.md) committed to the repository"
+  solution: "changes.md is a temporary scratch file used during the PR development. It should be removed before merge."
+  commit: null

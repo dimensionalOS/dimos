@@ -12,8 +12,10 @@ from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 
+
 class Config(VlModelConfig):
     api_key: str | None = None
+
 
 class MoondreamHostedVlModel(VlModel):
     config: Config
