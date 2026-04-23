@@ -17,7 +17,7 @@ import re
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.models.vl.types import VlModelName
-from dimos.visualization.constants import (
+from dimos.visualization.rerun.config import (
     RERUN_ENABLE_WEB,
     RERUN_OPEN_DEFAULT,
     RerunOpenOption,

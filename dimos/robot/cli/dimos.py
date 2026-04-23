@@ -685,8 +685,8 @@ def rerun_bridge_cmd(
 
     from dimos.protocol.pubsub.impl.lcmpubsub import LCM
     from dimos.protocol.service.lcmservice import autoconf
-    from dimos.visualization.constants import RerunOpenOption
     from dimos.visualization.rerun.bridge import RerunBridgeModule
+    from dimos.visualization.rerun.config import RerunOpenOption
 
     valid = get_args(RerunOpenOption)
     if rerun_open not in valid:

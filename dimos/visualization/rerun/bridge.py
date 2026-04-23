@@ -21,6 +21,7 @@ from dataclasses import field
 import subprocess
 import time
 from typing import (
+    TYPE_CHECKING,
     Any,
     Protocol,
     TypeAlias,
@@ -32,8 +33,10 @@ from typing import (
 
 from reactivex.disposable import Disposable
 from rerun._baseclasses import Archetype
-from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
+
+if TYPE_CHECKING:
+    from rerun.blueprint import Blueprint
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -42,10 +45,11 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.utils.logging_config import setup_logger
-from dimos.visualization.constants import (
+from dimos.visualization.rerun.config import (
     RERUN_ENABLE_WEB,
     RERUN_GRPC_PORT,
     RERUN_OPEN_DEFAULT,
+    RERUN_WEB_PORT,
     RerunOpenOption,
 )
 
@@ -178,6 +182,7 @@ class Config(ModuleConfig):
     memory_limit: str = "25%"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
+    web_port: int = RERUN_WEB_PORT
 
     # Blueprint factory: callable(rrb) -> Blueprint for viewer layout configuration
     # Set to None to disable default blueprint
@@ -379,7 +384,11 @@ class RerunBridgeModule(Module):
         # web
         open_web = self.config.rerun_open == "web" or self.config.rerun_open == "both"
         if open_web or self.config.rerun_web:
-            rr.serve_web_viewer(connect_to=server_uri, open_browser=open_web)
+            rr.serve_web_viewer(
+                connect_to=server_uri,
+                open_browser=open_web,
+                web_port=self.config.web_port,
+            )
 
         # printout
         if self.config.rerun_open == "none" or (self.config.rerun_open == "native" and not spawned):
