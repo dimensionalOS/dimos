@@ -335,13 +335,22 @@ class R1ProChassisAdapter:
         # promptly when _sensor_stop is set.
         sensor_stop = self._sensor_stop
         sensor_executor = self._sensor_executor
+        sensor_context = self._sensor_context
 
         def _run_sensor_spin() -> None:
             log.info("R1 Pro %s chassis sensor spin thread started", hw_id)
-            while not sensor_stop.is_set():
+            while not sensor_stop.is_set() and sensor_context.ok():
                 try:
                     sensor_executor.spin_once(timeout_sec=0.1)
                 except Exception as exc:
+                    # A shut-down rclpy context raises on every spin_once —
+                    # don't hot-loop, surface it once and exit.
+                    if not sensor_context.ok() or "context is not valid" in str(exc):
+                        log.warning(
+                            "R1 Pro %s chassis sensor context invalidated, exiting spin loop: %s",
+                            hw_id, exc,
+                        )
+                        break
                     log.warning(
                         "R1 Pro %s chassis sensor executor exception (continuing): %s",
                         hw_id, exc, exc_info=True,
