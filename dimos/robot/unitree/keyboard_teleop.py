@@ -30,24 +30,10 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 os.environ["SDL_VIDEODRIVER"] = "x11"
 
 
-# ---------------------------------------------------------------------------
-# Tunable defaults — edit here to change base teleop speeds, or pass
-# overrides via KeyboardTeleop(linear_speed=..., angular_speed=..., ...).
-# ---------------------------------------------------------------------------
-DEFAULT_LINEAR_SPEED: float = 0.5  # m/s, WASD/QE base magnitude
-DEFAULT_ANGULAR_SPEED: float = 0.8  # rad/s, A/D yaw-rate magnitude
-DEFAULT_BOOST_MULTIPLIER: float = 2.0  # Shift multiplier
-DEFAULT_SLOW_MULTIPLIER: float = 0.5  # Ctrl multiplier
-
-
 class KeyboardTeleop(Module):
     """Pygame-based keyboard control module.
 
     Outputs standard Twist messages on /cmd_vel for velocity control.
-
-    Speed constants can be tuned at the top of this file, or overridden
-    per-instance by passing linear_speed / angular_speed /
-    boost_multiplier / slow_multiplier to the constructor.
     """
 
     cmd_vel: Out[Twist]  # Standard velocity commands
@@ -59,20 +45,9 @@ class KeyboardTeleop(Module):
     _clock: pygame.time.Clock | None = None
     _font: pygame.font.Font | None = None
 
-    def __init__(
-        self,
-        linear_speed: float = DEFAULT_LINEAR_SPEED,
-        angular_speed: float = DEFAULT_ANGULAR_SPEED,
-        boost_multiplier: float = DEFAULT_BOOST_MULTIPLIER,
-        slow_multiplier: float = DEFAULT_SLOW_MULTIPLIER,
-        **kwargs: Any,
-    ) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._stop_event = threading.Event()
-        self.linear_speed = linear_speed
-        self.angular_speed = angular_speed
-        self.boost_multiplier = boost_multiplier
-        self.slow_multiplier = slow_multiplier
 
     @rpc
     def start(self) -> None:
@@ -140,28 +115,28 @@ class KeyboardTeleop(Module):
 
             # Forward/backward (W/S)
             if pygame.K_w in self._keys_held:
-                twist.linear.x = self.linear_speed
+                twist.linear.x = 0.5
             if pygame.K_s in self._keys_held:
-                twist.linear.x = -self.linear_speed
+                twist.linear.x = -0.5
 
             # Strafe left/right (Q/E)
             if pygame.K_q in self._keys_held:
-                twist.linear.y = self.linear_speed
+                twist.linear.y = 0.5
             if pygame.K_e in self._keys_held:
-                twist.linear.y = -self.linear_speed
+                twist.linear.y = -0.5
 
             # Turning (A/D)
             if pygame.K_a in self._keys_held:
-                twist.angular.z = self.angular_speed
+                twist.angular.z = 0.8
             if pygame.K_d in self._keys_held:
-                twist.angular.z = -self.angular_speed
+                twist.angular.z = -0.8
 
-            # Apply speed modifiers (Shift = boost, Ctrl = slow)
+            # Apply speed modifiers (Shift = 2x, Ctrl = 0.5x)
             speed_multiplier = 1.0
             if pygame.K_LSHIFT in self._keys_held or pygame.K_RSHIFT in self._keys_held:
-                speed_multiplier = self.boost_multiplier
+                speed_multiplier = 2.0
             elif pygame.K_LCTRL in self._keys_held or pygame.K_RCTRL in self._keys_held:
-                speed_multiplier = self.slow_multiplier
+                speed_multiplier = 0.5
 
             twist.linear.x *= speed_multiplier
             twist.linear.y *= speed_multiplier
@@ -190,9 +165,9 @@ class KeyboardTeleop(Module):
         # Determine active speed multiplier
         speed_mult_text = ""
         if pygame.K_LSHIFT in self._keys_held or pygame.K_RSHIFT in self._keys_held:
-            speed_mult_text = f" [BOOST {self.boost_multiplier:g}x]"
+            speed_mult_text = " [BOOST 2x]"
         elif pygame.K_LCTRL in self._keys_held or pygame.K_RCTRL in self._keys_held:
-            speed_mult_text = f" [SLOW {self.slow_multiplier:g}x]"
+            speed_mult_text = " [SLOW 0.5x]"
 
         texts = [
             "Keyboard Teleop" + speed_mult_text,
