@@ -29,9 +29,9 @@ from dimos.core.coordination.module_coordinator import _get_transport_for, _run_
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
+from dimos.core.test_utils import retry_until
 from dimos.core.transport import ZENOH_AVAILABLE, LCMTransport, pLCMTransport
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.protocol.pubsub.impl.test_zenohpubsub import _retry_until
 
 
 class TypedMsg:
@@ -213,7 +213,7 @@ class TestZenohTransportWrapper:
 
         t.subscribe(cb)
         test_img = Image(np.zeros((2, 2, 3), dtype=np.uint8))
-        _retry_until(event, lambda: t.broadcast(None, test_img))
+        retry_until(event, lambda: t.broadcast(None, test_img))
         assert isinstance(received[0], Image)
         t.stop()
 
@@ -233,7 +233,7 @@ class TestZenohTransportWrapper:
             event.set()
 
         t.subscribe(cb)
-        _retry_until(event, lambda: t.broadcast(None, {"key": "value"}))
+        retry_until(event, lambda: t.broadcast(None, {"key": "value"}))
         assert received[0] == {"key": "value"}
         t.stop()
 
