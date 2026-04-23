@@ -43,6 +43,7 @@ class AgentConfig(ModuleConfig):
     system_prompt: str | None = SYSTEM_PROMPT
     model: str = "gpt-4o"
     model_fixture: str | None = None
+    max_history_tokens: int | None = None
 
 
 class Agent(Module[AgentConfig]):
@@ -132,10 +133,40 @@ class Agent(Module[AgentConfig]):
     def _process_message(
         self, state_graph: CompiledStateGraph[Any, Any, Any, Any], message: BaseMessage
     ) -> None:
+        from langchain_core.messages import trim_messages
+        import json
+
         self.agent_idle.publish(False)
         self._history.append(message)
         pretty_print_langchain_message(message)
         self.agent.publish(message)
+
+        if self.config.max_history_tokens is not None:
+            # Provide a safe token counter since self.config.model is a string URL or ID
+            def _estimate_tokens(msgs: list[BaseMessage]) -> int:
+                count = 0
+                for m in msgs:
+                    content_str = json.dumps(m.content) if not isinstance(m.content, str) else m.content
+                    count += len(content_str) // 4 + 10
+                    if getattr(m, "tool_calls", None):
+                        count += 50 * len(m.tool_calls) # type: ignore
+                return count
+
+            trimmed_history = trim_messages(
+                self._history,
+                max_tokens=self.config.max_history_tokens,
+                strategy="last",
+                token_counter=_estimate_tokens,
+                include_system=True,
+                allow_partial=False,
+            )
+            # Ensure it's a list since trim_messages can return other types sometimes
+            trimmed_history = list(trimmed_history)
+        else:
+            trimmed_history = self._history
+
+        # We replace the internal history with the pruned one so it doesn't grow indefinitely in RAM
+        self._history = trimmed_history.copy()
 
         for update in state_graph.stream({"messages": self._history}, stream_mode="updates"):
             for node_output in update.values():
