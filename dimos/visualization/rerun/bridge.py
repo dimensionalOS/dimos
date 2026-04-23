@@ -32,10 +32,10 @@ from typing import (
 )
 
 from reactivex.disposable import Disposable
-from rerun._baseclasses import Archetype
 from toolz import pipe  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:
+    from rerun._baseclasses import Archetype
     from rerun.blueprint import Blueprint
 
 from dimos.core.core import rpc
@@ -52,6 +52,9 @@ from dimos.visualization.rerun.config import (
     RERUN_WEB_PORT,
     RerunOpenOption,
 )
+
+# Re-export constants so existing imports from this module keep working.
+__all__ = ["Config", "RerunBridgeModule", "RerunConvertible", "RerunData", "RerunMulti"]
 
 # TODO OUT visual annotations
 #
@@ -105,6 +108,8 @@ RerunData: TypeAlias = "Archetype | RerunMulti"
 
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
     """Check if data is a list of (entity_path, archetype) tuples."""
+    from rerun._baseclasses import Archetype
+
     return (
         isinstance(data, list)
         and bool(data)
@@ -246,6 +251,8 @@ class RerunBridgeModule(Module):
 
         # final step (ensures we return Archetype or None)
         def final_convert(msg: Any) -> RerunData | None:
+            from rerun._baseclasses import Archetype
+
             if isinstance(msg, Archetype):
                 return msg
             if is_rerun_multi(msg):
