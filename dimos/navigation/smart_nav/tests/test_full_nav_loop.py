@@ -79,7 +79,7 @@ class MockSensorConfig(ModuleConfig):
     rate: float = 5.0
 
 
-class MockSensor(Module[MockSensorConfig]):
+class MockSensor(Module):
     """Publishes synthetic lidar + odometry at fixed rate."""
 
     default_config = MockSensorConfig

@@ -75,7 +75,7 @@ class VehicleConfig(ModuleConfig):
     sim_rate: float = 50.0
 
 
-class Vehicle(Module[VehicleConfig]):
+class Vehicle(Module):
     """Kinematic sim vehicle with public position for test inspection."""
 
     default_config = VehicleConfig

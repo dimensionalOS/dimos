@@ -35,7 +35,7 @@ class StreamModule(Module):
 
     **Config-driven pipeline**
 
-        class VoxelGridMapper(StreamModule[VoxelGridMapperConfig]):
+        class VoxelGridMapper(StreamModule):
             def pipeline(self, stream: Stream) -> Stream:
                 return stream.transform(VoxelMap(**self.config.model_dump()))
 

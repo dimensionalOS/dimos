@@ -135,7 +135,7 @@ class MockVehicleConfig(ModuleConfig):
     sim_rate: float = 50.0
 
 
-class MockVehicle(Module[MockVehicleConfig]):
+class MockVehicle(Module):
     """Publishes sensor data and integrates cmd_vel for position tracking."""
 
     default_config = MockVehicleConfig

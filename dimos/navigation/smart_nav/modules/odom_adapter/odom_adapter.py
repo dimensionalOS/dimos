@@ -28,9 +28,10 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 
 
-class OdomAdapter(Module[ModuleConfig]):
+class OdomAdapter(Module):
     """Bidirectional PoseStamped <-> Odometry adapter."""
 
+    config: ModuleConfig
     default_config = ModuleConfig
 
     raw_odom: In[PoseStamped]

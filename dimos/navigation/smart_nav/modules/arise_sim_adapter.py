@@ -44,7 +44,7 @@ class AriseSimAdapterConfig(ModuleConfig):
     imu_rate: float = 200.0  # Hz — AriseSLAM expects high-rate IMU
 
 
-class AriseSimAdapter(Module[AriseSimAdapterConfig]):
+class AriseSimAdapter(Module):
     """Adapts sim data (world-frame scans + odom) → AriseSLAM inputs (body-frame + IMU).
 
     NOTE: using this is basically doing "1+1-1", its useful for sim or robots that do not provide raw-scans
@@ -56,6 +56,7 @@ class AriseSimAdapter(Module[AriseSimAdapterConfig]):
         imu (Out[Imu]): Synthetic IMU for AriseSLAM.
     """
 
+    config: AriseSimAdapterConfig
     default_config = AriseSimAdapterConfig
 
     registered_scan: In[PointCloud2]

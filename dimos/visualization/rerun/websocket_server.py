@@ -57,7 +57,7 @@ class Config(ModuleConfig):
     start_timeout: float = 10.0  # seconds to wait for the server to bind
 
 
-class RerunWebSocketServer(Module[Config]):
+class RerunWebSocketServer(Module):
     """Receives dimos-viewer WebSocket events and publishes them as DimOS streams.
 
     The viewer connects to this module (not the other way around) when running
@@ -71,6 +71,7 @@ class RerunWebSocketServer(Module[Config]):
         stop_movement: Published when teleop starts — signals nav to cancel the active goal.
     """
 
+    config: Config
     default_config = Config
 
     clicked_point: Out[PointStamped]

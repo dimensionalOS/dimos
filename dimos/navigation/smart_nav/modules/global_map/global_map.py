@@ -48,7 +48,7 @@ class GlobalMapConfig(ModuleConfig):
     height_max: float = 4.0  # clip ceiling
 
 
-class GlobalMap(Module[GlobalMapConfig]):
+class GlobalMap(Module):
     """Accumulated global point cloud from registered_scan.
 
     Voxelizes incoming scans and maintains a persistent map with
@@ -61,6 +61,7 @@ class GlobalMap(Module[GlobalMapConfig]):
         global_map (Out[PointCloud2]): Accumulated voxelized cloud.
     """
 
+    config: GlobalMapConfig
     default_config = GlobalMapConfig
 
     registered_scan: In[PointCloud2]

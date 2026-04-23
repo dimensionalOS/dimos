@@ -357,7 +357,7 @@ class _SimplePGO:
 # ─── PGO Module ──────────────────────────────────────────────────────────────
 
 
-class PGO(Module[PGOConfig]):
+class PGO(Module):
     """Pose graph optimization with loop closure detection.
 
     Pure-Python implementation using GTSAM iSAM2 and scipy KDTree.
@@ -371,6 +371,7 @@ class PGO(Module[PGOConfig]):
         global_map (Out[PointCloud2]): Accumulated keyframe map.
     """
 
+    config: PGOConfig
     default_config = PGOConfig
 
     registered_scan: In[PointCloud2]

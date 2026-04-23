@@ -38,7 +38,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 
 
-class ClickToGoal(Module[ModuleConfig]):
+class ClickToGoal(Module):
     """Relay clicked_point → way_point + goal for click-to-navigate.
 
     Ports:
@@ -50,6 +50,7 @@ class ClickToGoal(Module[ModuleConfig]):
         goal_path (Out[Path]): Straight line from robot to goal for Rerun.
     """
 
+    config: ModuleConfig
     default_config = ModuleConfig
 
     clicked_point: In[PointStamped]
