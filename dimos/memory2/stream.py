@@ -294,18 +294,24 @@ class Stream(CompositeResource, Generic[T, O]):
         return self._replace_query(live_buffer=buf)
 
     def save(self, target: Stream[T, O]) -> Stream[T, O]:
-        """Sync terminal: iterate self, append each obs to target's backend.
+        """Lazy pass-through that appends each observation to *target*'s backend.
 
-        Returns the target stream for continued querying.
+        Iteration drives both the passthrough and the appends — pick a terminal
+        (``.drain()`` sync, ``.drain_thread()`` background, ``.fetch()``,
+        ``for obs in ...``).
         """
         if isinstance(target._source, Stream) or target._source is None:
             raise TypeError(
                 "Cannot save to a transform/unbound stream. Target must be backend-backed."
             )
         backend = target._source
-        for obs in self:
-            backend.append(obs)
-        return target
+
+        def _save(upstream: Iterator[Observation[T]]) -> Iterator[Observation[T]]:
+            for obs in upstream:
+                backend.append(obs)
+                yield obs
+
+        return cast("Stream[T, O]", self.transform(FnIterTransformer(_save)))
 
     def fetch(self) -> list[O]:
         """Materialize all observations into a list."""
@@ -375,7 +381,9 @@ class Stream(CompositeResource, Generic[T, O]):
         from dimos.memory2.store.memory import MemoryStore
 
         mem = MemoryStore()
-        return self.save(cast("Stream[T, O]", mem.stream("cache")))
+        target = cast("Stream[T, O]", mem.stream("cache"))
+        self.save(target).drain()
+        return target
 
     def drain(self) -> int:
         """Consume all observations, discarding results. Returns count consumed.
@@ -387,6 +395,10 @@ class Stream(CompositeResource, Generic[T, O]):
         for _ in self:
             n += 1
         return n
+
+    def drain_thread(self) -> DisposableBase:
+        """Drain this stream on the dimos thread pool; returns a disposable."""
+        return self.subscribe(on_next=lambda _: None)
 
     def observable(self) -> reactivex.Observable[O]:
         """Convert this stream to an RxPY Observable.

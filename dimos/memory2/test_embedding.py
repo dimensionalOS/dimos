@@ -193,7 +193,7 @@ class TestSaveEmbeddings:
 
         emb = _emb([1, 0, 0])
         src.append("item", embedding=emb)
-        src.save(dst)
+        src.save(dst).drain()
 
         results = dst.fetch()
         assert len(results) == 1
@@ -207,7 +207,7 @@ class TestSaveEmbeddings:
 
         src.append("plain")
         src.append("embedded", embedding=_emb([0, 1, 0]))
-        src.save(dst)
+        src.save(dst).drain()
 
         results = dst.fetch()
         assert len(results) == 2

@@ -89,6 +89,7 @@ latest = images.last()
 
 # Transform (class or bare generator function)
 edges = images.transform(Canny()).save(store.stream("edges"))
+edges.drain()  # actually run the pipeline; .save() is lazy
 
 def running_avg(upstream):
     total, n = 0.0, 0
@@ -102,7 +103,7 @@ for obs in images.live().transform(process):
     handle(obs)
 
 # Embed + search
-images.transform(EmbedImages(clip)).save(store.stream("embedded"))
+images.transform(EmbedImages(clip)).save(store.stream("embedded")).drain()
 results = store.stream("embedded").search(query_vec, k=5).fetch()
 ```
 

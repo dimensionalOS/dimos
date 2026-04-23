@@ -27,9 +27,11 @@ from reactivex.disposable import Disposable
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.memory2.embed import EmbedImages
 from dimos.memory2.store.null import NullStore
 from dimos.memory2.store.sqlite import SqliteStore
 from dimos.memory2.stream import Stream
+from dimos.memory2.transform import QualityWindow
 from dimos.memory2.type.observation import EmbeddedObservation, Observation
 from dimos.models.embedding.base import EmbeddingModel
 from dimos.models.embedding.clip import CLIPModel
@@ -39,7 +41,8 @@ logger = logging.getLogger(__name__)
 
 
 class StreamModule(Module):
-    """Module base class that wires a memory2 stream pipeline.
+    """Module base class that wires a memory2 stream pipeline
+    and deploys it as a dimos module
 
     **Static pipeline**
 
@@ -184,19 +187,16 @@ class SemanticSearch(MemoryModule):
 
         self.embeddings = self.store.stream("color_image_embedded", Image)
 
-        # TODO(lesh): live embedding pipeline is not wired up yet.
-        #   - `.drain()` blocks forever on a live stream; needs background execution
-        #     (thread/task) or a subscription-based API
-        #   - `register_disposable` wants a DisposableBase, not the `int` returned by drain
-        #   Until then, the color_image stream is not embedded on-the-fly.
         # fmt: off
-        # self.store.streams.color_image \
-        #    .live() \
-        #    .filter(lambda obs: obs.data.brightness > 0.1) \
-        #    .transform(QualityWindow(lambda img: img.sharpness, window=0.5)) \
-        #    .transform(EmbedImages(self.model, batch_size=2)) \
-        #    .save(self.embeddings) \
-        #    .drain()
+        self.register_disposable(
+            self.store.streams.color_image
+               .live()
+               .filter(lambda obs: obs.data.brightness > 0.1)
+               .transform(QualityWindow(lambda img: img.sharpness, window=0.5))
+               .transform(EmbedImages(self.model, batch_size=2))
+               .save(self.embeddings)
+               .drain_thread()
+        )
         # fmt: on
 
     @skill
@@ -216,7 +216,7 @@ class SemanticSearch(MemoryModule):
         def _similarity(obs: Observation[Any]) -> float:
             return cast("EmbeddedObservation[Any]", obs).similarity or 0.0
 
-        return results.transform(peaks(key=_similarity, distance=1.0))
+        return results.transform(peaks(key=_similarity, distance=1.0)).last().pose_stamped
 
 
 class Recorder(MemoryModule):
