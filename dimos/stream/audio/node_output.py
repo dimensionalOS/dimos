@@ -96,7 +96,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
 
         except Exception as e:
             logger.error(f"Error starting audio output stream: {e}")
-            raise e
+            raise
 
         # Subscribe to the observable
         self._subscription = audio_observable.subscribe(  # type: ignore[assignment]
