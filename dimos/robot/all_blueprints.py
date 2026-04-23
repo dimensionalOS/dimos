@@ -16,14 +16,14 @@
 # Run `pytest dimos/robot/test_all_blueprints_generation.py` to regenerate.
 
 all_blueprints = {
-    "aruco-servo-mock": "dimos.manipulation.dynamic_tracking.blueprints:aruco_servo_mock",
-    "aruco-servo-xarm6": "dimos.manipulation.dynamic_tracking.blueprints:aruco_servo_xarm6",
-    "aruco-tracker": "dimos.manipulation.dynamic_tracking.blueprints:aruco_tracker_realsense",
     "arm-teleop": "dimos.teleop.quest.blueprints:arm_teleop",
     "arm-teleop-dual": "dimos.teleop.quest.blueprints:arm_teleop_dual",
     "arm-teleop-piper": "dimos.teleop.quest.blueprints:arm_teleop_piper",
     "arm-teleop-visualizing": "dimos.teleop.quest.blueprints:arm_teleop_visualizing",
     "arm-teleop-xarm7": "dimos.teleop.quest.blueprints:arm_teleop_xarm7",
+    "aruco-servo-mock": "dimos.manipulation.dynamic_tracking.blueprints:aruco_servo_mock",
+    "aruco-servo-xarm6": "dimos.manipulation.dynamic_tracking.blueprints:aruco_servo_xarm6",
+    "aruco-tracker-realsense": "dimos.manipulation.dynamic_tracking.blueprints:aruco_tracker_realsense",
     "coordinator-basic": "dimos.control.blueprints:coordinator_basic",
     "coordinator-cartesian-ik-mock": "dimos.control.blueprints:coordinator_cartesian_ik_mock",
     "coordinator-cartesian-ik-piper": "dimos.control.blueprints:coordinator_cartesian_ik_piper",
@@ -101,6 +101,7 @@ all_blueprints = {
 all_modules = {
     "agent": "dimos.agents.agent",
     "arm-teleop-module": "dimos.teleop.quest.quest_extensions",
+    "aruco-tracker": "dimos.manipulation.dynamic_tracking.aruco_tracker",
     "camera-module": "dimos.hardware.sensors.camera.module",
     "cartesian-motion-controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller",
     "control-coordinator": "dimos.control.coordinator",

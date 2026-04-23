@@ -39,15 +39,19 @@ import json
 from pathlib import Path
 import sys
 import time
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 import cv2
 import numpy as np
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
 
 def collect_sample_interactive(
-    arm_positions_getter: callable,
-    camera_frame_getter: callable,
+    arm_positions_getter: Callable[[], np.ndarray | None],
+    camera_frame_getter: Callable[[], tuple[np.ndarray | None, np.ndarray, np.ndarray]],
     marker_size: float,
     aruco_dict_id: int = cv2.aruco.DICT_4X4_50,
 ) -> tuple[list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray]]:
@@ -197,7 +201,7 @@ def load_calibration(path: str | Path) -> tuple[list[float], list[float]]:
     return [t["x"], t["y"], t["z"]], [r["x"], r["y"], r["z"], r["w"]]
 
 
-def calibration_to_transform(path: str | Path) -> tuple:
+def calibration_to_transform(path: str | Path) -> tuple[Any, Any]:
     """Load calibration and return (Vector3, Quaternion) for blueprint use.
 
     Example:
@@ -284,7 +288,7 @@ def main() -> int:
     try:
         from dimos.hardware.manipulators.xarm import XArmAdapter
 
-        adapter = XArmAdapter(ip=args.arm_ip, dof=args.arm_dof)
+        adapter = XArmAdapter(address=args.arm_ip, dof=args.arm_dof)
         if not adapter.connect():
             print("Failed to connect to arm")
             return 1
@@ -295,7 +299,7 @@ def main() -> int:
 
     # --- Connect to camera ---
     try:
-        import pyrealsense2 as rs
+        import pyrealsense2 as rs  # type: ignore[import-not-found]
 
         pipeline = rs.pipeline()
         config = rs.config()
@@ -320,16 +324,13 @@ def main() -> int:
     def get_ee_pose() -> np.ndarray | None:
         """Read current EE pose as 4x4 homogeneous matrix."""
         try:
-            # Read joint positions and compute FK, or read Cartesian pose directly
-            pose = adapter.read_cartesian_pose()
+            pose = adapter.read_cartesian_position()
             if pose is None:
                 return None
-            # pose is typically [x, y, z, roll, pitch, yaw]
-            x, y, z, roll, pitch, yaw = pose
-            R = Rotation.from_euler("xyz", [roll, pitch, yaw]).as_matrix()
+            R = Rotation.from_euler("xyz", [pose["roll"], pose["pitch"], pose["yaw"]]).as_matrix()
             T = np.eye(4)
             T[:3, :3] = R
-            T[:3, 3] = [x, y, z]
+            T[:3, 3] = [pose["x"], pose["y"], pose["z"]]
             return T
         except Exception as e:
             print(f"Failed to read EE pose: {e}")
