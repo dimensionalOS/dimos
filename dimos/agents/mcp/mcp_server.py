@@ -247,7 +247,7 @@ class McpServer(Module):
         from dimos.core.global_config import global_config
 
         _port = port if port is not None else global_config.mcp_port
-        _host = global_config.mcp_host
+        _host = global_config.listen_host
         config = uvicorn.Config(app, host=_host, port=_port, log_level="info")
         server = uvicorn.Server(config)
         self._uvicorn_server = server

@@ -320,7 +320,6 @@ def test_remapping() -> None:
         coordinator.stop()
 
 
-@pytest.mark.slow
 def test_future_annotations_autoconnect() -> None:
     """Test that autoconnect works with modules using `from __future__ import annotations`."""
 
@@ -799,3 +798,30 @@ def test_restart_preserves_remapped_streams(dynamic_coordinator) -> None:
     # The restarted proxy sees the same topic as the target.
     source_after = dynamic_coordinator.get_instance(SourceModule)
     assert source_after.color_image.transport.topic == target.remapped_data.transport.topic
+
+
+def test_start_rpyc_service(dynamic_coordinator) -> None:
+    port = dynamic_coordinator.start_rpyc_service()
+    assert port > 0
+
+
+@pytest.mark.slow
+def test_list_module_names(dynamic_coordinator) -> None:
+    assert dynamic_coordinator.list_module_names() == []
+    dynamic_coordinator.load_module(ModuleA)
+    dynamic_coordinator.load_module(ModuleC)
+    assert set(dynamic_coordinator.list_module_names()) == {"ModuleA", "ModuleC"}
+
+
+@pytest.mark.slow
+def test_get_module_endpoint(dynamic_coordinator) -> None:
+    dynamic_coordinator.load_module(ModuleA)
+    host, port, module_id = dynamic_coordinator.get_module_endpoint("ModuleA")
+    assert host == "localhost"
+    assert port > 0
+    assert isinstance(module_id, int)
+
+
+def test_get_module_endpoint_unknown_raises(dynamic_coordinator) -> None:
+    with pytest.raises(KeyError):
+        dynamic_coordinator.get_module_endpoint("NoSuchModule")

@@ -57,6 +57,7 @@ class GlobalConfig(BaseSettings):
     dtop: bool = False
     obstacle_avoidance: bool = True
     detection_model: VlModelName = "moondream"
+    listen_host: str = "127.0.0.1"
 
     model_config = SettingsConfigDict(
         env_file=".env",

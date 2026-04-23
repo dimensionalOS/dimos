@@ -35,6 +35,7 @@ import typer
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter, McpError
 from dimos.constants import CONFIG_DIR, LOG_DIR
+from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.utils.logging_config import setup_logger
@@ -204,13 +205,17 @@ def run(
 
     from dimos.core.coordination.blueprints import autoconnect
     from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    from dimos.core.coordination.process_lifecycle import (
+        DIMOS_RUN_ID_ENV,
+        spawn_watchdog,
+    )
     from dimos.core.run_registry import (
         RunEntry,
         check_port_conflicts,
         cleanup_stale,
         generate_run_id,
     )
-    from dimos.robot.get_all_blueprints import get_by_name, get_module_by_name
+    from dimos.robot.get_all_blueprints import get_by_name_or_exit, get_module_by_name_or_exit
     from dimos.utils.logging_config import set_run_log_dir, setup_exception_handler
 
     setup_exception_handler()
@@ -236,14 +241,20 @@ def run(
     run_id = generate_run_id(blueprint_name)
     log_dir = LOG_DIR / run_id
 
+    # Tag every descendant with the run id so the watchdog and stale-run
+    # cleanup can identify them via os.environ after main dies.
+    os.environ[DIMOS_RUN_ID_ENV] = run_id
+
     # Route structured logs (main.jsonl) to the per-run directory.
     # Workers inherit DIMOS_RUN_LOG_DIR env var via forkserver.
     set_run_log_dir(log_dir)
 
-    blueprint = autoconnect(*map(get_by_name, robot_types))
+    blueprint = autoconnect(*map(get_by_name_or_exit, robot_types))
 
     if disable:
-        disabled_classes = tuple(get_module_by_name(name).blueprints[0].module for name in disable)
+        disabled_classes = tuple(
+            get_module_by_name_or_exit(name).blueprints[0].module for name in disable
+        )
         blueprint = blueprint.disabled_modules(*disabled_classes)
 
     if show_help:
@@ -259,11 +270,6 @@ def run(
     coordinator = ModuleCoordinator.build(blueprint, kwargs)
 
     if daemon:
-        from dimos.core.daemon import (
-            daemonize,
-            install_signal_handlers,
-        )
-
         # Health check before daemonizing — catch early crashes
         if not coordinator.health_check():
             typer.echo("Error: health check failed — a worker process died.", err=True)
@@ -283,6 +289,7 @@ def run(
 
         daemonize(log_dir)
 
+        rpyc_port = coordinator.start_rpyc_service()  # After daemonize().
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -291,12 +298,15 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
+            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
+        spawn_watchdog(run_id, log_dir=log_dir)
         install_signal_handlers(entry, coordinator)
         coordinator.loop()
     else:
+        rpyc_port = coordinator.start_rpyc_service()
         entry = RunEntry(
             run_id=run_id,
             pid=os.getpid(),
@@ -305,9 +315,15 @@ def run(
             log_dir=str(log_dir),
             cli_args=list(robot_types),
             config_overrides=cli_config_overrides,
+            rpyc_port=rpyc_port,
             original_argv=sys.argv,
         )
         entry.save()
+        spawn_watchdog(run_id, log_dir=log_dir)
+        # Foreground: only SIGTERM goes through the handler. SIGINT stays at
+        # default so Ctrl+C raises KeyboardInterrupt and the try/finally below
+        # runs with a visible traceback.
+        install_signal_handlers(entry, coordinator, sigint=False)
         try:
             coordinator.loop()
         finally:

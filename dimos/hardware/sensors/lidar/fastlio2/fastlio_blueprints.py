@@ -21,11 +21,7 @@ voxel_size = 0.05
 
 mid360_fastlio = autoconnect(
     FastLio2.blueprint(voxel_size=voxel_size, map_voxel_size=voxel_size, map_freq=-1),
-    RerunBridgeModule.blueprint(
-        visual_override={
-            "world/lidar": lambda grid: grid.to_rerun(voxel_size=voxel_size, mode="boxes"),
-        }
-    ),
+    RerunBridgeModule.blueprint(),
 ).global_config(n_workers=2, robot_model="mid360_fastlio2")
 
 mid360_fastlio_voxels = autoconnect(
@@ -33,7 +29,6 @@ mid360_fastlio_voxels = autoconnect(
     VoxelGridMapper.blueprint(voxel_size=voxel_size, carve_columns=False),
     RerunBridgeModule.blueprint(
         visual_override={
-            "world/global_map": lambda grid: grid.to_rerun(voxel_size=voxel_size, mode="boxes"),
             "world/lidar": None,
         }
     ),
@@ -44,7 +39,6 @@ mid360_fastlio_voxels_native = autoconnect(
     RerunBridgeModule.blueprint(
         visual_override={
             "world/lidar": None,
-            "world/global_map": lambda grid: grid.to_rerun(voxel_size=voxel_size, mode="boxes"),
         }
     ),
 ).global_config(n_workers=2, robot_model="mid360_fastlio2")

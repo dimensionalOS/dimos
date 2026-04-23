@@ -27,7 +27,6 @@ class RobotWebInterface(FastAPIServer):
         super().__init__(
             dev_name="Robot Web Interface",
             edge_type="Bidirectional",
-            host="0.0.0.0",
             port=port,
             text_streams=text_streams,
             audio_subject=audio_subject,
