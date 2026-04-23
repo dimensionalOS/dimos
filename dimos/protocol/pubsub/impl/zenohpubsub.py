@@ -98,7 +98,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         super().__init__(**kwargs)
         self._publishers: dict[str, zenoh.Publisher] = {}
         self._publisher_lock = threading.Lock()
-        self._subscribers: list[zenoh.Subscriber] = []
+        self._subscribers: list[zenoh.Subscriber[Any]] = []
         self._subscriber_lock = threading.Lock()
 
     def _get_publisher(self, key_expr: str) -> zenoh.Publisher:
@@ -158,7 +158,7 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
                 if sub not in self._subscribers:
                     return  # Already removed by stop() — stop() owns the undeclare
                 self._subscribers.remove(sub)
-            sub.undeclare()
+            sub.undeclare()  # type: ignore[no-untyped-call]
 
         return unsubscribe
 
@@ -170,11 +170,11 @@ class ZenohPubSubBase(ZenohService, AllPubSub[Topic, bytes]):
         """Clean up publishers and subscribers."""
         with self._subscriber_lock:
             for subscriber in self._subscribers:
-                subscriber.undeclare()
+                subscriber.undeclare()  # type: ignore[no-untyped-call]
             self._subscribers.clear()
         with self._publisher_lock:
             for publisher in self._publishers.values():
-                publisher.undeclare()
+                publisher.undeclare()  # type: ignore[no-untyped-call]
             self._publishers.clear()
         super().stop()
 

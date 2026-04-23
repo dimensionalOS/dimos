@@ -285,7 +285,7 @@ if ZENOH_AVAILABLE:
         yield zenoh_pubsub
         zenoh_pubsub.stop()
         for s in _zenoh_sessions.values():
-            s.close()
+            s.close()  # type: ignore[no-untyped-call]
         _zenoh_sessions.clear()
 
     def zenoh_msggen(size: int) -> tuple[ZenohTopic, Image]:
