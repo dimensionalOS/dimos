@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("zenoh")
+
 from dimos.protocol.service.zenohservice import ZenohConfig, ZenohService, _sessions
 
 
