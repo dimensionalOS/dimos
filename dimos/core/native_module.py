@@ -328,8 +328,7 @@ class NativeModule(Module):
                 )
             return
 
-        if global_config.prod and exe.exists():
-            # no build
+        if exe.exists() and not self.config.auto_build and not global_config.build_native:
             return
 
         logger.info(
