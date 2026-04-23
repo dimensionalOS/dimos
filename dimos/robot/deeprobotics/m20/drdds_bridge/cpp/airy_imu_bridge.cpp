@@ -189,7 +189,9 @@ double frobenius_distance_from_identity(const Mat3& R) {
 
 struct DifopCalib {
     double qx, qy, qz, qw;  // normalized
-    double tx, ty, tz;      // lever-arm, meters (unused in v1)
+    double tx, ty, tz;      // intra-housing lever-arm (lidar origin → IMU),
+                            // meters in lidar frame. Rotated into base_link
+                            // and added to lever_arm_base (see main loop).
 };
 
 float bit_cast_u32_to_f32(uint32_t u) {
@@ -355,16 +357,22 @@ int open_multicast(const char* group, uint16_t port) {
 std::atomic<bool> g_running{true};
 void signal_handler(int) { g_running = false; }
 
-// Hot-swappable R_imu_to_base. Initialized at startup to R_base_lidar (i.e.
-// R_imu_to_lidar = identity → degraded mode), replaced when DIFOP C.17
-// arrives. Pointer ownership: we allocate exactly two Mat3 over the
-// process lifetime (initial + one DIFOP swap) and deliberately never free
-// the stale pointer to avoid racing the IMU hot path's dereference.
-std::atomic<Mat3*> g_R_imu_to_base{nullptr};
-std::atomic<bool>  g_cal_ok{false};
+// Bundled calibration state: R_imu_to_base AND the DIFOP intra-housing
+// translation (rotated into base_link), published atomically as a single
+// pointer so the IMU hot path cannot observe a partial update (e.g. a new
+// rotation with stale zero offset, or a mixed x/y/z snapshot). Allocation
+// is never freed — we create exactly two CalibState over process lifetime
+// (initial degraded + one DIFOP swap) and let the stale one leak, which
+// is safe because the hot path never holds the pointer across loop iters.
+struct CalibState {
+    Mat3 R_imu_to_base;
+    double difop_offset_body[3];  // added to lever_arm_base; 0,0,0 until DIFOP
+};
+std::atomic<CalibState*> g_calib{nullptr};
+std::atomic<bool>        g_cal_ok{false};
 
 // Background retry thread: polls DIFOP multicast every ~2s until a valid
-// C.17 record arrives, then hot-swaps g_R_imu_to_base and sets g_cal_ok.
+// C.17 record arrives, then hot-swaps g_calib and sets g_cal_ok.
 void difop_retry_loop(const char* mgroup, uint16_t difop_port, Mat3 R_base_lidar,
                       const std::string& which) {
     using namespace std::chrono_literals;
@@ -395,17 +403,30 @@ void difop_retry_loop(const char* mgroup, uint16_t difop_port, Mat3 R_base_lidar
             Mat3 R_imu_to_base  = matmul(R_base_lidar, R_imu_to_lidar);
             double dist = frobenius_distance_from_identity(R_imu_to_lidar);
 
+            // Rotate the DIFOP translation (lidar-origin → IMU, in lidar
+            // frame) into base_link. Adding this to the user-supplied
+            // lever_arm_base yields the PDF+DIFOP exact IMU position in
+            // body frame. For front Airy with the typical DIFOP lever of
+            // ~(0.004, 0.004, -0.005) m this refines the lever arm by
+            // about 5 mm per axis — below our current drift resolution,
+            // but physically correct and one-time-computed.
+            double off_x, off_y, off_z;
+            rotate(R_base_lidar, cal.tx, cal.ty, cal.tz, off_x, off_y, off_z);
+
             std::fprintf(stderr,
                 "[airy_imu_bridge] DIFOP C.17 received for %s Airy: "
                 "q=(%.5f,%.5f,%.5f,%.5f) lever=(%.4f,%.4f,%.4f) "
                 "|R_imu_to_lidar - I|_F=%.4f — cal=OK\n",
                 which.c_str(), cal.qx, cal.qy, cal.qz, cal.qw,
                 cal.tx, cal.ty, cal.tz, dist);
+            std::fprintf(stderr,
+                "[airy_imu_bridge] DIFOP lever_body = (%+.4f, %+.4f, %+.4f) m "
+                "— adding to lever_arm_base\n", off_x, off_y, off_z);
             log_matrix("R_imu_to_lidar (from C.17)", R_imu_to_lidar);
             log_matrix("R_imu_to_base (composed)",   R_imu_to_base);
 
-            Mat3* fresh = new Mat3(R_imu_to_base);
-            g_R_imu_to_base.store(fresh, std::memory_order_release);
+            CalibState* fresh = new CalibState{R_imu_to_base, {off_x, off_y, off_z}};
+            g_calib.store(fresh, std::memory_order_release);
             g_cal_ok.store(true, std::memory_order_release);
             got_it = true;
             break;
@@ -465,6 +486,48 @@ int main(int argc, char** argv) {
     }
     const char* header_frame_id = rotate_to_base ? "base_link" : "airy_sensor";
 
+    // Lever-arm from the Airy IMU to the M20 body origin, in base_link
+    // coordinates (meters). Per Lynx M20 hardware manual Section 1.10 the
+    // front/rear Airy LiDAR housings sit at (±320.28, 0, -13) mm from the
+    // body origin. The Airy IMU lives inside the lidar housing; DIFOP C.17
+    // intra-housing lever-arm is only ~5 mm so the housing position is a
+    // close-enough approximation.
+    //
+    // The IMU feels fictitious accel during rotation because r ≠ 0:
+    //   a_body = a_imu − ω × (ω × r) − α × r
+    // Centripetal ω × (ω × r) explains the ~0.37 m/s² sustained ax shift
+    // at |ω|=1 rad/s (FASTLIO2_LOG Finding #25). Tangential α × r is the
+    // dominant contributor on a wheel-legged platform where leg-shuffle
+    // produces ~8 rad/s² typical α (peak ~37) at ~25 Hz, yielding
+    // 2.6 m/s² typical / 11.8 m/s² peak in ay — directly confirmed by
+    // data: correlation(ay, α_z)=+0.80, regression slope=+0.30≈r_x.
+    // See Finding #26.
+    //
+    // --lever_arm_base_m "x,y,z" overrides the default for tuning. Set to
+    // "0,0,0" to disable both corrections (reproduce pre-fix baseline).
+    double lever_arm_base[3] = {0.0, 0.0, 0.0};
+    if (rotate_to_base) {
+        const std::string default_r = (which == "front")
+            ? "0.320,0.0,-0.013"
+            : "-0.320,0.0,-0.013";
+        const std::string r_str = mod.arg("lever_arm_base_m", default_r);
+        if (std::sscanf(r_str.c_str(), "%lf,%lf,%lf",
+                        &lever_arm_base[0],
+                        &lever_arm_base[1],
+                        &lever_arm_base[2]) != 3) {
+            std::fprintf(stderr,
+                         "[airy_imu_bridge] --lever_arm_base_m must be 'x,y,z' in meters, "
+                         "got '%s'\n", r_str.c_str());
+            return 1;
+        }
+        std::fprintf(stderr,
+                     "[airy_imu_bridge] lever_arm_base (m) = (%.4f, %.4f, %.4f) — "
+                     "centripetal correction %s\n",
+                     lever_arm_base[0], lever_arm_base[1], lever_arm_base[2],
+                     (lever_arm_base[0] == 0.0 && lever_arm_base[1] == 0.0 &&
+                      lever_arm_base[2] == 0.0) ? "disabled" : "enabled");
+    }
+
     lcm::LCM lcm;
     if (!lcm.good()) {
         std::fprintf(stderr, "[airy_imu_bridge] LCM init failed\n");
@@ -480,13 +543,14 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "[airy_imu_bridge] %s Airy IMU → LCM topic '%s' (multicast %s:%u)\n",
                  which.c_str(), imu_topic.c_str(), mgroup, mport);
 
-    // Seed g_R_imu_to_base with R_base_lidar (= R_base_lidar · I): assumes
-    // IMU frame is perfectly aligned with lidar frame until DIFOP arrives.
-    // Accepting degraded boot over blocking — factory pilot robustness.
+    // Seed CalibState with R_base_lidar (= R_base_lidar · I) and zero
+    // DIFOP offset: assumes IMU frame is perfectly aligned with lidar
+    // frame until DIFOP arrives. Accepting degraded boot over blocking —
+    // factory pilot robustness.
     std::thread difop_thread;
     if (rotate_to_base) {
-        Mat3* seed = new Mat3(R_base_lidar);
-        g_R_imu_to_base.store(seed, std::memory_order_release);
+        CalibState* seed = new CalibState{R_base_lidar, {0.0, 0.0, 0.0}};
+        g_calib.store(seed, std::memory_order_release);
         std::fprintf(stderr, "[airy_imu_bridge] DIFOP not yet received — running DEGRADED "
                              "(no factory IMU-lidar calibration applied). Drift may be large.\n");
         difop_thread = std::thread(difop_retry_loop, mgroup, difop_port, R_base_lidar, which);
@@ -526,16 +590,77 @@ int main(int argc, char** argv) {
         // R_imu_to_lidar = identity → degraded). In `--frame sensor` mode
         // we pass through unchanged so downstream FAST-LIO2 sees IMU and
         // lidar cloud in the raw Airy sensor frame.
-        //
-        // NOTE: the translation lever-arm term ω × (ω × r) + α × r is NOT
-        // subtracted here. For front Airy at ~(+0.32, 0, -0.013) m from
-        // base, centripetal at |ω|=2 rad/s contributes ~1.3 m/s² worst-
-        // axis — deferred to v2 (see FASTLIO2_LOG Finding #21).
         double ax, ay, az, gx, gy, gz;
         if (rotate_to_base) {
-            const Mat3* R = g_R_imu_to_base.load(std::memory_order_acquire);
-            rotate(*R, s.accel_ms2[0], s.accel_ms2[1], s.accel_ms2[2], ax, ay, az);
-            rotate(*R, s.gyro_rads[0], s.gyro_rads[1], s.gyro_rads[2], gx, gy, gz);
+            // Single acquire load pairs with the release-store of a fully-
+            // constructed CalibState in difop_retry_loop, so R and the
+            // DIFOP offset always come as a consistent bundle (no partial-
+            // update window where R is new but offset is still zero).
+            const CalibState* cal = g_calib.load(std::memory_order_acquire);
+            rotate(cal->R_imu_to_base,
+                   s.accel_ms2[0], s.accel_ms2[1], s.accel_ms2[2], ax, ay, az);
+            rotate(cal->R_imu_to_base,
+                   s.gyro_rads[0], s.gyro_rads[1], s.gyro_rads[2], gx, gy, gz);
+
+            // Remove fictitious accel the IMU feels because it sits at a
+            // lever-arm r from the body rotation axis:
+            //   a_body = a_imu − ω × (ω × r) − α × r
+            // Centripetal ω × (ω × r) explains the ~0.37 m/s² sustained ax
+            // shift at |ω|=1 rad/s. Tangential α × r dominates on a wheel-
+            // legged platform: leg-shuffle produces |α|≈8 rad/s² typical
+            // (peak ~37) at ~25 Hz, which times r_x = 0.32 m yields
+            // 2.6 m/s² typical in ay — empirically confirmed by
+            // correlation(ay, α_z) = +0.80 with slope +0.30 ≈ r_x. See
+            // FASTLIO2_LOG Finding #26. Coriolis 2ω × v_rel is zero for a
+            // rigid body (IMU has no motion inside the body frame).
+            //
+            // Effective lever arm = user-supplied lever_arm_base (geometric
+            // Section-1.10 PDF value) plus the DIFOP C.17 intra-housing
+            // offset (zero until DIFOP arrives, then the exact per-unit
+            // factory value rotated into base_link).
+            const double rx = lever_arm_base[0] + cal->difop_offset_body[0];
+            const double ry = lever_arm_base[1] + cal->difop_offset_body[1];
+            const double rz = lever_arm_base[2] + cal->difop_offset_body[2];
+
+            // ω × (ω × r) — centripetal.
+            const double wr_x = gy*rz - gz*ry;
+            const double wr_y = gz*rx - gx*rz;
+            const double wr_z = gx*ry - gy*rx;
+            const double cent_x = gy*wr_z - gz*wr_y;
+            const double cent_y = gz*wr_x - gx*wr_z;
+            const double cent_z = gx*wr_y - gy*wr_x;
+
+            // α = dω/dt via backward difference on base-frame gyro.
+            // Stationary gyro σ ≈ 1e-3 rad/s → differentiated σ_α ≈
+            // √2 · 1e-3 / Δt ≈ 0.3 rad/s² noise floor, small vs the
+            // 8 rad/s² signal stdev during leg-shuffle rotation. On the
+            // first sample we don't have Δt yet, so set α = 0.
+            static bool prev_valid = false;
+            static double prev_gx = 0.0, prev_gy = 0.0, prev_gz = 0.0;
+            static double prev_ts = 0.0;
+            double alpha_x = 0.0, alpha_y = 0.0, alpha_z = 0.0;
+            if (prev_valid) {
+                double dt = s.stamp_s - prev_ts;
+                if (dt > 1e-6 && dt < 0.1) {  // guard against stamp regressions / gaps
+                    alpha_x = (gx - prev_gx) / dt;
+                    alpha_y = (gy - prev_gy) / dt;
+                    alpha_z = (gz - prev_gz) / dt;
+                }
+            }
+            prev_gx = gx;
+            prev_gy = gy;
+            prev_gz = gz;
+            prev_ts = s.stamp_s;
+            prev_valid = true;
+
+            // α × r — tangential.
+            const double tang_x = alpha_y*rz - alpha_z*ry;
+            const double tang_y = alpha_z*rx - alpha_x*rz;
+            const double tang_z = alpha_x*ry - alpha_y*rx;
+
+            ax -= cent_x + tang_x;
+            ay -= cent_y + tang_y;
+            az -= cent_z + tang_z;
         } else {
             ax = s.accel_ms2[0]; ay = s.accel_ms2[1]; az = s.accel_ms2[2];
             gx = s.gyro_rads[0]; gy = s.gyro_rads[1]; gz = s.gyro_rads[2];

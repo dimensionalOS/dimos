@@ -7,18 +7,39 @@ common:
 
 preprocess:
     lidar_type: 2                # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR,
-    # M20 RSAIRY dual-lidar = 192 native rings, remapped to 64 by the drdds bridge
-    # (`ring * 64 / 192`) to fit FAST-LIO's Velodyne handler expectations.
-    scan_line: 64
+    # Each RSAIRY lidar has 96 scan lines. In rsdriver merged mode
+    # (send_separately=false) front+rear clouds share the same ring
+    # index space 0..95 (each ring value holds one point from each
+    # Airy), NOT 0..191 as the older comments claimed — verified via
+    # SHM probe after Finding #29. Bridge forwards rings raw (no more
+    # `ring * 64 / 192` remap). Safe at 96 per FASTLIO2_LOG Finding
+    # #25 audit: N_SCANS is a runtime int used only in
+    # `feature_enabled` paths, which are unreachable because
+    # laserMapping.hpp hardcodes feature_enabled=false. The ring value
+    # is read from points but never indexed into a fixed-size array.
+    scan_line: 96
     scan_rate: 10                # only need to be set for velodyne, unit: Hz,
     # drdds bridge emits time as float32 relative SECONDS (0.0 → max scan span).
     # timestamp_unit: 0=second, 1=ms, 2=us, 3=ns.
     timestamp_unit: 0
-    # M20 body blind zone — 820×430mm chassis plus lidar mount margin.
-    blind: 0.5
+    # Spherical blind radius around the LIDAR OPTICAL CENTER (sensor frame).
+    # Reduced from 1.0 → 0.1m now that robot-body self-features are handled
+    # by the body-frame AABB crop in drdds_lidar_bridge (FASTLIO2_LOG Finding
+    # #34). Low blind preserves real near-field features (doorway jambs,
+    # walls, obstacles within 0.5m) which are critical for narrow-passage
+    # navigation. RSAIRY's own hardware blind filters the noisy sub-10cm
+    # range at the sensor level. Upstream FAST-LIO default is 0.01m.
+    blind: 0.1
 
 mapping:
-    acc_cov: 0.1
+    # acc_cov bumped 0.1 → 0.5 (5×) per codex second opinion (FASTLIO2_LOG
+    # Finding #31): stationary accel σ is 0.01 but rotation accel σ is ~1
+    # m/s² on M20 Pro wheel-legged platform (leg-shuffle noise). Default
+    # 0.1 over-trusts accel during rotation → filter commits to IMU
+    # predictions carrying real physical noise + residual fictitious-accel
+    # error → ICP sometimes locks to wrong local minimum → runaway.
+    # Bumping cov lets scan-match dominate during rotation.
+    acc_cov: 0.5
     gyr_cov: 0.1
     b_acc_cov: 0.0001
     b_gyr_cov: 0.0001

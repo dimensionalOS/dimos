@@ -52,6 +52,12 @@ class DrddsLidarBridgeConfig(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/drdds_lidar_bridge"
     build_command: str | None = "nix build .#drdds_lidar_bridge"
+    # Robot body AABB for self-filtering, as "xmin,xmax,ymin,ymax,zmin,zmax"
+    # in base_link meters. Points that fall inside the box are dropped before
+    # publishing. When None the filter is disabled. For M20 (computed from
+    # URDF collision geometries + leg-swing padding) the recommended value is
+    # "-0.454,0.454,-0.354,0.354,-0.740,0.220". See FASTLIO2_LOG Finding #34.
+    body_crop: str | None = None
 
 
 class DrddsLidarBridge(
@@ -63,8 +69,10 @@ class DrddsLidarBridge(
     - /drdds_bridge_lidar: merged dual RSAIRY 192-ch point clouds
     - /drdds_bridge_imu: Yesense IMU at ~200Hz
 
-    Performs ring remapping (192→64 for ARISE N_SCANS=64) and time
-    relativization (f64 absolute → f32 relative) in the C++ hot path.
+    In the C++ hot path it re-stamps the PointCloud2 header with
+    scan_start (first point's time, not drdds's scan_end slot stamp —
+    see FASTLIO2_LOG Finding #28) and converts the per-point time field
+    from absolute f64 to relative f32.
 
     Ports:
         lidar (Out[PointCloud2]): Point cloud with ring + time fields.
@@ -91,6 +99,17 @@ class AiryImuBridgeConfig(NativeModuleConfig):
     # extrinsic zeroed so the lidar cloud stays in the same sensor frame
     # and FAST-LIO2's extrinsic is truly identity.
     frame: str = "base_link"
+    # Lever-arm from the IMU chip to the body rotation center, expressed in
+    # base_link (meters), as "x,y,z". When set, the bridge subtracts both
+    # centripetal ω × (ω × r) and tangential α × r from the rotated accel
+    # so FAST-LIO2 sees body-origin acceleration. When None, the C++ default
+    # of (0.320, 0, -0.013) for front / (-0.320, 0, -0.013) for rear —
+    # taken from Lynx M20 Hardware Manual Section 1.10 — applies.
+    # Tuning note: empirical slope of ay vs α_z on D-key yaw-in-place tests
+    # implies effective r_x ≈ 0.22 m, slightly less than the geometric
+    # 0.320 m (wheel-legged platform shifts rotation center during
+    # leg-shuffle). See FASTLIO2_LOG Findings #25/#26/#29.
+    lever_arm_base_m: str | None = None
 
 
 class AiryImuBridge(NativeModule[AiryImuBridgeConfig], perception.IMU):
