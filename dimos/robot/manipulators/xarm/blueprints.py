@@ -53,7 +53,7 @@ _xarm7_cfg = _catalog_xarm7(
 
 # XArm6 mock sim + keyboard teleop + Drake visualization
 keyboard_teleop_xarm6 = autoconnect(
-    KeyboardTeleopModule.blueprint(model_path=XARM6_FK_MODEL, ee_joint_id=_xarm6_cfg.dof),
+    KeyboardTeleopModule.blueprint(model_path=str(XARM6_FK_MODEL), ee_joint_id=_xarm6_cfg.dof),
     ControlCoordinator.blueprint(
         tick_rate=100.0,
         publish_joint_state=True,
