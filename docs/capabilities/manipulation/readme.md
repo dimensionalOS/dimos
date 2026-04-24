@@ -45,7 +45,7 @@ Then use the IPython client:
 python -m dimos.manipulation.planning.examples.manipulation_client
 ```
 
-```python
+```python skip
 joints()                # Get current joints
 plan([0.1] * 7)         # Plan to target
 preview()               # Preview in Meshcat

@@ -10,7 +10,11 @@ Define a `Case` dataclass that holds everything needed to run tests against a sp
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import Any, Generic
+from typing import Any, Generic, TypeVar
+
+TopicT = TypeVar("TopicT")
+MsgT = TypeVar("MsgT")
+
 
 @dataclass
 class Case(Generic[TopicT, MsgT]):
@@ -28,7 +32,7 @@ class Case(Generic[TopicT, MsgT]):
 
 Use tags to indicate what features each implementation supports:
 
-```python
+```python skip
 testcases = [
     Case(
         name="lcm_typed",
@@ -49,7 +53,7 @@ testcases = [
 
 Build separate lists for each capability to use with parametrize:
 
-```python
+```python skip
 all_cases = [c for c in testcases if "all" in c.tags]
 glob_cases = [c for c in testcases if "glob" in c.tags]
 regex_cases = [c for c in testcases if "regex" in c.tags]
@@ -59,7 +63,7 @@ regex_cases = [c for c in testcases if "regex" in c.tags]
 
 Use the filtered lists in parametrize decorators:
 
-```python
+```python skip
 @pytest.mark.parametrize("case", all_cases, ids=lambda c: c.name)
 def test_subscribe_all(case: Case) -> None:
     with case.pubsub_context() as pubsub:
@@ -79,6 +83,12 @@ def test_subscribe_glob(case: Case) -> None:
 Each implementation provides a context manager factory:
 
 ```python
+from collections.abc import Generator
+from contextlib import contextmanager
+
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+
+
 @contextmanager
 def lcm_typed_context() -> Generator[LCM, None, None]:
     lcm = LCM()
@@ -93,7 +103,7 @@ def lcm_typed_context() -> Generator[LCM, None, None]:
 - For typed implementations, use different types per topic to verify type handling
 - For bytes implementations, use simple distinguishable byte strings
 
-```python
+```python skip
 # Typed test data - different types per topic
 typed_topic_values = [
     (Topic("/sensor/position", Vector3), Vector3(1, 2, 3)),

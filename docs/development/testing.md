@@ -83,6 +83,28 @@ Whenever you have something that needs to be cleaned up when the test is over (d
 Simple example code:
 
 ```python
+import pytest
+
+
+class RobotArm:
+    def __init__(self, device: str) -> None:
+        self.device = device
+        self._position = (0.0, 0.0, 0.0)
+
+    def connect(self) -> None:
+        return None
+
+    def disconnect(self) -> None:
+        return None
+
+    def move_to(self, x: float, y: float, z: float) -> None:
+        self._position = (x, y, z)
+
+    @property
+    def position(self) -> tuple[float, float, float]:
+        return self._position
+
+
 @pytest.fixture
 def arm():
     arm = RobotArm(device="/dev/ttyUSB0")
