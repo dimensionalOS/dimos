@@ -16,13 +16,13 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from dimos.memory2.vis.plot.elements import HLine, Markers, PlotElement, Series, VLine
 
 
-class TimeAxis(str, Enum):
+class TimeAxis(StrEnum):
     """How the x-axis is formatted.
 
     - ``raw``: unix timestamps as-is (matplotlib's default numeric formatter).

@@ -16,8 +16,7 @@ from __future__ import annotations
 
 from functools import reduce
 from operator import add
-import sys
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, Self, TypeVar
 
 if sys.version_info >= (3, 11):
     from typing import Self

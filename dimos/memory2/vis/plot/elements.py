@@ -17,11 +17,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Union
 
 
-class Style(str, Enum):
+class Style(StrEnum):
     """Line style for Series and HLine elements.
 
     Values match matplotlib's `linestyle` names so they pass through directly
