@@ -1,5 +1,7 @@
 # Dimensional AGENTS.md
 
+**English** | [中文](AGENTS.zh-CN.md)
+
 ## What is DimOS
 
 The agentic operating system for generalist robotics. `Modules` communicate via typed streams over LCM, ROS2, DDS, or other transports. `Blueprints` compose modules into runnable robot stacks. `Skills` give agents the ability to execute physical on-hardware functions like `grab()`, `follow_object()`, or `jump()`.
