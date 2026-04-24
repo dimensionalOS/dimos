@@ -65,16 +65,23 @@ def _estimate_marker_poses(
         [[-half, half, 0.0], [half, half, 0.0], [half, -half, 0.0], [-half, -half, 0.0]],
         dtype=np.float32,
     )
-    rvecs = np.zeros((len(corners), 1, 3), dtype=np.float64)
-    tvecs = np.zeros((len(corners), 1, 3), dtype=np.float64)
-    for i, c in enumerate(corners):
+    rvecs_out: list[np.ndarray] = []
+    tvecs_out: list[np.ndarray] = []
+    for c in corners:
         ok, rvec, tvec = cv2.solvePnP(
             obj_points, c.reshape(-1, 2), camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_IPPE_SQUARE
         )
         if ok:
-            rvecs[i, 0] = rvec.flatten()
-            tvecs[i, 0] = tvec.flatten()
-    return rvecs, tvecs
+            rvecs_out.append(rvec.flatten())
+            tvecs_out.append(tvec.flatten())
+
+    if not rvecs_out:
+        return np.zeros((0, 1, 3), dtype=np.float64), np.zeros((0, 1, 3), dtype=np.float64)
+
+    return (
+        np.array(rvecs_out, dtype=np.float64)[:, np.newaxis, :],
+        np.array(tvecs_out, dtype=np.float64)[:, np.newaxis, :],
+    )
 
 
 @dataclass
@@ -234,10 +241,17 @@ class ArucoTracker(Module[ArucoTrackerConfig]):
             self._publish_annotated_image(display_image, image.format.name)
             return
 
-        # Estimate poses
+        # Estimate poses (failed solvePnP results are filtered out)
         rvecs, tvecs = _estimate_marker_poses(
             list(corners), self.config.marker_size, self._camera_matrix, self._dist_coeffs
         )
+        if len(rvecs) != self.config.expected_marker_count:
+            logger.debug(
+                f"Only {len(rvecs)}/{self.config.expected_marker_count} markers "
+                f"produced a valid solvePnP pose"
+            )
+            self._publish_annotated_image(display_image, image.format.name)
+            return
         avg_position, avg_quat = self._average_marker_poses(rvecs, tvecs)
 
         # Publish transform: camera_optical → aruco_avg
