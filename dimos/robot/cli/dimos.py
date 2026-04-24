@@ -24,7 +24,7 @@ from pathlib import Path
 import sys
 import time
 import types
-from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin
 
 import click
 from dotenv import load_dotenv
@@ -39,6 +39,7 @@ from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.constants import RerunOpenOption
 
 if TYPE_CHECKING:
     from dimos.core.coordination.blueprints import Blueprint, BlueprintAtom
@@ -681,12 +682,10 @@ def rerun_bridge_cmd(
     traffic without building a full module graph.
     """
     import signal
-    from typing import cast, get_args
 
     from dimos.protocol.pubsub.impl.lcmpubsub import LCM
     from dimos.protocol.service.lcmservice import autoconf
     from dimos.visualization.rerun.bridge import RerunBridgeModule
-    from dimos.visualization.rerun.constants import RerunOpenOption
 
     valid = get_args(RerunOpenOption)
     if rerun_open not in valid:
