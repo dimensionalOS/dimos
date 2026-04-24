@@ -48,13 +48,13 @@ class MemoryVectorStore(VectorStore):
     def put(self, stream_name: str, key: int, embedding: Embedding) -> None:
         self._vectors.setdefault(stream_name, {})[key] = embedding
 
-    def search(self, stream_name: str, query: Embedding, k: int) -> list[tuple[int, float]]:
+    def search(self, stream_name: str, query: Embedding, k: int | None) -> list[tuple[int, float]]:
         vectors = self._vectors.get(stream_name, {})
         if not vectors:
             return []
         scored = [(key, float(emb @ query)) for key, emb in vectors.items()]
         scored.sort(key=lambda x: x[1], reverse=True)
-        return scored[:k]
+        return scored if k is None else scored[:k]
 
     def delete(self, stream_name: str, key: int) -> None:
         vectors = self._vectors.get(stream_name, {})

@@ -39,7 +39,6 @@ from toolz import pipe  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
@@ -52,6 +51,7 @@ from dimos.visualization.rerun.constants import (
     RERUN_WEB_PORT,
     RerunOpenOption,
 )
+from dimos.visualization.rerun.init import rerun_init
 
 # TODO OUT visual annotations
 #
@@ -200,6 +200,7 @@ class RerunBridgeModule(Module):
     config: Config
     _last_log: dict[str, float]
 
+    # TODO this doesn't belong here, either hardcode it or put it to rerun bridge config
     GRAPH_VIZ_SCALE = 100.0
     MODULE_RADIUS = 20.0
     CHANNEL_RADIUS = 12.0
@@ -297,7 +298,7 @@ class RerunBridgeModule(Module):
             entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
         }
 
-        rr.init("dimos")
+        rerun_init("dimos")
 
         parsed = urlparse(self.config.connect_url.replace("rerun+", "", 1))
         grpc_port = parsed.port or RERUN_GRPC_PORT
@@ -370,9 +371,6 @@ class RerunBridgeModule(Module):
 
         if self.config.blueprint:
             rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
-
-        # Register colormap for viewer-side color resolution (PointCloud2 class_ids)
-        register_colormap_annotation("turbo")
 
         for pubsub in self.config.pubsubs:
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")

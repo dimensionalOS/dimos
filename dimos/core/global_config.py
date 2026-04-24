@@ -37,7 +37,7 @@ class GlobalConfig(BaseSettings):
     can_port: str | None = None
     simulation: bool = False
     replay: bool = False
-    replay_dir: str = "go2_sf_office"
+    replay_db: str = "go2_bigoffice"
     new_memory: bool = False
     viewer: ViewerBackend = "rerun"
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT

@@ -14,9 +14,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
+import sys
 import threading
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
+
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
+    from typing_extensions import Self
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -25,6 +31,7 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 T = TypeVar("T")
+R = TypeVar("R")
 
 
 class _Unloaded:
@@ -45,6 +52,7 @@ class Observation(Generic[T]):
 
     id: int
     ts: float
+    data_type: type = object
     pose: Any | None = None
     tags: dict[str, Any] = field(default_factory=dict)
     _data: T | _Unloaded = field(default=_UNLOADED, repr=False)
@@ -58,7 +66,8 @@ class Observation(Generic[T]):
         if self.pose is None:
             raise LookupError("No pose set on this observation")
         x, y, z, qx, qy, qz, qw = self.pose
-        return PoseStamped(ts=self.ts, position=(x, y, z), orientation=(qx, qy, qz, qw))
+        ps: PoseStamped = PoseStamped(ts=self.ts, position=(x, y, z), orientation=(qx, qy, qz, qw))
+        return ps
 
     @property
     def data(self) -> T:
@@ -77,29 +86,32 @@ class Observation(Generic[T]):
             return val
         return val
 
-    def derive(self, *, data: Any, **overrides: Any) -> Observation[Any]:
-        """Create a new observation preserving ts/pose/tags, replacing data.
+    def derive(self, *, data: R, **overrides: Any) -> Observation[R]:
+        """New observation with replaced ``data``; other fields carry over.
 
-        If ``embedding`` is passed, promotes the result to
+        Passing ``embedding`` on a plain :class:`Observation` promotes it to
         :class:`EmbeddedObservation`.
         """
-        if "embedding" in overrides:
-            return EmbeddedObservation(
-                id=self.id,
-                ts=overrides.get("ts", self.ts),
-                pose=overrides.get("pose", self.pose),
-                tags=overrides.get("tags", self.tags),
-                _data=data,
-                embedding=overrides["embedding"],
-                similarity=overrides.get("similarity"),
-            )
-        return Observation(
-            id=self.id,
-            ts=overrides.get("ts", self.ts),
-            pose=overrides.get("pose", self.pose),
-            tags=overrides.get("tags", self.tags),
-            _data=data,
+        cls: type[Observation[Any]] = (
+            EmbeddedObservation
+            if "embedding" in overrides and not isinstance(self, EmbeddedObservation)
+            else type(self)
         )
+        kwargs: dict[str, Any] = {f.name: getattr(self, f.name) for f in fields(self)}
+        kwargs.update(overrides)
+        kwargs.update(data_type=type(data), _data=data, _loader=None, _data_lock=threading.Lock())
+        return cast("Observation[R]", cls(**kwargs))
+
+    def tag(self, **tags: Any) -> Self:
+        """Return a new observation with tags merged in."""
+        kwargs: dict[str, Any] = {f.name: getattr(self, f.name) for f in fields(self)}
+        kwargs.update(
+            tags={**self.tags, **tags},
+            _data=_UNLOADED,
+            _loader=lambda: self.data,
+            _data_lock=threading.Lock(),
+        )
+        return type(self)(**kwargs)
 
 
 @dataclass
@@ -108,15 +120,3 @@ class EmbeddedObservation(Observation[T]):
 
     embedding: Embedding | None = None
     similarity: float | None = None
-
-    def derive(self, *, data: Any, **overrides: Any) -> EmbeddedObservation[Any]:
-        """Preserve embedding unless explicitly replaced."""
-        return EmbeddedObservation(
-            id=self.id,
-            ts=overrides.get("ts", self.ts),
-            pose=overrides.get("pose", self.pose),
-            tags=overrides.get("tags", self.tags),
-            _data=data,
-            embedding=overrides.get("embedding", self.embedding),
-            similarity=overrides.get("similarity", self.similarity),
-        )

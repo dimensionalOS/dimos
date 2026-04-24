@@ -52,8 +52,12 @@ class VectorStore(Configurable, CompositeResource):
         ...
 
     @abstractmethod
-    def search(self, stream_name: str, query: Embedding, k: int) -> list[tuple[int, float]]:
-        """Return top-k (observation_id, similarity) pairs, descending."""
+    def search(self, stream_name: str, query: Embedding, k: int | None) -> list[tuple[int, float]]:
+        """Return top-k (observation_id, similarity) pairs, descending.
+
+        ``k=None`` means "store default" — backends that require a bound
+        (e.g. sqlite-vec) pick one internally; unbounded backends return all.
+        """
         ...
 
     @abstractmethod
