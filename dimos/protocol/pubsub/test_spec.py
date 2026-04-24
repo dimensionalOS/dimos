@@ -282,6 +282,7 @@ async def test_async_iterator(
 
 
 @pytest.mark.slow
+@pytest.mark.skipif_macos_bug
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
 def test_high_volume_messages(
     pubsub_context: Callable[[], Any], topic: Any, values: list[Any]
