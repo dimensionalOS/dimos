@@ -2452,6 +2452,161 @@ mode gone, click-to-goal should just work.
 
 ---
 
+## Finding #36: Post-OTA drdds-recv matched=0 regression (2026-04-23, IN PROGRESS — HANDOFF)
+
+User ran DeepRobotics M20 V1.1.8.5 OTA. NOS came back with most
+customizations intact but two regressions. Regression #1 resolved,
+Regression #2 is the current blocker.
+
+### Regression 1 (RESOLVED): rsdriver config reverted
+
+`/opt/robot/share/node_driver/config/config.yaml` was reset to
+factory defaults:
+- `send_separately: true → false`
+- `ts_first_point: false → true`
+
+Fix applied: scp'd `~/m20_backup_20260423-152443/rsdriver_config.yaml`
+back into place; `systemctl restart rsdriver`.
+
+Confirms Gus's "different /opt/robot/ subtrees get different OTA
+treatment" hypothesis — `/opt/robot/scripts/system/...` (Gus's)
+survived; `/opt/robot/share/node_driver/...` (ours) didn't.
+
+### Regression 2 (CURRENT BLOCKER): drdds_recv ABI + matched=0
+
+**Step A (done): rebuilt drdds_recv.** Our Apr 21 binary was
+linked against a 3-arg `DrDDSChannel` ctor. OTA-installed
+`libdrdds.so` (Mar 18) only provides a 5-arg ctor: `(callback,
+topic, domain, use_shm=false, topic_prefix="rt")`. Symbol
+lookup error at launch. Rebuilt with `cd
+/var/opt/robot/data/dimos/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/build
+&& make drdds_recv -B`. Installed to
+`/opt/drdds_bridge/lib/drdds_bridge/drdds_recv` via sudo cp.
+Binary now loads cleanly.
+
+**Step B (BLOCKED): matched=0 on every channel, including
+self-match.**
+
+Symptoms:
+- drdds_recv runs stable (5+ min uptime, no crash)
+- status log every 5s: all 5 channels `matched=0`
+- rsdriver hardware packets arriving (`msg_lidar id: 0/1` in
+  journal)
+- Startup ordering dance applied (drdds-recv first, rsdriver 35s
+  later; SHM segments cleaned between stops)
+
+**Critical difference from pre-OTA failure mode**: pre-OTA wrong-
+ordering bug produced `matched=1, msgs=0` (DrDDSChannel self-match
+worked, remote discovery failed). Now we see `matched=0`, meaning
+the DrDDSChannel's internal pub+sub aren't even self-matching.
+That's a new failure class.
+
+### Codex ranked hypotheses (agent a757777c8b55971e4)
+
+1. **Most likely: `use_shm=false` default transport mismatch.**
+   Our positional 3-arg call resolves to 5-arg with `use_shm=false`
+   → UDP transport. rsdriver is SHM-only (Finding #4). Transport
+   mismatch → no discovery, no self-match.
+
+2. **Also likely: `topic_prefix="rt"` default.** New 5-arg ctor
+   defaults `topic_prefix="rt"`, so subscriber listens for
+   `rt/LIDAR/POINTS` while rsdriver publishes bare
+   `/LIDAR/POINTS`. Universal non-match fits.
+
+3. Possible: `DrDDSManager::Init` param positions shifted.
+
+4. Possible: `FASTRTPS_DEFAULT_PROFILES_FILE` env var or
+   `/opt/drdds/dr_qos/drqos.xml` OTA-replaced with UDP-only
+   transport profile that overrides ctor flags.
+
+### Fix to try next session
+
+**Step 1:** Check env var + QoS XML didn't change:
+```
+ssh [...] 'echo FASTRTPS_DEFAULT_PROFILES_FILE=$FASTRTPS_DEFAULT_PROFILES_FILE'
+ssh [...] 'md5sum /opt/drdds/dr_qos/drqos.xml'
+# Compare against session baseline (current file already inspected,
+# matches expected RELIABLE/deadline config).
+```
+
+**Step 2:** Edit
+`dimos/robot/deeprobotics/m20/drdds_bridge/cpp/drdds_recv.cpp`
+lines 225-234 — pass `use_shm=true, ""` explicitly on all 5
+DrDDSChannel constructors:
+
+```cpp
+// Pre-fix (3-arg, defaults use_shm=false, topic_prefix="rt")
+DrDDSChannel<PointCloud2PubSubType> lidar_ch(
+    on_lidar, "/LIDAR/POINTS", 0);
+
+// Post-fix (explicit SHM, empty prefix to match rsdriver bare topic)
+DrDDSChannel<PointCloud2PubSubType> lidar_ch(
+    on_lidar, "/LIDAR/POINTS", 0, true, "");
+```
+
+Apply to all 5: `lidar_ch`, `lidar2_ch`, `imu_ch`,
+`imu_airy_front_ch`, `imu_airy_rear_ch`.
+
+**Step 3:** Rebuild + install + full restart dance:
+```bash
+cd /var/opt/robot/data/dimos/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/build
+make drdds_recv -B
+sudo cp drdds_recv /opt/drdds_bridge/lib/drdds_bridge/drdds_recv
+
+sudo systemctl stop rsdriver drdds-recv
+sudo killall -9 yesense_node
+sudo /usr/local/sbin/m20-clean-shm
+sudo systemctl start drdds-recv
+sleep 5
+sudo systemctl start rsdriver
+sleep 35
+# yesense restarts automatically or: sudo systemctl restart yesense
+cat /var/log/drdds_recv.log | strings | grep status | tail -3
+```
+
+Expect: `matched=1` on self-match immediately after drdds-recv
+starts, then `matched=2` once rsdriver publishes, then `_msgs`
+incrementing.
+
+**Step 4:** If STILL matched=0, isolate the two changes:
+- Try `use_shm=true, "rt"` (only transport fix) — verify
+  rsdriver uses bare prefix
+- Try `use_shm=false, ""` (only prefix fix) — verify rsdriver
+  uses UDP transport
+
+### State at handoff
+
+**Current NOS state:**
+- rsdriver running, hardware packets flowing through it
+- drdds-recv running (new binary), matched=0 on all 5 channels
+- yesense running, publishing /IMU on DDS (also matched=0 from
+  our side)
+- smartnav NOT started (blocked on drdds-recv matching)
+- /etc/fstab + kernel cmdline + systemd units + nix store all
+  intact
+- rsdriver config restored from backup
+
+**What's on git:**
+Branch `feat/deeprobotics-m20-nav`, last commit `38eaf5308`
+(upgrade plan). All session code committed including drdds_recv.
+cpp source with current 3-arg calls.
+
+**What's NOT yet on git:**
+The drdds_recv.cpp fix (use_shm=true, ""). That's the next
+session's edit.
+
+**Backup tarball location:** `~/m20_backup_20260423-152443/`
+(Mac side). Contains pre-OTA rsdriver config,
+etc_fstab, systemd units, kernel cmdline, nix GC roots —
+all the recovery state.
+
+**Mail thread with Gus:** `hq-wisp-q0567` — Gus reports his side
+fully clean, nothing drifted. Not involved in drdds debug.
+
+**Codex agent with hypothesis diff:** `a757777c8b55971e4`.
+
+---
+
 ## Questions for Jeff (2026-04-23, in-person at Dimensional)
 
 **IMPORTANT**: Updated after Finding #33. Rotation is fixed; questions
