@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-from functools import partial
 import inspect
 import logging
 import os
@@ -254,5 +253,5 @@ class Recorder(MemoryModule):
 
         for name, port in self.inputs.items():
             stream: Stream[Any] = self.store.stream(name, port.type)
-            self.register_disposable(Disposable(port.subscribe(partial(Stream.append, stream))))
+            self.register_disposable(Disposable(port.subscribe(stream.append)))
             logger.info("Recording %s (%s)", name, port.type.__name__)
