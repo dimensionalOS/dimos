@@ -38,6 +38,7 @@ from typing import Any
 
 import pytest
 
+from dimos.visualization.rerun.conftest import wait_for_server
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 _E2E_PORT = 13032
@@ -45,23 +46,6 @@ _E2E_PORT = 13032
 
 def _make_server(port: int = _E2E_PORT) -> RerunWebSocketServer:
     return RerunWebSocketServer(port=port)
-
-
-def _wait_for_server(port: int, timeout: float = 5.0) -> None:
-    import websockets.asyncio.client as ws_client
-
-    async def _probe() -> None:
-        async with ws_client.connect(f"ws://127.0.0.1:{port}/ws"):
-            pass
-
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            asyncio.run(_probe())
-            return
-        except Exception:
-            time.sleep(0.05)
-    raise TimeoutError(f"Server on port {port} did not become ready within {timeout}s")
 
 
 def _send_messages(port: int, messages: list[dict[str, Any]], *, delay: float = 0.05) -> None:
@@ -89,7 +73,7 @@ class TestViewerProtocolE2E:
         """A viewer click message received over WebSocket publishes PointStamped."""
         server = _make_server()
         server.start()
-        _wait_for_server(_E2E_PORT)
+        wait_for_server(_E2E_PORT)
 
         received: list[Any] = []
         done = threading.Event()
@@ -129,7 +113,7 @@ class TestViewerProtocolE2E:
         """Twist messages from keyboard control do not publish clicked_point."""
         server = _make_server()
         server.start()
-        _wait_for_server(_E2E_PORT)
+        wait_for_server(_E2E_PORT)
 
         received: list[Any] = []
         server.clicked_point.subscribe(received.append)
@@ -156,7 +140,7 @@ class TestViewerProtocolE2E:
         """Stop messages do not publish clicked_point."""
         server = _make_server()
         server.start()
-        _wait_for_server(_E2E_PORT)
+        wait_for_server(_E2E_PORT)
 
         received: list[Any] = []
         server.clicked_point.subscribe(received.append)
@@ -170,7 +154,7 @@ class TestViewerProtocolE2E:
         """Realistic session: connect, heartbeats, click, WASD, stop → one point."""
         server = _make_server()
         server.start()
-        _wait_for_server(_E2E_PORT)
+        wait_for_server(_E2E_PORT)
 
         received: list[Any] = []
         done = threading.Event()
@@ -227,7 +211,7 @@ class TestViewerProtocolE2E:
         """Server keeps accepting new connections after a client disconnects."""
         server = _make_server()
         server.start()
-        _wait_for_server(_E2E_PORT)
+        wait_for_server(_E2E_PORT)
 
         received: list[Any] = []
         all_done = threading.Event()
@@ -272,7 +256,7 @@ class TestViewerBinaryConnectMode:
         """dimos-viewer --connect starts and its WS client connects to our server."""
         server = _make_server()
         server.start()
-        _wait_for_server(_E2E_PORT)
+        wait_for_server(_E2E_PORT)
 
         received: list[Any] = []
 

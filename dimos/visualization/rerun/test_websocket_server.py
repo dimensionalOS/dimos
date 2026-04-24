@@ -24,6 +24,7 @@ import threading
 import time
 from typing import Any
 
+from dimos.visualization.rerun.conftest import wait_for_server
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 _TEST_PORT = 13031
@@ -142,32 +143,13 @@ def _make_module(port: int = _TEST_PORT, cmd_vel_scaling: Any = None) -> RerunWe
     return RerunWebSocketServer(**kwargs)
 
 
-def _wait_for_server(port: int, timeout: float = 3.0) -> None:
-    """Block until the WebSocket server accepts an upgrade handshake."""
-
-    async def _probe() -> None:
-        import websockets.asyncio.client as ws_client
-
-        async with ws_client.connect(f"ws://127.0.0.1:{port}/ws"):
-            pass
-
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            asyncio.run(_probe())
-            return
-        except Exception:
-            time.sleep(0.05)
-    raise TimeoutError(f"Server on port {port} did not become ready within {timeout}s")
-
-
 class TestRerunWebSocketServerStartup:
     def test_server_binds_port(self) -> None:
         """After start(), the server must be reachable on the configured port."""
         mod = _make_module()
         mod.start()
         try:
-            _wait_for_server(_TEST_PORT)
+            wait_for_server(_TEST_PORT)
         finally:
             mod.stop()
 
@@ -175,7 +157,7 @@ class TestRerunWebSocketServerStartup:
         """Calling stop() twice must not raise."""
         mod = _make_module()
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
         mod.stop()
         mod.stop()
 
@@ -185,7 +167,7 @@ class TestClickMessages:
         """A single click publishes one PointStamped with correct coords."""
         mod = _make_module()
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
 
         received: list[Any] = []
         done = threading.Event()
@@ -208,7 +190,7 @@ class TestClickMessages:
         """entity_path is stored as frame_id on the published PointStamped."""
         mod = _make_module()
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
 
         received: list[Any] = []
         done = threading.Event()
@@ -226,7 +208,7 @@ class TestClickMessages:
         """timestamp_ms is converted to seconds on PointStamped.ts."""
         mod = _make_module()
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
 
         received: list[Any] = []
         done = threading.Event()
@@ -244,7 +226,7 @@ class TestClickMessages:
         """A burst of clicks all arrive on the stream."""
         mod = _make_module()
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
 
         received: list[Any] = []
         all_arrived = threading.Event()
@@ -273,7 +255,7 @@ class TestNonClickMessages:
         """Heartbeat messages must not trigger a clicked_point publish."""
         mod = _make_module()
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
 
         clicks: list[Any] = []
         twists: list[Any] = []
@@ -295,7 +277,7 @@ class TestNonClickMessages:
         """Twist messages must not trigger a clicked_point publish."""
         mod = _make_module()
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
 
         clicks: list[Any] = []
         twists: list[Any] = []
@@ -315,7 +297,7 @@ class TestNonClickMessages:
         """Stop messages must not trigger a clicked_point publish."""
         mod = _make_module()
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
 
         clicks: list[Any] = []
         twists: list[Any] = []
@@ -335,7 +317,7 @@ class TestNonClickMessages:
         """Twist messages publish a Twist on the tele_cmd_vel stream."""
         mod = _make_module()
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
 
         received: list[Any] = []
         done = threading.Event()
@@ -361,7 +343,7 @@ class TestNonClickMessages:
             cmd_vel_scaling=CmdVelScaling(x=0.5, y=2.0, z=0.0, roll=1.0, pitch=3.0, yaw=0.25)
         )
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
 
         received: list[Any] = []
         done = threading.Event()
@@ -387,7 +369,7 @@ class TestNonClickMessages:
         """Default CmdVelScaling() must pass twists through untouched."""
         mod = _make_module()
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
 
         received: list[Any] = []
         done = threading.Event()
@@ -413,7 +395,7 @@ class TestNonClickMessages:
         """Stop messages publish a zero Twist on the tele_cmd_vel stream."""
         mod = _make_module()
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
 
         received: list[Any] = []
         done = threading.Event()
@@ -436,7 +418,7 @@ class TestNonClickMessages:
 
         mod = _make_module()
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
 
         async def _send_bad() -> None:
             async with ws_client.connect(f"ws://127.0.0.1:{_TEST_PORT}/ws") as ws:
@@ -452,7 +434,7 @@ class TestNonClickMessages:
         """Realistic sequence: heartbeat → click → twist → stop publishes one point."""
         mod = _make_module()
         mod.start()
-        _wait_for_server(_TEST_PORT)
+        wait_for_server(_TEST_PORT)
 
         # Subscribe before sending so we don't race against the click dispatch.
         received: list[Any] = []
