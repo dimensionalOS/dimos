@@ -12,20 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""End-to-end test: dimos-viewer (headless) → WebSocket → RerunWebSocketServer.
+"""End-to-end tests for dimos-viewer ↔ RerunWebSocketServer protocol."""
 
-dimos-viewer is started in ``--connect`` mode so it initialises its WebSocket
-client.  The viewer needs a gRPC proxy to connect to; we give it a non-existent
-one so the viewer starts up anyway but produces no visualisation.  The important
-part is that the WebSocket client inside the viewer tries to connect to
-``ws://127.0.0.1:<port>/ws``.
-
-Because the viewer is a native GUI application it cannot run headlessly in CI
-without a display.  This test therefore verifies the connection at the protocol
-level by using the ``RerunWebSocketServer`` module directly as the server and
-injecting synthetic JSON messages that mimic what the viewer would send once a
-user clicks in the 3D viewport.
-"""
+from __future__ import annotations
 
 import asyncio
 import json
@@ -44,8 +33,13 @@ from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 _E2E_PORT = 13032
 
 
-def _make_server(port: int = _E2E_PORT) -> RerunWebSocketServer:
-    return RerunWebSocketServer(port=port)
+@pytest.fixture()
+def server() -> RerunWebSocketServer:
+    module = RerunWebSocketServer(port=_E2E_PORT)
+    module.start()
+    wait_for_server(_E2E_PORT)
+    yield module  # type: ignore[misc]
+    module.stop()
 
 
 def _send_messages(port: int, messages: list[dict[str, Any]], *, delay: float = 0.05) -> None:
@@ -61,28 +55,13 @@ def _send_messages(port: int, messages: list[dict[str, Any]], *, delay: float = 
 
 
 class TestViewerProtocolE2E:
-    """Verify the full Python-server side of the viewer ↔ DimOS protocol.
+    """Verify the Python-server side of the viewer ↔ DimOS protocol."""
 
-    These tests use the ``RerunWebSocketServer`` as the server and a dummy
-    WebSocket client (playing the role of dimos-viewer) to inject messages.
-    They confirm every message type is correctly routed and that only click
-    messages produce stream publishes.
-    """
-
-    def test_viewer_click_reaches_stream(self) -> None:
-        """A viewer click message received over WebSocket publishes PointStamped."""
-        server = _make_server()
-        server.start()
-        wait_for_server(_E2E_PORT)
-
+    def test_viewer_click_reaches_stream(self, server: RerunWebSocketServer) -> None:
+        """A viewer click over WebSocket publishes PointStamped."""
         received: list[Any] = []
         done = threading.Event()
-
-        def _on_pt(pt: Any) -> None:
-            received.append(pt)
-            done.set()
-
-        server.clicked_point.subscribe(_on_pt)
+        unsub = server.clicked_point.subscribe(lambda pt: (received.append(pt), done.set()))
 
         _send_messages(
             _E2E_PORT,
@@ -99,79 +78,27 @@ class TestViewerProtocolE2E:
         )
 
         done.wait(timeout=3.0)
-        server.stop()
+        unsub()
 
         assert len(received) == 1
         pt = received[0]
-        assert abs(pt.x - 10.0) < 1e-9
-        assert abs(pt.y - 20.0) < 1e-9
-        assert abs(pt.z - 0.5) < 1e-9
+        assert pt.x == pytest.approx(10.0)
+        assert pt.y == pytest.approx(20.0)
+        assert pt.z == pytest.approx(0.5)
         assert pt.frame_id == "/world/robot"
-        assert abs(pt.ts - 42.0) < 1e-6
+        assert pt.ts == pytest.approx(42.0)
 
-    def test_viewer_keyboard_twist_no_publish(self) -> None:
-        """Twist messages from keyboard control do not publish clicked_point."""
-        server = _make_server()
-        server.start()
-        wait_for_server(_E2E_PORT)
-
-        received: list[Any] = []
-        server.clicked_point.subscribe(received.append)
-
-        _send_messages(
-            _E2E_PORT,
-            [
-                {
-                    "type": "twist",
-                    "linear_x": 0.5,
-                    "linear_y": 0.0,
-                    "linear_z": 0.0,
-                    "angular_x": 0.0,
-                    "angular_y": 0.0,
-                    "angular_z": 0.8,
-                }
-            ],
-        )
-
-        server.stop()
-        assert received == []
-
-    def test_viewer_stop_no_publish(self) -> None:
-        """Stop messages do not publish clicked_point."""
-        server = _make_server()
-        server.start()
-        wait_for_server(_E2E_PORT)
-
-        received: list[Any] = []
-        server.clicked_point.subscribe(received.append)
-
-        _send_messages(_E2E_PORT, [{"type": "stop"}])
-
-        server.stop()
-        assert received == []
-
-    def test_full_viewer_session_sequence(self) -> None:
-        """Realistic session: connect, heartbeats, click, WASD, stop → one point."""
-        server = _make_server()
-        server.start()
-        wait_for_server(_E2E_PORT)
-
+    def test_full_viewer_session_sequence(self, server: RerunWebSocketServer) -> None:
+        """Realistic session: heartbeats, click, twist, stop — only the click produces a point."""
         received: list[Any] = []
         done = threading.Event()
-
-        def _on_pt(pt: Any) -> None:
-            received.append(pt)
-            done.set()
-
-        server.clicked_point.subscribe(_on_pt)
+        unsub = server.clicked_point.subscribe(lambda pt: (received.append(pt), done.set()))
 
         _send_messages(
             _E2E_PORT,
             [
-                # Initial heartbeats (viewer connects and starts 1 Hz heartbeat)
                 {"type": "heartbeat", "timestamp_ms": 1000},
                 {"type": "heartbeat", "timestamp_ms": 2000},
-                # User clicks a point in the 3D viewport
                 {
                     "type": "click",
                     "x": 3.14,
@@ -180,7 +107,6 @@ class TestViewerProtocolE2E:
                     "entity_path": "/world",
                     "timestamp_ms": 3000,
                 },
-                # User presses W (forward)
                 {
                     "type": "twist",
                     "linear_x": 0.5,
@@ -190,29 +116,22 @@ class TestViewerProtocolE2E:
                     "angular_y": 0.0,
                     "angular_z": 0.0,
                 },
-                # User releases W
                 {"type": "stop"},
-                # Another heartbeat
                 {"type": "heartbeat", "timestamp_ms": 4000},
             ],
             delay=0.2,
         )
 
         done.wait(timeout=3.0)
-        server.stop()
+        unsub()
 
         assert len(received) == 1, f"Expected exactly 1 click, got {len(received)}"
-        pt = received[0]
-        assert abs(pt.x - 3.14) < 1e-9
-        assert abs(pt.y - 2.71) < 1e-9
-        assert abs(pt.z - 1.41) < 1e-9
+        assert received[0].x == pytest.approx(3.14)
+        assert received[0].y == pytest.approx(2.71)
+        assert received[0].z == pytest.approx(1.41)
 
-    def test_reconnect_after_disconnect(self) -> None:
+    def test_reconnect_after_disconnect(self, server: RerunWebSocketServer) -> None:
         """Server keeps accepting new connections after a client disconnects."""
-        server = _make_server()
-        server.start()
-        wait_for_server(_E2E_PORT)
-
         received: list[Any] = []
         all_done = threading.Event()
 
@@ -221,30 +140,45 @@ class TestViewerProtocolE2E:
             if len(received) >= 2:
                 all_done.set()
 
-        server.clicked_point.subscribe(_on_pt)
+        unsub = server.clicked_point.subscribe(_on_pt)
 
-        # First connection — send one click and disconnect
         _send_messages(
             _E2E_PORT,
             [{"type": "click", "x": 1.0, "y": 0.0, "z": 0.0, "entity_path": "", "timestamp_ms": 0}],
         )
-
-        # Second connection (simulating viewer reconnect) — send another click
         _send_messages(
             _E2E_PORT,
             [{"type": "click", "x": 2.0, "y": 0.0, "z": 0.0, "entity_path": "", "timestamp_ms": 0}],
         )
 
         all_done.wait(timeout=5.0)
-        server.stop()
+        unsub()
 
         xs = sorted(pt.x for pt in received)
         assert xs == [1.0, 2.0], f"Unexpected xs: {xs}"
 
 
 class TestViewerBinaryConnectMode:
-    """Smoke test: dimos-viewer binary starts in --connect mode and its WebSocket
-    client attempts to connect to our Python server."""
+    """Smoke test: dimos-viewer binary starts in --connect mode."""
+
+    @pytest.fixture()
+    def viewer_process(self, server: RerunWebSocketServer) -> subprocess.Popen[bytes]:
+        proc = subprocess.Popen(
+            [
+                "dimos-viewer",
+                "--connect",
+                f"--ws-url=ws://127.0.0.1:{_E2E_PORT}/ws",
+            ],
+            env={**os.environ, "DISPLAY": ""},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        yield proc  # type: ignore[misc]
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
     @pytest.mark.skipif(
         shutil.which("dimos-viewer") is None
@@ -252,52 +186,20 @@ class TestViewerBinaryConnectMode:
         not in subprocess.run(["dimos-viewer", "--help"], capture_output=True, text=True).stdout,
         reason="dimos-viewer binary not installed or does not support --connect",
     )
-    def test_viewer_ws_client_connects(self) -> None:
+    def test_viewer_ws_client_connects(self, viewer_process: subprocess.Popen[bytes]) -> None:
         """dimos-viewer --connect starts and its WS client connects to our server."""
-        server = _make_server()
-        server.start()
-        wait_for_server(_E2E_PORT)
-
-        received: list[Any] = []
-
-        def _on_pt(pt: Any) -> None:
-            received.append(pt)
-
-        server.clicked_point.subscribe(_on_pt)
-
-        # Start dimos-viewer in --connect mode, pointing it at a non-existent gRPC
-        # proxy (it will fail to stream data, but that's fine) and at our WS server.
-        # Use DISPLAY="" to prevent it from opening a window (it will exit quickly
-        # without a display, but the WebSocket connection happens before the GUI loop).
-        proc = subprocess.Popen(
-            [
-                "dimos-viewer",
-                "--connect",
-                f"--ws-url=ws://127.0.0.1:{_E2E_PORT}/ws",
-            ],
-            env={
-                **os.environ,
-                "DISPLAY": "",
-            },
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
-            if proc.poll() is not None:
+            if viewer_process.poll() is not None:
                 break
             time.sleep(0.1)
 
-        proc.terminate()
-        try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-        stdout = proc.stdout.read().decode(errors="replace") if proc.stdout else ""
-        stderr = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
-        server.stop()
+        stdout = (
+            viewer_process.stdout.read().decode(errors="replace") if viewer_process.stdout else ""
+        )
+        stderr = (
+            viewer_process.stderr.read().decode(errors="replace") if viewer_process.stderr else ""
+        )
 
         combined = stdout + stderr
         assert f"ws://127.0.0.1:{_E2E_PORT}" in combined, (
