@@ -91,15 +91,6 @@ class MovementManager(Module):
         self._robot_y = 0.0
         self._robot_z = 0.0
 
-    def __getstate__(self) -> dict[str, Any]:
-        state: dict[str, Any] = super().__getstate__()  # type: ignore[no-untyped-call]
-        state.pop("_lock", None)
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        super().__setstate__(state)
-        self._lock = threading.Lock()
-
     @rpc
     def start(self) -> None:
         super().start()
