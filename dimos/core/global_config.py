@@ -35,7 +35,7 @@ class GlobalConfig(BaseSettings):
     device_path: str | None = None  # device path for real robot (e.g. /dev/ttyUSB0)
     simulation: bool = False
     replay: bool = False
-    replay_dir: str = "go2_sf_office"
+    replay_db: str = "go2_bigoffice"
     new_memory: bool = False
     viewer: ViewerBackend = "rerun"
     n_workers: int = 2
