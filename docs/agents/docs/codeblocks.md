@@ -313,4 +313,7 @@ md-babel-py run document.md --lang python,sh
 
 # Dry run - show what would execute
 md-babel-py run document.md --dry-run
+
+# Longer subprocess limit (default 60s); see upstream README for MD_BABEL_EXECUTION_TIMEOUT
+md-babel-py run document.md --execution-timeout 120
 ```
