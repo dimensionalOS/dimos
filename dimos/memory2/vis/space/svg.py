@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from PIL import Image as PILImage
 
+from dimos.mapping.occupancy.visualizations import generate_rgba_texture
 from dimos.memory2.type.observation import Observation
 from dimos.memory2.vis.color import Color
 from dimos.memory2.vis.space.elements import (
@@ -241,7 +242,7 @@ def _render_occupancy_grid(el: OccupancyGrid, b: Bounds) -> str:
     if el.grid.size == 0:
         return ""
 
-    rgba = np.flipud(el._generate_rgba_texture())
+    rgba = np.flipud(generate_rgba_texture(el))
     img = PILImage.fromarray(rgba, "RGBA")
     buf = io.BytesIO()
     img.save(buf, format="PNG")
