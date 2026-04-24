@@ -36,7 +36,7 @@ import json
 import logging
 import socket
 import threading
-from typing import Any
+from typing import Any, Literal, TypedDict, Union
 
 import websockets
 import websockets.asyncio.server as ws_server
@@ -53,6 +53,37 @@ from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RERUN_GRPC_PORT
 
 logger = setup_logger()
+
+
+class ClickMsg(TypedDict):
+    type: Literal["click"]
+    x: float
+    y: float
+    z: float
+    entity_path: str
+    timestamp_ms: int
+
+
+class TwistMsg(TypedDict):
+    type: Literal["twist"]
+    linear_x: float
+    linear_y: float
+    linear_z: float
+    angular_x: float
+    angular_y: float
+    angular_z: float
+
+
+class StopMsg(TypedDict):
+    type: Literal["stop"]
+
+
+class HeartbeatMsg(TypedDict):
+    type: Literal["heartbeat"]
+    timestamp_ms: int
+
+
+ViewerMsg = Union[ClickMsg, TwistMsg, StopMsg, HeartbeatMsg]
 
 
 def _handshake_noise_filter(record: logging.LogRecord) -> bool:
@@ -171,7 +202,7 @@ class RerunWebSocketServer(Module):
 
     def _dispatch(self, raw: str | bytes) -> None:
         try:
-            msg = json.loads(raw)
+            msg: ViewerMsg = json.loads(raw)
         except json.JSONDecodeError:
             logger.warning(f"RerunWebSocketServer: ignoring non-JSON message: {raw!r}")
             return
@@ -182,29 +213,31 @@ class RerunWebSocketServer(Module):
         msg_type = msg.get("type")
 
         if msg_type == "click":
-            pt = PointStamped(
-                x=float(msg.get("x", 0)),
-                y=float(msg.get("y", 0)),
-                z=float(msg.get("z", 0)),
-                ts=float(msg.get("timestamp_ms", 0)) / 1000.0,
-                frame_id=str(msg.get("entity_path", "")),
+            self.clicked_point.publish(
+                PointStamped(
+                    x=float(msg.get("x", 0)),
+                    y=float(msg.get("y", 0)),
+                    z=float(msg.get("z", 0)),
+                    ts=float(msg.get("timestamp_ms", 0)) / 1000.0,
+                    frame_id=str(msg.get("entity_path", "")),
+                )
             )
-            self.clicked_point.publish(pt)
 
         elif msg_type == "twist":
-            twist = Twist(
-                linear=Vector3(
-                    float(msg.get("linear_x", 0)),
-                    float(msg.get("linear_y", 0)),
-                    float(msg.get("linear_z", 0)),
-                ),
-                angular=Vector3(
-                    float(msg.get("angular_x", 0)),
-                    float(msg.get("angular_y", 0)),
-                    float(msg.get("angular_z", 0)),
-                ),
+            self.tele_cmd_vel.publish(
+                Twist(
+                    linear=Vector3(
+                        float(msg.get("linear_x", 0)),
+                        float(msg.get("linear_y", 0)),
+                        float(msg.get("linear_z", 0)),
+                    ),
+                    angular=Vector3(
+                        float(msg.get("angular_x", 0)),
+                        float(msg.get("angular_y", 0)),
+                        float(msg.get("angular_z", 0)),
+                    ),
+                )
             )
-            self.tele_cmd_vel.publish(twist)
 
         elif msg_type == "stop":
             self.tele_cmd_vel.publish(Twist.zero())
