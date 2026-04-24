@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import os
+import pathlib
 import threading
 from typing import (
     TYPE_CHECKING,
@@ -24,6 +26,15 @@ from typing import (
 from dimos.core.stream import In, Out, Stream, Transport
 from dimos.msgs.protocol import DimosMsg
 from dimos.utils import colors
+
+if "CYCLONEDDS_HOME" not in os.environ:
+    _nix_result = pathlib.Path(__file__).resolve().parents[2] / "result"
+    if (_nix_result / "lib" / "libddsc.so").exists():
+        os.environ["CYCLONEDDS_HOME"] = str(_nix_result)
+        os.environ["LD_LIBRARY_PATH"] = f"{_nix_result}/lib:" + os.environ.get(
+            "LD_LIBRARY_PATH", ""
+        )
+    del _nix_result
 
 try:
     import cyclonedds as _cyclonedds  # noqa: F401
