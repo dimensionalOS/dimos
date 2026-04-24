@@ -62,4 +62,4 @@ jobs:
           find .venv/lib/*/site-packages/pydrake -name '*.pyi' -delete 2>/dev/null || true
 
       - name: Execute documentation code blocks
-        run: ./bin/run-doc-codeblocks --ci
+        run: ./bin/run-doc-codeblocks --ci --no-cache
