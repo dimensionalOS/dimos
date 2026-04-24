@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import field
+import socket
 import subprocess
 import time
 from typing import (
@@ -30,6 +31,7 @@ from typing import (
     get_args,
     runtime_checkable,
 )
+from urllib.parse import urlparse
 
 from reactivex.disposable import Disposable
 from toolz import pipe  # type: ignore[import-untyped]
@@ -306,9 +308,6 @@ class RerunBridgeModule(Module):
 
     @rpc
     def start(self) -> None:
-        import socket
-        from urllib.parse import urlparse
-
         import rerun as rr
 
         super().start()
@@ -424,8 +423,6 @@ class RerunBridgeModule(Module):
 
     def _log_connect_hints(self, grpc_port: int) -> None:
         """Log CLI commands for connecting a viewer to this bridge."""
-        import socket
-
         from dimos.utils.generic import get_local_ips
 
         local_ips = get_local_ips()
