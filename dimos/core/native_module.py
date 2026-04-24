@@ -99,8 +99,21 @@ class NativeModuleConfig(ModuleConfig):
     log_format: LogFormat = LogFormat.TEXT
     auto_build: bool = False
 
+    # New version of Native Modules read json configs from stdin
+    # Enable this to read from stdin instead of cli args
+    stdin_config: bool = False
+
     cli_exclude: frozenset[str] = frozenset()
     cli_name_override: dict[str, str] = Field(default_factory=dict)
+
+    def to_config_dict(self) -> dict[str, Any]:
+        """
+        Return module-specific config fields as a plain dict (for stdin JSON).
+        """
+        ignore_fields = set(NativeModuleConfig.model_fields)
+        return {
+            k: v for k, v in self.model_dump().items() if k not in ignore_fields and v is not None
+        }
 
     def to_cli_args(self) -> list[str]:
         ignore_fields = {f for f in NativeModuleConfig.model_fields}
@@ -183,11 +196,20 @@ class NativeModule(Module):
             cmd,
             env=env,
             cwd=cwd,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
             preexec_fn=_set_process_to_die_when_parent_dies,
         )
+        assert self._process.stdin is not None
+        if self.config.stdin_config:
+            config_dict = self.config.to_config_dict()
+            stdin_blob = (
+                json.dumps({"topics": topics, "config": config_dict or None}).encode() + b"\n"
+            )
+            self._process.stdin.write(stdin_blob)
+        self._process.stdin.close()
         logger.info(
             "Native process started",
             module=self._mod_label,
