@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for :mod:`dimos.agents.memory.page_table`."""
+
 from __future__ import annotations
 
 import pytest
@@ -55,9 +56,7 @@ def _page(
     )
 
 
-# --- basic store ------------------------------------------------------
-
-
+# basic store
 def test_empty_table_has_len_zero() -> None:
     t = PageTable()
     assert len(t) == 0
@@ -129,9 +128,7 @@ def test_evidence_pages_filter() -> None:
     assert [p.id for p in ev] == ["e1"]
 
 
-# --- pin rebalancing ---------------------------------------------------
-
-
+# pin rebalancing
 def test_rebalance_pins_last_n_evidence() -> None:
     t = PageTable(pin_recent_evidence=3)
     for i in range(5):

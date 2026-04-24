@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for :mod:`dimos.agents.memory.ingestion`."""
+
 from __future__ import annotations
 
 import base64
@@ -19,9 +20,9 @@ import json
 import time
 
 import cv2
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 import numpy as np
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from dimos.agents.memory.ingestion import (
     THUMBNAIL_JPEG_QUALITY,
@@ -34,14 +35,14 @@ from dimos.agents.memory.tokens import HeuristicCounter
 
 
 def _make_jpeg_data_url(size: int = 256, color: int = 128) -> str:
-    img = np.full((size, size, 3), color, dtype=np.uint8)
+    img: np.ndarray = np.full((size, size, 3), color, dtype=np.uint8)
     ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
     assert ok
     b64 = base64.b64encode(buf.tobytes()).decode("ascii")
     return f"data:image/jpeg;base64,{b64}"
 
 
-# --- text messages ----------------------------------------------------
+# text messages
 #
 # All simple (non-multimodal) messages must produce exactly one Page.
 # The ``len(pages) == 1`` assertion is mandatory in every single-page
@@ -51,9 +52,7 @@ def _make_jpeg_data_url(size: int = 256, color: int = 128) -> str:
 
 def test_ingest_human_text_creates_conversation_page_with_four_reps() -> None:
     msg = HumanMessage(content="Move forward two meters and stop.")
-    pages = ingest_message(
-        msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter()
-    )
+    pages = ingest_message(msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter())
     assert len(pages) == 1
     page = pages[0]
     assert page.type is PageType.CONVERSATION
@@ -71,9 +70,7 @@ def test_ingest_text_token_estimates_are_monotonic() -> None:
         content="This is a multi-sentence message. It has more than one sentence. "
         "And in fact quite a bit more content to compress down. Lots of content. More."
     )
-    pages = ingest_message(
-        msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter()
-    )
+    pages = ingest_message(msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter())
     assert len(pages) == 1
     page = pages[0]
     p, s, c, f = (
@@ -87,9 +84,7 @@ def test_ingest_text_token_estimates_are_monotonic() -> None:
 
 def test_ingest_system_message_becomes_bootstrap_and_pinned_full() -> None:
     msg = SystemMessage(content="You are a helpful robot.")
-    pages = ingest_message(
-        msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter()
-    )
+    pages = ingest_message(msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter())
     assert len(pages) == 1
     page = pages[0]
     assert page.type is PageType.BOOTSTRAP
@@ -102,13 +97,9 @@ def test_ingest_system_message_becomes_bootstrap_and_pinned_full() -> None:
 def test_ingest_ai_message_preserves_tool_calls() -> None:
     msg = AIMessage(
         content="calling tool",
-        tool_calls=[
-            {"id": "c1", "name": "add", "args": {"x": 1, "y": 2}, "type": "tool_call"}
-        ],
+        tool_calls=[{"id": "c1", "name": "add", "args": {"x": 1, "y": 2}, "type": "tool_call"}],
     )
-    pages = ingest_message(
-        msg, turn_seq=1, ts=2.0, token_counter=HeuristicCounter()
-    )
+    pages = ingest_message(msg, turn_seq=1, ts=2.0, token_counter=HeuristicCounter())
     assert len(pages) == 1
     page = pages[0]
     assert page.role == "ai"
@@ -122,9 +113,7 @@ def test_ingest_ai_message_preserves_tool_calls() -> None:
 
 def test_ingest_tool_message_preserves_tool_call_id() -> None:
     msg = ToolMessage(content="42", tool_call_id="call-abc")
-    pages = ingest_message(
-        msg, turn_seq=2, ts=3.0, token_counter=HeuristicCounter()
-    )
+    pages = ingest_message(msg, turn_seq=2, ts=3.0, token_counter=HeuristicCounter())
     assert len(pages) == 1
     page = pages[0]
     assert page.role == "tool"
@@ -133,9 +122,7 @@ def test_ingest_tool_message_preserves_tool_call_id() -> None:
 
 def test_ingest_empty_text_does_not_crash() -> None:
     msg = HumanMessage(content="")
-    pages = ingest_message(
-        msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter()
-    )
+    pages = ingest_message(msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter())
     assert len(pages) == 1
     page = pages[0]
     # Representations must still be non-empty.
@@ -177,14 +164,10 @@ def test_ingest_message_ts_defaults_to_now_when_omitted() -> None:
     after = time.time()
     assert len(pages) == 1
     page = pages[0]
-    assert before <= page.ts <= after, (
-        f"page.ts={page.ts} not in [{before}, {after}]"
-    )
+    assert before <= page.ts <= after, f"page.ts={page.ts} not in [{before}, {after}]"
 
 
-# --- multimodal / image messages --------------------------------------
-
-
+# multimodal / image messages
 def test_ingest_image_human_message_becomes_evidence_page() -> None:
     # Multimodal ``[text, image]`` splits into [CONVERSATION, EVIDENCE].
     # The EVIDENCE page carries the artefact UUID.
@@ -195,9 +178,7 @@ def test_ingest_image_human_message_becomes_evidence_page() -> None:
             {"type": "image_url", "image_url": {"url": data_url}},
         ]
     )
-    pages = ingest_message(
-        msg, turn_seq=3, ts=1.0, token_counter=HeuristicCounter()
-    )
+    pages = ingest_message(msg, turn_seq=3, ts=1.0, token_counter=HeuristicCounter())
     assert len(pages) == 2
     conv, evidence = pages
     assert conv.type is PageType.CONVERSATION
@@ -208,12 +189,8 @@ def test_ingest_image_human_message_becomes_evidence_page() -> None:
 def test_ingest_image_full_representation_is_original_image_part() -> None:
     # Case (e.2): single image, no text → exactly one EVIDENCE page.
     data_url = _make_jpeg_data_url()
-    msg = HumanMessage(
-        content=[{"type": "image_url", "image_url": {"url": data_url}}]
-    )
-    pages = ingest_message(
-        msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter()
-    )
+    msg = HumanMessage(content=[{"type": "image_url", "image_url": {"url": data_url}}])
+    pages = ingest_message(msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter())
     assert len(pages) == 1
     page = pages[0]
     full_content = page.representations[FidelityLevel.FULL].content
@@ -226,12 +203,8 @@ def test_ingest_image_full_representation_is_original_image_part() -> None:
 
 def test_ingest_image_compressed_representation_is_96x96_thumbnail() -> None:
     data_url = _make_jpeg_data_url(size=512)
-    msg = HumanMessage(
-        content=[{"type": "image_url", "image_url": {"url": data_url}}]
-    )
-    pages = ingest_message(
-        msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter()
-    )
+    msg = HumanMessage(content=[{"type": "image_url", "image_url": {"url": data_url}}])
+    pages = ingest_message(msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter())
     assert len(pages) == 1
     page = pages[0]
     compressed = page.representations[FidelityLevel.COMPRESSED].content
@@ -259,9 +232,7 @@ def test_image_structured_representation_is_bracketed_text() -> None:
     # via ``PageTable.get_by_artefact`` / ``MemoryEngine.request_full``),
     # NOT the ``page.id`` (which carries a ``"page-"`` prefix).
     data_url = _make_jpeg_data_url(size=128)
-    msg = HumanMessage(
-        content=[{"type": "image_url", "image_url": {"url": data_url}}]
-    )
+    msg = HumanMessage(content=[{"type": "image_url", "image_url": {"url": data_url}}])
     pages = ingest_message(
         msg,
         turn_seq=0,
@@ -276,9 +247,7 @@ def test_image_structured_representation_is_bracketed_text() -> None:
 
     # Plain str — never a JSON-serialised dict or a list of parts.
     assert isinstance(structured, str)
-    assert not structured.startswith("{"), (
-        f"STRUCTURED regressed to JSON: {structured!r}"
-    )
+    assert not structured.startswith("{"), f"STRUCTURED regressed to JSON: {structured!r}"
 
     # Exact bracketed shape: single line, starts/ends predictably.
     assert "\n" not in structured
@@ -337,16 +306,13 @@ def test_image_structured_representation_handles_unknown_dims() -> None:
 
 def test_ingest_image_pointer_contains_artefact_uuid() -> None:
     data_url = _make_jpeg_data_url()
-    msg = HumanMessage(
-        content=[{"type": "image_url", "image_url": {"url": data_url}}]
-    )
-    pages = ingest_message(
-        msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter()
-    )
+    msg = HumanMessage(content=[{"type": "image_url", "image_url": {"url": data_url}}])
+    pages = ingest_message(msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter())
     assert len(pages) == 1
     page = pages[0]
     pointer = page.representations[FidelityLevel.POINTER].content
     assert isinstance(pointer, str)
+    assert page.artefact_uuid is not None
     assert page.artefact_uuid in pointer
 
 
@@ -361,12 +327,8 @@ def test_ingest_image_structured_uses_artefact_uuid_not_page_id() -> None:
     live in the table.
     """
     data_url = _make_jpeg_data_url()
-    msg = HumanMessage(
-        content=[{"type": "image_url", "image_url": {"url": data_url}}]
-    )
-    pages = ingest_message(
-        msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter()
-    )
+    msg = HumanMessage(content=[{"type": "image_url", "image_url": {"url": data_url}}])
+    pages = ingest_message(msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter())
     assert len(pages) == 1
     page = pages[0]
 
@@ -391,12 +353,8 @@ def test_ingest_image_token_estimates_monotonic() -> None:
     # relies on this invariant to reason about fidelity cost, so keep
     # the assertion strict.
     data_url = _make_jpeg_data_url()
-    msg = HumanMessage(
-        content=[{"type": "image_url", "image_url": {"url": data_url}}]
-    )
-    pages = ingest_message(
-        msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter()
-    )
+    msg = HumanMessage(content=[{"type": "image_url", "image_url": {"url": data_url}}])
+    pages = ingest_message(msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter())
     assert len(pages) == 1
     page = pages[0]
     p, s, c, f = (
@@ -421,9 +379,7 @@ def test_ingest_image_token_estimates_monotonic_unknown_dims() -> None:
             }
         ]
     )
-    pages = ingest_message(
-        msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter()
-    )
+    pages = ingest_message(msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter())
     assert len(pages) == 1
     page = pages[0]
     p, s, c, f = (
@@ -450,9 +406,7 @@ def test_ingest_image_extracts_existing_uuid_from_preamble() -> None:
             {"type": "image_url", "image_url": {"url": data_url}},
         ]
     )
-    pages = ingest_message(
-        msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter()
-    )
+    pages = ingest_message(msg, turn_seq=0, ts=1.0, token_counter=HeuristicCounter())
     assert len(pages) == 2
     conv, evidence = pages
     assert conv.type is PageType.CONVERSATION
@@ -479,7 +433,7 @@ def test_thumbnail_defaults_match_plan() -> None:
     assert THUMBNAIL_JPEG_QUALITY == 30
 
 
-# --- multi-image split ------------------------------------------------
+# multi-image split
 #
 # Contract: one EVIDENCE page per image part; text splits into a
 # CONVERSATION page. These tests lock in the full split matrix so a
@@ -495,9 +449,7 @@ def test_ingest_humanmessage_text_plus_one_image_returns_two_pages() -> None:
             {"type": "image_url", "image_url": {"url": data_url}},
         ]
     )
-    pages = ingest_message(
-        msg, turn_seq=7, ts=42.0, token_counter=HeuristicCounter()
-    )
+    pages = ingest_message(msg, turn_seq=7, ts=42.0, token_counter=HeuristicCounter())
     assert len(pages) == 2
     conv, evidence = pages
     assert conv.type is PageType.CONVERSATION
@@ -538,9 +490,7 @@ def test_ingest_humanmessage_text_plus_three_images_returns_four_pages() -> None
             {"type": "image_url", "image_url": {"url": url_c}},
         ]
     )
-    pages = ingest_message(
-        msg, turn_seq=11, ts=7.0, token_counter=HeuristicCounter()
-    )
+    pages = ingest_message(msg, turn_seq=11, ts=7.0, token_counter=HeuristicCounter())
     assert len(pages) == 4
     assert [p.type for p in pages] == [
         PageType.CONVERSATION,
@@ -551,7 +501,7 @@ def test_ingest_humanmessage_text_plus_three_images_returns_four_pages() -> None
 
     # Order preservation: pages[1+i] wraps the i-th image part in content order.
     expected_urls = [url_a, url_b, url_c]
-    for page, expected in zip(pages[1:], expected_urls):
+    for page, expected in zip(pages[1:], expected_urls, strict=True):
         full = page.representations[FidelityLevel.FULL].content
         assert isinstance(full, list)
         assert full[0]["image_url"]["url"] == expected
@@ -561,10 +511,7 @@ def test_ingest_humanmessage_text_plus_three_images_returns_four_pages() -> None
     conv_full = pages[0].representations[FidelityLevel.FULL].content
     assert isinstance(conv_full, str)
     attach_line = conv_full.split("\n\n", 1)[1]
-    positions = [
-        attach_line.find(f"[{pages[i + 1].artefact_uuid}]")
-        for i in range(3)
-    ]
+    positions = [attach_line.find(f"[{pages[i + 1].artefact_uuid}]") for i in range(3)]
     assert all(pos >= 0 for pos in positions), (
         f"Evidence uuids missing from preamble: {attach_line!r}"
     )
@@ -587,21 +534,19 @@ def test_ingest_humanmessage_two_images_no_text_returns_two_evidence_pages() -> 
             {"type": "image_url", "image_url": {"url": url_b}},
         ]
     )
-    pages = ingest_message(
-        msg, turn_seq=5, ts=9.0, token_counter=HeuristicCounter()
-    )
+    pages = ingest_message(msg, turn_seq=5, ts=9.0, token_counter=HeuristicCounter())
     assert len(pages) == 2
     assert all(p.type is PageType.EVIDENCE for p in pages)
     # No CONVERSATION page — case (e.3) has nothing to say.
     assert not any(p.type is PageType.CONVERSATION for p in pages)
 
     # Order preserved.
-    assert pages[0].representations[FidelityLevel.FULL].content[0][
-        "image_url"
-    ]["url"] == url_a
-    assert pages[1].representations[FidelityLevel.FULL].content[0][
-        "image_url"
-    ]["url"] == url_b
+    content_0 = pages[0].representations[FidelityLevel.FULL].content
+    content_1 = pages[1].representations[FidelityLevel.FULL].content
+    assert isinstance(content_0, list)
+    assert isinstance(content_1, list)
+    assert content_0[0]["image_url"]["url"] == url_a
+    assert content_1[0]["image_url"]["url"] == url_b
 
     for p in pages:
         assert p.turn_seq == 5
@@ -630,8 +575,7 @@ def test_ingest_multimodal_message_ignores_page_id_kwarg() -> None:
     )
     assert len(pages) == 3
     assert all(p.id != "fixed-id" for p in pages), (
-        f"page_id='fixed-id' must be ignored in multi-page result; "
-        f"got ids={[p.id for p in pages]}"
+        f"page_id='fixed-id' must be ignored in multi-page result; got ids={[p.id for p in pages]}"
     )
 
 
@@ -663,7 +607,7 @@ def test_page_type_hint_ignored_on_multimodal_split() -> None:
     )
 
 
-# --- AI tool_calls token accounting -----------------------------------
+# AI tool_calls token accounting
 #
 # ``Page.as_message`` reattaches ``tool_calls`` at every fidelity
 # level to preserve LangChain AIMessage/ToolMessage pairing, so the
@@ -711,13 +655,9 @@ def test_ingest_ai_message_with_tool_calls_adds_payload_tokens_to_every_rep() ->
     # (via _clone_tool_calls) whose dict contents are identical to the
     # input, so ``sort_keys=True`` yields the same serialization and
     # thus the same token count.
-    expected_payload_json = json.dumps(
-        page.ai_tool_calls, sort_keys=True, default=str
-    )
+    expected_payload_json = json.dumps(page.ai_tool_calls, sort_keys=True, default=str)
     expected_payload_tokens = counter.count_text(expected_payload_json)
-    assert expected_payload_tokens > 0, (
-        "fixture chosen so the payload is non-trivial"
-    )
+    assert expected_payload_tokens > 0, "fixture chosen so the payload is non-trivial"
 
     for level in _ALL_FIDELITY_LEVELS:
         with_tc = page.representations[level].token_estimate
@@ -762,14 +702,9 @@ def test_ingest_ai_message_without_tool_calls_has_no_tool_call_overhead() -> Non
     # that ``_build_single_text_page`` calls. Using the produced page's
     # own id keeps POINTER token counts byte-identical to the ingested
     # representation.
-    expected_reps = _build_text_representations(
-        page.role, content, page.id, counter
-    )
+    expected_reps = _build_text_representations(page.role, content, page.id, counter)
     for level in _ALL_FIDELITY_LEVELS:
-        assert (
-            page.representations[level].token_estimate
-            == expected_reps[level].token_estimate
-        ), (
+        assert page.representations[level].token_estimate == expected_reps[level].token_estimate, (
             f"{level.name}: AIMessage-without-tool_calls "
             f"({page.representations[level].token_estimate}) must equal "
             f"unmodified _build_text_representations output "
@@ -808,9 +743,7 @@ def test_ingest_ai_message_with_multiple_tool_calls_accounts_serialized_payload(
     # tool_calls payload that ``as_message`` will reattach.
     assert page.ai_tool_calls == tool_calls
 
-    expected_payload_json = json.dumps(
-        page.ai_tool_calls, sort_keys=True, default=str
-    )
+    expected_payload_json = json.dumps(page.ai_tool_calls, sort_keys=True, default=str)
     expected_payload_tokens = counter.count_text(expected_payload_json)
     assert expected_payload_tokens > 0
 
@@ -828,8 +761,7 @@ def test_ingest_ai_message_with_multiple_tool_calls_accounts_serialized_payload(
     # FULL: exact arithmetic — plain-content tokens + payload tokens.
     assert (
         page.representations[FidelityLevel.FULL].token_estimate
-        == twin_page.representations[FidelityLevel.FULL].token_estimate
-        + expected_payload_tokens
+        == twin_page.representations[FidelityLevel.FULL].token_estimate + expected_payload_tokens
     )
 
     # POINTER: the full expected_payload is added, NOT a scaled-down
@@ -839,6 +771,5 @@ def test_ingest_ai_message_with_multiple_tool_calls_accounts_serialized_payload(
     # the payload either way.
     assert (
         page.representations[FidelityLevel.POINTER].token_estimate
-        == twin_page.representations[FidelityLevel.POINTER].token_estimate
-        + expected_payload_tokens
+        == twin_page.representations[FidelityLevel.POINTER].token_estimate + expected_payload_tokens
     )

@@ -38,6 +38,7 @@ instead.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Protocol, runtime_checkable
 
 from langchain_core.messages.base import BaseMessage
@@ -49,7 +50,7 @@ __all__ = [
     "count_image_part",
 ]
 
-# --- image token pricing ------------------------------------------------
+# image token pricing
 #
 # OpenAI prices image inputs based on detail level. The published "low
 # detail" per-image cost is 85 tokens; "high detail" is 85 + 170 * tiles,
@@ -92,9 +93,7 @@ class TokenCounter(Protocol):
         """Return the token cost of a plain string."""
 
 
-# --- helpers ------------------------------------------------------------
-
-
+# helpers
 def count_image_part(part: dict[str, Any]) -> int:
     """Fixed-cost estimate for one ``image_url`` content part.
 
@@ -111,7 +110,7 @@ def count_image_part(part: dict[str, Any]) -> int:
 
 def _sum_content_tokens(
     content: Any,
-    text_fn: "callable[[str], int]",  # noqa: UP037 (callable used as forward-ref string)
+    text_fn: Callable[[str], int],
 ) -> int:
     """Sum tokens across a message ``content`` field.
 
@@ -142,9 +141,7 @@ def _sum_content_tokens(
     return total
 
 
-# --- concrete counters --------------------------------------------------
-
-
+# concrete counters
 class HeuristicCounter:
     """Character-length fallback counter.
 

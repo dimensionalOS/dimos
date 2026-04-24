@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for :mod:`dimos.agents.memory.tokens`."""
+
 from __future__ import annotations
 
-import pytest
 from langchain_core.messages import AIMessage, HumanMessage
+import pytest
 
 from dimos.agents.memory.budget import ModelBudget
 from dimos.agents.memory.tokens import (
@@ -29,18 +30,14 @@ from dimos.agents.memory.tokens import (
 )
 
 
-# --- Protocol ------------------------------------------------------------
-
-
+# Protocol
 def test_heuristic_and_tiktoken_implement_token_counter_protocol() -> None:
     pytest.importorskip("tiktoken")
     assert isinstance(HeuristicCounter(), TokenCounter)
     assert isinstance(TiktokenCounter("gpt-4o"), TokenCounter)
 
 
-# --- HeuristicCounter ----------------------------------------------------
-
-
+# HeuristicCounter
 def test_heuristic_count_text_ceil_divides_by_four() -> None:
     c = HeuristicCounter()
     assert c.count_text("") == 0
@@ -98,9 +95,7 @@ def test_heuristic_count_message_with_non_list_non_str_content() -> None:
     assert c.count_message(msg) == 0
 
 
-# --- count_image_part ---------------------------------------------------
-
-
+# count_image_part
 def test_count_image_part_defaults_to_full_cost() -> None:
     assert count_image_part({"type": "image_url", "image_url": {"url": "..."}}) == IMAGE_FULL_COST
 
@@ -115,9 +110,7 @@ def test_count_image_part_high_detail_hint_is_full() -> None:
     assert count_image_part(part) == IMAGE_FULL_COST
 
 
-# --- TiktokenCounter ----------------------------------------------------
-
-
+# TiktokenCounter
 def test_tiktoken_counter_matches_tiktoken_directly() -> None:
     tiktoken = pytest.importorskip("tiktoken")
     c = TiktokenCounter("gpt-4o")
@@ -153,7 +146,7 @@ def test_tiktoken_count_message_with_image_adds_fixed_cost() -> None:
     assert c.count_message(msg) == text_tokens + IMAGE_FULL_COST
 
 
-# --- content-only contract ---------------------------------------------
+# content-only contract
 #
 # These tests lock in the content-only contract: counters measure
 # payload, :class:`~dimos.agents.memory.budget.ModelBudget` reserves
@@ -164,9 +157,9 @@ def test_tiktoken_count_message_with_image_adds_fixed_cost() -> None:
 def test_heuristic_count_message_is_content_only() -> None:
     c = HeuristicCounter()
     parts = [
-        {"type": "text", "text": "one two three"},      # 13 chars -> 4 tok
-        {"type": "text", "text": "alpha"},              # 5  chars -> 2 tok
-        {"type": "text", "text": "abcdefghijklmnop"},   # 16 chars -> 4 tok
+        {"type": "text", "text": "one two three"},  # 13 chars -> 4 tok
+        {"type": "text", "text": "alpha"},  # 5  chars -> 2 tok
+        {"type": "text", "text": "abcdefghijklmnop"},  # 16 chars -> 4 tok
     ]
     msg = HumanMessage(content=parts)
     n = sum(c.count_text(p["text"]) for p in parts)
@@ -221,12 +214,8 @@ def test_per_message_overhead_lives_on_budget_not_counter() -> None:
         ]
     )
     counter = HeuristicCounter()
-    assert counter.count_message(msg) == _sum_content_tokens(
-        msg.content, counter.count_text
-    )
+    assert counter.count_message(msg) == _sum_content_tokens(msg.content, counter.count_text)
 
     tiktoken = pytest.importorskip("tiktoken")  # noqa: F841
     tk_counter = TiktokenCounter("gpt-4o")
-    assert tk_counter.count_message(msg) == _sum_content_tokens(
-        msg.content, tk_counter.count_text
-    )
+    assert tk_counter.count_message(msg) == _sum_content_tokens(msg.content, tk_counter.count_text)

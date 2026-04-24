@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for :mod:`dimos.agents.memory.faults`."""
+
 from __future__ import annotations
 
 import pytest
@@ -29,9 +30,7 @@ class _FakeOut:
         self.published.append(ev)
 
 
-# --- FaultEvent dataclass ------------------------------------------------
-
-
+# FaultEvent dataclass
 def test_fault_event_required_fields() -> None:
     ev = FaultEvent(kind=FaultKind.PAGE_EVICTED, page_id="p1", turn_seq=3)
     assert ev.kind == FaultKind.PAGE_EVICTED
@@ -73,9 +72,7 @@ def test_fault_event_details_copied_on_to_dict() -> None:
     assert ev.details["x"] == 1
 
 
-# --- FaultObserver -------------------------------------------------------
-
-
+# FaultObserver
 def test_observer_records_last_event_and_counts() -> None:
     obs = FaultObserver()
     assert obs.last_event is None
@@ -105,9 +102,7 @@ def test_observer_swallows_stream_errors() -> None:
     assert obs.last_event is ev
 
 
-# --- convenience emitters ----------------------------------------------
-
-
+# convenience emitters
 def test_observer_evict_helper() -> None:
     out = _FakeOut()
     obs = FaultObserver(stream_out=out)  # type: ignore[arg-type]

@@ -66,11 +66,7 @@ THUMBNAIL_JPEG_QUALITY = 30
 """JPEG quality used for the COMPRESSED image representation."""
 
 
-# ---------------------------------------------------------------------------
 # Helpers — role / page-type / artefact extraction
-# ---------------------------------------------------------------------------
-
-
 def _role_of(msg: BaseMessage) -> MessageRole:
     if isinstance(msg, SystemMessage):
         return "system"
@@ -159,11 +155,7 @@ def _split_content_parts(
     return texts, images
 
 
-# ---------------------------------------------------------------------------
 # Image thumbnailing
-# ---------------------------------------------------------------------------
-
-
 def _decode_image_url(image_part: dict[str, Any]) -> np.ndarray | None:
     """Decode a LangChain ``image_url`` content part into a BGR ndarray.
 
@@ -171,8 +163,11 @@ def _decode_image_url(image_part: dict[str, Any]) -> np.ndarray | None:
     are returned as ``None`` because we can't reliably fetch them during
     ingestion.
     """
-    url = image_part.get("image_url", {}).get("url") if image_part.get("type") == "image_url" \
+    url = (
+        image_part.get("image_url", {}).get("url")
+        if image_part.get("type") == "image_url"
         else image_part.get("source", {}).get("data")
+    )
     if not isinstance(url, str):
         return None
 
@@ -181,7 +176,7 @@ def _decode_image_url(image_part: dict[str, Any]) -> np.ndarray | None:
     if idx < 0:
         return None
     try:
-        raw = base64.b64decode(url[idx + len(prefix):], validate=True)
+        raw = base64.b64decode(url[idx + len(prefix) :], validate=True)
     except Exception:
         return None
     arr = np.frombuffer(raw, dtype=np.uint8)
@@ -233,11 +228,7 @@ def _encode_thumbnail(bgr: np.ndarray) -> str | None:
     return base64.b64encode(buf.tobytes()).decode("ascii")
 
 
-# ---------------------------------------------------------------------------
 # Representation builders
-# ---------------------------------------------------------------------------
-
-
 _TEXT_TRUNCATION_SENTENCES = 2
 _STRUCTURED_SUMMARY_MAX_CHARS = 80
 
@@ -289,13 +280,15 @@ def _build_text_representations(
     compressed_tokens = token_counter.count_text(compressed_text)
     structured_text = _short_summary(role, full_text, full_tokens)
     structured_tokens = token_counter.count_text(structured_text)
-    pointer_text = f"[page {page_id}]"
+    short_page_id = page_id if len(page_id) <= 16 else page_id[-12:]
+    pointer_text = f"[page {short_page_id}]"
     pointer_tokens = token_counter.count_text(pointer_text)
 
     # Force monotonicity even if the heuristic disagrees (e.g. structured
     # summary ends up longer than the compressed truncation). The selector
-    # relies on monotonic costs; we pick min(upper, lower+1)-style caps.
-    structured_tokens = min(structured_tokens, max(pointer_tokens, structured_tokens))
+    # relies on monotonic costs, and UUID-shaped page ids can make POINTER
+    # more expensive than a very short FULL message.
+    structured_tokens = max(structured_tokens, pointer_tokens)
     compressed_tokens = max(compressed_tokens, structured_tokens)
     full_tokens = max(full_tokens, compressed_tokens)
 
@@ -373,8 +366,7 @@ def _build_image_representations(
     # the table. The POINTER at line 341 was always correct; this line
     # brings STRUCTURED into agreement.
     structured_text = (
-        f"[image artefact uuid={artefact_uuid} "
-        f"src={src_tag} dims={dims_str} size={size_str}]"
+        f"[image artefact uuid={artefact_uuid} src={src_tag} dims={dims_str} size={size_str}]"
     )
     structured_tokens = token_counter.count_text(structured_text)
 
@@ -426,26 +418,18 @@ def _build_image_representations(
     full_tokens = max(full_tokens, compressed_tokens)
 
     return {
-        FidelityLevel.POINTER: Representation(
-            FidelityLevel.POINTER, pointer_text, pointer_tokens
-        ),
+        FidelityLevel.POINTER: Representation(FidelityLevel.POINTER, pointer_text, pointer_tokens),
         FidelityLevel.STRUCTURED: Representation(
             FidelityLevel.STRUCTURED, structured_text, structured_tokens
         ),
         FidelityLevel.COMPRESSED: Representation(
             FidelityLevel.COMPRESSED, compressed_content, compressed_tokens
         ),
-        FidelityLevel.FULL: Representation(
-            FidelityLevel.FULL, full_content, full_tokens
-        ),
+        FidelityLevel.FULL: Representation(FidelityLevel.FULL, full_content, full_tokens),
     }
 
 
-# ---------------------------------------------------------------------------
 # Public entry point
-# ---------------------------------------------------------------------------
-
-
 def ingest_message(
     msg: BaseMessage,
     *,
@@ -643,9 +627,7 @@ def ingest_message(
     # Case (e.4): CONVERSATION preamble + EVIDENCE pages. The trailing
     # ``Attached artefacts: [uuid1] [uuid2] ...`` line gives the LLM
     # something to quote when it decides whether to call ``get_artefact``.
-    attached_line = "Attached artefacts: " + " ".join(
-        f"[{u}]" for u in evidence_uuids
-    )
+    attached_line = "Attached artefacts: " + " ".join(f"[{u}]" for u in evidence_uuids)
     conv_text = f"{joined_text}\n\n{attached_line}"
     conv_page = _build_single_text_page(
         msg,
@@ -693,9 +675,7 @@ def _build_single_text_page(
         tool_calls_tokens = token_counter.count_text(tool_calls_json)
         if tool_calls_tokens:
             reps = {
-                level: Representation(
-                    level, rep.content, rep.token_estimate + tool_calls_tokens
-                )
+                level: Representation(level, rep.content, rep.token_estimate + tool_calls_tokens)
                 for level, rep in reps.items()
             }
 

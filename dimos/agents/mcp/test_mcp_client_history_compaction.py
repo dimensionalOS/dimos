@@ -28,27 +28,27 @@ Two tests live here:
   ``try/except`` wrapper in ``_thread_loop`` keeps the worker alive
   across turn failures AND forwards the exception to the fault stream.
 """
+
 from __future__ import annotations
 
 import base64
-import time
 from dataclasses import dataclass, field
 from queue import Queue
 from threading import Event, RLock, Thread
+import time
 from unittest.mock import MagicMock
 
 import cv2
+from langchain_core.messages import HumanMessage
 import numpy as np
 import pytest
-from langchain_core.messages import HumanMessage
 
 from dimos.agents.mcp.mcp_client import McpClient
 from dimos.agents.memory.engine import MemoryEngine
 from dimos.agents.memory.faults import FaultEvent, FaultKind
 from dimos.agents.memory.pages import FidelityLevel, PageType
 
-
-# --- fixtures / helpers ------------------------------------------------
+# fixtures / helpers
 #
 # Kept file-local rather than shared via conftest.py: other test files
 # in this package use their own small helpers (e.g. ``_image_msg``
@@ -156,9 +156,7 @@ def _build_bypass_client(
     return client
 
 
-# --- Test 1 — compaction invariants -----------------------------------
-
-
+# Test 1 — compaction invariants
 def test_history_compaction_keeps_recent_images_at_full_under_pressure() -> None:
     """Under a tight token budget, compaction keeps the most recent
     EVIDENCE pages at FULL fidelity, degrades older
@@ -199,29 +197,21 @@ def test_history_compaction_keeps_recent_images_at_full_under_pressure() -> None
 
     result = client._engine.assemble()
 
-    # --- Assertion 1: effective-budget ceiling ---
-    effective_cap = client._engine.budget.effective_budget_for_messages(
-        len(result.messages)
-    )
+    # Assertion 1: effective-budget ceiling
+    effective_cap = client._engine.budget.effective_budget_for_messages(len(result.messages))
     assert result.total_tokens <= effective_cap, (
         f"selector exceeded effective cap: total_tokens={result.total_tokens}, "
         f"effective_cap={effective_cap}, n_messages={len(result.messages)}"
     )
 
-    # --- Assertion 2: last 3 EVIDENCE pages are rendered at FULL ---
-    evidence_pages = [
-        p for p in client._engine.pages() if p.type is PageType.EVIDENCE
-    ]
+    # Assertion 2: last 3 EVIDENCE pages are rendered at FULL
+    evidence_pages = [p for p in client._engine.pages() if p.type is PageType.EVIDENCE]
     # ``turn_seq`` descending → newest first. Ties are broken by ingest
     # order, but ``ingest_message`` assigns a fresh turn_seq to each
     # ingest call so there are no ties here.
-    evidence_by_recency = sorted(
-        evidence_pages, key=lambda p: p.turn_seq, reverse=True
-    )
+    evidence_by_recency = sorted(evidence_pages, key=lambda p: p.turn_seq, reverse=True)
     top_three = evidence_by_recency[:3]
-    assert len(top_three) == 3, (
-        f"expected at least 3 EVIDENCE pages, got {len(top_three)}"
-    )
+    assert len(top_three) == 3, f"expected at least 3 EVIDENCE pages, got {len(top_three)}"
     for page in top_three:
         assert page.id in result.chosen_levels, (
             f"recent EVIDENCE page {page.id} (turn_seq={page.turn_seq}) "
@@ -232,18 +222,15 @@ def test_history_compaction_keeps_recent_images_at_full_under_pressure() -> None
             f"rendered at {result.chosen_levels[page.id]!r}, expected FULL"
         )
 
-    # --- Assertion 3: at least one PAGE_DEGRADED fault was emitted ---
-    degrade_events = [
-        ev for ev in fake_faults_out.published
-        if ev.kind is FaultKind.PAGE_DEGRADED
-    ]
+    # Assertion 3: at least one PAGE_DEGRADED fault was emitted
+    degrade_events = [ev for ev in fake_faults_out.published if ev.kind is FaultKind.PAGE_DEGRADED]
     assert degrade_events, (
         "no PAGE_DEGRADED faults emitted; either the budget was not "
         "actually under pressure (test fixture drifted) or the engine "
         "is silently degrading without telling the fault stream"
     )
 
-    # --- Assertion 4: no physical insufficiency ---
+    # Assertion 4: no physical insufficiency
     # 3 pinned images × ~1105 tokens + at least some text easily fits
     # in 8000 tokens after per-message overhead. If this flips True,
     # either the pin policy over-counted pages (the auto-pin set is
@@ -255,9 +242,7 @@ def test_history_compaction_keeps_recent_images_at_full_under_pressure() -> None
     )
 
 
-# --- Test 2 — regression guard for the motivating bug ------------------
-
-
+# Test 2 — regression guard for the motivating bug
 def test_thread_loop_recovers_from_process_message_exception() -> None:
     """Regression guard for the original motivating bug.
 
@@ -338,39 +323,35 @@ def test_thread_loop_recovers_from_process_message_exception() -> None:
         client._stop_event.set()
         client._thread.join(timeout=2.0)
 
-    # --- Assertion 1: all three messages processed ---
+    # Assertion 1: all three messages processed
     assert call_count["n"] == 3, (
         f"expected 3 processed turns, got {call_count['n']}. "
         "If this is 2, the thread died on the simulated exception "
         "and the queue stalled — exactly the original bug."
     )
 
-    # --- Assertion 2: PHYSICAL_INSUFFICIENCY fault was emitted ---
-    assert any(
-        ev.kind is FaultKind.PHYSICAL_INSUFFICIENCY
-        for ev in fake_faults_out.published
-    ), (
+    # Assertion 2: PHYSICAL_INSUFFICIENCY fault was emitted
+    assert any(ev.kind is FaultKind.PHYSICAL_INSUFFICIENCY for ev in fake_faults_out.published), (
         "no PHYSICAL_INSUFFICIENCY fault observed; "
         "_thread_loop's except-branch did not call emit_physical_insufficiency"
     )
 
-    # --- Assertion 3: idle restored to True after the final turn ---
+    # Assertion 3: idle restored to True after the final turn
     # Explicit ``is True`` — the stream takes bool, not truthy values;
     # a regression that publishes ``1`` or ``"True"`` would be bad and
     # we want the test to catch it.
     assert fake_idle.idle_history, "agent_idle never received any publish"
     assert fake_idle.idle_history[-1] is True, (
-        f"agent_idle did not return to True; history tail: "
-        f"{fake_idle.idle_history[-5:]!r}"
+        f"agent_idle did not return to True; history tail: {fake_idle.idle_history[-5:]!r}"
     )
 
-    # --- Assertion 4: thread exited cleanly ---
+    # Assertion 4: thread exited cleanly
     assert client._thread.is_alive() is False, (
         "thread still alive after stop_event set + join(timeout=2.0); "
         "worker loop is hung on something other than the message queue"
     )
 
-    # --- Assertion 5: exception forwarded through the fault stream ---
+    # Assertion 5: exception forwarded through the fault stream
     # ``MemoryEngine.emit_physical_insufficiency`` stringifies the
     # exception via ``repr()`` and stores it in ``details["exception"]``.
     # Filter the PHYSICAL_INSUFFICIENCY events down to those carrying
@@ -379,9 +360,9 @@ def test_thread_loop_recovers_from_process_message_exception() -> None:
     # the assertion robust if a future change adds another
     # physical-insufficiency emission path.
     phys_events_with_exc = [
-        ev for ev in fake_faults_out.published
-        if ev.kind is FaultKind.PHYSICAL_INSUFFICIENCY
-        and "exception" in ev.details
+        ev
+        for ev in fake_faults_out.published
+        if ev.kind is FaultKind.PHYSICAL_INSUFFICIENCY and "exception" in ev.details
     ]
     assert phys_events_with_exc, (
         "no PHYSICAL_INSUFFICIENCY fault carried an 'exception' key; "

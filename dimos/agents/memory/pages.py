@@ -120,8 +120,7 @@ class Representation:
     def __post_init__(self) -> None:
         if not isinstance(self.level, FidelityLevel):
             raise TypeError(
-                "Representation.level must be a FidelityLevel, got "
-                f"{type(self.level).__name__}"
+                f"Representation.level must be a FidelityLevel, got {type(self.level).__name__}"
             )
         if self.token_estimate < 0:
             raise ValueError(
@@ -188,18 +187,13 @@ class Page:
         if not self.id:
             raise ValueError("Page.id must be a non-empty string")
         if not isinstance(self.type, PageType):
-            raise TypeError(
-                f"Page.type must be a PageType, got {type(self.type).__name__}"
-            )
+            raise TypeError(f"Page.type must be a PageType, got {type(self.type).__name__}")
         if not isinstance(self.min_fidelity, FidelityLevel):
             raise TypeError(
-                "Page.min_fidelity must be a FidelityLevel, got "
-                f"{type(self.min_fidelity).__name__}"
+                f"Page.min_fidelity must be a FidelityLevel, got {type(self.min_fidelity).__name__}"
             )
         if self.role not in _VALID_ROLES:
-            raise ValueError(
-                f"Page.role must be one of {sorted(_VALID_ROLES)}, got {self.role!r}"
-            )
+            raise ValueError(f"Page.role must be one of {sorted(_VALID_ROLES)}, got {self.role!r}")
         if self.turn_seq < 0:
             raise ValueError(f"Page.turn_seq must be non-negative, got {self.turn_seq}")
         if self.ts < 0:

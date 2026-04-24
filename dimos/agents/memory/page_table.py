@@ -58,12 +58,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import threading
-from typing import TYPE_CHECKING
 
 from dimos.agents.memory.pages import FidelityLevel, Page, PageType
-
-if TYPE_CHECKING:
-    pass
 
 __all__ = [
     "PageTable",
@@ -104,9 +100,7 @@ class PageTable:
 
     def __init__(self, pin_recent_evidence: int = 3) -> None:
         if pin_recent_evidence < 0:
-            raise ValueError(
-                f"pin_recent_evidence must be non-negative, got {pin_recent_evidence}"
-            )
+            raise ValueError(f"pin_recent_evidence must be non-negative, got {pin_recent_evidence}")
         self._pages: list[Page] = []
         self._by_id: dict[str, Page] = {}
         self._by_artefact: dict[str, Page] = {}
@@ -119,8 +113,7 @@ class PageTable:
         # (per the plan's one-way-upgrade rule).
         self._auto_pinned_ids: set[str] = set()
 
-    # --- basic store operations ---------------------------------------
-
+    # basic store operations
     def __len__(self) -> int:
         with self._lock:
             return len(self._pages)
@@ -167,8 +160,7 @@ class PageTable:
             self._by_artefact.clear()
             self._auto_pinned_ids.clear()
 
-    # --- pinning -------------------------------------------------------
-
+    # pinning
     def evidence_pages(self) -> list[Page]:
         """Return EVIDENCE pages in ingest order."""
         with self._lock:
@@ -221,8 +213,7 @@ class PageTable:
 
             return PinRebalance(pinned=pinned_ids, unpinned=unpinned_ids)
 
-    # --- rehydration ---------------------------------------------------
-
+    # rehydration
     def mark_pinned_full(self, page_id: str) -> bool:
         """Promote a page to ``pinned_at_full`` (one-way upgrade).
 

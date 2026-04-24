@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for :mod:`dimos.agents.memory.pages`."""
+
 from __future__ import annotations
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -36,8 +37,12 @@ def _reps(
     """Helper to build a standard 4-level representation set."""
     return {
         FidelityLevel.POINTER: Representation(FidelityLevel.POINTER, pointer_text, tokens[0]),
-        FidelityLevel.STRUCTURED: Representation(FidelityLevel.STRUCTURED, structured_text, tokens[1]),
-        FidelityLevel.COMPRESSED: Representation(FidelityLevel.COMPRESSED, compressed_text, tokens[2]),
+        FidelityLevel.STRUCTURED: Representation(
+            FidelityLevel.STRUCTURED, structured_text, tokens[1]
+        ),
+        FidelityLevel.COMPRESSED: Representation(
+            FidelityLevel.COMPRESSED, compressed_text, tokens[2]
+        ),
         FidelityLevel.FULL: Representation(FidelityLevel.FULL, full_text, tokens[3]),
     }
 
@@ -60,7 +65,12 @@ def _page(**overrides: object) -> Page:
 
 
 def test_fidelity_level_ordered_int_enum() -> None:
-    assert FidelityLevel.POINTER < FidelityLevel.STRUCTURED < FidelityLevel.COMPRESSED < FidelityLevel.FULL
+    assert (
+        FidelityLevel.POINTER
+        < FidelityLevel.STRUCTURED
+        < FidelityLevel.COMPRESSED
+        < FidelityLevel.FULL
+    )
     assert int(FidelityLevel.POINTER) == 0
     assert int(FidelityLevel.FULL) == 3
 

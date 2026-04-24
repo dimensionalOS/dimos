@@ -142,7 +142,7 @@ class FaultObserver:
             logged to structlog.
     """
 
-    def __init__(self, stream_out: "Out[FaultEvent] | None" = None) -> None:
+    def __init__(self, stream_out: Out[FaultEvent] | None = None) -> None:
         self._stream = stream_out
         self._last_event: FaultEvent | None = None
         # Kept for tests — number of events seen of each kind. Not exposed
@@ -181,15 +181,16 @@ class FaultObserver:
             except Exception:  # pragma: no cover
                 _logger.exception("FaultObserver: failed to publish event to Out stream")
 
-    # --- convenience emitters used by the rest of the package -----------
-
+    # convenience emitters used by the rest of the package
     def evict(self, page_id: str, turn_seq: int, reason: str) -> None:
-        self.emit(FaultEvent(
-            kind=FaultKind.PAGE_EVICTED,
-            page_id=page_id,
-            turn_seq=turn_seq,
-            details={"reason": reason},
-        ))
+        self.emit(
+            FaultEvent(
+                kind=FaultKind.PAGE_EVICTED,
+                page_id=page_id,
+                turn_seq=turn_seq,
+                details={"reason": reason},
+            )
+        )
 
     def degrade(
         self,
@@ -199,20 +200,24 @@ class FaultObserver:
         from_level: str,
         to_level: str,
     ) -> None:
-        self.emit(FaultEvent(
-            kind=FaultKind.PAGE_DEGRADED,
-            page_id=page_id,
-            turn_seq=turn_seq,
-            details={"from": from_level, "to": to_level},
-        ))
+        self.emit(
+            FaultEvent(
+                kind=FaultKind.PAGE_DEGRADED,
+                page_id=page_id,
+                turn_seq=turn_seq,
+                details={"from": from_level, "to": to_level},
+            )
+        )
 
     def refetch(self, page_id: str, turn_seq: int, artefact_uuid: str) -> None:
-        self.emit(FaultEvent(
-            kind=FaultKind.REFETCH_FAULT,
-            page_id=page_id,
-            turn_seq=turn_seq,
-            details={"artefact_uuid": artefact_uuid},
-        ))
+        self.emit(
+            FaultEvent(
+                kind=FaultKind.REFETCH_FAULT,
+                page_id=page_id,
+                turn_seq=turn_seq,
+                details={"artefact_uuid": artefact_uuid},
+            )
+        )
 
     def physical_insufficiency(
         self,
@@ -225,12 +230,14 @@ class FaultObserver:
         details: dict[str, Any] = {"needed": needed, "available": available}
         if exception is not None:
             details["exception"] = exception
-        self.emit(FaultEvent(
-            kind=FaultKind.PHYSICAL_INSUFFICIENCY,
-            page_id=None,
-            turn_seq=turn_seq,
-            details=details,
-        ))
+        self.emit(
+            FaultEvent(
+                kind=FaultKind.PHYSICAL_INSUFFICIENCY,
+                page_id=None,
+                turn_seq=turn_seq,
+                details=details,
+            )
+        )
 
     def pin_rebalance(
         self,
@@ -239,9 +246,11 @@ class FaultObserver:
         pinned_page_ids: list[str],
         unpinned_page_ids: list[str],
     ) -> None:
-        self.emit(FaultEvent(
-            kind=FaultKind.PIN_REBALANCE,
-            page_id=None,
-            turn_seq=turn_seq,
-            details={"pinned": pinned_page_ids, "unpinned": unpinned_page_ids},
-        ))
+        self.emit(
+            FaultEvent(
+                kind=FaultKind.PIN_REBALANCE,
+                page_id=None,
+                turn_seq=turn_seq,
+                details={"pinned": pinned_page_ids, "unpinned": unpinned_page_ids},
+            )
+        )

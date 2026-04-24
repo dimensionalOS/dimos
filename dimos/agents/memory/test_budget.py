@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for :mod:`dimos.agents.memory.budget`."""
+
 from __future__ import annotations
 
 import pytest
@@ -26,9 +27,7 @@ from dimos.agents.memory.budget import (
 )
 
 
-# --- ModelBudget -------------------------------------------------------
-
-
+# ModelBudget
 def test_input_budget_arithmetic() -> None:
     b = ModelBudget(context_window=128_000, output_reserve=4096, system_overhead=256)
     assert b.input_budget == 128_000 - 4096 - 256
@@ -54,9 +53,7 @@ def test_model_budget_rejects_negative_per_message_overhead() -> None:
         ModelBudget(context_window=32_000, per_message_overhead=-1)
 
 
-# --- effective_budget_for_messages ------------------------------------
-
-
+# effective_budget_for_messages
 def test_effective_budget_subtracts_per_message_overhead() -> None:
     b = ModelBudget(
         context_window=10_000,
@@ -113,9 +110,7 @@ def test_model_budget_is_frozen() -> None:
         b.context_window = 2000  # type: ignore[misc]
 
 
-# --- resolve_budget ----------------------------------------------------
-
-
+# resolve_budget
 def test_resolve_budget_known_openai_models() -> None:
     b = resolve_budget("gpt-4o")
     assert b.context_window == 128_000

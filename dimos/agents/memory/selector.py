@@ -95,15 +95,11 @@ class AssembledPrompt:
     physical_insufficient: bool = False
 
 
-# ---------------------------------------------------------------------------
 # Algorithm
-# ---------------------------------------------------------------------------
-
-
 def assemble_prompt(
     pages: list[Page],
     *,
-    budget: "ModelBudget",
+    budget: ModelBudget,
 ) -> AssembledPrompt:
     """Build a token-capped prompt from the given pages.
 
@@ -201,11 +197,7 @@ def assemble_prompt(
     )
 
 
-# ---------------------------------------------------------------------------
 # Internals
-# ---------------------------------------------------------------------------
-
-
 def chosen_token_cost(page: Page, level: FidelityLevel) -> int:
     """Return the cached token cost of *page* rendered at *level*."""
     return page.rep_at(level).token_estimate
@@ -275,6 +267,7 @@ def _group_eviction_order(groups: list[list[Page]]) -> list[list[Page]]:
     slightly stickier (they get a small constant added). BOOTSTRAP is
     always pinned so never participates.
     """
+
     def _expendability(group: list[Page]) -> tuple[int, int, str]:
         head = group[0]
         # Lower tuple = evict earlier.
@@ -312,7 +305,7 @@ def _upgrade_until_full(
         return
 
     while cap_remaining > 0:
-        best: tuple[float, int, int, list[Page], FidelityLevel] | None = None
+        best: tuple[int, int, int, list[Page], FidelityLevel] | None = None
         # (delta_cost, -turn_seq, group_idx, group, target_level)
         #
         # Lower delta is better; higher turn_seq (negated so "smaller

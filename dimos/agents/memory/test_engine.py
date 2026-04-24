@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for :mod:`dimos.agents.memory.engine`."""
+
 from __future__ import annotations
 
 import base64
 
 import cv2
-import numpy as np
 from langchain_core.messages import HumanMessage, SystemMessage
+import numpy as np
 
 from dimos.agents.memory.engine import MemoryEngine
 from dimos.agents.memory.faults import FaultEvent, FaultKind
@@ -35,7 +36,7 @@ class _FakeOut:
 
 
 def _image_msg(size: int = 256) -> HumanMessage:
-    img = np.full((size, size, 3), 64, dtype=np.uint8)
+    img: np.ndarray = np.full((size, size, 3), 64, dtype=np.uint8)
     ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
     assert ok
     b64 = base64.b64encode(buf.tobytes()).decode("ascii")
@@ -132,7 +133,7 @@ def test_request_full_rehydrates_evidence_and_emits_refetch_fault() -> None:
     eng.ingest(_image_msg())  # e2
 
     # At this point e1 is no longer pinned (only 1 evidence is pinned).
-    e1 = [p for p in eng.pages() if p.type is PageType.EVIDENCE][0]
+    e1 = next(p for p in eng.pages() if p.type is PageType.EVIDENCE)
     uuid = e1.artefact_uuid
     assert uuid is not None
 

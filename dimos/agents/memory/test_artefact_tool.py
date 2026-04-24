@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for :mod:`dimos.agents.memory.artefact_tool`."""
+
 from __future__ import annotations
 
 import base64
 import re
 
 import cv2
-import numpy as np
 from langchain_core.messages import HumanMessage, SystemMessage
+import numpy as np
 
 from dimos.agents.memory.artefact_tool import (
     GET_ARTEFACT_TOOL_NAME,
@@ -40,7 +41,7 @@ class _FakeOut:
 
 
 def _image_msg(size: int = 256) -> HumanMessage:
-    img = np.full((size, size, 3), 128, dtype=np.uint8)
+    img: np.ndarray = np.full((size, size, 3), 128, dtype=np.uint8)
     ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
     assert ok
     b64 = base64.b64encode(buf.tobytes()).decode("ascii")
@@ -79,7 +80,7 @@ def test_tool_invoke_schedules_full_and_emits_refetch_fault() -> None:
     eng.ingest(_image_msg())
     eng.ingest(_image_msg())
 
-    old_evidence = [p for p in eng.pages() if p.type is PageType.EVIDENCE][0]
+    old_evidence = next(p for p in eng.pages() if p.type is PageType.EVIDENCE)
     uuid = old_evidence.artefact_uuid
     assert uuid is not None
 
@@ -143,7 +144,7 @@ def test_llm_can_rehydrate_from_structured_representation() -> None:
     eng.ingest(SystemMessage(content="sys"))
     eng.ingest(_image_msg())
 
-    evidence = [p for p in eng.pages() if p.type is PageType.EVIDENCE][0]
+    evidence = next(p for p in eng.pages() if p.type is PageType.EVIDENCE)
 
     # Read the STRUCTURED rep directly off the page. This is exactly the
     # string the LLM sees whenever the selector picks STRUCTURED; the
@@ -154,9 +155,7 @@ def test_llm_can_rehydrate_from_structured_representation() -> None:
     assert structured.startswith("[image artefact uuid=")
 
     match = re.search(r"\[image artefact uuid=([a-f0-9\-]+) ", structured)
-    assert match is not None, (
-        f"STRUCTURED rep did not match expected bracket shape: {structured!r}"
-    )
+    assert match is not None, f"STRUCTURED rep did not match expected bracket shape: {structured!r}"
     extracted_uuid = match.group(1)
 
     # The extracted UUID must be the artefact UUID the PageTable indexes

@@ -71,7 +71,7 @@ class _GetArtefactArgs(BaseModel):
     )
 
 
-def build_get_artefact_tool(engine: "MemoryEngine") -> "StructuredTool":
+def build_get_artefact_tool(engine: MemoryEngine) -> StructuredTool:
     """Build a :class:`StructuredTool` bound to *engine*.
 
     The returned tool is side-effectful: calling it mutates the engine's

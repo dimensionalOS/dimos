@@ -295,9 +295,7 @@ class McpClient(Module):
                     self._process_message(self._state_graph, message)
                 except Exception as exc:
                     self._engine.emit_physical_insufficiency(exception=exc)
-                    logger.exception(
-                        "mcp_client turn failed; continuing to drain queue"
-                    )
+                    logger.exception("mcp_client turn failed; continuing to drain queue")
 
     def _process_message(
         self,
@@ -305,17 +303,17 @@ class McpClient(Module):
         message: BaseMessage,
     ) -> None:
         self.agent_idle.publish(False)
-        # Ingest the inbound message into the memory engine; this becomes
-        # a Page (or several, for multimodal) and drives the next
-        # assemble. Edge case: under a physically-insufficient budget
-        # the fresh input itself may be degraded. The engine emits a
-        # PHYSICAL_INSUFFICIENCY fault in that case.
-        self._engine.ingest(message)
-        pretty_print_langchain_message(message)
-        self.agent.publish(message)
-
-        assembled = self._engine.assemble()
         try:
+            # Ingest the inbound message into the memory engine; this becomes
+            # a Page (or several, for multimodal) and drives the next
+            # assemble. Edge case: under a physically-insufficient budget
+            # the fresh input itself may be degraded. The engine emits a
+            # PHYSICAL_INSUFFICIENCY fault in that case.
+            self._engine.ingest(message)
+            pretty_print_langchain_message(message)
+            self.agent.publish(message)
+
+            assembled = self._engine.assemble()
             for update in state_graph.stream(
                 {"messages": assembled.messages}, stream_mode="updates"
             ):

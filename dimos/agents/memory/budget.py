@@ -127,9 +127,7 @@ class ModelBudget:
             ValueError: if *n_messages* is negative.
         """
         if n_messages < 0:
-            raise ValueError(
-                f"n_messages must be non-negative, got {n_messages}"
-            )
+            raise ValueError(f"n_messages must be non-negative, got {n_messages}")
         return self.input_budget - self.per_message_overhead * n_messages
 
 
@@ -137,7 +135,7 @@ class ModelBudget:
 # as of 2026-04. Conservative where ambiguity exists. Keep this table
 # sorted alphabetically for easy review.
 _MODEL_WINDOWS: dict[str, int] = {
-    # --- OpenAI ---
+    # OpenAI
     "gpt-3.5-turbo": 16_385,
     "gpt-3.5-turbo-16k": 16_385,
     "gpt-4": 8_192,
@@ -155,7 +153,7 @@ _MODEL_WINDOWS: dict[str, int] = {
     "o1-mini": 128_000,
     "o1-preview": 128_000,
     "o3-mini": 200_000,
-    # --- Anthropic ---
+    # Anthropic
     "claude-3-5-sonnet": 200_000,
     "claude-3-5-sonnet-latest": 200_000,
     "claude-3-haiku": 200_000,
@@ -163,14 +161,14 @@ _MODEL_WINDOWS: dict[str, int] = {
     "claude-3-sonnet": 200_000,
     "claude-4-opus": 200_000,
     "claude-4-sonnet": 200_000,
-    # --- Llama / ollama ---
+    # Llama / ollama
     "llama2": 4_096,
     "llama3": 8_192,
     "llama3.1": 128_000,
     "llama3.2": 128_000,
     "llama3.3": 128_000,
     "llama4": 128_000,
-    # --- Qwen / Mistral / misc ---
+    # Qwen / Mistral / misc
     "mistral": 32_768,
     "mistral-large": 128_000,
     "mixtral": 32_768,
@@ -191,7 +189,7 @@ def _normalize_model(name: str) -> str:
     s = name.strip()
     for prefix in ("ollama:", "openai:", "anthropic:", "groq:"):
         if s.startswith(prefix):
-            s = s[len(prefix):]
+            s = s[len(prefix) :]
             break
     # Drop ollama ``:tag`` and OpenAI ``-YYYY-MM-DD`` date suffixes.
     if ":" in s:
@@ -231,6 +229,7 @@ def resolve_budget(
         ValueError: if *override* or any other argument is non-positive /
             negative (validation is done in :class:`ModelBudget`).
     """
+    window: int | None
     if override is not None:
         window = override
     else:
@@ -243,9 +242,7 @@ def resolve_budget(
             # ``o1-mini`` wins and reports 128K rather than o1's 200K.
             best_key: str | None = None
             for key in _MODEL_WINDOWS:
-                if normalized.startswith(key) and (
-                    best_key is None or len(key) > len(best_key)
-                ):
+                if normalized.startswith(key) and (best_key is None or len(key) > len(best_key)):
                     best_key = key
             if best_key is not None:
                 window = _MODEL_WINDOWS[best_key]

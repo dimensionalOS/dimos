@@ -97,7 +97,7 @@ class MemoryEngine:
         pin_recent_evidence: int = 3,
         output_reserve_tokens: int = DEFAULT_OUTPUT_RESERVE,
         system_overhead: int = DEFAULT_SYSTEM_OVERHEAD,
-        faults_out: "Out[FaultEvent] | None" = None,
+        faults_out: Out[FaultEvent] | None = None,
         token_counter: TokenCounter | None = None,
     ) -> None:
         self.model_name = model_name
@@ -113,8 +113,7 @@ class MemoryEngine:
         self._turn_seq = 0
         self._lock = threading.RLock()
 
-    # --- introspection -------------------------------------------------
-
+    # introspection
     @property
     def budget(self) -> ModelBudget:
         """The immutable budget used for assembly (exposed for tests)."""
@@ -137,11 +136,10 @@ class MemoryEngine:
         """Snapshot of all pages in ingest order."""
         return self._table.ordered()
 
-    # --- lifecycle -----------------------------------------------------
-
+    # lifecycle
     def ingest(
         self,
-        msg: "BaseMessage",
+        msg: BaseMessage,
         *,
         page_type_hint: PageType | None = None,
     ) -> list[Page]:
@@ -256,8 +254,7 @@ class MemoryEngine:
         with self._lock:
             self._table.clear()
 
-    # --- artefact rehydration -----------------------------------------
-
+    # artefact rehydration
     def request_full(self, artefact_uuid: str) -> bool:
         """Flag an EVIDENCE page for FULL-fidelity rendering on the next
         :meth:`assemble`. Used by the ``get_artefact`` tool.
@@ -274,7 +271,7 @@ class MemoryEngine:
             self._observer.refetch(page.id, self._turn_seq, artefact_uuid)
             return True
 
-    def get_artefact_tool(self) -> "StructuredTool":
+    def get_artefact_tool(self) -> StructuredTool:
         """Build the LangChain tool that lets the LLM rehydrate evidence.
 
         Deferred import: this method is the only path that needs
