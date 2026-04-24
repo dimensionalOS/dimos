@@ -323,7 +323,7 @@ def main() -> int:
 
     # --- Connect to camera ---
     try:
-        import pyrealsense2 as rs  # type: ignore[import-not-found]
+        import pyrealsense2 as rs  # type: ignore[import-not-found,import-untyped]
 
         pipeline = rs.pipeline()
         config = rs.config()

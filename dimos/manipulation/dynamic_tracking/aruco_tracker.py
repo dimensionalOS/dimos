@@ -275,7 +275,7 @@ class ArucoTracker(Module[ArucoTrackerConfig]):
             self._servo_to_marker(ts)
 
         # Draw markers
-        self._draw_markers(display_image, corners, ids, rvecs, tvecs, image.format.name)
+        self._draw_markers(display_image, list(corners), ids, rvecs, tvecs, image.format.name)
 
     # =========================================================================
     # Visual servo
@@ -372,6 +372,9 @@ class ArucoTracker(Module[ArucoTrackerConfig]):
         image_format: str,
     ) -> None:
         cv2.aruco.drawDetectedMarkers(display_image, corners, ids)
+        if self._camera_matrix is None or self._dist_coeffs is None:
+            self._publish_annotated_image(display_image, image_format)
+            return
         for i in range(len(ids)):
             cv2.drawFrameAxes(
                 display_image,
