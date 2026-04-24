@@ -293,7 +293,7 @@ class TimeSeriesStore(Generic[T], ABC):
         from dimos.utils.testing.replay import timed_playback
 
         return timed_playback(
-            self.iterate_items(
+            lambda: self.iterate_items(
                 seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
             ),
             speed=speed,

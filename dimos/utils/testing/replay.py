@@ -81,7 +81,7 @@ def _close_all() -> None:
 
 
 def timed_playback(
-    source: Iterator[tuple[float, T]],
+    source: Callable[[], Iterator[tuple[float, T]]],
     speed: float = 1.0,
     detect_loop: bool = True,
 ) -> Observable[T]:
@@ -91,6 +91,9 @@ def timed_playback(
     ``scheduler.schedule_relative`` at ``anchor + (ts - first_ts) / speed``.
     When ``detect_loop`` is set, a backwards-going timestamp re-anchors — use
     this when the source iterator loops.
+
+    ``source`` is a factory: called fresh on each subscription so the same
+    Observable can be re-subscribed without iterator collisions.
 
     Pending timers are tracked on a CompositeDisposable and cancelled on
     subscription dispose.
@@ -103,9 +106,10 @@ def timed_playback(
         sched = scheduler or TimeoutScheduler()
         disp = CompositeDisposable()
         is_disposed = False
+        iterator = source()
 
         try:
-            first_ts, first_data = next(source)
+            first_ts, first_data = next(iterator)
         except StopIteration:
             observer.on_completed()
             return Disposable()
@@ -116,7 +120,7 @@ def timed_playback(
         observer.on_next(first_data)
 
         try:
-            next_message: tuple[float, T] | None = next(source)
+            next_message: tuple[float, T] | None = next(iterator)
         except StopIteration:
             observer.on_completed()
             return disp
@@ -137,7 +141,7 @@ def timed_playback(
             prev_ts = ts
 
             try:
-                next_message = next(source)
+                next_message = next(iterator)
             except StopIteration:
                 next_message = None
 
@@ -301,7 +305,9 @@ class Memory2ReplayAdapter(Generic[T]):
     ) -> Observable[T]:
         """Real-time scheduled playback as an RxPY Observable."""
         return timed_playback(
-            self.iterate_ts(seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop),
+            lambda: self.iterate_ts(
+                seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
+            ),
             speed=speed,
         )
 

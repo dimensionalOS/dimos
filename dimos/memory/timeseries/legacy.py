@@ -322,6 +322,8 @@ class LegacyPickleStore(TimeSeriesStore[T]):
         from dimos.utils.testing.replay import timed_playback
 
         return timed_playback(
-            self.iterate_ts(seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop),
+            lambda: self.iterate_ts(
+                seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
+            ),
             speed=speed,
         )
