@@ -68,10 +68,20 @@ class JogState:
         )
 
     @classmethod
-    def from_fk(cls, model_path: str, ee_joint_id: int) -> JogState:
-        """Create JogState from forward kinematics at zero configuration.
+    def from_fk(
+        cls,
+        model_path: str,
+        ee_joint_id: int,
+        q_home: list[float] | None = None,
+    ) -> JogState:
+        """Create JogState from forward kinematics at the given configuration.
 
-        This ensures the initial pose is reachable by the robot.
+        Args:
+            model_path: Path to URDF or MJCF model file.
+            ee_joint_id: End-effector joint ID in the kinematic chain.
+            q_home: Home joint configuration to use for FK. If None, defaults
+                to the zero configuration (not recommended — use the robot's
+                actual home joints to avoid large initial deltas).
         """
         import pinocchio
 
@@ -83,9 +93,12 @@ class JogState:
 
         data = model.createData()
 
-        # Compute FK at zero configuration
-        q_zero = np.zeros(model.nq)
-        pinocchio.forwardKinematics(model, data, q_zero)
+        # Compute FK at the given home configuration (fallback: zero)
+        if q_home is not None:
+            q_init = np.array(q_home, dtype=float)
+        else:
+            q_init = np.zeros(model.nq)
+        pinocchio.forwardKinematics(model, data, q_init)
 
         # Get EE pose
         ee_pose = data.oMi[ee_joint_id]
