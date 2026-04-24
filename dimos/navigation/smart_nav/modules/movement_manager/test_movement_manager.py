@@ -96,3 +96,22 @@ def test_invalid_clicks_rejected(manager: MovementManager) -> None:
     ]:
         manager._on_click(bad_click)
     manager.goal.publish.assert_not_called()  # type: ignore[union-attr]
+
+
+def test_tele_cmd_vel_scaling() -> None:
+    """tele_cmd_vel_scaling multiplies each teleop twist component independently."""
+    scaling = Twist(Vector3(0.5, 2.0, 0.0), Vector3(1.0, 1.0, 0.25))
+    module = MovementManager(tele_cooldown_sec=10.0, tele_cmd_vel_scaling=scaling)
+    module.cmd_vel.publish = MagicMock()
+    module.stop_movement.publish = MagicMock()
+    module.goal.publish = MagicMock()
+    module.way_point.publish = MagicMock()
+
+    module._on_teleop(Twist(Vector3(1, 1, 1), Vector3(1, 1, 1)))
+
+    published = module.cmd_vel.publish.call_args[0][0]  # type: ignore[union-attr]
+    assert published.linear.x == pytest.approx(0.5)
+    assert published.linear.y == pytest.approx(2.0)
+    assert published.linear.z == pytest.approx(0.0)
+    assert published.angular.z == pytest.approx(0.25)
+    module._close_module()
