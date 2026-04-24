@@ -100,7 +100,6 @@ logger = setup_logger()
 
 BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
 
-# to_rerun() can return a single archetype or a list of (entity_path, archetype) tuples
 RerunMulti: TypeAlias = "list[tuple[str, Archetype]]"
 RerunData: TypeAlias = "Archetype | RerunMulti"
 
@@ -167,8 +166,6 @@ def _default_blueprint() -> Blueprint:
 
 
 class Config(ModuleConfig):
-    """Configuration for RerunBridgeModule."""
-
     pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
 
     visual_override: dict[Glob | str, Callable[[Any], Archetype]] = field(default_factory=dict)
@@ -237,7 +234,6 @@ class RerunBridgeModule(Module):
         if cached is not None:
             return cached
 
-        # find all matching converters for this entity path
         matches = [
             fn
             for pattern, fn in self.config.visual_override.items()
@@ -250,7 +246,6 @@ class RerunBridgeModule(Module):
             self._override_cache[entity_path] = result
             return result
 
-        # final step (ensures we return Archetype or None)
         def final_convert(msg: Any) -> RerunData | None:
             from rerun._baseclasses import Archetype
 
@@ -262,7 +257,6 @@ class RerunBridgeModule(Module):
                 return msg.to_rerun()
             return None
 
-        # compose all converters
         composed: Callable[[Any], RerunData | None] = lambda msg: pipe(  # noqa: E731
             msg, *matches, final_convert
         )
@@ -270,18 +264,14 @@ class RerunBridgeModule(Module):
         return composed
 
     def _get_entity_path(self, topic: Any) -> str:
-        """Convert a topic to a Rerun entity path."""
         if self.config.topic_to_entity:
             return self.config.topic_to_entity(topic)
 
-        # Default: use topic.name if available (LCM Topic), else str
         topic_str = getattr(topic, "name", None) or str(topic)
-        # Strip everything after # (LCM topic suffix)
-        topic_str = topic_str.split("#")[0]
+        topic_str = topic_str.split("#")[0]  # strip LCM topic suffix
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:
-        """Handle incoming message - log to rerun."""
         import rerun as rr
 
         entity_path: str = self._get_entity_path(topic)
@@ -293,7 +283,6 @@ class RerunBridgeModule(Module):
                 return
             self._last_log[entity_path] = now
 
-        # apply visual overrides (including final_convert which handles .to_rerun())
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
 
         if not rerun_data:
@@ -314,17 +303,12 @@ class RerunBridgeModule(Module):
 
         logger.info("Rerun bridge starting")
 
-        # Build throttle lookup: entity_path → min interval in seconds
         self._last_log = {}
         self._min_intervals: dict[str, float] = {
             entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
         }
 
-        # Initialize and spawn Rerun viewer
         rr.init("dimos")
-
-        # start grpc if needed
-        # If the port is already in use (another instance running), connect
 
         parsed = urlparse(self.config.connect_url.replace("rerun+", "", 1))
         grpc_port = parsed.port or RERUN_GRPC_PORT
@@ -344,14 +328,12 @@ class RerunBridgeModule(Module):
             )
             logger.info(f"Rerun gRPC server ready at {server_uri}")
 
-        # Check open arg
         if self.config.rerun_open not in get_args(RerunOpenOption):
             logger.warning(
                 f"rerun_open was {self.config.rerun_open} which is not one of "
                 f"{get_args(RerunOpenOption)}"
             )
 
-        # launch native viewer if desired
         spawned = False
         if self.config.rerun_open in ("native", "both"):
             try:
@@ -386,7 +368,6 @@ class RerunBridgeModule(Module):
                         exc_info=True,
                     )
 
-        # web
         open_web = self.config.rerun_open == "web" or self.config.rerun_open == "both"
         if open_web or self.config.rerun_web:
             rr.serve_web_viewer(
@@ -395,18 +376,15 @@ class RerunBridgeModule(Module):
                 web_port=self.config.web_port,
             )
 
-        # printout
         if self.config.rerun_open == "none" or (self.config.rerun_open == "native" and not spawned):
             self._log_connect_hints(grpc_port)
 
-        # setup blueprint
         if self.config.blueprint:
             rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
 
         # Register colormap for viewer-side color resolution (PointCloud2 class_ids)
         register_colormap_annotation("turbo")
 
-        # Start pubsubs and subscribe to all messages
         for pubsub in self.config.pubsubs:
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
             if hasattr(pubsub, "start"):
@@ -414,7 +392,6 @@ class RerunBridgeModule(Module):
             unsub = pubsub.subscribe_all(self._on_message)
             self.register_disposable(Disposable(unsub))
 
-        # Add pubsub stop as disposable
         for pubsub in self.config.pubsubs:
             if hasattr(pubsub, "stop"):
                 self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]

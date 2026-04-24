@@ -30,9 +30,6 @@ from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 _TEST_PORT = 13031
 
 
-# ── Mock viewer ──────────────────────────────────────────────────────────
-
-
 class MockViewerPublisher:
     """Simulates dimos-viewer sending JSON events over WebSocket."""
 
@@ -101,9 +98,6 @@ class MockViewerPublisher:
     def _send(self, msg: dict[str, Any]) -> None:
         assert self._loop is not None and self._ws is not None
         self._loop.run_until_complete(self._ws.send(json.dumps(msg)))
-
-
-# ── Fixtures ─────────────────────────────────────────────────────────────
 
 
 @pytest.fixture()

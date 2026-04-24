@@ -12,18 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MovementManager: click-to-goal + teleop/nav velocity mux in one module.
-
-Combines the responsibilities of ClickToGoal and CmdVelMux:
-- Validates and forwards clicked_point → goal (+ way_point)
-- Multiplexes nav_cmd_vel and tele_cmd_vel → cmd_vel
-- When teleop starts: cancels the active nav goal and publishes stop_movement
-- When teleop ends: nav resumes but stays idle until a new click
-
-This avoids the round-trip where CmdVelMux had to publish stop_movement
-over a stream to ClickToGoal, which then had to publish a NaN goal to the
-planner. Now goal cancellation is immediate and internal.
-"""
+"""MovementManager: click-to-goal relay + teleop/nav velocity mux."""
 
 from __future__ import annotations
 
@@ -46,31 +35,12 @@ logger = setup_logger()
 
 
 class MovementManagerConfig(ModuleConfig):
-    """Config for MovementManager."""
-
-    # Seconds after the last teleop message before nav_cmd_vel is re-enabled.
     tele_cooldown_sec: float = 1.0
-    # Element-wise multiplier for incoming teleop twists.
-    # Default is identity (all 1.0). Set a component to 0.0 to lock it out.
     tele_cmd_vel_scaling: Twist = Twist(Vector3(1, 1, 1), Vector3(1, 1, 1))
 
 
 class MovementManager(Module):
-    """Click-to-goal relay + teleop/nav velocity mux.
-
-    Ports:
-        clicked_point (In[PointStamped]): Click from viewer → publishes goal.
-        nav_cmd_vel (In[Twist]): Velocity from the autonomous planner.
-        tele_cmd_vel (In[Twist]): Velocity from keyboard/joystick teleop.
-        goal (Out[PointStamped]): Navigation goal for the global planner.
-        way_point (Out[PointStamped]): Immediate waypoint (disconnected in smart_nav).
-        cmd_vel (Out[Twist]): Merged velocity — teleop wins when active.
-        stop_movement (Out[Bool]): Fired once when teleop takes over, for
-            modules that listen directly (e.g. FarPlanner C++ binary).
-
-    Robot pose is obtained via the TF tree (``map → body``) rather than
-    an Odometry stream.
-    """
+    """Combine tele_cmd_vel (keyboard controls) and nav_cmd_vel in a sane way, output cmd_vel"""
 
     config: MovementManagerConfig
 
@@ -110,7 +80,7 @@ class MovementManager(Module):
             logger.warning("Ignored out-of-range click", x=msg.x, y=msg.y, z=msg.z)
             return
 
-        logger.info("Goal", x=round(msg.x, 1), y=round(msg.y, 1), z=round(msg.z, 1))
+        logger.debug("Goal", x=round(msg.x, 1), y=round(msg.y, 1), z=round(msg.z, 1))
         self.way_point.publish(msg)
         self.goal.publish(msg)
 
@@ -124,14 +94,12 @@ class MovementManager(Module):
         )
         self.way_point.publish(cancel)
         self.goal.publish(cancel)
-        logger.info("Navigation cancelled — waiting for new goal")
-
-    # ── Velocity mux ─────────────────────────────────────────────────────
+        logger.debug("Navigation cancelled — waiting for new goal")
 
     def _on_nav(self, msg: Twist) -> None:
         with self._lock:
             if self._teleop_active:
-                # Check if cooldown has expired.
+                # check if cooldown has expired
                 elapsed = time.monotonic() - self._last_teleop_time
                 if elapsed < self.config.tele_cooldown_sec:
                     return

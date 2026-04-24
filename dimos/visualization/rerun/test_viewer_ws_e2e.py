@@ -283,14 +283,9 @@ class TestViewerBinaryConnectMode:
             stderr=subprocess.PIPE,
         )
 
-        # Give the viewer up to 5 s to connect its WebSocket client to our server.
-        # We detect the connection by waiting for the server to accept a client.
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
-            # Check if any connection was established by sending a message and
-            # verifying the viewer is still running.
             if proc.poll() is not None:
-                # Viewer exited (expected without a display) — check if it connected first.
                 break
             time.sleep(0.1)
 
@@ -304,8 +299,6 @@ class TestViewerBinaryConnectMode:
         stderr = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
         server.stop()
 
-        # The viewer should log that it is connecting to our WS URL.
-        # Check both stdout and stderr since log output destination varies.
         combined = stdout + stderr
         assert f"ws://127.0.0.1:{_E2E_PORT}" in combined, (
             f"Viewer did not attempt WS connection.\nstdout:\n{stdout}\nstderr:\n{stderr}"
