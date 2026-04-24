@@ -19,7 +19,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import shutil
 import subprocess
 import threading
 import time
@@ -180,11 +179,8 @@ class TestViewerBinaryConnectMode:
         except subprocess.TimeoutExpired:
             proc.kill()
 
-    @pytest.mark.skipif(
-        shutil.which("dimos-viewer") is None
-        or "--connect"
-        not in subprocess.run(["dimos-viewer", "--help"], capture_output=True, text=True).stdout,
-        reason="dimos-viewer binary not installed or does not support --connect",
+    @pytest.mark.skip(
+        reason="Incompatible with current winit: fails without DISPLAY (headless CI exits before WS connect) and hangs with DISPLAY (GUI event loop blocks before printing URL).",
     )
     def test_viewer_ws_client_connects(self, viewer_process: subprocess.Popen[bytes]) -> None:
         """dimos-viewer --connect starts and its WS client connects to our server."""

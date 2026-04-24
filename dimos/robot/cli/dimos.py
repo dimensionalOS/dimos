@@ -21,6 +21,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 import time
 import types
@@ -38,6 +39,8 @@ from dimos.constants import CONFIG_DIR, LOG_DIR
 from dimos.core.daemon import daemonize, install_signal_handlers
 from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.run_registry import get_most_recent, is_pid_alive, stop_entry
+from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.protocol.service.lcmservice import autoconf
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import RerunOpenOption
 
@@ -681,10 +684,8 @@ def rerun_bridge_cmd(
     blueprint / worker pool) so users can attach a viewer to existing LCM
     traffic without building a full module graph.
     """
-    import signal
-
-    from dimos.protocol.pubsub.impl.lcmpubsub import LCM
-    from dimos.protocol.service.lcmservice import autoconf
+    # Deferred: RerunBridgeModule pulls in the rerun package (~1s), keep it
+    # out of the CLI's hot path so `dimos --help` stays fast.
     from dimos.visualization.rerun.bridge import RerunBridgeModule
 
     valid = get_args(RerunOpenOption)

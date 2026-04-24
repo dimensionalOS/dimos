@@ -22,6 +22,7 @@ import time
 from typing import Any
 
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -62,9 +63,9 @@ class MovementManager(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.clicked_point.subscribe(self._on_click)
-        self.nav_cmd_vel.subscribe(self._on_nav)
-        self.tele_cmd_vel.subscribe(self._on_teleop)
+        self.register_disposable(Disposable(self.clicked_point.subscribe(self._on_click)))
+        self.register_disposable(Disposable(self.nav_cmd_vel.subscribe(self._on_nav)))
+        self.register_disposable(Disposable(self.tele_cmd_vel.subscribe(self._on_teleop)))
 
     @rpc
     def stop(self) -> None:

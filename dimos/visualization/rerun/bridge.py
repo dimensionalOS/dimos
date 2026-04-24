@@ -22,7 +22,6 @@ import socket
 import subprocess
 import time
 from typing import (
-    TYPE_CHECKING,
     Any,
     Protocol,
     TypeAlias,
@@ -34,11 +33,9 @@ from typing import (
 from urllib.parse import urlparse
 
 from reactivex.disposable import Disposable
+from rerun._baseclasses import Archetype
+from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
-
-if TYPE_CHECKING:
-    from rerun._baseclasses import Archetype
-    from rerun.blueprint import Blueprint
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
@@ -46,6 +43,7 @@ from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
+from dimos.utils.generic import get_local_ips
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.rerun.constants import (
     RERUN_ENABLE_WEB,
@@ -106,8 +104,6 @@ RerunData: TypeAlias = "Archetype | RerunMulti"
 
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
     """Check if data is a list of (entity_path, archetype) tuples."""
-    from rerun._baseclasses import Archetype
-
     return (
         isinstance(data, list)
         and bool(data)
@@ -182,14 +178,7 @@ class Config(ModuleConfig):
     blueprint: BlueprintFactory | None = _default_blueprint
 
 
-def _rebuild_config() -> None:
-    from rerun._baseclasses import Archetype
-    from rerun.blueprint import Blueprint
-
-    Config.model_rebuild(_types_namespace={"Archetype": Archetype, "Blueprint": Blueprint})
-
-
-_rebuild_config()
+Config.model_rebuild(_types_namespace={"Archetype": Archetype, "Blueprint": Blueprint})
 
 
 class RerunBridgeModule(Module):
@@ -241,13 +230,14 @@ class RerunBridgeModule(Module):
 
         # None means "suppress this topic entirely"
         if any(fn is None for fn in matches):
-            result: Callable[[Any], RerunData | None] = lambda msg: None  # noqa: E731
-            self._override_cache[entity_path] = result
-            return result
+
+            def suppressed(msg: Any) -> RerunData | None:
+                return None
+
+            self._override_cache[entity_path] = suppressed
+            return suppressed
 
         def final_convert(msg: Any) -> RerunData | None:
-            from rerun._baseclasses import Archetype
-
             if isinstance(msg, Archetype):
                 return msg
             if is_rerun_multi(msg):
@@ -256,9 +246,9 @@ class RerunBridgeModule(Module):
                 return msg.to_rerun()
             return None
 
-        composed: Callable[[Any], RerunData | None] = lambda msg: pipe(  # noqa: E731
-            msg, *matches, final_convert
-        )
+        def composed(msg: Any) -> RerunData | None:
+            return pipe(msg, *matches, final_convert)
+
         self._override_cache[entity_path] = composed
         return composed
 
@@ -399,8 +389,6 @@ class RerunBridgeModule(Module):
 
     def _log_connect_hints(self, grpc_port: int) -> None:
         """Log CLI commands for connecting a viewer to this bridge."""
-        from dimos.utils.generic import get_local_ips
-
         local_ips = get_local_ips()
         hostname = socket.gethostname()
         connect_url = f"rerun+http://127.0.0.1:{grpc_port}/proxy"
