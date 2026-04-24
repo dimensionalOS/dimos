@@ -40,6 +40,7 @@ Usage:
 from __future__ import annotations
 
 import math
+import os
 
 import cv2
 
@@ -59,6 +60,9 @@ from dimos.utils.data import LfsPath
 # =============================================================================
 
 _XARM6_MODEL_PATH = LfsPath("xarm_description/urdf/xarm6/xarm6.urdf")
+
+# XArm IP — override via DIMOS_XARM6_IP env var
+_XARM6_IP = os.environ.get("DIMOS_XARM6_IP", "192.168.1.210")
 
 # =============================================================================
 # Camera calibration (EEF → camera transform)
@@ -89,8 +93,7 @@ aruco_tracker_realsense = (
             camera_name="camera",
             base_frame_id="ee_link",
             base_transform=_DEFAULT_EEF_TO_CAMERA,
-            enable_depth=True,
-            align_depth_to_color=False,
+            enable_depth=False,
         ),
         aruco_tracker(
             marker_size=0.015,
@@ -149,8 +152,7 @@ aruco_servo_mock = (
             camera_name="camera",
             base_frame_id="ee_link",
             base_transform=_DEFAULT_EEF_TO_CAMERA,
-            enable_depth=True,
-            align_depth_to_color=False,
+            enable_depth=False,
         ),
         aruco_tracker(
             marker_size=0.015,
@@ -198,7 +200,7 @@ aruco_servo_xarm6 = (
                     hardware_type=HardwareType.MANIPULATOR,
                     joints=make_joints("arm", 6),
                     adapter_type="xarm",
-                    address="192.168.1.210",
+                    address=_XARM6_IP,
                     auto_enable=True,
                 ),
             ],
@@ -220,8 +222,7 @@ aruco_servo_xarm6 = (
             camera_name="camera",
             base_frame_id="ee_link",
             base_transform=_DEFAULT_EEF_TO_CAMERA,
-            enable_depth=True,
-            align_depth_to_color=False,
+            enable_depth=False,
         ),
         aruco_tracker(
             marker_size=0.015,
