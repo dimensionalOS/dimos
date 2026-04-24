@@ -41,8 +41,10 @@ Example usage::
 
 from __future__ import annotations
 
+import enum
 import functools
 import inspect
+import json
 import os
 from pathlib import Path
 import signal
@@ -56,29 +58,23 @@ from pydantic import Field
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
+from dimos.core.global_config import global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.utils.logging_config import setup_logger
 
-# ctypes is only needed for the Linux child-preexec helper below.  Hoisting
-# the import out of the inner function avoids re-importing on every start().
 if sys.platform.startswith("linux"):
     import ctypes
+    from ctypes.util import find_library
 
-    _LIBC = ctypes.CDLL("libc.so.6", use_errno=True)
-    _PR_SET_PDEATHSIG = 1
+    _LIBC = ctypes.CDLL(find_library("c"), use_errno=True)
 
-    def _child_preexec_linux() -> None:
-        """Kill child when parent dies. Linux only.
-
-        Runs in the child between fork() and exec().  Async-signal-safe
-        operations only — the call into libc.prctl is fine, but anything
-        that touches the threading runtime (allocating, importing) is not.
-        """
+    def _set_process_to_die_when_parent_dies() -> None:
+        _PR_SET_PDEATHSIG = 1
         if _LIBC.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM) != 0:
             err = ctypes.get_errno()
-            raise OSError(err, f"prctl(PR_SET_PDEATHSIG) failed: {os.strerror(err)}")
+            raise OSError(err, f"_set_process_to_die_when_parent_dies failed: {os.strerror(err)}")
 else:
-    _child_preexec_linux = None  # type: ignore[assignment]
+    _set_process_to_die_when_parent_dies = None  # type: ignore[assignment]
 
 if sys.version_info < (3, 13):
     from typing_extensions import TypeVar
@@ -88,31 +84,38 @@ else:
 logger = setup_logger()
 
 
-class NativeModuleConfig(ModuleConfig):
-    """Configuration for a native (C/C++) subprocess module."""
+class LogFormat(enum.Enum):
+    TEXT = "text"
+    JSON = "json"
 
+
+class NativeModuleConfig(ModuleConfig):
     executable: str
     build_command: str | None = None
     cwd: str | None = None
     extra_args: list[str] = Field(default_factory=list)
     extra_env: dict[str, str] = Field(default_factory=dict)
     shutdown_timeout: float = DEFAULT_THREAD_JOIN_TIMEOUT
+    log_format: LogFormat = LogFormat.TEXT
+    auto_build: bool = False
 
-    # Override in subclasses to exclude fields from CLI arg generation
+    # New version of Native Modules read json configs from stdin
+    # Enable this to read from stdin instead of cli args
+    stdin_config: bool = False
+
     cli_exclude: frozenset[str] = frozenset()
-    # Override in subclasses to map field names to custom CLI arg names
-    # (bypasses the automatic snake_case → camelCase conversion).
     cli_name_override: dict[str, str] = Field(default_factory=dict)
 
-    def to_cli_args(self) -> list[str]:
-        """Convert subclass config fields to CLI args.
-
-        Iterates fields defined on the concrete subclass (not NativeModuleConfig
-        or its parents) and converts them to ``["--name", str(value)]`` pairs.
-        Field names are passed as-is (snake_case) unless overridden via
-        ``cli_name_override``.
-        Skips fields whose values are ``None`` and fields in ``cli_exclude``.
+    def to_config_dict(self) -> dict[str, Any]:
         """
+        Return module-specific config fields as a plain dict (for stdin JSON).
+        """
+        ignore_fields = set(NativeModuleConfig.model_fields)
+        return {
+            k: v for k, v in self.model_dump().items() if k not in ignore_fields and v is not None
+        }
+
+    def to_cli_args(self) -> list[str]:
         ignore_fields = {f for f in NativeModuleConfig.model_fields}
         args: list[str] = []
         for f in self.__class__.model_fields:
@@ -137,19 +140,6 @@ _NativeConfig = TypeVar("_NativeConfig", bound=NativeModuleConfig, default=Nativ
 
 
 class NativeModule(Module):
-    """Module that wraps a native executable as a managed subprocess.
-
-    Subclass this, declare In/Out ports, and annotate ``config`` with a
-    :class:`NativeModuleConfig` subclass pointing at the executable.
-
-    On ``start()``, the binary is launched with CLI args::
-
-        <executable> --<port_name> <lcm_topic_string> ... <extra_args>
-
-    The native process should parse these args and pub/sub on the given
-    LCM topics directly.  On ``stop()``, the process receives SIGTERM.
-    """
-
     config: NativeModuleConfig
 
     _process: subprocess.Popen[bytes] | None = None
@@ -159,7 +149,6 @@ class NativeModule(Module):
 
     @functools.cached_property
     def _mod_label(self) -> str:
-        """Short human-readable label: ClassName(executable_basename)."""
         exe = Path(self.config.executable).name if self.config.executable else "?"
         return f"{type(self).__name__}({exe})"
 
@@ -167,7 +156,6 @@ class NativeModule(Module):
         super().__init__(**kwargs)
         self._stop_lock = threading.Lock()
 
-        # Resolve relative cwd and executable against the subclass's source file.
         if self.config.cwd is not None and not Path(self.config.cwd).is_absolute():
             base_dir = Path(inspect.getfile(type(self))).resolve().parent
             self.config.cwd = str(base_dir / self.config.cwd)
@@ -204,20 +192,24 @@ class NativeModule(Module):
             cwd=cwd,
         )
 
-        # start_new_session=True is the thread-safe way to isolate the child
-        # from terminal signals (SIGINT from the tty).  preexec_fn is unsafe
-        # in the presence of threads (subprocess docs), so we only use it on
-        # Linux where prctl(PR_SET_PDEATHSIG) has no alternative — see
-        # _child_preexec_linux defined at module scope.
         self._process = subprocess.Popen(
             cmd,
             env=env,
             cwd=cwd,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
-            preexec_fn=_child_preexec_linux,
+            preexec_fn=_set_process_to_die_when_parent_dies,
         )
+        assert self._process.stdin is not None
+        if self.config.stdin_config:
+            config_dict = self.config.to_config_dict()
+            stdin_blob = (
+                json.dumps({"topics": topics, "config": config_dict or None}).encode() + b"\n"
+            )
+            self._process.stdin.write(stdin_blob)
+        self._process.stdin.close()
         logger.info(
             "Native process started",
             module=self._mod_label,
@@ -236,13 +228,8 @@ class NativeModule(Module):
 
     @rpc
     def stop(self) -> None:
-        # Two callers can race here: the RPC stop() and the watchdog calling
-        # self.stop() after it detects an unexpected exit.  Serialize on a
-        # per-instance lock and let the second caller no-op via the
-        # _stopping flag.  We capture the proc/watchdog refs under the lock
-        # but do the actual signal/wait/join *outside* it — joining the
-        # watchdog while holding the lock would deadlock with the watchdog's
-        # own stop() call waiting on the same lock.
+        # Capture refs under lock, but signal/wait/join outside it to avoid
+        # deadlocking with the watchdog's own stop() call.
         with self._stop_lock:
             if self._stopping:
                 return
@@ -266,7 +253,14 @@ class NativeModule(Module):
                     pid=proc.pid,
                 )
                 proc.kill()
-                proc.wait(timeout=self.config.shutdown_timeout)
+                try:
+                    proc.wait(timeout=self.config.shutdown_timeout)
+                except subprocess.TimeoutExpired:
+                    logger.error(
+                        "Native process not reapable after SIGKILL",
+                        module=self._mod_label,
+                        pid=proc.pid,
+                    )
 
         if watchdog is not None and watchdog is not threading.current_thread():
             watchdog.join(timeout=self.config.shutdown_timeout)
@@ -278,9 +272,6 @@ class NativeModule(Module):
         super().stop()
 
     def _watch_process(self) -> None:
-        """Block until the native process exits; trigger stop() if it crashed."""
-        # Cache the Popen reference and pid locally so a concurrent stop()
-        # setting self._process = None can't race us into an AttributeError.
         proc = self._process
         if proc is None:
             return
@@ -315,7 +306,6 @@ class NativeModule(Module):
         level: str,
         pid: int,
     ) -> threading.Thread:
-        """Spawn a daemon thread that pipes a subprocess stream through the logger."""
         t = threading.Thread(
             target=self._read_log_stream,
             args=(stream, level, pid),
@@ -338,29 +328,19 @@ class NativeModule(Module):
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line:
                 continue
-            # Use the captured pid rather than self._process.pid — stop() can
-            # null self._process out from under us between the check and the
-            # attribute read.
+            if self.config.log_format == LogFormat.JSON:
+                try:
+                    data = json.loads(line)
+                    event = data.pop("event", line)
+                    log_fn(event, module=self._mod_label, pid=pid, **data)
+                    continue
+                except (json.JSONDecodeError, TypeError):
+                    pass
             log_fn(line, module=self._mod_label, pid=pid)
         stream.close()
 
     def _maybe_build(self) -> None:
-        """Run ``build_command`` when not in PROD mode, or if the executable is missing.
-
-        When ``PROD`` env var is set, skip rebuilding entirely — the executable
-        must already exist.  Otherwise, always invoke ``build_command`` and let
-        nix handle caching/cache-busting.
-        """
         exe = Path(self.config.executable)
-        is_prod = os.environ.get("PROD")
-
-        if is_prod:
-            if not exe.exists():
-                raise FileNotFoundError(
-                    f"[{self._mod_label}] PROD is set but executable not found: {exe}. "
-                    "Build it before deploying."
-                )
-            return
 
         if self.config.build_command is None:
             if not exe.exists():
@@ -368,6 +348,9 @@ class NativeModule(Module):
                     f"[{self._mod_label}] Executable not found: {exe}. "
                     "Set build_command in config to auto-build, or build it manually."
                 )
+            return
+
+        if exe.exists() and not self.config.auto_build and not global_config.build_native:
             return
 
         logger.info(
@@ -415,7 +398,6 @@ class NativeModule(Module):
         )
 
     def _collect_topics(self) -> dict[str, str]:
-        """Extract LCM topic strings from blueprint-assigned stream transports."""
         topics: dict[str, str] = {}
         for name in list(self.inputs) + list(self.outputs):
             stream = getattr(self, name, None)
@@ -431,6 +413,7 @@ class NativeModule(Module):
 
 
 __all__ = [
+    "LogFormat",
     "NativeModule",
     "NativeModuleConfig",
 ]
