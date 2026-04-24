@@ -60,10 +60,11 @@ class SqliteStore(Store):
 
     def _assemble_backend(self, name: str, stored: dict[str, Any]) -> Backend[Any]:
         """Reconstruct a Backend from a stored config dict."""
-        from dimos.memory2.codecs.base import codec_from_id
+        from dimos.memory2.codecs.base import _resolve_payload_type, codec_from_id
 
         payload_module = stored["payload_module"]
         codec = codec_from_id(stored["codec_id"], payload_module)
+        data_type = _resolve_payload_type(payload_module)
         eager_blobs = stored.get("eager_blobs", False)
         page_size = stored.get("page_size", self.config.page_size)
 
@@ -110,6 +111,7 @@ class SqliteStore(Store):
         backend: Backend[Any] = Backend(
             metadata_store=metadata_store,
             codec=codec,
+            data_type=data_type,
             blob_store=bs,
             vector_store=vs,
             notifier=notifier,

@@ -45,7 +45,6 @@ from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
-from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.testing.replay import TimedSensorReplay, TimedSensorStorage
 
@@ -102,11 +101,26 @@ def _camera_info_static() -> CameraInfo:
     )
 
 
+# Static camera mount chain: base_link -> camera_link -> camera_optical.
+# TODO we need a standardized way to specify this for all cameras in dimos
+BASE_TO_OPTICAL: Transform = Transform(
+    translation=Vector3(0.3, 0.0, 0.0),
+    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+    frame_id="base_link",
+    child_frame_id="camera_link",
+) + Transform(
+    translation=Vector3(0.0, 0.0, 0.0),
+    rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
+    frame_id="camera_link",
+    child_frame_id="camera_optical",
+)
+
+
 def make_connection(ip: str | None, cfg: GlobalConfig) -> Go2ConnectionProtocol:
     connection_type = cfg.unitree_connection_type
 
     if ip in ("fake", "mock", "replay") or connection_type == "replay":
-        dataset = cfg.replay_dir
+        dataset = cfg.replay_db
         return ReplayConnection(dataset=dataset)
     elif ip == "mujoco" or connection_type == "mujoco":
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
@@ -121,11 +135,10 @@ class ReplayConnection(UnitreeWebRTCConnection):
     # we don't want UnitreeWebRTCConnection to init
     def __init__(  # type: ignore[no-untyped-def]
         self,
-        dataset: str = "go2_sf_office",
+        dataset: str = "go2_bigoffice",
         **kwargs,
     ) -> None:
         self.dir_name = dataset
-        get_data(self.dir_name)
         self.replay_config = {
             "loop": kwargs.get("loop", True),
             "seek": kwargs.get("seek"),
@@ -181,7 +194,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
             arr = x.to_ndarray(format="rgb24") if hasattr(x, "to_ndarray") else x
             return Image.from_numpy(arr, format=ImageFormat.RGB, frame_id="camera_optical")
 
-        video_store = TimedSensorReplay(f"{self.dir_name}/video", autocast=_autocast_video)
+        video_store = TimedSensorReplay(f"{self.dir_name}/color_image", autocast=_autocast_video)
         return video_store.stream(**self.replay_config)
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
