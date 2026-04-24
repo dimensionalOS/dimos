@@ -92,8 +92,10 @@ class PointCloud2(Timestamped):
             self._pcd_tensor: o3d.t.geometry.PointCloud = o3d.t.geometry.PointCloud()
         elif isinstance(pointcloud, o3d.t.geometry.PointCloud):
             self._pcd_tensor = pointcloud
+        elif len(pointcloud.points) == 0:
+            # from_legacy() warns on empty legacy clouds; build an empty tensor instead
+            self._pcd_tensor = o3d.t.geometry.PointCloud()
         else:
-            # Convert legacy to tensor
             self._pcd_tensor = o3d.t.geometry.PointCloud.from_legacy(pointcloud)
         self._pcd_legacy_cache: o3d.geometry.PointCloud | None = None
 
@@ -157,6 +159,8 @@ class PointCloud2(Timestamped):
     def pointcloud(self, value: o3d.geometry.PointCloud | o3d.t.geometry.PointCloud) -> None:
         if isinstance(value, o3d.t.geometry.PointCloud):
             self._pcd_tensor = value
+        elif len(value.points) == 0:
+            self._pcd_tensor = o3d.t.geometry.PointCloud()
         else:
             self._pcd_tensor = o3d.t.geometry.PointCloud.from_legacy(value)
         self._pcd_legacy_cache = None
@@ -653,6 +657,7 @@ class PointCloud2(Timestamped):
         mode: str = "spheres",
         size: float | None = None,
         fill_mode: str = "solid",
+        bottom_cutoff: float | None = None,
         **kwargs: object,
     ) -> Archetype:
         """Convert to Rerun archetype for visualization.
@@ -675,6 +680,11 @@ class PointCloud2(Timestamped):
         points = self.points_f32()
         if len(points) == 0:
             return rr.Points3D([]) if mode != "boxes" else rr.Boxes3D(centers=[])
+
+        if bottom_cutoff is not None:
+            points = points[points[:, 2] >= bottom_cutoff]
+            if len(points) == 0:
+                return rr.Points3D([]) if mode != "boxes" else rr.Boxes3D(centers=[])
 
         # Use class_ids for height-based colormap (viewer resolves colors via AnnotationContext)
         # Fall back to explicit colors when provided

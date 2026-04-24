@@ -1,0 +1,18 @@
+[package]
+name = "dimos-native-module-examples"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "native_ping"
+path = "src/native_ping.rs"
+
+[[bin]]
+name = "native_pong"
+path = "src/native_pong.rs"
+
+[dependencies]
+dimos-native-module = { path = "../../../native/rust" }
+lcm-msgs = { git = "https://github.com/dimensionalOS/dimos-lcm.git", branch = "rust-codegen" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+serde = { version = "1", features = ["derive"] }

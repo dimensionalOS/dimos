@@ -249,7 +249,7 @@ dev = [
     "watchdog>=3.0.0",
 
     # docs
-    "md-babel-py==1.1.1",
+    "md-babel-py==1.1.3",
 
     # LSP
     "python-lsp-server[all]==1.14.0",
@@ -308,7 +308,6 @@ drone = [
 ]
 
 dds = [
-    "dimos[dev]",
     "cyclonedds>=0.10.5",
 ]
 

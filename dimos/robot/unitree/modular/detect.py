@@ -139,6 +139,7 @@ def broadcast(  # type: ignore[no-untyped-def]
 
 
 def process_data():  # type: ignore[no-untyped-def]
+    from dimos.memory.timeseries.legacy import LegacyPickleStore
     from dimos.msgs.sensor_msgs.Image import Image
     from dimos.perception.detection.module2D import (  # type: ignore[attr-defined]
         Detection2DModule,
@@ -146,15 +147,14 @@ def process_data():  # type: ignore[no-untyped-def]
     )
     from dimos.robot.unitree.type.odometry import Odometry
     from dimos.utils.data import get_data
-    from dimos.utils.testing.replay import TimedSensorReplay
 
     get_data("unitree_office_walk")
     target = 1751591272.9654856
-    lidar_store = TimedSensorReplay(
+    lidar_store = LegacyPickleStore(
         "unitree_office_walk/lidar", autocast=pointcloud2_from_webrtc_lidar
     )
-    video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
-    odom_store = TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    video_store = LegacyPickleStore("unitree_office_walk/video", autocast=Image.from_numpy)
+    odom_store = LegacyPickleStore("unitree_office_walk/odom", autocast=Odometry.from_msg)
 
     def attach_frame_id(image: Image) -> Image:
         image.frame_id = "camera_optical"
