@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import Enum
 import logging
 import sys
 from threading import Thread
@@ -56,8 +57,14 @@ else:
 logger = logging.getLogger(__name__)
 
 
+class Go2Mode(str, Enum):
+    DEFAULT = "default"
+    RAGE = "rage"
+
+
 class ConnectionConfig(ModuleConfig):
     ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
+    mode: Go2Mode = Go2Mode.DEFAULT
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -73,6 +80,7 @@ class Go2ConnectionProtocol(Protocol):
     def liedown(self) -> bool: ...
     def balance_stand(self) -> bool: ...
     def set_obstacle_avoidance(self, enabled: bool = True) -> None: ...
+    def enable_rage_mode(self) -> bool: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
 
 
@@ -141,6 +149,9 @@ class ReplayConnection(UnitreeWebRTCConnection):
 
     def set_obstacle_avoidance(self, enabled: bool = True) -> None:
         pass
+
+    def enable_rage_mode(self) -> bool:
+        return True
 
     @simple_mcache
     def lidar_stream(self):  # type: ignore[no-untyped-def]
@@ -251,6 +262,10 @@ class GO2Connection(Module, Camera, Pointcloud):
         self.standup()
         time.sleep(3)
         self.connection.balance_stand()
+
+        if self.config.mode == Go2Mode.RAGE:
+            self.connection.enable_rage_mode()
+
         self.connection.set_obstacle_avoidance(self.config.g.obstacle_avoidance)
 
         # self.record("go2_bigoffice")
@@ -316,6 +331,22 @@ class GO2Connection(Module, Camera, Pointcloud):
     def liedown(self) -> bool:
         """Make the robot lie down."""
         return self.connection.liedown()
+
+    @rpc
+    def balance_stand(self) -> bool:
+        """Enter BalanceStand: neutral state for switching locomotion modes"""
+        return self.connection.balance_stand()
+
+    @rpc
+    def enable_rage_mode(self) -> bool:
+        """Enable Rage Mode (~2.5 m/s forward velocity envelope).
+        Ensures BalanceStand precondition regardless of current FSM state.
+        """
+        self.connection.balance_stand()
+        time.sleep(0.3)
+        result = self.connection.enable_rage_mode()
+        logger.info("Rage Mode enabled")
+        return result
 
     @rpc
     def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
