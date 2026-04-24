@@ -52,6 +52,7 @@ class RpycServer:
             protocol_config={
                 "allow_all_attrs": True,
                 "allow_public_attrs": True,
+                "allow_pickle": True,
             },
         )
         self._thread = Thread(target=self._server.start, daemon=True, name="coordinator-rpyc")

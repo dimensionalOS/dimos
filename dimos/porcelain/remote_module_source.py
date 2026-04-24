@@ -56,7 +56,9 @@ class RemoteModuleSource(ModuleSource):
     is_remote = True
 
     def __init__(self, host: str, port: int) -> None:
-        self._coord_conn = _rpyc_connect(host, port, config={"sync_request_timeout": 30})
+        self._coord_conn = _rpyc_connect(
+            host, port, config={"sync_request_timeout": 30, "allow_pickle": True}
+        )
         self._cache: dict[str, tuple[rpyc.Connection, Any]] = {}
         self._lock = threading.RLock()
 
@@ -71,7 +73,9 @@ class RemoteModuleSource(ModuleSource):
 
             endpoint = self._coord_conn.root.get_module_endpoint(name)
             host, port, module_id = endpoint[0], int(endpoint[1]), int(endpoint[2])
-            conn = _rpyc_connect(host, port, config={"sync_request_timeout": 30})
+            conn = _rpyc_connect(
+                host, port, config={"sync_request_timeout": 30, "allow_pickle": True}
+            )
             module = conn.root.get_module(module_id)
             self._cache[name] = (conn, module)
             return module
