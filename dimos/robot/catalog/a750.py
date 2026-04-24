@@ -12,21 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2025-2026 Dimensional Inc.
-# Copyright 2026 Aleksandr Dobkin
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Agilex A-750 robot configuration."""
 
 from __future__ import annotations
@@ -89,7 +74,7 @@ def a750(
         "model_path": LfsPath("a750_description") / "urdf/a750_rev1.urdf",
         "end_effector_link": "gripper_base",
         "adapter_type": adapter_type,
-        "device_path": device_path,
+        "address": device_path,
         "joint_names": [f"joint{i}" for i in range(1, 7)],
         "base_link": "base_link",
         "home_joints": [0.0, 0.0, -math.radians(90), 0.0, 0.0, 0.0],
