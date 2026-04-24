@@ -148,7 +148,11 @@ class UnitreeGo2TwistAdapter:
                 return False
 
         try:
-            ChannelFactoryInitialize(0)
+            try:
+                ChannelFactoryInitialize(0)
+            except Exception:
+                # Safe to ignore, the existing factory is reused.
+                pass
             motion_switcher = MotionSwitcherClient()
             motion_switcher.SetTimeout(5.0)
             motion_switcher.Init()
