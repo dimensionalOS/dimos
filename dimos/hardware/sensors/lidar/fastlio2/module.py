@@ -243,6 +243,9 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
             )
         )
 
+    def stop(self) -> None:
+        super().stop()
+
     def _validate_network(self) -> None:
         """Pre-flight check: verify host_ip is reachable and suggest alternatives."""
         host_ip = self.config.host_ip

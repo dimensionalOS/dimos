@@ -25,6 +25,7 @@ from pathlib import Path
 
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -119,6 +120,13 @@ class FarPlanner(NativeModule):
     """
 
     config: FarPlannerConfig
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    def stop(self) -> None:
+        super().stop()
 
     terrain_map_ext: In[PointCloud2]
     terrain_map: In[PointCloud2]

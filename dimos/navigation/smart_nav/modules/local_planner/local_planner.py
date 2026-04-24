@@ -26,6 +26,7 @@ from typing import Any
 from dimos_lcm.geometry_msgs import PolygonStamped
 from dimos_lcm.std_msgs import Float32
 
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
@@ -240,6 +241,13 @@ class LocalPlanner(NativeModule):
     """
 
     config: LocalPlannerConfig
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    def stop(self) -> None:
+        super().stop()
 
     # --- Inputs ---
     registered_scan: In[PointCloud2]

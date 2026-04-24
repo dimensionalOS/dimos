@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -105,6 +106,13 @@ class PathFollower(NativeModule):
     """
 
     config: PathFollowerConfig
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    def stop(self) -> None:
+        super().stop()
 
     path: In[NavPath]
     odometry: In[Odometry]

@@ -20,6 +20,7 @@ a terrain cost map with obstacle classification.
 
 from __future__ import annotations
 
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -153,6 +154,13 @@ class TerrainAnalysis(NativeModule):
     """
 
     config: TerrainAnalysisConfig
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    def stop(self) -> None:
+        super().stop()
 
     registered_scan: In[PointCloud2]
     odometry: In[Odometry]
