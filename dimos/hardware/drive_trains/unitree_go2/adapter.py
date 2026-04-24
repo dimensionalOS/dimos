@@ -16,12 +16,10 @@
 
 Implements TwistBaseAdapter (3 DOF: vx, vy, wz) on top of unitree_sdk2py.
 Connects via DDS (ChannelFactoryInitialize → MotionSwitcher → SportClient
-→ StandUp → FreeWalk). Enables Rage Mode by default (opt-out via
-rage_mode=False) by publishing synthesized WirelessController_ messages
+→ StandUp → FreeWalk). No Rage Mode by default (opt-in via
+rage_mode=True) by publishing synthesized WirelessController_ messages
 on rt/wirelesscontroller_unprocessed.
 
-See data/notes/go2_firmware_modes.md for the reverse-engineering trail
-behind the Rage path + MotionSwitcher history.
 """
 
 from __future__ import annotations
@@ -107,19 +105,16 @@ class UnitreeGo2TwistAdapter:
     _RAGE_UP_VY: float = 1.0
     _RAGE_UP_VYAW: float = 5.0
 
-    # Joystick publish rate. Must out-rate sbus_handle (~50Hz) for last-write-wins.
     _RAGE_PUBLISH_HZ: float = 100.0
-
-    # Stick-axis sign flips. Defaults verified on Go2 Air vs ROS Twist convention.
     _RAGE_LY_SIGN: float = 1.0  # vx → ly
-    _RAGE_LX_SIGN: float = -1.0  # vy → lx (ROS +y=left, Unitree +lx=right)
-    _RAGE_RX_SIGN: float = -1.0  # wz → rx (ROS +z=CCW, Unitree +rx=CW)
+    _RAGE_LX_SIGN: float = -1.0  # vy → lx
+    _RAGE_RX_SIGN: float = -1.0  # wz → rx
 
     def __init__(
         self,
         dof: int = 3,
         speed_level: int = 1,
-        rage_mode: bool = True,
+        rage_mode: bool = False,
         **_: object,
     ) -> None:
         if dof != 3:
@@ -129,7 +124,6 @@ class UnitreeGo2TwistAdapter:
         self._session_lock = threading.Lock()
         self._speed_level = speed_level
         self._rage_mode_default = rage_mode
-        self._last_guard_warn_ts: float = 0.0
 
     def connect(self) -> bool:
         """Connect to Go2, verify sport mode, stand up, enter FreeWalk.
@@ -137,8 +131,8 @@ class UnitreeGo2TwistAdapter:
         Sequence:
           1. ChannelFactoryInitialize(0) — default domain, default NIC.
           2. Subscribe rt/sportmodestate for telemetry.
-          3. MotionSwitcher.Init + _verify_sport_mode_active() — accepts
-             whatever controller is currently running.
+          3. MotionSwitcher.Init + check_mode() — accepts whatever
+             controller is currently running.
           4. SportClient.Init.
           5. _initialize_locomotion(): StandUp + FreeWalk + SpeedLevel.
           6. If rage_mode=True, set_rage_mode(True).
@@ -179,14 +173,16 @@ class UnitreeGo2TwistAdapter:
             with self._session_lock:
                 self._session = session
 
-            if not self._verify_sport_mode_active():
-                logger.error("[Go2] Failed to activate sport mode")
+            mode = self.check_mode()
+            if not mode:
+                logger.error("[Go2] No sport mode active")
                 self.disconnect()
                 return False
+            logger.info(f"[Go2] Sport mode '{mode}' active")
 
             client.Init()
             time.sleep(2.0)
-            logger.info("[Go2] Connected ✓")
+            logger.info("[Go2] Connected")
 
             if not self._initialize_locomotion():
                 logger.error("[Go2] Failed to initialize locomotion mode")
@@ -310,11 +306,11 @@ class UnitreeGo2TwistAdapter:
         session = self._get_session()
 
         if not session.enabled:
-            self._warn_guard("Not enabled, ignoring velocity command")
+            logger.warning("[Go2] Not enabled, ignoring velocity command")
             return False
 
         if not session.locomotion_ready:
-            self._warn_guard("Locomotion not ready, ignoring velocity command")
+            logger.warning("[Go2] Locomotion not ready, ignoring velocity command")
             return False
 
         vx, vy, wz = velocities
@@ -324,14 +320,6 @@ class UnitreeGo2TwistAdapter:
             return True
 
         return self._send_velocity(vx, vy, wz)
-
-    def _warn_guard(self, msg: str) -> None:
-        """Rate-limited guard warning (at most once per second)."""
-        now = time.monotonic()
-        if now - self._last_guard_warn_ts < 1.0:
-            return
-        self._last_guard_warn_ts = now
-        logger.warning(f"[Go2] {msg}")
 
     def write_stop(self) -> bool:
         """Stop motion via SportClient.StopMove(). Leaves robot standing."""
@@ -480,7 +468,7 @@ class UnitreeGo2TwistAdapter:
             return False
 
         self._speed_level = level
-        logger.info(f"[Go2] ✓ SpeedLevel set to {level}")
+        logger.info(f"[Go2] SpeedLevel set to {level}")
         return True
 
     # =========================================================================
@@ -488,20 +476,12 @@ class UnitreeGo2TwistAdapter:
     # =========================================================================
 
     def set_rage_mode(self, enable: bool) -> bool:
-        """Toggle Rage Mode on the Go2 (mcf AI controller, api_id 2059).
+        """Toggle Rage Mode (api_id 2059) — widens forward envelope to ~2.5 m/s.
 
-        Rage widens the forward envelope to ~2.5 m/s via a dedicated MNN
-        policy (stiffer PD gains, up_vx=2.5, up_vy=1.0, up_vyaw=5.0).
-
-        Rage's velocity input does NOT arrive via SportClient.Move() — AiController::Move's dispatch table omits
-        FsmRageMode. Instead, the policy reads the wireless-controller joystick buffer on the DDS topic
-        rt/wirelesscontroller_unprocessed, which sbus_handle (physical
-        RC) and webrtc_bridge (mobile app) both write to.
-
-        Returns True if the 2059 toggle succeeded. The publisher thread
-        is best-effort; publisher/SwitchJoystick failures are logged
-        but don't fail the call. Idempotent — calling with the current
-        state returns True immediately without re-running the sequence.
+        Velocity input flows via rt/wirelesscontroller_unprocessed, not
+        SportClient.Move (FsmRageMode isn't in AiController::Move's dispatch).
+        Idempotent. Returns True on 2059 success; publisher/SwitchJoystick
+        failures are logged but don't fail the call.
         """
         session = self._get_session()
 
@@ -529,7 +509,7 @@ class UnitreeGo2TwistAdapter:
             with session.lock:
                 session.client.SwitchJoystick(False)
 
-        logger.info(f"[Go2] ✓ Rage Mode {'enabled' if enable else 'disabled'}")
+        logger.info(f"[Go2]  Rage Mode {'enabled' if enable else 'disabled'}")
         return True
 
     def _start_rage_joystick(self, session: _Session) -> None:
@@ -628,37 +608,16 @@ class UnitreeGo2TwistAdapter:
             raise RuntimeError("Go2 not connected")
         return session
 
-    def _verify_sport_mode_active(self) -> bool:
-        """Accept whatever sport mode MotionSwitcher reports as running.
-
-        Single CheckMode() call — the 1.5 s settle in connect() is our
-        DDS discovery wait. On any non-empty current mode, returns True;
-        we no longer auto-switch modes (see data/notes/go2_firmware_modes.md).
-
-        Returns False if MotionSwitcher is unreachable (3102) or reports
-        an empty mode — the caller must resolve (exit AI mode on the
-        remote, close the Unitree app, verify network).
-        """
-        session = self._get_session()
-        code, data = session.motion_switcher.CheckMode()
-        current = (data.get("name") or "").strip() if isinstance(data, dict) else ""
-
-        if current:
-            logger.info(f"[Go2] Sport mode '{current}' active")
-            return True
-
-        logger.error(f"[Go2] No sport mode active (CheckMode code={code}, data={data}).")
-        return False
-
     def _initialize_locomotion(self) -> bool:
         """StandUp → 3s settle → FreeWalk → 2s settle → SpeedLevel.
 
         Called from connect() and from write_enable(True) if locomotion
-        was not yet ready. Assumes _verify_sport_mode_active() has already run.
+        was not yet ready. Assumes a sport mode is already active.
         """
         session = self._get_session()
 
-        if not self._verify_sport_mode_active():
+        if not self.check_mode():
+            logger.error("[Go2] No sport mode active")
             return False
 
         logger.info("[Go2] Standing up...")
@@ -680,12 +639,12 @@ class UnitreeGo2TwistAdapter:
         with session.lock:
             sl_ret = session.client.SpeedLevel(self._speed_level)
         if sl_ret == 0:
-            logger.info(f"[Go2] ✓ SpeedLevel({self._speed_level}) applied")
+            logger.info(f"[Go2]  SpeedLevel({self._speed_level}) applied")
         else:
             logger.warning(f"[Go2] SpeedLevel({self._speed_level}) returned {sl_ret}")
 
         session.locomotion_ready = True
-        logger.info("[Go2] ✓ Locomotion ready")
+        logger.info("[Go2]  Locomotion ready")
         return True
 
     def _send_velocity(self, vx: float, vy: float, wz: float) -> bool:
