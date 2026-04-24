@@ -7,6 +7,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 LANG_FILTER="python,sh,node"
+# md-babel-py 1.1.4+: isolated block subprocess limit (default upstream is 60).
 declare -a USER_PATHS=()
 
 usage() {
@@ -56,12 +57,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 resolve_md_babel() {
-  # Prefer `uv run` so md-babel's session subprocess uses this project's interpreter
-  # (plain .venv/bin/md-babel-py can pick up the wrong Python on some machines).
+  # Prefer project env so md-babel-py version matches pyproject (needs >= 1.1.4 for --execution-timeout).
   if command -v uv &>/dev/null && [[ -f pyproject.toml ]]; then
     MB=(uv run md-babel-py)
   elif [[ -x .venv/bin/md-babel-py ]]; then
     MB=(.venv/bin/md-babel-py)
+  elif [[ -x .venv/bin/python ]]; then
+    MB=(.venv/bin/python -m md_babel_py.cli)
   elif command -v md-babel-py &>/dev/null; then
     MB=(md-babel-py)
   else
@@ -74,7 +76,7 @@ resolve_md_babel
 
 run_one_target() {
   local target=$1
-  local -a cmd=("${MB[@]}" run)
+  local -a cmd=("${MB[@]}" run --execution-timeout 120)
   if [[ -n "$LANG_FILTER" ]]; then
     cmd+=(--lang "$LANG_FILTER")
   fi
@@ -96,10 +98,6 @@ if [[ ${#USER_PATHS[@]} -gt 0 ]]; then
     fi
   done
 else
-  if [[ -d ./docs ]]; then
-    run_one_target ./docs
-  fi
-  if [[ -f README.md ]]; then
-    run_one_target README.md
-  fi
+  run_one_target ./docs
+  run_one_target README.md
 fi
