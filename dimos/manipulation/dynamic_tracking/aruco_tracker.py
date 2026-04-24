@@ -49,6 +49,34 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
+def _estimate_marker_poses(
+    corners: list[np.ndarray],
+    marker_size: float,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Estimate per-marker pose via solvePnP (replaces deprecated estimatePoseSingleMarkers).
+
+    Returns rvecs, tvecs each shaped (N, 1, 3) to match the legacy API.
+    """
+    half = marker_size / 2.0
+    # Marker corner order from cv2.aruco matches this object-point layout
+    obj_points = np.array(
+        [[-half, half, 0.0], [half, half, 0.0], [half, -half, 0.0], [-half, -half, 0.0]],
+        dtype=np.float32,
+    )
+    rvecs = np.zeros((len(corners), 1, 3), dtype=np.float64)
+    tvecs = np.zeros((len(corners), 1, 3), dtype=np.float64)
+    for i, c in enumerate(corners):
+        ok, rvec, tvec = cv2.solvePnP(
+            obj_points, c.reshape(-1, 2), camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_IPPE_SQUARE
+        )
+        if ok:
+            rvecs[i, 0] = rvec.flatten()
+            tvecs[i, 0] = tvec.flatten()
+    return rvecs, tvecs
+
+
 @dataclass
 class ArucoTrackerConfig(ModuleConfig):
     """Configuration for the ArUco tracker module."""
@@ -207,8 +235,8 @@ class ArucoTracker(Module[ArucoTrackerConfig]):
             return
 
         # Estimate poses
-        rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
-            corners, self.config.marker_size, self._camera_matrix, self._dist_coeffs
+        rvecs, tvecs = _estimate_marker_poses(
+            list(corners), self.config.marker_size, self._camera_matrix, self._dist_coeffs
         )
         avg_position, avg_quat = self._average_marker_poses(rvecs, tvecs)
 

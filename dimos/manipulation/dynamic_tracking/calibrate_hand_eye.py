@@ -49,6 +49,30 @@ import numpy as np
 from scipy.spatial.transform import Rotation  # type: ignore[import-untyped]
 
 
+def _estimate_marker_pose(
+    corners: np.ndarray,
+    marker_size: float,
+    camera_matrix: np.ndarray,
+    dist_coeffs: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Estimate single marker pose via solvePnP (replaces deprecated estimatePoseSingleMarkers)."""
+    half = marker_size / 2.0
+    obj_points = np.array(
+        [[-half, half, 0.0], [half, half, 0.0], [half, -half, 0.0], [-half, -half, 0.0]],
+        dtype=np.float32,
+    )
+    ok, rvec, tvec = cv2.solvePnP(
+        obj_points,
+        corners.reshape(-1, 2),
+        camera_matrix,
+        dist_coeffs,
+        flags=cv2.SOLVEPNP_IPPE_SQUARE,
+    )
+    if not ok:
+        return None
+    return rvec.flatten(), tvec.flatten()
+
+
 def collect_sample_interactive(
     arm_positions_getter: Callable[[], np.ndarray | None],
     camera_frame_getter: Callable[[], tuple[np.ndarray | None, np.ndarray, np.ndarray]],
@@ -97,11 +121,11 @@ def collect_sample_interactive(
             continue
 
         # Use first detected marker
-        rvecs, tvecs, _ = cv2.aruco.estimatePoseSingleMarkers(
-            corners[:1], marker_size, camera_matrix, dist_coeffs
-        )
-        rvec = rvecs[0][0]
-        tvec = tvecs[0][0]
+        result = _estimate_marker_pose(corners[0], marker_size, camera_matrix, dist_coeffs)
+        if result is None:
+            print("  Failed to solve marker pose, try again.")
+            continue
+        rvec, tvec = result
 
         R_target, _ = cv2.Rodrigues(rvec)
 
@@ -322,7 +346,12 @@ def main() -> int:
         return 1
 
     def get_ee_pose() -> np.ndarray | None:
-        """Read current EE pose as 4x4 homogeneous matrix."""
+        """Read current EE pose as 4x4 homogeneous matrix (meters, radians).
+
+        XArmAdapter.read_cartesian_position() converts the SDK's mm→m and deg→rad,
+        so both the EE translation and the marker translation (from solvePnP with
+        marker_size in meters) are in the same unit system.
+        """
         try:
             pose = adapter.read_cartesian_position()
             if pose is None:
