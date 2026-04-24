@@ -82,7 +82,7 @@ class Observation(Generic[T]):
                     self._data = loaded
                     self._loader = None  # release closure
                     return loaded
-            return val  # type: ignore[return-value]
+            return val
         return val
 
     def derive(self, *, data: R, **overrides: Any) -> Observation[R]:

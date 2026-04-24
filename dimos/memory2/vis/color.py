@@ -37,7 +37,7 @@ from typing import Any
 
 
 @functools.lru_cache(maxsize=16)
-def _cmap(name: str):  # type: ignore[no-untyped-def]
+def _cmap(name: str) -> Any:
     import matplotlib.pyplot as plt
 
     return plt.get_cmap(name)
@@ -171,7 +171,7 @@ def resolve_deferred(elements: Iterable[Any]) -> None:
     for el in elements:
         c = getattr(el, "color", None)
         if isinstance(c, DeferredColor):
-            el.color = c.resolve()  # type: ignore[misc]
+            el.color = c.resolve()
 
 
 # Named palette: 12 visually-distinct colors that share visual weight.

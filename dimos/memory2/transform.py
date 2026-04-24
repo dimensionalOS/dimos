@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import inspect
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 from dimos.memory2.utils.formatting import FilterRepr
 
@@ -196,7 +196,9 @@ def peaks(
     """
     from scipy.signal import find_peaks
 
-    key_fn: Callable[[Observation[T]], float] = key if key is not None else (lambda obs: obs.data)  # type: ignore[return-value,assignment]
+    key_fn: Callable[[Observation[T]], float] = (
+        key if key is not None else cast("Callable[[Observation[T]], float]", lambda obs: obs.data)
+    )
 
     def _peaks(upstream: Iterator[Observation[T]]) -> Iterator[Observation[T]]:
         items = list(upstream)

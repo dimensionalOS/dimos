@@ -48,7 +48,7 @@ def session() -> Iterator[SqliteStore]:
 class PoseIndex:
     """Preloaded odom data with O(log n) closest-timestamp lookup."""
 
-    def __init__(self, replay: LegacyPickleStore) -> None:  # type: ignore[type-arg]
+    def __init__(self, replay: LegacyPickleStore[Any]) -> None:
         self._timestamps: list[float] = []
         self._data: list[Any] = []
         for ts, data in replay.iterate_ts():
@@ -100,7 +100,7 @@ class TestImportReplay:
         self,
         session: SqliteStore,
         odom_index: PoseIndex,
-        video_replay: LegacyPickleStore,  # type: ignore[type-arg]
+        video_replay: LegacyPickleStore[Any],
     ) -> None:
         threshold = video_replay.first_timestamp()
         with session.stream("odom", Odometry) as odom:
@@ -120,7 +120,7 @@ class TestImportReplay:
     def test_import_video(
         self,
         session: SqliteStore,
-        video_replay: LegacyPickleStore,  # type: ignore[type-arg]
+        video_replay: LegacyPickleStore[Any],
         odom_index: PoseIndex,
     ) -> None:
         with session.stream("color_image", Image) as video:
@@ -138,9 +138,9 @@ class TestImportReplay:
     def test_import_lidar(
         self,
         session: SqliteStore,
-        lidar_replay: LegacyPickleStore,  # type: ignore[type-arg]
+        lidar_replay: LegacyPickleStore[Any],
         odom_index: PoseIndex,
-        video_replay: LegacyPickleStore,  # type: ignore[type-arg]
+        video_replay: LegacyPickleStore[Any],
     ) -> None:
         threshold = video_replay.first_timestamp()
         lidar = session.stream("lidar", PointCloud2, codec="lz4+lcm")

@@ -35,6 +35,7 @@ from dimos.memory2.transform import QualityWindow
 from dimos.memory2.type.observation import EmbeddedObservation, Observation
 from dimos.models.embedding.base import EmbeddingModel
 from dimos.models.embedding.clip import CLIPModel
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 
 logger = logging.getLogger(__name__)
@@ -198,7 +199,7 @@ class SemanticSearch(MemoryModule):
         # fmt: on
 
     @skill
-    def search(self, query: str) -> Stream[Any]:
+    def search(self, query: str) -> PoseStamped:
         from dimos.memory2.transform import peaks
 
         assert self.model is not None and self.embeddings is not None, (

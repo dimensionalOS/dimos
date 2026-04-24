@@ -114,7 +114,7 @@ class Backend(CompositeResource, Generic[T]):
                 assert self.blob_store is not None
                 self.blob_store.put(self.name, row_id, encoded)
                 # Replace inline data with lazy loader
-                obs._data = _UNLOADED  # type: ignore[assignment]
+                obs._data = _UNLOADED
                 obs._loader = self._make_loader(row_id)
 
             # Store embedding vector
