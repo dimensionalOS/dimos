@@ -12,21 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2025-2026 Dimensional Inc.
-# Copyright 2026 Aleksandr Dobkin
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Keyboard teleop blueprint for the A-750 arm.
 
 Launches the ControlCoordinator (mock adapter + CartesianIK), the
@@ -36,8 +21,6 @@ teleop UI — all wired together via autoconnect.
 Usage:
     dimos run keyboard-teleop-a750
 """
-
-from dimos_lcm.std_msgs import Float32
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
@@ -86,7 +69,6 @@ keyboard_teleop_a750 = autoconnect(
             "/coordinator/cartesian_command", PoseStamped
         ),
         ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
-        ("gripper_command", float): LCMTransport("/coordinator/gripper_command", Float32),
     }
 )
 
