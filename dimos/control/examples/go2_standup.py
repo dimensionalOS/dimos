@@ -46,24 +46,48 @@ logger = logging.getLogger(__name__)
 # Order: FR_0,1,2  FL_0,1,2  RR_0,1,2  RL_0,1,2
 # ---------------------------------------------------------------------------
 POS_CROUCH = [
-    0.0, 1.36, -2.65,   # FR
-    0.0, 1.36, -2.65,   # FL
-    -0.2, 1.36, -2.65,  # RR
-    0.2, 1.36, -2.65,   # RL
+    0.0,
+    1.36,
+    -2.65,  # FR
+    0.0,
+    1.36,
+    -2.65,  # FL
+    -0.2,
+    1.36,
+    -2.65,  # RR
+    0.2,
+    1.36,
+    -2.65,  # RL
 ]
 
 POS_STAND = [
-    0.0, 0.67, -1.3,    # FR
-    0.0, 0.67, -1.3,    # FL
-    0.0, 0.67, -1.3,    # RR
-    0.0, 0.67, -1.3,    # RL
+    0.0,
+    0.67,
+    -1.3,  # FR
+    0.0,
+    0.67,
+    -1.3,  # FL
+    0.0,
+    0.67,
+    -1.3,  # RR
+    0.0,
+    0.67,
+    -1.3,  # RL
 ]
 
 POS_SHIFT = [
-    -0.35, 1.36, -2.65,  # FR
-    0.35, 1.36, -2.65,   # FL
-    -0.5, 1.36, -2.65,   # RR
-    0.5, 1.36, -2.65,    # RL
+    -0.35,
+    1.36,
+    -2.65,  # FR
+    0.35,
+    1.36,
+    -2.65,  # FL
+    -0.5,
+    1.36,
+    -2.65,  # RR
+    0.5,
+    1.36,
+    -2.65,  # RL
 ]
 
 # Per-leg crouch positions (used for single-leg lower)
@@ -72,21 +96,21 @@ LEG_CROUCH = [0.0, 1.36, -2.65]
 LEG_STAND = [0.0, 0.67, -1.3]
 
 # Leg index ranges within the 12-DOF array
-LEG_FR = slice(0, 3)   # indices 0,1,2
-LEG_FL = slice(3, 6)   # indices 3,4,5
-LEG_RR = slice(6, 9)   # indices 6,7,8
+LEG_FR = slice(0, 3)  # indices 0,1,2
+LEG_FL = slice(3, 6)  # indices 3,4,5
+LEG_RR = slice(6, 9)  # indices 6,7,8
 LEG_RL = slice(9, 12)  # indices 9,10,11
 
 # Phase durations in ticks (at CMD_HZ)
 CMD_HZ = 50  # Command publish rate (Hz)
-PHASE_1_TICKS = 250   # current → crouch
-PHASE_2_TICKS = 250   # crouch → stand
-PHASE_3_TICKS = 400   # hold stand
-PHASE_4_TICKS = 400   # stand → shift
+PHASE_1_TICKS = 250  # current → crouch
+PHASE_2_TICKS = 250  # crouch → stand
+PHASE_3_TICKS = 400  # hold stand
+PHASE_4_TICKS = 400  # stand → shift
 LEG_LOWER_TICKS = 150  # per-leg lower/raise
-LEG_HOLD_TICKS = 100   # hold at bottom per leg
+LEG_HOLD_TICKS = 100  # hold at bottom per leg
 DIAG_LOWER_TICKS = 200  # diagonal pair lower/raise
-DIAG_HOLD_TICKS = 150   # hold at bottom diagonal
+DIAG_HOLD_TICKS = 150  # hold at bottom diagonal
 
 
 class Go2LowLevelControl(Module):
@@ -201,9 +225,7 @@ class Go2LowLevelControl(Module):
 
         # Phase 5: Lower each leg one by one
         logger.info("Phase 5: single leg lowers (FR → FL → RR → RL)")
-        for leg_name, leg_slice in [
-            ("FR", LEG_FR), ("FL", LEG_FL), ("RR", LEG_RR), ("RL", LEG_RL)
-        ]:
+        for leg_name, leg_slice in [("FR", LEG_FR), ("FL", LEG_FL), ("RR", LEG_RR), ("RL", LEG_RL)]:
             if self._stop_event.is_set():
                 return
             logger.info(f"  Lowering {leg_name}...")
@@ -211,9 +233,7 @@ class Go2LowLevelControl(Module):
 
         # Phase 6: Diagonal pairs
         logger.info("Phase 6: diagonal pair lowers (FR+RL, then FL+RR)")
-        for pair_name, slices in [
-            ("FR+RL", [LEG_FR, LEG_RL]), ("FL+RR", [LEG_FL, LEG_RR])
-        ]:
+        for pair_name, slices in [("FR+RL", [LEG_FR, LEG_RL]), ("FL+RR", [LEG_FL, LEG_RR])]:
             if self._stop_event.is_set():
                 return
             logger.info(f"  Lowering {pair_name}...")
@@ -239,7 +259,7 @@ class Go2LowLevelControl(Module):
             if self._stop_event.is_set():
                 return
             alpha = (t + 1) / ticks
-            pos = [(1 - alpha) * s + alpha * e for s, e in zip(start, end)]
+            pos = [(1 - alpha) * s + alpha * e for s, e in zip(start, end, strict=False)]
             self._pub(names, pos)
             time.sleep(dt)
 
