@@ -52,7 +52,6 @@ class GlobalConfig(BaseSettings):
     nerf_speed: float = 1.0
     planner_robot_speed: float | None = None
     mcp_port: int = 9990
-    mcp_host: str = "127.0.0.1"
     build_native: bool = False
     dtop: bool = False
     obstacle_avoidance: bool = True
