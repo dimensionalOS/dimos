@@ -197,8 +197,8 @@ class Stream(CompositeResource, Generic[T, O]):
         Returns a stream whose observations are :class:`EmbeddedObservation`
         with ``.similarity`` populated.
 
-        If *k* is omitted the backend applies a default cap (currently 4096
-        hits); pass an explicit *k* when you need a specific result size.
+        If *k* is omitted, unbounded backends return all scored hits and
+        bounded backends (e.g. sqlite-vec) apply their own default cap.
         """
         new_q = StreamQuery(
             filters=self._query.filters,

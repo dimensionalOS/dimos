@@ -66,7 +66,8 @@ class Observation(Generic[T]):
         if self.pose is None:
             raise LookupError("No pose set on this observation")
         x, y, z, qx, qy, qz, qw = self.pose
-        return PoseStamped(ts=self.ts, position=(x, y, z), orientation=(qx, qy, qz, qw))
+        ps: PoseStamped = PoseStamped(ts=self.ts, position=(x, y, z), orientation=(qx, qy, qz, qw))
+        return ps
 
     @property
     def data(self) -> T:
