@@ -29,6 +29,25 @@ So: treat the API as uniform, but pick a backend whose semantics match the task.
 
 ---
 
+## Choosing a backend
+
+For most users, the important choice is between `lcm`, `zenoh`, and shared memory overrides:
+
+* `lcm`: current legacy default on most platforms. Fast and simple, but UDP multicast is best-effort.
+* `zenoh`: network transport with reliable delivery semantics and the same typed message model through `LCMEncoderMixin`.
+* shared memory (`pSHMTransport`, etc.): best for large local streams on a single machine.
+
+At the CLI level, you can select the stream transport globally with:
+
+```bash
+dimos --transport=lcm run unitree-go2
+dimos --transport=zenoh run unitree-go2
+```
+
+On macOS, large replay workloads can be unreliable over LCM UDP. If Zenoh is installed, DimOS defaults the global stream transport to `zenoh`; otherwise it falls back to `lcm`.
+
+---
+
 ## Benchmarks
 
 Quick view on performance of our pubsub backends:
@@ -265,6 +284,24 @@ lcm.stop()
 Received velocity: x=1.0, y=0.0, z=0.5
 ```
 
+### Zenoh
+
+Zenoh provides network pubsub without relying on UDP multicast for the user-facing stream transport. In DimOS it carries the same typed messages by encoding them with `LCMEncoderMixin`, so existing `dimos.msgs.*` types still work.
+
+Use Zenoh when:
+
+* you want a transport that behaves better than UDP multicast on macOS
+* you are replaying large or high-rate data and want a more reliable network path
+* you want to keep the DimOS typed stream model while changing the transport backend
+
+At the stream level, the transport wrappers are `ZenohTransport` and `pZenohTransport`. At the CLI level, the usual entry point is:
+
+```bash
+dimos --transport=zenoh --dtop --replay --replay-dir=unitree_go2_bigoffice run unitree-go2
+```
+
+The Rerun bridge also follows the global transport. When `transport=zenoh`, the bridge listens on Zenoh and on LCM for TF data.
+
 ### Shared memory (IPC)
 
 Shared memory is highest performance, but only works on the **same machine**.
@@ -434,6 +471,7 @@ python -m pytest -svm tool -k "not bytes" dimos/protocol/pubsub/benchmark/test_b
 | `Memory`       | Testing only, single process        | No            | No      | Minimal reference impl               |
 | `SharedMemory` | Multi-process on same machine       | Yes           | No      | Highest throughput (IPC)             |
 | `LCM`          | Robot LAN broadcast (UDP multicast) | Yes           | Yes     | Best-effort; can drop packets on LAN |
+| `Zenoh`        | Reliable network stream transport   | Yes           | Yes     | Recommended on macOS for heavy replay |
 | `Redis`        | Network pubsub via Redis server     | Yes           | Yes     | Central broker; adds hop             |
 | `ROS`          | ROS 2 topic communication           | Yes           | Yes     | Integrates with RViz/ROS tools       |
 | `DDS`          | Cyclone DDS without ROS (WIP)       | Yes           | Yes     | WIP                                  |

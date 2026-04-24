@@ -272,6 +272,33 @@ except (ConnectionError, ImportError):
     print("Redis not available")
 
 
+from dimos.core.transport import ZENOH_AVAILABLE
+
+if ZENOH_AVAILABLE:
+    from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic, Zenoh
+    from dimos.protocol.service.zenohservice import _sessions as _zenoh_sessions
+
+    @contextmanager
+    def zenoh_pubsub_channel() -> Generator[Zenoh, None, None]:
+        zenoh_pubsub = Zenoh()
+        zenoh_pubsub.start()
+        yield zenoh_pubsub
+        zenoh_pubsub.stop()
+        for s in _zenoh_sessions.values():
+            s.close()  # type: ignore[no-untyped-call]
+        _zenoh_sessions.clear()
+
+    def zenoh_msggen(size: int) -> tuple[ZenohTopic, Image]:
+        return (ZenohTopic("dimos/benchmark/zenoh", Image), make_data_image(size))
+
+    testcases.append(
+        Case(
+            pubsub_context=zenoh_pubsub_channel,
+            msg_gen=zenoh_msggen,
+        )
+    )
+
+
 from dimos.protocol.pubsub.impl.rospubsub import (
     ROS_AVAILABLE,
     DimosROS,
