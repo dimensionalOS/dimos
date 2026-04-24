@@ -80,6 +80,95 @@ def _close_all() -> None:
     _stores.clear()
 
 
+def timed_playback(
+    source: Iterator[tuple[float, T]],
+    speed: float = 1.0,
+    detect_loop: bool = True,
+) -> Observable[T]:
+    """Replay a ``(ts, data)`` iterator as an Observable at real-time speed.
+
+    Anchors on the first timestamp and schedules subsequent emissions with
+    ``scheduler.schedule_relative`` at ``anchor + (ts - first_ts) / speed``.
+    When ``detect_loop`` is set, a backwards-going timestamp re-anchors — use
+    this when the source iterator loops.
+
+    Pending timers are tracked on a CompositeDisposable and cancelled on
+    subscription dispose.
+    """
+
+    def subscribe(
+        observer: ObserverBase[T],
+        scheduler: SchedulerBase | None = None,
+    ) -> DisposableBase:
+        sched = scheduler or TimeoutScheduler()
+        disp = CompositeDisposable()
+        is_disposed = False
+
+        try:
+            first_ts, first_data = next(source)
+        except StopIteration:
+            observer.on_completed()
+            return Disposable()
+
+        start_local_time = time.time()
+        start_replay_time = first_ts
+
+        observer.on_next(first_data)
+
+        try:
+            next_message: tuple[float, T] | None = next(source)
+        except StopIteration:
+            observer.on_completed()
+            return disp
+
+        prev_ts = first_ts
+
+        def schedule_emission(message: tuple[float, T]) -> None:
+            nonlocal next_message, start_local_time, start_replay_time, prev_ts
+
+            if is_disposed:
+                return
+
+            ts, data = message
+
+            if detect_loop and ts < prev_ts:
+                start_local_time = time.time()
+                start_replay_time = ts
+            prev_ts = ts
+
+            try:
+                next_message = next(source)
+            except StopIteration:
+                next_message = None
+
+            target_time = start_local_time + (ts - start_replay_time) / speed
+            delay = max(0.0, target_time - time.time())
+
+            def emit(_scheduler: SchedulerBase, _state: object) -> DisposableBase | None:
+                if is_disposed:
+                    return None
+                observer.on_next(data)
+                if next_message is not None:
+                    schedule_emission(next_message)
+                else:
+                    observer.on_completed()
+                return None
+
+            disp.add(sched.schedule_relative(delay, emit))
+
+        if next_message is not None:
+            schedule_emission(next_message)
+
+        def dispose() -> None:
+            nonlocal is_disposed
+            is_disposed = True
+            disp.dispose()
+
+        return Disposable(dispose)
+
+    return rx.create(subscribe)
+
+
 class Memory2ReplayAdapter(Generic[T]):
     """Memory2-backed replacement for the legacy ``TimedSensorReplay``.
 
@@ -210,89 +299,11 @@ class Memory2ReplayAdapter(Generic[T]):
         from_timestamp: float | None = None,
         loop: bool = False,
     ) -> Observable[T]:
-        """Real-time scheduled playback as an RxPY Observable.
-
-        Ported from ``LegacyPickleStore.stream`` (dimos/memory/timeseries/legacy.py:314)
-        — identical timing/loop-restart logic, with the iterator source swapped
-        to ``self.iterate_ts``.
-        """
-
-        def subscribe(
-            observer: ObserverBase[T],
-            scheduler: SchedulerBase | None = None,
-        ) -> DisposableBase:
-            sched = scheduler or TimeoutScheduler()
-            disp = CompositeDisposable()
-            is_disposed = False
-
-            iterator = self.iterate_ts(
-                seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
-            )
-
-            try:
-                first_ts, first_data = next(iterator)
-            except StopIteration:
-                observer.on_completed()
-                return Disposable()
-
-            start_local_time = time.time()
-            start_replay_time = first_ts
-
-            observer.on_next(first_data)
-
-            try:
-                next_message: tuple[float, T] | None = next(iterator)
-            except StopIteration:
-                observer.on_completed()
-                return disp
-
-            prev_ts = first_ts
-
-            def schedule_emission(message: tuple[float, T]) -> None:
-                nonlocal next_message, is_disposed, start_local_time, start_replay_time, prev_ts
-
-                if is_disposed:
-                    return
-
-                ts, data = message
-
-                # Detect loop restart: timestamp jumped backwards.
-                if ts < prev_ts:
-                    start_local_time = time.time()
-                    start_replay_time = ts
-                prev_ts = ts
-
-                try:
-                    next_message = next(iterator)
-                except StopIteration:
-                    next_message = None
-
-                target_time = start_local_time + (ts - start_replay_time) / speed
-                delay = max(0.0, target_time - time.time())
-
-                def emit(_scheduler: SchedulerBase, _state: object) -> DisposableBase | None:
-                    if is_disposed:
-                        return None
-                    observer.on_next(data)
-                    if next_message is not None:
-                        schedule_emission(next_message)
-                    else:
-                        observer.on_completed()
-                    return None
-
-                sched.schedule_relative(delay, emit)
-
-            if next_message is not None:
-                schedule_emission(next_message)
-
-            def dispose() -> None:
-                nonlocal is_disposed
-                is_disposed = True
-                disp.dispose()
-
-            return Disposable(dispose)
-
-        return rx.create(subscribe)
+        """Real-time scheduled playback as an RxPY Observable."""
+        return timed_playback(
+            self.iterate_ts(seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop),
+            speed=speed,
+        )
 
 
 TimedSensorReplay = Memory2ReplayAdapter
