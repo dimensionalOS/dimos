@@ -48,6 +48,10 @@ def _convert_camera_info(camera_info: Any) -> Any:
     )
 
 
+def _convert_global_map(grid: Any) -> Any:
+    return grid.to_rerun(bottom_cutoff=0)
+
+
 def _convert_navigation_costmap(grid: Any) -> Any:
     return grid.to_rerun(
         colormap="Accent",
@@ -62,7 +66,6 @@ def _static_base_link(rr: Any) -> list[Any]:
         rr.Boxes3D(
             half_sizes=[0.35, 0.155, 0.2],
             colors=[(0, 255, 127)],
-            fill_mode="wireframe",
         ),
         rr.Transform3D(parent_frame="tf#/base_link"),
     ]
@@ -83,6 +86,9 @@ def _go2_rerun_blueprint() -> Any:
                 line_grid=rrb.LineGrid3D(
                     plane=rr.components.Plane3D.XY.with_distance(0.5),
                 ),
+                overrides={
+                    "world/lidar": rrb.EntityBehavior(visible=False),
+                },
             ),
             column_shares=[1, 2],
         ),
@@ -103,6 +109,7 @@ rerun_config = {
     # This is unsustainable once we move to multi robot etc
     "visual_override": {
         "world/camera_info": _convert_camera_info,
+        "world/global_map": _convert_global_map,
         "world/navigation_costmap": _convert_navigation_costmap,
     },
     "max_hz": {
@@ -133,6 +140,7 @@ elif global_config.viewer.startswith("rerun"):
     )
 else:
     with_vis = _transports_base
+
 
 unitree_go2_basic = (
     autoconnect(

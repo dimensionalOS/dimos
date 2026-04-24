@@ -214,7 +214,7 @@ class FakeDJIVideoStream(DJIDroneVideoStream):
         """
         from reactivex import operators as ops
 
-        from dimos.utils.testing.replay import TimedSensorReplay
+        from dimos.memory.timeseries.legacy import LegacyPickleStore
 
         def _fix_format(img: Image) -> Image:
             if img.format == ImageFormat.BGR:
@@ -222,7 +222,7 @@ class FakeDJIVideoStream(DJIDroneVideoStream):
             return img
 
         logger.info("Creating video replay stream")
-        video_store: Any = TimedSensorReplay("drone/video")
+        video_store: Any = LegacyPickleStore("drone/video")
         stream: Observable[Image] = video_store.stream().pipe(ops.map(_fix_format))
         return stream
 

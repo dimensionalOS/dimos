@@ -178,7 +178,7 @@ class TestStoreReopen:
         with SqliteStore(path=db) as store2:
             s2 = store2.stream("nums", int)
             assert s2.count() == 2
-            obs = s2.fetch()
+            obs = s2.to_list()
             assert [o.data for o in obs] == [42, 99]
 
     def test_reopen_preserves_codec(self, tmp_path) -> None:
