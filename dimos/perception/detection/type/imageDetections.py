@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from functools import reduce
 from operator import add
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, Self, TypeVar
 
 from dimos_lcm.vision_msgs import Detection2DArray
 
@@ -61,7 +61,7 @@ class ImageDetections(Generic[T], TableStr):
     def __getitem__(self, index):  # type: ignore[no-untyped-def]
         return self.detections[index]
 
-    def filter(self, *predicates: Callable[[T], bool]) -> ImageDetections[T]:
+    def filter(self, *predicates: Callable[[T], bool]) -> Self:
         """Filter detections using one or more predicate functions.
 
         Multiple predicates are applied in cascade (all must return True).
@@ -70,12 +70,10 @@ class ImageDetections(Generic[T], TableStr):
             *predicates: Functions that take a detection and return True to keep it
 
         Returns:
-            A new ImageDetections instance with filtered detections
+            A new instance of the same class with filtered detections
         """
-        filtered_detections = self.detections
-        for predicate in predicates:
-            filtered_detections = [det for det in filtered_detections if predicate(det)]
-        return ImageDetections(self.image, filtered_detections)
+        filtered_detections = [det for det in self.detections if all(p(det) for p in predicates)]
+        return type(self)(self.image, filtered_detections)
 
     def to_ros_detection2d_array(self) -> Detection2DArray:
         return Detection2DArray(
