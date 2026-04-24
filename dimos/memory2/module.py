@@ -24,6 +24,7 @@ from pydantic import field_validator
 from reactivex.disposable import Disposable
 
 from dimos.agents.annotation import skill
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.memory2.embed import EmbedImages
@@ -166,9 +167,7 @@ class MemoryModuleConfig(ModuleConfig):
     def _resolve_path(cls, v: str | Path) -> Path:
         p = Path(os.fspath(v))
         if not p.is_absolute():
-            from dimos.utils.data import get_project_root
-
-            p = get_project_root() / p
+            p = DIMOS_PROJECT_ROOT / p
         return p
 
 
@@ -283,4 +282,5 @@ class Recorder(MemoryModule):
         for name, port in self.inputs.items():
             stream: Stream[Any] = self.store.stream(name, port.type)
             self.register_disposable(port_to_stream(port, stream))
+            logger.info("Recording %s (%s)", name, port.type.__name__)
             logger.info("Recording %s (%s)", name, port.type.__name__)
