@@ -63,7 +63,7 @@ class Stream(CompositeResource, Generic[T, O]):
     data; transform sources apply filters as Python predicates.
 
     Implements CompositeResource so subscriptions created via ``.subscribe()``
-    and ``.publish()`` are tracked and disposed on ``stop()``.
+    are tracked and disposed on ``stop()``.
 
     An *unbound* stream (``Stream()``) records a chain of transforms
     without a real source. Use ``.chain()`` to apply it to a bound stream::
@@ -427,25 +427,6 @@ class Stream(CompositeResource, Generic[T, O]):
                 on_error=on_error,
                 on_completed=on_completed,
             )
-        )
-
-    def publish(self, out: Any) -> DisposableBase:
-        """Publish each observation's data to a Module ``Out`` port.
-
-        Iteration runs on the dimos thread pool (via :meth:`subscribe`).
-        Returns a ``DisposableBase`` suitable for ``register_disposable()``.
-
-        Example::
-
-            lidar.live().transform(VoxelMapTransformer()).publish(self.global_map)
-        """
-
-        def _on_error(e: Exception) -> None:
-            logger.error("Stream.publish() pipeline error: %s", e, exc_info=True)
-
-        return self.subscribe(
-            on_next=lambda obs: out.publish(obs.data),
-            on_error=_on_error,
         )
 
     def chain(self, other: Stream[R, Any]) -> Stream[R]:

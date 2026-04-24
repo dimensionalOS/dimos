@@ -18,7 +18,7 @@ import inspect
 import logging
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from pydantic import field_validator
 from reactivex.disposable import Disposable
@@ -37,25 +37,55 @@ from dimos.models.embedding.clip import CLIPModel
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 
+if TYPE_CHECKING:
+    from reactivex.abc import DisposableBase
+
+    from dimos.core.stream import In, Out
+
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+TIn = TypeVar("TIn")
+TOut = TypeVar("TOut")
 
-class StreamModule(Module):
+
+def stream_to_port(stream: Stream[T], out: Out[T]) -> DisposableBase:
+    """Forward each observation's ``data`` from *stream* to a Module ``Out`` port.
+
+    Iteration runs on the dimos thread pool via :meth:`Stream.observable`.
+    """
+
+    def _on_error(e: Exception) -> None:
+        logger.error("stream_to_port() pipeline error: %s", e, exc_info=True)
+
+    return stream.observable().subscribe(
+        on_next=lambda obs: out.publish(obs.data),
+        on_error=_on_error,
+    )
+
+
+def port_to_stream(in_: In[T], stream: Stream[T]) -> DisposableBase:
+    """Append each message received on a Module ``In`` port to *stream*."""
+    return Disposable(in_.subscribe(stream.append))
+
+
+class StreamModule(Module, Generic[TIn, TOut]):
     """Module base class that wires a memory2 stream pipeline
     and deploys it as a dimos module
 
-    **Static pipeline**
+    Parameterize with the In/Out data types so the pipeline is
+    statically typed end-to-end::
 
-        class VoxelGridMapper(StreamModule):
+        class VoxelGridMapper(StreamModule[PointCloud2, PointCloud2]):
             pipeline = Stream().transform(VoxelMapTransformer())
             lidar: In[PointCloud2]
             global_map: Out[PointCloud2]
 
     **Config-driven pipeline**
 
-        class VoxelGridMapper(StreamModule):
+        class VoxelGridMapper(StreamModule[PointCloud2, PointCloud2]):
             config: VoxelGridMapperConfig
-            def pipeline(self, stream: Stream) -> Stream:
+            def pipeline(self, stream: Stream[PointCloud2]) -> Stream[PointCloud2]:
                 return stream.transform(VoxelMap(**self.config.model_dump()))
 
             lidar: In[PointCloud2]
@@ -82,24 +112,23 @@ class StreamModule(Module):
                 f"found {len(self.inputs)} In and {len(self.outputs)} Out"
             )
 
-        ((in_name, inp_port),) = self.inputs.items()
-        ((_, out_port),) = self.outputs.items()
+        ((in_name, in_port_raw),) = self.inputs.items()
+        ((_, out_port_raw),) = self.outputs.items()
+        in_port = cast("In[TIn]", in_port_raw)
+        out_port = cast("Out[TOut]", out_port_raw)
 
         store = self.register_disposable(NullStore())
         store.start()
 
-        stream: Stream[Any] = store.stream(in_name, inp_port.type)
+        stream: Stream[TIn] = store.stream(in_name, in_port.type)
 
         # we push input into the stream
-        inp_port.subscribe(lambda msg: stream.append(msg))
+        self.register_disposable(port_to_stream(in_port, stream))
 
-        live = stream.live()
         # and we push stream output to the output port
-        self._apply_pipeline(live).subscribe(
-            lambda obs: out_port.publish(obs.data),
-        )
+        self.register_disposable(stream_to_port(self._apply_pipeline(stream.live()), out_port))
 
-    def _apply_pipeline(self, stream: Stream[Any]) -> Stream[Any]:
+    def _apply_pipeline(self, stream: Stream[TIn]) -> Stream[TOut]:
         """Apply the pipeline to a live stream.
 
         Handles both static (class attr) and dynamic (method) pipelines.
@@ -253,5 +282,5 @@ class Recorder(MemoryModule):
 
         for name, port in self.inputs.items():
             stream: Stream[Any] = self.store.stream(name, port.type)
-            self.register_disposable(Disposable(port.subscribe(stream.append)))
+            self.register_disposable(port_to_stream(port, stream))
             logger.info("Recording %s (%s)", name, port.type.__name__)
