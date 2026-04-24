@@ -363,7 +363,7 @@ class RerunBridgeModule(Module):
                     logger.warning(
                         "Rerun native viewer not available (headless?). "
                         "Bridge will continue without a viewer — data is still "
-                        "accessible via rerun-connect or rerun-web.",
+                        "accessible via --rerun-open web or by connecting a viewer to the gRPC server.",
                         exc_info=True,
                     )
 
