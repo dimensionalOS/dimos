@@ -14,9 +14,10 @@
 
 """Rerun visualization defaults and type aliases.
 
-This module is intentionally free of ``import rerun`` so it can be
-imported from lightweight entry-points like ``global_config`` and
-``dimos --help`` without pulling in the full Rerun SDK.
+This module is intentionally free of heavy imports so it can be
+loaded from lightweight entry-points like ``global_config`` and
+``dimos --help`` without pulling in the Rerun SDK or the module
+framework.
 """
 
 from typing import Literal, TypeAlias

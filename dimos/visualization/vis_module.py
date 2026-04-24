@@ -18,7 +18,7 @@
 from typing import Any, get_args
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.visualization.rerun.config import ViewerBackend
+from dimos.visualization.rerun.constants import ViewerBackend
 
 
 def vis_module(

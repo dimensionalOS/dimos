@@ -145,7 +145,7 @@ class RerunWebSocketServer(Module):
         import socket
 
         from dimos.utils.generic import get_local_ips
-        from dimos.visualization.rerun.config import RERUN_GRPC_PORT
+        from dimos.visualization.rerun.constants import RERUN_GRPC_PORT
 
         local_ips = get_local_ips()
         hostname = socket.gethostname()

@@ -45,16 +45,13 @@ from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.utils.logging_config import setup_logger
-from dimos.visualization.rerun.config import (
+from dimos.visualization.rerun.constants import (
     RERUN_ENABLE_WEB,
     RERUN_GRPC_PORT,
     RERUN_OPEN_DEFAULT,
     RERUN_WEB_PORT,
     RerunOpenOption,
 )
-
-# Re-export constants so existing imports from this module keep working.
-__all__ = ["Config", "RerunBridgeModule", "RerunConvertible", "RerunData", "RerunMulti"]
 
 # TODO OUT visual annotations
 #
@@ -173,12 +170,7 @@ class Config(ModuleConfig):
     pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
 
     visual_override: dict[Glob | str, Callable[[Any], Archetype]] = field(default_factory=dict)
-
-    # Static items logged once after start. Maps entity_path -> callable(rr) returning Archetype
     static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
-
-    # Per-entity max update rate (Hz). Entities not listed are unthrottled.
-    # Use for heavy entities to prevent viewer backpressure.
     max_hz: dict[str, float] = field(default_factory=dict)
 
     entity_prefix: str = "world"
@@ -188,10 +180,17 @@ class Config(ModuleConfig):
     rerun_open: RerunOpenOption = RERUN_OPEN_DEFAULT
     rerun_web: bool = RERUN_ENABLE_WEB
     web_port: int = RERUN_WEB_PORT
-
-    # Blueprint factory: callable(rrb) -> Blueprint for viewer layout configuration
-    # Set to None to disable default blueprint
     blueprint: BlueprintFactory | None = _default_blueprint
+
+
+def _rebuild_config() -> None:
+    from rerun._baseclasses import Archetype
+    from rerun.blueprint import Blueprint
+
+    Config.model_rebuild(_types_namespace={"Archetype": Archetype, "Blueprint": Blueprint})
+
+
+_rebuild_config()
 
 
 class RerunBridgeModule(Module):
