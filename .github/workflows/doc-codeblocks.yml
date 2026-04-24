@@ -6,9 +6,9 @@
 # - If a block is broken and the fix is not obvious, contributors may mark the
 #   fence with `skip` (or `expected-error` where appropriate) and fix later;
 #   until then, this job fails on execution errors so drift is visible.
-# - Like .github/workflows/code-cleanup.yml: refreshed <!--Result:--> / generated
-#   assets are committed onto the PR branch so devs are not required to run this
-#   locally for output-only churn.
+# - For now this job only verifies that covered code blocks execute in CI.
+#   A follow-up can re-enable auto-committing refreshed <!--Result:--> /
+#   generated assets back onto the PR branch.
 name: doc-codeblocks
 on:
   pull_request:
@@ -22,7 +22,7 @@ on:
       - 'uv.lock'
 
 permissions:
-  contents: write
+  contents: read
   packages: read
   pull-requests: read
 
@@ -48,9 +48,6 @@ jobs:
           git config --global --add safe.directory '*'
           git clean -ffdx -e .venv
 
-      - name: Branch ref for git-auto-commit
-        run: git checkout -B "${{ github.head_ref }}"
-
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -66,8 +63,3 @@ jobs:
 
       - name: Execute documentation code blocks
         run: ./bin/run-doc-codeblocks --ci
-
-      - name: Commit doc updates
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "CI: execute documentation code blocks"
