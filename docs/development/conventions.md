@@ -1,5 +1,6 @@
 This mostly to track when conventions change (with regard to codebase updates) because this codebase is under heavy development. Note: this is a non-exhaustive list of conventions.
 
+- Instead of using `RerunBridge` in blueprints we always use `vis_module` which allows the CLI to control if its foxglove, rerun, or no-vis at all
 - When global_config.py shouldn't accidentally/indirectly import heavy libraries like rerun. But sometimes global_config needs the type definition or default value from a module. Preferably we import from the module file directly, however when thats not possible, we create a config.py for just that module's config and import that into global_config.py.
 - When adding visualization tools to a blueprint/autoconnect, instead of using RerunBridge or WebsocketVisModule directly we should always use `vis_module`, which right now should look something like `vis_module(viewer_backend=global_config.viewer, rerun_config={}),`
 - `DEFAULT_THREAD_JOIN_TIMEOUT` is used for all thread.join timeouts

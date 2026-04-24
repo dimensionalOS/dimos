@@ -128,6 +128,7 @@ class RerunWebSocketServer(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        assert self._loop is not None
         asyncio.run_coroutine_threadsafe(self._serve(), self._loop)
         self._server_ready.wait(timeout=self.config.start_timeout)
         self._log_connect_hints()
@@ -202,7 +203,7 @@ class RerunWebSocketServer(Module):
 
     def _dispatch(self, raw: str | bytes) -> None:
         try:
-            msg: ViewerMsg = json.loads(raw)
+            msg: dict[str, Any] = json.loads(raw)
         except json.JSONDecodeError:
             logger.warning(f"RerunWebSocketServer: ignoring non-JSON message: {raw!r}")
             return
