@@ -202,7 +202,7 @@ class TestEmbed:
         assert first_frame.ts < last_frame.ts
 
         mid_ts = (first_frame.ts + last_frame.ts) / 2
-        subset = video.time_range(first_frame.ts, mid_ts).fetch()
+        subset = video.time_range(first_frame.ts, mid_ts).to_list()
         assert 0 < len(subset) < video.count()
 
         streams = session.list_streams()
@@ -246,15 +246,15 @@ class TestE2EQuery:
         first = video.first()
 
         # Grab first 5 seconds
-        window = video.time_range(first.ts, first.ts + 5.0).fetch()
+        window = video.time_range(first.ts, first.ts + 5.0).to_list()
         assert len(window) > 0
         assert len(window) < video.count()
         assert all(first.ts <= obs.ts <= first.ts + 5.0 for obs in window)
 
     def test_limit_offset_pagination(self, session: SqliteStore) -> None:
         video = session.stream("color_image", Image)
-        page1 = video.limit(10).fetch()
-        page2 = video.offset(10).limit(10).fetch()
+        page1 = video.limit(10).to_list()
+        page2 = video.offset(10).limit(10).to_list()
 
         assert len(page1) == 10
         assert len(page2) == 10
@@ -262,7 +262,7 @@ class TestE2EQuery:
 
     def test_order_by_desc(self, session: SqliteStore) -> None:
         video = session.stream("color_image", Image)
-        last_10 = video.order_by("ts", desc=True).limit(10).fetch()
+        last_10 = video.order_by("ts", desc=True).limit(10).to_list()
 
         assert len(last_10) == 10
         assert all(last_10[i].ts >= last_10[i + 1].ts for i in range(9))
@@ -331,7 +331,7 @@ class TestEmbedImages:
         embedded = session.stream("color_image_embedded", Image)
         query = clip.embed_text("a door")
 
-        results = embedded.search(query, k=5).fetch()
+        results = embedded.search(query, k=5).to_list()
         assert len(results) > 0
         for obs in results:
             assert obs.similarity is not None

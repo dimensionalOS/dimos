@@ -61,7 +61,7 @@ class TestSave:
 
         source.save(target).drain()
 
-        results = target.fetch()
+        results = target.to_list()
         assert len(results) == 3
         assert [o.data for o in results] == [0, 10, 20]
 
@@ -72,9 +72,9 @@ class TestSave:
 
         pipeline = source.save(target)
 
-        assert target.fetch() == [], "expected target empty before iteration"
+        assert target.to_list() == [], "expected target empty before iteration"
         list(pipeline)  # drive iteration
-        assert len(target.fetch()) == 2
+        assert len(target.to_list()) == 2
 
     def test_save_preserves_data(self) -> None:
         backend = _make_backend("src")
@@ -97,7 +97,7 @@ class TestSave:
         target = Stream(source=_make_backend("target"))
         doubled.save(target).drain()
 
-        assert [o.data for o in target.fetch()] == [0, 20, 40]
+        assert [o.data for o in target.to_list()] == [0, 20, 40]
 
     def test_save_rejects_transform_target(self) -> None:
         source = make_stream(2)
@@ -113,7 +113,7 @@ class TestSave:
         target = Stream(source=_make_backend("target"))
         source.save(target).drain()
 
-        after_2 = target.after(2.0).fetch()
+        after_2 = target.after(2.0).to_list()
         assert [o.data for o in after_2] == [30, 40]
 
     def test_save_empty_source(self) -> None:
@@ -123,4 +123,4 @@ class TestSave:
         source.save(target).drain()
 
         assert target.count() == 0
-        assert target.fetch() == []
+        assert target.to_list() == []

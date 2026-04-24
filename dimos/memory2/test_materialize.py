@@ -28,22 +28,22 @@ def make_stream(n: int = 5, start_ts: float = 0.0) -> Stream[int]:
     return Stream(source=backend)
 
 
-class TestCache:
+class TestMaterialize:
     def test_returns_same_data(self) -> None:
-        cached = make_stream(3).cache()
-        assert [o.data for o in cached] == [0, 10, 20]
+        materialized = make_stream(3).materialize()
+        assert [o.data for o in materialized] == [0, 10, 20]
 
     def test_replayable(self) -> None:
-        cached = make_stream(3).cache()
-        first = [o.data for o in cached]
-        second = [o.data for o in cached]
+        materialized = make_stream(3).materialize()
+        first = [o.data for o in materialized]
+        second = [o.data for o in materialized]
         assert first == second == [0, 10, 20]
 
     def test_with_transform(self) -> None:
-        cached = make_stream(3).map(lambda obs: obs.derive(data=obs.data * 2)).cache()
-        assert [o.data for o in cached] == [0, 20, 40]
-        assert [o.data for o in cached] == [0, 20, 40]
+        materialized = make_stream(3).map(lambda obs: obs.derive(data=obs.data * 2)).materialize()
+        assert [o.data for o in materialized] == [0, 20, 40]
+        assert [o.data for o in materialized] == [0, 20, 40]
 
     def test_queryable(self) -> None:
-        cached = make_stream(5, start_ts=0.0).cache()
-        assert [o.data for o in cached.after(2.0)] == [30, 40]
+        materialized = make_stream(5, start_ts=0.0).materialize()
+        assert [o.data for o in materialized.after(2.0)] == [30, 40]

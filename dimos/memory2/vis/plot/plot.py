@@ -56,7 +56,7 @@ class Plot:
         if isinstance(element, (Series, Markers, HLine, VLine)):
             self._elements.append(element)
         elif isinstance(element, Stream):
-            self._add_from_observations(element.fetch(), **kwargs)
+            self._add_from_observations(element.to_list(), **kwargs)
         elif isinstance(element, list) and element and isinstance(element[0], Observation):
             self._add_from_observations(element, **kwargs)
         elif hasattr(element, "__iter__"):

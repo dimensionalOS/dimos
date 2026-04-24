@@ -117,13 +117,13 @@ print(plantness_query)
 
 # we evaluate it into a in-memory stream,
 # since we want to further process/plot multiple times
-plantness_query_cached = plantness_query.cache()
+plantness_query_materialized = plantness_query.materialize()
 
-print(plantness_query_cached)
-print(plantness_query_cached.summary())
+print(plantness_query_materialized)
+print(plantness_query_materialized.summary())
 
 # let's create a numerical stream
-plantness_similarity = plantness_query_cached.map_data(lambda obs: obs.similarity).cache()
+plantness_similarity = plantness_query_materialized.map_data(lambda obs: obs.similarity).materialize()
 
 plot = Plot()
 
@@ -138,8 +138,8 @@ plot.to_svg("assets/plot_plantness.svg")
 <!--Result:-->
 ```
 Stream("color_image_embedded") | vector_search() | order_by(ts)
-Stream("cache")
-Stream("cache"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
+Stream("materialize")
+Stream("materialize"): 267 items, 2025-12-26 11:09:12 — 2025-12-26 11:14:00 (288.4s)
 ```
 
 ![output](assets/plot_plantness.svg)
@@ -209,7 +209,7 @@ from dimos.memory2.vis.utils import mosaic
 from dimos.memory2.stream import Stream
 from itertools import chain
 
-semantic_peaks = plantness_query_cached.transform(peaks(key=lambda obs: obs.similarity, distance=1.0))
+semantic_peaks = plantness_query_materialized.transform(peaks(key=lambda obs: obs.similarity, distance=1.0))
 
 # load all lidar frames captured in the readius around the semantic peaks
 # feed them into a global mapper to get a single pointcloud around our areas of interest
@@ -342,8 +342,8 @@ detections = (near_images
     .map_data(lambda obs: moondream.query_detections(obs.data, "plant"))
     .map_data(lambda obs: obs.data.filter(lambda det: det.bbox_2d_volume() > 3000))
     .filter(lambda obs: len(obs.data) > 0)
-    .cache())
-    # cache this stream since we'll want to re-use it later
+    .materialize())
+    # materialize this stream since we'll want to re-use it later
 
 drawing.add(detections)
 drawing.to_svg("assets/peak_space.svg")

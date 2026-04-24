@@ -49,7 +49,7 @@ stream.live().transform(xf).last()
 
 ```python
 # Search the stored data, not the live tail
-results = stream.search(vec, k=5).fetch()
+results = stream.search(vec, k=5).to_list()
 
 # First works fine (uses limit(1), no materialization)
 obs = stream.live().transform(xf).first()
@@ -61,7 +61,7 @@ Terminals trigger iteration and return a value. They're the "go" button — noth
 
 | Method            | Returns             | Memory             | Live behaviour                          |
 |-------------------|---------------------|--------------------|-----------------------------------------|
-| `.fetch()`        | `list[Observation]` | Grows with results | TypeError without `.limit()` first      |
+| `.to_list()`        | `list[Observation]` | Grows with results | TypeError without `.limit()` first      |
 | `.drain()`        | `int` (count)       | Constant           | Blocks forever, memory stays flat       |
 | `.drain_thread()` | `DisposableBase`    | Constant           | Runs on the dimos thread pool           |
 | `.first()`        | `Observation`       | Constant           | Returns first item, then stops          |
@@ -77,7 +77,7 @@ observation to ``target``'s backend as the stream is iterated. Pair it with
 
 **Batch query** — collect results into memory:
 ```python
-results = stream.after(t).search(vec, k=10).fetch()
+results = stream.after(t).search(vec, k=10).to_list()
 ```
 
 **Live ingestion** — process forever, constant memory:
@@ -98,7 +98,7 @@ has_data = stream.exists()                    # quick check
 
 **Bounded live** — collect a fixed number from a live stream:
 ```python
-batch = stream.live().limit(100).fetch()     # OK — limit makes it finite
+batch = stream.live().limit(100).to_list()     # OK — limit makes it finite
 ```
 
 ### Error summary
@@ -109,6 +109,6 @@ All operations that would silently hang on live streams raise `TypeError` instea
 |-------------------------------------|-----------------------------------------------|
 | `live.transform(xf).search(vec, k)` | `.search() requires finite data`              |
 | `live.transform(xf).order_by("ts")` | `.order_by() requires finite data`            |
-| `live.fetch()` (without `.limit()`) | `.fetch() would collect forever`              |
+| `live.to_list()` (without `.limit()`) | `.to_list() would collect forever`              |
 | `live.transform(xf).count()`        | `.count() would block forever`                |
 | `live.transform(xf).last()`         | `.order_by() requires finite data` (via last) |

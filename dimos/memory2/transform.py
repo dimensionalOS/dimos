@@ -15,7 +15,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import collections
 import inspect
+import math
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 from dimos.memory2.utils.formatting import FilterRepr
@@ -135,7 +137,6 @@ def throttle(interval: float) -> FnIterTransformer[T, T]:
 
 def speed() -> FnIterTransformer[Any, float]:
     """Compute speed (m/s) between consecutive observations from their poses."""
-    import math
 
     def _speed(upstream: Iterator[Observation[Any]]) -> Iterator[Observation[float]]:
         prev: Observation[Any] | None = None
@@ -154,7 +155,6 @@ def speed() -> FnIterTransformer[Any, float]:
 
 def smooth(window: int) -> FnIterTransformer[float, float]:
     """Sliding window average over obs.data (must be numeric)."""
-    import collections
 
     def _smooth(upstream: Iterator[Observation[float]]) -> Iterator[Observation[float]]:
         buf: collections.deque[float] = collections.deque(maxlen=window)
@@ -347,7 +347,6 @@ def smooth_time(seconds: float) -> FnIterTransformer[float, float]:
     """
     if seconds <= 0:
         raise ValueError(f"smooth_time(seconds) requires seconds > 0, got {seconds}")
-    import collections
 
     def _smooth(upstream: Iterator[Observation[float]]) -> Iterator[Observation[float]]:
         buf: collections.deque[Observation[float]] = collections.deque()

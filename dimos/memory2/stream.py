@@ -297,7 +297,7 @@ class Stream(CompositeResource, Generic[T, O]):
         """Lazy pass-through that appends each observation to *target*'s backend.
 
         Iteration drives both the passthrough and the appends — pick a terminal
-        (``.drain()`` sync, ``.drain_thread()`` background, ``.fetch()``,
+        (``.drain()`` sync, ``.drain_thread()`` background, ``.to_list()``,
         ``for obs in ...``).
         """
         if isinstance(target._source, Stream) or target._source is None:
@@ -313,18 +313,14 @@ class Stream(CompositeResource, Generic[T, O]):
 
         return cast("Stream[T, O]", self.transform(FnIterTransformer(_save)))
 
-    def fetch(self) -> list[O]:
+    def to_list(self) -> list[O]:
         """Materialize all observations into a list."""
         if self.is_live():
             raise TypeError(
-                ".fetch() on a live stream would block forever. "
+                ".to_list() on a live stream would block forever. "
                 "Use .drain() or .save(target) instead."
             )
         return list(self)
-
-    def to_list(self) -> list[O]:
-        """Alias for .fetch()."""
-        return self.fetch()
 
     def first(self) -> O:
         """Return the first matching observation."""
@@ -372,7 +368,7 @@ class Stream(CompositeResource, Generic[T, O]):
         dur = t1 - t0
         return f"{self}: {n} items, {dt0} — {dt1} ({dur:.1f}s)"
 
-    def cache(self) -> Stream[T, O]:
+    def materialize(self) -> Stream[T, O]:
         """Materialize into memory and return a replayable stream.
 
         Useful when you need to iterate the same results multiple times
@@ -381,7 +377,7 @@ class Stream(CompositeResource, Generic[T, O]):
         from dimos.memory2.store.memory import MemoryStore
 
         mem = MemoryStore()
-        target = cast("Stream[T, O]", mem.stream("cache"))
+        target = cast("Stream[T, O]", mem.stream("materialize"))
         self.save(target).drain()
         return target
 

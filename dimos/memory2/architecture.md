@@ -83,8 +83,8 @@ images = store.stream("images")
 images.append(frame, ts=time.time(), pose=(x, y, z), tags={"camera": "front"})
 
 # Query
-recent = images.after(t).limit(10).fetch()
-nearest = images.near(pose, radius=2.0).fetch()
+recent = images.after(t).limit(10).to_list()
+nearest = images.near(pose, radius=2.0).to_list()
 latest = images.last()
 
 # Transform (class or bare generator function)
@@ -96,7 +96,7 @@ def running_avg(upstream):
     for obs in upstream:
         total += obs.data; n += 1
         yield obs.derive(data=total / n)
-avgs = stream.transform(running_avg).fetch()
+avgs = stream.transform(running_avg).to_list()
 
 # Live
 for obs in images.live().transform(process):
@@ -104,7 +104,7 @@ for obs in images.live().transform(process):
 
 # Embed + search
 images.transform(EmbedImages(clip)).save(store.stream("embedded")).drain()
-results = store.stream("embedded").search(query_vec, k=5).fetch()
+results = store.stream("embedded").search(query_vec, k=5).to_list()
 ```
 
 ## Implementations

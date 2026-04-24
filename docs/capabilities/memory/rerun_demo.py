@@ -73,7 +73,7 @@ search_results = (
     embedded.search(search_vector, k=18)
     .tap(lambda obs: drawing.add(obs.derive(data=florence.caption(obs.data))))
     .map(lambda obs: obs.derive(data=moondream.query_detections(obs.data, search_text)))
-    .cache()
+    .materialize()
 )
 
 drawing.add(mosaic(search_results))
