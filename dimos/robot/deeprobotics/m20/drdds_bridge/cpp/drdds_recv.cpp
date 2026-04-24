@@ -30,9 +30,13 @@ int main(int argc, char** argv) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    // Initialize drdds on domain 0 using the multi-domain Init (same as rsdriver)
-    std::vector<int> domains = {0};
-    DrDDSManager::Init(domains, "drdds_bridge", "drdds_recv", false, false, false);
+    // Use the simple DrDDSManager::Init(int, string) — creates mLocalParticipant_.
+    // Post-OTA nm -D of rslidar shows it uses THIS overload, not the 6-arg
+    // multi-domain variant. The two overloads create different participants
+    // (mLocalParticipant_ vs mMultiParticipant_) and DrDDSChannel endpoints
+    // attached to different participants don't match each other. See FASTLIO2_LOG
+    // Finding #36 for the post-OTA debug trail.
+    DrDDSManager::Init(0, "");
 
     // Create shared memory writers
     drdds_bridge::ShmWriter lidar_shm(
@@ -222,6 +226,10 @@ int main(int argc, char** argv) {
     // Creating all 5 channels BEFORE rsdriver starts ensures the SHM-based
     // FastDDS discovery can link our subscribers to rsdriver's publishers
     // in separate mode too (Finding #5 in ROSNAV_MIGRATION_LOG.md).
+    // Default 3-arg ctor (use_shm=false, topic_prefix="rt") — matches
+    // Finding #2's verified-working pre-OTA call. Post-Init-fix this works
+    // for all IMU channels. Lidar has a separate issue (matched=1 msgs=0)
+    // that's tracked in FASTLIO2_LOG Finding #36 for follow-up.
     DrDDSChannel<sensor_msgs::msg::PointCloud2PubSubType> lidar_ch(
         on_lidar, "/LIDAR/POINTS", 0);
     DrDDSChannel<sensor_msgs::msg::PointCloud2PubSubType> lidar2_ch(

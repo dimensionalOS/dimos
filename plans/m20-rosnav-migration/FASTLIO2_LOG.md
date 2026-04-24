@@ -2605,6 +2605,103 @@ fully clean, nothing drifted. Not involved in drdds debug.
 
 **Codex agent with hypothesis diff:** `a757777c8b55971e4`.
 
+### Resolution of matched=0 (2026-04-24)
+
+All four of codex's ranked hypotheses were **wrong**. Actual root
+cause: **`DrDDSManager::Init` overload mismatch**, discovered by
+comparing `nm -D` against rslidar.
+
+```
+$ nm -D /opt/robot/share/node_driver/bin/rslidar | grep DrDDSManager
+  U _ZN12DrDDSManager4InitEiNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+     ^-- DrDDSManager::Init(int, string) — SIMPLE 2-arg
+
+$ nm -D /opt/drdds_bridge/lib/drdds_bridge/drdds_recv | grep DrDDSManager
+  U _ZN12DrDDSManager4InitESt6vectorIiSaIiEENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES8_bbb
+     ^-- DrDDSManager::Init(vector<int>, string, string, bool, bool, bool) — 6-arg
+```
+
+Per Finding #3 in ROSNAV_MIGRATION_LOG, the two overloads create
+**different participants**: Simple → `mLocalParticipant_`,
+Multi-domain → `mMultiParticipant_`. DrDDSChannel endpoints
+attached to different participants do not discover each other.
+
+The 6-arg call was introduced somewhere between 2026-03 and now —
+the original `05-drdds-bridge/plan.md:328` shows `DrDDSManager::Init(0)`
+(the simple variant) as the intended call. Fix:
+
+```cpp
+// BEFORE (post-OTA broken):
+DrDDSManager::Init(domains, "drdds_bridge", "drdds_recv", false, false, false);
+
+// AFTER (matches rslidar):
+DrDDSManager::Init(0, "");
+```
+
+With this fix + 3-arg DrDDSChannel ctor (Finding #2 verified-
+working form), all IMU channels match+flow immediately:
+```
+lidar_front_matched=2 lidar_front_msgs=0 (self+rsdriver — BUT SEE BELOW)
+lidar_rear_matched=1  lidar_rear_msgs=0
+imu_yesense_matched=1 imu_yesense_msgs=~200Hz  ✓
+imu_airy_front_matched=1 imu_airy_front_msgs=~200Hz  ✓
+imu_airy_rear_matched=1  imu_airy_rear_msgs=~200Hz  ✓
+```
+
+### Remaining issue: lidar matched but msgs=0 (2026-04-24)
+
+With Init fix applied, LIDAR channels are the last holdout.
+Pattern: `matched=1` (occasionally 2) but `msgs=0` stable, even
+though rsdriver journal shows `send success size:` for each
+publish cycle with `error_code:0`.
+
+**Experiments tried:**
+
+| Ctor variant | IMU | LIDAR | Notes |
+|---|---|---|---|
+| 3-arg default (shm=false, "rt") | match+flow | match=1 msgs=0 | current committed state |
+| 5-arg (shm=true, "rt") on lidar, 3-arg on IMU | match+flow | initial ~400 msg burst, then stops | Data Sharing races during startup? |
+| 5-arg (shm=true, "rt") on all | airy OK but drops to 0 msgs after ~3k, yesense matched=0 | ~50 msg burst, stops | worse — SHM participant clobbers IMU UDP participant? |
+
+**Post-OTA system transport pattern** (vs Finding #4 pre-OTA):
+- rsdriver: binds **UDP port 7400** on eth0/eth1/lo + multicast 239.255.0.1 (pre-OTA was SHM-only)
+- yesense, hsLidar, handler, passable_area: same UDP 7400 pattern
+- Our drdds_recv (Init-fixed, 3-arg): only ephemeral UDP sockets; no 7400 binding
+- `fast_datasharing_*` SHM segments present but **not being written** (stale)
+
+**Hypotheses for msgs=0**:
+1. **QoS deadline violation.** `drqos.xml` has
+   `sensor_msgs::msg::dds_::PointCloud2_` data_reader with 50ms
+   deadline + RELIABLE. Our callback writes ~1MB PC2 to POSIX SHM
+   which may take >50ms under load — RELIABLE+deadline-violated
+   writer could stop delivering.
+2. **Data Sharing segment desync.** Post-OTA rsdriver may attempt
+   zero-copy Data Sharing for PC2 (hence the stale datasharing
+   segments). Our sub needs to join Data Sharing to receive; with
+   `use_shm=false` we don't, with `use_shm=true` we do initially
+   but then desync (the 438→stuck pattern).
+3. **PointCloud2 type size.** Our PC2 subscriber's type may have
+   been recompiled against a new CDR layout. `handler` journal
+   shows `Cloud= 0 Hz` — DeepRobotics's own consumer also getting
+   zero point clouds. Suggests system-wide PC2 issue, not just us.
+
+**Next session diagnostic plan:**
+- Check if ANY other process on system successfully receives
+  `/LIDAR/POINTS` (if `handler` reports `Cloud=0` it's not just
+  us → system-level issue)
+- Try BEST_EFFORT QoS for PC2 data_reader only (edit
+  `/opt/drdds/dr_qos/drqos.xml`)
+- Try smaller `deadline` period or remove deadline
+- Test minimal standalone FastDDS subscriber with same type to
+  isolate drdds vs FastDDS layer
+- Ask DeepRobotics (Jeff meeting 2026-04-23): does V1.1.8.5 change
+  PC2 CDR layout or transport requirements?
+
+**Current committed state** (2026-04-24):
+- drdds_recv.cpp: simple `DrDDSManager::Init(0, "")` + 3-arg
+  DrDDSChannel. IMU working. Lidar discovered but not flowing.
+- Branch `feat/deeprobotics-m20-nav`.
+
 ---
 
 ## Questions for Jeff (2026-04-23, in-person at Dimensional)
