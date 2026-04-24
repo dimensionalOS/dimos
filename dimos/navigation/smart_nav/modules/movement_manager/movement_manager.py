@@ -39,6 +39,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -49,9 +50,10 @@ class MovementManagerConfig(ModuleConfig):
 
     # Seconds after the last teleop message before nav_cmd_vel is re-enabled.
     tele_cooldown_sec: float = 1.0
-    # TF child frame for the robot body.  Override to ``"sensor"`` for
-    # the Unity sim bridge.
     body_frame: str = "body"
+    # Element-wise multiplier for incoming teleop twists.
+    # Default is identity (all 1.0). Set a component to 0.0 to lock it out.
+    tele_cmd_vel_scaling: Twist = Twist(Vector3(1, 1, 1), Vector3(1, 1, 1))
 
 
 class MovementManager(Module):
@@ -104,8 +106,8 @@ class MovementManager(Module):
             self._teleop_active = False
         super().stop()
 
-    # ── TF pose query ────────────────────────────────────────────────────
-
+    # TODO: when/if we change transform frame stuff (especially naming) we should change how this is done.
+    # This is in the "it works" category of code changes
     def _query_pose(self) -> tuple[float, float, float]:
         """Return (x, y, z) from the TF tree, falling back to cached values.
 
@@ -175,4 +177,17 @@ class MovementManager(Module):
             self._cancel_goal()
             logger.info("Teleop active")
 
-        self.cmd_vel.publish(msg)
+        scale = self.config.tele_cmd_vel_scaling
+        scaled = Twist(
+            linear=Vector3(
+                msg.linear.x * scale.linear.x,
+                msg.linear.y * scale.linear.y,
+                msg.linear.z * scale.linear.z,
+            ),
+            angular=Vector3(
+                msg.angular.x * scale.angular.x,
+                msg.angular.y * scale.angular.y,
+                msg.angular.z * scale.angular.z,
+            ),
+        )
+        self.cmd_vel.publish(scaled)
