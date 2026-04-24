@@ -143,7 +143,6 @@ class MovementManager(Module):
         self.goal.publish(msg)
 
     def _cancel_goal(self) -> None:
-        """Publish NaN goal so planners clear their active goal."""
         self.stop_movement.publish(Bool(data=True))
         # NOTE: this NaN goal is more of a safety fallback.
         # It can be REALLY bad if a robot is supposed to stop moving but wont
