@@ -170,8 +170,8 @@ agents = [
 
     # Audio
     "openai",
-    "openai-whisper",
     "sounddevice",
+    "faster-whisper>=1.0.0",
 ]
 
 web = [
@@ -246,6 +246,7 @@ dev = [
     "requests-mock==1.12.1",
     "terminaltexteffects==0.12.2",
     "watchdog>=3.0.0",
+    "openai-whisper",
 
     # docs
     "md-babel-py==1.1.1",
@@ -391,6 +392,7 @@ module = [
     "cyclonedds.*",
     "dimos_lcm.*",
     "etils",
+    "faster_whisper",
     "geometry_msgs.*",
     "lazy_loader",
     "mujoco",
