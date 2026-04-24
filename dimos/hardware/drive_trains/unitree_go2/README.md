@@ -1,12 +1,6 @@
-# Unitree Go2 drive-train adapters
+# Unitree Go2 drive-train adapter
 
-Two adapters in this folder cover different control layers of the same Go2:
-
-- **[`adapter.py`](adapter.py) — `UnitreeGo2TwistAdapter`** (high-level): Twist `(vx, vy, wz)` via SportClient, with optional Rage Mode (`rage_mode=True`, ~2.5 m/s forward envelope). Auto-registered as `"unitree_go2"` and used by blueprints like `unitree-go2-keyboard-teleop`. This is the one you want for teleop, navigation, or anything velocity-commanded.
-
-- **[`adapter_lowlevel.py`](adapter_lowlevel.py) — `UnitreeGo2LowLevelAdapter`** (low-level): per-joint `{q, dq, tau, kp, kd}` via `rt/lowcmd`. Standalone — instantiate directly, not through the registry. **Experimental, not yet validated on hardware** — use only for joint-level research / replay, and only on a sat robot with mcf released. Test with the smoke-test patterns before going live.
-
-**Do not run both adapters at once.** The high-level adapter relies on mcf producing motor commands; the low-level one publishes `LowCmd_` that bypasses mcf. They will fight for the motor rail. Disconnect one before connecting the other.
+[`adapter.py`](adapter.py) — `UnitreeGo2TwistAdapter` (high-level): Twist `(vx, vy, wz)` via SportClient, with optional Rage Mode (`rage_mode=True`, ~2.5 m/s forward envelope). Auto-registered as `"unitree_go2"` and used by blueprints like `unitree-go2-keyboard-teleop`. This is the one you want for teleop, navigation, or anything velocity-commanded.
 
 ---
 
