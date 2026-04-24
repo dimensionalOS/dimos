@@ -50,7 +50,6 @@ class MovementManagerConfig(ModuleConfig):
 
     # Seconds after the last teleop message before nav_cmd_vel is re-enabled.
     tele_cooldown_sec: float = 1.0
-    body_frame: str = "body"
     # Element-wise multiplier for incoming teleop twists.
     # Default is identity (all 1.0). Set a component to 0.0 to lock it out.
     tele_cmd_vel_scaling: Twist = Twist(Vector3(1, 1, 1), Vector3(1, 1, 1))
@@ -89,9 +88,6 @@ class MovementManager(Module):
         self._lock = threading.Lock()
         self._teleop_active = False
         self._last_teleop_time = 0.0
-        self._robot_x = 0.0
-        self._robot_y = 0.0
-        self._robot_z = 0.0
 
     @rpc
     def start(self) -> None:
@@ -105,30 +101,6 @@ class MovementManager(Module):
         with self._lock:
             self._teleop_active = False
         super().stop()
-
-    # TODO: when/if we change transform frame stuff (especially naming) we should change how this is done.
-    # This is in the "it works" category of code changes
-    def _query_pose(self) -> tuple[float, float, float]:
-        """Return (x, y, z) from the TF tree, falling back to cached values.
-
-        Tries ``map → body_frame`` first (corrected pose), then
-        ``odom → body_frame`` (startup fallback).  Caches the last
-        successful parent frame to avoid repeated BFS misses.
-        """
-        child = self.config.body_frame
-        # Always try map first (corrected pose), fall back to odom (startup).
-        for parent in ("map", "odom"):
-            tf = self.tf.get(parent, child)
-            if tf is not None:
-                with self._lock:
-                    self._robot_x = float(tf.translation.x)
-                    self._robot_y = float(tf.translation.y)
-                    self._robot_z = float(tf.translation.z)
-                break
-        with self._lock:
-            return self._robot_x, self._robot_y, self._robot_z
-
-    # ── Click-to-goal ─────────────────────────────────────────────────────
 
     def _on_click(self, msg: PointStamped) -> None:
         if not all(math.isfinite(v) for v in (msg.x, msg.y, msg.z)):

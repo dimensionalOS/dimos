@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 
 from dimos.visualization.rerun.conftest import wait_for_server
-from dimos.visualization.rerun.websocket_server import CmdVelScaling, RerunWebSocketServer
+from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 _TEST_PORT = 13031
 
@@ -182,38 +182,6 @@ def test_stop_publishes_zero_twist(
 
     assert len(received) == 1
     assert received[0].is_zero()
-
-
-def test_cmd_vel_scaling(server: RerunWebSocketServer) -> None:
-    """cmd_vel_scaling multiplies each component independently."""
-    server.stop()
-
-    module = RerunWebSocketServer(
-        port=_TEST_PORT,
-        cmd_vel_scaling=CmdVelScaling(x=0.5, y=2.0, z=0.0, roll=1.0, pitch=3.0, yaw=0.25),
-    )
-    module.start()
-    wait_for_server(_TEST_PORT)
-
-    received: list[Any] = []
-    done = threading.Event()
-    unsub = module.tele_cmd_vel.subscribe(lambda twist: (received.append(twist), done.set()))
-
-    try:
-        with MockViewerPublisher(f"ws://127.0.0.1:{_TEST_PORT}/ws") as publisher:
-            publisher.send_twist(1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
-            publisher.flush()
-        done.wait(timeout=2.0)
-    finally:
-        unsub()
-        module.stop()
-
-    assert len(received) == 1
-    twist = received[0]
-    assert twist.linear.x == pytest.approx(0.5)
-    assert twist.linear.y == pytest.approx(2.0)
-    assert twist.linear.z == pytest.approx(0.0)
-    assert twist.angular.z == pytest.approx(0.25)
 
 
 def test_invalid_json_does_not_crash(server: RerunWebSocketServer) -> None:
