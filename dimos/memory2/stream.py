@@ -398,7 +398,7 @@ class Stream(CompositeResource, Generic[T, O]):
 
     def drain_thread(self) -> DisposableBase:
         """Drain this stream on the dimos thread pool; returns a disposable."""
-        return self.subscribe(on_next=lambda _: None)
+        return self.subscribe(lambda _: None)
 
     def observable(self) -> reactivex.Observable[O]:
         """Convert this stream to an RxPY Observable.

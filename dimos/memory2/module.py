@@ -188,15 +188,13 @@ class SemanticSearch(MemoryModule):
         self.embeddings = self.store.stream("color_image_embedded", Image)
 
         # fmt: off
-        self.register_disposable(
-            self.store.streams.color_image
-               .live()
-               .filter(lambda obs: obs.data.brightness > 0.1)
-               .transform(QualityWindow(lambda img: img.sharpness, window=0.5))
-               .transform(EmbedImages(self.model, batch_size=2))
-               .save(self.embeddings)
-               .drain_thread()
-        )
+        self.store.streams.color_image \
+           .live() \
+           .filter(lambda obs: obs.data.brightness > 0.1) \
+           .transform(QualityWindow(lambda img: img.sharpness, window=0.5)) \
+           .transform(EmbedImages(self.model, batch_size=2)) \
+           .save(self.embeddings) \
+           .drain_thread()
         # fmt: on
 
     @skill
