@@ -54,6 +54,7 @@ from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
+from dimos.msgs.std_msgs.Bool import Bool as DimosBool
 from dimos.utils.logging_config import setup_logger
 
 from .optimized_costmap import OptimizedCostmapEncoder
@@ -96,6 +97,13 @@ class WebsocketVisModule(Module):
     stop_explore_cmd: Out[Bool]
     cmd_vel: Out[Twist]
     movecmd_stamped: Out[TwistStamped]
+    # Arming / dry-run for locomotion-policy tasks (e.g. GrootWBCTask).
+    # Uses dimos.msgs.std_msgs.Bool to match the coordinator's
+    # ``activate`` / ``dry_run`` In[Bool] ports, rather than
+    # dimos_lcm.std_msgs.Bool used by ``explore_cmd`` — the LCM wire
+    # format is identical; what matters for autoconnect is type parity.
+    activate: Out[DimosBool]
+    dry_run: Out[DimosBool]
 
     def __init__(
         self,
@@ -326,6 +334,38 @@ class WebsocketVisModule(Module):
             if self.sio is not None:
                 await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)
             logger.info("GPS goal points cleared and updated clients")
+
+        @self.sio.event  # type: ignore[untyped-decorator]
+        async def arm(sid: str, data: dict[str, Any] | None = None) -> None:
+            """Dashboard → arm the locomotion policy (with ramp)."""
+            if self.activate and self.activate.transport:
+                logger.info("Dashboard requested arm")
+                self.activate.publish(DimosBool(data=True))
+            else:
+                logger.warning("arm requested but activate transport is not configured")
+
+        @self.sio.event  # type: ignore[untyped-decorator]
+        async def disarm(sid: str, data: dict[str, Any] | None = None) -> None:
+            """Dashboard → disarm; task falls back to hold-current-pose."""
+            if self.activate and self.activate.transport:
+                logger.info("Dashboard requested disarm")
+                self.activate.publish(DimosBool(data=False))
+            else:
+                logger.warning("disarm requested but activate transport is not configured")
+
+        @self.sio.event  # type: ignore[untyped-decorator]
+        async def set_dry_run(sid: str, data: dict[str, Any]) -> None:
+            """Dashboard → toggle dry-run on the locomotion policy.
+
+            Payload: ``{"enabled": bool}``.  Task still computes but
+            coordinator sends nothing to the adapter when enabled.
+            """
+            if self.dry_run and self.dry_run.transport:
+                enabled = bool(data.get("enabled", False))
+                logger.info(f"Dashboard set dry_run = {enabled}")
+                self.dry_run.publish(DimosBool(data=enabled))
+            else:
+                logger.warning("set_dry_run requested but dry_run transport is not configured")
 
         @self.sio.event  # type: ignore[untyped-decorator]
         async def move_command(sid: str, data: dict[str, Any]) -> None:

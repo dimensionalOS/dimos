@@ -49,6 +49,9 @@ data/*
 FastSAM-x.pt
 yolo11n.pt
 
+# MuJoCo dumps a GL-warning log in the CWD at runtime.
+MUJOCO_LOG.TXT
+
 /thread_monitor_report.csv
 
 # symlink one of .envrc.* if you'd like to use

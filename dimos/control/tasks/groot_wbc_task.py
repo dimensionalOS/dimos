@@ -123,6 +123,16 @@ class GrootWBCTaskConfig:
             model, otherwise walk.
         height_cmd: Fixed height command slot in obs.
         timeout: Seconds without a velocity command before zeroing it.
+        auto_arm: Arm the policy automatically on ``start()``.  Default
+            False — safe for real hardware; the blueprint sets True for
+            simulation.
+        auto_dry_run: Enter dry-run mode on ``start()``.  Policy still
+            runs but outputs are not emitted to the adapter — useful for
+            verifying on real hardware without commanding motors.
+        default_ramp_seconds: Duration of the arming ramp (current pose
+            → ``default_15``) when ``arm()`` is called without an
+            explicit duration.  Set to 0 in simulation (no ramp needed);
+            10 s on real hardware mirrors the g1-control-api default.
     """
 
     balance_onnx: str | Path
@@ -140,6 +150,9 @@ class GrootWBCTaskConfig:
     cmd_norm_threshold: float = 0.05
     height_cmd: float = 0.74
     timeout: float = 1.0
+    auto_arm: bool = False
+    auto_dry_run: bool = False
+    default_ramp_seconds: float = 10.0
 
 
 class GrootWBCTask(BaseControlTask):
@@ -213,13 +226,44 @@ class GrootWBCTask(BaseControlTask):
         self._default_15 = self._default_29[:_NUM_ACTIONS]
         self._cmd_scale = np.asarray(config.cmd_scale, dtype=np.float32)
 
-        # State
+        # Inference state
         self._last_action = np.zeros(_NUM_ACTIONS, dtype=np.float32)
         self._obs_buf = np.zeros((1, _SINGLE_OBS_DIM * _OBS_HISTORY_LEN), dtype=np.float32)
         self._first_inference = True
         self._tick_count = 0
         self._last_targets: list[float] | None = None
+
+        # Lifecycle state machine.
+        #
+        #   _active   — task is registered and compute() is being invoked
+        #               by the coordinator.  Gate for the whole compute()
+        #               path; start()/stop() toggle this.
+        #   _armed    — policy outputs are emitted to the adapter.  Flip
+        #               via arm()/disarm().
+        #   _arming   — currently ramping current-pose → default_15 over
+        #               ``_arming_duration`` seconds.  Set by arm() with
+        #               a non-zero ramp, cleared when alpha reaches 1.
+        #   _arm_pending — arm() was called; compute() captures the ramp
+        #               start pose from state on the next tick and flips
+        #               into _arming (or _armed directly if ramp=0).
+        #   _dry_run  — compute() still runs the policy (obs history
+        #               stays hot) but returns None so the coordinator
+        #               sends no command to the adapter.  Throttled log
+        #               lets the operator see what WOULD have gone out.
+        #
+        # When active-but-unarmed, compute() echoes back the current
+        # joint positions so the PD error is zero and the robot sits in
+        # pure damping (kd-only) — this mirrors the reference backend's
+        # "hold current pose" inactive state.
         self._active = False
+        self._armed = False
+        self._arming = False
+        self._arm_pending = False
+        self._dry_run = bool(config.auto_dry_run)
+        self._arming_duration = 0.0
+        self._arming_start_t = 0.0
+        self._ramp_start: np.ndarray | None = None
+        self._last_dry_run_log_t: float = 0.0
 
         self._cmd_lock = threading.Lock()
         self._cmd = np.zeros(3, dtype=np.float32)
@@ -243,19 +287,92 @@ class GrootWBCTask(BaseControlTask):
         if not self._active:
             return None
 
+        # Read our 15 claimed joints' current positions — needed for the
+        # hold-pose / ramp-start / unarmed echo paths below.
+        current_15 = np.zeros(_NUM_ACTIONS, dtype=np.float32)
+        for i, jname in enumerate(self._joint_names_list):
+            pos = state.joints.get_position(jname)
+            current_15[i] = pos if pos is not None else 0.0
+
+        # ------------------------------------------------------------------
+        # arm() was called — snapshot the ramp start and enter arming /
+        # armed state (ramp=0 arms immediately).
+        # ------------------------------------------------------------------
+        if self._arm_pending:
+            self._ramp_start = current_15.copy()
+            self._arming_start_t = state.t_now
+            if self._arming_duration > 0.0:
+                self._arming = True
+                self._armed = False
+                logger.info(
+                    f"GrootWBCTask '{self._name}' arming: "
+                    f"ramp → default_15 over {self._arming_duration:.1f}s"
+                )
+            else:
+                self._arming = False
+                self._armed = True
+                self._reset_policy_state()
+                logger.info(f"GrootWBCTask '{self._name}' armed (no ramp)")
+            self._arm_pending = False
+
+        # ------------------------------------------------------------------
+        # Unarmed & not arming: echo current joint positions.  With the
+        # component's kp/kd applied downstream, q_tgt == q_actual yields
+        # pure damping (tau = -kd * dq), which mirrors the reference
+        # backend's inactive "hold current pose" behaviour.
+        # ------------------------------------------------------------------
+        if not self._armed and not self._arming:
+            self._last_targets = current_15.tolist()
+            return JointCommandOutput(
+                joint_names=self._joint_names_list,
+                positions=self._last_targets,
+                mode=ControlMode.SERVO_POSITION,
+            )
+
+        # ------------------------------------------------------------------
+        # Arming: lerp ramp_start → default_15 over arming_duration.
+        # ------------------------------------------------------------------
+        if self._arming:
+            assert self._ramp_start is not None
+            elapsed = state.t_now - self._arming_start_t
+            alpha = (
+                1.0 if self._arming_duration <= 0.0 else min(1.0, elapsed / self._arming_duration)
+            )
+            target = self._ramp_start + alpha * (self._default_15 - self._ramp_start)
+            self._last_targets = target.tolist()
+            if alpha >= 1.0:
+                self._arming = False
+                self._armed = True
+                self._reset_policy_state()
+                logger.info(
+                    f"GrootWBCTask '{self._name}' ramp complete — policy armed "
+                    f"({'dry-run' if self._dry_run else 'live'})"
+                )
+            return JointCommandOutput(
+                joint_names=self._joint_names_list,
+                positions=self._last_targets,
+                mode=ControlMode.SERVO_POSITION,
+            )
+
+        # ------------------------------------------------------------------
+        # Armed: run the policy.  In dry-run mode we still compute (so
+        # the obs buffer stays hot), but return None so no command goes
+        # downstream.  A throttled log line shows what WOULD have been
+        # sent, which is how g1-control-api lets operators verify pre-go.
+        # ------------------------------------------------------------------
         self._tick_count += 1
 
         # Decimation: only run inference every N ticks.  Between inference
         # ticks, re-emit the last target so the coordinator keeps driving
-        # the joints.  Matches the Go2 RLPolicyTask pattern.
+        # the joints (or nothing, in dry-run).
         if self._tick_count % self._config.decimation != 0:
-            if self._last_targets is not None:
-                return JointCommandOutput(
-                    joint_names=self._joint_names_list,
-                    positions=self._last_targets,
-                    mode=ControlMode.SERVO_POSITION,
-                )
-            return None
+            if self._dry_run or self._last_targets is None:
+                return None
+            return JointCommandOutput(
+                joint_names=self._joint_names_list,
+                positions=self._last_targets,
+                mode=ControlMode.SERVO_POSITION,
+            )
 
         # Read all 29 joints from CoordinatorState in DDS order.
         q_29 = np.zeros(_NUM_MOTORS, dtype=np.float32)
@@ -309,6 +426,18 @@ class GrootWBCTask(BaseControlTask):
         target_q_15 = action * self._config.action_scale + self._default_15
         self._last_targets = target_q_15.tolist()
 
+        if self._dry_run:
+            # Throttled peek at the commanded pose so the operator can
+            # decide whether it looks sane before flipping dry-run off.
+            if (state.t_now - self._last_dry_run_log_t) >= 1.0:
+                max_delta = float(np.max(np.abs(target_q_15 - current_15)))
+                logger.info(
+                    f"GrootWBCTask '{self._name}' DRY-RUN (|Δq|_max={max_delta:.3f} rad, "
+                    f"model={'walk' if cmd_norm > self._config.cmd_norm_threshold else 'balance'})"
+                )
+                self._last_dry_run_log_t = state.t_now
+            return None
+
         return JointCommandOutput(
             joint_names=self._joint_names_list,
             positions=self._last_targets,
@@ -348,32 +477,128 @@ class GrootWBCTask(BaseControlTask):
     # ------------------------------------------------------------------
 
     def start(self) -> None:
-        """Activate the policy.  Resets history + last-action state."""
+        """Enter the coordinator tick loop.
+
+        Starts in "active but unarmed" — compute() echoes current joint
+        positions every tick, which (combined with the component's
+        kp/kd) produces damping-only behaviour on real hardware (the
+        robot sits quietly in dev mode).
+
+        If ``config.auto_arm`` is set, schedules an immediate
+        ``arm()`` using ``config.default_ramp_seconds`` — this is how
+        the simulation blueprint bypasses the activation ritual.
+        If ``config.auto_dry_run`` is set, starts in dry-run mode.
+        """
         self._active = True
-        self._tick_count = 0
-        self._first_inference = True
-        self._last_action[:] = 0.0
-        # Seed with the default 15-DOF bent-knee pose so the coordinator
-        # holds the robot in a stable stance during the ~decimation ticks
-        # before the first 50 Hz inference fires.  Without this, legs
-        # would get POS_STOP → 0.0 targets (= fully-extended stance) for
-        # a few ms and the 150-kp PD would yank the robot around before
-        # the policy has a chance to respond.
-        self._last_targets = self._default_15.tolist()
+        self._armed = False
+        self._arming = False
+        self._arm_pending = False
+        self._dry_run = bool(self._config.auto_dry_run)
+        self._last_targets = None
+        self._reset_policy_state()
         with self._cmd_lock:
             self._cmd[:] = 0.0
             self._last_cmd_time = 0.0
-        logger.info(f"GrootWBCTask '{self._name}' started")
+        logger.info(
+            f"GrootWBCTask '{self._name}' started (unarmed"
+            + (", dry-run" if self._dry_run else "")
+            + ")"
+        )
+        if self._config.auto_arm:
+            self.arm(self._config.default_ramp_seconds)
 
     def stop(self) -> None:
-        """Deactivate the policy; re-activation resets history."""
+        """Leave the tick loop.  Re-activation resets policy state."""
         self._active = False
+        self._armed = False
+        self._arming = False
+        self._arm_pending = False
         self._last_targets = None
         logger.info(f"GrootWBCTask '{self._name}' stopped")
 
     # ------------------------------------------------------------------
+    # Arming / dry-run (RPC-callable via coordinator.task_invoke)
+    # ------------------------------------------------------------------
+
+    def arm(self, ramp_seconds: float | None = None) -> bool:
+        """Begin the arming sequence.
+
+        ``compute()`` will snapshot the current joint positions on the
+        next tick, lerp toward ``default_15`` over ``ramp_seconds``,
+        then flip ``_armed`` true and hand control to the ONNX policy.
+        A ramp of 0 arms immediately with no interpolation (what sim
+        uses — the subprocess already holds the MJCF's default pose).
+
+        Safe to call redundantly; subsequent calls while already armed
+        are ignored.  No-op if the task is not ``_active``.
+        """
+        if not self._active:
+            logger.warning(f"GrootWBCTask '{self._name}' arm() called before start() — ignoring")
+            return False
+        if self._armed:
+            logger.info(f"GrootWBCTask '{self._name}' already armed — arm() ignored")
+            return False
+        ramp = ramp_seconds if ramp_seconds is not None else self._config.default_ramp_seconds
+        self._arming_duration = max(0.0, float(ramp))
+        self._arm_pending = True
+        logger.info(
+            f"GrootWBCTask '{self._name}' arm requested (ramp={self._arming_duration:.1f}s)"
+        )
+        return True
+
+    def disarm(self) -> bool:
+        """Stop emitting policy outputs; fall back to hold-current-pose.
+
+        Called either from an operator ``Disarm`` button or from
+        safety watchdogs.  Resets obs history so the next ``arm()``
+        starts with a clean buffer.
+        """
+        if not self._armed and not self._arming and not self._arm_pending:
+            return False
+        self._armed = False
+        self._arming = False
+        self._arm_pending = False
+        self._ramp_start = None
+        self._reset_policy_state()
+        logger.info(f"GrootWBCTask '{self._name}' disarmed (holding current pose)")
+        return True
+
+    def set_dry_run(self, enabled: bool) -> None:
+        """Enable/disable dry-run.
+
+        In dry-run the policy still runs (obs history stays hot) but
+        ``compute()`` returns ``None``, so the coordinator forwards no
+        command to the adapter.  Use to verify policy sanity on real
+        hardware before committing motor torques.
+        """
+        new_val = bool(enabled)
+        if new_val == self._dry_run:
+            return
+        self._dry_run = new_val
+        self._last_dry_run_log_t = 0.0
+        logger.info(f"GrootWBCTask '{self._name}' dry_run = {new_val}")
+
+    def state_snapshot(self) -> dict[str, object]:
+        """Return the current state-machine flags for UI / telemetry."""
+        return {
+            "active": self._active,
+            "armed": self._armed,
+            "arming": self._arming,
+            "arm_pending": self._arm_pending,
+            "dry_run": self._dry_run,
+            "arming_duration": self._arming_duration,
+        }
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _reset_policy_state(self) -> None:
+        """Clear inference state — obs history, last action, tick count."""
+        self._last_action[:] = 0.0
+        self._obs_buf[:] = 0.0
+        self._first_inference = True
+        self._tick_count = 0
 
     def _build_obs(
         self,

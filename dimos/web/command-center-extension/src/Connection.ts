@@ -104,6 +104,18 @@ export default class Connection {
     this.socket.emit("move_command", twist);
   }
 
+  arm(): void {
+    this.socket.emit("arm");
+  }
+
+  disarm(): void {
+    this.socket.emit("disarm");
+  }
+
+  setDryRun(enabled: boolean): void {
+    this.socket.emit("set_dry_run", { enabled });
+  }
+
   disconnect(): void {
     this.socket.disconnect();
   }

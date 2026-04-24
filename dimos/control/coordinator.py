@@ -60,6 +60,7 @@ from dimos.msgs.geometry_msgs import (
 from dimos.msgs.sensor_msgs import (
     JointState,
 )
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.teleop.quest.quest_types import (
     Buttons,
 )
@@ -119,6 +120,18 @@ class TaskConfig:
     # immediately).  Default False keeps the existing convention where
     # tasks wait for an explicit activation (e.g. from teleop).
     auto_start: bool = False
+    # Arm the task's policy automatically on ``start()`` (applies to
+    # tasks exposing ``arm()``, e.g. ``GrootWBCTask``).  Simulation
+    # blueprints set this True; real-hardware blueprints leave it False
+    # so the operator arms via dashboard button after settling.
+    auto_arm: bool = False
+    # Start the task in dry-run mode (policy computes but output is
+    # suppressed).  For real-hardware safety checks.
+    auto_dry_run: bool = False
+    # Ramp duration (seconds) used by ``arm()`` when called without an
+    # explicit argument — applies to tasks that interpolate from the
+    # current pose toward a default on arming.
+    default_ramp_seconds: float = 10.0
 
 
 @dataclass
@@ -191,6 +204,17 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
     # Input: Teleop buttons for engage/disengage signaling
     buttons: In[Buttons]
 
+    # Input: Arm/disarm velocity-policy tasks (e.g. GrootWBCTask).  True
+    # → task.arm(); False → task.disarm().  Routed to every task that
+    # duck-types an ``arm`` method (and ``disarm`` for False).
+    activate: In[Bool]
+
+    # Input: Toggle dry-run on velocity-policy tasks.  In dry-run the
+    # policy keeps computing but the coordinator forwards no command to
+    # the adapter — operators use this to sanity-check commands on real
+    # hardware before committing motor torques.
+    dry_run: In[Bool]
+
     config: ControlCoordinatorConfig
     default_config = ControlCoordinatorConfig
 
@@ -216,6 +240,8 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         self._cartesian_command_unsub: Callable[[], None] | None = None
         self._twist_command_unsub: Callable[[], None] | None = None
         self._buttons_unsub: Callable[[], None] | None = None
+        self._activate_unsub: Callable[[], None] | None = None
+        self._dry_run_unsub: Callable[[], None] | None = None
 
         logger.info(f"ControlCoordinator initialized at {self.config.tick_rate}Hz")
 
@@ -417,6 +443,9 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
                     joint_names=cfg.joint_names,
                     all_joint_names=hw.joint_names,
                     priority=cfg.priority,
+                    auto_arm=cfg.auto_arm,
+                    auto_dry_run=cfg.auto_dry_run,
+                    default_ramp_seconds=cfg.default_ramp_seconds,
                 ),
                 adapter=hw.adapter,
             )
@@ -686,6 +715,36 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             for task in self._tasks.values():
                 task.on_buttons(msg)
 
+    def _on_activate(self, msg: Bool) -> None:
+        """Arm/disarm every task exposing ``arm()`` / ``disarm()``.
+
+        Duck-typed to match the ``set_velocity_command`` convention used
+        by ``_on_twist_command``.  The blueprint wires this input to a
+        dashboard button; operators can also drive it directly via LCM.
+        """
+        engage = bool(msg.data)
+        with self._task_lock:
+            for task in self._tasks.values():
+                method_name = "arm" if engage else "disarm"
+                handler = getattr(task, method_name, None)
+                if callable(handler):
+                    try:
+                        handler()
+                    except Exception:
+                        logger.exception(f"{method_name}() raised on task {task.name!r}")
+
+    def _on_dry_run(self, msg: Bool) -> None:
+        """Forward dry-run toggle to every task exposing ``set_dry_run``."""
+        enabled = bool(msg.data)
+        with self._task_lock:
+            for task in self._tasks.values():
+                handler = getattr(task, "set_dry_run", None)
+                if callable(handler):
+                    try:
+                        handler(enabled)
+                    except Exception:
+                        logger.exception(f"set_dry_run() raised on task {task.name!r}")
+
     @rpc
     def task_invoke(
         self, task_name: TaskName, method: str, kwargs: dict[str, Any] | None = None
@@ -832,6 +891,32 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
             self._buttons_unsub = self.buttons.subscribe(self._on_buttons)
             logger.info("Subscribed to buttons for engage/disengage")
 
+        # Subscribe to activate / dry_run if any task exposes arm() / set_dry_run()
+        # (duck-typed, same convention as twist_command / set_velocity_command).
+        with self._task_lock:
+            has_arm = any(callable(getattr(t, "arm", None)) for t in self._tasks.values())
+            has_dry_run = any(
+                callable(getattr(t, "set_dry_run", None)) for t in self._tasks.values()
+            )
+        if has_arm:
+            try:
+                self._activate_unsub = self.activate.subscribe(self._on_activate)
+                logger.info("Subscribed to activate for arm()/disarm() routing")
+            except Exception:
+                logger.warning(
+                    "Arm-capable task configured but could not subscribe to activate. "
+                    "Use task_invoke RPC or set transport via blueprint."
+                )
+        if has_dry_run:
+            try:
+                self._dry_run_unsub = self.dry_run.subscribe(self._on_dry_run)
+                logger.info("Subscribed to dry_run for dry-run routing")
+            except Exception:
+                logger.warning(
+                    "Dry-run-capable task configured but could not subscribe to dry_run. "
+                    "Use task_invoke RPC or set transport via blueprint."
+                )
+
         logger.info(f"ControlCoordinator started at {self.config.tick_rate}Hz")
 
     @rpc
@@ -849,6 +934,12 @@ class ControlCoordinator(Module[ControlCoordinatorConfig]):
         if self._twist_command_unsub:
             self._twist_command_unsub()
             self._twist_command_unsub = None
+        if self._activate_unsub:
+            self._activate_unsub()
+            self._activate_unsub = None
+        if self._dry_run_unsub:
+            self._dry_run_unsub()
+            self._dry_run_unsub = None
         if self._buttons_unsub:
             self._buttons_unsub()
             self._buttons_unsub = None

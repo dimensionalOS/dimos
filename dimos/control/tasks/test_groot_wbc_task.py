@@ -112,6 +112,9 @@ def joints_29():
 
 @pytest.fixture
 def task(patched_ort, stub_adapter, joints_29) -> GrootWBCTask:
+    """Test fixture: auto-armed with no ramp so the existing policy
+    tests can run compute() immediately after start().  The arming/
+    dry-run state-machine has its own dedicated tests below."""
     legs_waist = joints_29[:15]
     return GrootWBCTask(
         name="groot_wbc",
@@ -121,6 +124,29 @@ def task(patched_ort, stub_adapter, joints_29) -> GrootWBCTask:
             joint_names=legs_waist,
             all_joint_names=joints_29,
             priority=50,
+            auto_arm=True,
+            default_ramp_seconds=0.0,
+        ),
+        adapter=stub_adapter,
+    )
+
+
+@pytest.fixture
+def unarmed_task(patched_ort, stub_adapter, joints_29) -> GrootWBCTask:
+    """Fixture mirroring the real-hardware blueprint: active but
+    unarmed on start(), so arm()/disarm()/set_dry_run() can be
+    exercised explicitly."""
+    legs_waist = joints_29[:15]
+    return GrootWBCTask(
+        name="groot_wbc",
+        config=GrootWBCTaskConfig(
+            balance_onnx="/fake/balance.onnx",
+            walk_onnx="/fake/walk.onnx",
+            joint_names=legs_waist,
+            all_joint_names=joints_29,
+            priority=50,
+            auto_arm=False,
+            default_ramp_seconds=0.0,
         ),
         adapter=stub_adapter,
     )
@@ -319,3 +345,119 @@ def test_joint_count_validation(patched_ort, stub_adapter, joints_29):
             ),
             adapter=stub_adapter,
         )
+
+
+# ---------------------------------------------------------------------------
+# Arming / dry-run state machine
+# ---------------------------------------------------------------------------
+
+
+def test_unarmed_holds_current_pose(unarmed_task, joints_29, patched_ort):
+    """Active but unarmed → compute() echoes current joint positions
+    every tick.  Downstream PD with q_tgt == q_actual → damping only."""
+    unarmed_task.start()
+    snap = JointStateSnapshot(
+        joint_positions={n: 0.0 for n in joints_29},
+        joint_velocities={n: 0.0 for n in joints_29},
+        joint_efforts={n: 0.0 for n in joints_29},
+        timestamp=100.0,
+    )
+    # Set some non-zero current positions for the 15 claimed joints.
+    for i, n in enumerate(joints_29[:15]):
+        snap.joint_positions[n] = 0.1 * (i + 1)
+    state = CoordinatorState(joints=snap, t_now=100.0, dt=0.002)
+    for _ in range(30):
+        out = unarmed_task.compute(state)
+        assert out is not None
+        # No inference while unarmed.
+    assert patched_ort == []
+    # Output tracks current pose exactly.
+    np.testing.assert_allclose(out.positions, [0.1 * (i + 1) for i in range(15)], atol=1e-6)
+
+
+def test_arm_no_ramp_goes_straight_to_policy(unarmed_task, joints_29, patched_ort):
+    """arm(0.0) → immediately armed → policy runs on the next decimation tick."""
+    unarmed_task.start()
+    unarmed_task.arm(ramp_seconds=0.0)
+    state = _state_at(100.0, joints_29)
+    # First compute after arm(): snapshots ramp_start, flips armed=True (ramp=0).
+    unarmed_task.compute(state)
+    assert unarmed_task._armed
+    # 9 more ticks to hit decimation threshold (10th is inference).
+    for _ in range(9):
+        unarmed_task.compute(state)
+    assert patched_ort == ["balance"]
+
+
+def test_arm_with_ramp_lerps_over_duration(unarmed_task, joints_29, patched_ort):
+    """arm(1.0) → lerp from current pose to default_15 over 1 second."""
+    unarmed_task.start()
+    unarmed_task.arm(ramp_seconds=1.0)
+    # First tick: snapshot ramp_start (all zeros).
+    state0 = _state_at(0.0, joints_29)
+    out0 = unarmed_task.compute(state0)
+    assert out0 is not None
+    assert unarmed_task._arming
+    # alpha=0 → output == ramp_start (all zeros here).
+    np.testing.assert_allclose(out0.positions, [0.0] * 15, atol=1e-6)
+    # Halfway through: alpha=0.5.
+    state_mid = _state_at(0.5, joints_29)
+    out_mid = unarmed_task.compute(state_mid)
+    default_15 = list(groot_wbc_task._DEFAULT_POSITIONS_29[:15])
+    expected_mid = [0.5 * d for d in default_15]
+    np.testing.assert_allclose(out_mid.positions, expected_mid, atol=1e-6)
+    # End: alpha=1 → armed flips, output == default_15.
+    state_end = _state_at(1.0, joints_29)
+    unarmed_task.compute(state_end)
+    assert unarmed_task._armed
+    assert not unarmed_task._arming
+    # Policy has NOT run yet — ramp completion doesn't trigger inference.
+    assert patched_ort == []
+
+
+def test_dry_run_suppresses_output_but_runs_inference(task, joints_29, patched_ort):
+    """Dry-run: policy still computes (obs history stays hot), but
+    compute() returns None so the adapter sees no command."""
+    task.start()  # fixture has auto_arm=True, so armed immediately
+    task.set_dry_run(True)
+    state = _state_at(100.0, joints_29)
+    # 10 ticks → first inference fires under the hood, but output is None.
+    for _ in range(10):
+        out = task.compute(state)
+    assert out is None
+    # Policy DID run — obs buffer is hot.
+    assert patched_ort == ["balance"]
+
+
+def test_dry_run_toggle_off_resumes_output(task, joints_29, patched_ort):
+    """Flipping dry_run from True → False resumes normal output."""
+    task.start()
+    task.set_dry_run(True)
+    state = _state_at(100.0, joints_29)
+    for _ in range(10):
+        task.compute(state)
+    assert patched_ort == ["balance"]  # ran during dry-run
+    task.set_dry_run(False)
+    # Next inference tick: output is non-None.
+    for _ in range(10):
+        out = task.compute(state)
+    assert out is not None
+    assert len(out.positions) == 15
+
+
+def test_disarm_returns_to_hold_pose(unarmed_task, joints_29, patched_ort):
+    """Disarm after policy has run → compute() falls back to echoing pose."""
+    unarmed_task.start()
+    unarmed_task.arm(ramp_seconds=0.0)
+    state = _state_at(100.0, joints_29)
+    for _ in range(10):
+        unarmed_task.compute(state)
+    assert patched_ort == ["balance"]
+    assert unarmed_task._armed
+
+    unarmed_task.disarm()
+    assert not unarmed_task._armed
+    # Policy should NOT run again.
+    for _ in range(30):
+        unarmed_task.compute(state)
+    assert patched_ort == ["balance"]  # still just one call

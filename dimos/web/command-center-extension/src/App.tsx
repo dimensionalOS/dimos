@@ -1,5 +1,6 @@
 import * as React from "react";
 
+import ActivationPanel from "./ActivationPanel";
 import Connection from "./Connection";
 import ExplorePanel from "./ExplorePanel";
 import GpsButton from "./GpsButton";
@@ -78,6 +79,18 @@ export default function App(): React.ReactElement {
     connectionRef.current?.stopMoveCommand();
   }, []);
 
+  const handleArm = React.useCallback(() => {
+    connectionRef.current?.arm();
+  }, []);
+
+  const handleDisarm = React.useCallback(() => {
+    connectionRef.current?.disarm();
+  }, []);
+
+  const handleSetDryRun = React.useCallback((enabled: boolean) => {
+    connectionRef.current?.setDryRun(enabled);
+  }, []);
+
   const handleReturnHome = React.useCallback(() => {
     connectionRef.current?.worldClick(0, 0);
   }, []);
@@ -121,6 +134,11 @@ export default function App(): React.ReactElement {
         <KeyboardControlPanel
           onSendMoveCommand={handleSendMoveCommand}
           onStopMoveCommand={handleStopMoveCommand}
+        />
+        <ActivationPanel
+          onArm={handleArm}
+          onDisarm={handleDisarm}
+          onSetDryRun={handleSetDryRun}
         />
       </div>
     </div>

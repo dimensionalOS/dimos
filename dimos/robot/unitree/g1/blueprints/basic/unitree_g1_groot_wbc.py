@@ -65,6 +65,7 @@ from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.std_msgs.Bool import Bool as DimosBool
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
 _g1_joints = make_humanoid_joints("g1")
@@ -164,6 +165,15 @@ _ARM_DEFAULT_POSE = [
 _adapter_type = "sim_mujoco_g1" if global_config.simulation else "unitree_g1"
 _address = None if global_config.simulation else os.getenv("ROBOT_INTERFACE", "enp86s0")
 
+# Arming defaults: sim auto-arms (the MuJoCo subprocess holds the MJCF
+# pose until first command, no ramp needed); real hardware comes up
+# unarmed + dry-run so the operator can see computed commands before
+# committing motor torques, then hit Activate in the dashboard for a
+# 10 s ramp to the bent-knee default (mirrors g1-control-api).
+_AUTO_ARM = global_config.simulation
+_AUTO_DRY_RUN = not global_config.simulation
+_DEFAULT_RAMP_SECONDS = 0.0 if global_config.simulation else 10.0
+
 _g1_coordinator = (
     control_coordinator(
         tick_rate=500.0,
@@ -191,6 +201,9 @@ _g1_coordinator = (
                 model_path=os.getenv("GROOT_MODEL_DIR", "data/groot"),
                 hardware_id="g1",
                 auto_start=True,
+                auto_arm=_AUTO_ARM,
+                auto_dry_run=_AUTO_DRY_RUN,
+                default_ramp_seconds=_DEFAULT_RAMP_SECONDS,
             ),
             TaskConfig(
                 name="servo_arms",
@@ -207,6 +220,8 @@ _g1_coordinator = (
             ("joint_state", JointState): LCMTransport("/coordinator/joint_state", JointState),
             ("joint_command", JointState): LCMTransport("/g1/joint_command", JointState),
             ("twist_command", Twist): LCMTransport("/g1/cmd_vel", Twist),
+            ("activate", DimosBool): LCMTransport("/g1/activate", DimosBool),
+            ("dry_run", DimosBool): LCMTransport("/g1/dry_run", DimosBool),
         }
     )
     .global_config(
@@ -232,7 +247,11 @@ _g1_coordinator = (
 # rejects NSWindow creation from non-main threads — which is where
 # dimos runs module code.  A browser tab has no such constraint.
 _g1_ws_vis = websocket_vis().transports(
-    {("cmd_vel", Twist): LCMTransport("/g1/cmd_vel", Twist)},
+    {
+        ("cmd_vel", Twist): LCMTransport("/g1/cmd_vel", Twist),
+        ("activate", DimosBool): LCMTransport("/g1/activate", DimosBool),
+        ("dry_run", DimosBool): LCMTransport("/g1/dry_run", DimosBool),
+    },
 )
 
 unitree_g1_groot_wbc = autoconnect(_g1_coordinator, _g1_ws_vis)
