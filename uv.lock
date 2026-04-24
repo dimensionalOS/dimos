@@ -1968,6 +1968,7 @@ dependencies = [
     { name = "pyturbojpeg" },
     { name = "reactivex" },
     { name = "rerun-sdk" },
+    { name = "rpyc" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sortedcontainers" },
@@ -2015,15 +2016,11 @@ base = [
     { name = "lap" },
     { name = "moondream", version = "0.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'win32'" },
     { name = "moondream", version = "0.2.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x') or platform_machine == 'aarch64' or platform_machine == 's390x' or sys_platform == 'darwin' or sys_platform == 'win32'" },
-    { name = "mujoco" },
     { name = "ollama" },
     { name = "omegaconf" },
     { name = "openai" },
     { name = "openai-whisper" },
     { name = "pillow" },
-    { name = "playground", version = "0.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "playground", version = "0.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pygame" },
     { name = "rerun-sdk" },
     { name = "sounddevice" },
     { name = "soundfile" },
@@ -2229,15 +2226,11 @@ unitree = [
     { name = "lap" },
     { name = "moondream", version = "0.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x' and sys_platform != 'darwin' and sys_platform != 'win32'" },
     { name = "moondream", version = "0.2.1", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and platform_machine != 'aarch64' and platform_machine != 's390x') or platform_machine == 'aarch64' or platform_machine == 's390x' or sys_platform == 'darwin' or sys_platform == 'win32'" },
-    { name = "mujoco" },
     { name = "ollama" },
     { name = "omegaconf" },
     { name = "openai" },
     { name = "openai-whisper" },
     { name = "pillow" },
-    { name = "playground", version = "0.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "playground", version = "0.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pygame" },
     { name = "rerun-sdk" },
     { name = "sounddevice" },
     { name = "soundfile" },
@@ -2272,7 +2265,7 @@ requires-dist = [
     { name = "ctransformers", extras = ["cuda"], marker = "extra == 'cuda'", specifier = "==0.2.27" },
     { name = "cupy-cuda12x", marker = "platform_machine == 'x86_64' and extra == 'cuda'", specifier = "==13.6.0" },
     { name = "cyclonedds", marker = "extra == 'dds'", specifier = ">=0.10.5" },
-    { name = "dimos", extras = ["agents", "web", "perception", "visualization", "sim"], marker = "extra == 'base'" },
+    { name = "dimos", extras = ["agents", "web", "perception", "visualization"], marker = "extra == 'base'" },
     { name = "dimos", extras = ["base"], marker = "extra == 'unitree'" },
     { name = "dimos", extras = ["dev"], marker = "extra == 'dds'" },
     { name = "dimos-lcm" },
@@ -2373,6 +2366,7 @@ requires-dist = [
     { name = "rerun-sdk", specifier = ">=0.20.0" },
     { name = "rerun-sdk", marker = "extra == 'docker'" },
     { name = "rerun-sdk", marker = "extra == 'visualization'", specifier = ">=0.20.0" },
+    { name = "rpyc", specifier = ">=6.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.14.3" },
     { name = "scikit-learn", marker = "extra == 'misc'" },
     { name = "scipy", specifier = ">=1.15.1" },
@@ -3916,6 +3910,7 @@ dependencies = [
     { name = "opt-einsum", marker = "python_full_version >= '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/50/f0/bcb81d28267d2054d0daed766c7fa16bcee5e481331b4d1e14f5fbe662be/jax-0.10.0.tar.gz", hash = "sha256:0119c767de1645f407df72345d28a3837dc904f1d698911c121d8f2b396fdece", size = 2663397, upload-time = "2026-04-22T13:22:28.563Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/70/aa/dfac6d72cc35bc07e7587115b6946e333ef4ccb2e6cd26ecf639438c5d26/jax-0.10.0-py3-none-any.whl", hash = "sha256:76c42ba163c8db3dc2e449e225b888c0edfb623ded31efdc96d85e0fda1d26e8", size = 3094950, upload-time = "2026-04-16T12:32:11.576Z" },
 ]
@@ -8216,6 +8211,18 @@ wheels = [
 ]
 
 [[package]]
+name = "plumbum"
+version = "1.10.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pywin32", marker = "platform_python_implementation != 'PyPy' and sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/dc/c8/11a5f792704b70f071a3dbc329105a98e9cc8d25daaf09f733c44eb0ef8e/plumbum-1.10.0.tar.gz", hash = "sha256:f8cbf0ecec0b73ff4e349398b65112a9e3f9300e7dc019001217dcc148d5c97c", size = 320039, upload-time = "2025-10-31T05:02:48.697Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/79/ad/45312df6b63ba64ea35b8d8f5f0c577aac16e6b416eafe8e1cb34e03f9a7/plumbum-1.10.0-py3-none-any.whl", hash = "sha256:9583d737ac901c474d99d030e4d5eec4c4e6d2d7417b1cf49728cf3be34f6dc8", size = 127383, upload-time = "2025-10-31T05:02:47.002Z" },
+]
+
+[[package]]
 name = "polars"
 version = "1.39.3"
 source = { registry = "https://pypi.org/simple" }
@@ -10018,6 +10025,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/13/64/b4d76f227d5c45a7e0b796c674fd81b0a6c4fbd48dc29271857d8219571c/rpds_py-0.30.0-pp311-pypy311_pp73-musllinux_1_2_aarch64.whl", hash = "sha256:dff13836529b921e22f15cb099751209a60009731a68519630a24d61f0b1b30a", size = 573981, upload-time = "2025-11-30T20:24:32.934Z" },
     { url = "https://files.pythonhosted.org/packages/20/91/092bacadeda3edf92bf743cc96a7be133e13a39cdbfd7b5082e7ab638406/rpds_py-0.30.0-pp311-pypy311_pp73-musllinux_1_2_i686.whl", hash = "sha256:1b151685b23929ab7beec71080a8889d4d6d9fa9a983d213f07121205d48e2c4", size = 599782, upload-time = "2025-11-30T20:24:35.169Z" },
     { url = "https://files.pythonhosted.org/packages/d1/b7/b95708304cd49b7b6f82fdd039f1748b66ec2b21d6a45180910802f1abf1/rpds_py-0.30.0-pp311-pypy311_pp73-musllinux_1_2_x86_64.whl", hash = "sha256:ac37f9f516c51e5753f27dfdef11a88330f04de2d564be3991384b2f3535d02e", size = 562191, upload-time = "2025-11-30T20:24:36.853Z" },
+]
+
+[[package]]
+name = "rpyc"
+version = "6.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "plumbum" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8b/e7/1c17410673b634f4658bb5d2232d0c4507432a97508b2c6708e59481644a/rpyc-6.0.2.tar.gz", hash = "sha256:8e780a6a71b842128a80a337c64adfb6f919014e069951832161c9efc630c93b", size = 62321, upload-time = "2025-04-18T16:33:21.693Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/99/2e119d541d596daea39643eb9312b47c7847383951300f889166938035b1/rpyc-6.0.2-py3-none-any.whl", hash = "sha256:8072308ad30725bc281c42c011fc8c922be15f3eeda6eafb2917cafe1b6f00ec", size = 74768, upload-time = "2025-04-18T16:33:20.147Z" },
 ]
 
 [[package]]

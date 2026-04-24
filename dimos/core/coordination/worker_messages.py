@@ -58,6 +58,11 @@ class SuppressConsoleRequest:
 
 
 @dataclass(frozen=True)
+class StartRpycRequest:
+    pass
+
+
+@dataclass(frozen=True)
 class ShutdownRequest:
     pass
 
@@ -69,6 +74,7 @@ WorkerRequest = (
     | CallMethodRequest
     | UndeployModuleRequest
     | SuppressConsoleRequest
+    | StartRpycRequest
     | ShutdownRequest
 )
 
