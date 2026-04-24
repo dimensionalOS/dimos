@@ -25,6 +25,7 @@ import time
 from typing import Any
 
 import pytest
+import websockets.asyncio.client as ws_client
 
 from dimos.visualization.rerun.conftest import wait_for_server
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
@@ -42,8 +43,6 @@ def server() -> RerunWebSocketServer:
 
 
 def _send_messages(port: int, messages: list[dict[str, Any]], *, delay: float = 0.05) -> None:
-    import websockets.asyncio.client as ws_client
-
     async def _run() -> None:
         async with ws_client.connect(f"ws://127.0.0.1:{port}/ws") as ws:
             for msg in messages:

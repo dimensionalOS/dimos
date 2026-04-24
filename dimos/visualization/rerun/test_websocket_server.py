@@ -23,6 +23,7 @@ import time
 from typing import Any
 
 import pytest
+import websockets.asyncio.client as ws_client
 
 from dimos.visualization.rerun.conftest import wait_for_server
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
@@ -50,8 +51,6 @@ class MockViewerPublisher:
             self._loop.close()
 
     async def _connect(self) -> Any:
-        import websockets.asyncio.client as ws_client
-
         return await ws_client.connect(self._url)
 
     def send_click(
@@ -180,7 +179,6 @@ def test_stop_publishes_zero_twist(
 
 def test_invalid_json_does_not_crash(server: RerunWebSocketServer) -> None:
     """Malformed JSON is silently dropped; server stays alive for the next message."""
-    import websockets.asyncio.client as ws_client
 
     async def _send_bad() -> None:
         async with ws_client.connect(f"ws://127.0.0.1:{_TEST_PORT}/ws") as ws:
