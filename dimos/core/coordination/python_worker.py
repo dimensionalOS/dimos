@@ -338,10 +338,7 @@ class _WorkerState:
 
 def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
     apply_library_config()
-    # Ignore SIGINT so the coordinator can orchestrate shutdown via the pipe.
-    # Without this, workers race with the coordinator: they start tearing down
-    # modules locally while the coordinator tries to send stop() RPCs, causing
-    # BrokenPipeErrors.
+
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     state = _WorkerState(instances={}, worker_id=worker_id)
 
