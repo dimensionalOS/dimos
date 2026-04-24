@@ -51,7 +51,6 @@ class FarPlannerConfig(NativeModuleConfig):
         "robot_dimension": "robot_dim",
     }
 
-    # --- Core planner parameters (mirrors LoadROSParams) ---
     update_rate: float = 5.0
     robot_dimension: float = 0.5
     voxel_dim: float = 0.1
@@ -66,30 +65,25 @@ class FarPlannerConfig(NativeModuleConfig):
     is_attempt_autoswitch: bool = True
     world_frame: str = "map"
 
-    # --- Graph planner params ---
     converge_dist: float = 1.5
     goal_adjust_radius: float = 10.0
     free_counter_thred: int = 5
     reach_goal_vote_size: int = 5
     path_momentum_thred: int = 5
 
-    # --- Map handler params ---
     floor_height: float = 2.0
     cell_length: float = 5.0
     map_grid_max_length: float = 1000.0
     map_grad_max_height: float = 100.0
 
-    # --- Dynamic graph params ---
     connect_votes_size: int = 10
     clear_dumper_thred: int = 3
     node_finalize_thred: int = 3
     filter_pool_size: int = 12
 
-    # --- Contour detector params ---
     resize_ratio: float = 5.0
     filter_count_value: int = 5
 
-    # --- Utility params ---
     angle_noise: float = 15.0
     accept_max_align_angle: float = 15.0
     new_intensity_thred: float = 2.0

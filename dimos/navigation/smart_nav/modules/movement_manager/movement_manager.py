@@ -29,6 +29,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PointStamped import PointStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.navigation.smart_nav.frames import FRAME_BODY, FRAME_MAP
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -58,6 +59,9 @@ class MovementManager(Module):
         self._lock = threading.Lock()
         self._teleop_active = False
         self._last_teleop_time = 0.0
+        self._robot_x = 0.0
+        self._robot_y = 0.0
+        self._robot_z = 0.0
 
     @rpc
     def start(self) -> None:
@@ -83,6 +87,15 @@ class MovementManager(Module):
         logger.debug("Goal", x=round(msg.x, 1), y=round(msg.y, 1), z=round(msg.z, 1))
         self.way_point.publish(msg)
         self.goal.publish(msg)
+
+    def _query_pose(self) -> tuple[float, float, float]:
+        """Return (x, y, z) from TF tree, falling back to cached position."""
+        tf = self.tf.get(FRAME_MAP, FRAME_BODY)
+        if tf is not None:
+            self._robot_x = tf.translation.x
+            self._robot_y = tf.translation.y
+            self._robot_z = tf.translation.z
+        return self._robot_x, self._robot_y, self._robot_z
 
     def _cancel_goal(self) -> None:
         self.stop_movement.publish(Bool(data=True))

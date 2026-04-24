@@ -50,6 +50,7 @@ IGNORED_DIRS = {
     "build",
     ".egg-info",
     ".tox",
+    ".ignore.enhance",
     # third-party vendored code
     "gtsam",
 }

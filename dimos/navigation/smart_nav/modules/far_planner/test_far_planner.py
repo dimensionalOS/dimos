@@ -28,10 +28,10 @@ class TestFarPlannerConfig:
         config = FarPlannerConfig()
         assert config.update_rate == 5.0
         assert config.robot_dimension == 0.5
-        assert config.sensor_range == 15.0
+        assert config.sensor_range == 30.0
         assert config.voxel_dim == 0.1
         assert config.terrain_range == 7.5
-        assert config.is_static_env is False
+        assert config.is_static_env is True
 
     def test_cli_args_generation(self):
         config = FarPlannerConfig(
