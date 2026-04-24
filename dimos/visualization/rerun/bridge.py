@@ -211,8 +211,7 @@ class RerunBridgeModule(Module):
     config: Config
     _last_log: dict[str, float]
 
-    # Graphviz layout scale and node radii for blueprint graph
-    GV_SCALE = 100.0
+    GRAPH_VIZ_SCALE = 100.0
     MODULE_RADIUS = 20.0
     CHANNEL_RADIUS = 12.0
 
@@ -468,8 +467,8 @@ class RerunBridgeModule(Module):
             if line.startswith("node "):
                 parts = line.split()
                 node_id = parts[1].strip('"')
-                x = float(parts[2]) * self.GV_SCALE
-                y = -float(parts[3]) * self.GV_SCALE
+                x = float(parts[2]) * self.GRAPH_VIZ_SCALE
+                y = -float(parts[3]) * self.GRAPH_VIZ_SCALE
                 label = parts[6].strip('"')
                 color = parts[9].strip('"')
 
