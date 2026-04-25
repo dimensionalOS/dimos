@@ -42,15 +42,21 @@ jobs:
         run: |
           find .venv/lib/*/site-packages/pydrake -name '*.pyi' -delete 2>/dev/null || true
 
+      # 921 P5-5: plant-backed holonomic calibration + in-tree odom replay mini (no LFS).
+      # Fail fast before the full suite; see docs/development/large_file_management.md.
+      - name: Trajectory calibration smoke (921)
+        run: |
+          /entrypoint.sh bash -c "source .venv/bin/activate && pytest -q --tb=short --durations=5 -m 'not (tool or mujoco or lfs_data)' dimos/navigation/test_trajectory_holonomic_calibration.py dimos/navigation/test_trajectory_replay_loader.py"
+
       - name: Run tests
         if: github.event_name != 'push'
         run: |
-          /entrypoint.sh bash -c "source .venv/bin/activate && pytest --durations=0 -m 'not (tool or mujoco)'"
+          /entrypoint.sh bash -c "source .venv/bin/activate && pytest --durations=0 -m 'not (tool or mujoco or lfs_data)'"
 
       - name: Run tests with coverage
         if: github.event_name == 'push'
         run: |
-          /entrypoint.sh bash -c "source .venv/bin/activate && _DIMOS_COV=1 coverage run -m pytest --durations=0 -m 'not (tool or mujoco)' && coverage combine && coverage html && coverage report"
+          /entrypoint.sh bash -c "source .venv/bin/activate && _DIMOS_COV=1 coverage run -m pytest --durations=0 -m 'not (tool or mujoco or lfs_data)' && coverage combine && coverage html && coverage report"
 
       - name: Run mypy
         if: ${{ !cancelled() }}

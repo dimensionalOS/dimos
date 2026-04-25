@@ -122,9 +122,31 @@ For holonomic trajectory calibration and regression, use
   on the ``lfs_data`` pytest marker. Default ``pytest`` (see ``pyproject.toml`` ``addopts``)
   excludes ``lfs_data``. Run it explicitly after resolving LFS, for example:
   ``pytest dimos/navigation/test_trajectory_replay_loader.py -m lfs_data``.
-  The Linux ``ci.yml`` job uses the same default selection, so those tests are not
-  required for merge. macOS or local workflows that already pull LFS can include
-  ``-m lfs_data`` in their command when they want replay archive coverage.
+  The Linux ``.github/workflows/ci.yml`` job passes ``-m 'not (tool or mujoco or lfs_data)'``,
+  so LFS replay tests are not required for merge. The workflow also runs a short
+  **trajectory calibration smoke** step first (holonomic plant calibration YAML plus
+  the mini fixture replay module) so regressions surface with a small, LFS-free
+  surface. macOS CI (``macos.yml``) runs ``git lfs pull`` and keeps ``lfs_data`` in the
+  default marker expression there, so archive-backed replay can still run on that job.
+  Local workflows that pull LFS can include ``-m lfs_data`` when they want the same.
+
+### Holonomic calibration CI smoke (921 P5-5)
+
+Default Linux CI exercises calibration without hardware or network:
+
+- ``dimos/navigation/test_trajectory_holonomic_calibration.py`` - deterministic
+  ``IntegratedHolonomicPlant`` / ``ActuatedHolonomicPlant`` step-dwell-return and v1
+  params YAML I/O, plus the small checked-in sample under ``fixtures/``.
+- ``dimos/navigation/test_trajectory_replay_loader.py`` - in-tree
+  ``trajectory_odom_replay_mini`` only (tests without the ``lfs_data`` marker).
+
+To run the same subset locally:
+
+```sh
+pytest -m 'not (tool or mujoco or lfs_data)' \
+  dimos/navigation/test_trajectory_holonomic_calibration.py \
+  dimos/navigation/test_trajectory_replay_loader.py
+```
 
 ### Loading Point Clouds
 
