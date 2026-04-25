@@ -58,6 +58,8 @@ After `schema_version`, object keys follow the field order of `TrajectoryControl
 
 Use `planar_position_divergence_m` vs `commanded_planar_speed_m_s` (and time series on `ref_time_s` or `meas_time_s`) per issue 921 guidance; `pandas.read_json(..., lines=True)` accepts this format if you use pandas.
 
+**Control rate (P4-3):** after you have exports, see `docs/development/trajectory_control_rate_from_logs.md` for how to relate `dt_s` and optional `wall_time_s` to a sensible `local_planner_control_rate_hz` and to plant delay.
+
 **Built-in recipe (P2-3):** from the repository root, `make plot-trajectory-ticks` writes `dimos/navigation/fixtures/trajectory_control_ticks_sample_921_plot.png` using `uv run --with matplotlib`. For your own export:
 
 ```bash

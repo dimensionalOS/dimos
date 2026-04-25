@@ -38,4 +38,4 @@ CI=1 ./bin/pytest-slow dimos/navigation/test_trajectory_control_tick_benchmark.p
 
 One developer run (Apple Silicon, CPython, April 2026) showed median `HolonomicPathController.advance` around **0.3-0.4 ms** and `trajectory_control_tick_from_samples` around **0.015 ms**. Your laptop or CI VM will differ; re-run the commands above after code changes.
 
-Related: tick JSONL fields and plotting are in `dimos/navigation/trajectory_control_tick_jsonl.md` and `docs/development/trajectory_control_tick_plots.md`.
+Related: tick JSONL fields and plotting are in `dimos/navigation/trajectory_control_tick_jsonl.md` and `docs/development/trajectory_control_tick_plots.md`. For choosing a rate from telemetry and plant delay (P4-3), see `docs/development/trajectory_control_rate_from_logs.md`.

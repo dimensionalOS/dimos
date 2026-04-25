@@ -18,4 +18,4 @@ uv run --with matplotlib python scripts/plot_trajectory_control_ticks.py /path/t
 
 If you omit `-o`, the script writes `<input_stem>_921_plot.png` next to the JSONL file. The same flow works on macOS when `uv` is available.
 
-For Python CPU cost per tick and how to compare rates on a developer machine, see `docs/development/trajectory_control_tick_benchmark.md`.
+For Python CPU cost per tick and how to compare rates on a developer machine, see `docs/development/trajectory_control_tick_benchmark.md`. For how to **choose** a control rate using JSONL timestamps and plant delay, see `docs/development/trajectory_control_rate_from_logs.md` (P4-3).
