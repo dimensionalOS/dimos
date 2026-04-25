@@ -28,7 +28,10 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.base import NavigationState
-from dimos.navigation.replanning_a_star.controllers import Controller, PController
+from dimos.navigation.replanning_a_star.controllers import (
+    Controller,
+    make_local_path_controller,
+)
 from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
 from dimos.navigation.replanning_a_star.path_clearance import PathClearance
 from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
@@ -90,7 +93,7 @@ class LocalPlanner(Resource):
         if global_config.nerf_speed < 1.0:
             speed *= global_config.nerf_speed
 
-        self._controller = PController(
+        self._controller = make_local_path_controller(
             self._global_config,
             speed,
             self._control_frequency,
@@ -248,7 +251,7 @@ class LocalPlanner(Resource):
                 self._change_state("path_following")
             return self._compute_path_following()
 
-        return self._controller.rotate(yaw_error)
+        return self._controller.rotate(yaw_error, current_odom)
 
     def get_distance_to_path(self) -> float | None:
         with self._lock:
@@ -305,7 +308,7 @@ class LocalPlanner(Resource):
                 self._change_state("arrived")
             return Twist()
 
-        return self._controller.rotate(yaw_error)
+        return self._controller.rotate(yaw_error, current_odom)
 
     def _reset_state(self) -> None:
         with self._lock:

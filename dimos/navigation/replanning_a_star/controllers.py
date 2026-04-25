@@ -19,16 +19,34 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dimos.core.global_config import GlobalConfig
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.navigation.trajectory_command_limits import HolonomicCommandLimits
+from dimos.navigation.trajectory_holonomic_tracking_controller import HolonomicTrackingController
+from dimos.navigation.trajectory_types import TrajectoryMeasuredSample, TrajectoryReferenceSample
 from dimos.utils.trigonometry import angle_diff
+
+
+def _pose_from_xy_yaw(x: float, y: float, yaw: float) -> Pose:
+    return Pose(
+        position=Vector3(x, y, 0.0),
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, float(yaw))),
+    )
+
+
+def _pose_from_pose_stamped(odom: PoseStamped) -> Pose:
+    return Pose(odom.position, odom.orientation)
 
 
 class Controller(Protocol):
     def advance(self, lookahead_point: NDArray[np.float64], current_odom: PoseStamped) -> Twist: ...
 
-    def rotate(self, yaw_error: float) -> Twist: ...
+    def rotate(
+        self, yaw_error: float, current_odom: PoseStamped | None = None
+    ) -> Twist: ...
 
     def reset_errors(self) -> None: ...
 
@@ -79,7 +97,10 @@ class PController:
             angular=Vector3(0.0, 0.0, angular_velocity),
         )
 
-    def rotate(self, yaw_error: float) -> Twist:
+    def rotate(
+        self, yaw_error: float, current_odom: PoseStamped | None = None
+    ) -> Twist:
+        del current_odom
         angular_velocity = self._compute_angular_velocity(yaw_error)
         return self._angular_twist(angular_velocity)
 
@@ -155,3 +176,118 @@ class PdController(PController):
         self._prev_angular_velocity = angular_velocity
 
         return float(angular_velocity)
+
+
+class HolonomicPathController:
+    """Follow path segments using the holonomic tracking law (P3-3, issue 921).
+
+    Wraps :class:`HolonomicTrackingController` in the :class:`Controller` seam
+    (lookahead + odom). Rotations in place use the same law with a fixed
+    position reference. Not a car-style or Pure Pursuit path law.
+    """
+
+    def __init__(
+        self,
+        global_config: GlobalConfig,
+        speed: float,
+        control_frequency: float,
+        k_position_per_s: float,
+        k_yaw_per_s: float,
+    ) -> None:
+        self._global_config = global_config
+        self._speed = float(speed)
+        self._control_frequency = float(control_frequency)
+        self._inner = HolonomicTrackingController(
+            k_position_per_s=k_position_per_s,
+            k_yaw_per_s=k_yaw_per_s,
+        )
+        limits = HolonomicCommandLimits(
+            max_planar_speed_m_s=self._speed,
+            max_yaw_rate_rad_s=self._speed,
+            max_planar_linear_accel_m_s2=5.0,
+            max_yaw_accel_rad_s2=5.0,
+        )
+        self._inner.configure(limits)
+
+    def advance(self, lookahead_point: NDArray[np.float64], current_odom: PoseStamped) -> Twist:
+        current_pos = np.array(
+            [float(current_odom.position.x), float(current_odom.position.y)]
+        )
+        direction = np.asarray(lookahead_point, dtype=np.float64) - current_pos
+        distance = float(np.linalg.norm(direction))
+
+        if distance < 1e-6 or not np.isfinite(distance):
+            return Twist()
+
+        ref_yaw = float(np.arctan2(direction[1], direction[0]))
+        ref_pose = _pose_from_xy_yaw(
+            float(lookahead_point[0]), float(lookahead_point[1]), ref_yaw
+        )
+        # Feedforward along the reference heading in the body frame of the target pose.
+        ref_ff = Twist(
+            linear=Vector3(self._speed, 0.0, 0.0),
+            angular=Vector3(0.0, 0.0, 0.0),
+        )
+        ref = TrajectoryReferenceSample(0.0, ref_pose, ref_ff)
+        meas = TrajectoryMeasuredSample(0.0, _pose_from_pose_stamped(current_odom), Twist())
+        return self._inner.control(ref, meas)
+
+    def rotate(
+        self, yaw_error: float, current_odom: PoseStamped | None = None
+    ) -> Twist:
+        if current_odom is None:
+            # ``LocalPlanner`` should always pass odom; keep a safe fallback.
+            wz = float(0.5 * yaw_error)
+            wz = float(np.clip(wz, -self._speed, self._speed))
+            if wz != 0.0 and abs(wz) < 0.2:
+                wz = 0.2 * (1.0 if wz > 0 else -1.0)
+            t = Twist(
+                linear=Vector3(0.0, 0.0, 0.0),
+                angular=Vector3(0.0, 0.0, wz),
+            )
+            return self._apply_sim_angular(t)
+
+        robot_yaw = float(current_odom.orientation.euler[2])
+        target_yaw = float(np.arctan2(np.sin(robot_yaw + yaw_error), np.cos(robot_yaw + yaw_error)))
+        p = _pose_from_xy_yaw(
+            float(current_odom.position.x),
+            float(current_odom.position.y),
+            target_yaw,
+        )
+        ref = TrajectoryReferenceSample(0.0, p, Twist())
+        meas = TrajectoryMeasuredSample(0.0, _pose_from_pose_stamped(current_odom), Twist())
+        out = self._inner.control(ref, meas)
+        return self._apply_sim_angular(out)
+
+    def reset_errors(self) -> None:
+        self._inner.reset()
+
+    def reset_yaw_error(self, value: float) -> None:
+        del value
+
+    def _apply_sim_angular(self, t: Twist) -> Twist:
+        wz = float(t.angular.z)
+        if self._global_config.simulation and 1e-9 < abs(wz) < 0.8:
+            wz = 0.8 * (1.0 if wz > 0 else -1.0)
+        return Twist(
+            linear=Vector3(
+                float(t.linear.x), float(t.linear.y), float(t.linear.z)
+            ),
+            angular=Vector3(0.0, 0.0, wz),
+        )
+
+
+def make_local_path_controller(
+    global_config: GlobalConfig,
+    speed: float,
+    control_frequency: float,
+) -> Controller:
+    if global_config.local_planner_path_controller == "holonomic":
+        return HolonomicPathController(
+            global_config,
+            speed,
+            control_frequency,
+            k_position_per_s=global_config.local_planner_holonomic_kp,
+            k_yaw_per_s=global_config.local_planner_holonomic_ky,
+        )
+    return PController(global_config, speed, control_frequency)

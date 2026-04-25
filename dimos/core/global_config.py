@@ -50,6 +50,10 @@ class GlobalConfig(BaseSettings):
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
     nerf_speed: float = 1.0
+    # Local path follower in ``replanning_a_star.LocalPlanner`` (issue 921 / P3-3).
+    local_planner_path_controller: Literal["differential", "holonomic"] = "differential"
+    local_planner_holonomic_kp: float = 2.0
+    local_planner_holonomic_ky: float = 1.5
     planner_robot_speed: float | None = None
     mcp_port: int = 9990
     dtop: bool = False
