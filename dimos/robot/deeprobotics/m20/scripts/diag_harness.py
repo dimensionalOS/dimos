@@ -39,6 +39,10 @@ SLOT_SIZE = 4 * 1024 * 1024
 # Safety: zero-flood teleop on any exit.
 # ---------------------------------------------------------------------------
 
+# Default to /tele_cmd_vel — this is what works when smartnav's CmdVelMux is up
+# (M20_NAV_ENABLED=1). In NAV_ENABLED=0 mode CmdVelMux is gone entirely, so the
+# harness needs to publish /cmd_vel directly to feed NavCmdPub. Override via
+# --cmd_topic on the CLI; the value here is just the import-time default.
 STOP_TOPIC = "/tele_cmd_vel#geometry_msgs.Twist"
 _stop_armed = [True]
 
@@ -189,6 +193,7 @@ def sample_proc_state(pid_file: str = "/tmp/smartnav.pid") -> dict:
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    global STOP_TOPIC  # may be overridden by --cmd_topic; safety _flood_zeros reads it.
     _install_safety()
     ap = argparse.ArgumentParser()
     ap.add_argument("--outdir",
@@ -201,7 +206,14 @@ def main() -> int:
     ap.add_argument("--rotate_duration", type=float, default=10.0)
     ap.add_argument("--warmup", type=float, default=2.0)
     ap.add_argument("--cooldown", type=float, default=5.0)
+    ap.add_argument("--cmd_topic", type=str, default=STOP_TOPIC,
+                    help="LCM topic to publish Twist on. Default /tele_cmd_vel goes "
+                         "through smartnav's CmdVelMux (only present when NAV_ENABLED=1). "
+                         "Use /cmd_vel#geometry_msgs.Twist for NAV_ENABLED=0 (drives "
+                         "NavCmdPub directly).")
     args = ap.parse_args()
+    STOP_TOPIC = args.cmd_topic
+    print(f"[diag] cmd_topic = {STOP_TOPIC}", file=sys.stderr, flush=True)
 
     os.makedirs(args.outdir, exist_ok=True)
     print(f"[diag] outdir = {args.outdir}", file=sys.stderr, flush=True)
