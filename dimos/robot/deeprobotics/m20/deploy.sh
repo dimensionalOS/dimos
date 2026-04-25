@@ -10,18 +10,22 @@
 #   NOS user has passwordless sudo (or set SUDO_PASS env var)
 #
 # Usage:
-#   ./deploy.sh provision [--host <hostname>]     # ONE-TIME: persistent setup per dog
-#   ./deploy.sh sync [--host <hostname>]          # Sync dimos source to NOS
-#   ./deploy.sh start [--host <hostname>]         # Start smartnav on NOS
-#   ./deploy.sh stop [--host <hostname>]          # Stop smartnav
-#   ./deploy.sh restart [--host <hostname>]       # Stop + start
-#   ./deploy.sh bridge-start [--host <hostname>]  # Restart drdds SHM bridge
-#   ./deploy.sh bridge-stop [--host <hostname>]   # Stop bridge
-#   ./deploy.sh status [--host <hostname>]        # Show status
-#   ./deploy.sh viewer [--host <hostname>]        # Start tunnels + dimos-viewer
+#   ./deploy.sh bootstrap [--host <hostname>]            # NEW dog post-OTA: provision + sync + install-binaries + restore-rsdriver-config
+#   ./deploy.sh provision [--host <hostname>]            # systemd units, fstab, sudoers, sysctl (idempotent)
+#   ./deploy.sh sync [--host <hostname>]                 # Sync dimos source to NOS
+#   ./deploy.sh install-binaries [--host <hostname>]     # Build + install drdds_recv from source on NOS
+#   ./deploy.sh restore-rsdriver-config [--host <hostname>]  # Restore our rsdriver config edits (post-OTA)
+#   ./deploy.sh backup-customizations [--host <hostname>]    # Snapshot pre-OTA NOS state to ~/m20_backup_<ts>/
+#   ./deploy.sh start [--host <hostname>]                # Start smartnav on NOS
+#   ./deploy.sh stop [--host <hostname>]                 # Stop smartnav
+#   ./deploy.sh restart [--host <hostname>]              # Stop + start
+#   ./deploy.sh bridge-start [--host <hostname>]         # Restart drdds SHM bridge
+#   ./deploy.sh bridge-stop [--host <hostname>]          # Stop bridge
+#   ./deploy.sh status [--host <hostname>]               # Show status
+#   ./deploy.sh viewer [--host <hostname>]               # Start tunnels + dimos-viewer
 #
-# First time on a new M20 (requires interactive sudo password, one-time):
-#   ./deploy.sh provision --host m20-770-gogo
+# First time on a new M20 post-OTA (interactive sudo, one-time):
+#   ./deploy.sh bootstrap --host m20-XXX-gogo
 #
 # After reboot (no-op — provision makes everything persistent):
 #   ./deploy.sh start --host m20-770-gogo
@@ -29,6 +33,11 @@
 #
 # Quick deploy after code changes:
 #   ./deploy.sh sync --host m20-770-gogo && ./deploy.sh restart --host m20-770-gogo
+#
+# Before a system OTA on a dog you've already customized:
+#   ./deploy.sh backup-customizations --host m20-XXX-gogo
+# After the OTA finishes:
+#   ./deploy.sh bootstrap --host m20-XXX-gogo
 #
 # Options:
 #   --host <hostname>   Access robot via Tailscale (e.g., m20-770-gogo)
@@ -208,10 +217,15 @@ Description=drdds bridge receiver (drdds SHM -> POSIX SHM for dimos)
 Documentation=file:///var/opt/robot/data/dimos/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/drdds_recv.cpp
 After=network-online.target m20-nav-net.service
 Wants=network-online.target
-Before=rsdriver.service
+Before=rsdriver.service yesense.service
 
 [Service]
 Type=simple
+# Wait for both physical interfaces to be UP before starting. At cold boot
+# network-online.target can fire before eth0/eth1 have IPs; FastDDS would
+# then bind only to lo, breaking discovery for cross-interface peers.
+# Bounded by 30s in case an interface is genuinely missing.
+ExecStartPre=/bin/sh -c 't=0; until ip -br addr show eth0 2>/dev/null | grep -q UP && ip -br addr show eth1 2>/dev/null | grep -q UP; do t=$((t+1)); [ $t -ge 30 ] && exit 0; sleep 1; done'
 ExecStart=/opt/drdds_bridge/lib/drdds_bridge/drdds_recv
 Restart=on-failure
 RestartSec=3
@@ -232,6 +246,27 @@ After=drdds-recv.service
 Requires=drdds-recv.service
 DROPIN
 
+echo "[provision] Installing yesense ordering dropin..."
+mkdir -p /etc/systemd/system/yesense.service.d
+cat > /etc/systemd/system/yesense.service.d/10-drdds-order.conf <<'DROPIN'
+[Unit]
+# Same SHM-discovery race as rsdriver. Empirically, post-cold-boot
+# yesense without this dropin ends up matched=0 against drdds_recv
+# even though discovery on rsdriver succeeds (Phase B 2026-04-25).
+After=drdds-recv.service
+Requires=drdds-recv.service
+DROPIN
+
+echo "[provision] Installing sshd OOM protection dropin..."
+mkdir -p /etc/systemd/system/ssh.service.d
+cat > /etc/systemd/system/ssh.service.d/oom.conf <<'DROPIN'
+[Service]
+# Pin sshd OOM score to the kernel minimum so it survives memory pressure
+# from the dimos stack. Without this, OOM killer takes sshd first under
+# heavy SLAM load and we lose remote access to the dog.
+OOMScoreAdjust=-1000
+DROPIN
+
 echo "[provision] Installing m20-nav-net.service (loopback multicast + DDS routes)..."
 cat > /etc/systemd/system/m20-nav-net.service <<'UNIT'
 [Unit]
@@ -250,6 +285,37 @@ ExecStart=/bin/sh -c '/sbin/ip route add 10.21.33.103/32 via 10.21.31.103 2>/dev
 [Install]
 WantedBy=multi-user.target
 UNIT
+
+echo "[provision] Setting up 4GB swap (NOS has only ~4GB RAM, dimos peaks above that)..."
+SWAPFILE=/var/opt/robot/data/swapfile
+if ! swapon --show=NAME --noheadings | grep -qF "$SWAPFILE"; then
+    if [ ! -f "$SWAPFILE" ]; then
+        # Use fallocate; mkswap fails on holes, so prefer dd if fallocate-backed FS doesn't allow swap.
+        if ! fallocate -l 4G "$SWAPFILE" 2>/dev/null; then
+            dd if=/dev/zero of="$SWAPFILE" bs=1M count=4096 status=progress
+        fi
+        chmod 600 "$SWAPFILE"
+        mkswap "$SWAPFILE" >/dev/null
+        echo "  created $SWAPFILE"
+    fi
+    if ! grep -qF "$SWAPFILE" /etc/fstab; then
+        echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab
+        echo "  added to /etc/fstab"
+    fi
+    swapon "$SWAPFILE" || true
+    echo "  swap on"
+else
+    echo "  already active"
+fi
+
+echo "[provision] Checking kernel cmdline for isolcpus=4,5,6,7..."
+if grep -q 'isolcpus=4,5,6,7' /proc/cmdline; then
+    echo "  present"
+else
+    echo "  NOT PRESENT — SLAM cpu_affinity will work without exclusivity"
+    echo "  To enable, add 'isolcpus=4,5,6,7' to the kernel cmdline (bootloader-specific)"
+    echo "  and reboot. Skipping auto-modification — bootloader edits are dog-specific."
+fi
 
 echo "[provision] Installing sysctl tuning for LCM (large UDP packets)..."
 cat > /etc/sysctl.d/99-m20-nav.conf <<'SYSCTL'
@@ -307,12 +373,16 @@ systemctl is-enabled drdds-recv.service m20-nav-net.service
 systemctl is-active drdds-recv.service m20-nav-net.service rsdriver.service
 echo ""
 echo "Persistent config installed:"
-echo "  /etc/fstab:                              /nix bind mount"
-echo "  /etc/systemd/system/drdds-recv.service:  drdds SHM receiver"
+echo "  /etc/fstab:                              /nix bind mount + swap"
+echo "  /etc/systemd/system/drdds-recv.service:  drdds SHM receiver (with interface-up wait)"
 echo "  /etc/systemd/system/rsdriver.service.d/: ordering after drdds-recv"
+echo "  /etc/systemd/system/yesense.service.d/:  ordering after drdds-recv"
+echo "  /etc/systemd/system/ssh.service.d/:      sshd OOM protection"
 echo "  /etc/systemd/system/m20-nav-net.service: multicast + routes"
+echo "  /etc/sysctl.d/99-m20-nav.conf:           LCM large UDP buffers"
 echo "  /etc/sudoers.d/m20-nav:                  NOPASSWD for service control"
 echo "  /usr/local/sbin/m20-clean-shm:           SHM cleanup helper"
+echo "  /var/opt/robot/data/swapfile:            4GB swap"
 PROVISION_EOF
 )
 
@@ -324,6 +394,107 @@ PROVISION_EOF
         ssh -t ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "sudo bash /tmp/m20-provision.sh"
         remote_ssh "rm -f /tmp/m20-provision.sh"
         echo "=== Provision Complete — reboots will now Just Work ==="
+        echo ""
+        echo "Next steps for a fresh post-OTA dog:"
+        echo "  $0 sync --host \${REMOTE_HOST:-<host>}                  # push source"
+        echo "  $0 install-binaries --host \${REMOTE_HOST:-<host>}      # build drdds_recv"
+        echo "  $0 restore-rsdriver-config --host \${REMOTE_HOST:-<host>}  # re-apply our config edits"
+        echo "(or run \`bootstrap\` to do all four in one go.)"
+        ;;
+
+    install-binaries)
+        echo "=== Building + installing drdds_recv on NOS ==="
+        # Verify source synced.
+        SRC_DIR="${DEPLOY_DIR}/dimos/robot/deeprobotics/m20/drdds_bridge/cpp"
+        if ! remote_ssh "test -f ${SRC_DIR}/drdds_recv.cpp"; then
+            echo "ERROR: source not on NOS at ${SRC_DIR}. Run \`$0 sync\` first." >&2
+            exit 1
+        fi
+        # Build under a fresh build dir owned by the user. CMakeLists is at
+        # ../, so we configure once and rebuild as needed. We build:
+        #   - drdds_recv (the runtime daemon, installed to /opt)
+        #   - nav_cmd_pub (smartnav binary, picked up via deploy.sh sync's
+        #     symlink at result/bin/nav_cmd_pub)
+        echo "  cmake configure (idempotent) + build drdds_recv + nav_cmd_pub..."
+        remote_ssh "
+            set -e
+            cd ${SRC_DIR}
+            mkdir -p build
+            cd build
+            if [ ! -f Makefile ] && [ ! -f build.ninja ]; then
+                cmake .. >/tmp/drdds_recv_cmake.log 2>&1
+            fi
+            make drdds_recv nav_cmd_pub -j2 2>&1 | tail -20
+            ls -la drdds_recv nav_cmd_pub
+        "
+        echo "  installing drdds_recv to /opt/drdds_bridge/lib/drdds_bridge/..."
+        remote_sudo "mkdir -p /opt/drdds_bridge/lib/drdds_bridge"
+        remote_sudo "systemctl stop drdds-recv 2>/dev/null || true"
+        remote_sudo "install -o root -g root -m 0755 ${SRC_DIR}/build/drdds_recv /opt/drdds_bridge/lib/drdds_bridge/drdds_recv"
+        remote_sudo "systemctl start drdds-recv"
+        sleep 3
+        echo "  drdds-recv status:"
+        remote_ssh "systemctl is-active drdds-recv && tail -3 /var/log/drdds_recv.log 2>/dev/null | strings | head -3"
+        echo "  nav_cmd_pub built at ${SRC_DIR}/build/nav_cmd_pub (symlinked via \`sync\`)"
+        echo "=== Binary install complete ==="
+        ;;
+
+    restore-rsdriver-config)
+        echo "=== Restoring rsdriver config edits (post-OTA) ==="
+        # OTA wipes our edits to /opt/robot/share/node_driver/config/config.yaml.
+        # Two settings must be flipped back:
+        #   - send_separately: false → true   (we want per-lidar topics, not merged)
+        #   - ts_first_point: true → false    (FAST-LIO assumes scan_END timestamps; per-lidar applies)
+        # Calibration values (per-lidar pitch/yaw/roll) are NOT touched — they're
+        # factory-set per dog and the OTA preserves them inside config.yaml.
+        CONFIG_PATH=/opt/robot/share/node_driver/config/config.yaml
+        if ! remote_ssh "test -f ${CONFIG_PATH}"; then
+            echo "ERROR: ${CONFIG_PATH} not found on NOS." >&2
+            exit 1
+        fi
+        # Snapshot before edit so a botched sed leaves a recovery copy.
+        remote_sudo "cp -n ${CONFIG_PATH} ${CONFIG_PATH}.pre-restore || true"
+        echo "  flipping send_separately to true..."
+        remote_sudo "sed -i 's/^\\(\\s*send_separately:\\s*\\)false/\\1true/' ${CONFIG_PATH}"
+        echo "  flipping ts_first_point to false (both lidars)..."
+        remote_sudo "sed -i 's/^\\(\\s*ts_first_point:\\s*\\)true/\\1false/g' ${CONFIG_PATH}"
+        echo "  diff vs .pre-restore:"
+        remote_ssh "diff ${CONFIG_PATH}.pre-restore ${CONFIG_PATH} 2>&1 | head -20" || true
+        echo "  restarting rsdriver..."
+        remote_sudo "systemctl restart rsdriver"
+        sleep 5
+        echo "  rsdriver status: $(remote_ssh 'systemctl is-active rsdriver')"
+        echo "=== rsdriver config restored ==="
+        ;;
+
+    bootstrap)
+        # End-to-end fresh-dog setup post-OTA:
+        # provision (system) → sync (source) → install-binaries → restore-rsdriver-config
+        echo "=== Bootstrapping fresh dog post-OTA ==="
+        if [ -n "${REMOTE_HOST}" ]; then
+            HOST_ARGS="--host ${REMOTE_HOST}"
+        else
+            HOST_ARGS=""
+        fi
+        "$0" provision ${HOST_ARGS}
+        "$0" sync ${HOST_ARGS}
+        "$0" install-binaries ${HOST_ARGS}
+        "$0" restore-rsdriver-config ${HOST_ARGS}
+        echo ""
+        echo "=== Bootstrap complete ==="
+        echo "Verify with:  $0 status ${HOST_ARGS}"
+        echo "Then:         $0 start ${HOST_ARGS}"
+        ;;
+
+    backup-customizations)
+        # Wraps scripts/backup_m20_customizations.sh, exposing it via deploy.sh
+        # so the OTA-prep workflow lives next to the rest of the deploy commands.
+        echo "=== Snapshotting NOS customizations to ~/m20_backup_<ts>/ ==="
+        if [ -n "${REMOTE_HOST}" ]; then
+            NOS_HOST="${REMOTE_HOST}" "${SCRIPT_DIR}/scripts/backup_m20_customizations.sh"
+        else
+            "${SCRIPT_DIR}/scripts/backup_m20_customizations.sh"
+        fi
         ;;
 
     start)
@@ -449,20 +620,28 @@ PROVISION_EOF
     *)
         echo "Usage: $0 <command> [--host <hostname>]"
         echo ""
-        echo "Commands:"
-        echo "  provision    - ONE-TIME: install persistent systemd units, fstab, sudoers"
-        echo "  sync         - Sync dimos source to NOS + fix nix symlinks"
-        echo "  start        - Start smartnav on NOS"
-        echo "  stop         - Stop smartnav"
-        echo "  restart      - Stop + start"
-        echo "  viewer       - Start SSH tunnels + dimos-viewer locally"
-        echo "  bridge-start - Restart drdds SHM bridge (with rsdriver ordering)"
-        echo "  bridge-stop  - Stop drdds bridge"
-        echo "  status       - Show status"
+        echo "Per-OTA / new-dog commands:"
+        echo "  bootstrap                - provision + sync + install-binaries + restore-rsdriver-config"
+        echo "  provision                - install systemd units, fstab, sudoers, sysctl, swap"
+        echo "  sync                     - rsync dimos source to NOS + fix nix symlinks"
+        echo "  install-binaries         - build drdds_recv from source on NOS, install to /opt"
+        echo "  restore-rsdriver-config  - re-apply send_separately:true + ts_first_point:false"
+        echo "  backup-customizations    - snapshot NOS state to ~/m20_backup_<ts>/ (run pre-OTA)"
         echo ""
-        echo "First time per dog:  $0 provision --host m20-770-gogo"
-        echo "Quick deploy:        $0 sync --host m20-770-gogo && $0 restart --host m20-770-gogo"
-        echo "After reboot:        $0 start --host m20-770-gogo && $0 viewer --host m20-770-gogo"
+        echo "Runtime commands:"
+        echo "  start                    - start smartnav on NOS"
+        echo "  stop                     - stop smartnav"
+        echo "  restart                  - stop + start"
+        echo "  viewer                   - start SSH tunnels + dimos-viewer locally"
+        echo "  bridge-start             - restart drdds SHM bridge (with rsdriver ordering)"
+        echo "  bridge-stop              - stop drdds bridge"
+        echo "  status                   - show status"
+        echo ""
+        echo "Typical flows:"
+        echo "  Fresh post-OTA dog:    $0 bootstrap --host m20-XXX-gogo"
+        echo "  Quick code update:     $0 sync --host m20-770-gogo && $0 restart --host m20-770-gogo"
+        echo "  After reboot:          $0 start --host m20-770-gogo && $0 viewer --host m20-770-gogo"
+        echo "  Pre-OTA snapshot:      $0 backup-customizations --host m20-770-gogo"
         echo ""
         echo "Options:"
         echo "  --host <hostname>  Access robot via Tailscale (e.g., m20-770-gogo)"
