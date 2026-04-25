@@ -54,6 +54,7 @@ IGNORED_DIRS = {
     "gtsam",
     # hidden/personal directories
     ".hidden",
+    ".ignore.enhance",
 }
 
 # Lines that match section patterns but are actually programmatic / intentional.
