@@ -391,7 +391,15 @@ PROVISION_EOF
         remote_ssh "cat > /tmp/m20-provision.sh" <<< "${PROVISION_SCRIPT}"
         remote_ssh "chmod +x /tmp/m20-provision.sh"
         echo "  Running provision script (sudo password required, one time)..."
-        ssh -t ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "sudo bash /tmp/m20-provision.sh"
+        if [ -n "${SUDO_PASS}" ]; then
+            # Non-interactive path. Base64-encode the password locally so any
+            # quoting characters (this session's literal `'` for instance)
+            # survive ssh argument passing without escape gymnastics.
+            PW64=$(printf '%s' "${SUDO_PASS}" | base64)
+            remote_ssh "echo ${PW64} | base64 -d | sudo -S bash /tmp/m20-provision.sh" 2>&1 | grep -v '^\[sudo\] password for'
+        else
+            ssh -t ${SSH_OPTS} "${NOS_USER}@${NOS_HOST}" "sudo bash /tmp/m20-provision.sh"
+        fi
         remote_ssh "rm -f /tmp/m20-provision.sh"
         echo "=== Provision Complete — reboots will now Just Work ==="
         echo ""
