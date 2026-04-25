@@ -61,6 +61,6 @@ A higher number that does not show up in `dt_s` / `wall_time_s` or that does not
 
 ## 5. Config reference
 
-- **`GlobalConfig.local_planner_control_rate_hz`** in `dimos/dimos/core/global_config.py` - default is conservative; adjust after measurements.
+- **`GlobalConfig.local_planner_control_rate_hz`** in `dimos/dimos/core/global_config.py` - default is conservative and validation rejects 100 Hz-style settings on this path; adjust within the allowed range after measurements.
 
 Related: P4-2 cost per tick in `docs/development/trajectory_control_tick_benchmark.md`, field list in `dimos/navigation/trajectory_control_tick_jsonl.md`.

@@ -29,8 +29,8 @@ and ``trajectory_control_tick_jsonl.md``.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
+import os
 from typing import Protocol, runtime_checkable
 
 from dimos.msgs.geometry_msgs.Twist import Twist

@@ -15,9 +15,10 @@ Before commanding motion:
 
 Holonomic path following is selected through `GlobalConfig`:
 
-- `local_planner_path_controller="holonomic"` enables the issue 921 holonomic path follower.
+- `local_planner_path_controller` defaults to `"holonomic"` for the issue 921 path follower; set `"differential"` only for legacy comparison runs.
 - `planner_robot_speed` sets the requested local planner speed. Use this for higher-speed Go2 trials instead of changing code constants.
 - `local_planner_holonomic_kp` and `local_planner_holonomic_ky` set pose tracking gains. Start from calibration output when available, then validate on the target base.
+- `local_planner_max_tangent_accel_m_s2` and `local_planner_max_normal_accel_m_s2` bound the live path speed profile so tight turns slow down before the command reaches the controller.
 - `local_planner_control_rate_hz` is the local loop rate. Do not pick a high value because it sounds safer or faster; choose it from tick logs, plant delay, and speed-vs-divergence plots.
 - `local_planner_trajectory_tick_log_path="path/to/ticks.jsonl"` streams live `LocalPlanner` ticks to JSONL for plotting and rate analysis.
 
@@ -77,8 +78,8 @@ Before motion:
 
 Configuration:
 
-- [ ] `local_planner_path_controller` is set to `"holonomic"` for issue 921 validation.
-- [ ] `planner_robot_speed`, `local_planner_holonomic_kp`, `local_planner_holonomic_ky`, `local_planner_control_rate_hz`, and speed limits are recorded.
+- [ ] `local_planner_path_controller` is `"holonomic"` for issue 921 validation.
+- [ ] `planner_robot_speed`, holonomic gains, control rate, tangent and normal acceleration caps, and speed limits are recorded.
 - [ ] `local_planner_trajectory_tick_log_path` points to a writable JSONL file.
 - [ ] Git commit and dirty or clean state are recorded.
 - [ ] Calibration YAML is attached if one was generated.

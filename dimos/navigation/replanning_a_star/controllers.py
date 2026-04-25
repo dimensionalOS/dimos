@@ -51,6 +51,8 @@ class Controller(Protocol):
         self, yaw_error: float, current_odom: PoseStamped | None = None
     ) -> Twist: ...
 
+    def set_speed(self, speed_m_s: float) -> None: ...
+
     def reset_errors(self) -> None: ...
 
     def reset_yaw_error(self, value: float) -> None: ...
@@ -71,6 +73,9 @@ class PController:
         self._global_config = global_config
         self._speed = speed
         self._control_frequency = control_frequency
+
+    def set_speed(self, speed_m_s: float) -> None:
+        self._speed = float(speed_m_s)
 
     def advance(self, lookahead_point: NDArray[np.float64], current_odom: PoseStamped) -> Twist:
         current_pos = np.array([current_odom.position.x, current_odom.position.y])
@@ -212,6 +217,16 @@ class HolonomicPathController:
         )
         self._inner.configure(self._limits)
         self._previous_cmd = Twist()
+
+    def set_speed(self, speed_m_s: float) -> None:
+        self._speed = float(speed_m_s)
+        self._limits = HolonomicCommandLimits(
+            max_planar_speed_m_s=self._speed,
+            max_yaw_rate_rad_s=self._speed,
+            max_planar_linear_accel_m_s2=5.0,
+            max_yaw_accel_rad_s2=5.0,
+        )
+        self._inner.configure(self._limits)
 
     def advance(self, lookahead_point: NDArray[np.float64], current_odom: PoseStamped) -> Twist:
         current_pos = np.array(

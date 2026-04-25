@@ -38,8 +38,14 @@ from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
 from dimos.navigation.trajectory_control_tick_export import iter_trajectory_control_tick_jsonl
 
 
-def test_make_local_path_controller_default_is_differential() -> None:
+def test_make_local_path_controller_default_is_holonomic() -> None:
     g = GlobalConfig()
+    c = make_local_path_controller(g, 0.5, 10.0)
+    assert type(c) is HolonomicPathController
+
+
+def test_make_local_path_controller_differential_when_configured() -> None:
+    g = GlobalConfig(local_planner_path_controller="differential")
     c = make_local_path_controller(g, 0.5, 10.0)
     assert type(c) is PController
 
@@ -147,6 +153,96 @@ def test_local_planner_path_following_writes_speed_vs_divergence_jsonl(tmp_path:
     assert row["dt_s"] == pytest.approx(0.1)
 
 
+def test_local_planner_live_tick_jsonl_includes_measured_body_twist(tmp_path: FsPath) -> None:
+    log_path = tmp_path / "ticks.jsonl"
+    g = GlobalConfig(
+        local_planner_path_controller="holonomic",
+        local_planner_trajectory_tick_log_path=str(log_path),
+    )
+    nav = NavigationMap(g, "gradient")
+    lp = LocalPlanner(g, nav, goal_tolerance=0.01)
+    path = Path(
+        frame_id="map",
+        poses=[
+            PoseStamped(
+                frame_id="map",
+                position=[0.0, 0.0, 0.0],
+                orientation=Quaternion(0, 0, 0, 1),
+            ),
+            PoseStamped(
+                frame_id="map",
+                position=[2.0, 0.0, 0.0],
+                orientation=Quaternion(0, 0, 0, 1),
+            ),
+        ],
+    )
+    lp._path = path
+    lp._path_distancer = PathDistancer(path)
+    lp._current_odom = PoseStamped(
+        ts=1.0,
+        frame_id="map",
+        position=[0.0, 0.0, 0.0],
+        orientation=Quaternion(0, 0, 0, 1),
+    )
+    lp._compute_path_following()
+    lp._current_odom = PoseStamped(
+        ts=2.0,
+        frame_id="map",
+        position=[0.2, 0.0, 0.0],
+        orientation=Quaternion(0, 0, 0, 1),
+    )
+
+    lp._compute_path_following()
+
+    rows = list(iter_trajectory_control_tick_jsonl(log_path))
+    assert len(rows) == 2
+    assert rows[1]["meas_twist_linear_x_m_s"] == pytest.approx(0.2)
+    assert rows[1]["meas_twist_linear_y_m_s"] == pytest.approx(0.0)
+    assert rows[1]["meas_twist_angular_z_rad_s"] == pytest.approx(0.0)
+
+
+def test_local_planner_uses_curvature_speed_cap_for_holonomic_path() -> None:
+    g = GlobalConfig(
+        local_planner_path_controller="holonomic",
+        planner_robot_speed=1.2,
+        local_planner_max_normal_accel_m_s2=0.6,
+    )
+    nav = NavigationMap(g, "gradient")
+    lp = LocalPlanner(g, nav, goal_tolerance=0.01)
+    path = Path(
+        frame_id="map",
+        poses=[
+            PoseStamped(
+                frame_id="map",
+                position=[0.0, 0.0, 0.0],
+                orientation=Quaternion(0, 0, 0, 1),
+            ),
+            PoseStamped(
+                frame_id="map",
+                position=[0.5, 0.0, 0.0],
+                orientation=Quaternion(0, 0, 0, 1),
+            ),
+            PoseStamped(
+                frame_id="map",
+                position=[0.5, 0.5, 0.0],
+                orientation=Quaternion(0, 0, 0, 1),
+            ),
+        ],
+    )
+    lp._path = path
+    lp._path_distancer = PathDistancer(path)
+    lp._current_odom = PoseStamped(
+        frame_id="map",
+        position=[0.5, 0.0, 0.0],
+        orientation=Quaternion(0, 0, 0, 1),
+    )
+
+    lp._compute_path_following()
+
+    assert isinstance(lp._controller, HolonomicPathController)
+    assert lp._controller._speed < 1.2
+
+
 def test_local_planner_control_rate_from_global_config() -> None:
     """P4-1: loop pacing and ``make_local_path_controller`` share ``GlobalConfig`` Hz."""
     g = GlobalConfig(local_planner_control_rate_hz=25.0, local_planner_path_controller="holonomic")
@@ -167,6 +263,8 @@ def test_local_planner_uses_configured_robot_speed_for_holonomic_runs() -> None:
 def test_local_planner_control_rate_hz_validation() -> None:
     with pytest.raises(ValidationError):
         GlobalConfig(local_planner_control_rate_hz=0.0)
+    with pytest.raises(ValidationError):
+        GlobalConfig(local_planner_control_rate_hz=100.0)
     with pytest.raises(ValidationError):
         GlobalConfig(local_planner_control_rate_hz=300.0)
 

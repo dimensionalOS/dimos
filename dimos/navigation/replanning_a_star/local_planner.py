@@ -44,6 +44,11 @@ from dimos.navigation.trajectory_control_tick_log import (
     TrajectoryControlTickSink,
     append_trajectory_control_tick,
 )
+from dimos.navigation.trajectory_path_speed_profile import (
+    PathSpeedProfileLimits,
+    circular_arc_geometry_speed_cap_m_s,
+    line_segment_geometry_speed_cap_m_s,
+)
 from dimos.navigation.trajectory_types import TrajectoryMeasuredSample, TrajectoryReferenceSample
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
@@ -77,6 +82,7 @@ class LocalPlanner(Resource):
     _goal_tolerance: float
     _controller: Controller
     _trajectory_tick_sink: TrajectoryControlTickSink | None
+    _previous_odom_for_velocity: PoseStamped | None
 
     _speed: float = 0.55
     _control_frequency: float
@@ -101,6 +107,7 @@ class LocalPlanner(Resource):
         self._goal_tolerance = goal_tolerance
         self._control_frequency = float(global_config.local_planner_control_rate_hz)
         self._trajectory_tick_sink = self._make_trajectory_tick_sink(global_config)
+        self._previous_odom_for_velocity = None
 
         speed = (
             float(global_config.planner_robot_speed)
@@ -124,6 +131,7 @@ class LocalPlanner(Resource):
 
     def stop(self) -> None:
         self.stop_planning()
+        self._close_trajectory_tick_sink()
 
     def handle_odom(self, msg: PoseStamped) -> None:
         with self._lock:
@@ -139,6 +147,7 @@ class LocalPlanner(Resource):
             self._path_clearance = PathClearance(self._global_config, self._path)
             self._path_distancer = PathDistancer(self._path)
             self._pose_index = 0
+            self._previous_odom_for_velocity = None
             self._thread = Thread(target=self._thread_entrypoint, daemon=True)
             self._thread.start()
 
@@ -158,6 +167,13 @@ class LocalPlanner(Resource):
         if path is None or str(path).strip() == "":
             return None
         return JsonlTrajectoryControlTickSink(path)
+
+    def _close_trajectory_tick_sink(self) -> None:
+        sink = self._trajectory_tick_sink
+        close = getattr(sink, "close", None)
+        if callable(close):
+            close()
+        self._trajectory_tick_sink = None
 
     def get_state(self) -> NavigationState:
         with self._lock:
@@ -279,6 +295,7 @@ class LocalPlanner(Resource):
                 self._change_state("path_following")
             return self._compute_path_following()
 
+        self._controller.set_speed(self._speed)
         cmd = self._controller.rotate(yaw_error, current_odom)
         ref_pose = _pose_from_xy_yaw(
             float(current_odom.position.x),
@@ -323,6 +340,8 @@ class LocalPlanner(Resource):
 
         lookahead_point = path_distancer.find_lookahead_point(closest_index)
 
+        path_speed = self._path_speed_for_index(path_distancer, closest_index, current_pos)
+        self._controller.set_speed(path_speed)
         cmd = self._controller.advance(lookahead_point, current_odom)
         direction = np.asarray(lookahead_point, dtype=np.float64) - current_pos
         ref_yaw = float(np.arctan2(direction[1], direction[0]))
@@ -332,11 +351,56 @@ class LocalPlanner(Resource):
             ref_yaw,
         )
         ref_twist = Twist(
-            linear=Vector3(self._speed, 0.0, 0.0),
+            linear=Vector3(path_speed, 0.0, 0.0),
             angular=Vector3(0.0, 0.0, 0.0),
         )
         self._append_trajectory_control_tick(ref_pose, ref_twist, current_odom, cmd)
         return cmd
+
+    def _path_speed_for_index(
+        self,
+        path_distancer: PathDistancer,
+        closest_index: int,
+        current_pos: np.ndarray,
+    ) -> float:
+        limits = PathSpeedProfileLimits(
+            max_speed_m_s=self._speed,
+            max_tangent_accel_m_s2=self._global_config.local_planner_max_tangent_accel_m_s2,
+            max_normal_accel_m_s2=self._global_config.local_planner_max_normal_accel_m_s2,
+        )
+        geometry_cap = self._local_geometry_speed_cap(path_distancer, closest_index, limits)
+        distance_cap = math.sqrt(
+            max(
+                0.0,
+                2.0
+                * self._global_config.local_planner_max_tangent_accel_m_s2
+                * path_distancer.distance_to_goal(current_pos),
+            )
+        )
+        capped = min(self._speed, geometry_cap, distance_cap)
+        return min(self._speed, max(0.05, capped))
+
+    def _local_geometry_speed_cap(
+        self,
+        path_distancer: PathDistancer,
+        closest_index: int,
+        limits: PathSpeedProfileLimits,
+    ) -> float:
+        path_xy = path_distancer._path
+        if len(path_xy) < 3:
+            return line_segment_geometry_speed_cap_m_s(limits)
+        i = min(max(closest_index, 1), len(path_xy) - 2)
+        p0, p1, p2 = path_xy[i - 1], path_xy[i], path_xy[i + 1]
+        a = float(np.linalg.norm(p1 - p0))
+        b = float(np.linalg.norm(p2 - p1))
+        c = float(np.linalg.norm(p2 - p0))
+        v10 = p1 - p0
+        v20 = p2 - p0
+        area2 = abs(float(v10[0] * v20[1] - v10[1] * v20[0]))
+        if min(a, b, c, area2) <= 1e-9:
+            return line_segment_geometry_speed_cap_m_s(limits)
+        radius = (a * b * c) / (2.0 * area2)
+        return circular_arc_geometry_speed_cap_m_s(radius, limits)
 
     def _compute_final_rotation(self) -> Twist:
         with self._lock:
@@ -356,6 +420,7 @@ class LocalPlanner(Resource):
                 self._change_state("arrived")
             return Twist()
 
+        self._controller.set_speed(self._speed)
         cmd = self._controller.rotate(yaw_error, current_odom)
         ref_pose = _pose_from_xy_yaw(
             float(current_odom.position.x),
@@ -372,6 +437,8 @@ class LocalPlanner(Resource):
             self._path_clearance = None
             self._path_distancer = None
             self._pose_index = 0
+            self._previous_odom_for_velocity = None
+            self._controller.set_speed(self._speed)
             self._controller.reset_errors()
 
     def _append_trajectory_control_tick(
@@ -384,10 +451,11 @@ class LocalPlanner(Resource):
         sink = self._trajectory_tick_sink
         if sink is None:
             return
+        measured_twist = self._estimate_measured_body_twist(current_odom)
         measurement = TrajectoryMeasuredSample(
             time_s=float(current_odom.ts),
             pose_plan=Pose(current_odom.position, current_odom.orientation),
-            twist_body=Twist(),
+            twist_body=measured_twist,
         )
         reference = TrajectoryReferenceSample(
             time_s=float(current_odom.ts),
@@ -401,6 +469,30 @@ class LocalPlanner(Resource):
             command,
             1.0 / self._control_frequency,
             wall_time_s=time.time(),
+        )
+
+    def _estimate_measured_body_twist(self, current_odom: PoseStamped) -> Twist:
+        previous = self._previous_odom_for_velocity
+        self._previous_odom_for_velocity = current_odom
+        if previous is None:
+            return Twist()
+        dt = float(current_odom.ts) - float(previous.ts)
+        if not math.isfinite(dt) or dt <= 0.0:
+            return Twist()
+        vx_w = (float(current_odom.position.x) - float(previous.position.x)) / dt
+        vy_w = (float(current_odom.position.y) - float(previous.position.y)) / dt
+        yaw = float(current_odom.orientation.euler[2])
+        c = math.cos(yaw)
+        s = math.sin(yaw)
+        vx_b = c * vx_w + s * vy_w
+        vy_b = -s * vx_w + c * vy_w
+        wz = angle_diff(
+            float(current_odom.orientation.euler[2]),
+            float(previous.orientation.euler[2]),
+        ) / dt
+        return Twist(
+            linear=Vector3(vx_b, vy_b, 0.0),
+            angular=Vector3(0.0, 0.0, wz),
         )
 
     def _send_navigation_costmap(self, path: Path, path_clearance: PathClearance) -> None:

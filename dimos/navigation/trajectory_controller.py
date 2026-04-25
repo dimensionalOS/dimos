@@ -30,7 +30,6 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from dimos.msgs.geometry_msgs.Twist import Twist
-
 from dimos.navigation.trajectory_command_limits import HolonomicCommandLimits
 from dimos.navigation.trajectory_types import TrajectoryMeasuredSample, TrajectoryReferenceSample
 

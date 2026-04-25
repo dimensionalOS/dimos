@@ -24,9 +24,9 @@ versioned YAML artifact. Replay-backed calibration can reuse the same
 
 from __future__ import annotations
 
-import math
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+import math
 from pathlib import Path
 from typing import IO, Any, Literal
 
@@ -164,7 +164,7 @@ def _default_max_steps(cfg: HolonomicStepDwellReturnConfig) -> int:
         return int(cfg.max_simulation_steps)
     t_move = float(cfg.max_displacement_m) / max(cfg.peak_body_speed_m_s, 1e-9)
     t_total = 4.0 * t_move + float(cfg.dwell_s) + 10.0
-    n = int(math.ceil(t_total / cfg.dt_s)) + 1000
+    n = math.ceil(t_total / cfg.dt_s) + 1000
     return min(max(n, 20_000), 5_000_000)
 
 

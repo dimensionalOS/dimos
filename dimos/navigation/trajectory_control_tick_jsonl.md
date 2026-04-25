@@ -29,12 +29,12 @@ After `schema_version`, object keys follow the field order of `TrajectoryControl
 | `meas_x_m` | number | m | Measured pose x (plan frame). |
 | `meas_y_m` | number | m | Measured pose y (plan frame). |
 | `meas_yaw_rad` | number | rad | Measured yaw (plan frame). |
-| `meas_twist_linear_x_m_s` | number | m/s | Measured twist linear x (body). |
-| `meas_twist_linear_y_m_s` | number | m/s | Measured twist linear y (body). |
+| `meas_twist_linear_x_m_s` | number | m/s | Measured twist linear x (body). Live `LocalPlanner` logs estimate this from consecutive odom poses when timestamps advance. |
+| `meas_twist_linear_y_m_s` | number | m/s | Measured twist linear y (body). Live `LocalPlanner` logs estimate this from consecutive odom poses when timestamps advance. |
 | `meas_twist_linear_z_m_s` | number | m/s | Measured twist linear z (body). |
 | `meas_twist_angular_x_rad_s` | number | rad/s | Measured twist angular x (body). |
 | `meas_twist_angular_y_rad_s` | number | rad/s | Measured twist angular y (body). |
-| `meas_twist_angular_z_rad_s` | number | rad/s | Measured twist angular z (body). |
+| `meas_twist_angular_z_rad_s` | number | rad/s | Measured twist angular z (body). Live `LocalPlanner` logs estimate this from consecutive odom yaws when timestamps advance. |
 | `e_along_track_m` | number | m | Along-track error (see `trajectory_metrics`). |
 | `e_cross_track_m` | number | m | Cross-track error. |
 | `e_heading_rad` | number | rad | Heading error. |

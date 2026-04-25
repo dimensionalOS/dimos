@@ -33,8 +33,8 @@ trapezoidal ``v`` between samples (see ``time_s_from_speed_profile``).
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
+import math
 
 
 @dataclass(frozen=True)

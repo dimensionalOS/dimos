@@ -81,8 +81,8 @@ planners may replace that mapping while keeping the same error definitions.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
+import math
 
 import numpy as np
 from numpy.typing import NDArray
