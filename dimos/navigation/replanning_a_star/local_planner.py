@@ -68,7 +68,7 @@ class LocalPlanner(Resource):
     _controller: Controller
 
     _speed: float = 0.55
-    _control_frequency: float = 10
+    _control_frequency: float
     _orientation_tolerance: float = 0.35
     _navigation_costmap_interval: float = 1.0
     _navigation_costmap_last: float = 0.0
@@ -88,6 +88,7 @@ class LocalPlanner(Resource):
         self._global_config = global_config
         self._navigation_map = navigation_map
         self._goal_tolerance = goal_tolerance
+        self._control_frequency = float(global_config.local_planner_control_rate_hz)
 
         speed = self._speed
         if global_config.nerf_speed < 1.0:

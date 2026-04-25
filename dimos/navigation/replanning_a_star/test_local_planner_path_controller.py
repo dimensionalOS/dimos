@@ -17,7 +17,10 @@
 from __future__ import annotations
 
 import math
+
 import numpy as np
+import pytest
+from pydantic import ValidationError
 
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -80,6 +83,22 @@ def test_local_planner_wires_holonomic_when_configured() -> None:
     nav = NavigationMap(g, "gradient")
     lp = LocalPlanner(g, nav, goal_tolerance=0.2)
     assert isinstance(lp._controller, HolonomicPathController)  # noqa: SLF001
+
+
+def test_local_planner_control_rate_from_global_config() -> None:
+    """P4-1: loop pacing and ``make_local_path_controller`` share ``GlobalConfig`` Hz."""
+    g = GlobalConfig(local_planner_control_rate_hz=25.0, local_planner_path_controller="holonomic")
+    nav = NavigationMap(g, "gradient")
+    lp = LocalPlanner(g, nav, goal_tolerance=0.2)
+    assert lp._control_frequency == 25.0  # noqa: SLF001
+    assert lp._controller._control_frequency == 25.0  # noqa: SLF001
+
+
+def test_local_planner_control_rate_hz_validation() -> None:
+    with pytest.raises(ValidationError):
+        GlobalConfig(local_planner_control_rate_hz=0.0)
+    with pytest.raises(ValidationError):
+        GlobalConfig(local_planner_control_rate_hz=300.0)
 
 
 def test_replay_flag_does_not_change_holonomic_path_controller() -> None:
