@@ -30,13 +30,15 @@ int main(int argc, char** argv) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    // Use the simple DrDDSManager::Init(int, string) — creates mLocalParticipant_.
-    // Post-OTA nm -D of rslidar shows it uses THIS overload, not the 6-arg
-    // multi-domain variant. The two overloads create different participants
-    // (mLocalParticipant_ vs mMultiParticipant_) and DrDDSChannel endpoints
-    // attached to different participants don't match each other. See FASTLIO2_LOG
-    // Finding #36 for the post-OTA debug trail.
-    DrDDSManager::Init(0, "");
+    // 2-arg DrDDSManager::Init(domain_id, network_name) — the network_name
+    // arg is a slash-separated list of interfaces to bind for UDP transport.
+    // rsdriver's rodata reveals it passes "eth0/eth1" (verified via
+    // `objdump -s -j .rodata /opt/robot/share/node_driver/bin/rslidar`).
+    // Empty string makes the participant bind localhost-only — that's why
+    // pre-fix our drdds_recv only saw matched=1 self-match for lidar:
+    // rsdriver tried to deliver via UDP unicast to our 10.21.x.x announced
+    // address but we only listened on 127.0.0.1. See FASTLIO2_LOG #36.
+    DrDDSManager::Init(0, "eth0/eth1");
 
     // Create shared memory writers
     drdds_bridge::ShmWriter lidar_shm(
