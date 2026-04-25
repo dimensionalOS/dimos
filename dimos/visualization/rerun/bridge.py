@@ -32,8 +32,8 @@ from typing import (
 )
 from urllib.parse import urlparse
 
-import rerun as rr
 from reactivex.disposable import Disposable
+import rerun as rr
 from rerun._baseclasses import Archetype
 import rerun.blueprint as rrb
 from rerun.blueprint import Blueprint
