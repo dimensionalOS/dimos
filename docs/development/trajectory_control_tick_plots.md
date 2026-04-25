@@ -1,0 +1,19 @@
+# Trajectory control tick plots
+
+How to turn trajectory control tick **JSONL** exports into figures (speed vs planar divergence and time-series sanity panels). Field definitions and units are in `dimos/navigation/trajectory_control_tick_jsonl.md`.
+
+From the repository root, using the bundled sample fixture:
+
+```bash
+make plot-trajectory-ticks
+```
+
+That invokes `scripts/plot_trajectory_control_ticks.py` with `uv run --with matplotlib` so matplotlib is not part of the default install.
+
+For your own export:
+
+```bash
+uv run --with matplotlib python scripts/plot_trajectory_control_ticks.py /path/to/ticks.jsonl -o plot.png
+```
+
+If you omit `-o`, the script writes `<input_stem>_921_plot.png` next to the JSONL file. The same flow works on macOS when `uv` is available.

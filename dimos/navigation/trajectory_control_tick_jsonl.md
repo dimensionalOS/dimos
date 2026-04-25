@@ -56,4 +56,12 @@ After `schema_version`, object keys follow the field order of `TrajectoryControl
 
 ## Plotting
 
-Use `planar_position_divergence_m` vs `commanded_planar_speed_m_s` (and time series on `ref_time_s` or `meas_time_s`) per issue 921 guidance; `pandas.read_json(..., lines=True)` accepts this format.
+Use `planar_position_divergence_m` vs `commanded_planar_speed_m_s` (and time series on `ref_time_s` or `meas_time_s`) per issue 921 guidance; `pandas.read_json(..., lines=True)` accepts this format if you use pandas.
+
+**Built-in recipe (P2-3):** from the repository root, `make plot-trajectory-ticks` writes `dimos/navigation/fixtures/trajectory_control_ticks_sample_921_plot.png` using `uv run --with matplotlib`. For your own export:
+
+```bash
+uv run --with matplotlib python scripts/plot_trajectory_control_ticks.py path/to/ticks.jsonl -o out.png
+```
+
+See [docs/development/trajectory_control_tick_plots.md](../../docs/development/trajectory_control_tick_plots.md) for commands and defaults.

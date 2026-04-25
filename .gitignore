@@ -77,3 +77,6 @@ CLAUDE.MD
 htmlcov/
 .coverage
 .coverage.*
+
+# Local trajectory tick plot outputs (scripts/plot_trajectory_control_ticks.py)
+*_921_plot.png
