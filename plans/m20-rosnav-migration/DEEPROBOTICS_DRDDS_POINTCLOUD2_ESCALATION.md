@@ -186,6 +186,11 @@ Raw FastDDS with built-in transports has the same failure:
 [fastdds_pc2_probe] done msgs=0
 ```
 
+For clarity: in this probe, `keep_builtin` only controls whether
+built-in transports are kept when a custom transport is added. With
+`custom_udp=false`, the participant is using FastDDS default built-in
+transports.
+
 Raw FastDDS works when built-in transports are disabled and explicit
 UDPv4 is configured:
 

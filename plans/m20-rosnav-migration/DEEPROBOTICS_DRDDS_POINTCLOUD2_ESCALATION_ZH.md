@@ -178,6 +178,10 @@ OTA 后使用 `libdrdds`：
 [fastdds_pc2_probe] done msgs=0
 ```
 
+说明：在这个 probe 中，`keep_builtin` 只控制添加 custom transport 时是否保留
+built-in transports。当 `custom_udp=false` 时，participant 使用的是 FastDDS
+默认 built-in transports。
+
 禁用 built-in transports 并显式配置 UDPv4 后，raw FastDDS 可以正常接收：
 
 ```text
