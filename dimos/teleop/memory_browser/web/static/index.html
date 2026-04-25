@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DimOS Memory Browser (VR)</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg: #06090f;
+            --panel: #0d141e;
+            --accent: #4cd9ff;
+            --accent-soft: rgba(76, 217, 255, 0.12);
+            --text: #d8e6f4;
+            --muted: #5a6478;
+            --grid: rgba(76, 217, 255, 0.05);
+        }
+        body {
+            font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+            background: var(--bg);
+            background-image:
+                linear-gradient(var(--grid) 1px, transparent 1px),
+                linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+            background-size: 32px 32px;
+            color: var(--text);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            letter-spacing: 0.03em;
+        }
+        #ui {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            text-align: center;
+        }
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 28px;
+            color: var(--text);
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            position: relative;
+        }
+        h1::before { content: '// '; color: var(--accent); }
+        h1 small {
+            display: block;
+            font-size: 13px;
+            color: var(--muted);
+            font-weight: 400;
+            margin-top: 8px;
+            letter-spacing: 0.18em;
+        }
+        #status {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--accent);
+            padding: 14px 22px;
+            background: var(--panel);
+            border: 1px solid var(--accent-soft);
+            border-left: 3px solid var(--accent);
+            border-radius: 0;
+            margin-bottom: 24px;
+            min-width: 360px;
+            text-transform: uppercase;
+            letter-spacing: 0.16em;
+        }
+        button {
+            font-family: inherit;
+            padding: 14px 42px;
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--bg);
+            background: var(--accent);
+            border: none;
+            border-radius: 0;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.22em;
+            transition: filter 0.15s, transform 0.05s;
+            clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+        }
+        button:hover { filter: brightness(1.15); }
+        button:active { transform: translateY(1px); }
+        button:disabled { background: #2a3140; color: var(--muted); cursor: not-allowed; }
+        button.secondary {
+            background: transparent;
+            color: var(--muted);
+            border: 1px solid var(--muted);
+            margin-top: 14px;
+        }
+        #canvas {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .hidden { display: none !important; }
+        #log {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            right: 16px;
+            max-height: 120px;
+            overflow-y: auto;
+            font-family: inherit;
+            font-size: 10px;
+            color: var(--muted);
+            opacity: 0.85;
+            border-left: 2px solid var(--accent-soft);
+            padding-left: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h1>DimOS Memory Browser
+            <small>QUEST 3 // WEBXR // GO2_BIGOFFICE</small>
+        </h1>
+        <div id="status">[ READY TO CONNECT ]</div>
+        <button id="connectBtn" onclick="window.app.connect()">Connect</button>
+        <button id="disconnectBtn" class="secondary hidden" onclick="window.app.disconnect()">Disconnect</button>
+    </div>
+    <canvas id="canvas"></canvas>
+    <pre id="log"></pre>
+    <script type="module" src="/static_mb/main.js"></script>
+</body>
+</html>
