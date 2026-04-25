@@ -2791,6 +2791,78 @@ found no remaining `m20_smartnav_native`, `fastlio2_native`,
 Base services were still active, and `drdds_recv` counters continued
 climbing past `lidar_front_msgs=2014` / `lidar_rear_msgs=2008`.
 
+### Root-cause comparison for Deep Robotics escalation (2026-04-25)
+
+The pre-OTA backup exists on the Mac at
+`/Users/afik_cohen/m20_backup_20260423-152443/`. That backup captured
+the rsdriver config and pre-OTA process/network/SHM state, but did
+not capture `/usr/local/lib/libdrdds.so*` or
+`/opt/drdds/dr_qos/drqos.xml`.
+
+What did compare exactly:
+
+- `rsdriver_config.yaml` is byte-for-byte identical between the
+  pre-OTA backup and current NOS after restoration.
+- Current `rslidar` still hardcodes the active topics:
+  `/LIDAR/POINTS`, `/LIDAR/POINTS2`, `/LIDAR/IMU201`,
+  `/LIDAR/IMU202`, `/LIDAR/STATUS`.
+- Current `rslidar` still has `eth0/eth1` in rodata for
+  `DrDDSManager::Init`.
+- Current `drqos.xml` matches the March-documented shape for PC2:
+  `sensor_msgs::msg::dds_::PointCloud2_` data writer/reader use
+  `RELIABLE` plus a 50 ms deadline.
+
+Current artifact fingerprints:
+
+```
+e476b1f6b39a372b5be9114341189fdc7f785ae16eada95a9299ae019ce72d8c  /usr/local/lib/libdrdds.so.1.1.7
+0c0dec4e719aab80709984947bc250abfd352bef8aa1d5009f085906f89e547b  /usr/local/lib/libfastrtps.so.2.14.2
+b36b17aa799b15f31dd60f2fb1862b0e01f360b6bee1d877b94bfe0e155f4f56  /usr/local/lib/libfastcdr.so.2.2.5
+cb2dc759da63b41bb614be9d33eabca6d5665e52cd996b53f1b036dc3fb00b4e  /opt/drdds/dr_qos/drqos.xml
+f036085a5ed60b1e89309fd1e54be1e985262a400f491f4a5a4040b4c78b589c  /opt/robot/share/node_driver/bin/rslidar
+```
+
+Fresh probe matrix against live `/LIDAR/POINTS`:
+
+| Probe | Transport/QoS | Result |
+| --- | --- | --- |
+| `drdds_probe --mode channel --use-shm 0` | libdrdds `DrDDSChannel`, prefix `rt` | `matched=2`, `msgs=0` for 20 s |
+| `drdds_probe --mode subscriber --use-shm 0` | libdrdds `DrDDSSubscriber`, prefix `rt` | `matched=2`, `msgs=0` for 15 s |
+| `drdds_probe --mode subscriber --use-shm 1` | libdrdds subscriber with SHM enabled | `matched=2`, `msgs=0` for 10 s |
+| `drdds_probe --mode subscriber --prefix __empty__` | libdrdds, no `rt` prefix | `matched=0`, `msgs=0` |
+| `fastdds_pc2_probe` | raw FastDDS, built-in transports | `matched=2`, `msgs=0` |
+| `fastdds_pc2_probe --custom-udp 1 --recv-buffer 8388608` | raw FastDDS, built-ins disabled, explicit UDP | `matched=2`, `msgs=70` in 10 s |
+| `fastdds_pc2_probe --custom-udp 1 --recv-buffer 268435456` | raw FastDDS, built-ins disabled, explicit UDP | `matched=2`, `msgs=130` in 15 s |
+| `fastdds_pc2_probe --custom-udp 1 --keep-builtin 1` | raw FastDDS, explicit UDP plus built-ins kept | `matched=2`, `msgs=0` |
+| `fastdds_pc2_probe --custom-udp 1 --reliable 1` | raw FastDDS, explicit UDP, RELIABLE reader | `matched=2`, `msgs=148` in 15 s |
+
+Interpretation:
+
+- This is not a topic-name issue: empty prefix does not match, while
+  `rt/LIDAR/POINTS` matches.
+- This is not a type-support issue: raw FastDDS decodes full
+  `PointCloud2` frames with the same DR IDL type.
+- This is not a RELIABLE-vs-BEST_EFFORT mismatch: raw explicit-UDP
+  works with both BEST_EFFORT and RELIABLE readers.
+- This is not primarily socket buffer size: explicit UDP works even
+  with the probe's 8 MiB receive buffer.
+- The failing variable is FastDDS built-in transports / local
+  DataSharing/SHM selection. Built-in transports produce endpoint
+  matches but no PC2 samples. Disabling built-ins and forcing an
+  explicit UDPv4 transport makes the same publisher deliver full
+  point clouds immediately.
+
+Best current root-cause statement:
+
+> After V1.1.8.5, Deep Robotics' `rsdriver`/`libdrdds` stack advertises
+> matching PointCloud2 endpoints, but the default FastDDS/libdrdds
+> receive path selects a local built-in/DataSharing/SHM transport that
+> never delivers large PC2 samples to a normal `DrDDSSubscriber` or
+> `DrDDSChannel`. Forcing a raw FastDDS subscriber onto explicit UDPv4
+> with built-in transports disabled receives the same PC2 stream at
+> 10 Hz. Deep Robotics should expose/fix the libdrdds transport selection
+> or document the required API for PointCloud2 consumers.
+
 ---
 
 ## Questions for Jeff (2026-04-23, in-person at Dimensional)
