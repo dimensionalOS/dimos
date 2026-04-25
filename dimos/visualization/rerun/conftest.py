@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
+
+import pytest
+import websockets.asyncio.client as ws_client
 
 
-def wait_for_server(port: int, timeout: float = 5.0) -> None:
+def _wait_for_server(port: int, timeout: float = 5.0) -> None:
     """Block until the WebSocket server on *port* accepts a connection."""
-    import websockets.asyncio.client as ws_client
 
     async def _probe() -> None:
         async with ws_client.connect(f"ws://127.0.0.1:{port}/ws"):
@@ -34,3 +37,9 @@ def wait_for_server(port: int, timeout: float = 5.0) -> None:
         except Exception:
             time.sleep(0.05)
     raise TimeoutError(f"Server on port {port} did not become ready within {timeout}s")
+
+
+@pytest.fixture()
+def wait_for_server() -> Callable[[int, float], None]:
+    """Fixture that returns a callable to wait for a WebSocket server."""
+    return _wait_for_server

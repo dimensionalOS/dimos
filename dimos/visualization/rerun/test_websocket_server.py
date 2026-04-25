@@ -25,7 +25,6 @@ from typing import Any
 import pytest
 import websockets.asyncio.client as ws_client
 
-from dimos.visualization.rerun.conftest import wait_for_server
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
 _TEST_PORT = 13031
@@ -100,7 +99,7 @@ class MockViewerPublisher:
 
 
 @pytest.fixture()
-def server() -> RerunWebSocketServer:
+def server(wait_for_server: Any) -> RerunWebSocketServer:
     module = RerunWebSocketServer(port=_TEST_PORT)
     module.start()
     wait_for_server(_TEST_PORT)
