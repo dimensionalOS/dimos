@@ -1,0 +1,22 @@
+# P6-2 / T-19: shared closed-loop scenario for controller swap regression tests.
+# Same numeric scenario must run with any TrajectoryController implementation.
+schema: trajectory_controller_swap_regression
+version: 1
+dt_s: 0.05
+t_end_s: 3.0
+plant:
+  class: integrated
+  x_m: 0.0
+  y_m: 0.35
+  yaw_rad: 0.0
+reference:
+  kind: line_constant_speed
+  v_m_s: 0.35
+limits:
+  max_planar_speed_m_s: 1.2
+  max_yaw_rate_rad_s: 1.5
+  max_planar_linear_accel_m_s2: 4.0
+  max_yaw_accel_rad_s2: 4.0
+holonomic_tracking_gains:
+  k_position_per_s: 2.2
+  k_yaw_per_s: 2.5

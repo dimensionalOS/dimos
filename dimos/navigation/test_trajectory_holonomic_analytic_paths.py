@@ -31,6 +31,7 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.trajectory_command_limits import HolonomicCommandLimits, clamp_holonomic_cmd_vel
+from dimos.navigation.trajectory_controller import TrajectoryController
 from dimos.navigation.trajectory_holonomic_plant import ActuatedHolonomicPlant, IntegratedHolonomicPlant
 from dimos.navigation.trajectory_holonomic_tracking_controller import HolonomicTrackingController
 from dimos.navigation.trajectory_metrics import planar_position_divergence, pose_errors_vs_reference
@@ -99,10 +100,11 @@ def _simulate_closed_loop(
     plant_step: Callable[[Twist, float], None],
     plant_sample: Callable[[float, Twist], TrajectoryMeasuredSample],
     plant_xy_yaw: Callable[[], tuple[float, float, float]],
-    ctrl: HolonomicTrackingController,
+    ctrl: TrajectoryController,
     limits: HolonomicCommandLimits,
     prev_cmd: Twist | None = None,
 ) -> _TrackStats:
+    ctrl.reset()
     n = int(math.ceil(t_end / dt))
     prev = Twist() if prev_cmd is None else prev_cmd
     max_div = 0.0
