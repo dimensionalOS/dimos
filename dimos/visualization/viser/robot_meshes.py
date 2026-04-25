@@ -51,9 +51,7 @@ def dimos_joint_to_mjcf(name: str) -> str:
 class GeomInstance:
     """A single visual mesh geom, parented to a body."""
 
-    body_id: int
     body_name: str
-    mesh_id: int
     vertices: np.ndarray  # (V, 3)
     faces: np.ndarray  # (F, 3)
     local_pos: np.ndarray  # (3,)
@@ -122,9 +120,7 @@ def load_robot_meshes(
         rgba = tuple(float(x) for x in model.geom_rgba[gid])
         geoms.append(
             GeomInstance(
-                body_id=body_id,
                 body_name=body_name,
-                mesh_id=mesh_id,
                 vertices=vertices,
                 faces=faces,
                 local_pos=np.array(model.geom_pos[gid], dtype=np.float32).copy(),

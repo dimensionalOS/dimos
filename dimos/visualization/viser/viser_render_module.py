@@ -35,7 +35,6 @@ import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs import PoseStamped
@@ -73,11 +72,9 @@ class ViserRenderModule(Module):
         alignment_yaml: str | FilePath | None = None,
         render_hz: float = 30.0,
         camera_spec: CameraSpec | None = None,
-        cfg: GlobalConfig = global_config,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self._global_config = cfg
         self._splat_path = FilePath(splat_path)
         self._mjcf_path = FilePath(mjcf_path)
         self._alignment_yaml = FilePath(alignment_yaml) if alignment_yaml else None

@@ -60,7 +60,6 @@ Environment:
 from __future__ import annotations
 
 import os
-from pathlib import Path as FilePath
 
 from dimos.control.components import (
     HardwareComponent,
@@ -74,7 +73,11 @@ from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.sensor_msgs import CameraInfo, Image, JointState
 from dimos.msgs.std_msgs.Bool import Bool as DimosBool
+from dimos.utils.data import get_data
+from dimos.utils.logging_config import setup_logger
 from dimos.visualization.viser import splat_camera, viser_render
+
+logger = setup_logger()
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
 _g1_joints = make_humanoid_joints("g1")
@@ -207,7 +210,7 @@ _g1_coordinator = (
                 type="groot_wbc",
                 joint_names=_g1_legs_waist,
                 priority=50,
-                model_path=os.getenv("GROOT_MODEL_DIR", "data/groot"),
+                model_path=os.getenv("GROOT_MODEL_DIR", str(get_data("groot"))),
                 hardware_id="g1",
                 auto_start=True,
                 auto_arm=_AUTO_ARM,
@@ -264,27 +267,28 @@ _g1_ws_vis = websocket_vis().transports(
     },
 )
 
-# Viser browser viewer: overlays the live robot (FK from joint_state +
-# odom) on a Gaussian splat of the workspace.  Sim-only — there is no
-# /odom on real hardware in this blueprint, and the splat is a static
-# capture, not the live world the robot is in.
+# Viser browser viewer + splat-rendered head camera.  Sim-only — there
+# is no /odom on real hardware in this blueprint, and the splat is a
+# static capture, not the live world the robot is in.
 #
-# The splat asset is bring-your-own (it isn't bundled in the repo
-# because PLY files are hundreds of MB).  Drop a ``.ply`` and an
-# optional ``.yaml`` alignment file at:
-#
-#   data/scenes/dimos_office.ply
-#   data/scenes/dimos_office.yaml   (optional; identity defaults if absent)
-#
-# Without the PLY the module is silently skipped and the rest of the
-# blueprint runs unchanged.  YAML schema: see SplatAlignment in
-# dimos/visualization/viser/splat.py.
+# Splat + alignment YAML are pulled via the standard Git-LFS data flow:
+# ``get_data("dimos_office")`` triggers a one-time pull of
+# ``data/.lfs/dimos_office.tar.gz`` and decompresses it to
+# ``data/dimos_office/``.  YAML schema: ``SplatAlignment`` in
+# ``dimos/visualization/viser/splat.py``.  If the pull fails (no
+# Git-LFS, offline, etc.) the viser modules are skipped and the rest
+# of the blueprint runs unchanged.
 _viser_modules: tuple = ()
 if global_config.simulation:
-    _splat_path = FilePath("data/scenes/dimos_office.ply")
-    _alignment_yaml = FilePath("data/scenes/dimos_office.yaml")
-    _mjcf_path = "data/mujoco_sim/g1_gear_wbc.xml"
-    if _splat_path.exists():
+    try:
+        _splat_dir = get_data("dimos_office")
+        _splat_path = _splat_dir / "dimos_office.ply"
+        _alignment_yaml = _splat_dir / "dimos_office.yaml"
+    except Exception as e:
+        logger.warning(f"Splat asset unavailable: {e}; viser viewer + splat camera disabled")
+        _splat_path = None
+    if _splat_path is not None and _splat_path.exists():
+        _mjcf_path = "data/mujoco_sim/g1_gear_wbc.xml"
         _g1_viser = viser_render(
             splat_path=str(_splat_path),
             mjcf_path=_mjcf_path,
