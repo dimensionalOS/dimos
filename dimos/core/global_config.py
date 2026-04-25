@@ -72,12 +72,13 @@ class GlobalConfig(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        validate_assignment=True,
     )
 
     def update(self, **kwargs: object) -> None:
         """Update config fields in place."""
         for key, value in kwargs.items():
-            if not hasattr(self, key):
+            if key not in type(self).model_fields:
                 raise AttributeError(f"GlobalConfig has no field '{key}'")
             setattr(self, key, value)
 

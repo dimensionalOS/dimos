@@ -269,6 +269,13 @@ def test_local_planner_control_rate_hz_validation() -> None:
         GlobalConfig(local_planner_control_rate_hz=300.0)
 
 
+def test_local_planner_control_rate_hz_update_validation() -> None:
+    g = GlobalConfig()
+    with pytest.raises(ValidationError):
+        g.update(local_planner_control_rate_hz=100.0)
+    assert g.local_planner_control_rate_hz == pytest.approx(10.0)
+
+
 def test_replay_flag_does_not_change_holonomic_path_controller() -> None:
     """``replay=True`` selects replay sensor backends; the path follower is independent."""
     g = GlobalConfig(
