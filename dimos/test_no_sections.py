@@ -52,8 +52,8 @@ IGNORED_DIRS = {
     ".tox",
     # third-party vendored code
     "gtsam",
-    # personal overlay repos excluded from the main project
-    ".ignore.enhance",
+    # hidden/personal directories
+    ".hidden",
 }
 
 # Lines that match section patterns but are actually programmatic / intentional.
