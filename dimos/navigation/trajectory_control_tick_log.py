@@ -22,6 +22,9 @@ optional wall or simulation timestamps. Integration code chooses a
 Optional environment flag ``DIMOS_TRAJECTORY_CONTROL_TICK_LOG`` (truthy:
 ``1``, ``true``, ``yes``, ``on``) signals that a runner should allocate a sink
 or forward ticks; it does not perform I/O by itself.
+
+JSONL export (stable field names) lives in ``dimos.navigation.trajectory_control_tick_export``
+and ``trajectory_control_tick_jsonl.md``.
 """
 
 from __future__ import annotations
