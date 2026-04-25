@@ -110,6 +110,22 @@ Replay <dimos.utils.testing.replay.TimedSensorReplay object at 0x7fdc24c708f0> l
        [ 2.325,  1.225,  0.775]], shape=(22730, 3))}}}
 ```
 
+### Trajectory replay loader (921)
+
+For holonomic trajectory calibration and regression, use
+``dimos.navigation.trajectory_replay_loader.open_trajectory_odom_replay``.
+
+- **Default CI and fast pytest** use ``source="fixture"``, which reads a tiny in-tree
+  pickle directory under ``dimos/navigation/fixtures/trajectory_odom_replay_mini/``
+  and does **not** call ``get_data`` or Git LFS.
+- **Optional LFS-backed coverage** lives in ``dimos/navigation/test_trajectory_replay_loader.py``
+  on the ``lfs_data`` pytest marker. Default ``pytest`` (see ``pyproject.toml`` ``addopts``)
+  excludes ``lfs_data``. Run it explicitly after resolving LFS, for example:
+  ``pytest dimos/navigation/test_trajectory_replay_loader.py -m lfs_data``.
+  The Linux ``ci.yml`` job uses the same default selection, so those tests are not
+  required for merge. macOS or local workflows that already pull LFS can include
+  ``-m lfs_data`` in their command when they want replay archive coverage.
+
 ### Loading Point Clouds
 
 ```python

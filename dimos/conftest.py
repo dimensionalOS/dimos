@@ -48,6 +48,10 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
     config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
+    config.addinivalue_line(
+        "markers",
+        "lfs_data: needs get_data and Git LFS for large archives; not in default pytest selection",
+    )
 
     # Propagate coverage collection to subprocesses.
     if os.environ.get("_DIMOS_COV"):
