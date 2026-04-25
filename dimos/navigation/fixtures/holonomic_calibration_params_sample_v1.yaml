@@ -1,0 +1,21 @@
+# Synthetic example for v1 holonomic plant calibration (schema validation only; not a recorded run)
+schema: holonomic_trajectory_calibration
+version: 1
+kind: plant
+generated_utc: "2026-04-25T00:00:00+00:00"
+scenario:
+  max_displacement_m: 1.0
+  step_displacement_m: 0.3
+  peak_body_speed_m_s: 0.4
+  dwell_s: 0.2
+  dt_s: 0.02
+  body_axis: x
+results:
+  outbound_step_count: 40
+  dwell_step_count: 10
+  return_step_count: 40
+  estimated_linear_lag_s: 0.12
+  return_plan_error_m: 0.001
+suggested_holonomic_gains:
+  k_position_per_s: 1.2
+  k_yaw_per_s: 0.9
