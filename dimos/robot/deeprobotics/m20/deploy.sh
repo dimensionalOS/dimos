@@ -15,6 +15,7 @@
 #   ./deploy.sh sync [--host <hostname>]                 # Sync dimos source to NOS
 #   ./deploy.sh install-binaries [--host <hostname>]     # Build + install drdds_recv from source on NOS
 #   ./deploy.sh restore-rsdriver-config [--host <hostname>]  # Restore our rsdriver config edits (post-OTA)
+#   ./deploy.sh validate [--host <hostname>]             # End-to-end healthcheck (services, msgs flowing, config)
 #   ./deploy.sh backup-customizations [--host <hostname>]    # Snapshot pre-OTA NOS state to ~/m20_backup_<ts>/
 #   ./deploy.sh start [--host <hostname>]                # Start smartnav on NOS
 #   ./deploy.sh stop [--host <hostname>]                 # Stop smartnav
@@ -221,11 +222,10 @@ Before=rsdriver.service yesense.service
 
 [Service]
 Type=simple
-# Wait for both physical interfaces to be UP before starting. At cold boot
-# network-online.target can fire before eth0/eth1 have IPs; FastDDS would
-# then bind only to lo, breaking discovery for cross-interface peers.
-# Bounded by 30s in case an interface is genuinely missing.
-ExecStartPre=/bin/sh -c 't=0; until ip -br addr show eth0 2>/dev/null | grep -q UP && ip -br addr show eth1 2>/dev/null | grep -q UP; do t=$((t+1)); [ $t -ge 30 ] && exit 0; sleep 1; done'
+# raw-FastDDS receive uses INADDR_ANY (0.0.0.0:7400) and re-enumerates
+# interfaces dynamically, so we don't need an interface-up gate before
+# starting. Verified at cold boot 2026-04-26: all 5 channels matched and
+# flowing within 60s of boot completion with no manual intervention.
 ExecStart=/opt/drdds_bridge/lib/drdds_bridge/drdds_recv
 Restart=on-failure
 RestartSec=3
@@ -418,6 +418,24 @@ PROVISION_EOF
             echo "ERROR: source not on NOS at ${SRC_DIR}. Run \`$0 sync\` first." >&2
             exit 1
         fi
+        # Preflight: verify build deps. cmake + FastDDS headers ship with
+        # the DR base image, so missing them after OTA is a real problem
+        # worth surfacing before we hit a noisy cmake error.
+        echo "  preflight: checking build deps..."
+        if ! remote_ssh "command -v cmake >/dev/null 2>&1"; then
+            echo "ERROR: cmake not on PATH on NOS. Try \`sudo apt install cmake\`." >&2
+            exit 1
+        fi
+        if ! remote_ssh "test -d /usr/local/include/fastdds/dds"; then
+            echo "ERROR: FastDDS dev headers missing at /usr/local/include/fastdds/dds." >&2
+            echo "       This ships with the DR base system; OTA may have removed it." >&2
+            exit 1
+        fi
+        if ! remote_ssh "test -d /usr/local/include/drdds"; then
+            echo "ERROR: drdds dev headers missing at /usr/local/include/drdds." >&2
+            exit 1
+        fi
+        echo "    cmake + FastDDS + drdds headers present"
         # Build under a fresh build dir owned by the user. CMakeLists is at
         # ../, so we configure once and rebuild as needed. We build:
         #   - drdds_recv (the runtime daemon, installed to /opt)
@@ -466,6 +484,24 @@ PROVISION_EOF
         remote_sudo "sed -i 's/^\\(\\s*send_separately:\\s*\\)false/\\1true/' ${CONFIG_PATH}"
         echo "  flipping ts_first_point to false (both lidars)..."
         remote_sudo "sed -i 's/^\\(\\s*ts_first_point:\\s*\\)true/\\1false/g' ${CONFIG_PATH}"
+        # Verification — fail loudly if the regex didn't match (e.g. OTA
+        # changed yaml indentation or comment style). Without this we'd
+        # ship dogs with send_separately:false and not know.
+        echo "  verifying expected keys..."
+        sep_ok=$(remote_ssh "grep -cE '^\\s*send_separately:\\s*true' ${CONFIG_PATH}")
+        tfp_ok=$(remote_ssh "grep -cE '^\\s*ts_first_point:\\s*false' ${CONFIG_PATH}")
+        if [ "${sep_ok:-0}" -lt 1 ]; then
+            echo "ERROR: send_separately:true not found after sed (got count=${sep_ok})." >&2
+            echo "       Restore from .pre-restore and inspect yaml format manually:" >&2
+            echo "       ssh ... 'cp ${CONFIG_PATH}.pre-restore ${CONFIG_PATH}'" >&2
+            exit 1
+        fi
+        if [ "${tfp_ok:-0}" -lt 2 ]; then
+            echo "ERROR: ts_first_point:false expected on 2 lidars (got count=${tfp_ok})." >&2
+            echo "       Restore from .pre-restore and inspect yaml format manually." >&2
+            exit 1
+        fi
+        echo "    send_separately:true (×${sep_ok}), ts_first_point:false (×${tfp_ok})"
         echo "  diff vs .pre-restore:"
         remote_ssh "diff ${CONFIG_PATH}.pre-restore ${CONFIG_PATH} 2>&1 | head -20" || true
         echo "  restarting rsdriver..."
@@ -490,8 +526,90 @@ PROVISION_EOF
         "$0" restore-rsdriver-config ${HOST_ARGS}
         echo ""
         echo "=== Bootstrap complete ==="
-        echo "Verify with:  $0 status ${HOST_ARGS}"
+        echo "Verify with:  $0 validate ${HOST_ARGS}"
         echo "Then:         $0 start ${HOST_ARGS}"
+        ;;
+
+    validate)
+        # End-to-end healthcheck. Run after bootstrap (or any time you want
+        # to confirm a dog is in a good state). Exits 0 on PASS, 1 on FAIL,
+        # so it's safe to chain in CI / loops.
+        echo "=== Validating M20 nav stack ==="
+        rc=0
+        # 1. SSH reachable
+        if ! remote_ssh 'true' >/dev/null 2>&1; then
+            echo "  SSH:                       FAIL (unreachable)" >&2
+            exit 1
+        fi
+        echo "  SSH:                       OK"
+        # 2. Services active
+        svc=$(remote_ssh 'systemctl is-active drdds-recv rsdriver yesense m20-nav-net 2>&1' | tr '\n' '|')
+        if echo "$svc" | grep -qE 'inactive|failed|activating'; then
+            echo "  services:                  FAIL ($svc)" >&2
+            rc=1
+        else
+            echo "  services (4 active):       OK ($svc)"
+        fi
+        # 3. drdds_recv process alive
+        if ! remote_ssh 'pgrep -f /opt/drdds_bridge/lib/drdds_bridge/drdds_recv >/dev/null'; then
+            echo "  drdds_recv process:        FAIL (not running)" >&2
+            rc=1
+        else
+            echo "  drdds_recv process:        OK"
+        fi
+        # 4. All 5 channels matched > 0 and msgs incrementing across a 5s window.
+        # The log alternates 'status:' (lidar) and 'imu_status:' (imu) lines,
+        # so we tail the latest of each separately rather than tail -2 which
+        # could miss one.
+        snap1_lidar=$(remote_ssh 'strings /var/log/drdds_recv.log | grep "drdds_recv\] status:" | tail -1')
+        snap1_imu=$(remote_ssh 'strings /var/log/drdds_recv.log | grep "drdds_recv\] imu_status:" | tail -1')
+        sleep 5
+        snap2_lidar=$(remote_ssh 'strings /var/log/drdds_recv.log | grep "drdds_recv\] status:" | tail -1')
+        snap2_imu=$(remote_ssh 'strings /var/log/drdds_recv.log | grep "drdds_recv\] imu_status:" | tail -1')
+        check_chan() {
+            # $1 = label, $2 = matched key, $3 = msgs key, $4 = snap1, $5 = snap2
+            m=$(echo "$5" | grep -oE "$2=[0-9]+" | head -1 | cut -d= -f2)
+            n1=$(echo "$4" | grep -oE "$3=[0-9]+" | head -1 | cut -d= -f2)
+            n2=$(echo "$5" | grep -oE "$3=[0-9]+" | head -1 | cut -d= -f2)
+            : "${m:=0}"; : "${n1:=0}"; : "${n2:=0}"
+            d=$((n2 - n1))
+            if [ "$m" -lt 1 ]; then
+                printf "  %-26s FAIL (matched=%s)\n" "$1:" "$m" >&2
+                return 1
+            fi
+            if [ "$d" -le 0 ]; then
+                printf "  %-26s FAIL (msgs %s→%s, delta=%s in 5s)\n" "$1:" "$n1" "$n2" "$d" >&2
+                return 1
+            fi
+            printf "  %-26s OK (matched=%s, +%s msgs/5s)\n" "$1:" "$m" "$d"
+        }
+        check_chan "lidar_front"    lidar_front_matched    lidar_front_msgs    "$snap1_lidar" "$snap2_lidar" || rc=1
+        check_chan "lidar_rear"     lidar_rear_matched     lidar_rear_msgs     "$snap1_lidar" "$snap2_lidar" || rc=1
+        check_chan "imu_yesense"    imu_yesense_matched    imu_yesense_msgs    "$snap1_imu"   "$snap2_imu"   || rc=1
+        check_chan "imu_airy_front" imu_airy_front_matched imu_airy_front_msgs "$snap1_imu"   "$snap2_imu"   || rc=1
+        check_chan "imu_airy_rear"  imu_airy_rear_matched  imu_airy_rear_msgs  "$snap1_imu"   "$snap2_imu"   || rc=1
+        # 5. rsdriver config has our edits
+        sep_ok=$(remote_ssh "grep -cE '^\\s*send_separately:\\s*true' /opt/robot/share/node_driver/config/config.yaml")
+        tfp_ok=$(remote_ssh "grep -cE '^\\s*ts_first_point:\\s*false' /opt/robot/share/node_driver/config/config.yaml")
+        if [ "${sep_ok:-0}" -lt 1 ]; then
+            echo "  rsdriver send_separately:  FAIL (expected :true, found ${sep_ok})" >&2
+            rc=1
+        else
+            echo "  rsdriver send_separately:  OK (true)"
+        fi
+        if [ "${tfp_ok:-0}" -lt 2 ]; then
+            echo "  rsdriver ts_first_point:   FAIL (expected :false ×2, found ${tfp_ok})" >&2
+            rc=1
+        else
+            echo "  rsdriver ts_first_point:   OK (false ×${tfp_ok})"
+        fi
+        echo ""
+        if [ $rc -eq 0 ]; then
+            echo "=== VALIDATE PASS ==="
+        else
+            echo "=== VALIDATE FAIL — see lines above ==="
+        fi
+        exit $rc
         ;;
 
     backup-customizations)
@@ -634,6 +752,7 @@ PROVISION_EOF
         echo "  sync                     - rsync dimos source to NOS + fix nix symlinks"
         echo "  install-binaries         - build drdds_recv from source on NOS, install to /opt"
         echo "  restore-rsdriver-config  - re-apply send_separately:true + ts_first_point:false"
+        echo "  validate                 - end-to-end healthcheck (exits 0 PASS / 1 FAIL)"
         echo "  backup-customizations    - snapshot NOS state to ~/m20_backup_<ts>/ (run pre-OTA)"
         echo ""
         echo "Runtime commands:"
