@@ -22,12 +22,16 @@ Runs the ControlCoordinator at 500 Hz with two tasks:
     them at a configured relaxed pose.  No timeout — the task holds
     until an external caller sends new arm targets.
 
-Velocity commands come in over LCM on ``/g1/cmd_vel`` as a Twist.  The
-coordinator's ``twist_command`` dispatcher routes them into the task.
+Velocity commands come from the dashboard's KeyboardControlPanel
+(http://localhost:7779/, WASD captured in the browser DOM) and are
+routed through ``WebsocketVisModule`` → LCM ``/g1/cmd_vel`` →
+coordinator ``twist_command`` → ``GrootWBCTask.set_velocity_command``.
 
 Architecture:
-    Twist/cmd_vel ──▶ coordinator twist_command ──▶ GrootWBCTask
-                                                   │
+    dashboard WASD ──▶ WebsocketVisModule ──▶ LCM /g1/cmd_vel
+                                                       │
+                              coordinator twist_command ──▶ GrootWBCTask
+                                                       │
     ControlCoordinator ──joint_state──▶ LCM /coordinator/joint_state
                        ◀─joint_command── LCM /g1/joint_command
                               │
@@ -38,14 +42,17 @@ Architecture:
                       real hardware   → UnitreeG1LowLevelAdapter (DDS)
 
 Usage:
-    dimos --simulation run unitree-g1-groot-wbc          # MuJoCo subprocess, viewer pops
-    ROBOT_INTERFACE=enp86s0 dimos run unitree-g1-groot-wbc   # real robot
+    dimos --simulation run unitree-g1-groot-wbc          # MuJoCo viewer, browser opens auto
+    ROBOT_INTERFACE=en7 dimos run unitree-g1-groot-wbc   # real robot (set CYCLONEDDS_HOME first)
 
 Environment:
     ROBOT_INTERFACE   DDS network interface for real robot (default "enp86s0").
                       Ignored under --simulation.
     DIMOS_DDS_DOMAIN  DDS domain id for real robot (default 0). Ignored
                       under --simulation.
+    CYCLONEDDS_HOME   Required at runtime on real hw — must point at the
+                      cyclonedds C install (e.g. ~/cyclonedds/install).
+                      Ignored under --simulation.
     GROOT_MODEL_DIR   Directory containing balance.onnx + walk.onnx
                       (default "data/groot").
 """
@@ -256,4 +263,4 @@ _g1_ws_vis = websocket_vis().transports(
 
 unitree_g1_groot_wbc = autoconnect(_g1_coordinator, _g1_ws_vis)
 
-__all__ = ["_ARM_DEFAULT_POSE", "unitree_g1_groot_wbc"]
+__all__ = ["unitree_g1_groot_wbc"]

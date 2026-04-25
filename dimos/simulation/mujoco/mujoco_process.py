@@ -137,7 +137,9 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader, control_mode: str = "h
         case "unitree_go1":
             z = 0.3
         case "unitree_g1":
-            z = 0.8
+            # Match g1_gear_wbc.xml's pelvis pos.  Was 0.8 — overrode the
+            # MJCF and dropped the robot 7 mm at the first mj_step.
+            z = 0.793
         case _:
             z = 0
 
@@ -234,7 +236,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader, control_mode: str = "h
             # Using shm-sourced kp/kd (not MJCF-baked gains) is the whole
             # point: the GR00T policy was trained against a specific
             # per-joint PD, and any deviation destabilises it.
-            if skip_controller and act_qposadr is not None and act_dofadr is not None:
+            if skip_controller:
+                assert act_qposadr is not None and act_dofadr is not None
                 cmd = shm.read_joint_cmd(num_motors)
                 if cmd is not None:
                     controller_ready = True
@@ -274,7 +277,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader, control_mode: str = "h
             shm.write_odom(pos, quat, time.time())
 
             # Low-level passthrough: export per-joint state + IMU to shm.
-            if skip_controller and act_qposadr is not None and act_dofadr is not None:
+            if skip_controller:
+                assert act_qposadr is not None and act_dofadr is not None
                 q_out = data.qpos[act_qposadr].astype(np.float32)
                 dq_out = data.qvel[act_dofadr].astype(np.float32)
                 tau_out = data.actuator_force[:num_motors].astype(np.float32)

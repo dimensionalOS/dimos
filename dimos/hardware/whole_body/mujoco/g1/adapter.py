@@ -29,9 +29,7 @@ auto-spawned under ``mjpython`` on macOS by ``MujocoConnection``
 
 from __future__ import annotations
 
-import logging
 import math
-import threading
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -45,12 +43,13 @@ from dimos.hardware.whole_body.spec import (
     MotorState,
 )
 from dimos.robot.unitree.mujoco_connection import MujocoConnection
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.core.global_config import GlobalConfig
     from dimos.hardware.whole_body.registry import WholeBodyAdapterRegistry
 
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 _NUM_MOTORS = 29
 
@@ -198,11 +197,6 @@ class SimMujocoG1WholeBodyAdapter:
             kd[i] = cmd.kd
         self._connection.write_motor_commands(q, kp, kd)
         return True
-
-
-# Module-global lock to guard concurrent shm writes if the same adapter
-# instance is ever driven from multiple threads (coordinator tick + RPC).
-_write_lock = threading.Lock()
 
 
 def register(registry: WholeBodyAdapterRegistry) -> None:
