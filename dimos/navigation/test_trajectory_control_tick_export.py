@@ -25,6 +25,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.navigation.trajectory_control_tick_export import (
     TRAJECTORY_CONTROL_TICK_JSONL_SCHEMA_VERSION,
+    JsonlTrajectoryControlTickSink,
     iter_trajectory_control_tick_jsonl,
     trajectory_control_tick_to_jsonl_dict,
     trajectory_control_ticks_to_jsonl_lines,
@@ -111,6 +112,15 @@ def test_write_trajectory_control_ticks_jsonl(tmp_path: Path) -> None:
     row = json.loads(raw.strip())
     assert row["schema_version"] == 1
     assert row["dt_s"] == pytest.approx(0.05)
+
+
+def test_jsonl_sink_appends_and_flushes(tmp_path: Path) -> None:
+    path = tmp_path / "live" / "ticks.jsonl"
+    sink = JsonlTrajectoryControlTickSink(path)
+    sink.append(_tick())
+    assert path.is_file()
+    assert len(list(iter_trajectory_control_tick_jsonl(path))) == 1
+    sink.close()
 
 
 def test_sample_fixture_matches_schema_and_loads() -> None:

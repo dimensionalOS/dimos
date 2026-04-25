@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import os
 from threading import Event, RLock, Thread
 import time
@@ -23,8 +24,11 @@ from reactivex import Subject
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.base import NavigationState
@@ -35,6 +39,12 @@ from dimos.navigation.replanning_a_star.controllers import (
 from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
 from dimos.navigation.replanning_a_star.path_clearance import PathClearance
 from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
+from dimos.navigation.trajectory_control_tick_export import JsonlTrajectoryControlTickSink
+from dimos.navigation.trajectory_control_tick_log import (
+    TrajectoryControlTickSink,
+    append_trajectory_control_tick,
+)
+from dimos.navigation.trajectory_types import TrajectoryMeasuredSample, TrajectoryReferenceSample
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.trigonometry import angle_diff
 
@@ -66,6 +76,7 @@ class LocalPlanner(Resource):
     _navigation_map: NavigationMap
     _goal_tolerance: float
     _controller: Controller
+    _trajectory_tick_sink: TrajectoryControlTickSink | None
 
     _speed: float = 0.55
     _control_frequency: float
@@ -89,10 +100,18 @@ class LocalPlanner(Resource):
         self._navigation_map = navigation_map
         self._goal_tolerance = goal_tolerance
         self._control_frequency = float(global_config.local_planner_control_rate_hz)
+        self._trajectory_tick_sink = self._make_trajectory_tick_sink(global_config)
 
-        speed = self._speed
+        speed = (
+            float(global_config.planner_robot_speed)
+            if global_config.planner_robot_speed is not None
+            else self._speed
+        )
+        if not math.isfinite(speed) or speed <= 0.0:
+            raise ValueError(f"planner speed must be a positive finite float, got {speed!r}")
         if global_config.nerf_speed < 1.0:
             speed *= global_config.nerf_speed
+        self._speed = speed
 
         self._controller = make_local_path_controller(
             self._global_config,
@@ -131,6 +150,14 @@ class LocalPlanner(Resource):
             self._thread = None
 
         self._reset_state()
+
+    def _make_trajectory_tick_sink(
+        self, global_config: GlobalConfig
+    ) -> TrajectoryControlTickSink | None:
+        path = global_config.local_planner_trajectory_tick_log_path
+        if path is None or str(path).strip() == "":
+            return None
+        return JsonlTrajectoryControlTickSink(path)
 
     def get_state(self) -> NavigationState:
         with self._lock:
@@ -252,7 +279,14 @@ class LocalPlanner(Resource):
                 self._change_state("path_following")
             return self._compute_path_following()
 
-        return self._controller.rotate(yaw_error, current_odom)
+        cmd = self._controller.rotate(yaw_error, current_odom)
+        ref_pose = _pose_from_xy_yaw(
+            float(current_odom.position.x),
+            float(current_odom.position.y),
+            float(first_yaw),
+        )
+        self._append_trajectory_control_tick(ref_pose, Twist(), current_odom, cmd)
+        return cmd
 
     def get_distance_to_path(self) -> float | None:
         with self._lock:
@@ -289,7 +323,20 @@ class LocalPlanner(Resource):
 
         lookahead_point = path_distancer.find_lookahead_point(closest_index)
 
-        return self._controller.advance(lookahead_point, current_odom)
+        cmd = self._controller.advance(lookahead_point, current_odom)
+        direction = np.asarray(lookahead_point, dtype=np.float64) - current_pos
+        ref_yaw = float(np.arctan2(direction[1], direction[0]))
+        ref_pose = _pose_from_xy_yaw(
+            float(lookahead_point[0]),
+            float(lookahead_point[1]),
+            ref_yaw,
+        )
+        ref_twist = Twist(
+            linear=Vector3(self._speed, 0.0, 0.0),
+            angular=Vector3(0.0, 0.0, 0.0),
+        )
+        self._append_trajectory_control_tick(ref_pose, ref_twist, current_odom, cmd)
+        return cmd
 
     def _compute_final_rotation(self) -> Twist:
         with self._lock:
@@ -309,7 +356,14 @@ class LocalPlanner(Resource):
                 self._change_state("arrived")
             return Twist()
 
-        return self._controller.rotate(yaw_error, current_odom)
+        cmd = self._controller.rotate(yaw_error, current_odom)
+        ref_pose = _pose_from_xy_yaw(
+            float(current_odom.position.x),
+            float(current_odom.position.y),
+            float(goal_yaw),
+        )
+        self._append_trajectory_control_tick(ref_pose, Twist(), current_odom, cmd)
+        return cmd
 
     def _reset_state(self) -> None:
         with self._lock:
@@ -319,6 +373,35 @@ class LocalPlanner(Resource):
             self._path_distancer = None
             self._pose_index = 0
             self._controller.reset_errors()
+
+    def _append_trajectory_control_tick(
+        self,
+        reference_pose: Pose,
+        reference_twist: Twist,
+        current_odom: PoseStamped,
+        command: Twist,
+    ) -> None:
+        sink = self._trajectory_tick_sink
+        if sink is None:
+            return
+        measurement = TrajectoryMeasuredSample(
+            time_s=float(current_odom.ts),
+            pose_plan=Pose(current_odom.position, current_odom.orientation),
+            twist_body=Twist(),
+        )
+        reference = TrajectoryReferenceSample(
+            time_s=float(current_odom.ts),
+            pose_plan=reference_pose,
+            twist_body=reference_twist,
+        )
+        append_trajectory_control_tick(
+            sink,
+            reference,
+            measurement,
+            command,
+            1.0 / self._control_frequency,
+            wall_time_s=time.time(),
+        )
 
     def _send_navigation_costmap(self, path: Path, path_clearance: PathClearance) -> None:
         if "DEBUG_NAVIGATION" not in os.environ:
@@ -331,3 +414,10 @@ class LocalPlanner(Resource):
         self._navigation_costmap_last = now
 
         self.navigation_costmap.on_next(self._navigation_map.gradient_costmap)
+
+
+def _pose_from_xy_yaw(x: float, y: float, yaw: float) -> Pose:
+    return Pose(
+        position=Vector3(x, y, 0.0),
+        orientation=Quaternion.from_euler(Vector3(0.0, 0.0, float(yaw))),
+    )

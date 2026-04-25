@@ -57,6 +57,8 @@ class GlobalConfig(BaseSettings):
     local_planner_holonomic_ky: float = 1.5
     # Issue 921 P4-1: one knob for LocalPlanner sleep pacing and controller dt (e.g. PD).
     local_planner_control_rate_hz: float = Field(default=10.0, ge=0.1, le=200.0)
+    # Optional issue 921 JSONL telemetry export. Set to a file path for live speed-vs-divergence logs.
+    local_planner_trajectory_tick_log_path: str | None = None
     planner_robot_speed: float | None = None
     mcp_port: int = 9990
     dtop: bool = False

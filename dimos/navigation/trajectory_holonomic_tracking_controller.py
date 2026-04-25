@@ -117,8 +117,13 @@ class HolonomicTrackingController:
         ey_b = -s * dx_w + c * dy_w
 
         ref = reference.twist_body
-        vx = float(ref.linear.x) + self._kp * ex_b
-        vy = float(ref.linear.y) + self._kp * ey_b
+        yaw_ref_to_meas = yaw_r - yaw_m
+        c_rm = math.cos(yaw_ref_to_meas)
+        s_rm = math.sin(yaw_ref_to_meas)
+        vx_ff = c_rm * float(ref.linear.x) - s_rm * float(ref.linear.y)
+        vy_ff = s_rm * float(ref.linear.x) + c_rm * float(ref.linear.y)
+        vx = vx_ff + self._kp * ex_b
+        vy = vy_ff + self._kp * ey_b
         e_psi = angle_diff(yaw_m, yaw_r)
         wz = float(ref.angular.z) - self._ky * e_psi
 

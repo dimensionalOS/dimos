@@ -24,7 +24,10 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.navigation.trajectory_command_limits import HolonomicCommandLimits
+from dimos.navigation.trajectory_command_limits import (
+    HolonomicCommandLimits,
+    clamp_holonomic_cmd_vel,
+)
 from dimos.navigation.trajectory_holonomic_tracking_controller import HolonomicTrackingController
 from dimos.navigation.trajectory_types import TrajectoryMeasuredSample, TrajectoryReferenceSample
 from dimos.utils.trigonometry import angle_diff
@@ -201,13 +204,14 @@ class HolonomicPathController:
             k_position_per_s=k_position_per_s,
             k_yaw_per_s=k_yaw_per_s,
         )
-        limits = HolonomicCommandLimits(
+        self._limits = HolonomicCommandLimits(
             max_planar_speed_m_s=self._speed,
             max_yaw_rate_rad_s=self._speed,
             max_planar_linear_accel_m_s2=5.0,
             max_yaw_accel_rad_s2=5.0,
         )
-        self._inner.configure(limits)
+        self._inner.configure(self._limits)
+        self._previous_cmd = Twist()
 
     def advance(self, lookahead_point: NDArray[np.float64], current_odom: PoseStamped) -> Twist:
         current_pos = np.array(
@@ -230,7 +234,7 @@ class HolonomicPathController:
         )
         ref = TrajectoryReferenceSample(0.0, ref_pose, ref_ff)
         meas = TrajectoryMeasuredSample(0.0, _pose_from_pose_stamped(current_odom), Twist())
-        return self._inner.control(ref, meas)
+        return self._limit_output(self._inner.control(ref, meas))
 
     def rotate(
         self, yaw_error: float, current_odom: PoseStamped | None = None
@@ -245,7 +249,7 @@ class HolonomicPathController:
                 linear=Vector3(0.0, 0.0, 0.0),
                 angular=Vector3(0.0, 0.0, wz),
             )
-            return self._apply_sim_angular(t)
+            return self._limit_output(self._apply_sim_angular(t))
 
         robot_yaw = float(current_odom.orientation.euler[2])
         target_yaw = float(np.arctan2(np.sin(robot_yaw + yaw_error), np.cos(robot_yaw + yaw_error)))
@@ -257,10 +261,11 @@ class HolonomicPathController:
         ref = TrajectoryReferenceSample(0.0, p, Twist())
         meas = TrajectoryMeasuredSample(0.0, _pose_from_pose_stamped(current_odom), Twist())
         out = self._inner.control(ref, meas)
-        return self._apply_sim_angular(out)
+        return self._limit_output(self._apply_sim_angular(out))
 
     def reset_errors(self) -> None:
         self._inner.reset()
+        self._previous_cmd = Twist()
 
     def reset_yaw_error(self, value: float) -> None:
         del value
@@ -275,6 +280,16 @@ class HolonomicPathController:
             ),
             angular=Vector3(0.0, 0.0, wz),
         )
+
+    def _limit_output(self, raw: Twist) -> Twist:
+        out = clamp_holonomic_cmd_vel(
+            self._previous_cmd,
+            raw,
+            self._limits,
+            1.0 / self._control_frequency,
+        )
+        self._previous_cmd = Twist(out)
+        return out
 
 
 def make_local_path_controller(

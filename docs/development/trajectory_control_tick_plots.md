@@ -2,6 +2,8 @@
 
 How to turn trajectory control tick **JSONL** exports into figures (speed vs planar divergence and time-series sanity panels). Field definitions and units are in `dimos/navigation/trajectory_control_tick_jsonl.md`.
 
+For live `LocalPlanner` runs, set `GlobalConfig.local_planner_trajectory_tick_log_path` to the JSONL file you want to capture, then run the plot command below on that file.
+
 From the repository root, using the bundled sample fixture:
 
 ```bash

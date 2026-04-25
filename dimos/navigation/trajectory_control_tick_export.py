@@ -20,9 +20,9 @@ documented in ``trajectory_control_tick_jsonl.md`` in this package.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Iterator
 from dataclasses import asdict
+import json
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +68,35 @@ def write_trajectory_control_ticks_jsonl(
             f.write("\n")
 
 
+class JsonlTrajectoryControlTickSink:
+    """Append control ticks directly to a JSONL file during live runs."""
+
+    def __init__(self, path: Path | str) -> None:
+        self.path = Path(path).expanduser()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._file = self.path.open("a", encoding="utf-8")
+
+    def append(self, tick: TrajectoryControlTick) -> None:
+        self._file.write(
+            json.dumps(
+                trajectory_control_tick_to_jsonl_dict(tick),
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        )
+        self._file.write("\n")
+        self._file.flush()
+
+    def close(self) -> None:
+        self._file.close()
+
+    def __enter__(self) -> JsonlTrajectoryControlTickSink:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
 def iter_trajectory_control_tick_jsonl(path: Path | str) -> Iterator[dict[str, Any]]:
     """Yield one dict per non-empty line (for analysis, tests, and replays)."""
     with Path(path).open(encoding="utf-8") as f:
@@ -80,6 +109,7 @@ def iter_trajectory_control_tick_jsonl(path: Path | str) -> Iterator[dict[str, A
 
 __all__ = [
     "TRAJECTORY_CONTROL_TICK_JSONL_SCHEMA_VERSION",
+    "JsonlTrajectoryControlTickSink",
     "iter_trajectory_control_tick_jsonl",
     "trajectory_control_tick_to_jsonl_dict",
     "trajectory_control_ticks_to_jsonl_lines",

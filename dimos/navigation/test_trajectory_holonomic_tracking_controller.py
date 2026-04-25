@@ -23,7 +23,10 @@ import pytest
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.navigation.trajectory_command_limits import HolonomicCommandLimits, clamp_holonomic_cmd_vel
+from dimos.navigation.trajectory_command_limits import (
+    HolonomicCommandLimits,
+    clamp_holonomic_cmd_vel,
+)
 from dimos.navigation.trajectory_holonomic_plant import IntegratedHolonomicPlant
 from dimos.navigation.trajectory_holonomic_tracking_controller import HolonomicTrackingController
 from dimos.navigation.trajectory_metrics import planar_position_divergence, pose_errors_vs_reference
@@ -59,6 +62,16 @@ def test_tracking_feedforward_when_aligned() -> None:
     assert out.linear.x == pytest.approx(0.4)
     assert out.linear.y == pytest.approx(-0.1)
     assert out.angular.z == pytest.approx(0.05)
+
+
+def test_tracking_rotates_reference_feedforward_into_measured_body_frame() -> None:
+    ctrl = HolonomicTrackingController(k_position_per_s=0.0, k_yaw_per_s=0.0)
+    ref_p = _pose_xy_yaw(0.0, 1.0, math.pi / 2.0)
+    meas_p = _pose_xy_yaw(0.0, 0.0, 0.0)
+    ref_twist = Twist(linear=Vector3(0.5, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.0))
+    out = ctrl.control(_ref(0.0, ref_p, ref_twist), _meas(0.0, meas_p, Twist()))
+    assert out.linear.x == pytest.approx(0.0, abs=1e-12)
+    assert out.linear.y == pytest.approx(0.5)
 
 
 def test_tracking_pushes_toward_reference_in_body_frame() -> None:
@@ -116,7 +129,7 @@ def test_closed_loop_straight_line_cross_track_converges() -> None:
     v_line = 0.35
     prev_cmd = Twist()
     t_end = 6.0
-    n = int(math.ceil(t_end / dt))
+    n = math.ceil(t_end / dt)
     for i in range(n):
         t = i * dt
         ref_pose = _pose_xy_yaw(v_line * t, 0.0, 0.0)

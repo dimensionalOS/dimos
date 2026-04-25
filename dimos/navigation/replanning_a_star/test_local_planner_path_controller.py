@@ -17,14 +17,16 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path as FsPath
 
 import numpy as np
-import pytest
 from pydantic import ValidationError
+import pytest
 
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.replanning_a_star.controllers import (
     HolonomicPathController,
     PController,
@@ -32,6 +34,8 @@ from dimos.navigation.replanning_a_star.controllers import (
 )
 from dimos.navigation.replanning_a_star.local_planner import LocalPlanner
 from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
+from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
+from dimos.navigation.trajectory_control_tick_export import iter_trajectory_control_tick_jsonl
 
 
 def test_make_local_path_controller_default_is_differential() -> None:
@@ -78,11 +82,69 @@ def test_holonomic_path_controller_rotate_uses_pose_when_passed() -> None:
     assert math.hypot(float(t.linear.x), float(t.linear.y)) < 1.0
 
 
+def test_holonomic_path_controller_slews_first_command_from_rest() -> None:
+    g = GlobalConfig(local_planner_path_controller="holonomic")
+    ctrl = HolonomicPathController(
+        g,
+        speed=0.55,
+        control_frequency=10.0,
+        k_position_per_s=2.0,
+        k_yaw_per_s=1.5,
+    )
+    odom = PoseStamped(
+        frame_id="map", position=[0.0, 0.0, 0.0], orientation=Quaternion(0, 0, 0, 1)
+    )
+    out = ctrl.advance(np.array([0.5, 0.0], dtype=np.float64), odom)
+    assert math.hypot(float(out.linear.x), float(out.linear.y)) == pytest.approx(0.5)
+
+
 def test_local_planner_wires_holonomic_when_configured() -> None:
     g = GlobalConfig(local_planner_path_controller="holonomic")
     nav = NavigationMap(g, "gradient")
     lp = LocalPlanner(g, nav, goal_tolerance=0.2)
-    assert isinstance(lp._controller, HolonomicPathController)  # noqa: SLF001
+    assert isinstance(lp._controller, HolonomicPathController)
+
+
+def test_local_planner_path_following_writes_speed_vs_divergence_jsonl(tmp_path: FsPath) -> None:
+    log_path = tmp_path / "ticks.jsonl"
+    g = GlobalConfig(
+        local_planner_path_controller="holonomic",
+        local_planner_trajectory_tick_log_path=str(log_path),
+    )
+    nav = NavigationMap(g, "gradient")
+    lp = LocalPlanner(g, nav, goal_tolerance=0.01)
+    path = Path(
+        frame_id="map",
+        poses=[
+            PoseStamped(
+                frame_id="map",
+                position=[0.0, 0.0, 0.0],
+                orientation=Quaternion(0, 0, 0, 1),
+            ),
+            PoseStamped(
+                frame_id="map",
+                position=[1.0, 0.0, 0.0],
+                orientation=Quaternion(0, 0, 0, 1),
+            ),
+        ],
+    )
+    odom = PoseStamped(
+        frame_id="map",
+        position=[0.0, 0.1, 0.0],
+        orientation=Quaternion(0, 0, 0, 1),
+    )
+    lp._path = path
+    lp._path_distancer = PathDistancer(path)
+    lp._current_odom = odom
+
+    cmd = lp._compute_path_following()
+
+    rows = list(iter_trajectory_control_tick_jsonl(log_path))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["commanded_planar_speed_m_s"] == pytest.approx(math.hypot(cmd.linear.x, cmd.linear.y))
+    assert row["planar_position_divergence_m"] > 0.0
+    assert row["dt_s"] == pytest.approx(0.1)
 
 
 def test_local_planner_control_rate_from_global_config() -> None:
@@ -90,8 +152,16 @@ def test_local_planner_control_rate_from_global_config() -> None:
     g = GlobalConfig(local_planner_control_rate_hz=25.0, local_planner_path_controller="holonomic")
     nav = NavigationMap(g, "gradient")
     lp = LocalPlanner(g, nav, goal_tolerance=0.2)
-    assert lp._control_frequency == 25.0  # noqa: SLF001
-    assert lp._controller._control_frequency == 25.0  # noqa: SLF001
+    assert lp._control_frequency == 25.0
+    assert lp._controller._control_frequency == 25.0
+
+
+def test_local_planner_uses_configured_robot_speed_for_holonomic_runs() -> None:
+    g = GlobalConfig(local_planner_path_controller="holonomic", planner_robot_speed=1.2)
+    nav = NavigationMap(g, "gradient")
+    lp = LocalPlanner(g, nav, goal_tolerance=0.2)
+    assert lp._speed == pytest.approx(1.2)
+    assert lp._controller._speed == pytest.approx(1.2)
 
 
 def test_local_planner_control_rate_hz_validation() -> None:
@@ -109,4 +179,4 @@ def test_replay_flag_does_not_change_holonomic_path_controller() -> None:
     )
     nav = NavigationMap(g, "gradient")
     lp = LocalPlanner(g, nav, goal_tolerance=0.2)
-    assert isinstance(lp._controller, HolonomicPathController)  # noqa: SLF001
+    assert isinstance(lp._controller, HolonomicPathController)
