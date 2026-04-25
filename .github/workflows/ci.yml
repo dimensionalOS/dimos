@@ -46,7 +46,7 @@ jobs:
       # Fail fast before the full suite; see docs/development/large_file_management.md.
       - name: Trajectory calibration smoke (921)
         run: |
-          /entrypoint.sh bash -c "source .venv/bin/activate && pytest -q --tb=short --durations=5 -m 'not (tool or mujoco or lfs_data)' dimos/navigation/test_trajectory_holonomic_calibration.py dimos/navigation/test_trajectory_replay_loader.py"
+          /entrypoint.sh bash -c "source .venv/bin/activate && pytest -q --tb=short --durations=5 -m 'not (tool or mujoco or lfs_data)' dimos/navigation/test_trajectory_holonomic_calibration.py dimos/navigation/test_trajectory_replay_loader.py dimos/navigation/test_trajectory_golden_replay.py"
 
       - name: Run tests
         if: github.event_name != 'push'
