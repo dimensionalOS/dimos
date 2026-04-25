@@ -80,7 +80,7 @@ target_link_directories(nav_cmd_pub PRIVATE
 )
 endif()  # BUILD_NAV_CMD_PUB
 
-# drdds_recv: FastDDS SHM subscriber for rsdriver/yesense → POSIX SHM. Same
+# drdds_recv: raw FastDDS subscribers for rsdriver/yesense → POSIX SHM. Same
 # BUILD_NAV_CMD_PUB reasoning — depends on host /usr/local FastDDS which isn't
 # in the nix sandbox. Built via the cpp/build/ path, installed to
 # /opt/drdds_bridge/lib/drdds_bridge/ by deploy.sh.
@@ -104,6 +104,51 @@ target_link_libraries(drdds_recv PRIVATE
 )
 
 target_link_directories(drdds_recv PRIVATE
+  /usr/local/lib
+)
+
+# Diagnostic-only probes for isolating libdrdds wrapper behavior from raw
+# FastDDS behavior. They are intentionally not installed with the runtime
+# bridge targets.
+add_executable(drdds_probe drdds_probe.cpp)
+
+target_include_directories(drdds_probe PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  /usr/local/include
+  /usr/local/include/dridl
+)
+file(GLOB DRDDS_PROBE_MSG_DIRS "/usr/local/include/dridl/*/msg")
+target_include_directories(drdds_probe PRIVATE ${DRDDS_PROBE_MSG_DIRS})
+
+target_link_libraries(drdds_probe PRIVATE
+  fastrtps
+  fastcdr
+  drdds
+  pthread
+)
+
+target_link_directories(drdds_probe PRIVATE
+  /usr/local/lib
+)
+
+add_executable(fastdds_pc2_probe fastdds_pc2_probe.cpp)
+
+target_include_directories(fastdds_pc2_probe PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  /usr/local/include
+  /usr/local/include/dridl
+)
+file(GLOB FASTDDS_PC2_PROBE_MSG_DIRS "/usr/local/include/dridl/*/msg")
+target_include_directories(fastdds_pc2_probe PRIVATE ${FASTDDS_PC2_PROBE_MSG_DIRS})
+
+target_link_libraries(fastdds_pc2_probe PRIVATE
+  fastrtps
+  fastcdr
+  drdds
+  pthread
+)
+
+target_link_directories(fastdds_pc2_probe PRIVATE
   /usr/local/lib
 )
 endif()  # BUILD_NAV_CMD_PUB (drdds_recv)

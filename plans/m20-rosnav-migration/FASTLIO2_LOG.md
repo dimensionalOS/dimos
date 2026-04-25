@@ -2702,6 +2702,95 @@ publish cycle with `error_code:0`.
   DrDDSChannel. IMU working. Lidar discovered but not flowing.
 - Branch `feat/deeprobotics-m20-nav`.
 
+### Resolution of lidar msgs=0 (2026-04-25)
+
+Resolved by moving `drdds_recv` sensor receive off the libdrdds
+`DrDDSChannel` path entirely. The working runtime path is now a
+forked raw FastDDS child that creates one custom UDP participant and
+subscribes directly to the ROS2-prefixed DDS topics:
+
+- `rt/LIDAR/POINTS` (`sensor_msgs::msg::dds_::PointCloud2_`)
+- `rt/LIDAR/POINTS2` (`sensor_msgs::msg::dds_::PointCloud2_`)
+- `rt/IMU` (`sensor_msgs::msg::dds_::Imu_`)
+- `rt/LIDAR/IMU201` (`sensor_msgs::msg::dds_::Imu_`)
+- `rt/LIDAR/IMU202` (`sensor_msgs::msg::dds_::Imu_`)
+
+PointCloud2 readers use BEST_EFFORT/VOLATILE/KEEP_LAST(8) with a
+custom UDP transport and 256 MiB socket buffers. IMU readers use
+RELIABLE/VOLATILE/KEEP_LAST(32). The parent process only creates
+the POSIX SHM files and supervises the raw child.
+
+Why this works: raw FastDDS PC2 was the only path that ever decoded
+post-OTA point clouds, but combining it with libdrdds IMU readers in
+the parent left the parent `DrDDSChannel` participant at
+`matched=0` after restart. Moving all five sensor topics into the
+same raw FastDDS participant removed that libdrdds participant state
+from the receive path.
+
+Verification on NOS after installing to
+`/opt/drdds_bridge/lib/drdds_bridge/drdds_recv` and restarting
+`drdds-recv`, `rsdriver`, and `yesense`:
+
+```
+[drdds_recv] status: lidar_front_matched=2 lidar_front_msgs=241 lidar_rear_matched=1 lidar_rear_msgs=240
+[drdds_recv] imu_status: imu_yesense_matched=1 imu_yesense_msgs=4665 imu_airy_front_matched=3 imu_airy_front_msgs=9375 imu_airy_rear_matched=3 imu_airy_rear_msgs=9375
+...
+[drdds_recv] status: lidar_front_matched=2 lidar_front_msgs=941 lidar_rear_matched=1 lidar_rear_msgs=940
+[drdds_recv] imu_status: imu_yesense_matched=1 imu_yesense_msgs=18666 imu_airy_front_matched=3 imu_airy_front_msgs=37377 imu_airy_rear_matched=3 imu_airy_rear_msgs=37377
+```
+
+This is >60 seconds of steady data: front/rear PC2 at ~10 Hz,
+Yesense at ~200 Hz, and both Airy IMUs at ~400 Hz as reported by
+the raw DDS callbacks. Services active during verification:
+`drdds-recv`, `rsdriver`, `yesense`, `charge_manager`,
+`reflective_column`, and `localization`.
+
+Follow-up cleanup: removed the temporary `DRDDS_RECV_DRDDS_PC2`
+diagnostic fallback from `drdds_recv` so the production binary has a
+single receive path for all five sensor topics. Rebuilt on NOS with:
+
+```
+cd /var/opt/robot/data/dimos/dimos/robot/deeprobotics/m20/drdds_bridge/cpp/build
+make drdds_recv -B
+```
+
+Build passed; only the existing `shm_transport.h` `ftruncate` warning
+remained. After installing the rebuilt binary and restarting
+`drdds-recv`, `rsdriver`, and `yesense`, a fresh bridge watch showed:
+
+```
+[drdds_recv] status: lidar_front_matched=2 lidar_front_msgs=14 lidar_rear_matched=1 lidar_rear_msgs=8
+[drdds_recv] imu_status: imu_yesense_matched=1 imu_yesense_msgs=350 imu_airy_front_matched=3 imu_airy_front_msgs=1345 imu_airy_rear_matched=3 imu_airy_rear_msgs=1344
+...
+[drdds_recv] status: lidar_front_matched=2 lidar_front_msgs=664 lidar_rear_matched=1 lidar_rear_msgs=658
+[drdds_recv] imu_status: imu_yesense_matched=1 imu_yesense_msgs=13351 imu_airy_front_matched=3 imu_airy_front_msgs=27345 imu_airy_rear_matched=3 imu_airy_rear_msgs=27345
+```
+
+Then ran a dock-safe smartnav validation with:
+
+```
+M20_SLAM_BACKEND=fastlio2 M20_FASTLIO2_IMU=airy M20_NAV_ENABLED=0 M20_SKIP_STAND=1 \
+  timeout -s TERM 70s /home/user/dimos-venv/bin/python -m \
+  dimos.robot.deeprobotics.m20.blueprints.nav.m20_smartnav_native
+```
+
+Evidence from `/tmp/smartnav_native.log`:
+
+```
+[fastlio2] stationary preroll complete after 2.00s — releasing lidar scans to FAST-LIO
+[fastlio2] frame #0  path=pc2 ... npts=31646
+...
+[fastlio2] frame #29  path=pc2 ... npts=34088
+[drdds_bridge] lidar #301 pts=34263 bytes=890838
+[nav_cmd_pub] #351 x=0.000 y=0.000 yaw=0.000 matched=1
+```
+
+The run exited by `timeout` (`rc=124`) as expected. A post-run `pgrep`
+found no remaining `m20_smartnav_native`, `fastlio2_native`,
+`drdds_lidar_bridge`, `nav_cmd_pub`, or `airy_imu_bridge` processes.
+Base services were still active, and `drdds_recv` counters continued
+climbing past `lidar_front_msgs=2014` / `lidar_rear_msgs=2008`.
+
 ---
 
 ## Questions for Jeff (2026-04-23, in-person at Dimensional)
@@ -2791,4 +2880,3 @@ re-prioritized around robustness, generalization, and correctness.
 - Would Jeff accept a PR upstreaming the Velodyne input restoration to `leshy/FAST-LIO-NON-ROS`?
 - Should the PGO duplicate-key crash (`RuntimeError: key "33", already exists` in `isam2.update`) be a separate bead? Saw it crash smartnav once during this session — likely upstream fastlio2 outputting multiple poses per scan when frames have near-identical timebases.
 - Are RSAIRY lidar points actually emitted in time-order, or interleaved across rings? Needs a quick empirical probe to decide how to fix the per-point time relativization.
-

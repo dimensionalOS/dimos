@@ -1,5 +1,54 @@
 # Handoff: M20 lidar PC2 not flowing post-OTA
 
+## Status update — resolved 2026-04-25
+
+The lidar blocker described below is resolved in the current deployed
+`drdds_recv` binary. The working solution bypasses libdrdds
+`DrDDSChannel` for sensor receive and uses a forked raw FastDDS child
+for all five sensor topics:
+
+- `rt/LIDAR/POINTS`
+- `rt/LIDAR/POINTS2`
+- `rt/IMU`
+- `rt/LIDAR/IMU201`
+- `rt/LIDAR/IMU202`
+
+Verified on NOS for >60 seconds:
+
+```
+[drdds_recv] status: lidar_front_matched=2 lidar_front_msgs=241 lidar_rear_matched=1 lidar_rear_msgs=240
+[drdds_recv] imu_status: imu_yesense_matched=1 imu_yesense_msgs=4665 imu_airy_front_matched=3 imu_airy_front_msgs=9375 imu_airy_rear_matched=3 imu_airy_rear_msgs=9375
+...
+[drdds_recv] status: lidar_front_matched=2 lidar_front_msgs=941 lidar_rear_matched=1 lidar_rear_msgs=940
+[drdds_recv] imu_status: imu_yesense_matched=1 imu_yesense_msgs=18666 imu_airy_front_matched=3 imu_airy_front_msgs=37377 imu_airy_rear_matched=3 imu_airy_rear_msgs=37377
+```
+
+Services active during verification: `drdds-recv`, `rsdriver`,
+`yesense`, `charge_manager`, `reflective_column`, `localization`.
+
+Post-cleanup verification on the rebuilt binary with the old diagnostic
+`DRDDS_RECV_DRDDS_PC2` fallback removed:
+
+- NOS build: `make drdds_recv -B` passes; only the pre-existing
+  `shm_transport.h` `ftruncate` warning remains.
+- Fresh bridge watch after install/restart:
+  `lidar_front_msgs=14 -> 664`, `lidar_rear_msgs=8 -> 658`,
+  `imu_yesense_msgs=350 -> 13351`, Airy IMUs
+  `1345 -> 27345` over the same run.
+- Dock-safe smartnav run with `M20_NAV_ENABLED=0` and
+  `M20_SKIP_STAND=1` consumed PC2 frames in FastLIO:
+  `frame #0..#29 path=pc2` immediately after stationary preroll,
+  `DrddsLidarBridge` reached `lidar #301`, and `nav_cmd_pub`
+  published zero commands only.
+- After the timed smartnav run, no `m20_smartnav_native`,
+  `fastlio2_native`, `drdds_lidar_bridge`, `nav_cmd_pub`, or
+  `airy_imu_bridge` processes were left running; all base services
+  remained active.
+
+The historical notes below remain useful for context, but the ranked
+open hypotheses and quick-win actions are superseded by the raw
+FastDDS all-sensor receive path.
+
 ## Mission
 
 Make `/LIDAR/POINTS` and `/LIDAR/POINTS2` PointCloud2 messages flow from `rsdriver` → our `drdds_recv` subscriber on the M20 robot's NOS board, post system-software upgrade to V1.1.8.5. IMU paths already work; lidar is the last blocker for SLAM.
