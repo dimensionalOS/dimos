@@ -20,14 +20,14 @@ from typing import TypedDict
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 
 # Backwards compatibility alias for pickled data
 LidarMessage = PointCloud2
 
 
 class RawLidarPoints(TypedDict):
-    points: np.ndarray  # type: ignore[type-arg]  # Shape (N, 3) array of 3D points [x, y, z]
+    points: np.ndarray  # Shape (N, 3) array of 3D points [x, y, z]
 
 
 class RawLidarData(TypedDict):

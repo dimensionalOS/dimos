@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import PoseStamped
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 # Sentinel values from Unitree SDK — used to signal "no command" for a DOF.
 POS_STOP: float = 2.146e9

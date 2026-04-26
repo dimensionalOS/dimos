@@ -29,15 +29,18 @@ from unitree_webrtc_connect.constants import (
     SPORT_CMD,
     VUI_COLOR,
 )
-from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untyped]
+from unitree_webrtc_connect.webrtc_driver import (
     UnitreeWebRTCConnection as LegionConnection,
     WebRTCConnectionMethod,
 )
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs import Pose, Transform, Twist
-from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.sensor_msgs.Image import ImageFormat
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import RawLidarMsg, pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree.type.lowstate import LowStateMsg
 from dimos.robot.unitree.type.odometry import Odometry
@@ -51,7 +54,7 @@ VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 class SerializableVideoFrame:
     """Pickleable wrapper for av.VideoFrame with all metadata"""
 
-    data: np.ndarray  # type: ignore[type-arg]
+    data: np.ndarray
     pts: int | None = None
     time: float | None = None
     dts: int | None = None
@@ -76,6 +79,8 @@ class SerializableVideoFrame:
 
 
 class UnitreeWebRTCConnection(Resource):
+    _SPORT_API_ID_RAGEMODE: int = 2059
+
     def __init__(self, ip: str, mode: str = "ai") -> None:
         self.ip = ip
         self.mode = mode
@@ -145,7 +150,7 @@ class UnitreeWebRTCConnection(Resource):
             self.loop.call_soon_threadsafe(self.loop.stop)
 
         if self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+            self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send movement command to the robot using Twist commands.
@@ -183,7 +188,7 @@ class UnitreeWebRTCConnection(Resource):
             self.stop_timer.cancel()
 
         # Auto-stop after 0.5 seconds if no new commands
-        self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop)
+        self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop_movement)
         self.stop_timer.daemon = True
         self.stop_timer.start()
 
@@ -193,7 +198,7 @@ class UnitreeWebRTCConnection(Resource):
                 future = asyncio.run_coroutine_threadsafe(async_move_duration(), self.loop)
                 future.result()
                 # Stop after duration
-                self.stop()
+                self.stop_movement()
             else:
                 # Single command for continuous movement
                 future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
@@ -277,6 +282,45 @@ class UnitreeWebRTCConnection(Resource):
     def standup(self) -> bool:
         return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]}))
 
+    def balance_stand(self) -> bool:
+        """Activate BalanceStand mode — enables WIRELESS_CONTROLLER joystick commands."""
+        return bool(
+            self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
+        )
+
+    def set_obstacle_avoidance(self, enabled: bool = True) -> None:
+        self.publish_request(
+            RTC_TOPIC["OBSTACLES_AVOID"],
+            {"api_id": 1001, "parameter": {"enable": int(enabled)}},
+        )
+
+    def free_walk(self) -> bool:
+        """Activate FreeWalk locomotion mode — enables walking and velocity commands."""
+        return bool(self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["FreeWalk"]}))
+
+    def enable_rage_mode(self) -> bool:
+        """Enable Rage Mode on the Go2 via WebRTC.
+        Assumes the robot is already in BalanceStand.
+        """
+        rage_ok = bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {"api_id": self._SPORT_API_ID_RAGEMODE, "parameter": {"data": True}},
+            )
+        )
+        time.sleep(2.0)
+
+        joystick_ok = bool(
+            self.publish_request(
+                RTC_TOPIC["SPORT_MOD"],
+                {
+                    "api_id": SPORT_CMD["SwitchJoystick"],
+                    "parameter": {"data": True},
+                },
+            )
+        )
+        return rage_ok and joystick_ok
+
     def liedown(self) -> bool:
         return bool(
             self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
@@ -305,7 +349,7 @@ class UnitreeWebRTCConnection(Resource):
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
 
-        from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
+        from aiortc import MediaStreamTrack
 
         async def accept_track(track: MediaStreamTrack) -> None:
             while True:
@@ -347,19 +391,13 @@ class UnitreeWebRTCConnection(Resource):
         Returns:
             Observable: An observable stream of video frames or None if video is not available.
         """
-        return self.video_stream()  # type: ignore[no-any-return]
+        return self.video_stream()
 
-    def stop(self) -> bool:  # type: ignore[no-redef]
-        """Stop the robot's movement.
-
-        Returns:
-            bool: True if stop command was sent successfully
-        """
-        # Cancel timer since we're explicitly stopping
+    def stop_movement(self) -> None:
+        """Cancel the auto-stop timer (used by move() for continuous commands)."""
         if self.stop_timer:
             self.stop_timer.cancel()
             self.stop_timer = None
-        return True
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""
@@ -385,4 +423,4 @@ class UnitreeWebRTCConnection(Resource):
             self.loop.call_soon_threadsafe(self.loop.stop)
 
         if hasattr(self, "thread") and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+            self.thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)

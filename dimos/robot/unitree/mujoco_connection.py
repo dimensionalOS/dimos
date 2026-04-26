@@ -34,9 +34,14 @@ from reactivex import Observable
 from reactivex.abc import ObserverBase, SchedulerBase
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.geometry_msgs import Quaternion, Twist, Vector3
-from dimos.msgs.sensor_msgs import CameraInfo, Image, ImageFormat, PointCloud2
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.simulation.mujoco.constants import (
     LAUNCHER_PATH,
@@ -141,6 +146,7 @@ class MujocoConnection:
                     shm_names_json,
                     self.control_mode,
                 ],
+                stderr=subprocess.PIPE,
             )
 
         except Exception as e:
@@ -202,7 +208,7 @@ class MujocoConnection:
         # Wait for threads to finish
         for thread in self._stream_threads:
             if thread.is_alive():
-                thread.join(timeout=2.0)
+                thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
                 if thread.is_alive():
                     logger.warning(f"Stream thread {thread.name} did not stop gracefully")
 
@@ -242,6 +248,15 @@ class MujocoConnection:
         return True
 
     def liedown(self) -> bool:
+        return True
+
+    def balance_stand(self) -> bool:
+        return True
+
+    def set_obstacle_avoidance(self, enabled: bool = True) -> None:
+        pass
+
+    def enable_rage_mode(self) -> bool:
         return True
 
     def get_video_frame(self) -> NDArray[Any] | None:

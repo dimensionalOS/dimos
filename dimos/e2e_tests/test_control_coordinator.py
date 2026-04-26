@@ -24,8 +24,10 @@ import pytest
 
 from dimos.control.coordinator import ControlCoordinator
 from dimos.core.rpc_client import RPCClient
-from dimos.msgs.sensor_msgs import JointState
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint, TrajectoryState
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
+from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
+from dimos.msgs.trajectory_msgs.TrajectoryStatus import TrajectoryState
 
 
 @pytest.mark.skipif_in_ci
@@ -54,7 +56,7 @@ class TestControlCoordinatorE2E:
             joints = client.list_joints()
             assert joints is not None
             assert len(joints) == 7  # Mock arm has 7 DOF
-            assert "arm_joint1" in joints
+            assert "arm/joint1" in joints
 
             # Test list_tasks RPC
             tasks = client.list_tasks()
@@ -88,7 +90,7 @@ class TestControlCoordinatorE2E:
 
             # Create a simple trajectory
             trajectory = JointTrajectory(
-                joint_names=[f"arm_joint{i + 1}" for i in range(7)],
+                joint_names=[f"arm/joint{i + 1}" for i in range(7)],
                 points=[
                     TrajectoryPoint(
                         time_from_start=0.0,
@@ -151,7 +153,7 @@ class TestControlCoordinatorE2E:
         joint_state = JointState.lcm_decode(raw_msg)
         assert len(joint_state.name) == 7
         assert len(joint_state.position) == 7
-        assert "arm_joint1" in joint_state.name
+        assert "arm/joint1" in joint_state.name
 
     def test_coordinator_cancel_trajectory(self, lcm_spy, start_blueprint) -> None:
         """Test that a running trajectory can be cancelled."""
@@ -165,7 +167,7 @@ class TestControlCoordinatorE2E:
         try:
             # Create a long trajectory (5 seconds)
             trajectory = JointTrajectory(
-                joint_names=[f"arm_joint{i + 1}" for i in range(7)],
+                joint_names=[f"arm/joint{i + 1}" for i in range(7)],
                 points=[
                     TrajectoryPoint(
                         time_from_start=0.0,
@@ -208,8 +210,8 @@ class TestControlCoordinatorE2E:
         try:
             # Verify both arms present
             joints = client.list_joints()
-            assert "left_arm_joint1" in joints
-            assert "right_arm_joint1" in joints
+            assert "left_arm/joint1" in joints
+            assert "right_arm/joint1" in joints
 
             tasks = client.list_tasks()
             assert "traj_left" in tasks
@@ -217,7 +219,7 @@ class TestControlCoordinatorE2E:
 
             # Create trajectories for both arms
             left_trajectory = JointTrajectory(
-                joint_names=[f"left_arm_joint{i + 1}" for i in range(7)],
+                joint_names=[f"left_arm/joint{i + 1}" for i in range(7)],
                 points=[
                     TrajectoryPoint(time_from_start=0.0, positions=[0.0] * 7),
                     TrajectoryPoint(time_from_start=0.5, positions=[0.2] * 7),
@@ -225,7 +227,7 @@ class TestControlCoordinatorE2E:
             )
 
             right_trajectory = JointTrajectory(
-                joint_names=[f"right_arm_joint{i + 1}" for i in range(6)],
+                joint_names=[f"right_arm/joint{i + 1}" for i in range(6)],
                 points=[
                     TrajectoryPoint(time_from_start=0.0, positions=[0.0] * 6),
                     TrajectoryPoint(time_from_start=0.5, positions=[0.3] * 6),

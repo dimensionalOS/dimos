@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
+from pydantic import Field
 from reactivex.disposable import Disposable
 
-from dimos import spec
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
-from dimos.msgs.geometry_msgs import Twist
+from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.robot.unitree.connection import UnitreeWebRTCConnection
+from dimos.spec.control import LocalPlanner
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -33,36 +33,52 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-class G1Connection(Module):
+class G1Config(ModuleConfig):
+    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
+    connection_type: str = Field(default_factory=lambda m: m["g"].unitree_connection_type)
+
+
+class G1ConnectionBase(Module, ABC):
+    """Abstract base for G1 connections (real hardware and simulation).
+
+    Modules that depend on G1 connection RPC methods should reference this
+    base class so the blueprint wiring works regardless of which concrete
+    connection is deployed.
+    """
+
+    config: ModuleConfig
+
+    @rpc
+    @abstractmethod
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    @abstractmethod
+    def stop(self) -> None:
+        super().stop()
+
+    @rpc
+    @abstractmethod
+    def move(self, twist: Twist, duration: float = 0.0) -> None: ...
+
+    @rpc
+    @abstractmethod
+    def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]: ...
+
+
+class G1Connection(G1ConnectionBase):
+    config: G1Config
     cmd_vel: In[Twist]
-    ip: str | None
-    connection_type: str | None = None
-    _global_config: GlobalConfig
-
-    connection: UnitreeWebRTCConnection | None
-
-    def __init__(
-        self,
-        ip: str | None = None,
-        connection_type: str | None = None,
-        cfg: GlobalConfig = global_config,
-        *args: Any,
-        **kwargs: Any,
-    ) -> None:
-        self._global_config = cfg
-        self.ip = ip if ip is not None else self._global_config.robot_ip
-        self.connection_type = connection_type or self._global_config.unitree_connection_type
-        self.connection = None
-        super().__init__(*args, **kwargs)
+    connection: UnitreeWebRTCConnection | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
 
-        match self.connection_type:
+        match self.config.connection_type:
             case "webrtc":
-                assert self.ip is not None, "IP address must be provided"
-                self.connection = UnitreeWebRTCConnection(self.ip)
+                self.connection = UnitreeWebRTCConnection(self.config.ip)
             case "replay":
                 raise ValueError("Replay connection not implemented for G1 robot")
             case "mujoco":
@@ -70,12 +86,12 @@ class G1Connection(Module):
                     "This module does not support simulation, use G1SimConnection instead"
                 )
             case _:
-                raise ValueError(f"Unknown connection type: {self.connection_type}")
+                raise ValueError(f"Unknown connection type: {self.config.connection_type}")
 
         assert self.connection is not None
         self.connection.start()
 
-        self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
     @rpc
     def stop(self) -> None:
@@ -95,14 +111,8 @@ class G1Connection(Module):
         return self.connection.publish_request(topic, data)  # type: ignore[no-any-return]
 
 
-g1_connection = G1Connection.blueprint
-
-
-def deploy(dimos: ModuleCoordinator, ip: str, local_planner: spec.LocalPlanner) -> "ModuleProxy":
-    connection = dimos.deploy(G1Connection, ip)  # type: ignore[attr-defined]
+def deploy(dimos: ModuleCoordinator, ip: str, local_planner: LocalPlanner) -> "ModuleProxy":
+    connection = dimos.deploy(G1Connection, ip=ip)
     connection.cmd_vel.connect(local_planner.cmd_vel)
     connection.start()
     return connection
-
-
-__all__ = ["G1Connection", "deploy", "g1_connection"]

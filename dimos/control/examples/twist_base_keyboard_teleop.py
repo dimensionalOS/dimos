@@ -33,14 +33,15 @@ Usage:
 
 from __future__ import annotations
 
-from dimos.control.blueprints import coordinator_mock_twist_base
-from dimos.robot.unitree.keyboard_teleop import keyboard_teleop
+from dimos.control.blueprints.mobile import coordinator_mock_twist_base
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
+from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
 
 
 def main() -> None:
     """Run mock twist base + keyboard teleop."""
-    coord = coordinator_mock_twist_base.build()
-    teleop = keyboard_teleop().build()
+    coord = ModuleCoordinator.build(coordinator_mock_twist_base)
+    teleop = ModuleCoordinator.build(KeyboardTeleop.blueprint())
 
     print("Starting mock twist base coordinator + keyboard teleop...")
     print("Coordinator tick loop: 100Hz")

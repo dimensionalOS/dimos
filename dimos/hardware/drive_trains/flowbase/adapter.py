@@ -62,14 +62,10 @@ class FlowBaseAdapter:
         # Last commanded velocities (in standard frame, before negation)
         self._last_velocities = [0.0, 0.0, 0.0]
 
-    # =========================================================================
-    # Connection
-    # =========================================================================
-
     def connect(self) -> bool:
         """Connect to FlowBase controller via Portal RPC."""
         try:
-            import portal  # type: ignore[import-untyped]
+            import portal
 
             self._client = portal.Client(self._address)
             self._connected = True
@@ -98,17 +94,9 @@ class FlowBaseAdapter:
         """Check if connected to FlowBase."""
         return self._connected
 
-    # =========================================================================
-    # Info
-    # =========================================================================
-
     def get_dof(self) -> int:
         """FlowBase is always 3 DOF (vx, vy, wz)."""
         return 3
-
-    # =========================================================================
-    # State Reading
-    # =========================================================================
 
     def read_velocities(self) -> list[float]:
         """Return last commanded velocities (FlowBase doesn't report actual)."""
@@ -133,10 +121,6 @@ class FlowBaseAdapter:
         except Exception as e:
             logger.error(f"Error reading FlowBase odometry: {e}")
             return None
-
-    # =========================================================================
-    # Control
-    # =========================================================================
 
     def write_velocities(self, velocities: list[float]) -> bool:
         """Send velocity command to FlowBase.
@@ -165,10 +149,6 @@ class FlowBaseAdapter:
             return False
         return self._send_velocity(0.0, 0.0, 0.0)
 
-    # =========================================================================
-    # Enable/Disable
-    # =========================================================================
-
     def write_enable(self, enable: bool) -> bool:
         """Enable/disable the platform (FlowBase is always enabled when connected)."""
         self._enabled = enable
@@ -177,10 +157,6 @@ class FlowBaseAdapter:
     def read_enabled(self) -> bool:
         """Check if platform is enabled."""
         return self._enabled
-
-    # =========================================================================
-    # Internal
-    # =========================================================================
 
     def _send_velocity(self, vx: float, vy: float, wz: float) -> bool:
         """Send raw velocity to FlowBase via Portal RPC."""

@@ -46,9 +46,10 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import CameraInfo, Image, JointState
-from dimos.msgs.sensor_msgs.Image import ImageFormat
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.viser.camera import CameraSpec, g1_d435_default, world_pose
 from dimos.visualization.viser.robot_meshes import (
@@ -360,13 +361,13 @@ class SplatCameraModule(Module):
 
         try:
             unsub = self.joint_state.subscribe(self._on_joint_state)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception as e:
             logger.warning(f"SplatCamera: joint_state subscribe failed: {e}")
 
         try:
             unsub = self.odom.subscribe(self._on_odom)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception as e:
             logger.warning(f"SplatCamera: odom subscribe failed: {e}")
 

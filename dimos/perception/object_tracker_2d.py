@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 import logging
 import threading
 import time
+from typing import Any
 
 import cv2
 
@@ -32,34 +32,33 @@ import numpy as np
 from numpy.typing import NDArray
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(level=logging.INFO)
 
 
-@dataclass
 class ObjectTracker2DConfig(ModuleConfig):
     frame_id: str = "camera_link"
 
 
-class ObjectTracker2D(Module[ObjectTracker2DConfig]):
+class ObjectTracker2D(Module):
     """Pure 2D object tracking module using OpenCV's CSRT tracker."""
+
+    config: ObjectTracker2DConfig
 
     color_image: In[Image]
 
     detection2darray: Out[Detection2DArray]
     tracked_overlay: Out[Image]  # Visualization output
 
-    default_config = ObjectTracker2DConfig
-    config: ObjectTracker2DConfig
-
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize 2D object tracking module using OpenCV's CSRT tracker."""
         super().__init__(**kwargs)
 
@@ -75,7 +74,7 @@ class ObjectTracker2D(Module[ObjectTracker2DConfig]):
 
         # Frame management
         self._frame_lock = threading.Lock()
-        self._latest_rgb_frame: np.ndarray | None = None  # type: ignore[type-arg]
+        self._latest_rgb_frame: np.ndarray | None = None
         self._frame_arrival_time: float | None = None
 
         # Tracking thread control
@@ -98,7 +97,7 @@ class ObjectTracker2D(Module[ObjectTracker2DConfig]):
                 self._frame_arrival_time = arrival_time
 
         unsub = self.color_image.subscribe(on_frame)
-        self._disposables.add(Disposable(unsub))
+        self.register_disposable(Disposable(unsub))
         logger.info("ObjectTracker2D module started")
 
     @rpc
@@ -106,7 +105,7 @@ class ObjectTracker2D(Module[ObjectTracker2DConfig]):
         self.stop_track()
         if self.tracking_thread and self.tracking_thread.is_alive():
             self.stop_tracking_event.set()
-            self.tracking_thread.join(timeout=2.0)
+            self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 
@@ -196,7 +195,7 @@ class ObjectTracker2D(Module[ObjectTracker2DConfig]):
         if self.tracking_thread and self.tracking_thread.is_alive():
             if threading.current_thread() != self.tracking_thread:
                 self.stop_tracking_event.set()
-                self.tracking_thread.join(timeout=1.0)
+                self.tracking_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
                 self.tracking_thread = None
             else:
                 self.stop_tracking_event.set()
@@ -292,9 +291,9 @@ class ObjectTracker2D(Module[ObjectTracker2DConfig]):
         viz_msg = Image.from_numpy(viz_copy, format=ImageFormat.RGB)
         self.tracked_overlay.publish(viz_msg)
 
-    def _draw_visualization(self, image: NDArray[np.uint8], bbox: list[int]) -> NDArray[np.uint8]:  # type: ignore[type-arg]
+    def _draw_visualization(self, image: NDArray[np.uint8], bbox: list[int]) -> NDArray[np.uint8]:
         """Draw tracking visualization."""
-        viz_image: NDArray[np.uint8] = image.copy()  # type: ignore[type-arg]
+        viz_image: NDArray[np.uint8] = image.copy()
         x1, y1, x2, y2 = bbox
         cv2.rectangle(viz_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
         cv2.putText(viz_image, "TRACKING", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)

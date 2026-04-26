@@ -22,11 +22,15 @@ from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
 from dimos.models.qwen.bbox import BBox
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
-from dimos.msgs.geometry_msgs.Vector3 import make_vector3
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.navigation.base import NavigationState
+from dimos.navigation.navigation_spec import NavigationInterfaceSpec
 from dimos.navigation.visual.query import get_object_bbox_from_image
+from dimos.perception.object_tracking_spec import ObjectTrackingSpec
+from dimos.perception.spatial_memory_spec import SpatialMemorySpec
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
@@ -39,24 +43,15 @@ class NavigationSkillContainer(Module):
     _skill_started: bool = False
     _similarity_threshold: float = 0.23
 
-    rpc_calls: list[str] = [
-        "SpatialMemory.tag_location",
-        "SpatialMemory.query_tagged_location",
-        "SpatialMemory.query_by_text",
-        "NavigationInterface.set_goal",
-        "NavigationInterface.get_state",
-        "NavigationInterface.is_goal_reached",
-        "NavigationInterface.cancel_goal",
-        "ObjectTracking.track",
-        "ObjectTracking.stop_track",
-        "ObjectTracking.is_tracking",
-    ]
+    _spatial_memory: SpatialMemorySpec
+    _navigation: NavigationInterfaceSpec
+    _object_tracking: ObjectTrackingSpec | None = None
 
     color_image: In[Image]
     odom: In[PoseStamped]
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._skill_started = False
 
         # Here to prevent unwanted imports in the file.
@@ -67,8 +62,8 @@ class NavigationSkillContainer(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.color_image.subscribe(self._on_color_image)))
-        self._disposables.add(Disposable(self.odom.subscribe(self._on_odom)))
+        self.register_disposable(Disposable(self.color_image.subscribe(self._on_color_image)))
+        self.register_disposable(Disposable(self.odom.subscribe(self._on_odom)))
         self._skill_started = True
 
     @rpc
@@ -109,8 +104,7 @@ class NavigationSkillContainer(Module):
             rotation=(rotation.x, rotation.y, rotation.z),
         )
 
-        tag_location_rpc = self.get_rpc_calls("SpatialMemory.tag_location")
-        if not tag_location_rpc(location):
+        if not self._spatial_memory.tag_location(location):
             return f"Error: Failed to store '{location_name}' in the spatial memory"
 
         logger.info(f"Tagged {location}")
@@ -150,13 +144,7 @@ class NavigationSkillContainer(Module):
         return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
 
     def _navigate_by_tagged_location(self, query: str) -> str | None:
-        try:
-            query_tagged_location_rpc = self.get_rpc_calls("SpatialMemory.query_tagged_location")
-        except Exception:
-            logger.warning("SpatialMemory module not connected, cannot query tagged locations")
-            return None
-
-        robot_location = query_tagged_location_rpc(query)
+        robot_location = self._spatial_memory.query_tagged_location(query)
 
         if not robot_location:
             return None
@@ -171,16 +159,10 @@ class NavigationSkillContainer(Module):
         return self._navigate_to(goal_pose, f"Found a tagged location called '{query}'.")
 
     def _navigate_to(self, pose: PoseStamped, message: str) -> str:
-        try:
-            set_goal_rpc = self.get_rpc_calls("NavigationInterface.set_goal")
-        except Exception:
-            logger.error("Navigation module not connected properly")
-            return "Error: Navigation module is not connected, cannot set goal."
-
         logger.info(
             f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
         )
-        set_goal_rpc(pose)
+        self._navigation.set_goal(pose)
 
         return (
             f"{message}. Started navigating to that position. "
@@ -188,6 +170,9 @@ class NavigationSkillContainer(Module):
         )
 
     def _navigate_to_object(self, query: str) -> str | None:
+        if self._object_tracking is None:
+            return None
+
         try:
             bbox = self._get_bbox_for_current_frame(query)
         except Exception:
@@ -197,26 +182,10 @@ class NavigationSkillContainer(Module):
         if bbox is None:
             return None
 
-        try:
-            track_rpc, stop_track_rpc, is_tracking_rpc = self.get_rpc_calls(
-                "ObjectTracking.track", "ObjectTracking.stop_track", "ObjectTracking.is_tracking"
-            )
-        except Exception:
-            logger.error("ObjectTracking module not connected properly")
-            return None
-
-        try:
-            get_state_rpc, is_goal_reached_rpc = self.get_rpc_calls(
-                "NavigationInterface.get_state", "NavigationInterface.is_goal_reached"
-            )
-        except Exception:
-            logger.error("Navigation module not connected properly")
-            return None
-
         logger.info(f"Found {query} at {bbox}")
 
         # Start tracking - BBoxNavigationModule automatically generates goals
-        track_rpc(bbox)
+        self._object_tracking.track(bbox)  # type: ignore[arg-type]
 
         start_time = time.time()
         timeout = 30.0
@@ -224,31 +193,31 @@ class NavigationSkillContainer(Module):
 
         while time.time() - start_time < timeout:
             # Check if navigator finished
-            if get_state_rpc() == NavigationState.IDLE and goal_set:
+            if self._navigation.get_state() == NavigationState.IDLE and goal_set:
                 logger.info("Waiting for goal result")
                 time.sleep(1.0)
-                if not is_goal_reached_rpc():
+                if not self._navigation.is_goal_reached():
                     logger.info(f"Goal cancelled, tracking '{query}' failed")
-                    stop_track_rpc()
+                    self._object_tracking.stop_track()
                     return None
                 else:
                     logger.info(f"Reached '{query}'")
-                    stop_track_rpc()
+                    self._object_tracking.stop_track()
                     return f"Successfully arrived at '{query}'"
 
             # If goal set and tracking lost, just continue (tracker will resume or timeout)
-            if goal_set and not is_tracking_rpc():
+            if goal_set and not self._object_tracking.is_tracking():
                 continue
 
             # BBoxNavigationModule automatically sends goals when tracker publishes
             # Just check if we have any detections to mark goal_set
-            if is_tracking_rpc():
+            if self._object_tracking.is_tracking():
                 goal_set = True
 
             time.sleep(0.25)
 
         logger.warning(f"Navigation to '{query}' timed out after {timeout}s")
-        stop_track_rpc()
+        self._object_tracking.stop_track()
         return None
 
     def _get_bbox_for_current_frame(self, query: str) -> BBox | None:
@@ -258,12 +227,7 @@ class NavigationSkillContainer(Module):
         return get_object_bbox_from_image(self._vl_model, self._latest_image, query)
 
     def _navigate_using_semantic_map(self, query: str) -> str:
-        try:
-            query_by_text_rpc = self.get_rpc_calls("SpatialMemory.query_by_text")
-        except Exception:
-            return "Error: The SpatialMemory module is not connected."
-
-        results = query_by_text_rpc(query)
+        results = self._spatial_memory.query_by_text(query)
 
         if not results:
             return f"No matching location found in semantic map for '{query}'"
@@ -291,13 +255,7 @@ class NavigationSkillContainer(Module):
         return "Stopped"
 
     def _cancel_goal_and_stop(self) -> None:
-        try:
-            cancel_goal_rpc = self.get_rpc_calls("NavigationInterface.cancel_goal")
-        except Exception:
-            logger.warning("Navigation module not connected, cannot cancel goal")
-            return
-
-        cancel_goal_rpc()
+        self._navigation.cancel_goal()
 
     def _get_goal_pose_from_result(self, result: dict[str, Any]) -> PoseStamped | None:
         similarity = 1.0 - (result.get("distance") or 1)
@@ -320,8 +278,3 @@ class NavigationSkillContainer(Module):
             orientation=Quaternion.from_euler(make_vector3(0, 0, theta)),
             frame_id="map",
         )
-
-
-navigation_skill = NavigationSkillContainer.blueprint
-
-__all__ = ["NavigationSkillContainer", "navigation_skill"]

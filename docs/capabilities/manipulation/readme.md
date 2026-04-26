@@ -55,11 +55,8 @@ execute()               # Execute via coordinator
 ### Perception + Agent
 
 ```bash
-# Terminal 1: Coordinator with real xarm7
-dimos run coordinator-xarm7
-
-# Terminal 2: Perception + manipulation + LLM agent
-dimos run xarm-perception-agent
+# Coordinator + perception + manipulation + LLM agent (single command)
+XARM7_IP=<ip> dimos run coordinator-xarm7 xarm-perception-agent
 ```
 
 ## Architecture
@@ -108,7 +105,7 @@ KeyboardTeleopModule ──→ ControlCoordinator ──→ ManipulationModule
 | File | Description |
 |------|-------------|
 | [`manipulation_module.py`](/dimos/manipulation/manipulation_module.py) | Main module (RPC interface, state machine) |
-| [`manipulation_blueprints.py`](/dimos/manipulation/manipulation_blueprints.py) | Planner and perception blueprints |
+| [`manipulation/blueprints.py`](/dimos/manipulation/blueprints.py) | Planner and perception blueprints |
 | [`robot/manipulators/piper/blueprints.py`](/dimos/robot/manipulators/piper/blueprints.py) | Piper keyboard teleop blueprint |
 | [`robot/manipulators/xarm/blueprints.py`](/dimos/robot/manipulators/xarm/blueprints.py) | XArm keyboard teleop blueprints |
 | [`teleop/keyboard/keyboard_teleop_module.py`](/dimos/teleop/keyboard/keyboard_teleop_module.py) | Keyboard teleop module |

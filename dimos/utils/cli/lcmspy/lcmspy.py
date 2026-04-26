@@ -13,10 +13,11 @@
 # limitations under the License.
 
 from collections import deque
-from dataclasses import dataclass
 import threading
 import time
+from typing import Any
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 from dimos.utils.human import human_bytes
 
@@ -98,20 +99,19 @@ class Topic:
         return f"topic({self.name})"
 
 
-@dataclass
 class LCMSpyConfig(LCMConfig):
     topic_history_window: float = 60.0
 
 
 class LCMSpy(LCMService, Topic):
-    default_config = LCMSpyConfig
+    config: LCMSpyConfig
     topic = dict[str, Topic]
     graph_log_window: float = 1.0
     topic_class: type[Topic] = Topic
 
-    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        Topic.__init__(self, name="total", history_window=self.config.topic_history_window)  # type: ignore[attr-defined]
+        Topic.__init__(self, name="total", history_window=self.config.topic_history_window)
         self.topic = {}  # type: ignore[assignment]
         self._topic_lock = threading.Lock()
 
@@ -131,7 +131,7 @@ class LCMSpy(LCMService, Topic):
                 print(self.config)
                 self.topic[topic] = self.topic_class(  # type: ignore[assignment, call-arg]
                     topic,
-                    history_window=self.config.topic_history_window,  # type: ignore[attr-defined]
+                    history_window=self.config.topic_history_window,
                 )
         self.topic[topic].msg(data)  # type: ignore[attr-defined, type-arg]
 
@@ -150,21 +150,19 @@ class GraphTopic(Topic):
         self.bandwidth_history.append(kbps)
 
 
-@dataclass
 class GraphLCMSpyConfig(LCMSpyConfig):
     graph_log_window: float = 1.0
 
 
 class GraphLCMSpy(LCMSpy, GraphTopic):
-    default_config = GraphLCMSpyConfig
-
+    config: GraphLCMSpyConfig
     graph_log_thread: threading.Thread | None = None
     graph_log_stop_event: threading.Event = threading.Event()
     topic_class: type[Topic] = GraphTopic
 
-    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        GraphTopic.__init__(self, name="total", history_window=self.config.topic_history_window)  # type: ignore[attr-defined]
+        GraphTopic.__init__(self, name="total", history_window=self.config.topic_history_window)
 
     def start(self) -> None:
         super().start()
@@ -184,7 +182,7 @@ class GraphLCMSpy(LCMSpy, GraphTopic):
         """Stop the graph logging and LCM spy"""
         self.graph_log_stop_event.set()
         if self.graph_log_thread and self.graph_log_thread.is_alive():
-            self.graph_log_thread.join(timeout=1.0)
+            self.graph_log_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
 

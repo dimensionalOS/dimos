@@ -24,12 +24,16 @@ import numpy as np
 
 from dimos.core.core import rpc
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.object_tracker_2d import ObjectTracker2D
-from dimos.protocol.tf import TF
+from dimos.protocol.tf.tf import TF
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import (
@@ -62,7 +66,7 @@ class ObjectTracker3D(ObjectTracker2D):
 
         # Additional state for 3D tracking
         self.camera_intrinsics = None
-        self._latest_depth_frame: np.ndarray | None = None  # type: ignore[type-arg]
+        self._latest_depth_frame: np.ndarray | None = None
         self._latest_camera_info: CameraInfo | None = None
 
         # TF publisher for tracked object
@@ -89,13 +93,13 @@ class ObjectTracker3D(ObjectTracker2D):
 
         # Create aligned observable for RGB and depth
         aligned_frames = align_timestamped(
-            self.color_image.observable(),  # type: ignore[no-untyped-call]
-            self.depth.observable(),  # type: ignore[no-untyped-call]
+            self.color_image.observable(),
+            self.depth.observable(),
             buffer_size=2.0,  # 2 second buffer
             match_tolerance=0.5,  # 500ms tolerance
         )
         unsub = aligned_frames.subscribe(on_aligned_frames)
-        self._disposables.add(unsub)
+        self.register_disposable(unsub)
 
         # Subscribe to camera info
         def on_camera_info(camera_info_msg: CameraInfo) -> None:
@@ -247,7 +251,7 @@ class ObjectTracker3D(ObjectTracker2D):
 
         return detection3darray
 
-    def _get_depth_from_bbox(self, bbox: list[int], depth_frame: np.ndarray) -> float | None:  # type: ignore[type-arg]
+    def _get_depth_from_bbox(self, bbox: list[int], depth_frame: np.ndarray) -> float | None:
         """
         Calculate depth from bbox using the 25th percentile of closest points.
 
@@ -280,11 +284,11 @@ class ObjectTracker3D(ObjectTracker2D):
 
         return None
 
-    def _draw_reid_overlay(self, image: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
+    def _draw_reid_overlay(self, image: np.ndarray) -> np.ndarray:
         """Draw Re-ID feature matches on visualization."""
         import cv2
 
-        viz_image: np.ndarray = image.copy()  # type: ignore[type-arg]
+        viz_image: np.ndarray = image.copy()
         x1, y1, _x2, _y2 = self.last_roi_bbox  # type: ignore[attr-defined]
 
         # Draw keypoints

@@ -16,8 +16,9 @@ import pickle
 
 from dimos_lcm.sensor_msgs import CameraInfo
 
-from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.std_msgs import Header
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Header import Header
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree.type.odometry import Odometry
 
@@ -71,8 +72,10 @@ def camera_info() -> CameraInfo:
 
 
 def transform_chain(odom_frame: Odometry) -> list:  # type: ignore[type-arg]
-    from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
-    from dimos.protocol.tf import TF
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Transform import Transform
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+    from dimos.protocol.tf.tf import TF
 
     camera_link = Transform(
         translation=Vector3(0.3, 0.0, 0.0),
@@ -113,7 +116,7 @@ def broadcast(  # type: ignore[no-untyped-def]
     )
 
     from dimos.core.transport import LCMTransport
-    from dimos.msgs.geometry_msgs import PoseStamped
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
     lidar_transport = LCMTransport("/lidar", PointCloud2)  # type: ignore[var-annotated]
     odom_transport = LCMTransport("/odom", PoseStamped)  # type: ignore[var-annotated]
@@ -136,22 +139,22 @@ def broadcast(  # type: ignore[no-untyped-def]
 
 
 def process_data():  # type: ignore[no-untyped-def]
-    from dimos.msgs.sensor_msgs import Image
+    from dimos.memory.timeseries.legacy import LegacyPickleStore
+    from dimos.msgs.sensor_msgs.Image import Image
     from dimos.perception.detection.module2D import (  # type: ignore[attr-defined]
         Detection2DModule,
         build_imageannotations,
     )
     from dimos.robot.unitree.type.odometry import Odometry
     from dimos.utils.data import get_data
-    from dimos.utils.testing import TimedSensorReplay
 
     get_data("unitree_office_walk")
     target = 1751591272.9654856
-    lidar_store = TimedSensorReplay(
+    lidar_store = LegacyPickleStore(
         "unitree_office_walk/lidar", autocast=pointcloud2_from_webrtc_lidar
     )
-    video_store = TimedSensorReplay("unitree_office_walk/video", autocast=Image.from_numpy)
-    odom_store = TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    video_store = LegacyPickleStore("unitree_office_walk/video", autocast=Image.from_numpy)
+    odom_store = LegacyPickleStore("unitree_office_walk/odom", autocast=Odometry.from_msg)
 
     def attach_frame_id(image: Image) -> Image:
         image.frame_id = "camera_optical"

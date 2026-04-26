@@ -20,11 +20,12 @@ from contextlib import contextmanager
 import threading
 from typing import TYPE_CHECKING, Any
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.manipulation.planning.factory import create_world
+from dimos.manipulation.planning.monitor.robot_state_monitor import RobotStateMonitor
 from dimos.manipulation.planning.monitor.world_obstacle_monitor import WorldObstacleMonitor
-from dimos.manipulation.planning.monitor.world_state_monitor import WorldStateMonitor
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -33,15 +34,15 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
-    from dimos.manipulation.planning.spec import (
+    from dimos.manipulation.planning.spec.config import RobotModelConfig
+    from dimos.manipulation.planning.spec.models import (
         CollisionObjectMessage,
         JointPath,
         Obstacle,
-        RobotModelConfig,
         WorldRobotID,
-        WorldSpec,
     )
-    from dimos.msgs.vision_msgs import Detection3D
+    from dimos.manipulation.planning.spec.protocols import WorldSpec
+    from dimos.msgs.vision_msgs.Detection3D import Detection3D
     from dimos.perception.detection.type.detection3d.object import Object
 
 logger = setup_logger()
@@ -55,18 +56,18 @@ class WorldMonitor:
         backend: str = "drake",
         enable_viz: bool = False,
         **kwargs: Any,
-    ):
+    ) -> None:
         self._backend = backend
         self._world: WorldSpec = create_world(backend=backend, enable_viz=enable_viz, **kwargs)
         self._lock = threading.RLock()
         self._robot_joints: dict[WorldRobotID, list[str]] = {}
-        self._state_monitors: dict[WorldRobotID, WorldStateMonitor] = {}
+        self._state_monitors: dict[WorldRobotID, RobotStateMonitor] = {}
         self._obstacle_monitor: WorldObstacleMonitor | None = None
         self._viz_thread: threading.Thread | None = None
         self._viz_stop_event = threading.Event()
         self._viz_rate_hz: float = 10.0
 
-    # ============= Robot Management =============
+    # Robot Management
 
     def add_robot(self, config: RobotModelConfig) -> WorldRobotID:
         """Add a robot. Returns robot_id."""
@@ -93,7 +94,7 @@ class WorldMonitor:
         with self._lock:
             return self._world.get_joint_limits(robot_id)
 
-    # ============= Obstacle Management =============
+    # Obstacle Management
 
     def add_obstacle(self, obstacle: Obstacle) -> str:
         """Add an obstacle. Returns obstacle_id."""
@@ -110,7 +111,7 @@ class WorldMonitor:
         with self._lock:
             self._world.clear_obstacles()
 
-    # ============= Monitor Control =============
+    # Monitor Control
 
     def start_state_monitor(
         self,
@@ -138,7 +139,7 @@ class WorldMonitor:
             if joint_name_mapping is None and config.joint_name_mapping:
                 joint_name_mapping = config.joint_name_mapping
 
-            monitor = WorldStateMonitor(
+            monitor = RobotStateMonitor(
                 world=self._world,
                 lock=self._lock,
                 robot_id=robot_id,
@@ -181,7 +182,7 @@ class WorldMonitor:
 
         self._world.close()
 
-    # ============= Message Handlers =============
+    # Message Handlers
 
     def on_joint_state(self, msg: JointState, robot_id: WorldRobotID | None = None) -> None:
         """Handle joint state message. Broadcasts to all monitors if robot_id is None."""
@@ -222,6 +223,12 @@ class WorldMonitor:
             return self._obstacle_monitor.refresh_obstacles(min_duration)
         return []
 
+    def remove_object_obstacle(self, object_id: str) -> bool:
+        """Remove a single object's obstacle from the planning world."""
+        if self._obstacle_monitor is not None:
+            return self._obstacle_monitor.remove_object_obstacle(object_id)
+        return False
+
     def clear_perception_obstacles(self) -> int:
         """Remove all perception obstacles. Returns count removed."""
         if self._obstacle_monitor is not None:
@@ -252,7 +259,7 @@ class WorldMonitor:
             return self._obstacle_monitor.list_added_obstacles()
         return []
 
-    # ============= State Access =============
+    # State Access
 
     def get_current_joint_state(self, robot_id: WorldRobotID) -> JointState | None:
         """Get current joint state. Returns None if not yet received."""
@@ -294,7 +301,7 @@ class WorldMonitor:
             return self._state_monitors[robot_id].is_state_stale(max_age)
         return True
 
-    # ============= Context Management =============
+    # Context Management
 
     @contextmanager
     def scratch_context(self) -> Generator[Any, None, None]:
@@ -306,7 +313,7 @@ class WorldMonitor:
         """Get live context. Prefer scratch_context() for planning."""
         return self._world.get_live_context()
 
-    # ============= Collision Checking =============
+    # Collision Checking
 
     def is_state_valid(self, robot_id: WorldRobotID, joint_state: JointState) -> bool:
         """Check if configuration is collision-free."""
@@ -340,7 +347,7 @@ class WorldMonitor:
         with self._world.scratch_context() as ctx:
             return self._world.get_min_distance(ctx, robot_id)
 
-    # ============= Kinematics =============
+    # Kinematics
 
     def get_ee_pose(
         self, robot_id: WorldRobotID, joint_state: JointState | None = None
@@ -366,7 +373,7 @@ class WorldMonitor:
             link_name: Name of the link in the URDF
             joint_state: Joint state to use (uses current if None)
         """
-        from dimos.msgs.geometry_msgs import Quaternion
+        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 
         with self._world.scratch_context() as ctx:
             if joint_state is None:
@@ -394,7 +401,7 @@ class WorldMonitor:
             self._world.set_joint_state(ctx, robot_id, joint_state)
             return self._world.get_jacobian(ctx, robot_id)
 
-    # ============= Lifecycle =============
+    # Lifecycle
 
     def finalize(self) -> None:
         """Finalize world. Must be called before collision checking."""
@@ -407,7 +414,7 @@ class WorldMonitor:
         """Check if world is finalized."""
         return self._world.is_finalized
 
-    # ============= Visualization =============
+    # Visualization
 
     def get_visualization_url(self) -> str | None:
         """Get visualization URL or None if not enabled."""
@@ -447,7 +454,7 @@ class WorldMonitor:
             return
 
         self._viz_stop_event.set()
-        self._viz_thread.join(timeout=1.0)
+        self._viz_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         if self._viz_thread.is_alive():
             logger.warning("Visualization thread did not stop cleanly")
         self._viz_thread = None
@@ -466,14 +473,14 @@ class WorldMonitor:
                 logger.debug(f"Visualization publish failed: {e}")
             time.sleep(period)
 
-    # ============= Direct World Access =============
+    # Direct World Access
 
     @property
     def world(self) -> WorldSpec:
         """Get underlying WorldSpec. Not thread-safe for modifications."""
         return self._world
 
-    def get_state_monitor(self, robot_id: str) -> WorldStateMonitor | None:
+    def get_state_monitor(self, robot_id: str) -> RobotStateMonitor | None:
         """Get state monitor for a robot (may be None)."""
         return self._state_monitors.get(robot_id)
 

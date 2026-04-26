@@ -66,19 +66,22 @@ from dimos.control.components import (
     HardwareType,
     make_humanoid_joints,
 )
-from dimos.control.coordinator import TaskConfig, control_coordinator
-from dimos.core.blueprints import autoconnect
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import LCMTransport
-from dimos.msgs.geometry_msgs import PoseStamped, Twist
-from dimos.msgs.sensor_msgs import CameraInfo, Image, JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Bool import Bool as DimosBool
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.viser import splat_camera, viser_render
 
 logger = setup_logger()
-from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 _g1_joints = make_humanoid_joints("g1")
 _g1_legs_waist = _g1_joints[:15]  # indices 0..14 — legs (12) + waist (3)
@@ -187,7 +190,7 @@ _AUTO_DRY_RUN = not global_config.simulation
 _DEFAULT_RAMP_SECONDS = 0.0 if global_config.simulation else 10.0
 
 _g1_coordinator = (
-    control_coordinator(
+    ControlCoordinator.blueprint(
         tick_rate=500.0,
         publish_joint_state=True,
         joint_state_frame_id="coordinator",
@@ -259,7 +262,7 @@ _g1_coordinator = (
 # pygame's pygame.display.set_mode() calls NSWindow on macOS, and Cocoa
 # rejects NSWindow creation from non-main threads — which is where
 # dimos runs module code.  A browser tab has no such constraint.
-_g1_ws_vis = websocket_vis().transports(
+_g1_ws_vis = WebsocketVisModule.blueprint().transports(
     {
         ("cmd_vel", Twist): LCMTransport("/g1/cmd_vel", Twist),
         ("activate", DimosBool): LCMTransport("/g1/activate", DimosBool),

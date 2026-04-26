@@ -20,7 +20,7 @@ Then install DimOS:
 ```bash
 uv venv --python "3.12"
 source .venv/bin/activate
-uv pip install dimos[base,unitree]
+uv pip install 'dimos[base,unitree]'
 ```
 
 ## Try It — No Hardware Needed
@@ -85,7 +85,7 @@ From the command center ([localhost:7779](http://localhost:7779)):
 ## MuJoCo Simulation
 
 ```bash
-uv pip install dimos[base,unitree,sim]
+uv pip install 'dimos[base,unitree,sim]'
 dimos --simulation run unitree-go2
 ```
 
@@ -116,9 +116,8 @@ The agent subscribes to camera, LiDAR, and spatial memory streams — it sees wh
 |-----------|-------------|
 | `unitree-go2-basic` | Connection + visualization (no navigation) |
 | `unitree-go2` | Full navigation stack |
-| `unitree-go2-agentic` | Navigation + LLM agent |
+| `unitree-go2-agentic` | Navigation + LLM agent + MCP tool access |
 | `unitree-go2-agentic-ollama` | Agent with local Ollama models |
-| `unitree-go2-agentic-mcp` | Agent with MCP tool access |
 | `unitree-go2-spatial` | Navigation + spatial memory |
 | `unitree-go2-detection` | Navigation + object detection |
 | `unitree-go2-ros` | ROS 2 bridge mode |

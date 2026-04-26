@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+
+import ast
+from collections import defaultdict
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import xml.etree.ElementTree as ET
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def get_repo_root():
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def classname_to_filepath(classname):
+    parts = classname.split(".")
+    class_name = None
+    while len(parts) > 1 and parts[-1][0:1].isupper():
+        class_name = parts.pop()
+    return os.path.join(*parts) + ".py", class_name
+
+
+def run_pytest(extra_args):
+    """Run pytest, return list of (file_path, class_name|None, func_name, duration)."""
+    xml_file = tempfile.NamedTemporaryFile(suffix=".xml", delete=False)
+    xml_file.close()
+    try:
+        cmd = [
+            "pytest",
+            "dimos",
+            "-m",
+            "not (tool or mujoco)",
+            f"--junit-xml={xml_file.name}",
+            "--tb=no",
+            *extra_args,
+        ]
+        print("$ " + " ".join(cmd), file=sys.stderr, flush=True)
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        # Show the final summary line
+        for raw in reversed(result.stdout.splitlines()):
+            line = ANSI_RE.sub("", raw).strip()
+            if "passed" in line or "failed" in line or "error" in line:
+                print(line, file=sys.stderr)
+                break
+
+        if result.returncode not in (0, 1):
+            print(result.stderr, file=sys.stderr)
+            sys.exit(result.returncode)
+
+        tree = ET.parse(xml_file.name)
+    finally:
+        os.unlink(xml_file.name)
+
+    tests = []
+    for tc in tree.iter("testcase"):
+        classname = tc.get("classname", "")
+        name = tc.get("name", "")
+        time_s = float(tc.get("time", "0"))
+        # Strip parametrize suffixes like [param1-param2]
+        func_name = re.sub(r"\[.*\]$", "", name)
+        file_path, class_name = classname_to_filepath(classname)
+        tests.append((file_path, class_name, func_name, time_s))
+    return tests
+
+
+def find_function_lines(tree, class_name, func_name):
+    """Return (start_line, end_line) of a test function in an AST."""
+    for node in ast.walk(tree):
+        if class_name and isinstance(node, ast.ClassDef) and node.name == class_name:
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if item.name == func_name:
+                        return item.lineno, item.end_lineno
+        elif not class_name and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == func_name:
+                return node.lineno, node.end_lineno
+    return None, None
+
+
+def blame_lines(file_path, start, end):
+    """Return {author: line_count} for a line range via git blame."""
+    try:
+        result = subprocess.run(
+            ["git", "blame", "--line-porcelain", f"-L{start},{end}", file_path],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        return {}
+
+    counts = defaultdict(int)
+    current_line = None
+    for line in result.stdout.splitlines():
+        tokens = line.split()
+        if (
+            len(tokens) >= 3
+            and len(tokens[0]) == 40
+            and all(c in "0123456789abcdef" for c in tokens[0])
+        ):
+            current_line = int(tokens[2])
+        elif line.startswith("author ") and current_line is not None:
+            counts[line[7:]] += 1
+    return dict(counts)
+
+
+def format_time(seconds):
+    if seconds >= 60:
+        m, s = divmod(seconds, 60)
+        return f"{int(m)}m {s:.1f}s"
+    if seconds >= 1:
+        return f"{seconds:.2f}s"
+    if seconds >= 0.001:
+        return f"{seconds * 1000:.1f}ms"
+    return f"{seconds * 1_000_000:.0f}us"
+
+
+def main():
+    repo_root = get_repo_root()
+    os.chdir(repo_root)
+
+    extra_args = sys.argv[1:]
+
+    print("Running pytest to collect test durations...", file=sys.stderr, flush=True)
+    tests = run_pytest(extra_args)
+    if not tests:
+        print("No test results found.", file=sys.stderr)
+        sys.exit(1)
+
+    print(
+        f"Analysing {len(tests)} tests with git blame...",
+        file=sys.stderr,
+        flush=True,
+    )
+
+    stats = defaultdict(lambda: {"time": 0.0, "lines": 0})
+    ast_cache = {}
+    blame_cache = {}
+    skipped = 0
+
+    for file_path, class_name, func_name, duration in tests:
+        if not func_name:
+            skipped += 1
+            continue
+
+        if file_path not in ast_cache:
+            try:
+                with open(file_path) as f:
+                    ast_cache[file_path] = ast.parse(f.read())
+            except (FileNotFoundError, SyntaxError):
+                ast_cache[file_path] = None
+        tree = ast_cache[file_path]
+        if tree is None:
+            skipped += 1
+            continue
+
+        start, end = find_function_lines(tree, class_name, func_name)
+        if start is None:
+            skipped += 1
+            continue
+
+        cache_key = (file_path, start, end)
+        if cache_key not in blame_cache:
+            blame_cache[cache_key] = blame_lines(file_path, start, end)
+        author_lines = blame_cache[cache_key]
+        total_lines = sum(author_lines.values())
+        if total_lines == 0:
+            skipped += 1
+            continue
+
+        for author, lines in author_lines.items():
+            frac = lines / total_lines
+            stats[author]["time"] += duration * frac
+            stats[author]["lines"] += lines
+
+    if not stats:
+        print("No blame data could be collected.", file=sys.stderr)
+        sys.exit(1)
+    if skipped:
+        print(f"({skipped} tests skipped — could not resolve source)", file=sys.stderr)
+
+    # Sort by time-per-line ascending (fastest first)
+    ranked = sorted(
+        stats.items(),
+        key=lambda x: x[1]["time"] / x[1]["lines"] if x[1]["lines"] else float("inf"),
+    )
+
+    total_time = sum(s["time"] for _, s in ranked)
+    total_lines = sum(s["lines"] for _, s in ranked)
+
+    print()
+    hdr = f"  {'Committer':<30} {'Total Time':>12} {'Lines':>7} {'Time / Line':>12}"
+    sep = "  " + "\u2500" * (len(hdr) - 2)
+    print(hdr)
+    print(sep)
+    for rank, (author, s) in enumerate(ranked, 1):
+        t = s["time"]
+        n = s["lines"]
+        tpl = t / n if n else 0
+        print(f"{rank:>2}. {author:<28} {format_time(t):>12} {n:>7} {format_time(tpl):>12}")
+    print(sep)
+    tpl_all = total_time / total_lines if total_lines else 0
+    print(
+        f"  {'TOTAL':<30} {format_time(total_time):>12} {total_lines:>7} {format_time(tpl_all):>12}"
+    )
+
+
+if __name__ == "__main__":
+    main()

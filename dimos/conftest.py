@@ -14,12 +14,13 @@
 
 import asyncio
 import os
+import platform
 import threading
 
 from dotenv import load_dotenv
 import pytest
 
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.protocol.service.lcmservice import autoconf
 
 load_dotenv()
@@ -34,6 +35,10 @@ def _has_ros() -> bool:
         return False
 
 
+def _is_macos() -> bool:
+    return platform.system() == "Darwin"
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "tool: dev tooling")
     config.addinivalue_line("markers", "slow: tests that are too slow for the fast loop")
@@ -42,6 +47,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "skipif_no_openai: skip when OPENAI_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_alibaba: skip when ALIBABA_API_KEY is not set")
     config.addinivalue_line("markers", "skipif_no_ros: skip when ROS dependencies are not present")
+    config.addinivalue_line("markers", "skipif_macos_bug: skip known-buggy tests on macOS")
 
     # Propagate coverage collection to subprocesses.
     if os.environ.get("_DIMOS_COV"):
@@ -55,6 +61,7 @@ def pytest_collection_modifyitems(config, items):
         "skipif_no_openai": (not os.getenv("OPENAI_API_KEY"), "OPENAI_API_KEY not set"),
         "skipif_no_alibaba": (not os.getenv("ALIBABA_API_KEY"), "ALIBABA_API_KEY not set"),
         "skipif_no_ros": (not _has_ros(), "ROS dependencies are not present"),
+        "skipif_macos_bug": (_is_macos(), "Some tests are buggy on Mac OS"),
     }
     for marker_name, (condition, reason) in _skipif_markers.items():
         if condition:

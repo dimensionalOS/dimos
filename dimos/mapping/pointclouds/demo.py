@@ -25,8 +25,8 @@ from dimos.mapping.pointclouds.util import (
     read_pointcloud,
     visualize,
 )
-from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
 
 app = typer.Typer()

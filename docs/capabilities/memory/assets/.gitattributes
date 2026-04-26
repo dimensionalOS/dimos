@@ -1,0 +1,2 @@
+plot_brightness_algo.svg filter=lfs diff=lfs merge=lfs -text
+plot_brightness_algo_delta.svg filter=lfs diff=lfs merge=lfs -text

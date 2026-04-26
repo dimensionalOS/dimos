@@ -29,9 +29,9 @@ from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
 
 try:
-    from .gateway import UnifiedGatewayClient
+    from dimos.agents_deprecated.modules.gateway.client import UnifiedGatewayClient
 except ImportError:
-    from dimos.agents_deprecated.modules.gateway import UnifiedGatewayClient
+    from dimos.agents_deprecated.modules.gateway.client import UnifiedGatewayClient
 
 logger = setup_logger()
 

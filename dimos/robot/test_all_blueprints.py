@@ -14,7 +14,7 @@
 
 import pytest
 
-from dimos.core.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.robot.all_blueprints import all_blueprints
 from dimos.robot.get_all_blueprints import get_blueprint_by_name
 
@@ -22,6 +22,7 @@ from dimos.robot.get_all_blueprints import get_blueprint_by_name
 OPTIONAL_DEPENDENCIES = {"pyrealsense2", "pyzed", "geometry_msgs", "turbojpeg"}
 OPTIONAL_ERROR_SUBSTRINGS = {
     "Unable to locate turbojpeg library automatically",
+    "ZED SDK not installed",
 }
 
 

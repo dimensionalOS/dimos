@@ -13,25 +13,25 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
 import time
-from typing import Any
 
+from pydantic import Field
 import reactivex as rx
 
 from dimos.agents.annotation import skill
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
 from dimos.hardware.sensors.camera.spec import CameraHardware
 from dimos.hardware.sensors.camera.webcam import Webcam
-from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.spec import perception
-from dimos.visualization.rerun.bridge import rerun_bridge
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 
 def default_transform() -> Transform:
@@ -43,28 +43,20 @@ def default_transform() -> Transform:
     )
 
 
-@dataclass
 class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
-    transform: Transform | None = field(default_factory=default_transform)
-    hardware: Callable[[], CameraHardware[Any]] | CameraHardware[Any] = Webcam
+    transform: Transform | None = Field(default_factory=default_transform)
+    hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
     frequency: float = 0.0  # Hz, 0 means no limit
 
 
-class CameraModule(Module[CameraModuleConfig], perception.Camera):
+class CameraModule(Module, perception.Camera):
+    config: CameraModuleConfig
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
 
-    hardware: CameraHardware[Any]
-
-    config: CameraModuleConfig
-    default_config = CameraModuleConfig
-    _global_config: GlobalConfig
-
-    def __init__(self, *args: Any, cfg: GlobalConfig = global_config, **kwargs: Any) -> None:
-        self._global_config = cfg
-        self._latest_image: Image | None = None
-        super().__init__(*args, **kwargs)
+    hardware: CameraHardware
+    _latest_image: Image | None = None
 
     @rpc
     def start(self) -> None:
@@ -84,11 +76,11 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
             self.color_image.publish(image)
             self._latest_image = image
 
-        self._disposables.add(
+        self.register_disposable(
             stream.subscribe(on_image),
         )
 
-        self._disposables.add(
+        self.register_disposable(
             rx.interval(1.0).subscribe(lambda _: self.publish_metadata()),
         )
 
@@ -119,17 +111,14 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
             raise RuntimeError("No image received from camera yet.")
         return self._latest_image
 
+    @rpc
     def stop(self) -> None:
         if self.hardware and hasattr(self.hardware, "stop"):
             self.hardware.stop()
         super().stop()
 
 
-camera_module = CameraModule.blueprint
-
 demo_camera = autoconnect(
-    camera_module(),
-    rerun_bridge(),
+    CameraModule.blueprint(),
+    RerunBridgeModule.blueprint(),
 )
-
-__all__ = ["CameraModule", "camera_module"]

@@ -24,14 +24,16 @@ from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
-from dimos.msgs.foxglove_msgs import ImageAnnotations
-from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
-from dimos.msgs.sensor_msgs.Image import ImageFormat
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
+from dimos.msgs.foxglove_msgs.ImageAnnotations import ImageAnnotations
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.vision_msgs.Detection2DArray import Detection2DArray
+from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.detection.detectors.yoloe import Yoloe2DDetector, YoloePromptMode
 from dimos.perception.detection.objectDB import ObjectDB
-from dimos.perception.detection.type import ImageDetections2D
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection3d.object import (
     Object,
     Object as DetObject,
@@ -68,11 +70,25 @@ class ObjectSceneRegistrationModule(Module):
         self,
         target_frame: str = "map",
         prompt_mode: YoloePromptMode = YoloePromptMode.LRPC,
+        # ObjectDB tuning
+        distance_threshold: float = 0.2,
+        min_detections_for_permanent: int = 6,
+        # Object 3D reconstruction tuning
+        max_distance: float = 0.0,
+        use_aabb: bool = False,
+        max_obstacle_width: float = 0.0,
+        **kwargs: Any,
     ) -> None:
-        super().__init__()
+        super().__init__(**kwargs)
         self._target_frame = target_frame
         self._prompt_mode = prompt_mode
-        self._object_db = ObjectDB()
+        self._object_db = ObjectDB(
+            distance_threshold=distance_threshold,
+            min_detections_for_permanent=min_detections_for_permanent,
+        )
+        self._max_distance = max_distance
+        self._use_aabb = use_aabb
+        self._max_obstacle_width = max_obstacle_width
 
     @rpc
     def start(self) -> None:
@@ -91,8 +107,8 @@ class ObjectSceneRegistrationModule(Module):
         self.camera_info.subscribe(lambda msg: setattr(self, "_camera_info", msg))
 
         aligned_frames = align_timestamped(
-            self.color_image.observable(),  # type: ignore[no-untyped-call]
-            self.depth_image.observable(),  # type: ignore[no-untyped-call]
+            self.color_image.observable(),
+            self.depth_image.observable(),
             buffer_size=2.0,
             match_tolerance=0.1,
         )
@@ -325,7 +341,7 @@ class ObjectSceneRegistrationModule(Module):
                 0.1,
             )
             if camera_transform is None:
-                logger.warning("Failed to lookup transform from camera frame to target frame")
+                logger.info("Failed to lookup transform from camera frame to target frame")
                 return
 
         # Cache camera transform for full scene pointcloud
@@ -337,23 +353,25 @@ class ObjectSceneRegistrationModule(Module):
             depth_image=depth_image,
             camera_info=self._camera_info,
             camera_transform=camera_transform,
+            max_distance=self._max_distance,
+            use_aabb=self._use_aabb,
+            max_obstacle_width=self._max_obstacle_width,
         )
         if not objects:
             return
 
         # Add objects to spatial memory database
-        objects = self._object_db.add_objects(objects)
+        self._object_db.add_objects(objects)
 
-        detections_3d = to_detection3d_array(objects)
+        # Publish ALL permanent objects so downstream consumers get the full set,
+        # not just this frame's batch (which may be a subset of what's on the table).
+        all_permanent = self._object_db.get_objects()
+
+        detections_3d = to_detection3d_array(all_permanent)
         self.detections_3d.publish(detections_3d)
-        self.objects.publish(objects)
+        self.objects.publish(all_permanent)
 
-        objects_for_pc = self._object_db.get_objects()
+        objects_for_pc = all_permanent
         aggregated_pc = aggregate_pointclouds(objects_for_pc)
         self.pointcloud.publish(aggregated_pc)
         return
-
-
-object_scene_registration_module = ObjectSceneRegistrationModule.blueprint
-
-__all__ = ["ObjectSceneRegistrationModule", "object_scene_registration_module"]

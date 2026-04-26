@@ -26,24 +26,30 @@ Architecture:
 - Supports velocity-based and position-based control modes
 """
 
-from dataclasses import dataclass
 import math
 import threading
 import time
 from typing import Any
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Twist, Vector3
-from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
+from dimos.manipulation.control.arm_driver_spec import ArmDriverSpec
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.RobotState import RobotState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.simple_controller import PIDController
 
 logger = setup_logger()
 
 
-@dataclass
 class CartesianMotionControllerConfig(ModuleConfig):
     """Configuration for Cartesian motion controller."""
 
@@ -93,14 +99,9 @@ class CartesianMotionController(Module):
     provides IK/FK RPC methods and JointState/RobotState outputs.
     """
 
-    default_config = CartesianMotionControllerConfig
-    config: CartesianMotionControllerConfig  # Type hint for proper attribute access
+    config: CartesianMotionControllerConfig
 
-    # RPC methods to request from other modules (resolved at blueprint build time)
-    rpc_calls = [
-        "XArmDriver.get_forward_kinematics",
-        "XArmDriver.get_inverse_kinematics",
-    ]
+    _arm_driver: ArmDriverSpec
 
     # Input topics (initialized by Module base class)
     joint_state: In[JointState] = None  # type: ignore[assignment]
@@ -112,18 +113,8 @@ class CartesianMotionController(Module):
     cartesian_velocity: Out[Twist] = None  # type: ignore[assignment]
     current_pose: Out[PoseStamped] = None  # type: ignore[assignment]
 
-    def __init__(self, arm_driver: Any = None, *args: Any, **kwargs: Any) -> None:
-        """
-        Initialize the Cartesian motion controller.
-
-        Args:
-            arm_driver: (Optional) Hardware driver reference (legacy mode).
-                       When using blueprints, this is resolved automatically via rpc_calls.
-        """
-        super().__init__(*args, **kwargs)
-
-        # Hardware driver reference - set via arm_driver param (legacy) or RPC wiring (blueprint)
-        self._arm_driver_legacy = arm_driver
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
         # State tracking
         self._latest_joint_state: JointState | None = None
@@ -192,34 +183,12 @@ class CartesianMotionController(Module):
         )
 
     def _call_fk(self, joint_positions: list[float]) -> tuple[int, list[float] | None]:
-        """Call FK - uses blueprint RPC wiring or legacy arm_driver reference."""
-        try:
-            result: tuple[int, list[float] | None] = self.get_rpc_calls(
-                "XArmDriver.get_forward_kinematics"
-            )(joint_positions)
-            return result
-        except (ValueError, KeyError):
-            if self._arm_driver_legacy:
-                result_fk: tuple[int, list[float] | None] = (
-                    self._arm_driver_legacy.get_forward_kinematics(joint_positions)  # type: ignore[attr-defined]
-                )
-                return result_fk
-            raise RuntimeError("No arm driver available - use blueprint or pass arm_driver param")
+        """Call FK via the arm driver spec (resolved at blueprint build time)."""
+        return self._arm_driver.get_forward_kinematics(joint_positions)
 
     def _call_ik(self, pose: list[float]) -> tuple[int, list[float] | None]:
-        """Call IK - uses blueprint RPC wiring or legacy arm_driver reference."""
-        try:
-            result: tuple[int, list[float] | None] = self.get_rpc_calls(
-                "XArmDriver.get_inverse_kinematics"
-            )(pose)
-            return result
-        except (ValueError, KeyError):
-            if self._arm_driver_legacy:
-                result_ik: tuple[int, list[float] | None] = (
-                    self._arm_driver_legacy.get_inverse_kinematics(pose)  # type: ignore[attr-defined]
-                )
-                return result_ik
-            raise RuntimeError("No arm driver available - use blueprint or pass arm_driver param")
+        """Call IK via the arm driver spec (resolved at blueprint build time)."""
+        return self._arm_driver.get_inverse_kinematics(pose)
 
     @rpc
     def start(self) -> None:
@@ -268,14 +237,10 @@ class CartesianMotionController(Module):
 
         # Wait for control thread
         if self._control_thread and self._control_thread.is_alive():
-            self._control_thread.join(timeout=2.0)
+            self._control_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
         logger.info("CartesianMotionController stopped")
-
-    # =========================================================================
-    # RPC Methods - High-level control
-    # =========================================================================
 
     @rpc
     def set_target_pose(
@@ -350,10 +315,6 @@ class CartesianMotionController(Module):
             and ori_error < self.config.orientation_tolerance
         )
 
-    # =========================================================================
-    # Private Methods - Callbacks
-    # =========================================================================
-
     def _on_joint_state(self, msg: JointState) -> None:
         """Callback when new joint state is received."""
         logger.debug(f"Received joint_state: {len(msg.position)} joints")
@@ -372,10 +333,6 @@ class CartesianMotionController(Module):
             self._last_target_time = time.time()
             self._is_tracking = True
         logger.debug(f"New target received: {msg}")
-
-    # =========================================================================
-    # Private Methods - Control Loop
-    # =========================================================================
 
     def _control_loop(self) -> None:
         """
@@ -715,7 +672,3 @@ class CartesianMotionController(Module):
     def _normalize_angle(angle: float) -> float:
         """Normalize angle to [-pi, pi]."""
         return math.atan2(math.sin(angle), math.cos(angle))
-
-
-# Expose blueprint for declarative composition
-cartesian_motion_controller = CartesianMotionController.blueprint

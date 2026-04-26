@@ -16,16 +16,16 @@ import re
 
 from reactivex import operators as ops
 
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.memory.timeseries.legacy import LegacyPickleStore
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.type.lidar import pointcloud2_from_webrtc_lidar
 from dimos.robot.unitree.type.odometry import Odometry
 from dimos.utils.data import get_data
-from dimos.utils.testing import replay
 
 
 def test_timed_sensor_replay() -> None:
     get_data("unitree_office_walk")
-    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom")
+    odom_store = LegacyPickleStore("unitree_office_walk/odom")
 
     itermsgs = []
     for msg in odom_store.iterate():
@@ -51,7 +51,7 @@ def test_timed_sensor_replay() -> None:
 
 def test_iterate_ts_no_seek() -> None:
     """Test iterate_ts without seek (start_timestamp=None)"""
-    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    odom_store = LegacyPickleStore("unitree_office_walk/odom", autocast=Odometry.from_msg)
 
     # Test without seek
     ts_msgs = []
@@ -69,7 +69,7 @@ def test_iterate_ts_no_seek() -> None:
 
 def test_iterate_ts_with_from_timestamp() -> None:
     """Test iterate_ts with from_timestamp (absolute timestamp)"""
-    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom")
+    odom_store = LegacyPickleStore("unitree_office_walk/odom")
 
     # First get all messages to find a good seek point
     all_msgs = []
@@ -97,7 +97,7 @@ def test_iterate_ts_with_from_timestamp() -> None:
 
 def test_iterate_ts_with_relative_seek() -> None:
     """Test iterate_ts with seek (relative seconds after first timestamp)"""
-    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom")
+    odom_store = LegacyPickleStore("unitree_office_walk/odom")
 
     # Get first few messages to understand timing
     all_msgs = []
@@ -126,7 +126,7 @@ def test_iterate_ts_with_relative_seek() -> None:
 
 def test_stream_with_seek() -> None:
     """Test stream method with seek parameters"""
-    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom")
+    odom_store = LegacyPickleStore("unitree_office_walk/odom")
 
     # Test stream with relative seek
     msgs_with_seek = []
@@ -152,7 +152,7 @@ def test_stream_with_seek() -> None:
 
 def test_duration_with_loop() -> None:
     """Test duration parameter with looping in TimedSensorReplay"""
-    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom")
+    odom_store = LegacyPickleStore("unitree_office_walk/odom")
 
     # Collect timestamps from a small duration window
     collected_ts = []
@@ -187,7 +187,7 @@ def test_first_methods() -> None:
     """Test first() and first_timestamp() methods"""
 
     # Test SensorReplay.first()
-    lidar_replay = replay.SensorReplay("office_lidar", autocast=pointcloud2_from_webrtc_lidar)
+    lidar_replay = LegacyPickleStore("office_lidar", autocast=pointcloud2_from_webrtc_lidar)
 
     print("first file", lidar_replay.files[0])
     # Verify the first file ends with 000.pickle using regex
@@ -207,7 +207,7 @@ def test_first_methods() -> None:
     assert abs(first_msg.ts - first_from_iterate.ts) < 1.0  # Within 1 second tolerance
 
     # Test TimedSensorReplay.first_timestamp()
-    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    odom_store = LegacyPickleStore("unitree_office_walk/odom", autocast=Odometry.from_msg)
     first_ts = odom_store.first_timestamp()
     assert first_ts is not None
     assert isinstance(first_ts, float)
@@ -224,7 +224,7 @@ def test_first_methods() -> None:
 
 def test_find_closest() -> None:
     """Test find_closest method in TimedSensorReplay"""
-    odom_store = replay.TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
+    odom_store = LegacyPickleStore("unitree_office_walk/odom", autocast=Odometry.from_msg)
 
     # Get some reference timestamps
     timestamps = []

@@ -22,7 +22,7 @@ from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy, GraphTopic, LCMSpy, Topic
 
 @pytest.fixture
 def pickle_lcm():
-    lcm = PickleLCM(autoconf=True)
+    lcm = PickleLCM()
     lcm.start()
     yield lcm
     lcm.stop()
@@ -30,7 +30,7 @@ def pickle_lcm():
 
 @pytest.fixture
 def lcmspy_instance():
-    spy = LCMSpy(autoconf=True)
+    spy = LCMSpy()
     spy.start()
     yield spy
     spy.stop()
@@ -38,7 +38,7 @@ def lcmspy_instance():
 
 @pytest.fixture
 def graph_lcmspy_instance():
-    spy = GraphLCMSpy(autoconf=True, graph_log_window=0.1)
+    spy = GraphLCMSpy(graph_log_window=0.1)
     spy.start()
     time.sleep(0.2)  # Wait for thread to start
     yield spy
@@ -164,7 +164,7 @@ def test_graph_lcmspy_basic(graph_lcmspy_instance) -> None:
     """Test GraphLCMSpy basic functionality"""
     # Simulate a message
     graph_lcmspy_instance.msg("/test", b"test data")
-    time.sleep(0.2)  # Wait for graph update
+    time.sleep(0.5)  # Wait for graph update — macOS needs longer for thread scheduling
 
     # Should create GraphTopic with history
     topic = graph_lcmspy_instance.topic["/test"]

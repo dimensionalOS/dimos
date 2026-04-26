@@ -22,8 +22,8 @@ from typing import Any
 
 import lcm
 
-from dimos.msgs import DimosMsg
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.service.lcmservice import LCMService
 
 

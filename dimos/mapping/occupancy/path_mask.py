@@ -16,8 +16,8 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.nav_msgs import Path
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 
 
 def make_path_mask(
@@ -93,6 +93,6 @@ def make_path_mask(
 
     # Some of the points on the edge of the path may be occupied due to
     # rounding. Remove them.
-    bool_mask = bool_mask & ~occupied_mask  # type: ignore[assignment]
+    bool_mask = bool_mask & ~occupied_mask
 
     return bool_mask

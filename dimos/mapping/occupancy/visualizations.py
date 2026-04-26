@@ -16,11 +16,12 @@ from functools import lru_cache
 from typing import Literal, TypeAlias
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
 
-from dimos.msgs.nav_msgs import Path
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 
 Palette: TypeAlias = Literal["rainbow", "turbo"]
@@ -134,6 +135,100 @@ def _interpolate_turbo(t: float) -> tuple[int, int, int]:
         max(0, min(255, round(g))),
         max(0, min(255, round(b))),
     )
+
+
+def generate_rgba_texture(
+    grid: OccupancyGrid,
+    colormap: str | None = None,
+    opacity: float = 1.0,
+    cost_range: tuple[int, int] | None = None,
+    background: str | None = None,
+) -> NDArray[np.uint8]:
+    """Generate RGBA texture for an occupancy grid.
+
+    Args:
+        grid: OccupancyGrid to render.
+        colormap: Optional matplotlib colormap name.
+        opacity: Blend factor (0.0 to 1.0). Blends towards background color.
+        cost_range: Optional (min, max) cost range. Cells outside range use background.
+        background: Hex color for background (e.g. "#484981"). Default is black.
+
+    Returns:
+        RGBA numpy array of shape (height, width, 4).
+        Note: NOT flipped - caller handles orientation.
+    """
+    if background is not None:
+        bg = background.lstrip("#")
+        bg_rgb = np.array([int(bg[i : i + 2], 16) for i in (0, 2, 4)], dtype=np.float32)
+    else:
+        bg_rgb = np.array([0, 0, 0], dtype=np.float32)
+
+    if cost_range is not None:
+        in_range_mask = (grid.grid >= cost_range[0]) & (grid.grid <= cost_range[1])
+    else:
+        in_range_mask = None
+
+    if colormap is not None:
+        cmap = plt.get_cmap(colormap)
+        grid_float = grid.grid.astype(np.float32)
+
+        vis = np.zeros((grid.height, grid.width, 4), dtype=np.uint8)
+
+        free_mask = grid.grid == 0
+        occupied_mask = grid.grid > 0
+
+        if np.any(free_mask):
+            fg = np.array(cmap(0.0)[:3]) * 255
+            blended = fg * opacity + bg_rgb * (1 - opacity)
+            vis[free_mask, :3] = blended.astype(np.uint8)
+            vis[free_mask, 3] = 255
+
+        if np.any(occupied_mask):
+            costs = grid_float[occupied_mask]
+            cost_norm = 0.5 + (costs / 100) * 0.5
+            fg = cmap(cost_norm)[:, :3] * 255
+            blended = fg * opacity + bg_rgb * (1 - opacity)
+            vis[occupied_mask, :3] = blended.astype(np.uint8)
+            vis[occupied_mask, 3] = 255
+
+        unknown_mask = grid.grid == -1
+        vis[unknown_mask] = 0
+
+        if in_range_mask is not None:
+            out_of_range = ~in_range_mask & (grid.grid != -1)
+            vis[out_of_range, :3] = bg_rgb.astype(np.uint8)
+            vis[out_of_range, 3] = 255
+
+        return vis
+
+    # Default: Foxglove-style coloring
+    vis = np.zeros((grid.height, grid.width, 4), dtype=np.uint8)
+
+    free_mask = grid.grid == 0
+    occupied_mask = grid.grid > 0
+
+    fg_free = np.array([72, 73, 129], dtype=np.float32)
+    blended_free = fg_free * opacity + bg_rgb * (1 - opacity)
+    vis[free_mask, :3] = blended_free.astype(np.uint8)
+    vis[free_mask, 3] = 255
+
+    if np.any(occupied_mask):
+        costs = grid.grid[occupied_mask].astype(np.float32)
+        factor = (1 - costs / 100).clip(0, 1)
+        fg_occ = np.column_stack([72 * factor, 73 * factor, 129 * factor])
+        blended_occ = fg_occ * opacity + bg_rgb * (1 - opacity)
+        vis[occupied_mask, :3] = blended_occ.astype(np.uint8)
+        vis[occupied_mask, 3] = 255
+
+    unknown_mask = grid.grid == -1
+    vis[unknown_mask] = 0
+
+    if in_range_mask is not None:
+        out_of_range = ~in_range_mask & (grid.grid != -1)
+        vis[out_of_range, :3] = bg_rgb.astype(np.uint8)
+        vis[out_of_range, 3] = 255
+
+    return vis
 
 
 @lru_cache(maxsize=1)

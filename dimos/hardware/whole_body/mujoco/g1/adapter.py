@@ -48,7 +48,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.core.global_config import GlobalConfig
     from dimos.hardware.whole_body.registry import WholeBodyAdapterRegistry
-    from dimos.msgs.geometry_msgs import PoseStamped
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
 

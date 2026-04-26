@@ -1,0 +1,70 @@
+name: ci
+on:
+  push:
+    branches: [main, dev]
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - '**.md'
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  ci-complete:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    timeout-minutes: 60
+    runs-on: [self-hosted, Linux]
+    container:
+      image: ghcr.io/dimensionalos/ros-dev:dev
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        ALIBABA_API_KEY: ${{ secrets.ALIBABA_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          clean: false
+
+      - name: Fix permissions
+        run: |
+          git config --global --add safe.directory '*'
+          git clean -ffdx -e .venv
+
+      - name: Install Python dependencies
+        run: uv sync --all-extras --no-extra dds --frozen
+
+      - name: Remove pydrake stubs
+        run: |
+          find .venv/lib/*/site-packages/pydrake -name '*.pyi' -delete 2>/dev/null || true
+
+      - name: Run tests
+        if: github.event_name != 'push'
+        run: |
+          /entrypoint.sh bash -c "source .venv/bin/activate && pytest --durations=0 -m 'not (tool or mujoco)'"
+
+      - name: Run tests with coverage
+        if: github.event_name == 'push'
+        run: |
+          /entrypoint.sh bash -c "source .venv/bin/activate && _DIMOS_COV=1 coverage run -m pytest --durations=0 -m 'not (tool or mujoco)' && coverage combine && coverage html && coverage report"
+
+      - name: Run mypy
+        if: ${{ !cancelled() }}
+        run: |
+          /entrypoint.sh bash -c "source .venv/bin/activate && MYPYPATH=/opt/ros/humble/lib/python3.10/site-packages mypy dimos"
+
+      - name: Upload coverage report
+        if: github.event_name == 'push' && !cancelled()
+        uses: actions/upload-artifact@v5
+        with:
+          name: coverage-report
+          path: htmlcov/
+
+      - name: Check disk space
+        if: failure()
+        run: |
+          df -h

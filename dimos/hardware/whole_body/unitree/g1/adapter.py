@@ -53,7 +53,7 @@ from dimos.hardware.whole_body.spec import (
 
 if TYPE_CHECKING:
     from dimos.hardware.whole_body.registry import WholeBodyAdapterRegistry
-    from dimos.msgs.geometry_msgs import PoseStamped
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = logging.getLogger(__name__)
 

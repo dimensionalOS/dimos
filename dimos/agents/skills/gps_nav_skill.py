@@ -14,14 +14,16 @@
 
 import json
 
+from reactivex.disposable import Disposable
+
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out
-from dimos.mapping.types import LatLon
+from dimos.mapping.models import LatLon
 from dimos.mapping.utils.distance import distance_in_meters
 from dimos.utils.logging_config import setup_logger
+from dimos.web.websocket_vis_spec import WebsocketVisSpec
 
 logger = setup_logger()
 
@@ -29,27 +31,20 @@ logger = setup_logger()
 class GpsNavSkillContainer(Module):
     _latest_location: LatLon | None = None
     _max_valid_distance: int = 50000
-    _set_gps_travel_goal_points: RpcCall | None = None
+
+    _vis: WebsocketVisSpec
 
     gps_location: In[LatLon]
     gps_goal: Out[LatLon]
 
-    def __init__(self) -> None:
-        super().__init__()
-
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))  # type: ignore[arg-type]
+        self.register_disposable(Disposable(self.gps_location.subscribe(self._on_gps_location)))
 
     @rpc
     def stop(self) -> None:
         super().stop()
-
-    @rpc
-    def set_WebsocketVisModule_set_gps_travel_goal_points(self, callable: RpcCall) -> None:
-        self._set_gps_travel_goal_points = callable
-        self._set_gps_travel_goal_points.set_rpc(self.rpc)  # type: ignore[arg-type]
 
     def _on_gps_location(self, location: LatLon) -> None:
         self._latest_location = location
@@ -86,8 +81,7 @@ class GpsNavSkillContainer(Module):
         if self.gps_goal._transport is not None:
             self.gps_goal.publish(new_points)  # type: ignore[arg-type]
 
-        if self._set_gps_travel_goal_points:
-            self._set_gps_travel_goal_points(new_points)
+        self._vis.set_gps_travel_goal_points(new_points)  # type: ignore[arg-type]
 
         return "I've successfully set the travel points."
 
@@ -101,9 +95,3 @@ class GpsNavSkillContainer(Module):
             return None
 
         return LatLon(lat=lat, lon=lon)
-
-
-gps_nav_skill = GpsNavSkillContainer.blueprint
-
-
-__all__ = ["GpsNavSkillContainer", "gps_nav_skill"]

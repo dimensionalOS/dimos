@@ -12,15 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import Enum
 from functools import cached_property
 
 from PIL import Image as PILImage
 import torch
-from transformers import AutoModelForCausalLM, AutoProcessor  # type: ignore[import-untyped]
+from transformers import AutoModelForCausalLM, AutoProcessor
 
 from dimos.models.base import HuggingFaceModel
 from dimos.models.vl.base import Captioner
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
+
+
+class CaptionDetail(Enum):
+    """Florence-2 caption detail level."""
+
+    BRIEF = "<CAPTION>"
+    NORMAL = "<DETAILED_CAPTION>"
+    DETAILED = "<MORE_DETAILED_CAPTION>"
+
+    @classmethod
+    def from_str(cls, name: str) -> "CaptionDetail":
+        _ALIASES: dict[str, CaptionDetail] = {
+            "brief": cls.BRIEF,
+            "normal": cls.NORMAL,
+            "detailed": cls.DETAILED,
+            "more_detailed": cls.DETAILED,
+        }
+        return _ALIASES.get(name.lower()) or cls[name.upper()]
 
 
 class Florence2Model(HuggingFaceModel, Captioner):
@@ -35,6 +54,7 @@ class Florence2Model(HuggingFaceModel, Captioner):
     def __init__(
         self,
         model_name: str = "microsoft/Florence-2-base",
+        detail: CaptionDetail = CaptionDetail.NORMAL,
         **kwargs: object,
     ) -> None:
         """Initialize Florence-2 model.
@@ -43,9 +63,11 @@ class Florence2Model(HuggingFaceModel, Captioner):
             model_name: HuggingFace model name. Options:
                 - "microsoft/Florence-2-base" (~0.2B, fastest)
                 - "microsoft/Florence-2-large" (~0.8B, better quality)
+            detail: Caption detail level
             **kwargs: Additional config options (device, dtype, warmup, etc.)
         """
         super().__init__(model_name=model_name, **kwargs)
+        self._task_prompt = detail.value
 
     @cached_property
     def _processor(self) -> AutoProcessor:
@@ -53,27 +75,27 @@ class Florence2Model(HuggingFaceModel, Captioner):
             self.config.model_name, trust_remote_code=self.config.trust_remote_code
         )
 
-    def caption(self, image: Image, detail: str = "normal") -> str:
-        """Generate a caption for the image.
+    _STRIP_PREFIXES = ("The image shows ", "The image is a ", "A ")
 
-        Args:
-            image: Input image to caption
-            detail: Level of detail for caption:
-                - "brief": Short, concise caption
-                - "normal": Standard caption (default)
-                - "detailed": More detailed description
+    @staticmethod
+    def _clean_caption(text: str) -> str:
+        for prefix in Florence2Model._STRIP_PREFIXES:
+            if text.startswith(prefix):
+                return text[len(prefix) :]
+        return text
+
+    def caption(self, image: Image, detail: str | CaptionDetail | None = None) -> str:
+        """Generate a caption for the image.
 
         Returns:
             Text description of the image
         """
-        # Map detail level to Florence-2 task prompts
-        task_prompts = {
-            "brief": "<CAPTION>",
-            "normal": "<CAPTION>",
-            "detailed": "<DETAILED_CAPTION>",
-            "more_detailed": "<MORE_DETAILED_CAPTION>",
-        }
-        task_prompt = task_prompts.get(detail, "<CAPTION>")
+        if detail is None:
+            task_prompt = self._task_prompt
+        elif isinstance(detail, CaptionDetail):
+            task_prompt = detail.value
+        else:
+            task_prompt = CaptionDetail.from_str(detail).value
 
         # Convert to PIL
         pil_image = PILImage.fromarray(image.to_rgb().data)
@@ -101,13 +123,10 @@ class Florence2Model(HuggingFaceModel, Captioner):
 
         # Extract caption from parsed output
         caption: str = parsed.get(task_prompt, generated_text)
-        return caption.strip()
+        return self._clean_caption(caption.strip())
 
     def caption_batch(self, *images: Image) -> list[str]:
         """Generate captions for multiple images efficiently.
-
-        Args:
-            images: Input images to caption
 
         Returns:
             List of text descriptions
@@ -115,7 +134,7 @@ class Florence2Model(HuggingFaceModel, Captioner):
         if not images:
             return []
 
-        task_prompt = "<CAPTION>"
+        task_prompt = self._task_prompt
 
         # Convert all to PIL
         pil_images = [PILImage.fromarray(img.to_rgb().data) for img in images]
@@ -136,7 +155,7 @@ class Florence2Model(HuggingFaceModel, Captioner):
             )
 
         # Decode all
-        generated_texts = self._processor.batch_decode(generated_ids, skip_special_tokens=False)
+        generated_texts = self._processor.batch_decode(generated_ids, skip_special_tokens=True)
 
         # Parse outputs
         captions = []
@@ -144,7 +163,7 @@ class Florence2Model(HuggingFaceModel, Captioner):
             parsed = self._processor.post_process_generation(
                 text, task=task_prompt, image_size=pil_img.size
             )
-            captions.append(parsed.get(task_prompt, text).strip())
+            captions.append(self._clean_caption(parsed.get(task_prompt, text).strip()))
 
         return captions
 

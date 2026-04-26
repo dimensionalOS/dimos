@@ -18,7 +18,7 @@ import pytest
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.path_resampling import simple_resample_path, smooth_resample_path
 from dimos.mapping.occupancy.visualize_path import visualize_path
-from dimos.msgs.geometry_msgs import Pose
+from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image

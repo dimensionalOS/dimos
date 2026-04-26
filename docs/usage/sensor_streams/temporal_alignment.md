@@ -44,8 +44,8 @@ from reactivex import operators as ops
 import reactivex as rx
 
 # Load recorded Go2 sensor streams
-video_replay = TimedSensorReplay("unitree_go2_bigoffice/video")
-lidar_replay = TimedSensorReplay("unitree_go2_bigoffice/lidar")
+video_replay = TimedSensorReplay("go2_sf_office/video")
+lidar_replay = TimedSensorReplay("go2_sf_office/lidar")
 
 # This is a bit tricky. We find the first video frame timestamp, then add 2 seconds to it.
 seek_ts = video_replay.first_timestamp() + 2

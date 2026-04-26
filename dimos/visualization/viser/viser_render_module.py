@@ -37,8 +37,8 @@ from reactivex.disposable import Disposable
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 from dimos.visualization.viser.camera import CameraSpec, g1_d435_default, world_pose
 from dimos.visualization.viser.robot_meshes import (
@@ -189,13 +189,13 @@ class ViserRenderModule(Module):
 
         try:
             unsub = self.joint_state.subscribe(self._on_joint_state)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception as e:
             logger.warning(f"Viser: joint_state subscribe failed: {e}")
 
         try:
             unsub = self.odom.subscribe(self._on_odom)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
         except Exception as e:
             logger.warning(f"Viser: odom subscribe failed: {e}")
 

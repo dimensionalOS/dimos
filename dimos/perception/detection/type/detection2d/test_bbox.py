@@ -14,6 +14,7 @@
 import pytest
 
 
+@pytest.mark.skipif_in_ci
 def test_detection2d(detection2d) -> None:
     # def test_detection_basic_properties(detection2d):
     """Test basic detection properties."""

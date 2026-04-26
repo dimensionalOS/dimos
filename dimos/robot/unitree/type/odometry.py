@@ -13,7 +13,9 @@
 # limitations under the License.
 from typing import Literal, TypedDict
 
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.unitree.type.timeseries import (
     Timestamped,
 )

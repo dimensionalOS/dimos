@@ -37,7 +37,8 @@ except ImportError:
 
 import uuid
 
-from dimos.msgs import DimosMsg
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.msgs.protocol import DimosMsg
 from dimos.protocol.pubsub.impl.rospubsub_conversion import (
     derive_ros_type,
     dimos_to_ros,
@@ -142,7 +143,7 @@ class RawROS(PubSub[RawROSTopic, Any]):
             self._executor.shutdown()  # This stops spin_once from blocking
 
         # Wait for spin thread to exit
-        self._spin_thread.join(timeout=1.0)
+        self._spin_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         # Grab references while holding lock, then destroy without lock
         with self._lock:

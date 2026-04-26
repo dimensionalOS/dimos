@@ -30,7 +30,7 @@ import threading
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
-import pinocchio  # type: ignore[import-untyped]
+import pinocchio
 
 from dimos.control.task import (
     BaseControlTask,
@@ -51,7 +51,8 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-    from dimos.msgs.geometry_msgs import Pose, PoseStamped
+    from dimos.msgs.geometry_msgs.Pose import Pose
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
     from dimos.teleop.quest.quest_types import Buttons
 
 logger = setup_logger()
@@ -69,7 +70,7 @@ class TeleopIKTaskConfig:
         timeout: If no command received for this many seconds, go inactive (0 = never)
         max_joint_delta_deg: Maximum allowed joint change per tick (safety limit)
         hand: "left" or "right" — which controller's primary button to listen to
-        gripper_joint: Optional joint name for the gripper (e.g. "arm_gripper").
+        gripper_joint: Optional joint name for the gripper (e.g. "arm/gripper").
         gripper_open_pos: Gripper position (adapter units) at trigger value 0.0 (no press).
         gripper_closed_pos: Gripper position (adapter units) at trigger value 1.0 (full press).
     """
@@ -294,10 +295,6 @@ class TeleopIKTask(BaseControlTask):
         """
         if joints & self._joint_names:
             logger.warning(f"TeleopIKTask {self._name} preempted by {by_task} on joints {joints}")
-
-    # =========================================================================
-    # Task-specific methods
-    # =========================================================================
 
     def on_buttons(self, msg: Buttons) -> bool:
         """Press-and-hold engage: hold primary button to track, release to stop."""

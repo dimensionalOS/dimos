@@ -13,15 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.vlm_agent import vlm_agent
-from dimos.agents.vlm_stream_tester import vlm_stream_tester
-from dimos.core.blueprints import autoconnect
+from dimos.agents.vlm_agent import VLMAgent
+from dimos.agents.vlm_stream_tester import VlmStreamTester
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
 unitree_go2_vlm_stream_test = autoconnect(
     unitree_go2_basic,
-    vlm_agent(),
-    vlm_stream_tester(),
+    VLMAgent.blueprint(),
+    VlmStreamTester.blueprint(),
 )
 
 __all__ = ["unitree_go2_vlm_stream_test"]

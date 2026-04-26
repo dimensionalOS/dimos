@@ -116,12 +116,48 @@ All visualization layers shown together
 
 ![All layers](assets/5-all.png)
 
+## Patrolling
+
+The patrolling system drives the robot to systematically cover a **known** area. It is exposed as an agent skill. An LLM agent can call `start_patrol` and `stop_patrol` to control it. Note that the area has to be explored first.
+
+### How it works
+
+1. **Visitation tracking** — As the robot moves, a visitation grid (aligned to the costmap) marks cells around the robot's position as visited. This gives the system a running picture of where the robot has and hasn't been. This expires over time, and has to be visited again.
+
+2. **Goal selection** — A *patrol router* picks the next goal. The default strategy is **coverage**: it samples a handful of candidate points from unvisited, obstacle-free cells, plans a path to each one, and picks the candidate whose path would cover the most new ground. Candidates are weighted by a Voronoi skeleton so goals are more likely to be spread evenly across the map, rather than clustering in large open areas.
+
+3. **Navigation loop** — The module sends each goal to the planner and waits for a `goal_reached` signal before requesting the next one. If no valid goal is available (e.g. the map hasn't loaded yet), it retries after a short delay.
+
+4. **Stopping** — When patrol is stopped, the module cancels in-progress navigation by publishing the robot's current pose as the goal, then re-enables the planner's normal replanning behavior.
+
+### Patrol router strategies
+
+| Router       | Behavior                                                                                       |
+|--------------|------------------------------------------------------------------------------------------------|
+| `coverage`   | Maximizes new-cell coverage per goal. Uses Voronoi weighting for even spatial distribution.     |
+| `random`     | Picks a random unvisited, obstacle-free cell.                                                  |
+| `frontier`   | Targets the boundary between known and unknown space, useful for exploration-style patrol.      |
+
+### Safety
+
+Goal candidates are filtered through a **safe mask** — the free-space region eroded by the robot's clearance radius — so the robot is never sent to a position too close to walls or obstacles. The planner's safe-goal clearance is also tightened while patrolling to ensure the robot can rotate in place at every goal.
+
+### Router comparison
+
+| Coverage | Frontier | Random |
+|----------|----------|--------|
+| ![coverage](assets/coverage.png) | ![frontier](assets/frontier.png) | ![random](assets/random.png) |
+
+### Sample patrol trace (26 min)
+
+![Patrol path](assets/patrol_path.png)
+
 ## Blueprint Composition
 
-The navigation stack is composed in the [`unitree_go2`](/dimos/robot/unitree/go2/blueprints/__init__.py) blueprint:
+The navigation stack is composed in the [`unitree_go2`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py) blueprint:
 
 ```python fold output=assets/go2_blueprint.svg
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.introspection import to_svg
 from dimos.mapping.costmapper import cost_mapper
 from dimos.mapping.voxels import voxel_mapper

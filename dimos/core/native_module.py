@@ -27,20 +27,21 @@ Example usage::
         some_param: float = 1.0
 
     class MyCppModule(NativeModule):
-        default_config = MyConfig
+        config: MyConfig
         pointcloud: Out[PointCloud2]
         cmd_vel: In[Twist]
 
     # Works with autoconnect, remappings, etc.
-    autoconnect(
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    ModuleCoordinator.build(autoconnect(
         MyCppModule.blueprint(),
         SomeConsumer.blueprint(),
-    ).build().loop()
+    )).loop()
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+import collections
 import enum
 import inspect
 import json
@@ -48,12 +49,21 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import threading
 from typing import IO, Any
 
+from pydantic import Field
+
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.utils.logging_config import setup_logger
+
+if sys.version_info < (3, 13):
+    from typing_extensions import TypeVar
+else:
+    from typing import TypeVar
 
 logger = setup_logger()
 
@@ -63,51 +73,63 @@ class LogFormat(enum.Enum):
     JSON = "json"
 
 
-@dataclass(kw_only=True)
 class NativeModuleConfig(ModuleConfig):
     """Configuration for a native (C/C++) subprocess module."""
 
     executable: str
     build_command: str | None = None
     cwd: str | None = None
-    extra_args: list[str] = field(default_factory=list)
-    extra_env: dict[str, str] = field(default_factory=dict)
+    extra_args: list[str] = Field(default_factory=list)
+    extra_env: dict[str, str] = Field(default_factory=dict)
     shutdown_timeout: float = 10.0
     log_format: LogFormat = LogFormat.TEXT
+
+    # New version of Native Modules read json configs from stdin
+    # Enable this to read from stdin instead of cli args
+    stdin_config: bool = False
 
     # Override in subclasses to exclude fields from CLI arg generation
     cli_exclude: frozenset[str] = frozenset()
 
-    def to_cli_args(self) -> list[str]:
-        """Auto-convert subclass config fields to CLI args.
-
-        Iterates fields defined on the concrete subclass (not NativeModuleConfig
-        or its parents) and converts them to ``["--name", str(value)]`` pairs.
-        Skips fields whose values are ``None`` and fields in ``cli_exclude``.
+    def to_config_dict(self) -> dict[str, Any]:
         """
-        ignore_fields = {f.name for f in fields(NativeModuleConfig)}
+        Return module-specific config fields as a plain dict (for stdin JSON).
+        """
+        ignore_fields = set(NativeModuleConfig.model_fields)
+        return {
+            k: v for k, v in self.model_dump().items() if k not in ignore_fields and v is not None
+        }
+
+    def to_cli_args(self) -> list[str]:
+        """
+        Auto-convert subclass config fields to CLI args.
+        """
+        ignore_fields = {f for f in NativeModuleConfig.model_fields}
         args: list[str] = []
-        for f in fields(self):
-            if f.name in ignore_fields:
+        for f in self.__class__.model_fields:
+            if f in ignore_fields:
                 continue
-            if f.name in self.cli_exclude:
+            if f in self.cli_exclude:
                 continue
-            val = getattr(self, f.name)
+            val = getattr(self, f)
             if val is None:
                 continue
             if isinstance(val, bool):
-                args.extend([f"--{f.name}", str(val).lower()])
+                args.extend([f"--{f}", str(val).lower()])
             elif isinstance(val, list):
-                args.extend([f"--{f.name}", ",".join(str(v) for v in val)])
+                args.extend([f"--{f}", ",".join(str(v) for v in val)])
             else:
-                args.extend([f"--{f.name}", str(val)])
+                args.extend([f"--{f}", str(val)])
         return args
 
 
-class NativeModule(Module[NativeModuleConfig]):
+_NativeConfig = TypeVar("_NativeConfig", bound=NativeModuleConfig, default=NativeModuleConfig)
+
+
+class NativeModule(Module):
     """Module that wraps a native executable as a managed subprocess.
 
-    Subclass this, declare In/Out ports, and set ``default_config`` to a
+    Subclass this, declare In/Out ports, and annotate ``config`` with a
     :class:`NativeModuleConfig` subclass pointing at the executable.
 
     On ``start()``, the binary is launched with CLI args::
@@ -118,13 +140,16 @@ class NativeModule(Module[NativeModuleConfig]):
     LCM topics directly.  On ``stop()``, the process receives SIGTERM.
     """
 
-    default_config: type[NativeModuleConfig] = NativeModuleConfig
+    config: NativeModuleConfig
+
     _process: subprocess.Popen[bytes] | None = None
     _watchdog: threading.Thread | None = None
     _stopping: bool = False
+    _last_stderr_lines: collections.deque[str]
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._last_stderr_lines = collections.deque(maxlen=50)
         self._resolve_paths()
 
     @rpc
@@ -146,15 +171,34 @@ class NativeModule(Module[NativeModuleConfig]):
         env = {**os.environ, **self.config.extra_env}
         cwd = self.config.cwd or str(Path(self.config.executable).resolve().parent)
 
-        logger.info("Starting native process", cmd=" ".join(cmd), cwd=cwd)
+        module_name = type(self).__name__
+        logger.info(
+            f"Starting native process: {module_name}",
+            module=module_name,
+            cmd=" ".join(cmd),
+            cwd=cwd,
+        )
         self._process = subprocess.Popen(
             cmd,
             env=env,
             cwd=cwd,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        logger.info("Native process started", pid=self._process.pid)
+        assert self._process.stdin is not None
+        if self.config.stdin_config:
+            config_dict = self.config.to_config_dict()
+            stdin_blob = (
+                json.dumps({"topics": topics, "config": config_dict or None}).encode() + b"\n"
+            )
+            self._process.stdin.write(stdin_blob)
+        self._process.stdin.close()
+        logger.info(
+            f"Native process started: {module_name}",
+            module=module_name,
+            pid=self._process.pid,
+        )
 
         self._stopping = False
         self._watchdog = threading.Thread(target=self._watch_process, daemon=True)
@@ -175,7 +219,7 @@ class NativeModule(Module[NativeModuleConfig]):
                 self._process.kill()
                 self._process.wait(timeout=5)
         if self._watchdog is not None and self._watchdog is not threading.current_thread():
-            self._watchdog.join(timeout=2)
+            self._watchdog.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         self._watchdog = None
         self._process = None
         super().stop()
@@ -188,15 +232,25 @@ class NativeModule(Module[NativeModuleConfig]):
         stdout_t = self._start_reader(self._process.stdout, "info")
         stderr_t = self._start_reader(self._process.stderr, "warning")
         rc = self._process.wait()
-        stdout_t.join(timeout=2)
-        stderr_t.join(timeout=2)
+        stdout_t.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+        stderr_t.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
 
         if self._stopping:
             return
+
+        module_name = type(self).__name__
+        exe_name = Path(self.config.executable).name if self.config.executable else "unknown"
+
+        # Use buffered stderr lines from the reader thread for the crash report.
+        last_stderr = "\n".join(self._last_stderr_lines)
+
         logger.error(
-            "Native process died unexpectedly",
+            f"Native process crashed: {module_name} ({exe_name})",
+            module=module_name,
+            executable=exe_name,
             pid=self._process.pid,
             returncode=rc,
+            last_stderr=last_stderr[:500] if last_stderr else None,
         )
         self.stop()
 
@@ -210,10 +264,13 @@ class NativeModule(Module[NativeModuleConfig]):
         if stream is None:
             return
         log_fn = getattr(logger, level)
+        is_stderr = level == "warning"
         for raw in stream:
             line = raw.decode("utf-8", errors="replace").rstrip()
             if not line:
                 continue
+            if is_stderr:
+                self._last_stderr_lines.append(line)
             if self.config.log_format == LogFormat.JSON:
                 try:
                     data = json.loads(line)
@@ -265,12 +322,16 @@ class NativeModule(Module[NativeModuleConfig]):
             if line.strip():
                 logger.warning(line)
         if proc.returncode != 0:
+            stderr_tail = stderr.decode("utf-8", errors="replace").strip()[-1000:]
             raise RuntimeError(
-                f"Build command failed (exit {proc.returncode}): {self.config.build_command}"
+                f"Build command failed (exit {proc.returncode}): {self.config.build_command}\n"
+                f"stderr: {stderr_tail}"
             )
         if not exe.exists():
             raise FileNotFoundError(
-                f"Build command succeeded but executable still not found: {exe}"
+                f"Build command succeeded but executable still not found: {exe}\n"
+                f"Build output may have been written to a different path. "
+                f"Check that build_command produces the executable at the expected location."
             )
 
     def _collect_topics(self) -> dict[str, str]:

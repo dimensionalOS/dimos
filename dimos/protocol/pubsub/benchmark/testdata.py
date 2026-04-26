@@ -61,7 +61,7 @@ testcases: list[Case[Any, Any]] = []
 
 @contextmanager
 def lcm_pubsub_channel() -> Generator[LCM, None, None]:
-    lcm_pubsub = LCM(autoconf=True)
+    lcm_pubsub = LCM()
     lcm_pubsub.start()
     yield lcm_pubsub
     lcm_pubsub.stop()
@@ -83,7 +83,7 @@ testcases.append(
 @contextmanager
 def udp_bytes_pubsub_channel() -> Generator[LCMPubSubBase, None, None]:
     """LCM with raw bytes - no encoding overhead."""
-    lcm_pubsub = LCMPubSubBase(autoconf=True)
+    lcm_pubsub = LCMPubSubBase()
     lcm_pubsub.start()
     yield lcm_pubsub
     lcm_pubsub.stop()
@@ -284,13 +284,13 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 if ROS_AVAILABLE:
-    from rclpy.qos import (  # type: ignore[no-untyped-call]
+    from rclpy.qos import (
         QoSDurabilityPolicy,
         QoSHistoryPolicy,
         QoSProfile,
         QoSReliabilityPolicy,
     )
-    from sensor_msgs.msg import Image as ROSImage  # type: ignore[attr-defined,no-untyped-call]
+    from sensor_msgs.msg import Image as ROSImage
 
     @contextmanager
     def ros_best_effort_pubsub_channel() -> Generator[RawROS, None, None]:
@@ -331,7 +331,7 @@ if ROS_AVAILABLE:
         final_data: NDArray[np.uint8] = padded_data[: height * width * 3]
 
         # Create ROS Image message
-        msg = ROSImage()  # type: ignore[no-untyped-call]
+        msg = ROSImage()
         msg.height = height
         msg.width = width
         msg.encoding = "rgb8"

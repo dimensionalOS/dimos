@@ -22,17 +22,19 @@ Simple virtual robot demonstrating a dimos Module with In/Out ports.
 Subscribes to Twist commands and publishes PoseStamped.
 """
 
-from dataclasses import dataclass
 import math
 import time
-from typing import Any
 
 import reactivex as rx
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 def apply_twist(pose: Pose, twist: Twist, dt: float) -> Pose:
@@ -48,33 +50,29 @@ def apply_twist(pose: Pose, twist: Twist, dt: float) -> Pose:
     )
 
 
-@dataclass
 class SimpleRobotConfig(ModuleConfig):
     frame_id: str = "world"
     update_rate: float = 30.0
     cmd_timeout: float = 0.5
 
 
-class SimpleRobot(Module[SimpleRobotConfig]):
+class SimpleRobot(Module):
     """A 2D robot that integrates velocity commands into pose."""
 
+    config: SimpleRobotConfig
     cmd_vel: In[Twist]
     pose: Out[PoseStamped]
-    default_config = SimpleRobotConfig
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._pose = Pose()
-        self._vel = Twist()
-        self._vel_time = 0.0
+    _pose = Pose()
+    _vel = Twist()
+    _vel_time = 0.0
 
     @rpc
     def start(self) -> None:
-        self._disposables.add(self.cmd_vel.observable().subscribe(self._on_twist))
-        self._disposables.add(
+        self.register_disposable(self.cmd_vel.observable().subscribe(self._on_twist))
+        self.register_disposable(
             rx.interval(1.0 / self.config.update_rate).subscribe(lambda _: self._update())
         )
-        self._disposables.add(
+        self.register_disposable(
             rx.interval(1.0).subscribe(lambda _: print(f"\033[34m{self._pose}\033[0m"))
         )
 

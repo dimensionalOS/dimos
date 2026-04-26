@@ -80,3 +80,6 @@ CLAUDE.MD
 htmlcov/
 .coverage
 .coverage.*
+
+# Memory2 autorecord
+recording*.db

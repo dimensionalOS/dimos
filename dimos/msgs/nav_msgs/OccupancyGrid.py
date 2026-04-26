@@ -23,12 +23,13 @@ from dimos_lcm.nav_msgs import (
     MapMetaData,
     OccupancyGrid as LCMOccupancyGrid,
 )
-from dimos_lcm.std_msgs import Time as LCMTime  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Time as LCMTime
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
 from dimos.types.timestamped import Timestamped
 
 
@@ -36,6 +37,56 @@ from dimos.types.timestamped import Timestamped
 def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
     """Get a matplotlib colormap by name (cached for performance)."""
     return plt.get_cmap(name)
+
+
+@lru_cache(maxsize=16)
+def _build_occupancy_lut(
+    colormap: str | None,
+    opacity: float,
+    background: str | None,
+) -> np.ndarray:
+    """Build a 102-entry RGBA LUT for grid values -1..100. One-time cost per config."""
+    bg_rgb = np.array([0, 0, 0], dtype=np.float32)
+    if background is not None:
+        bg = background.lstrip("#")
+        bg_rgb = np.array([int(bg[i : i + 2], 16) for i in (0, 2, 4)], dtype=np.float32)
+
+    # LUT: index 0 = grid value -1 (unknown), index 1 = grid value 0 (free), index 2..101 = grid values 1..100
+    lut = np.zeros((102, 4), dtype=np.uint8)
+
+    # Unknown (-1) → index 0: black
+    lut[0] = [0, 0, 0, 255]
+
+    if colormap is not None:
+        cmap = _get_matplotlib_cmap(colormap)
+        # Free (0) → index 1
+        fg = np.array(cmap(0.0)[:3]) * 255
+        blended = fg * opacity + bg_rgb * (1 - opacity)
+        lut[1, :3] = blended.astype(np.uint8)
+        lut[1, 3] = 255
+
+        # Occupied (1..100) → index 2..101
+        for cost in range(1, 101):
+            cost_norm = 0.5 + (cost / 100) * 0.5
+            fg = np.array(cmap(cost_norm)[:3]) * 255
+            blended = fg * opacity + bg_rgb * (1 - opacity)
+            lut[cost + 1, :3] = blended.astype(np.uint8)
+            lut[cost + 1, 3] = 255
+    else:
+        # Foxglove-style: free = #484981, occupied = gradient to black
+        fg_free = np.array([72, 73, 129], dtype=np.float32)
+        blended_free = fg_free * opacity + bg_rgb * (1 - opacity)
+        lut[1, :3] = blended_free.astype(np.uint8)
+        lut[1, 3] = 255
+
+        for cost in range(1, 101):
+            factor = 1 - cost / 100
+            fg = np.array([72 * factor, 73 * factor, 129 * factor], dtype=np.float32)
+            blended = fg * opacity + bg_rgb * (1 - opacity)
+            lut[cost + 1, :3] = blended.astype(np.uint8)
+            lut[cost + 1, 3] = 255
+
+    return lut
 
 
 if TYPE_CHECKING:
@@ -427,112 +478,10 @@ class OccupancyGrid(Timestamped):
 
         return int(self.grid[y, x])
 
-    def _generate_rgba_texture(
-        self,
-        colormap: str | None = None,
-        opacity: float = 1.0,
-        cost_range: tuple[int, int] | None = None,
-        background: str | None = None,
-    ) -> NDArray[np.uint8]:
-        """Generate RGBA texture for the occupancy grid.
-
-        Args:
-            colormap: Optional matplotlib colormap name.
-            opacity: Blend factor (0.0 to 1.0). Blends towards background color.
-            cost_range: Optional (min, max) cost range. Cells outside range use background.
-            background: Hex color for background (e.g. "#484981"). Default is black.
-
-        Returns:
-            RGBA numpy array of shape (height, width, 4).
-            Note: NOT flipped - caller handles orientation.
-        """
-        # Parse background hex to RGB
-        if background is not None:
-            bg = background.lstrip("#")
-            bg_rgb = np.array([int(bg[i : i + 2], 16) for i in (0, 2, 4)], dtype=np.float32)
-        else:
-            bg_rgb = np.array([0, 0, 0], dtype=np.float32)
-
-        # Determine which cells are in range (if cost_range specified)
-        if cost_range is not None:
-            in_range_mask = (self.grid >= cost_range[0]) & (self.grid <= cost_range[1])
-        else:
-            in_range_mask = None
-
-        if colormap is not None:
-            cmap = _get_matplotlib_cmap(colormap)
-            grid_float = self.grid.astype(np.float32)
-
-            vis = np.zeros((self.height, self.width, 4), dtype=np.uint8)
-
-            free_mask = self.grid == 0
-            occupied_mask = self.grid > 0
-
-            if np.any(free_mask):
-                fg = np.array(cmap(0.0)[:3]) * 255
-                blended = fg * opacity + bg_rgb * (1 - opacity)
-                vis[free_mask, :3] = blended.astype(np.uint8)
-                vis[free_mask, 3] = 255
-
-            if np.any(occupied_mask):
-                costs = grid_float[occupied_mask]
-                cost_norm = 0.5 + (costs / 100) * 0.5
-                fg = cmap(cost_norm)[:, :3] * 255
-                blended = fg * opacity + bg_rgb * (1 - opacity)
-                vis[occupied_mask, :3] = blended.astype(np.uint8)
-                vis[occupied_mask, 3] = 255
-
-            # Unknown cells: always black
-            unknown_mask = self.grid == -1
-            vis[unknown_mask, :3] = 0
-            vis[unknown_mask, 3] = 255
-
-            # Apply cost_range filter - set out-of-range cells to background
-            if in_range_mask is not None:
-                out_of_range = ~in_range_mask & (self.grid != -1)
-                vis[out_of_range, :3] = bg_rgb.astype(np.uint8)
-                vis[out_of_range, 3] = 255
-
-            return vis
-
-        # Default: Foxglove-style coloring
-        vis = np.zeros((self.height, self.width, 4), dtype=np.uint8)
-
-        free_mask = self.grid == 0
-        occupied_mask = self.grid > 0
-
-        # Free space: blue-purple #484981, blended with background
-        fg_free = np.array([72, 73, 129], dtype=np.float32)
-        blended_free = fg_free * opacity + bg_rgb * (1 - opacity)
-        vis[free_mask, :3] = blended_free.astype(np.uint8)
-        vis[free_mask, 3] = 255
-
-        # Occupied: gradient from blue-purple to black, blended with background
-        if np.any(occupied_mask):
-            costs = self.grid[occupied_mask].astype(np.float32)
-            factor = (1 - costs / 100).clip(0, 1)
-            fg_occ = np.column_stack([72 * factor, 73 * factor, 129 * factor])
-            blended_occ = fg_occ * opacity + bg_rgb * (1 - opacity)
-            vis[occupied_mask, :3] = blended_occ.astype(np.uint8)
-            vis[occupied_mask, 3] = 255
-
-        # Unknown cells: always black
-        unknown_mask = self.grid == -1
-        vis[unknown_mask, :3] = 0
-        vis[unknown_mask, 3] = 255
-
-        # Apply cost_range filter - set out-of-range cells to background
-        if in_range_mask is not None:
-            out_of_range = ~in_range_mask & (self.grid != -1)
-            vis[out_of_range, :3] = bg_rgb.astype(np.uint8)
-            vis[out_of_range, 3] = 255
-
-        return vis
-
     def to_rerun(
         self,
         colormap: str | None = None,
-        z_offset: float = 0.01,
+        z_offset: float = 0,
         opacity: float = 1.0,
         cost_range: tuple[int, int] | None = None,
         background: str | None = None,
@@ -547,9 +496,27 @@ class OccupancyGrid(Timestamped):
         if self.grid.size == 0:
             return rr.Mesh3D(vertex_positions=[])
 
-        # Generate RGBA texture and flip to match world coordinates
-        # Grid row 0 is at world y=origin (bottom), but texture row 0 is at UV v=0 (top)
-        rgba = np.flipud(self._generate_rgba_texture(colormap, opacity, cost_range, background))
+        # Downsample grid before LUT to avoid allocating huge RGBA array
+        max_tex = 256
+        grid = self.grid[::-1]  # flip for world coords (view, no copy)
+        if grid.shape[0] > max_tex or grid.shape[1] > max_tex:
+            step_h = max(1, grid.shape[0] // max_tex)
+            step_w = max(1, grid.shape[1] // max_tex)
+            grid = grid[::step_h, ::step_w]
+
+        lut = _build_occupancy_lut(colormap, opacity, background)
+        rgba = np.ascontiguousarray(lut[np.clip(grid + 1, 0, 101)])
+
+        # Apply cost_range filter on downsampled grid
+        if cost_range is not None:
+            out_of_range = ((grid < cost_range[0]) | (grid > cost_range[1])) & (grid != -1)
+            if np.any(out_of_range):
+                bg_rgb = [0, 0, 0]
+                if background is not None:
+                    bg = background.lstrip("#")
+                    bg_rgb = [int(bg[i : i + 2], 16) for i in (0, 2, 4)]
+                rgba[out_of_range, :3] = bg_rgb
+                rgba[out_of_range, 3] = 255
 
         # Single quad covering entire grid
         ox = self.origin.position.x

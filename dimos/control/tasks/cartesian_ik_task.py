@@ -48,9 +48,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from numpy.typing import NDArray
-    import pinocchio  # type: ignore[import-untyped]
+    import pinocchio
 
-    from dimos.msgs.geometry_msgs import Pose, PoseStamped
+    from dimos.msgs.geometry_msgs.Pose import Pose
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
 
@@ -254,10 +255,6 @@ class CartesianIKTask(BaseControlTask):
             logger.warning(
                 f"CartesianIKTask {self._name} preempted by {by_task} on joints {joints}"
             )
-
-    # =========================================================================
-    # Task-specific methods
-    # =========================================================================
 
     def on_cartesian_command(self, pose: Pose | PoseStamped, t_now: float) -> bool:
         """Handle incoming cartesian command (target EE pose).

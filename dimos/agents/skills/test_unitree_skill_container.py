@@ -13,26 +13,54 @@
 # limitations under the License.
 
 import difflib
+from typing import Any
 
 from langchain_core.messages import HumanMessage
 import pytest
 
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.navigation.base import NavigationState
 from dimos.robot.unitree.unitree_skill_container import _UNITREE_COMMANDS, UnitreeSkillContainer
 
 
-class MockedUnitreeSkill(UnitreeSkillContainer):
-    rpc_calls: list[str] = []
+class StubNavigation(Module):
+    @rpc
+    def set_goal(self, goal: PoseStamped) -> bool:
+        return True
 
-    def __init__(self):
-        super().__init__()
-        # Provide a fake RPC so the real execute_sport_command runs end-to-end.
-        self._bound_rpc_calls["GO2Connection.publish_request"] = lambda *args, **kwargs: None
+    @rpc
+    def get_state(self) -> NavigationState:
+        return NavigationState.IDLE
+
+    @rpc
+    def is_goal_reached(self) -> bool:
+        return False
+
+    @rpc
+    def cancel_goal(self) -> bool:
+        return True
+
+
+class StubGO2Connection(Module):
+    @rpc
+    def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
+        return {}
+
+
+class MockedUnitreeSkill(UnitreeSkillContainer):
+    pass
 
 
 @pytest.mark.slow
 def test_pounce(agent_setup) -> None:
     history = agent_setup(
-        blueprints=[MockedUnitreeSkill.blueprint()],
+        blueprints=[
+            MockedUnitreeSkill.blueprint(),
+            StubNavigation.blueprint(),
+            StubGO2Connection.blueprint(),
+        ],
         messages=[HumanMessage("Pounce! Use the execute_sport_command tool.")],
     )
 

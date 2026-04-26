@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 
-from terminaltexteffects import Color  # type: ignore[attr-defined, import-not-found]
+from terminaltexteffects import Color  # type: ignore[attr-defined]
 
 from dimos.utils.cli import theme
 
@@ -88,31 +88,31 @@ def run_banner_animation() -> None:
 
     if animation_style == "none":
         return  # Skip animation
-    from terminaltexteffects.effects.effect_beams import Beams  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_burn import Burn  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_decrypt import Decrypt  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_expand import Expand  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_highlight import (  # type: ignore[import-not-found]
+    from terminaltexteffects.effects.effect_beams import Beams
+    from terminaltexteffects.effects.effect_burn import Burn
+    from terminaltexteffects.effects.effect_decrypt import Decrypt
+    from terminaltexteffects.effects.effect_expand import Expand
+    from terminaltexteffects.effects.effect_highlight import (
         Highlight,
     )
-    from terminaltexteffects.effects.effect_matrix import Matrix  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_middleout import (  # type: ignore[import-not-found]
+    from terminaltexteffects.effects.effect_matrix import Matrix
+    from terminaltexteffects.effects.effect_middleout import (
         MiddleOut,
     )
-    from terminaltexteffects.effects.effect_overflow import (  # type: ignore[import-not-found]
+    from terminaltexteffects.effects.effect_overflow import (
         Overflow,
     )
-    from terminaltexteffects.effects.effect_pour import Pour  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_print import Print  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_rain import Rain  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_random_sequence import (  # type: ignore[import-not-found]
+    from terminaltexteffects.effects.effect_pour import Pour
+    from terminaltexteffects.effects.effect_print import Print
+    from terminaltexteffects.effects.effect_rain import Rain
+    from terminaltexteffects.effects.effect_random_sequence import (
         RandomSequence,
     )
-    from terminaltexteffects.effects.effect_scattered import (  # type: ignore[import-not-found]
+    from terminaltexteffects.effects.effect_scattered import (
         Scattered,
     )
-    from terminaltexteffects.effects.effect_slide import Slide  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_sweep import Sweep  # type: ignore[import-not-found]
+    from terminaltexteffects.effects.effect_slide import Slide
+    from terminaltexteffects.effects.effect_sweep import Sweep
 
     # The DIMENSIONAL ASCII art
     ascii_art = "\n" + theme.ascii_logo.replace("\n", "\n ")

@@ -16,10 +16,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import field
 from functools import lru_cache
+import subprocess
+import time
 from typing import (
-    TYPE_CHECKING,
     Any,
     Literal,
     Protocol,
@@ -30,6 +32,10 @@ from typing import (
 )
 
 from reactivex.disposable import Disposable
+import rerun as rr
+from rerun._baseclasses import Archetype
+import rerun.blueprint as rrb
+from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
 import typer
 
@@ -37,9 +43,11 @@ from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
+from dimos.protocol.pubsub.spec import SubscribeAllCapable
 from dimos.utils.logging_config import setup_logger
+from dimos.visualization.rerun.init import rerun_init
 
-RERUN_GRPC_PORT = 9876
+RERUN_GRPC_PORT = 9877
 RERUN_WEB_PORT = 9090
 
 # TODO OUT visual annotations
@@ -59,7 +67,6 @@ RERUN_WEB_PORT = 9090
 # to define custom visualizations for specific topics
 #
 # as well as pubsubs={} to specify which protocols to listen to.
-
 
 # TODO better TF processing
 #
@@ -84,18 +91,9 @@ RERUN_WEB_PORT = 9090
 # In order to solve this, bridge needs to own it's own tf service
 # and render it's tf tree into correct rerun entity paths
 
-
 logger = setup_logger()
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from rerun._baseclasses import Archetype
-    from rerun.blueprint import Blueprint
-
-    from dimos.protocol.pubsub.spec import SubscribeAllCapable
-
-BlueprintFactory: TypeAlias = "Callable[[], Blueprint]"
+BlueprintFactory: TypeAlias = Callable[[], "Blueprint"]
 
 # to_rerun() can return a single archetype or a list of (entity_path, archetype) tuples
 RerunMulti: TypeAlias = "list[tuple[str, Archetype]]"
@@ -104,8 +102,6 @@ RerunData: TypeAlias = "Archetype | RerunMulti"
 
 def is_rerun_multi(data: Any) -> TypeGuard[RerunMulti]:
     """Check if data is a list of (entity_path, archetype) tuples."""
-    from rerun._baseclasses import Archetype
-
     return (
         isinstance(data, list)
         and bool(data)
@@ -126,23 +122,41 @@ class RerunConvertible(Protocol):
 ViewerMode = Literal["native", "web", "connect", "none"]
 
 
+def _hex_to_rgba(hex_color: str) -> int:
+    """Convert '#RRGGBB' to a 0xRRGGBBAA int (fully opaque)."""
+    h = hex_color.lstrip("#")
+    return (int(h, 16) << 8) | 0xFF
+
+
+def _with_graph_tab(bp: Blueprint) -> Blueprint:
+    """Add a Graph tab alongside the existing viewer layout without changing it."""
+
+    root = bp.root_container
+    return rrb.Blueprint(
+        rrb.Tabs(
+            root,
+            rrb.GraphView(origin="blueprint", name="Graph"),
+        ),
+        auto_layout=bp.auto_layout,
+        auto_views=bp.auto_views,
+        collapse_panels=bp.collapse_panels,
+    )
+
+
 def _default_blueprint() -> Blueprint:
     """Default blueprint with black background and raised grid."""
-    import rerun as rr
-    import rerun.blueprint as rrb
-
-    return rrb.Blueprint(  # type: ignore[no-any-return]
+    return rrb.Blueprint(
         rrb.Spatial3DView(
             origin="world",
             background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
             line_grid=rrb.LineGrid3D(
-                plane=rr.components.Plane3D.XY.with_distance(0.2),
+                plane=rr.components.Plane3D.XY.with_distance(0.5),
             ),
         ),
     )
 
 
-# Maps global_config.viewer_backend -> bridge viewer_mode.
+# Maps global_config.viewer -> bridge viewer_mode.
 # Evaluated at blueprint construction time (main process), not in start() (worker process).
 _BACKEND_TO_MODE: dict[str, ViewerMode] = {
     "rerun": "native",
@@ -155,21 +169,25 @@ _BACKEND_TO_MODE: dict[str, ViewerMode] = {
 def _resolve_viewer_mode() -> ViewerMode:
     from dimos.core.global_config import global_config
 
-    return _BACKEND_TO_MODE.get(global_config.viewer_backend, "native")
+    return _BACKEND_TO_MODE.get(global_config.viewer, "native")
 
 
-@dataclass
 class Config(ModuleConfig):
     """Configuration for RerunBridgeModule."""
 
-    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(
-        default_factory=lambda: [LCM(autoconf=True)]
-    )
+    pubsubs: list[SubscribeAllCapable[Any, Any]] = field(default_factory=lambda: [LCM()])
 
     visual_override: dict[Glob | str, Callable[[Any], Archetype]] = field(default_factory=dict)
 
     # Static items logged once after start. Maps entity_path -> callable(rr) returning Archetype
     static: dict[str, Callable[[Any], Archetype]] = field(default_factory=dict)
+
+    grpc_port: int = RERUN_GRPC_PORT
+    web_port: int = RERUN_WEB_PORT
+
+    # Per-entity max update rate (Hz). Entities not listed are unthrottled.
+    # Use for heavy entities to prevent viewer backpressure.
+    max_hz: dict[str, float] = field(default_factory=dict)
 
     entity_prefix: str = "world"
     topic_to_entity: Callable[[Any], str] | None = None
@@ -191,15 +209,19 @@ class RerunBridgeModule(Module):
     Example:
         from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 
-        lcm = LCM(autoconf=True)
+        lcm = LCM()
         bridge = RerunBridgeModule(pubsubs=[lcm])
         bridge.start()
         # All messages with to_rerun() are now logged to Rerun
         bridge.stop()
     """
 
-    default_config = Config
     config: Config
+
+    # TODO this doesn't belong here, either hardcode it or put it to rerun bridge config
+    GV_SCALE = 100.0  # graphviz inches to rerun screen units
+    MODULE_RADIUS = 30.0
+    CHANNEL_RADIUS = 20.0
 
     @lru_cache(maxsize=256)
     def _visual_override_for_entity_path(
@@ -210,8 +232,6 @@ class RerunBridgeModule(Module):
         Chains matching overrides from config, ending with final_convert
         which handles .to_rerun() or passes through Archetypes.
         """
-        from rerun._baseclasses import Archetype
-
         # find all matching converters for this entity path
         matches = [
             fn
@@ -249,15 +269,19 @@ class RerunBridgeModule(Module):
 
     def _on_message(self, msg: Any, topic: Any) -> None:
         """Handle incoming message - log to rerun."""
-        import rerun as rr
 
-        # convert a potentially complex topic object into an str rerun entity path
         entity_path: str = self._get_entity_path(topic)
+
+        # Throttle entities with a max_hz limit
+        if entity_path in self._min_intervals:
+            now = time.monotonic()
+            if now - self._last_log.get(entity_path, 0.0) < self._min_intervals[entity_path]:
+                return
+            self._last_log[entity_path] = now
 
         # apply visual overrides (including final_convert which handles .to_rerun())
         rerun_data: RerunData | None = self._visual_override_for_entity_path(entity_path)(msg)
 
-        # converters can also suppress logging by returning None
         if not rerun_data:
             return
 
@@ -270,60 +294,64 @@ class RerunBridgeModule(Module):
 
     @rpc
     def start(self) -> None:
-        import rerun as rr
-
         super().start()
 
         logger.info("Rerun bridge starting", viewer_mode=self.config.viewer_mode)
 
+        # Build throttle lookup: entity_path → min interval in seconds
+        self._last_log: dict[str, float] = {}
+        self._min_intervals: dict[str, float] = {
+            entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
+        }
+
         # Initialize and spawn Rerun viewer
-        rr.init("dimos")
+        rerun_init("dimos")
 
         if self.config.viewer_mode == "native":
             try:
                 import rerun_bindings
 
                 rerun_bindings.spawn(
-                    port=RERUN_GRPC_PORT,
+                    port=self.config.grpc_port,
                     executable_name="dimos-viewer",
                     memory_limit=self.config.memory_limit,
                 )
+                rr.connect_grpc(f"rerun+http://127.0.0.1:{self.config.grpc_port}/proxy")
             except ImportError:
-                pass  # dimos-viewer not installed
+                rr.spawn(connect=True, memory_limit=self.config.memory_limit)
             except Exception:
                 logger.warning(
                     "dimos-viewer found but failed to spawn, falling back to stock rerun",
                     exc_info=True,
                 )
-            rr.spawn(connect=True, memory_limit=self.config.memory_limit)
+                rr.spawn(connect=True, memory_limit=self.config.memory_limit)
         elif self.config.viewer_mode == "web":
             server_uri = rr.serve_grpc()
             rr.serve_web_viewer(connect_to=server_uri, open_browser=False)
+
         elif self.config.viewer_mode == "connect":
             rr.connect_grpc(self.config.connect_url)
         # "none" - just init, no viewer (connect externally)
 
         if self.config.blueprint:
-            rr.send_blueprint(self.config.blueprint())
+            rr.send_blueprint(_with_graph_tab(self.config.blueprint()))
 
         # Start pubsubs and subscribe to all messages
         for pubsub in self.config.pubsubs:
             logger.info(f"bridge listening on {pubsub.__class__.__name__}")
             if hasattr(pubsub, "start"):
-                pubsub.start()  # type: ignore[union-attr]
+                pubsub.start()
             unsub = pubsub.subscribe_all(self._on_message)
-            self._disposables.add(Disposable(unsub))
+            self.register_disposable(Disposable(unsub))
 
         # Add pubsub stop as disposable
         for pubsub in self.config.pubsubs:
             if hasattr(pubsub, "stop"):
-                self._disposables.add(Disposable(pubsub.stop))  # type: ignore[union-attr]
+                self.register_disposable(Disposable(pubsub.stop))  # type: ignore[union-attr]
 
         self._log_static()
 
     def _log_static(self) -> None:
-        import rerun as rr
-
         for entity_path, factory in self.config.static.items():
             data = factory(rr)
             if isinstance(data, list):
@@ -331,6 +359,71 @@ class RerunBridgeModule(Module):
                     rr.log(entity_path, archetype, static=True)
             else:
                 rr.log(entity_path, data, static=True)
+
+    @rpc
+    def log_blueprint_graph(self, dot_code: str, module_names: list[str]) -> None:
+        """Log a blueprint module graph from a Graphviz DOT string.
+
+        Runs ``dot -Tplain`` to compute positions, then logs
+        ``rr.GraphNodes`` + ``rr.GraphEdges`` to the active recording.
+
+        Args:
+            dot_code: The DOT-format graph (from ``introspection.blueprint.dot.render``).
+            module_names: List of module class names (to distinguish modules from channels).
+        """
+
+        try:
+            result = subprocess.run(
+                ["dot", "-Tplain"], input=dot_code, text=True, capture_output=True, timeout=30
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return
+        if result.returncode != 0:
+            return
+
+        node_ids: list[str] = []
+        node_labels: list[str] = []
+        node_colors: list[int] = []
+        positions: list[tuple[float, float]] = []
+        radii: list[float] = []
+        edges: list[tuple[str, str]] = []
+        module_set = set(module_names)
+
+        for line in result.stdout.splitlines():
+            if line.startswith("node "):
+                parts = line.split()
+                node_id = parts[1].strip('"')
+                x = float(parts[2]) * self.GV_SCALE
+                y = -float(parts[3]) * self.GV_SCALE
+                label = parts[6].strip('"')
+                color = parts[9].strip('"')
+
+                node_ids.append(node_id)
+                node_labels.append(label)
+                positions.append((x, y))
+                node_colors.append(_hex_to_rgba(color))
+                radii.append(self.MODULE_RADIUS if node_id in module_set else self.CHANNEL_RADIUS)
+
+            elif line.startswith("edge "):
+                parts = line.split()
+                edges.append((parts[1].strip('"'), parts[2].strip('"')))
+
+        if not node_ids:
+            return
+
+        rr.log(
+            "blueprint",
+            rr.GraphNodes(
+                node_ids=node_ids,
+                labels=node_labels,
+                colors=node_colors,
+                positions=positions,
+                radii=radii,
+                show_labels=True,
+            ),
+            rr.GraphEdges(edges=edges, graph_type="directed"),
+            static=True,
+        )
 
     @rpc
     def stop(self) -> None:
@@ -344,12 +437,16 @@ def run_bridge(
     """Start a RerunBridgeModule with default LCM config and block until interrupted."""
     import signal
 
+    from dimos.protocol.service.lcmservice import autoconf
+
+    autoconf(check_only=True)
+
     bridge = RerunBridgeModule(
         viewer_mode=viewer_mode,
         memory_limit=memory_limit,
         # any pubsub that supports subscribe_all and topic that supports str(topic)
         # is acceptable here
-        pubsubs=[LCM(autoconf=True)],
+        pubsubs=[LCM()],
     )
 
     bridge.start()
@@ -376,7 +473,3 @@ def cli(
 
 if __name__ == "__main__":
     app()
-
-# you don't need to include this in your blueprint if you are not creating a
-# custom rerun configuration for your deployment, you can also run rerun-bridge standalone
-rerun_bridge = RerunBridgeModule.blueprint

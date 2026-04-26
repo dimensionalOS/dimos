@@ -18,15 +18,15 @@ from typing import Any
 
 import numpy as np
 
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
 
 try:
-    import torch  # type: ignore
+    import torch
 
-    from dimos.models.embedding.clip import CLIPModel  # type: ignore
+    from dimos.models.embedding.clip import CLIPModel
 
     CLIP_AVAILABLE = True
 except ImportError as e:
@@ -46,7 +46,7 @@ if CLIP_AVAILABLE:
     class CLIPFrameFilter:
         """Filter video frames using CLIP embeddings for diversity."""
 
-        def __init__(self, model_name: str = "ViT-B/32", device: str | None = None):
+        def __init__(self, model_name: str = "ViT-B/32", device: str | None = None) -> None:
             if not CLIP_AVAILABLE:
                 raise ImportError("CLIP not available. Install transformers[torch].")
 

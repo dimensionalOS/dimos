@@ -17,7 +17,6 @@ Python side native module is just a definition of a **config** dataclass and **m
 Both the config dataclass and pubsub topics get converted to CLI args passed down to your executable once the module is started.
 
 ```python no-result session=nativemodule
-from dataclasses import dataclass
 from dimos.core.stream import Out
 from dimos.core.transport import LCMTransport
 from dimos.core.native_module import NativeModule, NativeModuleConfig
@@ -25,14 +24,13 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sensor_msgs.Imu import Imu
 import time
 
-@dataclass(kw_only=True)
 class MyLidarConfig(NativeModuleConfig):
     executable: str = "./build/my_lidar"
     host_ip: str = "192.168.1.5"
     frequency: float = 10.0
 
 class MyLidar(NativeModule):
-    default_config = MyLidarConfig
+    config: MyLidarConfig
     pointcloud: Out[PointCloud2]
     imu: Out[Imu]
 
@@ -98,18 +96,18 @@ When `stop()` is called, the process receives SIGTERM. If it doesn't exit within
 Any field you add to your config subclass automatically becomes a `--name value` CLI arg. Fields from `NativeModuleConfig` itself (like `executable`, `extra_args`, `cwd`) are **not** passed — they're for Python-side orchestration only.
 
 ```python skip
+from pydantic import Field
 
 class LogFormat(enum.Enum):
     TEXT = "text"
     JSON = "json"
 
-@dataclass(kw_only=True)
 class MyConfig(NativeModuleConfig):
     executable: str = "./build/my_module" # relative or absolute path to your executable
     host_ip: str = "192.168.1.5"     # becomes --host_ip 192.168.1.5
     frequency: float = 10.0           # becomes --frequency 10.0
     enable_imu: bool = True           # becomes --enable_imu true
-    filters: list[str] = field(default_factory=lambda: ["a", "b"])  # becomes --filters a,b
+    filters: list[str] = Field(default_factory=lambda: ["a", "b"])  # becomes --filters a,b
 ```
 
 - `None` values are skipped.
@@ -121,16 +119,11 @@ class MyConfig(NativeModuleConfig):
 If a config field shouldn't be a CLI arg, add it to `cli_exclude`:
 
 ```python skip
-@dataclass(kw_only=True)
 class FastLio2Config(NativeModuleConfig):
     executable: str = "./build/fastlio2"
     config: str = "mid360.yaml"                          # human-friendly name
-    config_path: str | None = None                       # resolved absolute path
+    config_path: str = Field(default_factory=lambda m: str(Path(m["config"]).resolve()))
     cli_exclude: frozenset[str] = frozenset({"config"})  # only config_path is passed
-
-    def __post_init__(self) -> None:
-        if self.config_path is None:
-            self.config_path = str(Path(self.config).resolve())
 ```
 
 ## Using with blueprints
@@ -138,7 +131,7 @@ class FastLio2Config(NativeModuleConfig):
 Native modules work with `autoconnect` exactly like Python modules:
 
 ```python skip
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 
 class PointCloudConsumer(Module):
     pointcloud: In[PointCloud2]
@@ -173,7 +166,6 @@ NativeModule pipes subprocess stdout and stderr through structlog:
 If your native binary outputs structured JSON lines, set `log_format=LogFormat.JSON`:
 
 ```python skip
-@dataclass(kw_only=True)
 class MyConfig(NativeModuleConfig):
     executable: str = "./build/my_module"
     log_format: LogFormat = LogFormat.JSON
@@ -236,7 +228,6 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.spec import perception
 
-@dataclass(kw_only=True)
 class Mid360Config(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/mid360_native"
@@ -249,7 +240,7 @@ class Mid360Config(NativeModuleConfig):
     # ... SDK port configuration
 
 class Mid360(NativeModule, perception.Lidar, perception.IMU):
-    default_config = Mid360Config
+    config: Mid360Config
     lidar: Out[PointCloud2]
     imu: Out[Imu]
 ```
@@ -271,7 +262,6 @@ If `build_command` is set in the module config, and the executable doesn't exist
 Build output is piped through structlog (stdout at `info`, stderr at `warning`).
 
 ```python skip
-@dataclass(kw_only=True)
 class MyLidarConfig(NativeModuleConfig):
     cwd: str | None = "cpp"
     executable: str = "result/bin/my_lidar"

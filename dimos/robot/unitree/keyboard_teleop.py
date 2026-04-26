@@ -15,22 +15,34 @@
 
 import os
 import threading
+from typing import Any
 
 import pygame
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import Twist, Vector3
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # Force X11 driver to avoid OpenGL threading issues
 os.environ["SDL_VIDEODRIVER"] = "x11"
+
+DEFAULT_LINEAR_SPEED: float = 0.5  # m/s
+DEFAULT_ANGULAR_SPEED: float = 0.8  # rad/s
+DEFAULT_BOOST_MULTIPLIER: float = 2.0
+DEFAULT_SLOW_MULTIPLIER: float = 0.5
 
 
 class KeyboardTeleop(Module):
     """Pygame-based keyboard control module.
 
     Outputs standard Twist messages on /cmd_vel for velocity control.
+
+    Speed constants can be tuned at the top of this file, or overridden
+    per-instance by passing linear_speed / angular_speed /
+    boost_multiplier / slow_multiplier to the constructor.
     """
 
     cmd_vel: Out[Twist]  # Standard velocity commands
@@ -42,9 +54,20 @@ class KeyboardTeleop(Module):
     _clock: pygame.time.Clock | None = None
     _font: pygame.font.Font | None = None
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        linear_speed: float = DEFAULT_LINEAR_SPEED,
+        angular_speed: float = DEFAULT_ANGULAR_SPEED,
+        boost_multiplier: float = DEFAULT_BOOST_MULTIPLIER,
+        slow_multiplier: float = DEFAULT_SLOW_MULTIPLIER,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
         self._stop_event = threading.Event()
+        self.linear_speed = linear_speed
+        self.angular_speed = angular_speed
+        self.boost_multiplier = boost_multiplier
+        self.slow_multiplier = slow_multiplier
 
     @rpc
     def start(self) -> None:
@@ -69,7 +92,7 @@ class KeyboardTeleop(Module):
 
         if self._thread is None:
             raise RuntimeError("Cannot stop: thread was never started")
-        self._thread.join(2)
+        self._thread.join(DEFAULT_THREAD_JOIN_TIMEOUT)
 
         super().stop()
 
@@ -112,28 +135,28 @@ class KeyboardTeleop(Module):
 
             # Forward/backward (W/S)
             if pygame.K_w in self._keys_held:
-                twist.linear.x = 0.5
+                twist.linear.x = self.linear_speed
             if pygame.K_s in self._keys_held:
-                twist.linear.x = -0.5
+                twist.linear.x = -self.linear_speed
 
             # Strafe left/right (Q/E)
             if pygame.K_q in self._keys_held:
-                twist.linear.y = 0.5
+                twist.linear.y = self.linear_speed
             if pygame.K_e in self._keys_held:
-                twist.linear.y = -0.5
+                twist.linear.y = -self.linear_speed
 
             # Turning (A/D)
             if pygame.K_a in self._keys_held:
-                twist.angular.z = 0.8
+                twist.angular.z = self.angular_speed
             if pygame.K_d in self._keys_held:
-                twist.angular.z = -0.8
+                twist.angular.z = -self.angular_speed
 
-            # Apply speed modifiers (Shift = 2x, Ctrl = 0.5x)
+            # Apply speed modifiers (Shift = boost, Ctrl = slow)
             speed_multiplier = 1.0
             if pygame.K_LSHIFT in self._keys_held or pygame.K_RSHIFT in self._keys_held:
-                speed_multiplier = 2.0
+                speed_multiplier = self.boost_multiplier
             elif pygame.K_LCTRL in self._keys_held or pygame.K_RCTRL in self._keys_held:
-                speed_multiplier = 0.5
+                speed_multiplier = self.slow_multiplier
 
             twist.linear.x *= speed_multiplier
             twist.linear.y *= speed_multiplier
@@ -162,9 +185,9 @@ class KeyboardTeleop(Module):
         # Determine active speed multiplier
         speed_mult_text = ""
         if pygame.K_LSHIFT in self._keys_held or pygame.K_RSHIFT in self._keys_held:
-            speed_mult_text = " [BOOST 2x]"
+            speed_mult_text = f" [BOOST {self.boost_multiplier:g}x]"
         elif pygame.K_LCTRL in self._keys_held or pygame.K_RCTRL in self._keys_held:
-            speed_mult_text = " [SLOW 0.5x]"
+            speed_mult_text = f" [SLOW {self.slow_multiplier:g}x]"
 
         texts = [
             "Keyboard Teleop" + speed_mult_text,
@@ -200,8 +223,3 @@ class KeyboardTeleop(Module):
             y_pos += 25
 
         pygame.display.flip()
-
-
-keyboard_teleop = KeyboardTeleop.blueprint
-
-__all__ = ["KeyboardTeleop", "keyboard_teleop"]

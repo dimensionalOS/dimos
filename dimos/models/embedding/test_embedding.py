@@ -7,7 +7,7 @@ import torch
 from dimos.models.embedding.clip import CLIPModel
 from dimos.models.embedding.mobileclip import MobileCLIPModel
 from dimos.models.embedding.treid import TorchReIDModel
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 
 

@@ -57,7 +57,7 @@ from dimos.utils.testing import TimedSensorReplay
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 
 # Load recorded Go2 camera frames
-video_replay = TimedSensorReplay("unitree_go2_bigoffice/video")
+video_replay = TimedSensorReplay("go2_sf_office/video")
 
 # Use stream() with seek to skip blank frames, speed=10x to collect faster
 input_frames = video_replay.stream(seek=5.0, duration=1.4, speed=10.0).pipe(

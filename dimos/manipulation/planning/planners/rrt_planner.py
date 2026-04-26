@@ -26,15 +26,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.manipulation.planning.spec import (
-    JointPath,
-    PlanningResult,
-    PlanningStatus,
-    WorldRobotID,
-    WorldSpec,
-)
+from dimos.manipulation.planning.spec.enums import PlanningStatus
+from dimos.manipulation.planning.spec.models import JointPath, PlanningResult, WorldRobotID
+from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.path_utils import compute_path_length
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -75,7 +71,7 @@ class RRTConnectPlanner:
         connect_step_size: float = 0.05,
         goal_tolerance: float = 0.1,
         collision_step_size: float = 0.02,
-    ):
+    ) -> None:
         self._step_size = step_size
         self._connect_step_size = connect_step_size
         self._goal_tolerance = goal_tolerance
@@ -315,7 +311,7 @@ class RRTConnectPlanner:
         return simplified
 
 
-# ============= Result Helpers =============
+# Result Helpers
 
 
 def _create_success_result(

@@ -20,22 +20,25 @@ Outputs registered (world-frame) point clouds and odometry with covariance.
 Usage::
 
     from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-    from dimos.core.blueprints import autoconnect
+    from dimos.core.coordination.blueprints import autoconnect
 
-    autoconnect(
+    from dimos.core.coordination.module_coordinator import ModuleCoordinator
+    ModuleCoordinator.build(autoconnect(
         FastLio2.blueprint(host_ip="192.168.1.5"),
         SomeConsumer.blueprint(),
-    ).build().loop()
+    )).loop()
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
+from pydantic.experimental.pipeline import validate_as
+
+from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
-from dimos.core.stream import Out  # noqa: TC001
+from dimos.core.stream import Out
 from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_CMD_DATA_PORT,
     SDK_HOST_CMD_DATA_PORT,
@@ -48,14 +51,13 @@ from dimos.hardware.sensors.lidar.livox.ports import (
     SDK_POINT_DATA_PORT,
     SDK_PUSH_MSG_PORT,
 )
-from dimos.msgs.nav_msgs.Odometry import Odometry  # noqa: TC001
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2  # noqa: TC001
+from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec import mapping, perception
 
 _CONFIG_DIR = Path(__file__).parent / "config"
 
 
-@dataclass(kw_only=True)
 class FastLio2Config(NativeModuleConfig):
     """Config for the FAST-LIO2 + Livox Mid-360 native module."""
 
@@ -92,7 +94,9 @@ class FastLio2Config(NativeModuleConfig):
 
     # FAST-LIO YAML config (relative to config/ dir, or absolute path)
     # C++ binary reads YAML directly via yaml-cpp
-    config: str = "mid360.yaml"
+    config: Annotated[
+        Path, validate_as(...).transform(lambda p: p if p.is_absolute() else _CONFIG_DIR / p)
+    ] = Path("mid360.yaml")
 
     # SDK port configuration (see livox/ports.py for defaults)
     cmd_data_port: int = SDK_CMD_DATA_PORT
@@ -112,13 +116,6 @@ class FastLio2Config(NativeModuleConfig):
     # config is not a CLI arg (config_path is)
     cli_exclude: frozenset[str] = frozenset({"config"})
 
-    def __post_init__(self) -> None:
-        if self.config_path is None:
-            path = Path(self.config)
-            if not path.is_absolute():
-                path = _CONFIG_DIR / path
-            self.config_path = str(path.resolve())
-
 
 class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.GlobalPointcloud):
     """FAST-LIO2 SLAM module with integrated Livox Mid-360 driver.
@@ -129,19 +126,20 @@ class FastLio2(NativeModule, perception.Lidar, perception.Odometry, mapping.Glob
         global_map (Out[PointCloud2]): Global voxel map (optional, enable via map_freq > 0).
     """
 
-    default_config: type[FastLio2Config] = FastLio2Config  # type: ignore[assignment]
+    config: FastLio2Config
+
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
     global_map: Out[PointCloud2]
 
+    @rpc
+    def start(self) -> None:
+        super().start()
 
-fastlio2_module = FastLio2.blueprint
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
-__all__ = [
-    "FastLio2",
-    "FastLio2Config",
-    "fastlio2_module",
-]
 
 # Verify protocol port compliance (mypy will flag missing ports)
 if TYPE_CHECKING:

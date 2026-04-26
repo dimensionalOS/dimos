@@ -81,7 +81,7 @@ We’ll go through these layers top-down.
 
 See [Blueprints](/docs/usage/blueprints.md) for the blueprint API.
 
-From [`unitree/go2/blueprints/__init__.py`](/dimos/robot/unitree/go2/blueprints/__init__.py).
+From [`unitree/go2/blueprints/smart/unitree_go2.py`](/dimos/robot/unitree/go2/blueprints/smart/unitree_go2.py).
 
 Example: rebind a few streams from the default `LCMTransport` to `ROSTransport` (defined at [`transport.py`](/dimos/core/transport.py#L226)) so you can visualize in **rviz2**.
 
@@ -244,7 +244,7 @@ For local emission it autoconfigures system in a way in which it's more robust a
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.msgs.geometry_msgs import Vector3
 
-lcm = LCM(autoconf=True)
+lcm = LCM()
 lcm.start()
 
 received = []
@@ -357,7 +357,7 @@ Received 2 messages:
   {'temperature': 23.0}
 ```
 
-See [`memory.py`](/dimos/protocol/pubsub/impl/memory.py) for the complete source.
+See [`pubsub/impl/memory.py`](/dimos/protocol/pubsub/impl/memory.py) for the complete source.
 
 ---
 

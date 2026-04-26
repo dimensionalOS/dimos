@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 import warnings
@@ -6,30 +5,28 @@ import warnings
 import numpy as np
 from PIL import Image as PILImage
 import torch
-from transformers import AutoModelForCausalLM  # type: ignore[import-untyped]
+from transformers import AutoModelForCausalLM
 
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
-from dimos.models.vl.base import VlModel
-from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
+from dimos.models.vl.base import VlModel, VlModelConfig
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
+from dimos.perception.detection.type.detection2d.point import Detection2DPoint
 
 # Moondream works well with 512x512 max
 MOONDREAM_DEFAULT_AUTO_RESIZE = (512, 512)
 
-
-@dataclass
-class MoondreamConfig(HuggingFaceModelConfig):
+class MoondreamConfig(HuggingFaceModelConfig, VlModelConfig):
     """Configuration for MoondreamVlModel."""
 
     model_name: str = "vikhyatk/moondream2"
     dtype: torch.dtype = torch.bfloat16
     auto_resize: tuple[int, int] | None = MOONDREAM_DEFAULT_AUTO_RESIZE
 
-
 class MoondreamVlModel(HuggingFaceModel, VlModel):
+    config: MoondreamConfig
     _model_class = AutoModelForCausalLM
-    default_config = MoondreamConfig  # type: ignore[assignment]
-    config: MoondreamConfig  # type: ignore[assignment]
 
     @cached_property
     def _model(self) -> AutoModelForCausalLM:
@@ -56,7 +53,7 @@ class MoondreamVlModel(HuggingFaceModel, VlModel):
         rgb_image = image.to_rgb()
         return PILImage.fromarray(rgb_image.data)
 
-    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
+    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def]
         pil_image = self._to_pil(image)
 
         # Query the model

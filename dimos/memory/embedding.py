@@ -13,9 +13,9 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from typing import cast
+from dataclasses import dataclass
 
+from pydantic import Field
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
@@ -25,16 +25,14 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.models.embedding.clip import CLIPModel
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.utils.reactive import getter_hot
 
 
-@dataclass
 class Config(ModuleConfig):
-    embedding_model: EmbeddingModel = field(default_factory=CLIPModel)
+    embedding_model: EmbeddingModel = Field(default_factory=CLIPModel)
 
 
 @dataclass
@@ -48,8 +46,7 @@ class SpatialEmbedding(SpatialEntry):
     embedding: Embedding
 
 
-class EmbeddingMemory(Module[Config]):
-    default_config = Config
+class EmbeddingMemory(Module):
     config: Config
     color_image: In[Image]
     global_costmap: In[OccupancyGrid]
@@ -59,7 +56,7 @@ class EmbeddingMemory(Module[Config]):
     def get_costmap(self) -> OccupancyGrid:
         if self._costmap_getter is None:
             self._costmap_getter = getter_hot(self.global_costmap.pure_observable())
-            self._disposables.add(self._costmap_getter)
+            self.register_disposable(self._costmap_getter)
         return self._costmap_getter()
 
     @rpc
@@ -90,12 +87,16 @@ class EmbeddingMemory(Module[Config]):
         return rx.of(SpatialEntry(image=img, pose=pose))
 
     def _embed_spatial_entry(self, spatial_entry: SpatialEntry) -> SpatialEmbedding:
-        embedding = cast("Embedding", self.config.embedding_model.embed(spatial_entry.image))
+        embedding = self.config.embedding_model.embed(spatial_entry.image)
         return SpatialEmbedding(
             image=spatial_entry.image,
             pose=spatial_entry.pose,
             embedding=embedding,
         )
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _store_spatial_entry(self, spatial_embedding: SpatialEmbedding) -> SpatialEmbedding:
         return spatial_embedding

@@ -5,19 +5,21 @@ Motion planning for robotic manipulators. Backend-agnostic design with Drake imp
 ## Quick Start
 
 ```bash
-# Terminal 1: Mock coordinator
-dimos run coordinator-mock
+# 1. Verify manipulation dependencies load correctly (standalone, no hardware):
+dimos run xarm6-planner-only
 
-# Terminal 2: Manipulation planner
-dimos run xarm7-planner-coordinator
+# 2. Keyboard teleop with mock arm (single command):
+dimos run keyboard-teleop-xarm7
 
-# Terminal 3: IPython client
-python -m dimos.manipulation.planning.examples.manipulation_client
+# 3. Interactive RPC client (plan, preview, execute from Python):
+dimos run xarm7-planner-coordinator                                    # terminal 1
+python -i -m dimos.manipulation.planning.examples.manipulation_client  # terminal 2
 ```
 
-In IPython:
+In the interactive client:
 ```python
-joints()                # Get current joints
+commands()              # List available commands
+joints()                # Get current joint positions
 plan([0.1] * 7)         # Plan to target
 preview()               # Preview in Meshcat (url() for link)
 execute()               # Execute via coordinator
@@ -63,7 +65,7 @@ from dimos.manipulation.planning.spec import RobotModelConfig
 
 config = RobotModelConfig(
     name="xarm7",
-    urdf_path=Path("/path/to/xarm7.urdf"),
+    model_path=Path("/path/to/xarm7.urdf"),
     base_pose=PoseStamped(position=Vector3(), orientation=Quaternion()),
     joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7"],
     end_effector_link="link7",
@@ -89,7 +91,7 @@ module.execute()  # Sends to coordinator
 | Field | Description |
 |-------|-------------|
 | `name` | Robot identifier |
-| `urdf_path` | Path to URDF/XACRO file |
+| `model_path` | Path to URDF/XACRO file |
 | `base_pose` | PoseStamped for robot base in world frame |
 | `joint_names` | Joint names in URDF |
 | `end_effector_link` | EE link name |
@@ -146,8 +148,7 @@ planning/
 ├── monitor/                 # WorldMonitor (live state sync)
 ├── trajectory_generator/    # Time-parameterized trajectories
 └── examples/
-    ├── planning_tester.py        # Standalone CLI tester
-    └── manipulation_client.py    # IPython RPC client
+    └── manipulation_client.py    # Interactive RPC client (python -i)
 ```
 
 ## Obstacle Types

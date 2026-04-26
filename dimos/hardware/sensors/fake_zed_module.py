@@ -17,9 +17,9 @@
 FakeZEDModule - Replays recorded ZED data for testing without hardware.
 """
 
-from dataclasses import dataclass
 import functools
 import logging
+from typing import Any
 
 from dimos_lcm.sensor_msgs import CameraInfo
 import numpy as np
@@ -27,25 +27,27 @@ import numpy as np
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.msgs.std_msgs import Header
-from dimos.protocol.tf import TF
+from dimos.memory.timeseries.legacy import LegacyPickleStore
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.std_msgs.Header import Header
+from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.testing import TimedSensorReplay
 
 logger = setup_logger(level=logging.INFO)
 
 
-@dataclass
 class FakeZEDModuleConfig(ModuleConfig):
+    recording_path: str
     frame_id: str = "zed_camera"
 
 
-class FakeZEDModule(Module[FakeZEDModuleConfig]):
+class FakeZEDModule(Module):
     """
     Fake ZED module that replays recorded data instead of real camera.
     """
+
+    config: FakeZEDModuleConfig
 
     # Define LCM outputs (same as ZEDModule)
     color_image: Out[Image]
@@ -53,10 +55,7 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
     camera_info: Out[CameraInfo]
     pose: Out[PoseStamped]
 
-    default_config = FakeZEDModuleConfig
-    config: FakeZEDModuleConfig
-
-    def __init__(self, recording_path: str, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         """
         Initialize FakeZEDModule with recording path.
 
@@ -65,7 +64,7 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
         """
         super().__init__(**kwargs)
 
-        self.recording_path = recording_path
+        self.recording_path = self.config.recording_path
         self._running = False
 
         # Initialize TF publisher
@@ -86,7 +85,7 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
                 return x
             return x
 
-        color_replay = TimedSensorReplay(f"{self.recording_path}/color", autocast=image_autocast)
+        color_replay = LegacyPickleStore(f"{self.recording_path}/color", autocast=image_autocast)
         return color_replay.stream()
 
     @functools.cache
@@ -103,7 +102,7 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
                 return x
             return x
 
-        depth_replay = TimedSensorReplay(f"{self.recording_path}/depth", autocast=depth_autocast)
+        depth_replay = LegacyPickleStore(f"{self.recording_path}/depth", autocast=depth_autocast)
         return depth_replay.stream()
 
     @functools.cache
@@ -125,7 +124,7 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
                 return x
             return x
 
-        pose_replay = TimedSensorReplay(f"{self.recording_path}/pose", autocast=pose_autocast)
+        pose_replay = LegacyPickleStore(f"{self.recording_path}/pose", autocast=pose_autocast)
         return pose_replay.stream()
 
     @functools.cache
@@ -201,7 +200,7 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
                 return x
             return x
 
-        info_replay = TimedSensorReplay(
+        info_replay = LegacyPickleStore(
             f"{self.recording_path}/camera_info", autocast=camera_info_autocast
         )
         return info_replay.stream()
@@ -225,7 +224,7 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
             unsub = self._get_color_stream().subscribe(
                 lambda msg: self.color_image.publish(msg) if self._running else None
             )
-            self._disposables.add(unsub)
+            self.register_disposable(unsub)
             logger.info("Started color image replay stream")
         except Exception as e:
             logger.warning(f"Color image stream not available: {e}")
@@ -235,7 +234,7 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
             unsub = self._get_depth_stream().subscribe(
                 lambda msg: self.depth_image.publish(msg) if self._running else None
             )
-            self._disposables.add(unsub)
+            self.register_disposable(unsub)
             logger.info("Started depth image replay stream")
         except Exception as e:
             logger.warning(f"Depth image stream not available: {e}")
@@ -245,7 +244,7 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
             unsub = self._get_pose_stream().subscribe(
                 lambda msg: self._publish_pose(msg) if self._running else None
             )
-            self._disposables.add(unsub)
+            self.register_disposable(unsub)
             logger.info("Started pose replay stream")
         except Exception as e:
             logger.warning(f"Pose stream not available: {e}")
@@ -255,7 +254,7 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
             unsub = self._get_camera_info_stream().subscribe(
                 lambda msg: self.camera_info.publish(msg) if self._running else None
             )
-            self._disposables.add(unsub)
+            self.register_disposable(unsub)
             logger.info("Started camera info replay stream")
         except Exception as e:
             logger.warning(f"Camera info stream not available: {e}")
@@ -279,7 +278,9 @@ class FakeZEDModule(Module[FakeZEDModuleConfig]):
             # Publish TF transform from world to camera
             import time
 
-            from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
+            from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+            from dimos.msgs.geometry_msgs.Transform import Transform
+            from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
             transform = Transform(
                 translation=Vector3(*msg.position),

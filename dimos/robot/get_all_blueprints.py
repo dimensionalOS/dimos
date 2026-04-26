@@ -13,18 +13,59 @@
 # limitations under the License.
 
 import difflib
+import re
 import sys
 from typing import NoReturn
 
 import typer
 
-from dimos.core.blueprints import Blueprint
+from dimos.core.coordination.blueprints import Blueprint
 from dimos.robot.all_blueprints import all_blueprints, all_modules
 
 all_names = sorted(set(all_blueprints.keys()) | set(all_modules.keys()))
 
 
-def _fail_unknown(name: str, candidates: list[str]) -> NoReturn:
+def class_name_to_registry_key(class_name: str) -> str:
+    """Convert a CamelCase class name to its kebab-case registry key."""
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", class_name)
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
+    return s.lower().replace("_", "-")
+
+
+def _raise_unknown(name: str, candidates: list[str]) -> NoReturn:
+    msg = f"Unknown blueprint or module: {name!r}"
+    suggestions = difflib.get_close_matches(name, candidates, n=5, cutoff=0.4)
+    if suggestions:
+        msg += f". Did you mean: {', '.join(suggestions)}?"
+    raise ValueError(msg)
+
+
+def get_blueprint_by_name(name: str) -> Blueprint:
+    if name not in all_blueprints:
+        _raise_unknown(name, list(all_blueprints.keys()))
+    module_path, attr = all_blueprints[name].split(":")
+    module = __import__(module_path, fromlist=[attr])
+    return getattr(module, attr)  # type: ignore[no-any-return]
+
+
+def get_module_by_name(name: str) -> Blueprint:
+    if name not in all_modules:
+        _raise_unknown(name, list(all_modules.keys()))
+    module_path, class_name = all_modules[name].rsplit(".", 1)
+    python_module = __import__(module_path, fromlist=[class_name])
+    return getattr(python_module, class_name).blueprint()  # type: ignore[no-any-return]
+
+
+def get_by_name(name: str) -> Blueprint:
+    if name in all_blueprints:
+        return get_blueprint_by_name(name)
+    elif name in all_modules:
+        return get_module_by_name(name)
+    else:
+        _raise_unknown(name, all_names)
+
+
+def _fail_or_exit(name: str, candidates: list[str]) -> NoReturn:
     typer.echo(typer.style(f"Unknown blueprint or module: {name}", fg=typer.colors.RED), err=True)
     suggestions = difflib.get_close_matches(name, candidates, n=5, cutoff=0.4)
     if suggestions:
@@ -34,26 +75,16 @@ def _fail_unknown(name: str, candidates: list[str]) -> NoReturn:
     sys.exit(1)
 
 
-def get_blueprint_by_name(name: str) -> Blueprint:
-    if name not in all_blueprints:
-        _fail_unknown(name, list(all_blueprints.keys()))
-    module_path, attr = all_blueprints[name].split(":")
-    module = __import__(module_path, fromlist=[attr])
-    return getattr(module, attr)  # type: ignore[no-any-return]
-
-
-def get_module_by_name(name: str) -> Blueprint:
-    if name not in all_modules:
-        _fail_unknown(name, list(all_modules.keys()))
-    attr_name = name.replace("-", "_")
-    python_module = __import__(all_modules[name], fromlist=[attr_name])
-    return getattr(python_module, attr_name)()  # type: ignore[no-any-return]
-
-
-def get_by_name(name: str) -> Blueprint:
+def get_by_name_or_exit(name: str) -> Blueprint:
     if name in all_blueprints:
         return get_blueprint_by_name(name)
     elif name in all_modules:
         return get_module_by_name(name)
     else:
-        _fail_unknown(name, all_names)
+        _fail_or_exit(name, all_names)
+
+
+def get_module_by_name_or_exit(name: str) -> Blueprint:
+    if name not in all_modules:
+        _fail_or_exit(name, list(all_modules.keys()))
+    return get_module_by_name(name)

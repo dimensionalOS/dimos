@@ -25,13 +25,13 @@ from dimos_lcm.foxglove_msgs.Point2 import Point2
 import numpy as np
 
 from dimos.msgs.foxglove_msgs.Color import Color
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.types.timestamped import to_ros_stamp
 from dimos.utils.decorators.decorators import simple_mcache
 
 if TYPE_CHECKING:
-    from ultralytics.engine.results import Results  # type: ignore[import-not-found]
+    from ultralytics.engine.results import Results
 
 
 @dataclass
@@ -39,12 +39,12 @@ class Detection2DPerson(Detection2DBBox):
     """Represents a detected person with pose keypoints."""
 
     # Pose keypoints - additional fields beyond Detection2DBBox
-    keypoints: np.ndarray  # type: ignore[type-arg]  # [17, 2] - x,y coordinates
-    keypoint_scores: np.ndarray  # type: ignore[type-arg]  # [17] - confidence scores
+    keypoints: np.ndarray  # [17, 2] - x,y coordinates
+    keypoint_scores: np.ndarray  # [17] - confidence scores
 
     # Optional normalized coordinates
-    bbox_normalized: np.ndarray | None = None  # type: ignore[type-arg]  # [x1, y1, x2, y2] in 0-1 range
-    keypoints_normalized: np.ndarray | None = None  # type: ignore[type-arg]  # [17, 2] in 0-1 range
+    bbox_normalized: np.ndarray | None = None  # [x1, y1, x2, y2] in 0-1 range
+    keypoints_normalized: np.ndarray | None = None  # [17, 2] in 0-1 range
 
     # Image dimensions for context
     image_width: int | None = None
@@ -194,7 +194,7 @@ class Detection2DPerson(Detection2DBBox):
             "message format that includes pose keypoints."
         )
 
-    def get_keypoint(self, name: str) -> tuple[np.ndarray, float]:  # type: ignore[type-arg]
+    def get_keypoint(self, name: str) -> tuple[np.ndarray, float]:
         """Get specific keypoint by name.
         Returns:
             Tuple of (xy_coordinates, confidence_score)
@@ -205,7 +205,7 @@ class Detection2DPerson(Detection2DBBox):
         idx = self.KEYPOINT_NAMES.index(name)
         return self.keypoints[idx], self.keypoint_scores[idx]
 
-    def get_visible_keypoints(self, threshold: float = 0.5) -> list[tuple[str, np.ndarray, float]]:  # type: ignore[type-arg]
+    def get_visible_keypoints(self, threshold: float = 0.5) -> list[tuple[str, np.ndarray, float]]:
         """Get all keypoints above confidence threshold.
         Returns:
             List of tuples: (keypoint_name, xy_coordinates, confidence)

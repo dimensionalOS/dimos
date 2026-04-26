@@ -12,76 +12,51 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import threading
 from threading import Thread
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from pydantic import Field
 from reactivex.disposable import Disposable
 
+from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module
+from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.geometry_msgs import (
-    PoseStamped,
-    Quaternion,
-    Transform,
-    Twist,
-    Vector3,
-)
-from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.unitree.g1.connection import G1ConnectionBase
+from dimos.robot.unitree.mujoco_connection import MujocoConnection
 from dimos.robot.unitree.type.odometry import Odometry as SimOdometry
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
 logger = setup_logger()
 
 
-def _camera_info_static() -> CameraInfo:
-    """Camera intrinsics for rerun visualization (matches Go2 convention)."""
-    fx, fy, cx, cy = (819.553492, 820.646595, 625.284099, 336.808987)
-    width, height = (1280, 720)
-
-    return CameraInfo(
-        frame_id="camera_optical",
-        height=height,
-        width=width,
-        distortion_model="plumb_bob",
-        D=[0.0, 0.0, 0.0, 0.0, 0.0],
-        K=[fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
-        R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
-        P=[fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
-        binning_x=0,
-        binning_y=0,
-    )
+class G1SimConfig(ModuleConfig):
+    ip: str = Field(default_factory=lambda m: m["g"].robot_ip)
 
 
-class G1SimConnection(Module):
+class G1SimConnection(G1ConnectionBase):
+    config: G1SimConfig
     cmd_vel: In[Twist]
     lidar: Out[PointCloud2]
     odom: Out[PoseStamped]
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
-    ip: str | None
-    _global_config: GlobalConfig
+    connection: MujocoConnection | None = None
     _camera_info_thread: Thread | None = None
 
-    def __init__(
-        self,
-        ip: str | None = None,
-        cfg: GlobalConfig = global_config,
-        *args: Any,
-        **kwargs: Any,
-    ) -> None:
-        self._global_config = cfg
-        self.ip = ip if ip is not None else self._global_config.robot_ip
-        self.connection: MujocoConnection | None = None
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._stop_event = threading.Event()
-        super().__init__(*args, **kwargs)
 
     @rpc
     def start(self) -> None:
@@ -89,14 +64,14 @@ class G1SimConnection(Module):
 
         from dimos.robot.unitree.mujoco_connection import MujocoConnection
 
-        self.connection = MujocoConnection(self._global_config)
+        self.connection = MujocoConnection(self.config.g)
         assert self.connection is not None
         self.connection.start()
 
-        self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
-        self._disposables.add(self.connection.odom_stream().subscribe(self._publish_sim_odom))
-        self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
-        self._disposables.add(self.connection.video_stream().subscribe(self.color_image.publish))
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
+        self.register_disposable(self.connection.odom_stream().subscribe(self._publish_sim_odom))
+        self.register_disposable(self.connection.lidar_stream().subscribe(self.lidar.publish))
+        self.register_disposable(self.connection.video_stream().subscribe(self.color_image.publish))
 
         self._camera_info_thread = Thread(
             target=self._publish_camera_info_loop,
@@ -110,11 +85,12 @@ class G1SimConnection(Module):
         assert self.connection is not None
         self.connection.stop()
         if self._camera_info_thread and self._camera_info_thread.is_alive():
-            self._camera_info_thread.join(timeout=1.0)
+            self._camera_info_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
         super().stop()
 
     def _publish_camera_info_loop(self) -> None:
-        info = _camera_info_static()
+        assert self.connection is not None
+        info = self.connection.camera_info_static
         while not self._stop_event.is_set():
             self.camera_info.publish(info)
             self._stop_event.wait(1.0)
@@ -171,9 +147,3 @@ class G1SimConnection(Module):
         logger.info(f"Publishing request to topic: {topic} with data: {data}")
         assert self.connection is not None
         return self.connection.publish_request(topic, data)
-
-
-g1_sim_connection = G1SimConnection.blueprint
-
-
-__all__ = ["G1SimConnection", "g1_sim_connection"]

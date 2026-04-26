@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from reactivex.disposable import Disposable
 
 from dimos.agents.system_prompt import SYSTEM_PROMPT
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 logger = setup_logger()
 
 
-@dataclass
 class VLMAgentConfig(ModuleConfig):
     model: str = "gpt-4o"
     system_prompt: str | None = SYSTEM_PROMPT
@@ -40,22 +39,21 @@ class VLMAgentConfig(ModuleConfig):
 class VLMAgent(Module):
     """Stream-first agent for vision queries with optional RPC access."""
 
-    default_config: type[VLMAgentConfig] = VLMAgentConfig
     config: VLMAgentConfig
 
     color_image: In[Image]
     query_stream: In[HumanMessage]
     answer_stream: Out[AIMessage]
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
         if self.config.model.startswith("ollama:"):
             from dimos.agents.ollama_agent import ensure_ollama_model
 
             ensure_ollama_model(self.config.model.removeprefix("ollama:"))
 
-        self._llm: BaseChatModel = init_chat_model(self.config.model)  # type: ignore[assignment]
+        self._llm: BaseChatModel = init_chat_model(self.config.model)
         self._latest_image: Image | None = None
         self._history: list[AIMessage | HumanMessage] = []
         self._system_message = SystemMessage(self.config.system_prompt or SYSTEM_PROMPT)
@@ -63,8 +61,8 @@ class VLMAgent(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(self.color_image.subscribe(self._on_image))  # type: ignore[arg-type]
-        self._disposables.add(self.query_stream.subscribe(self._on_query))  # type: ignore[arg-type]
+        self.register_disposable(Disposable(self.color_image.subscribe(self._on_image)))
+        self.register_disposable(Disposable(self.query_stream.subscribe(self._on_query)))
 
     @rpc
     def stop(self) -> None:
@@ -95,8 +93,8 @@ class VLMAgent(Module):
     def _invoke(self, msg: HumanMessage, **kwargs: Any) -> AIMessage:
         messages = [self._system_message, msg]
         response = self._llm.invoke(messages, **kwargs)
-        self._history.extend([msg, response])  # type: ignore[arg-type]
-        return response  # type: ignore[return-value]
+        self._history.extend([msg, response])
+        return response
 
     def _invoke_image(
         self, image: Image, query: str, response_format: dict[str, Any] | None = None
@@ -124,8 +122,3 @@ class VLMAgent(Module):
         response = self._invoke_image(image, query, response_format=response_format)
         content = response.content
         return content if isinstance(content, str) else str(content)
-
-
-vlm_agent = VLMAgent.blueprint
-
-__all__ = ["VLMAgent", "vlm_agent"]

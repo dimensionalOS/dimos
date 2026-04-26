@@ -20,10 +20,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from dimos.manipulation.planning.spec import IKResult, IKStatus, WorldRobotID, WorldSpec
+from dimos.manipulation.planning.spec.enums import IKStatus
+from dimos.manipulation.planning.spec.models import IKResult, WorldRobotID
+from dimos.manipulation.planning.spec.protocols import WorldSpec
 from dimos.manipulation.planning.utils.kinematics_utils import compute_pose_error
-from dimos.msgs.geometry_msgs import PoseStamped, Transform
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import pose_to_matrix
 
@@ -31,11 +34,11 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 try:
-    from pydrake.math import RigidTransform, RotationMatrix  # type: ignore[import-not-found]
-    from pydrake.multibody.inverse_kinematics import (  # type: ignore[import-not-found]
+    from pydrake.math import RigidTransform, RotationMatrix
+    from pydrake.multibody.inverse_kinematics import (
         InverseKinematics,
     )
-    from pydrake.solvers import Solve  # type: ignore[import-not-found]
+    from pydrake.solvers import Solve
 
     DRAKE_AVAILABLE = True
 except ImportError:

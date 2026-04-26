@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.blueprints import autoconnect
+from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out

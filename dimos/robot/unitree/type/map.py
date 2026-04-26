@@ -20,63 +20,57 @@ import open3d as o3d  # type: ignore[import-untyped]
 from reactivex import interval
 from reactivex.disposable import Disposable
 
+from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig, global_config
-from dimos.core.module import Module
-from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.mapping.pointclouds.accumulators.general import GeneralPointCloudAccumulator
 from dimos.mapping.pointclouds.accumulators.protocol import PointCloudAccumulator
 from dimos.mapping.pointclouds.occupancy import general_occupancy
-from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.robot.unitree.go2.connection import Go2ConnectionProtocol
 
 
+class MapConfig(ModuleConfig):
+    voxel_size: float = 0.05
+    cost_resolution: float = 0.05
+    global_publish_interval: float | None = None
+    min_height: float = 0.10
+    max_height: float = 0.5
+
+
 class Map(Module):
+    config: MapConfig
     lidar: In[PointCloud2]
     global_map: Out[PointCloud2]
     global_costmap: Out[OccupancyGrid]
 
     _point_cloud_accumulator: PointCloudAccumulator
-    _global_config: GlobalConfig
     _preloaded_occupancy: OccupancyGrid | None = None
 
-    def __init__(  # type: ignore[no-untyped-def]
-        self,
-        voxel_size: float = 0.05,
-        cost_resolution: float = 0.05,
-        global_publish_interval: float | None = None,
-        min_height: float = 0.10,
-        max_height: float = 0.5,
-        cfg: GlobalConfig = global_config,
-        **kwargs,
-    ) -> None:
-        self.voxel_size = voxel_size
-        self.cost_resolution = cost_resolution
-        self.global_publish_interval = global_publish_interval
-        self.min_height = min_height
-        self.max_height = max_height
-        self._global_config = cfg
-        self._point_cloud_accumulator = GeneralPointCloudAccumulator(
-            self.voxel_size, self._global_config
-        )
-
-        if self._global_config.simulation:
-            self.min_height = 0.3
-
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
+        self.voxel_size = self.config.voxel_size
+        self.cost_resolution = self.config.cost_resolution
+        self.global_publish_interval = self.config.global_publish_interval
+        self.min_height = self.config.min_height
+        self.max_height = self.config.max_height
+        self._point_cloud_accumulator = GeneralPointCloudAccumulator(self.voxel_size, self.config.g)
+
+        if self.config.g.simulation:
+            self.min_height = 0.3
 
     @rpc
     def start(self) -> None:
         super().start()
 
-        self._disposables.add(Disposable(self.lidar.subscribe(self.add_frame)))
+        self.register_disposable(Disposable(self.lidar.subscribe(self.add_frame)))
 
         if self.global_publish_interval is not None:
             unsub = interval(self.global_publish_interval).subscribe(self._publish)
-            self._disposables.add(unsub)
+            self.register_disposable(unsub)
 
     @rpc
     def stop(self) -> None:
@@ -108,25 +102,19 @@ class Map(Module):
         )
 
         # When debugging occupancy navigation, load a predefined occupancy grid.
-        if self._global_config.mujoco_global_costmap_from_occupancy:
+        if self.config.g.mujoco_global_costmap_from_occupancy:
             if self._preloaded_occupancy is None:
-                path = Path(self._global_config.mujoco_global_costmap_from_occupancy)
+                path = Path(self.config.g.mujoco_global_costmap_from_occupancy)
                 self._preloaded_occupancy = OccupancyGrid.from_path(path)
             occupancygrid = self._preloaded_occupancy
 
         self.global_costmap.publish(occupancygrid)
 
 
-mapper = Map.blueprint
-
-
 def deploy(dimos: ModuleCoordinator, connection: Go2ConnectionProtocol):  # type: ignore[no-untyped-def]
-    mapper = dimos.deploy(Map, global_publish_interval=1.0)  # type: ignore[attr-defined]
+    mapper = dimos.deploy(Map, global_publish_interval=1.0)
     mapper.global_map.transport = LCMTransport("/global_map", PointCloud2)
     mapper.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
     mapper.lidar.connect(connection.pointcloud)  # type: ignore[attr-defined]
     mapper.start()
     return mapper
-
-
-__all__ = ["Map", "mapper"]
