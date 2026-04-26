@@ -247,3 +247,96 @@ def test_calibration_yaml_loads_suggested_gains(tmp_path: Path) -> None:
     assert rc == 0
     assert config["controller"]["calibration_source"] == str(fixture)
     assert config["controller"]["gains"] == {"k_position_per_s": 1.2, "k_yaw_per_s": 0.9}
+
+
+def test_measurement_delay_records_disturbance_and_fails_gate(tmp_path: Path) -> None:
+    rc, output_dir, summary = _run_runner(
+        tmp_path,
+        "--scenario",
+        "line",
+        "--speed",
+        "1.0",
+        "--rate",
+        "10",
+        "--plant-preset",
+        "synthetic_nominal",
+        "--measurement-delay-ticks",
+        "20",
+        "--gate-max-divergence",
+        "0.25",
+    )
+
+    config = yaml.safe_load((output_dir / "config.yaml").read_text(encoding="utf-8"))
+    measurement = summary["disturbance"]["measurement"]
+
+    assert rc == 1
+    assert summary["verdict"]["status"] == "fail"
+    assert "max_planar_position_divergence_m" in summary["verdict"]["failed_gates"]
+    assert config["disturbance"]["measurement"]["fixed_delay_ticks"] == 20
+    assert measurement["fixed_delay_s"] == pytest.approx(2.0)
+    assert measurement["stats"]["delayed_samples"] > 0
+
+
+def test_measurement_jitter_drop_and_stale_are_reproducible(tmp_path: Path) -> None:
+    args = (
+        "--scenario",
+        "circle",
+        "--speed",
+        "0.8",
+        "--rate",
+        "10",
+        "--plant-preset",
+        "synthetic_nominal",
+        "--measurement-jitter-ticks",
+        "3",
+        "--measurement-stale-probability",
+        "0.25",
+        "--measurement-drop-probability",
+        "0.25",
+        "--seed",
+        "99",
+    )
+
+    rc_a, _output_dir_a, summary_a = _run_runner(tmp_path / "a", *args)
+    rc_b, _output_dir_b, summary_b = _run_runner(tmp_path / "b", *args)
+
+    stats = summary_a["disturbance"]["measurement"]["stats"]
+
+    assert rc_a == rc_b
+    assert summary_a["metrics"] == summary_b["metrics"]
+    assert summary_a["disturbance"]["measurement"] == summary_b["disturbance"]["measurement"]
+    assert stats["jittered_samples"] > 0
+    assert stats["stale_reused_samples"] > 0
+    assert stats["dropped_samples"] > 0
+
+
+def test_slower_lateral_response_causes_controlled_degradation(tmp_path: Path) -> None:
+    args = (
+        "--scenario",
+        "s_curve",
+        "--speed",
+        "1.0",
+        "--rate",
+        "10",
+        "--plant-preset",
+        "synthetic_nominal",
+    )
+    rc_nominal, _output_dir_nominal, nominal = _run_runner(tmp_path / "nominal", *args)
+    rc_slow, output_dir_slow, slow = _run_runner(
+        tmp_path / "slow",
+        *args,
+        "--response-linear-y-scale",
+        "0.35",
+        "--response-linear-y-command-gain-scale",
+        "0.65",
+        "--response-speed-dependent-slip-per-mps",
+        "0.3",
+    )
+
+    config = yaml.safe_load((output_dir_slow / "config.yaml").read_text(encoding="utf-8"))
+
+    assert rc_nominal == 0
+    assert rc_slow in {0, 1}
+    assert config["disturbance"]["response_wrappers"]["linear_y_response_scale"] == 0.35
+    assert slow["plant"]["response_curve_id"].endswith("+runner_wrappers")
+    assert slow["metrics"]["max_cross_track_error_m"] > nominal["metrics"]["max_cross_track_error_m"]

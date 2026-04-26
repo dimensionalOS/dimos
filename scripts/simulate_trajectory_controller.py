@@ -29,7 +29,7 @@ import argparse
 import bisect
 from collections import deque
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import hashlib
 from itertools import pairwise
@@ -141,6 +141,62 @@ class PlotResult:
     command: list[str]
     returncode: int
     stderr: str | None
+
+
+@dataclass(frozen=True)
+class MeasurementDisturbanceConfig:
+    fixed_delay_ticks: int
+    random_jitter_ticks: int
+    stale_probability: float
+    drop_probability: float
+
+    @property
+    def enabled(self) -> bool:
+        return (
+            self.fixed_delay_ticks > 0
+            or self.random_jitter_ticks > 0
+            or self.stale_probability > 0.0
+            or self.drop_probability > 0.0
+        )
+
+
+@dataclass(frozen=True)
+class ResponseWrapperConfig:
+    command_gain_scale: float
+    linear_y_command_gain_scale: float
+    deadband_m_s: float
+    yaw_deadband_rad_s: float
+    saturation_scale: float
+    linear_y_response_scale: float
+    speed_dependent_slip_per_mps: float
+
+    @property
+    def enabled(self) -> bool:
+        return (
+            self.command_gain_scale != 1.0
+            or self.linear_y_command_gain_scale != 1.0
+            or self.deadband_m_s > 0.0
+            or self.yaw_deadband_rad_s > 0.0
+            or self.saturation_scale != 1.0
+            or self.linear_y_response_scale != 1.0
+            or self.speed_dependent_slip_per_mps > 0.0
+        )
+
+
+@dataclass(frozen=True)
+class MeasurementDisturbanceStats:
+    delayed_samples: int = 0
+    jittered_samples: int = 0
+    stale_reused_samples: int = 0
+    dropped_samples: int = 0
+
+    def asdict(self) -> dict[str, int]:
+        return {
+            "delayed_samples": self.delayed_samples,
+            "jittered_samples": self.jittered_samples,
+            "stale_reused_samples": self.stale_reused_samples,
+            "dropped_samples": self.dropped_samples,
+        }
 
 
 def _pose_xy_yaw(x_m: float, y_m: float, yaw_rad: float) -> Pose:
@@ -495,6 +551,7 @@ class ResponseCurvePlant:
         preset: ResponseCurvePreset,
         initial_pose: PlanarPose,
         noise_rng: random.Random | None,
+        speed_dependent_slip_per_mps: float = 0.0,
     ) -> None:
         self._preset = preset
         self._x = initial_pose.x_m
@@ -505,6 +562,7 @@ class ResponseCurvePlant:
         self._wz = 0.0
         self._time_s = 0.0
         self._noise_rng = noise_rng
+        self._speed_dependent_slip_per_mps = speed_dependent_slip_per_mps
         self._delayed = {"linear_x": 0.0, "linear_y": 0.0, "yaw": 0.0}
         self._queues: dict[str, deque[tuple[float, float]]] = {
             "linear_x": deque(),
@@ -590,16 +648,144 @@ class ResponseCurvePlant:
 
         c = math.cos(self._yaw)
         s = math.sin(self._yaw)
-        self._x += (c * self._vx - s * self._vy) * dt_s
-        self._y += (s * self._vx + c * self._vy) * dt_s
+        slip_scale = max(0.0, 1.0 - self._speed_dependent_slip_per_mps * abs(self._vx))
+        vy_effective = self._vy * slip_scale
+        self._x += (c * self._vx - s * vy_effective) * dt_s
+        self._y += (s * self._vx + c * vy_effective) * dt_s
         self._yaw += self._wz * dt_s
         self._yaw = math.atan2(math.sin(self._yaw), math.cos(self._yaw))
         self._time_s += dt_s
+
+class MeasurementDisturbanceWrapper:
+    """Returns delayed or stale measured samples while preserving actual plant history."""
+
+    def __init__(
+        self,
+        *,
+        config: MeasurementDisturbanceConfig,
+        dt_s: float,
+        rng: random.Random | None,
+    ) -> None:
+        self._config = config
+        self._dt_s = dt_s
+        self._rng = rng
+        self._history: list[TrajectoryMeasuredSample] = []
+        self._last: TrajectoryMeasuredSample | None = None
+        self._stats = MeasurementDisturbanceStats()
+
+    @property
+    def stats(self) -> MeasurementDisturbanceStats:
+        return self._stats
+
+    def observe(self, sample: TrajectoryMeasuredSample) -> None:
+        self._history.append(sample)
+
+    def sample(self, time_s: float) -> TrajectoryMeasuredSample:
+        if not self._history:
+            raise ValueError("measurement wrapper has no observed samples")
+
+        if self._last is not None and self._rng is not None and self._rng.random() < self._config.drop_probability:
+            self._stats = replace(self._stats, dropped_samples=self._stats.dropped_samples + 1)
+            return self._reuse_last()
+
+        delay_ticks = self._config.fixed_delay_ticks
+        jitter_ticks = 0
+        if self._config.random_jitter_ticks > 0:
+            rng = self._rng if self._rng is not None else random.Random(0)
+            jitter_ticks = rng.randint(0, self._config.random_jitter_ticks)
+            if jitter_ticks > 0:
+                self._stats = replace(self._stats, jittered_samples=self._stats.jittered_samples + 1)
+        if delay_ticks + jitter_ticks > 0:
+            self._stats = replace(self._stats, delayed_samples=self._stats.delayed_samples + 1)
+
+        if self._last is not None and self._rng is not None and self._rng.random() < self._config.stale_probability:
+            self._stats = replace(self._stats, stale_reused_samples=self._stats.stale_reused_samples + 1)
+            return self._last
+
+        query_time_s = max(0.0, time_s - (delay_ticks + jitter_ticks) * self._dt_s)
+        times = [sample.time_s for sample in self._history]
+        index = max(0, bisect.bisect_right(times, query_time_s) - 1)
+        selected = self._history[index]
+        self._last = selected
+        return selected
+
+    def _reuse_last(self) -> TrajectoryMeasuredSample:
+        if self._last is None:
+            self._last = self._history[0]
+        self._stats = replace(self._stats, stale_reused_samples=self._stats.stale_reused_samples + 1)
+        return self._last
 
 
 def _resolve_preset(name: str) -> ResponseCurvePreset:
     canonical = PLANT_PRESET_ALIASES.get(name, name)
     return get_response_curve_preset(canonical)
+
+
+def _apply_response_wrappers(preset: ResponseCurvePreset, config: ResponseWrapperConfig) -> ResponseCurvePreset:
+    if not config.enabled:
+        return preset
+
+    curves: list[ResponseCurveAxisConfig] = []
+    for curve in preset.curves:
+        command_gain = curve.command_gain * config.command_gain_scale
+        if curve.axis == "linear_y":
+            command_gain *= config.linear_y_command_gain_scale
+
+        deadband = curve.deadband
+        if curve.axis in {"linear_x", "linear_y"}:
+            deadband += config.deadband_m_s
+        elif curve.axis == "yaw":
+            deadband += config.yaw_deadband_rad_s
+
+        saturation = curve.saturation * config.saturation_scale
+        tau_s = curve.tau_s
+        max_accel = curve.max_accel
+        if curve.axis == "linear_y" and config.linear_y_response_scale != 1.0:
+            max_accel *= config.linear_y_response_scale
+            if tau_s > 0.0:
+                tau_s /= config.linear_y_response_scale
+
+        curves.append(
+            replace(
+                curve,
+                tau_s=tau_s,
+                max_accel=max_accel,
+                command_gain=command_gain,
+                deadband=deadband,
+                saturation=saturation,
+            )
+        )
+
+    notes = f"{preset.notes} Runner response wrappers applied."
+    return replace(
+        preset,
+        response_curve_id=f"{preset.response_curve_id}+runner_wrappers",
+        curves=tuple(curves),
+        notes=notes,
+    )
+
+
+def _measurement_disturbance_config(config: MeasurementDisturbanceConfig, dt_s: float) -> dict[str, Any]:
+    return {
+        "fixed_delay_ticks": config.fixed_delay_ticks,
+        "fixed_delay_s": config.fixed_delay_ticks * dt_s,
+        "random_jitter_ticks": config.random_jitter_ticks,
+        "random_jitter_max_s": config.random_jitter_ticks * dt_s,
+        "stale_probability": config.stale_probability,
+        "drop_probability": config.drop_probability,
+    }
+
+
+def _response_wrapper_config(config: ResponseWrapperConfig) -> dict[str, Any]:
+    return {
+        "command_gain_scale": config.command_gain_scale,
+        "linear_y_command_gain_scale": config.linear_y_command_gain_scale,
+        "deadband_m_s": config.deadband_m_s,
+        "yaw_deadband_rad_s": config.yaw_deadband_rad_s,
+        "saturation_scale": config.saturation_scale,
+        "linear_y_response_scale": config.linear_y_response_scale,
+        "speed_dependent_slip_per_mps": config.speed_dependent_slip_per_mps,
+    }
 
 
 def _sha256(path: Path) -> str:
@@ -816,17 +1002,30 @@ def _simulate(
     *,
     scenario: Scenario,
     preset: ResponseCurvePreset,
+    measurement_disturbance: MeasurementDisturbanceConfig,
+    response_wrappers: ResponseWrapperConfig,
     limits: HolonomicCommandLimits,
     rate_hz: float,
     k_position: float,
     k_yaw: float,
     seed: int | None,
-) -> tuple[list[TrajectoryControlTick], PlanarPose]:
+) -> tuple[list[TrajectoryControlTick], PlanarPose, MeasurementDisturbanceStats]:
     dt_s = 1.0 / rate_hz
     max_ticks = math.ceil(scenario.duration_s / dt_s)
     noise_enabled = any(c.noise_max > 0.0 for c in preset.curves)
     rng = random.Random(seed) if noise_enabled else None
-    plant = ResponseCurvePlant(preset=preset, initial_pose=scenario.initial_pose, noise_rng=rng)
+    measurement_rng = random.Random(seed + 1) if seed is not None and measurement_disturbance.enabled else None
+    plant = ResponseCurvePlant(
+        preset=preset,
+        initial_pose=scenario.initial_pose,
+        noise_rng=rng,
+        speed_dependent_slip_per_mps=response_wrappers.speed_dependent_slip_per_mps,
+    )
+    measurement_wrapper = MeasurementDisturbanceWrapper(
+        config=measurement_disturbance,
+        dt_s=dt_s,
+        rng=measurement_rng,
+    )
     controller = HolonomicTrackingController(k_position_per_s=k_position, k_yaw_per_s=k_yaw)
     controller.configure(limits)
     controller.reset()
@@ -836,7 +1035,8 @@ def _simulate(
     for i in range(max_ticks):
         t = i * dt_s
         ref = scenario.sample(t)
-        meas = plant.measured_sample(t)
+        measurement_wrapper.observe(plant.measured_sample(t))
+        meas = measurement_wrapper.sample(t)
         raw_cmd = controller.control(ref, meas)
         cmd = clamp_holonomic_cmd_vel(prev_cmd, raw_cmd, limits, dt_s)
         ticks.append(
@@ -852,7 +1052,7 @@ def _simulate(
         plant.step(cmd, dt_s)
         prev_cmd = cmd
 
-    return ticks, plant.pose
+    return ticks, plant.pose, measurement_wrapper.stats
 
 
 def _write_config(path: Path, config: dict[str, Any]) -> None:
@@ -932,6 +1132,16 @@ def _finite_nonnegative(value: float, name: str, parser: argparse.ArgumentParser
         parser.error(f"{name} must be non-negative and finite")
 
 
+def _finite_positive_or_zero_scale(value: float, name: str, parser: argparse.ArgumentParser) -> None:
+    if not (math.isfinite(value) and value > 0.0):
+        parser.error(f"{name} must be positive and finite")
+
+
+def _probability(value: float, name: str, parser: argparse.ArgumentParser) -> None:
+    if not (math.isfinite(value) and 0.0 <= value <= 1.0):
+        parser.error(f"{name} must be between 0 and 1")
+
+
 def _reference_profile_from_args(args: argparse.Namespace) -> ReferenceProfileConfig | None:
     if args.reference_mode == "direct":
         return None
@@ -1007,6 +1217,67 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         choices=sorted(set(RESPONSE_CURVE_PRESETS) | set(PLANT_PRESET_ALIASES)),
         help="Response-curve preset or alias.",
     )
+    parser.add_argument("--measurement-delay-ticks", type=int, default=0, help="Fixed odometry delay in control ticks.")
+    parser.add_argument(
+        "--measurement-jitter-ticks",
+        type=int,
+        default=0,
+        help="Random additional odometry delay in ticks, sampled uniformly from 0 through this value.",
+    )
+    parser.add_argument(
+        "--measurement-stale-probability",
+        type=float,
+        default=0.0,
+        help="Probability that a tick reuses the previous odometry measurement.",
+    )
+    parser.add_argument(
+        "--measurement-drop-probability",
+        type=float,
+        default=0.0,
+        help="Probability that a new odometry measurement is dropped and the previous one is reused.",
+    )
+    parser.add_argument(
+        "--response-command-gain-scale",
+        type=float,
+        default=1.0,
+        help="Scale all response-curve command gains.",
+    )
+    parser.add_argument(
+        "--response-linear-y-command-gain-scale",
+        type=float,
+        default=1.0,
+        help="Additional command-gain scale for lateral response.",
+    )
+    parser.add_argument(
+        "--response-deadband",
+        type=float,
+        default=0.0,
+        help="Additional linear response deadband in m/s.",
+    )
+    parser.add_argument(
+        "--response-yaw-deadband",
+        type=float,
+        default=0.0,
+        help="Additional yaw response deadband in rad/s.",
+    )
+    parser.add_argument(
+        "--response-saturation-scale",
+        type=float,
+        default=1.0,
+        help="Scale all response-curve saturation limits.",
+    )
+    parser.add_argument(
+        "--response-linear-y-scale",
+        type=float,
+        default=1.0,
+        help="Scale lateral max acceleration and inverse lag; values below 1 make lateral response slower.",
+    )
+    parser.add_argument(
+        "--response-speed-dependent-slip-per-mps",
+        type=float,
+        default=0.0,
+        help="Reduce effective lateral velocity by this fraction per m/s of forward speed.",
+    )
     parser.add_argument("--output-dir", type=Path, required=True, help="Directory for ticks, plot, config, and summary.")
     parser.add_argument("--seed", type=int, default=7, help="Random seed recorded for the run.")
     parser.add_argument("--max-linear-speed", type=float, default=None, help="Controller max planar speed in m/s.")
@@ -1041,6 +1312,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     _finite_positive(args.local_planner_max_tangent_accel_m_s2, "--local-planner-max-tangent-accel-m-s2", parser)
     _finite_positive(args.local_planner_max_normal_accel_m_s2, "--local-planner-max-normal-accel-m-s2", parser)
     _finite_positive(args.local_planner_goal_decel_m_s2, "--local-planner-goal-decel-m-s2", parser)
+    if args.measurement_delay_ticks < 0:
+        parser.error("--measurement-delay-ticks must be non-negative")
+    if args.measurement_jitter_ticks < 0:
+        parser.error("--measurement-jitter-ticks must be non-negative")
+    _probability(args.measurement_stale_probability, "--measurement-stale-probability", parser)
+    _probability(args.measurement_drop_probability, "--measurement-drop-probability", parser)
+    _finite_positive_or_zero_scale(args.response_command_gain_scale, "--response-command-gain-scale", parser)
+    _finite_positive_or_zero_scale(
+        args.response_linear_y_command_gain_scale,
+        "--response-linear-y-command-gain-scale",
+        parser,
+    )
+    _finite_nonnegative(args.response_deadband, "--response-deadband", parser)
+    _finite_nonnegative(args.response_yaw_deadband, "--response-yaw-deadband", parser)
+    _finite_positive_or_zero_scale(args.response_saturation_scale, "--response-saturation-scale", parser)
+    _finite_positive_or_zero_scale(args.response_linear_y_scale, "--response-linear-y-scale", parser)
+    _finite_nonnegative(args.response_speed_dependent_slip_per_mps, "--response-speed-dependent-slip-per-mps", parser)
     if args.path_speed_profile_samples < 3:
         parser.error("--path-speed-profile-samples must be at least 3")
 
@@ -1057,7 +1345,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     started_wall = time.monotonic()
     started_at = datetime.now(UTC).isoformat()
-    preset = _resolve_preset(args.plant_preset)
+    response_wrappers = ResponseWrapperConfig(
+        command_gain_scale=args.response_command_gain_scale,
+        linear_y_command_gain_scale=args.response_linear_y_command_gain_scale,
+        deadband_m_s=args.response_deadband,
+        yaw_deadband_rad_s=args.response_yaw_deadband,
+        saturation_scale=args.response_saturation_scale,
+        linear_y_response_scale=args.response_linear_y_scale,
+        speed_dependent_slip_per_mps=args.response_speed_dependent_slip_per_mps,
+    )
+    preset = _apply_response_wrappers(_resolve_preset(args.plant_preset), response_wrappers)
     reference_profile = _reference_profile_from_args(args)
     scenario = build_scenario(args.scenario, args.speed, reference_profile)
     max_linear_speed = args.max_linear_speed if args.max_linear_speed is not None else args.speed
@@ -1089,6 +1386,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     dt_s = 1.0 / args.rate
     max_ticks = math.ceil(scenario.duration_s / dt_s)
     noise_enabled = any(c.noise_max > 0.0 for c in preset.curves)
+    measurement_disturbance = MeasurementDisturbanceConfig(
+        fixed_delay_ticks=args.measurement_delay_ticks,
+        random_jitter_ticks=args.measurement_jitter_ticks,
+        stale_probability=args.measurement_stale_probability,
+        drop_probability=args.measurement_drop_probability,
+    )
 
     config = {
         "schema_version": CONFIG_SCHEMA_VERSION,
@@ -1101,6 +1404,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         },
         "scenario": _scenario_config(scenario),
         "plant": preset.to_plant_config(),
+        "disturbance": {
+            "measurement": _measurement_disturbance_config(measurement_disturbance, dt_s),
+            "response_wrappers": _response_wrapper_config(response_wrappers),
+        },
         "controller": {
             "name": "HolonomicTrackingController",
             "mode": args.reference_mode,
@@ -1145,9 +1452,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ValueError as exc:
         invalid_reasons.append(str(exc))
 
-    ticks, final_pose = _simulate(
+    ticks, final_pose, measurement_stats = _simulate(
         scenario=scenario,
         preset=preset,
+        measurement_disturbance=measurement_disturbance,
+        response_wrappers=response_wrappers,
         limits=limits,
         rate_hz=args.rate,
         k_position=args.k_position,
@@ -1209,6 +1518,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             "preset": preset.name,
             "response_curve_source": preset.source,
             "response_curve_id": preset.response_curve_id,
+        },
+        "disturbance": {
+            "measurement": {
+                **_measurement_disturbance_config(measurement_disturbance, dt_s),
+                "stats": measurement_stats.asdict(),
+            },
+            "response_wrappers": _response_wrapper_config(response_wrappers),
         },
         "controller": {
             "name": "HolonomicTrackingController",
