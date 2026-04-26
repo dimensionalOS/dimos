@@ -463,6 +463,119 @@ def build_scenario(
             path_config={"length_m": length, "dwell_at_goal_s": DEFAULT_SETTLE_MARGIN_S},
             reference_profile=reference_profile,
         )
+    if name == "speed_max_line":
+        length = 40.0
+        return _polyline_scenario(
+            name=name,
+            speed_m_s=speed_m_s,
+            points=[(0.0, 0.0), (length, 0.0)],
+            path_config={"length_m": length, "geometry_class": "speed_max_long_straight"},
+            reference_profile=reference_profile,
+        )
+    if name == "speed_max_stop_distance":
+        length = 30.0
+        return _polyline_scenario(
+            name=name,
+            speed_m_s=speed_m_s,
+            points=[(0.0, 0.0), (length, 0.0)],
+            path_config={
+                "length_m": length,
+                "geometry_class": "speed_max_stop_distance",
+                "purpose": "verify deceleration to a stop within the goal-decel cap from running speed",
+            },
+            reference_profile=reference_profile,
+        )
+    if name == "speed_max_s_curve":
+        length = 40.0
+        amplitude = 2.0
+        samples = 241
+        return _polyline_scenario(
+            name=name,
+            speed_m_s=speed_m_s,
+            points=_make_s_curve_points(length, amplitude, samples),
+            path_config={
+                "length_m": length,
+                "lateral_amplitude_m": amplitude,
+                "samples": samples,
+                "geometry_class": "speed_max_wide_s_curve",
+                "approx_min_radius_m": (length / (2.0 * math.pi)) ** 2 / amplitude,
+            },
+            reference_profile=reference_profile,
+        )
+    if name == "speed_max_right_angle_turn":
+        # Sharp 90 degree corner sized for running-speed validation. The
+        # geometry is a straight approach, a small-radius fillet arc, and a
+        # straight exit. A bare polyline vertex is not used because the
+        # path-speed profile in this codebase computes the curvature cap at a
+        # vertex from the circumscribed circle of three adjacent waypoints,
+        # which scales with the leg length and stops slowing the reference at
+        # running speed for legs >= ~12 m. A small fillet matches what a real
+        # planner produces and gives the speed profile a well-defined local
+        # curvature to brake into. With fillet_radius = 1.5 m and the matrix
+        # normal accel cap of 1.0 m/s^2 the corner cap is
+        # sqrt(1.0 * 1.5) ~= 1.22 m/s. With tangent_accel = 0.7 m/s^2 the
+        # accel distance from 0 to 3.7 m/s is 3.7^2 / (2 * 0.7) = 9.78 m and
+        # the brake distance from 3.7 m/s to 1.22 m/s at goal_decel = 0.7
+        # m/s^2 is (3.7^2 - 1.22^2) / (2 * 0.7) = 8.71 m. A straight leg of
+        # 20 m allows accel + cruise + brake to peak at the 3.7 m/s running
+        # target. The original 4 m `right_angle_turn` is retained for SIM-04
+        # slow-speed validation.
+        straight_leg = 20.0
+        fillet_radius = 1.5
+        arc_samples = 31
+        center_x = straight_leg
+        center_y = fillet_radius
+        points: list[tuple[float, float]] = [(0.0, 0.0), (straight_leg, 0.0)]
+        for i in range(1, arc_samples + 1):
+            theta = (math.pi / 2.0) * i / arc_samples
+            x = center_x + fillet_radius * math.sin(theta)
+            y = center_y - fillet_radius * math.cos(theta)
+            points.append((x, y))
+        exit_x = straight_leg + fillet_radius
+        exit_y_end = straight_leg + fillet_radius
+        points.append((exit_x, exit_y_end))
+        corner_center_x = center_x + fillet_radius / math.sqrt(2.0)
+        corner_center_y = center_y - fillet_radius / math.sqrt(2.0)
+        return _polyline_scenario(
+            name=name,
+            speed_m_s=speed_m_s,
+            points=points,
+            path_config={
+                "geometry_class": "speed_max_right_angle_fillet",
+                "straight_leg_m": straight_leg,
+                "fillet_radius_m": fillet_radius,
+                "fillet_center_x_m": center_x,
+                "fillet_center_y_m": center_y,
+                "corner_midpoint_x_m": corner_center_x,
+                "corner_midpoint_y_m": corner_center_y,
+                "turn_angle_rad": math.pi / 2.0,
+                "purpose": "validate corner slow-down at running speed via small-radius fillet with sufficient approach for goal_decel",
+            },
+            reference_profile=reference_profile,
+        )
+    if name == "speed_max_arc":
+        radius = 25.0
+        sweep_rad = math.pi / 2.0
+        samples = 181
+        points = [
+            (
+                radius * math.sin(sweep_rad * i / (samples - 1)),
+                radius * (1.0 - math.cos(sweep_rad * i / (samples - 1))),
+            )
+            for i in range(samples)
+        ]
+        return _polyline_scenario(
+            name=name,
+            speed_m_s=speed_m_s,
+            points=points,
+            path_config={
+                "radius_m": radius,
+                "turn_angle_rad": sweep_rad,
+                "samples": samples,
+                "geometry_class": "speed_max_large_radius_arc",
+            },
+            reference_profile=reference_profile,
+        )
     if name == "circle":
         radius = 1.5
         circumference = 2.0 * math.pi * radius
@@ -1158,7 +1271,22 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Simulate the holonomic trajectory controller against response-curve plant presets."
     )
-    parser.add_argument("--scenario", choices=["line", "circle", "s_curve", "right_angle_turn", "stop_at_goal"], default="s_curve")
+    parser.add_argument(
+        "--scenario",
+        choices=[
+            "line",
+            "circle",
+            "s_curve",
+            "right_angle_turn",
+            "stop_at_goal",
+            "speed_max_line",
+            "speed_max_arc",
+            "speed_max_s_curve",
+            "speed_max_stop_distance",
+            "speed_max_right_angle_turn",
+        ],
+        default="s_curve",
+    )
     parser.add_argument("--speed", type=float, default=1.5, help="Target planar path speed in m/s.")
     parser.add_argument("--rate", type=float, default=10.0, help="Control loop rate in Hz.")
     parser.add_argument("--k-position", type=float, default=2.2, help="Position gain in 1/s.")

@@ -20,6 +20,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import math
 from pathlib import Path
 import sys
 from types import ModuleType
@@ -348,6 +349,116 @@ def test_measurement_jitter_drop_and_stale_are_reproducible(tmp_path: Path) -> N
     assert stats["jittered_samples"] > 0
     assert stats["stale_reused_samples"] > 0
     assert stats["dropped_samples"] > 0
+
+
+@pytest.mark.parametrize(
+    "scenario,expected_peak_speed_m_s",
+    [
+        ("speed_max_line", 3.7),
+        ("speed_max_s_curve", 3.7),
+        ("speed_max_stop_distance", 3.7),
+        ("speed_max_arc", (0.5 * 25.0) ** 0.5),
+    ],
+)
+def test_speed_max_scenarios_path_speed_profile_envelope_at_3p7_target(
+    tmp_path: Path,
+    scenario: str,
+    expected_peak_speed_m_s: float,
+) -> None:
+    rc, output_dir, summary = _run_runner(
+        tmp_path,
+        "--scenario",
+        scenario,
+        "--speed",
+        "3.7",
+        "--rate",
+        "20",
+        "--plant-preset",
+        "ideal",
+        "--reference-mode",
+        "path_speed_profile",
+        "--local-planner-max-tangent-accel-m-s2",
+        "0.7",
+        "--local-planner-max-normal-accel-m-s2",
+        "0.5",
+        "--local-planner-goal-decel-m-s2",
+        "0.7",
+        "--max-yaw-rate",
+        "2.0",
+    )
+
+    config = yaml.safe_load((output_dir / "config.yaml").read_text(encoding="utf-8"))
+    profile = config["scenario"]["path"]["speed_profile"]
+
+    assert rc == 0
+    assert summary["verdict"]["status"] == "pass"
+    assert summary["scenario"]["target_speed_m_s"] == pytest.approx(3.7)
+    assert profile["max_profile_speed_m_s"] == pytest.approx(expected_peak_speed_m_s, rel=1e-2)
+    assert summary["metrics"]["arrived"] is True
+    assert summary["metrics"]["max_planar_position_divergence_m"] < 0.5
+    assert summary["metrics"]["max_commanded_planar_speed_m_s"] == pytest.approx(
+        expected_peak_speed_m_s, rel=1e-2
+    )
+
+
+def test_speed_max_right_angle_turn_slows_at_corner_at_running_target(
+    tmp_path: Path,
+) -> None:
+    rc, output_dir, summary = _run_runner(
+        tmp_path,
+        "--scenario",
+        "speed_max_right_angle_turn",
+        "--speed",
+        "3.7",
+        "--rate",
+        "20",
+        "--plant-preset",
+        "ideal",
+        "--reference-mode",
+        "path_speed_profile",
+        "--local-planner-max-tangent-accel-m-s2",
+        "0.7",
+        "--local-planner-max-normal-accel-m-s2",
+        "1.0",
+        "--local-planner-goal-decel-m-s2",
+        "0.7",
+        "--max-yaw-rate",
+        "2.0",
+    )
+
+    config = yaml.safe_load((output_dir / "config.yaml").read_text(encoding="utf-8"))
+    path_cfg = config["scenario"]["path"]
+    profile = path_cfg["speed_profile"]
+
+    assert rc == 0
+    assert summary["verdict"]["status"] == "pass"
+    assert summary["scenario"]["target_speed_m_s"] == pytest.approx(3.7)
+    assert profile["max_profile_speed_m_s"] == pytest.approx(3.7, rel=1e-3)
+    assert summary["metrics"]["arrived"] is True
+    assert summary["metrics"]["max_planar_position_divergence_m"] < 0.1
+
+    assert path_cfg["geometry_class"] == "speed_max_right_angle_fillet"
+    assert path_cfg["straight_leg_m"] == pytest.approx(20.0)
+    assert path_cfg["fillet_radius_m"] == pytest.approx(1.5)
+    expected_corner_cap = math.sqrt(1.0 * path_cfg["fillet_radius_m"])
+
+    ticks_path = output_dir / "ticks.jsonl"
+    assert ticks_path.is_file()
+    corner_x = path_cfg["corner_midpoint_x_m"]
+    corner_y = path_cfg["corner_midpoint_y_m"]
+    corner_min_speed = math.inf
+    for line in ticks_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        x = float(row.get("meas_x_m", 0.0))
+        y = float(row.get("meas_y_m", 0.0))
+        if math.hypot(x - corner_x, y - corner_y) <= 2.0:
+            vx = float(row.get("meas_twist_linear_x_m_s", 0.0))
+            vy = float(row.get("meas_twist_linear_y_m_s", 0.0))
+            corner_min_speed = min(corner_min_speed, math.hypot(vx, vy))
+
+    assert corner_min_speed == pytest.approx(expected_corner_cap, abs=0.1)
 
 
 def test_slower_lateral_response_causes_controlled_degradation(tmp_path: Path) -> None:
