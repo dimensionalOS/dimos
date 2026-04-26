@@ -328,14 +328,15 @@ class ResponseCurvePlant:
     def measured_sample(self, time_s: float) -> TrajectoryMeasuredSample:
         return _measured_sample(time_s, self.pose, self.twist_body_velocity)
 
-    def _select_curve(self, axis: str, command: float) -> ResponseCurveAxisConfig:
+    def _select_curve(self, axis: str, command: float, current_velocity: float) -> ResponseCurveAxisConfig:
         curves = [c for c in self._preset.curves if c.axis == axis]
-        if command > 0.0:
+        selector = command if command != 0.0 else current_velocity
+        if selector > 0.0:
             preferred = [c for c in curves if c.direction == "positive"]
-        elif command < 0.0:
+        elif selector < 0.0:
             preferred = [c for c in curves if c.direction == "negative"]
         else:
-            preferred = []
+            preferred = [c for c in curves if c.direction == "positive"]
         bidirectional = [c for c in curves if c.direction == "bidirectional"]
         matches = preferred or bidirectional
         if not matches:
@@ -344,8 +345,10 @@ class ResponseCurvePlant:
             raise ValueError(f"preset {self._preset.name!r} has ambiguous {axis} curves")
         return matches[0]
 
-    def _condition_command(self, axis: str, command: float) -> tuple[float, ResponseCurveAxisConfig]:
-        curve = self._select_curve(axis, command)
+    def _condition_command(
+        self, axis: str, command: float, current_velocity: float
+    ) -> tuple[float, ResponseCurveAxisConfig]:
+        curve = self._select_curve(axis, command, current_velocity)
         value = command
         if abs(value) < curve.deadband:
             value = 0.0
@@ -379,9 +382,9 @@ class ResponseCurvePlant:
         if not (math.isfinite(dt_s) and dt_s > 0.0):
             raise ValueError("dt_s must be positive and finite")
 
-        ux, curve_x = self._condition_command("linear_x", float(command.linear.x))
-        uy, curve_y = self._condition_command("linear_y", float(command.linear.y))
-        uw, curve_w = self._condition_command("yaw", float(command.angular.z))
+        ux, curve_x = self._condition_command("linear_x", float(command.linear.x), self._vx)
+        uy, curve_y = self._condition_command("linear_y", float(command.linear.y), self._vy)
+        uw, curve_w = self._condition_command("yaw", float(command.angular.z), self._wz)
         ux = self._delayed_command("linear_x", ux, curve_x.latency_s)
         uy = self._delayed_command("linear_y", uy, curve_y.latency_s)
         uw = self._delayed_command("yaw", uw, curve_w.latency_s)

@@ -17,11 +17,11 @@
 from __future__ import annotations
 
 import contextlib
-import io
 import importlib.util
+import io
 import json
-import sys
 from pathlib import Path
+import sys
 from types import ModuleType
 
 import pytest
@@ -131,3 +131,22 @@ def test_seeded_noisy_run_is_reproducible(tmp_path: Path) -> None:
     ).read_text(encoding="utf-8")
     assert summary_a["metrics"] == summary_b["metrics"]
     assert summary_a["artifacts"]["ticks_jsonl"]["sha256"] == summary_b["artifacts"]["ticks_jsonl"]["sha256"]
+
+
+def test_synthetic_asymmetric_run_writes_artifacts(tmp_path: Path) -> None:
+    rc, output_dir, summary = _run_runner(
+        tmp_path,
+        "--scenario",
+        "s_curve",
+        "--speed",
+        "1.0",
+        "--rate",
+        "10",
+        "--plant-preset",
+        "synthetic_asymmetric",
+    )
+
+    assert rc == 0
+    assert (output_dir / "ticks.jsonl").is_file()
+    assert summary["plant"]["preset"] == "synthetic_asymmetric"
+    assert summary["artifacts"]["ticks_jsonl"]["line_count"] > 0
