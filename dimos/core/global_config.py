@@ -57,6 +57,7 @@ class GlobalConfig(BaseSettings):
     local_planner_holonomic_ky: float = 1.5
     local_planner_max_tangent_accel_m_s2: float = Field(default=1.0, gt=0.0)
     local_planner_max_normal_accel_m_s2: float = Field(default=0.6, gt=0.0)
+    local_planner_goal_decel_m_s2: float = Field(default=1.0, gt=0.0)
     local_planner_max_planar_cmd_accel_m_s2: float = Field(default=5.0, gt=0.0)
     local_planner_max_yaw_accel_rad_s2: float = Field(default=5.0, gt=0.0)
     local_planner_max_yaw_rate_rad_s: float | None = Field(default=None, gt=0.0)

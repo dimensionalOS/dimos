@@ -108,6 +108,7 @@ def _run_local_planner_harness(
     speed_m_s: float = 1.0,
     max_normal_accel_m_s2: float = 0.6,
     max_tangent_accel_m_s2: float = 1.0,
+    max_goal_decel_m_s2: float = 1.0,
     max_ticks: int = 260,
 ) -> _LocalPlannerHarnessResult:
     rate_hz = 60.0
@@ -119,6 +120,7 @@ def _run_local_planner_harness(
         planner_robot_speed=speed_m_s,
         local_planner_max_normal_accel_m_s2=max_normal_accel_m_s2,
         local_planner_max_tangent_accel_m_s2=max_tangent_accel_m_s2,
+        local_planner_goal_decel_m_s2=max_goal_decel_m_s2,
         local_planner_max_planar_cmd_accel_m_s2=8.0,
         local_planner_max_yaw_accel_rad_s2=8.0,
         local_planner_trajectory_tick_log_path=str(log_path),
@@ -391,6 +393,24 @@ def test_local_planner_uses_curvature_speed_cap_for_holonomic_path() -> None:
     assert lp._controller._speed < 1.2
 
 
+def test_local_planner_uses_configured_goal_decel_for_path_speed_cap() -> None:
+    g = GlobalConfig(
+        local_planner_path_controller="holonomic",
+        planner_robot_speed=2.0,
+        local_planner_max_tangent_accel_m_s2=4.0,
+        local_planner_goal_decel_m_s2=0.5,
+    )
+    nav = NavigationMap(g, "gradient")
+    lp = LocalPlanner(g, nav, goal_tolerance=0.01)
+    path = _path_from_points([(0.0, 0.0), (1.0, 0.0)])
+    distancer = PathDistancer(path)
+    current_pos = np.array([0.75, 0.0], dtype=np.float64)
+
+    speed = lp._path_speed_for_index(distancer, 0, current_pos)
+
+    assert speed == pytest.approx(0.5)
+
+
 def test_local_planner_in_the_loop_harness_reaches_arrival_on_straight_line(
     tmp_path: FsPath,
 ) -> None:
@@ -426,6 +446,32 @@ def test_local_planner_in_the_loop_harness_exercises_curvature_speed_cap(
     assert positive_path_speeds
     assert min(positive_path_speeds) < 0.6
     assert max(float(row["planar_position_divergence_m"]) for row in result.rows) < 0.9
+
+
+def test_local_planner_in_the_loop_harness_supports_2mps_right_angle_with_conservative_profile(
+    tmp_path: FsPath,
+) -> None:
+    result = _run_local_planner_harness(
+        tmp_path,
+        points=[(0.1, 0.0), (0.55, 0.0), (0.55, 0.55), (0.9, 0.55)],
+        speed_m_s=2.0,
+        max_tangent_accel_m_s2=0.5,
+        max_normal_accel_m_s2=0.1,
+        max_goal_decel_m_s2=0.5,
+        max_ticks=420,
+    )
+    positive_path_speeds = [
+        float(row["ref_twist_linear_x_m_s"])
+        for row in result.rows
+        if float(row["ref_twist_linear_x_m_s"]) > 0.0
+    ]
+
+    assert "arrived" in result.stop_messages
+    assert positive_path_speeds
+    assert max(positive_path_speeds) < 2.0
+    assert min(positive_path_speeds[-10:]) < 0.55
+    assert max(float(row["commanded_planar_speed_m_s"]) for row in result.rows) < 0.75
+    assert max(float(row["planar_position_divergence_m"]) for row in result.rows) < 0.75
 
 
 def test_local_planner_in_the_loop_harness_decelerates_near_goal(
@@ -500,6 +546,8 @@ def test_local_planner_control_rate_hz_validation() -> None:
         GlobalConfig(local_planner_max_yaw_accel_rad_s2=0.0)
     with pytest.raises(ValidationError):
         GlobalConfig(local_planner_max_yaw_rate_rad_s=0.0)
+    with pytest.raises(ValidationError):
+        GlobalConfig(local_planner_goal_decel_m_s2=0.0)
 
 
 def test_local_planner_control_rate_hz_update_validation() -> None:

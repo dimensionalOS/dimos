@@ -180,6 +180,46 @@ def test_path_speed_profile_reference_records_live_like_caps(tmp_path: Path) -> 
     assert profile["max_profile_speed_m_s"] < 2.0
 
 
+@pytest.mark.parametrize("scenario", ["s_curve", "right_angle_turn"])
+@pytest.mark.parametrize("plant", ["synthetic_nominal", "synthetic_asymmetric", "synthetic_noisy"])
+def test_path_speed_profile_supports_2mps_conservative_envelope(
+    tmp_path: Path,
+    scenario: str,
+    plant: str,
+) -> None:
+    rc, output_dir, summary = _run_runner(
+        tmp_path,
+        "--scenario",
+        scenario,
+        "--speed",
+        "2.0",
+        "--rate",
+        "10",
+        "--plant-preset",
+        plant,
+        "--reference-mode",
+        "path_speed_profile",
+        "--local-planner-max-tangent-accel-m-s2",
+        "0.5",
+        "--local-planner-max-normal-accel-m-s2",
+        "0.1",
+        "--local-planner-goal-decel-m-s2",
+        "0.5",
+        "--seed",
+        "7",
+    )
+
+    config = yaml.safe_load((output_dir / "config.yaml").read_text(encoding="utf-8"))
+    speed_profile = config["scenario"]["path"]["speed_profile"]
+
+    assert rc == 0
+    assert summary["verdict"]["status"] == "pass"
+    assert summary["scenario"]["target_speed_m_s"] == pytest.approx(2.0)
+    assert speed_profile["max_profile_speed_m_s"] < 2.0
+    assert summary["metrics"]["max_planar_position_divergence_m"] < 1.0
+    assert summary["metrics"]["arrived"] is True
+
+
 def test_config_yaml_and_cli_override_runner_options(tmp_path: Path) -> None:
     config_in = tmp_path / "runner.yaml"
     config_in.write_text(

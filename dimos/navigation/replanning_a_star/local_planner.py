@@ -373,7 +373,7 @@ class LocalPlanner(Resource):
             max(
                 0.0,
                 2.0
-                * self._global_config.local_planner_max_tangent_accel_m_s2
+                * self._global_config.local_planner_goal_decel_m_s2
                 * path_distancer.distance_to_goal(current_pos),
             )
         )
