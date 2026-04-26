@@ -209,24 +209,23 @@ class HolonomicPathController:
             k_position_per_s=k_position_per_s,
             k_yaw_per_s=k_yaw_per_s,
         )
-        self._limits = HolonomicCommandLimits(
-            max_planar_speed_m_s=self._speed,
-            max_yaw_rate_rad_s=self._speed,
-            max_planar_linear_accel_m_s2=5.0,
-            max_yaw_accel_rad_s2=5.0,
-        )
+        self._limits = self._make_limits()
         self._inner.configure(self._limits)
         self._previous_cmd = Twist()
 
     def set_speed(self, speed_m_s: float) -> None:
         self._speed = float(speed_m_s)
-        self._limits = HolonomicCommandLimits(
-            max_planar_speed_m_s=self._speed,
-            max_yaw_rate_rad_s=self._speed,
-            max_planar_linear_accel_m_s2=5.0,
-            max_yaw_accel_rad_s2=5.0,
-        )
+        self._limits = self._make_limits()
         self._inner.configure(self._limits)
+
+    def _make_limits(self) -> HolonomicCommandLimits:
+        max_yaw_rate = self._global_config.local_planner_max_yaw_rate_rad_s
+        return HolonomicCommandLimits(
+            max_planar_speed_m_s=self._speed,
+            max_yaw_rate_rad_s=self._speed if max_yaw_rate is None else float(max_yaw_rate),
+            max_planar_linear_accel_m_s2=self._global_config.local_planner_max_planar_cmd_accel_m_s2,
+            max_yaw_accel_rad_s2=self._global_config.local_planner_max_yaw_accel_rad_s2,
+        )
 
     def advance(self, lookahead_point: NDArray[np.float64], current_odom: PoseStamped) -> Twist:
         current_pos = np.array(

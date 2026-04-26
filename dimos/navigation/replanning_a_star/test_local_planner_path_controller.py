@@ -104,6 +104,32 @@ def test_holonomic_path_controller_slews_first_command_from_rest() -> None:
     assert math.hypot(float(out.linear.x), float(out.linear.y)) == pytest.approx(0.5)
 
 
+def test_holonomic_path_controller_uses_configured_command_limits() -> None:
+    g = GlobalConfig(
+        local_planner_path_controller="holonomic",
+        local_planner_max_planar_cmd_accel_m_s2=0.25,
+        local_planner_max_yaw_accel_rad_s2=0.3,
+        local_planner_max_yaw_rate_rad_s=0.4,
+    )
+    ctrl = HolonomicPathController(
+        g,
+        speed=1.2,
+        control_frequency=10.0,
+        k_position_per_s=2.0,
+        k_yaw_per_s=1.5,
+    )
+
+    assert ctrl._limits.max_planar_speed_m_s == pytest.approx(1.2)
+    assert ctrl._limits.max_planar_linear_accel_m_s2 == pytest.approx(0.25)
+    assert ctrl._limits.max_yaw_accel_rad_s2 == pytest.approx(0.3)
+    assert ctrl._limits.max_yaw_rate_rad_s == pytest.approx(0.4)
+
+    ctrl.set_speed(0.8)
+
+    assert ctrl._limits.max_planar_speed_m_s == pytest.approx(0.8)
+    assert ctrl._limits.max_yaw_rate_rad_s == pytest.approx(0.4)
+
+
 def test_local_planner_wires_holonomic_when_configured() -> None:
     g = GlobalConfig(local_planner_path_controller="holonomic")
     nav = NavigationMap(g, "gradient")
@@ -267,6 +293,12 @@ def test_local_planner_control_rate_hz_validation() -> None:
         GlobalConfig(local_planner_control_rate_hz=100.0)
     with pytest.raises(ValidationError):
         GlobalConfig(local_planner_control_rate_hz=300.0)
+    with pytest.raises(ValidationError):
+        GlobalConfig(local_planner_max_planar_cmd_accel_m_s2=0.0)
+    with pytest.raises(ValidationError):
+        GlobalConfig(local_planner_max_yaw_accel_rad_s2=0.0)
+    with pytest.raises(ValidationError):
+        GlobalConfig(local_planner_max_yaw_rate_rad_s=0.0)
 
 
 def test_local_planner_control_rate_hz_update_validation() -> None:

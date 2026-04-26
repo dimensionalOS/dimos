@@ -57,6 +57,9 @@ class GlobalConfig(BaseSettings):
     local_planner_holonomic_ky: float = 1.5
     local_planner_max_tangent_accel_m_s2: float = Field(default=1.0, gt=0.0)
     local_planner_max_normal_accel_m_s2: float = Field(default=0.6, gt=0.0)
+    local_planner_max_planar_cmd_accel_m_s2: float = Field(default=5.0, gt=0.0)
+    local_planner_max_yaw_accel_rad_s2: float = Field(default=5.0, gt=0.0)
+    local_planner_max_yaw_rate_rad_s: float | None = Field(default=None, gt=0.0)
     # Issue 921 P4-1: one knob for LocalPlanner sleep pacing and controller dt (e.g. PD).
     local_planner_control_rate_hz: float = Field(default=10.0, ge=0.1, le=60.0)
     # Optional issue 921 JSONL telemetry export. Set to a file path for live speed-vs-divergence logs.

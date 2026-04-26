@@ -25,6 +25,7 @@ import sys
 from types import ModuleType
 
 import pytest
+import yaml
 
 from dimos.navigation.trajectory_control_tick_export import iter_trajectory_control_tick_jsonl
 
@@ -150,3 +151,99 @@ def test_synthetic_asymmetric_run_writes_artifacts(tmp_path: Path) -> None:
     assert (output_dir / "ticks.jsonl").is_file()
     assert summary["plant"]["preset"] == "synthetic_asymmetric"
     assert summary["artifacts"]["ticks_jsonl"]["line_count"] > 0
+
+
+def test_path_speed_profile_reference_records_live_like_caps(tmp_path: Path) -> None:
+    rc, output_dir, summary = _run_runner(
+        tmp_path,
+        "--scenario",
+        "circle",
+        "--speed",
+        "2.0",
+        "--rate",
+        "10",
+        "--plant-preset",
+        "ideal",
+        "--reference-mode",
+        "path_speed_profile",
+        "--local-planner-max-normal-accel-m-s2",
+        "0.6",
+    )
+
+    config = yaml.safe_load((output_dir / "config.yaml").read_text(encoding="utf-8"))
+    profile = config["scenario"]["path"]["speed_profile"]
+
+    assert rc == 0
+    assert summary["scenario"]["variant"] == "path_speed_profile"
+    assert config["controller"]["mode"] == "path_speed_profile"
+    assert profile["geometry_speed_cap_m_s"] == pytest.approx((0.6 * 1.5) ** 0.5)
+    assert profile["max_profile_speed_m_s"] < 2.0
+
+
+def test_config_yaml_and_cli_override_runner_options(tmp_path: Path) -> None:
+    config_in = tmp_path / "runner.yaml"
+    config_in.write_text(
+        "\n".join(
+            [
+                "runner:",
+                "  reference_mode: path_speed_profile",
+                "  plant_preset: ideal",
+                "  k_position: 3.0",
+                "  k_yaw: 1.1",
+                "  local_planner_max_normal_accel_m_s2: 0.6",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rc, output_dir, _summary = _run_runner(
+        tmp_path,
+        "--config-yaml",
+        str(config_in),
+        "--scenario",
+        "line",
+        "--speed",
+        "0.8",
+        "--rate",
+        "10",
+        "--k-position",
+        "2.0",
+    )
+
+    config = yaml.safe_load((output_dir / "config.yaml").read_text(encoding="utf-8"))
+
+    assert rc == 0
+    assert config["plant"]["preset"] == "ideal"
+    assert config["controller"]["mode"] == "path_speed_profile"
+    assert config["controller"]["gains"] == {"k_position_per_s": 2.0, "k_yaw_per_s": 1.1}
+
+
+def test_calibration_yaml_loads_suggested_gains(tmp_path: Path) -> None:
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / "dimos"
+        / "navigation"
+        / "fixtures"
+        / "holonomic_calibration_params_sample_v1.yaml"
+    )
+
+    rc, output_dir, _summary = _run_runner(
+        tmp_path,
+        "--scenario",
+        "line",
+        "--speed",
+        "0.8",
+        "--rate",
+        "10",
+        "--plant-preset",
+        "ideal",
+        "--calibration-params-yaml",
+        str(fixture),
+    )
+
+    config = yaml.safe_load((output_dir / "config.yaml").read_text(encoding="utf-8"))
+
+    assert rc == 0
+    assert config["controller"]["calibration_source"] == str(fixture)
+    assert config["controller"]["gains"] == {"k_position_per_s": 1.2, "k_yaw_per_s": 0.9}

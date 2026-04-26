@@ -26,6 +26,7 @@ The runner emits the issue 921 artifact bundle:
 from __future__ import annotations
 
 import argparse
+import bisect
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -59,7 +60,14 @@ from dimos.navigation.trajectory_control_tick_log import (
     TrajectoryControlTick,
     trajectory_control_tick_from_samples,
 )
+from dimos.navigation.trajectory_holonomic_calibration import read_holonomic_calibration_params_yaml
 from dimos.navigation.trajectory_holonomic_tracking_controller import HolonomicTrackingController
+from dimos.navigation.trajectory_path_speed_profile import (
+    PathSpeedProfileLimits,
+    circular_arc_geometry_speed_cap_m_s,
+    line_segment_geometry_speed_cap_m_s,
+    time_s_from_speed_profile,
+)
 from dimos.navigation.trajectory_response_curve_presets import (
     RESPONSE_CURVE_PRESETS,
     ResponseCurveAxisConfig,
@@ -74,6 +82,9 @@ SUMMARY_SCHEMA_VERSION = 1
 DEFAULT_GOAL_POSITION_TOLERANCE_M = 0.15
 DEFAULT_GOAL_YAW_TOLERANCE_RAD = 0.2
 DEFAULT_SETTLE_MARGIN_S = 5.0
+DEFAULT_PROFILE_SAMPLES = 301
+DEFAULT_LOCAL_PLANNER_MAX_TANGENT_ACCEL_M_S2 = 1.0
+DEFAULT_LOCAL_PLANNER_MAX_NORMAL_ACCEL_M_S2 = 0.6
 
 PLANT_PRESET_ALIASES = {
     "nominal": "synthetic_nominal",
@@ -91,6 +102,15 @@ class PlanarPose:
 
 
 @dataclass(frozen=True)
+class ReferenceProfileConfig:
+    mode: str
+    max_tangent_accel_m_s2: float
+    max_normal_accel_m_s2: float
+    max_goal_decel_m_s2: float
+    samples: int
+
+
+@dataclass(frozen=True)
 class Scenario:
     name: str
     target_speed_m_s: float
@@ -99,6 +119,7 @@ class Scenario:
     goal_pose: PlanarPose
     path_config: dict[str, Any]
     sample: Callable[[float], TrajectoryReferenceSample]
+    variant: str | None = None
 
 
 @dataclass(frozen=True)
@@ -178,12 +199,91 @@ def _sample_polyline_pose(
     return PlanarPose(x, y, yaw)
 
 
+def _profile_distances(total_m: float, cumulative_lengths_m: Sequence[float], samples: int) -> list[float]:
+    if total_m <= 0.0:
+        return [0.0]
+    if samples < 3:
+        raise ValueError("path speed profile samples must be at least 3")
+    distances = {0.0, float(total_m), *(float(s) for s in cumulative_lengths_m)}
+    for i in range(samples):
+        distances.add(total_m * float(i) / float(samples - 1))
+    return sorted(distances)
+
+
+def _polyline_geometry_speed_cap_m_s(
+    points: Sequence[tuple[float, float]],
+    cumulative_lengths_m: Sequence[float],
+    distance_m: float,
+    limits: PathSpeedProfileLimits,
+) -> float:
+    for i in range(1, len(points) - 1):
+        local_scale = max(
+            cumulative_lengths_m[i] - cumulative_lengths_m[i - 1],
+            cumulative_lengths_m[i + 1] - cumulative_lengths_m[i],
+            1.0,
+        )
+        if abs(distance_m - cumulative_lengths_m[i]) > max(1e-9, local_scale * 1e-9):
+            continue
+        p0, p1, p2 = points[i - 1], points[i], points[i + 1]
+        a = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+        b = math.hypot(p2[0] - p1[0], p2[1] - p1[1])
+        c = math.hypot(p2[0] - p0[0], p2[1] - p0[1])
+        area2 = abs((p1[0] - p0[0]) * (p2[1] - p0[1]) - (p1[1] - p0[1]) * (p2[0] - p0[0]))
+        if min(a, b, c, area2) <= 1e-9:
+            return line_segment_geometry_speed_cap_m_s(limits)
+        radius = (a * b * c) / (2.0 * area2)
+        return circular_arc_geometry_speed_cap_m_s(radius, limits)
+    return line_segment_geometry_speed_cap_m_s(limits)
+
+
+def _speed_profile_from_caps(
+    s_m: Sequence[float],
+    cap_m_s: Sequence[float],
+    *,
+    tangent_accel_m_s2: float,
+    goal_decel_m_s2: float,
+) -> list[float]:
+    if len(s_m) != len(cap_m_s):
+        raise ValueError("speed profile distances and caps must have the same length")
+    if not s_m:
+        return []
+    v_forward = [0.0] * len(s_m)
+    for i in range(len(s_m) - 1):
+        ds = max(0.0, float(s_m[i + 1]) - float(s_m[i]))
+        v_next_sq = v_forward[i] * v_forward[i] + 2.0 * tangent_accel_m_s2 * ds
+        v_forward[i + 1] = min(float(cap_m_s[i + 1]), math.sqrt(max(0.0, v_next_sq)))
+
+    v_backward = [0.0] * len(s_m)
+    for i in range(len(s_m) - 1, 0, -1):
+        ds = max(0.0, float(s_m[i]) - float(s_m[i - 1]))
+        v_prev_sq = v_backward[i] * v_backward[i] + 2.0 * goal_decel_m_s2 * ds
+        v_backward[i - 1] = min(float(cap_m_s[i - 1]), math.sqrt(max(0.0, v_prev_sq)))
+
+    return [min(float(cap_m_s[i]), v_forward[i], v_backward[i]) for i in range(len(s_m))]
+
+
+def _sample_distance_speed(time_s: float, t_s: Sequence[float], s_m: Sequence[float], v_m_s: Sequence[float]) -> tuple[float, float]:
+    if not t_s:
+        return 0.0, 0.0
+    t = max(0.0, float(time_s))
+    if t >= t_s[-1]:
+        return float(s_m[-1]), 0.0
+    i = bisect.bisect_right(t_s, t) - 1
+    i = max(0, min(i, len(t_s) - 2))
+    t0, t1 = float(t_s[i]), float(t_s[i + 1])
+    u = 0.0 if t1 <= t0 else (t - t0) / (t1 - t0)
+    s = float(s_m[i]) + (float(s_m[i + 1]) - float(s_m[i])) * u
+    v = float(v_m_s[i]) + (float(v_m_s[i + 1]) - float(v_m_s[i])) * u
+    return s, v
+
+
 def _polyline_scenario(
     *,
     name: str,
     speed_m_s: float,
     points: Sequence[tuple[float, float]],
     path_config: dict[str, Any],
+    reference_profile: ReferenceProfileConfig | None = None,
     settle_margin_s: float = DEFAULT_SETTLE_MARGIN_S,
 ) -> Scenario:
     if len(points) < 2:
@@ -200,14 +300,54 @@ def _polyline_scenario(
         v = speed_m_s if distance < total else 0.0
         return _reference_sample(t, pose, _twist(v))
 
+    variant = None
+    effective_path_config = path_config | {"waypoints": [{"x_m": x, "y_m": y} for x, y in points]}
+    if reference_profile is not None:
+        limits = PathSpeedProfileLimits(
+            max_speed_m_s=speed_m_s,
+            max_tangent_accel_m_s2=reference_profile.max_tangent_accel_m_s2,
+            max_normal_accel_m_s2=reference_profile.max_normal_accel_m_s2,
+        )
+        s_profile = _profile_distances(total, cumulative, reference_profile.samples)
+        caps = [_polyline_geometry_speed_cap_m_s(points, cumulative, s, limits) for s in s_profile]
+        v_profile = _speed_profile_from_caps(
+            s_profile,
+            caps,
+            tangent_accel_m_s2=reference_profile.max_tangent_accel_m_s2,
+            goal_decel_m_s2=reference_profile.max_goal_decel_m_s2,
+        )
+        t_profile = time_s_from_speed_profile(s_profile, v_profile)
+        travel_s = t_profile[-1]
+        duration_s = travel_s + settle_margin_s
+        variant = reference_profile.mode
+        effective_path_config |= {
+            "reference_mode": reference_profile.mode,
+            "speed_profile": {
+                "samples": len(s_profile),
+                "max_tangent_accel_m_s2": reference_profile.max_tangent_accel_m_s2,
+                "max_normal_accel_m_s2": reference_profile.max_normal_accel_m_s2,
+                "max_goal_decel_m_s2": reference_profile.max_goal_decel_m_s2,
+                "max_profile_speed_m_s": max(v_profile),
+                "travel_time_s": travel_s,
+            },
+        }
+
+        def sample(t: float) -> TrajectoryReferenceSample:
+            distance, v = _sample_distance_speed(t, t_profile, s_profile, v_profile)
+            pose = _sample_polyline_pose(points, cumulative, distance)
+            if distance >= total:
+                v = 0.0
+            return _reference_sample(t, pose, _twist(v))
+
     return Scenario(
         name=name,
         target_speed_m_s=speed_m_s,
         duration_s=duration_s,
         initial_pose=initial,
         goal_pose=goal,
-        path_config=path_config | {"waypoints": [{"x_m": x, "y_m": y} for x, y in points]},
+        path_config=effective_path_config,
         sample=sample,
+        variant=variant,
     )
 
 
@@ -221,7 +361,11 @@ def _make_s_curve_points(length_m: float, amplitude_m: float, samples: int) -> l
     ]
 
 
-def build_scenario(name: str, speed_m_s: float) -> Scenario:
+def build_scenario(
+    name: str,
+    speed_m_s: float,
+    reference_profile: ReferenceProfileConfig | None = None,
+) -> Scenario:
     if not (math.isfinite(speed_m_s) and speed_m_s > 0.0):
         raise ValueError("speed must be a positive finite float")
 
@@ -232,6 +376,7 @@ def build_scenario(name: str, speed_m_s: float) -> Scenario:
             speed_m_s=speed_m_s,
             points=[(0.0, 0.0), (length, 0.0)],
             path_config={"length_m": length},
+            reference_profile=reference_profile,
         )
     if name == "s_curve":
         length = 8.0
@@ -242,6 +387,7 @@ def build_scenario(name: str, speed_m_s: float) -> Scenario:
             speed_m_s=speed_m_s,
             points=_make_s_curve_points(length, amplitude, samples),
             path_config={"length_m": length, "lateral_amplitude_m": amplitude, "samples": samples},
+            reference_profile=reference_profile,
         )
     if name == "right_angle_turn":
         leg = 4.0
@@ -250,6 +396,7 @@ def build_scenario(name: str, speed_m_s: float) -> Scenario:
             speed_m_s=speed_m_s,
             points=[(0.0, 0.0), (leg, 0.0), (leg, leg)],
             path_config={"leg_length_m": leg, "turn_angle_rad": math.pi / 2.0},
+            reference_profile=reference_profile,
         )
     if name == "stop_at_goal":
         length = 3.0
@@ -258,14 +405,18 @@ def build_scenario(name: str, speed_m_s: float) -> Scenario:
             speed_m_s=speed_m_s,
             points=[(0.0, 0.0), (length, 0.0)],
             path_config={"length_m": length, "dwell_at_goal_s": DEFAULT_SETTLE_MARGIN_S},
+            reference_profile=reference_profile,
         )
     if name == "circle":
         radius = 1.5
+        circumference = 2.0 * math.pi * radius
         omega = speed_m_s / radius
-        travel_s = 2.0 * math.pi / omega
+        travel_s = circumference / speed_m_s
         duration_s = travel_s + DEFAULT_SETTLE_MARGIN_S
         initial = PlanarPose(radius, 0.0, math.pi / 2.0)
         goal = initial
+        variant = None
+        path_config: dict[str, Any] = {"radius_m": radius, "turn_angle_rad": 2.0 * math.pi}
 
         def sample(t: float) -> TrajectoryReferenceSample:
             active_t = min(max(t, 0.0), travel_s)
@@ -278,14 +429,58 @@ def build_scenario(name: str, speed_m_s: float) -> Scenario:
             twist = _twist(speed_m_s, wz_rad_s=omega) if t < travel_s else _twist(0.0)
             return _reference_sample(t, pose, twist)
 
+        if reference_profile is not None:
+            limits = PathSpeedProfileLimits(
+                max_speed_m_s=speed_m_s,
+                max_tangent_accel_m_s2=reference_profile.max_tangent_accel_m_s2,
+                max_normal_accel_m_s2=reference_profile.max_normal_accel_m_s2,
+            )
+            geometry_cap = circular_arc_geometry_speed_cap_m_s(radius, limits)
+            s_profile = _profile_distances(circumference, [0.0, circumference], reference_profile.samples)
+            caps = [geometry_cap] * len(s_profile)
+            v_profile = _speed_profile_from_caps(
+                s_profile,
+                caps,
+                tangent_accel_m_s2=reference_profile.max_tangent_accel_m_s2,
+                goal_decel_m_s2=reference_profile.max_goal_decel_m_s2,
+            )
+            t_profile = time_s_from_speed_profile(s_profile, v_profile)
+            travel_s = t_profile[-1]
+            duration_s = travel_s + DEFAULT_SETTLE_MARGIN_S
+            variant = reference_profile.mode
+            path_config |= {
+                "reference_mode": reference_profile.mode,
+                "speed_profile": {
+                    "samples": len(s_profile),
+                    "geometry_speed_cap_m_s": geometry_cap,
+                    "max_tangent_accel_m_s2": reference_profile.max_tangent_accel_m_s2,
+                    "max_normal_accel_m_s2": reference_profile.max_normal_accel_m_s2,
+                    "max_goal_decel_m_s2": reference_profile.max_goal_decel_m_s2,
+                    "max_profile_speed_m_s": max(v_profile),
+                    "travel_time_s": travel_s,
+                },
+            }
+
+            def sample(t: float) -> TrajectoryReferenceSample:
+                distance, v = _sample_distance_speed(t, t_profile, s_profile, v_profile)
+                phi = distance / radius
+                pose = PlanarPose(
+                    radius * math.cos(phi),
+                    radius * math.sin(phi),
+                    math.atan2(math.cos(phi), -math.sin(phi)),
+                )
+                wz = v / radius if distance < circumference else 0.0
+                return _reference_sample(t, pose, _twist(v, wz_rad_s=wz))
+
         return Scenario(
             name=name,
             target_speed_m_s=speed_m_s,
             duration_s=duration_s,
             initial_pose=initial,
             goal_pose=goal,
-            path_config={"radius_m": radius, "turn_angle_rad": 2.0 * math.pi},
+            path_config=path_config,
             sample=sample,
+            variant=variant,
         )
 
     raise ValueError(f"unknown scenario {name!r}")
@@ -579,16 +774,17 @@ def _plot_ticks(ticks_path: Path, plot_path: Path, enabled: bool) -> PlotResult 
     )
 
 
-def _run_id(plant: str, scenario: str, speed: float, rate: float, seed: int | None) -> str:
+def _run_id(plant: str, scenario: str, speed: float, rate: float, seed: int | None, reference_mode: str) -> str:
     speed_token = str(speed).replace(".", "p")
     rate_token = str(rate).replace(".", "p")
-    return f"{plant}_{scenario}_{speed_token}mps_{rate_token}hz_seed{seed}"
+    mode_token = "" if reference_mode == "direct" else f"_{reference_mode}"
+    return f"{plant}_{scenario}_{speed_token}mps_{rate_token}hz_seed{seed}{mode_token}"
 
 
 def _scenario_config(scenario: Scenario) -> dict[str, Any]:
     return {
         "name": scenario.name,
-        "variant": None,
+        "variant": scenario.variant,
         "target_speed_m_s": scenario.target_speed_m_s,
         "duration_s": scenario.duration_s,
         "initial_pose": {
@@ -663,6 +859,91 @@ def _write_config(path: Path, config: dict[str, Any]) -> None:
     path.write_text(yaml.safe_dump(config, sort_keys=False, allow_unicode=False), encoding="utf-8")
 
 
+def _parser_actions_by_dest(parser: argparse.ArgumentParser) -> dict[str, argparse.Action]:
+    return {
+        action.dest: action
+        for action in parser._actions
+        if action.dest != argparse.SUPPRESS and action.dest != "help"
+    }
+
+
+def _provided_option_dests(argv: Sequence[str], parser: argparse.ArgumentParser) -> set[str]:
+    option_to_dest: dict[str, str] = {}
+    for action in parser._actions:
+        for option in action.option_strings:
+            option_to_dest[option] = action.dest
+    out: set[str] = set()
+    for token in argv:
+        option = token.split("=", 1)[0]
+        dest = option_to_dest.get(option)
+        if dest is not None:
+            out.add(dest)
+    return out
+
+
+def _coerce_config_value(action: argparse.Action, value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(action, argparse._StoreTrueAction | argparse._StoreFalseAction):
+        return bool(value)
+    if action.type is not None and not isinstance(value, action.type):
+        return action.type(value)
+    return value
+
+
+def _apply_config_yaml(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    provided_dests: set[str],
+) -> set[str]:
+    if args.config_yaml is None:
+        return set()
+    path = Path(args.config_yaml).expanduser()
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if data is None:
+        return set()
+    if not isinstance(data, dict):
+        parser.error("--config-yaml must contain a YAML mapping")
+    if isinstance(data.get("runner"), dict):
+        data = data["runner"]
+    actions = _parser_actions_by_dest(parser)
+    applied: set[str] = set()
+    for raw_key, raw_value in data.items():
+        dest = str(raw_key).replace("-", "_")
+        if dest == "config_yaml":
+            continue
+        action = actions.get(dest)
+        if action is None:
+            parser.error(f"--config-yaml contains unknown runner option {raw_key!r}")
+        if dest in provided_dests:
+            continue
+        setattr(args, dest, _coerce_config_value(action, raw_value))
+        applied.add(dest)
+    return applied
+
+
+def _finite_positive(value: float, name: str, parser: argparse.ArgumentParser) -> None:
+    if not (math.isfinite(value) and value > 0.0):
+        parser.error(f"{name} must be positive and finite")
+
+
+def _finite_nonnegative(value: float, name: str, parser: argparse.ArgumentParser) -> None:
+    if not (math.isfinite(value) and value >= 0.0):
+        parser.error(f"{name} must be non-negative and finite")
+
+
+def _reference_profile_from_args(args: argparse.Namespace) -> ReferenceProfileConfig | None:
+    if args.reference_mode == "direct":
+        return None
+    return ReferenceProfileConfig(
+        mode=args.reference_mode,
+        max_tangent_accel_m_s2=args.local_planner_max_tangent_accel_m_s2,
+        max_normal_accel_m_s2=args.local_planner_max_normal_accel_m_s2,
+        max_goal_decel_m_s2=args.local_planner_goal_decel_m_s2,
+        samples=args.path_speed_profile_samples,
+    )
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Simulate the holonomic trajectory controller against response-curve plant presets."
@@ -672,6 +953,54 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rate", type=float, default=10.0, help="Control loop rate in Hz.")
     parser.add_argument("--k-position", type=float, default=2.2, help="Position gain in 1/s.")
     parser.add_argument("--k-yaw", type=float, default=2.5, help="Yaw gain in 1/s.")
+    parser.add_argument(
+        "--config-yaml",
+        type=Path,
+        default=None,
+        help="Optional YAML mapping of runner options. Explicit CLI flags override file values.",
+    )
+    parser.add_argument(
+        "--calibration-params-yaml",
+        type=Path,
+        default=None,
+        help="Optional holonomic calibration YAML used for suggested gains unless gains are explicitly set.",
+    )
+    parser.add_argument(
+        "--reference-mode",
+        choices=["direct", "path_speed_profile"],
+        default="direct",
+        help="Reference generator mode. direct preserves historical constant-speed SIM-04 behavior.",
+    )
+    parser.add_argument(
+        "--local-planner-max-tangent-accel-m-s2",
+        "--max-tangent-accel",
+        dest="local_planner_max_tangent_accel_m_s2",
+        type=float,
+        default=DEFAULT_LOCAL_PLANNER_MAX_TANGENT_ACCEL_M_S2,
+        help="Path speed profile tangent acceleration cap in m/s^2.",
+    )
+    parser.add_argument(
+        "--local-planner-max-normal-accel-m-s2",
+        "--max-normal-accel",
+        dest="local_planner_max_normal_accel_m_s2",
+        type=float,
+        default=DEFAULT_LOCAL_PLANNER_MAX_NORMAL_ACCEL_M_S2,
+        help="Path speed profile normal acceleration cap in m/s^2.",
+    )
+    parser.add_argument(
+        "--local-planner-goal-decel-m-s2",
+        "--goal-decel",
+        dest="local_planner_goal_decel_m_s2",
+        type=float,
+        default=DEFAULT_LOCAL_PLANNER_MAX_TANGENT_ACCEL_M_S2,
+        help="Path speed profile goal deceleration cap in m/s^2.",
+    )
+    parser.add_argument(
+        "--path-speed-profile-samples",
+        type=int,
+        default=DEFAULT_PROFILE_SAMPLES,
+        help="Minimum sample count for path speed profiling.",
+    )
     parser.add_argument(
         "--plant-preset",
         default="synthetic_nominal",
@@ -695,18 +1024,42 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_arg_parser()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    provided_dests = _provided_option_dests(argv, parser)
     args = parser.parse_args(argv)
+    config_dests = _apply_config_yaml(args, parser, provided_dests)
     if args.list_presets:
         for name in sorted(RESPONSE_CURVE_PRESETS):
             print(name)
         return 0
+    if args.reference_mode not in {"direct", "path_speed_profile"}:
+        parser.error("--reference-mode must be one of: direct, path_speed_profile")
     if not (math.isfinite(args.rate) and args.rate > 0.0):
         parser.error("--rate must be positive and finite")
+    _finite_nonnegative(args.k_position, "--k-position", parser)
+    _finite_nonnegative(args.k_yaw, "--k-yaw", parser)
+    _finite_positive(args.local_planner_max_tangent_accel_m_s2, "--local-planner-max-tangent-accel-m-s2", parser)
+    _finite_positive(args.local_planner_max_normal_accel_m_s2, "--local-planner-max-normal-accel-m-s2", parser)
+    _finite_positive(args.local_planner_goal_decel_m_s2, "--local-planner-goal-decel-m-s2", parser)
+    if args.path_speed_profile_samples < 3:
+        parser.error("--path-speed-profile-samples must be at least 3")
+
+    calibration_source: str | None = None
+    if args.calibration_params_yaml is not None:
+        calibration_path = args.calibration_params_yaml.expanduser().resolve()
+        calibration = read_holonomic_calibration_params_yaml(calibration_path)
+        calibration_source = str(calibration_path)
+        gains = calibration.suggested_holonomic_gains
+        if "k_position" not in provided_dests and "k_position" not in config_dests:
+            args.k_position = float(gains["k_position_per_s"])
+        if "k_yaw" not in provided_dests and "k_yaw" not in config_dests:
+            args.k_yaw = float(gains["k_yaw_per_s"])
 
     started_wall = time.monotonic()
     started_at = datetime.now(UTC).isoformat()
     preset = _resolve_preset(args.plant_preset)
-    scenario = build_scenario(args.scenario, args.speed)
+    reference_profile = _reference_profile_from_args(args)
+    scenario = build_scenario(args.scenario, args.speed, reference_profile)
     max_linear_speed = args.max_linear_speed if args.max_linear_speed is not None else args.speed
     limits = HolonomicCommandLimits(
         max_planar_speed_m_s=max_linear_speed,
@@ -730,7 +1083,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     config_path = out_dir / "config.yaml"
     summary_path = out_dir / "summary.json"
     plot_path = out_dir / "plot.png"
-    run_id = _run_id(preset.name, scenario.name, args.speed, args.rate, args.seed)
+    run_id = _run_id(preset.name, scenario.name, args.speed, args.rate, args.seed, args.reference_mode)
     commit = _git_value(["rev-parse", "HEAD"], "unknown")
     dirty = _git_dirty()
     dt_s = 1.0 / args.rate
@@ -750,10 +1103,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "plant": preset.to_plant_config(),
         "controller": {
             "name": "HolonomicTrackingController",
-            "mode": "direct",
+            "mode": args.reference_mode,
             "gains": {"k_position_per_s": args.k_position, "k_yaw_per_s": args.k_yaw},
-            "calibration_source": None,
-            "parameters": {},
+            "calibration_source": calibration_source,
+            "parameters": {
+                "config_yaml": None if args.config_yaml is None else str(args.config_yaml.expanduser().resolve()),
+            },
         },
         "limits": _limits_config(limits),
         "rate": {
@@ -846,7 +1201,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         },
         "scenario": {
             "name": scenario.name,
-            "variant": None,
+            "variant": scenario.variant,
             "target_speed_m_s": scenario.target_speed_m_s,
         },
         "plant": {
@@ -857,8 +1212,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         },
         "controller": {
             "name": "HolonomicTrackingController",
-            "mode": "direct",
-            "calibration_source": None,
+            "mode": args.reference_mode,
+            "calibration_source": calibration_source,
         },
         "limits": _limits_config(limits),
         "rate": {
