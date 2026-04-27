@@ -5,9 +5,9 @@ Smart Nav is a modular navigation stack for autonomous robot navigation and expl
 It's a good fit when you have a lidar-equipped robot and need end-to-end autonomous navigation: give it a registered point cloud and odometry, and it produces velocity commands. The stack runs without ROS -- modules communicate over DimOS streams (LCM/SHM) and each component can be swapped or tuned independently.
 
 ```python
-from dimos.navigation.nav_stack.main import nav_stack
+from dimos.navigation.nav_stack.main import create_nav_stack
 
-blueprint = nav_stack()
+blueprint = create_nav_stack()
 ```
 
 Smart Nav consumes three external streams (typically provided by a SLAM module like FastLio2):
@@ -28,10 +28,10 @@ And produces:
 
 ## Customizing the Navigation
 
-All configuration is done through `nav_stack()` keyword arguments. Each module has its own config dict, and there are a few top-level switches for structural choices.
+All configuration is done through `create_nav_stack()` keyword arguments. Each module has its own config dict, and there are a few top-level switches for structural choices.
 
 ```python
-nav_stack(
+create_nav_stack(
     use_simple_planner=False,      # Use A* instead of FAR planner
     use_tare=False,                # Add TARE frontier exploration
     use_terrain_map_ext=True,      # Persistent terrain accumulator
@@ -64,7 +64,7 @@ Set `use_tare=True` to add the TARE frontier exploration module. When enabled, T
 TerrainAnalysis and LocalPlanner both have `obstacle_height_threshold`. Keep them aligned -- if TerrainAnalysis flags something as an obstacle but LocalPlanner's threshold is higher, the planner may drive through it.
 
 ```python
-nav_stack(
+create_nav_stack(
     terrain_analysis={"obstacle_height_threshold": 0.1},
     local_planner={"obstacle_height_threshold": 0.1},
 )
@@ -75,7 +75,7 @@ nav_stack(
 Speed is controlled at two levels. LocalPlanner caps how fast it will plan, PathFollower caps how fast it will execute.
 
 ```python
-nav_stack(
+create_nav_stack(
     local_planner={"max_speed": 1.5, "autonomy_speed": 1.0},
     path_follower={"max_speed": 1.5, "autonomy_speed": 1.0},
 )
@@ -86,7 +86,7 @@ nav_stack(
 `vehicle_height` propagated from the top level sets it on TerrainAnalysis (ignore-above filter) and SimplePlanner (ground offset). For FarPlanner, pass it explicitly:
 
 ```python
-nav_stack(
+create_nav_stack(
     vehicle_height=1.2,
     far_planner={"vehicle_height": 1.2},
 )
@@ -332,7 +332,7 @@ If you have a robot with a Livox Mid-360 lidar and a module that accepts `cmd_ve
 ```python
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.hardware.sensors.lidar.fastlio2.module import FastLio2
-from dimos.navigation.nav_stack.main import nav_stack
+from dimos.navigation.nav_stack.main import create_nav_stack
 
 from my_robot.control import MyRobotControl  # your module
 
@@ -347,7 +347,7 @@ my_robot_nav = (
 
         # 2. Navigation stack — consumes registered_scan + odometry,
         #    produces cmd_vel
-        nav_stack(
+        create_nav_stack(
             use_simple_planner=True,
             vehicle_height=0.8,          # your robot's height
         ),
@@ -405,13 +405,13 @@ class MyRobotControl(Module):
 To see what the navigation stack is doing, add a Rerun bridge:
 
 ```python
-from dimos.navigation.nav_stack.main import nav_stack, nav_stack_rerun_config
+from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 my_robot_nav = (
     autoconnect(
         FastLio2.blueprint(...),
-        nav_stack(...),
+        create_nav_stack(...),
         MyRobotControl.blueprint(),
         RerunBridgeModule.blueprint(**nav_stack_rerun_config()),
     )

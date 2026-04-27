@@ -720,10 +720,10 @@ class TestSmartNavRemappings:
 
     def test_simple_planner_no_odometry_remapping(self) -> None:
         """When use_simple_planner=True, no odometry remapping for SimplePlanner."""
-        from dimos.navigation.nav_stack.main import nav_stack
+        from dimos.navigation.nav_stack.main import create_nav_stack
         from dimos.navigation.nav_stack.modules.simple_planner.simple_planner import SimplePlanner
 
-        bp = nav_stack(use_simple_planner=True)
+        bp = create_nav_stack(use_simple_planner=True)
         rmap = bp.remapping_map
         assert (SimplePlanner, "odometry") not in rmap, (
             "SimplePlanner should not have an odometry remapping"
@@ -731,12 +731,12 @@ class TestSmartNavRemappings:
 
     def test_movement_manager_no_odometry_remapping(self) -> None:
         """MovementManager should not have an odometry remapping."""
-        from dimos.navigation.nav_stack.main import nav_stack
+        from dimos.navigation.nav_stack.main import create_nav_stack
         from dimos.navigation.nav_stack.modules.movement_manager.movement_manager import (
             MovementManager,
         )
 
-        bp = nav_stack(use_simple_planner=True)
+        bp = create_nav_stack(use_simple_planner=True)
         rmap = bp.remapping_map
         assert (MovementManager, "odometry") not in rmap, (
             "MovementManager should not have an odometry remapping"
@@ -744,22 +744,22 @@ class TestSmartNavRemappings:
 
     def test_terrain_analysis_still_remapped(self) -> None:
         """TerrainAnalysis (NativeModule) should still have corrected_odometry remapping."""
-        from dimos.navigation.nav_stack.main import nav_stack
+        from dimos.navigation.nav_stack.main import create_nav_stack
         from dimos.navigation.nav_stack.modules.terrain_analysis.terrain_analysis import (
             TerrainAnalysis,
         )
 
-        bp = nav_stack(use_simple_planner=True)
+        bp = create_nav_stack(use_simple_planner=True)
         rmap = bp.remapping_map
         assert (TerrainAnalysis, "odometry") in rmap
         assert rmap[(TerrainAnalysis, "odometry")] == "corrected_odometry"
 
     def test_far_planner_remapped_when_active(self) -> None:
         """FarPlanner (NativeModule) should have corrected_odometry remapping."""
-        from dimos.navigation.nav_stack.main import nav_stack
+        from dimos.navigation.nav_stack.main import create_nav_stack
         from dimos.navigation.nav_stack.modules.far_planner.far_planner import FarPlanner
 
-        bp = nav_stack(use_simple_planner=False)
+        bp = create_nav_stack(use_simple_planner=False)
         rmap = bp.remapping_map
         assert (FarPlanner, "odometry") in rmap
         assert rmap[(FarPlanner, "odometry")] == "corrected_odometry"
