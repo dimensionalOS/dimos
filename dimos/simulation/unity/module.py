@@ -42,6 +42,7 @@ import subprocess
 import threading
 import time
 from typing import Any
+import zipfile
 
 import cv2
 import numpy as np
@@ -155,8 +156,6 @@ def _download_unity_scene(scene: str, dest_dir: Path) -> Path:
 
     Returns the path to the Model.x86_64 binary.
     """
-    import zipfile
-
     try:
         import gdown  # type: ignore[import-untyped]
     except ImportError:
