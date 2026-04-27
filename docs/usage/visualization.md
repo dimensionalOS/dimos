@@ -1,37 +1,43 @@
 # Viewer Backends
 
-Dimos supports three visualization backends: Rerun (web or native) and Foxglove.
+Dimos supports three visualization backends: `rerun` (default), `foxglove`, and `none`.
 
 ## Quick Start
 
-Choose your viewer via the CLI (preferred):
+Choose your viewer via the CLI:
 
 ```bash
 # Rerun native viewer (default) - dimos-viewer with built-in teleop + click-to-navigate
 dimos run unitree-go2
 
-# Explicitly select the viewer mode:
+# Explicitly select the viewer backend:
 dimos --viewer rerun run unitree-go2
-dimos --viewer rerun-web run unitree-go2
 dimos --viewer foxglove run unitree-go2
+dimos --viewer none run unitree-go2
 ```
 
-Alternative (environment variable):
+Control how the Rerun viewer opens with `--rerun-open` and `--rerun-web`:
 
 ```bash
-# Rerun native viewer (default) - dimos-viewer with built-in teleop + click-to-navigate
-VIEWER=rerun dimos run unitree-go2
+# Open native desktop viewer (default)
+dimos --rerun-open native run unitree-go2
 
-# Rerun web viewer - browser dashboard + teleop at http://localhost:7779
-VIEWER=rerun-web dimos run unitree-go2
+# Open web viewer in browser
+dimos --rerun-open web run unitree-go2
 
-# Foxglove - Use Foxglove Studio instead of Rerun
-VIEWER=foxglove dimos run unitree-go2
+# Open both native and web
+dimos --rerun-open both run unitree-go2
+
+# No viewer (headless) — data still accessible via gRPC
+dimos --rerun-open none run unitree-go2
+
+# Serve the web viewer without auto-opening a browser
+dimos --rerun-web --rerun-open native run unitree-go2
 ```
 
 ## Viewer Modes Explained
 
-### Rerun Native (`rerun`) — Default
+### Rerun Native (`rerun`, `--rerun-open native`) — Default
 
 **What you get:**
 - [dimos-viewer](https://github.com/dimensionalOS/dimos-viewer), a custom Dimensional fork of Rerun with built-in keyboard teleop and click-to-navigate
@@ -41,7 +47,7 @@ VIEWER=foxglove dimos run unitree-go2
 
 ---
 
-### Rerun Web (`rerun-web`)
+### Rerun Web (`rerun`, `--rerun-open web`)
 
 **What you get:**
 - Browser-based dashboard at http://localhost:7779
@@ -63,18 +69,16 @@ VIEWER=foxglove dimos run unitree-go2
 
 ## Rendering with Custom Blueprints
 
-To enable rerun within your own blueprint simply include `RerunBridgeModule`:
+To enable visualization in your own blueprint, use `vis_module`:
 
 ```python
-from dimos.visualization.rerun.bridge import RerunBridgeModule
+from dimos.core.global_config import global_config
+from dimos.visualization.vis_module import vis_module
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 
 camera_demo = autoconnect(
     CameraModule.blueprint(),
-    RerunBridgeModule.blueprint(
-        viewer_mode="native", # native (desktop), web (browser), none (headless)
-    ),
+    vis_module(viewer_backend=global_config.viewer),
 )
 
 if __name__ == "__main__":
