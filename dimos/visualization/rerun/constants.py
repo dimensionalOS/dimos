@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.models.vl.base import VlModel
-from dimos.models.vl.types import VlModelName
+"""Rerun visualization defaults and type aliases.
 
-__all__ = ["VlModelName", "create"]
+This module is intentionally free of heavy imports so it can be
+loaded from lightweight entry-points like ``global_config`` and
+``dimos --help`` without pulling in the Rerun SDK or the module
+framework.
+"""
 
+from typing import Literal, TypeAlias
 
-def create(name: VlModelName) -> VlModel:
-    # This uses inline imports to only import what's needed.
-    match name:
-        case "qwen":
-            from dimos.models.vl.qwen import QwenVlModel
+ViewerBackend: TypeAlias = Literal["rerun", "foxglove", "none"]
+RerunOpenOption: TypeAlias = Literal["none", "web", "native", "both"]
 
-            return QwenVlModel()
-        case "moondream":
-            from dimos.models.vl.moondream import MoondreamVlModel
-
-            return MoondreamVlModel()
+RERUN_OPEN_DEFAULT: RerunOpenOption = "native"
+RERUN_ENABLE_WEB = False
+RERUN_GRPC_PORT = 9876
+RERUN_WEB_PORT = 9877
