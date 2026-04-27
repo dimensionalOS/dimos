@@ -29,14 +29,10 @@ module's config via per-module kwarg dicts (e.g.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.module import ModuleBase
-from dimos.spec.utils import Spec
-
-logger = logging.getLogger(__name__)
 from dimos.navigation.smart_nav.modules.far_planner.far_planner import FarPlanner
 from dimos.navigation.smart_nav.modules.local_planner.local_planner import LocalPlanner
 from dimos.navigation.smart_nav.modules.movement_manager.movement_manager import MovementManager
@@ -47,6 +43,10 @@ from dimos.navigation.smart_nav.modules.tare_planner.tare_planner import TarePla
 from dimos.navigation.smart_nav.modules.terrain_analysis.terrain_analysis import TerrainAnalysis
 from dimos.navigation.smart_nav.modules.terrain_map_ext.terrain_map_ext import TerrainMapExt
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
+from dimos.spec.utils import Spec
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 def smart_nav(
