@@ -27,6 +27,7 @@ from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector impo
 )
 from dimos.navigation.patrolling.module import PatrollingModule
 from dimos.navigation.replanning_a_star.module import ReplanningAStarPlanner
+from dimos.navigation.smart_nav.modules.movement_manager.movement_manager import MovementManager
 from dimos.robot.unitree.go2.blueprints.basic.unitree_go2_basic import unitree_go2_basic
 
 unitree_go2 = autoconnect(
@@ -36,7 +37,8 @@ unitree_go2 = autoconnect(
     ReplanningAStarPlanner.blueprint(),
     WavefrontFrontierExplorer.blueprint(),
     PatrollingModule.blueprint(),
-).global_config(n_workers=9, robot_model="unitree_go2")
+    MovementManager.blueprint(),
+).global_config(n_workers=10, robot_model="unitree_go2")
 
 
 class Go2MemoryConfig(RecorderConfig):
@@ -52,6 +54,6 @@ class Go2Memory(Recorder):
 unitree_go2_memory = autoconnect(
     unitree_go2,
     Go2Memory.blueprint(),
-).global_config(n_workers=10)
+).global_config(n_workers=11)
 
 __all__ = ["unitree_go2", "unitree_go2_memory"]

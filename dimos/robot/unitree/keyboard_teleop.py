@@ -38,14 +38,14 @@ DEFAULT_SLOW_MULTIPLIER: float = 0.5
 class KeyboardTeleop(Module):
     """Pygame-based keyboard control module.
 
-    Outputs standard Twist messages on /cmd_vel for velocity control.
+    Outputs standard Twist messages on /tele_cmd_vel for velocity control.
 
     Speed constants can be tuned at the top of this file, or overridden
     per-instance by passing linear_speed / angular_speed /
     boost_multiplier / slow_multiplier to the constructor.
     """
 
-    cmd_vel: Out[Twist]  # Standard velocity commands
+    tele_cmd_vel: Out[Twist]  # Standard velocity commands
 
     _stop_event: threading.Event
     _keys_held: set[int] | None = None
@@ -86,7 +86,7 @@ class KeyboardTeleop(Module):
         stop_twist = Twist()
         stop_twist.linear = Vector3(0, 0, 0)
         stop_twist.angular = Vector3(0, 0, 0)
-        self.cmd_vel.publish(stop_twist)
+        self.tele_cmd_vel.publish(stop_twist)
 
         self._stop_event.set()
 
@@ -119,7 +119,7 @@ class KeyboardTeleop(Module):
                         stop_twist = Twist()
                         stop_twist.linear = Vector3(0, 0, 0)
                         stop_twist.angular = Vector3(0, 0, 0)
-                        self.cmd_vel.publish(stop_twist)
+                        self.tele_cmd_vel.publish(stop_twist)
                         print("EMERGENCY STOP!")
                     elif event.key == pygame.K_ESCAPE:
                         # ESC quits
@@ -163,7 +163,7 @@ class KeyboardTeleop(Module):
             twist.angular.z *= speed_multiplier
 
             # Always publish twist at 50Hz
-            self.cmd_vel.publish(twist)
+            self.tele_cmd_vel.publish(twist)
 
             self._update_display(twist)
 
