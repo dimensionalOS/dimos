@@ -243,7 +243,6 @@ class UnitreeGo2TwistAdapter:
                 logger.error(f"[Go2] Error closing state subscriber: {e}")
 
     def is_connected(self) -> bool:
-        """True iff a session exists. Read under _session_lock."""
         with self._session_lock:
             return self._session is not None
 
@@ -374,8 +373,6 @@ class UnitreeGo2TwistAdapter:
         return True
 
     def read_enabled(self) -> bool:
-        """True iff session exists AND session.enabled. Reads under
-        _session_lock so it never returns stale True after disconnect()."""
         with self._session_lock:
             return self._session is not None and self._session.enabled
 
@@ -423,7 +420,6 @@ class UnitreeGo2TwistAdapter:
 
         mode = self.check_mode()
 
-        # Snapshot state under session lock.
         with session.lock:
             state = session.latest_state
             enabled = session.enabled
@@ -679,7 +675,6 @@ class UnitreeGo2TwistAdapter:
         return True
 
     def _send_velocity(self, vx: float, vy: float, wz: float) -> bool:
-        """Send raw SportClient.Move(vx, vy, wz) under session.lock."""
         session = self._get_session()
         with session.lock:
             ret = session.client.Move(vx, vy, wz)
@@ -690,8 +685,6 @@ class UnitreeGo2TwistAdapter:
 
 
 def register(registry: TwistBaseAdapterRegistry) -> None:
-    """Register this adapter with the TwistBaseAdapterRegistry under
-    the name 'unitree_go2'."""
     registry.register("unitree_go2", UnitreeGo2TwistAdapter)
 
 
