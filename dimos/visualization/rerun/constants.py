@@ -12,11 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core.coordination.blueprints import autoconnect
-from dimos.hardware.sensors.lidar.livox.module import Mid360
-from dimos.visualization.vis_module import vis_module
+"""Rerun visualization defaults and type aliases.
 
-mid360 = autoconnect(
-    Mid360.blueprint(),
-    vis_module("rerun"),
-).global_config(n_workers=2, robot_model="mid360")
+This module is intentionally free of heavy imports so it can be
+loaded from lightweight entry-points like ``global_config`` and
+``dimos --help`` without pulling in the Rerun SDK or the module
+framework.
+"""
+
+from typing import Literal, TypeAlias
+
+ViewerBackend: TypeAlias = Literal["rerun", "foxglove", "none"]
+RerunOpenOption: TypeAlias = Literal["none", "web", "native", "both"]
+
+RERUN_OPEN_DEFAULT: RerunOpenOption = "native"
+RERUN_ENABLE_WEB = False
+RERUN_GRPC_PORT = 9876
+RERUN_WEB_PORT = 9877
