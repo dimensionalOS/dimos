@@ -675,21 +675,43 @@ PROVISION_EOF
         ;;
 
     viewer)
-        echo "=== Starting dimos-viewer ==="
+        # READONLY=1 drops --ws-url so the viewer is gRPC-only. The dimos
+        # client side seems to publish a stale (-0.50, 0, 0) Twist on first
+        # connect (root cause not yet traced), which RerunWebSocketServer
+        # then forwards as both /tele_cmd_vel AND /stop_movement. The latter
+        # makes ClickToGoal freeze a phantom goal at the robot's current
+        # pose. With --ws-url dropped, the viewer cannot publish anything
+        # back, so the chain never starts. Use READONLY=1 when running
+        # NAV_ENABLED=1 and you don't need to teleop or click via the viewer.
+        echo "=== Starting dimos-viewer${READONLY:+ (READONLY)} ==="
         pkill -f "rerun" 2>/dev/null || true
         pkill -f "ssh.*-L.*9877.*${JUMP_HOST}" 2>/dev/null || true
         sleep 1
-        # Set up SSH tunnels
-        ssh -f -N -o ConnectTimeout=10 ${SSH_OPTS} \
-            -L 9877:${NOS_HOST}:9877 \
-            -L 7779:${NOS_HOST}:7779 \
-            -L 3030:${NOS_HOST}:3030 \
-            "${NOS_USER}@${NOS_HOST}" 2>/dev/null
+        # Set up SSH tunnels. In READONLY mode we skip the 3030 (WebSocket)
+        # tunnel too — defense in depth: even if rerun decides to ws-connect,
+        # there's no path from Mac→NOS for it to publish.
+        if [ -n "${READONLY}" ]; then
+            ssh -f -N -o ConnectTimeout=10 ${SSH_OPTS} \
+                -L 9877:${NOS_HOST}:9877 \
+                -L 7779:${NOS_HOST}:7779 \
+                "${NOS_USER}@${NOS_HOST}" 2>/dev/null
+        else
+            ssh -f -N -o ConnectTimeout=10 ${SSH_OPTS} \
+                -L 9877:${NOS_HOST}:9877 \
+                -L 7779:${NOS_HOST}:7779 \
+                -L 3030:${NOS_HOST}:3030 \
+                "${NOS_USER}@${NOS_HOST}" 2>/dev/null
+        fi
         sleep 1
         # Launch viewer
-        DIMOS_DEBUG=1 "${DIMOS_ROOT}/.venv/bin/rerun" \
-            --connect "rerun+http://127.0.0.1:9877/proxy" \
-            --ws-url "ws://127.0.0.1:3030/ws" &
+        if [ -n "${READONLY}" ]; then
+            DIMOS_DEBUG=1 "${DIMOS_ROOT}/.venv/bin/rerun" \
+                --connect "rerun+http://127.0.0.1:9877/proxy" &
+        else
+            DIMOS_DEBUG=1 "${DIMOS_ROOT}/.venv/bin/rerun" \
+                --connect "rerun+http://127.0.0.1:9877/proxy" \
+                --ws-url "ws://127.0.0.1:3030/ws" &
+        fi
         echo "  dimos-viewer PID: $!"
         echo "=== Viewer started ==="
         ;;
