@@ -1,0 +1,81 @@
+# DimOS Learning — DatasetSpec template
+#
+# This file is the contract between data collection and training. Same spec is
+# used by `python -m dimos.learning.dataset build` (export to disk) and by
+# `load_dataset(spec)` (training-time PyTorch Dataset).
+#
+# Stream names below must match the topic names recorded by RecordReplay. To
+# discover them: `python -m dimos.learning.dataset inspect dataset.yaml`
+# (or look in the SQLite registry of session.db).
+
+# ─── Source recording ────────────────────────────────────────────────────────
+source: ./session.db
+
+# ─── How to slice the session into episodes ──────────────────────────────────
+episodes:
+  extractor: buttons              # buttons | ranges | whole_session
+
+  # BUTTONS extractor: state machine over the recorded button stream
+  button_stream: buttons          # stream name (matches LCM topic, sanitized)
+  start: A                        # rising edge -> begin episode
+  save:  B                        # rising edge -> end + save
+  discard: X                      # rising edge -> end + drop
+  # Note: if recording stops mid-episode without an explicit save/discard,
+  # the in-progress episode is always discarded.
+
+  # RANGES extractor: explicit absolute timestamps (only used when extractor: ranges)
+  # ranges:
+  #   - [1730000000.0, 1730000045.5]
+  #   - [1730000060.0, 1730000110.2]
+
+  default_task_label: pick_red_cube  # optional; applied to every extracted episode
+
+# ─── What goes into each timestep ────────────────────────────────────────────
+# Each entry: dataset_key -> { stream, type?, field?, preprocess? }
+#   stream     — recorded stream name (LCM topic, sanitized)
+#   type       — optional dotted message type (for codec dispatch)
+#   field      — attribute on the message; omit to keep the whole message
+#   preprocess — named transform applied after field projection
+
+observation:
+  image:
+    stream: camera_color_image
+    type: sensor_msgs.Image
+    preprocess: jpeg_decode       # raw JPEG bytes -> HxWx3 uint8
+  joint_pos:
+    stream: coordinator_joint_state
+    type: sensor_msgs.JointState
+    field: position
+  joint_vel:
+    stream: coordinator_joint_state
+    type: sensor_msgs.JointState
+    field: velocity
+
+action:
+  target_pos:
+    stream: coordinator_joint_command
+    type: sensor_msgs.JointState
+    field: position
+
+# ─── Synchronization (build per-timestep samples) ────────────────────────────
+sync:
+  anchor: image                   # which observation key drives the timeline
+  rate_hz: 30                     # downsample anchor to this rate; 0 = native
+  tolerance_ms: 50                # max time delta when picking nearest sample
+  strategy: nearest               # nearest | interp
+
+# ─── Per-episode filters (optional) ──────────────────────────────────────────
+filters:
+  success_only: true
+  min_duration_s: 1.0
+  # max_duration_s: 60.0
+  # task_labels: [pick_red_cube, pick_blue_cube]
+
+# ─── Output (only required when calling build_dataset / `... build`) ─────────
+output:
+  format: lerobot                 # lerobot | hdf5 | rlds
+  path: ./datasets/pick_red/
+  metadata:
+    fps: 30
+    robot: xarm7
+    task_label: pick_red_cube
