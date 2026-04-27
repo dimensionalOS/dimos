@@ -2865,6 +2865,244 @@ Best current root-cause statement:
 
 ---
 
+## Finding #37: V1.1.8.5 Validation Suite + Dog Rollout Tooling (2026-04-25 → 2026-04-27)
+
+After codex's raw-FastDDS receive fix landed, ran a structured
+validation pass to confirm V1.1.8.5 is safe to roll across the other
+5 dogs.
+
+### Validation results
+
+**30-minute stability monitor** (2026-04-25): zero anomalies. Exact
+10 Hz lidar (front+rear), exact 200 Hz IMU (yesense + airy front
++ rear), matched counts steady (lidar_front=2, lidar_rear=1,
+imu_*=1-3) across all 30 1-min samples.
+
+**Cold-boot stability** (2026-04-25): full reboot, no manual
+intervention, all 5 channels matched and msgs flowing within ~60 s.
+The raw-FastDDS receive path uses `INADDR_ANY` and re-enumerates
+interfaces dynamically, so the earlier `ExecStartPre` interface-up
+wait (added then dropped) is unnecessary.
+
+**Rotation drift** (2026-04-26 — one full session): 60s rotation
+at -0.4 rad/s (~3.8 revolutions). `imu_vs_frame_end` p50=+6 ms,
+max ±36 ms, **0/30 samples over the ±50 ms Finding #35 baseline**.
+cloud_pre vs cloud_post point distributions virtually identical
+(npts 47972 vs 48123, range_p50 1.56 m both, close_points_lt_1m
+11387 vs 11332). Visually confirmed by the operator: dog turned
+as commanded.
+
+  Caveat: `fastlio2` source caps the per-frame log at 30 entries
+  (`if (frame_idx < 30)` in `main.cpp:622`), so we only have IMU
+  timing for the first ~3 s of rotation. Cloud features + visual
+  + 30-min stability fill in the rest of the picture.
+
+**NavCmdPub → AOS basic_server → motors** (2026-04-26): rotation
+test indirectly proved this path is intact — `nav_cmd_pub`
+forwarded `yaw=-0.400 matched=1` for 60 s and the dog rotated.
+
+### Dog-rollout tooling (`deploy.sh`)
+
+The provision flow had several gaps for fresh post-OTA dogs.
+Patched in commits `897817abd`, `7be769f49`, `8246cddec`:
+
+- `bootstrap` orchestrator: `provision → sync → install-binaries
+  → restore-rsdriver-config` in one shot
+- `install-binaries`: `cmake` + `make drdds_recv nav_cmd_pub` on
+  NOS, install drdds_recv to `/opt`. Pre-flight checks for
+  `cmake` + FastDDS + drdds dev headers
+- `restore-rsdriver-config`: idempotent `sed` flips of
+  `send_separately:true` + `ts_first_point:false`, plus a
+  post-edit verification grep that fails loudly if the regex
+  missed (protects against future OTAs shipping yaml format the
+  regex doesn't catch)
+- `validate`: end-to-end healthcheck — SSH + 4 services + 5
+  channels matched + msgs incrementing across a 5 s window +
+  rsdriver config keys correct. Exits 0 PASS / 1 FAIL.
+- `provision` additions: yesense ordering dropin (symmetric to
+  rsdriver's, fixes cold-boot yesense matched=0 race), sshd OOM
+  protection (-1000 score), 4 GB swap setup at
+  `/var/opt/robot/data/swapfile`, isolcpus warn-only check
+- `SUDO_PASS` env var support for non-interactive automation
+  (base64-encoded so single-quote password survives ssh argument
+  passing)
+
+Verified `bootstrap → validate` end-to-end on 770-gogo (already
+customized — all idempotent steps reported "already present").
+
+### Click-to-goal validation: STARTED, NOT FINISHED
+
+Spent the 2026-04-27 session attempting click-to-goal. Found
+**two real bugs** that prevented the test from completing.
+Documented as Findings #38 and #39 below. Robot E-stopped twice;
+no damage. Click-to-goal validation deferred to next session
+pending bug fixes.
+
+The other 5 dogs do **not** depend on click-to-goal for V1.1.8.5
+rollout — they need the SLAM/IMU/lidar stack which is rock solid
+and the velocity-command path which the rotation test validated.
+
+---
+
+## Finding #38: Phantom-Goal Chain (cmd_vel_mux + click_to_goal) (2026-04-27)
+
+Click-to-goal validation was halted by the dog spontaneously
+driving forward at ~1.0 m/s shortly after a brief WASD test.
+Operator E-stopped. Postmortem of `/tmp/smartnav_native.log`
+identified a multi-component interaction that creates phantom
+goals from any teleop event.
+
+### The chain
+
+```
+viewer connects → publishes /tele_cmd_vel = (-0.50, 0, 0)
+  ↓ (BUG #1: viewer-side, source not yet traced in repo —
+   `RerunWebSocketServer` only forwards what client sends)
+RerunWebSocketServer ALSO publishes stop_movement=True
+  (websocket_server.py:226 — duplicate publisher missed in
+   first analysis, found by codex)
+  ↓
+CmdVelMux._on_teleop fires (was_active=False rising edge)
+  → publishes stop_movement=True ONCE more (cmd_vel_mux.py:115)
+  ↓
+ClickToGoal._on_stop_movement
+  → publishes /goal at robot's CURRENT pose
+   (click_to_goal.py:100-110)
+  ↓ (this is the goal you never set)
+SimplePlanner sees goal=current_pose. path=1 cell. nav_cmd_vel=0.
+Robot quiet.
+
+Then user actually presses WASD:
+  ↓
+CmdVelMux forwards teleop twist → /cmd_vel → robot moves to Y
+ClickToGoal NEVER updates goal during sustained teleop (single
+  rising-edge publish — see below)
+  ↓
+User releases keys. After teleop_cooldown_sec=1.0 s:
+  ↓
+SimplePlanner sees: robot=Y, goal=X (frozen 1+ s ago).
+  Generates path back to X. path_follower drives.
+  nav_cmd_pub goes to ±1 m/s. Operator E-stops.
+```
+
+### Evidence (postmortem log file-line ordering, 2026-04-27)
+
+- Line 250 @ `22:25:20.168`: `Teleop active — published stop_movement`
+- Line 314: first `[simple_planner] Goal received: (-0.05, -0.01, 0.00)` — essentially the SLAM origin
+- Lines 491-508: subsequent goal updates as each WASD burst froze a new "home":
+  ```
+  Goal received: (-0.05, -0.01)  ← burst 1
+  Goal received: (-0.41, -0.00)  ← burst 2
+  Goal received: (-0.44, -0.01)  ← burst 3
+  Goal received: (-2.80, -0.21)  ← burst 4
+  ```
+- 22:27:28: `nav_cmd_pub yaw=-0.800 matched=1`
+- 22:27:53: `yaw=-1.396`
+- 22:28:13: `x=1.020 y=-0.000 yaw=-0.000` ← **full forward 1.02 m/s**
+- 22:28:20: operator E-stopped
+
+### Codex review (agent `a1b350fc38345196e`)
+
+Confirmed the causal chain, found the additional `RerunWebSocketServer:226`
+publisher I had missed, and rejected my proposed Option E
+(drop ClickToGoal's `stop_movement` subscription entirely):
+
+> "E breaks legitimate stop/cancel semantics used by
+> `ReplanningAStarPlanner` (`replanning_a_star/module.py:126`)
+> and `WavefrontFrontierExplorer`
+> (`frontier_exploration/wavefront_frontier_goal_selector.py:209`)."
+
+### Recommended fix (not yet applied)
+
+1. **Zero-twist filter at both publishers**:
+   - `cmd_vel_mux.py::_on_teleop` — ignore msg if
+     `linear == 0 and angular == 0`
+   - `RerunWebSocketServer:226` — same guard. (Without this,
+     fixing only CmdVelMux is bypassed by the WS server's
+     direct stop_movement publish.)
+2. **Replace freeze-at-pose with explicit cancel**:
+   `ClickToGoal._on_stop_movement` currently publishes the robot's
+   current pose as `/goal` — which is the actual hazard, because
+   teleop continues past the freeze point. Convert it (or have
+   SimplePlanner subscribe to `stop_movement` directly) so
+   "stop" means "drop the goal" rather than "anchor at this
+   instant's pose."
+3. **Trace dimos-viewer's auto-publish on connect** (Bug 1 in
+   the chain). Codex couldn't find a repo source proving the
+   viewer publishes a non-zero Twist on connect, but the log
+   evidence is unambiguous (`[DIMOS_DEBUG] Published twist:
+   lin=(-0.50, 0, 0)` repeatedly, before any user keypress).
+   Once (1) lands, this becomes moot — phantom Twist still
+   arrives but gets filtered.
+
+### Workaround (interim)
+
+`READONLY=1 ./deploy.sh viewer` drops `--ws-url` AND skips the
+3030 SSH tunnel, so the viewer literally cannot publish back
+to NOS. Verified: `WsPublisher: connection failed: Connection
+refused (os error 61) — retrying`. Defense-in-depth — even if
+rerun decides to ws-connect anyway, no path exists.
+
+---
+
+## Finding #39: ClickToGoal `self.goal.publish(msg)` doesn't reach LCM wire (2026-04-27, OPEN)
+
+While testing the conservative click-to-goal path (READONLY
+viewer + `inject_goal.py` publishing `/clicked_point` directly
+via LCM), discovered that **ClickToGoal receives the click but
+its republish to `/goal` doesn't reach simple_planner**.
+
+### Evidence
+
+After `inject_goal.py` publishes a goal at `(1.0, 0, 0)`:
+- ClickToGoal logs `[click_to_goal] Goal: (1.0, -0.0, -0.0)` —
+  validates `_on_click` fired, `msg` was decoded, validation
+  passed, and `self.goal.publish(msg)` was called.
+- SimplePlanner log shows ONLY `[simple_planner] Started.` —
+  `_on_goal` never fires, `[simple_planner] Goal received:`
+  never logs.
+- A direct external publish to `/goal#geometry_msgs.PointStamped`
+  from a separate Python process ALSO fails to trigger
+  simple_planner — but that same external script subscribed
+  back to `/goal` DOES see its own publish round-trip. So:
+  - LCM wire works for inject's `/goal` round-trip ✓
+  - ClickToGoal's `self.goal.publish(msg)` is **not actually
+    transmitting bytes to the LCM wire**
+
+The autoconnect/transport log shows both `ClickToGoal.goal`
+(Out) and `SimplePlanner.goal` (In) bound to topic
+`/goal#geometry_msgs.PointStamped` with `transport=LCMTransport`,
+so the wiring should work.
+
+### Hypotheses to investigate
+
+1. The dimos `Out[T]` port system may use an internal-process
+   queue rather than LCM, with a separate bridge that fails to
+   forward in this configuration.
+2. Forwarding a wire-deserialized `msg` through a port may
+   behave differently than constructing one in-process. The
+   pre-OTA postmortem shows ClickToGoal's
+   `_on_stop_movement` (which constructs `PointStamped` in
+   process) DID reach simple_planner. `_on_click` (which
+   forwards a wire-decoded msg) does NOT.
+3. autoconnect topology may have disconnected the
+   `ClickToGoal.goal → SimplePlanner.goal` link in this
+   particular blueprint instance.
+
+### State at handoff
+
+- `READONLY=1 ./deploy.sh viewer` works as a phantom-goal
+  workaround (defense in depth: no `--ws-url`, no 3030 tunnel)
+- `dimos/robot/deeprobotics/m20/scripts/inject_goal.py` publishes
+  `/clicked_point` from outside smartnav — confirmed reaches
+  ClickToGoal._on_click, but ClickToGoal's republish black-holes
+- Open issue: trace why `Out[PointStamped].publish()` from
+  ClickToGoal._on_click doesn't hit the LCM wire. Likely a
+  ~1-session bug fix once the root cause is found.
+- Click-to-goal validation deferred until #38 + #39 are fixed.
+
+---
+
 ## Questions for Jeff (2026-04-23, in-person at Dimensional)
 
 **IMPORTANT**: Updated after Finding #33. Rotation is fixed; questions
