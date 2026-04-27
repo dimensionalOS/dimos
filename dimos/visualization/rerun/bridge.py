@@ -33,14 +33,13 @@ from typing import (
 from urllib.parse import urlparse
 
 from reactivex.disposable import Disposable
-import rerun as rr
 from rerun._baseclasses import Archetype
-import rerun.blueprint as rrb
 from rerun.blueprint import Blueprint
 from toolz import pipe  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.msgs.sensor_msgs.PointCloud2 import register_colormap_annotation
 from dimos.protocol.pubsub.impl.lcmpubsub import LCM
 from dimos.protocol.pubsub.patterns import Glob, pattern_matches
 from dimos.protocol.pubsub.spec import SubscribeAllCapable
@@ -53,7 +52,6 @@ from dimos.visualization.rerun.constants import (
     RERUN_WEB_PORT,
     RerunOpenOption,
 )
-from dimos.visualization.rerun.init import rerun_init
 
 # TODO OUT visual annotations
 #
@@ -133,6 +131,8 @@ def _hex_to_rgba(hex_color: str) -> int:
 
 def _with_graph_tab(bp: Blueprint) -> Blueprint:
     """Add a Graph tab alongside the existing viewer layout without changing it."""
+    import rerun.blueprint as rrb
+
     root = bp.root_container
     return rrb.Blueprint(
         rrb.Tabs(
@@ -147,6 +147,9 @@ def _with_graph_tab(bp: Blueprint) -> Blueprint:
 
 def _default_blueprint() -> Blueprint:
     """Default blueprint with black background and raised grid."""
+    import rerun as rr
+    import rerun.blueprint as rrb
+
     return rrb.Blueprint(
         rrb.Spatial3DView(
             origin="world",
@@ -244,11 +247,8 @@ class RerunBridgeModule(Module):
                 return msg.to_rerun()
             return None
 
-        def composed(msg: Any) -> RerunData | None:
-            return cast("RerunData | None", pipe(msg, *matches, final_convert))
-
-        self._override_cache[entity_path] = composed
-        return composed
+        # compose all converters
+        return lambda msg: pipe(msg, *matches, final_convert)
 
     def _get_entity_path(self, topic: Any) -> str:
         if self.config.topic_to_entity:
@@ -259,6 +259,9 @@ class RerunBridgeModule(Module):
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:
+        """Handle incoming message - log to rerun."""
+        import rerun as rr
+
         entity_path: str = self._get_entity_path(topic)
 
         # Throttle entities with a max_hz limit
@@ -282,6 +285,8 @@ class RerunBridgeModule(Module):
 
     @rpc
     def start(self) -> None:
+        import rerun as rr
+
         super().start()
 
         logger.info("Rerun bridge starting")
@@ -291,7 +296,7 @@ class RerunBridgeModule(Module):
             entity: 1.0 / hz for entity, hz in self.config.max_hz.items() if hz > 0
         }
 
-        rerun_init("dimos")
+        rr.init("dimos")
 
         parsed = urlparse(self.config.connect_url.replace("rerun+", "", 1))
         grpc_port = parsed.port or RERUN_GRPC_PORT
@@ -310,6 +315,8 @@ class RerunBridgeModule(Module):
                 server_memory_limit=self.config.memory_limit,
             )
             logger.info(f"Rerun gRPC server ready at {server_uri}")
+
+        register_colormap_annotation("turbo")
 
         if self.config.rerun_open not in get_args(RerunOpenOption):
             logger.warning(
@@ -402,6 +409,8 @@ class RerunBridgeModule(Module):
         logger.info("\n".join(lines))
 
     def _log_static(self) -> None:
+        import rerun as rr
+
         for entity_path, factory in self.config.static.items():
             data = factory(rr)
             if isinstance(data, list):
@@ -421,6 +430,8 @@ class RerunBridgeModule(Module):
             dot_code: The DOT-format graph (from ``introspection.blueprint.dot.render``).
             module_names: List of module class names (to distinguish modules from channels).
         """
+        import rerun as rr
+
         try:
             result = subprocess.run(
                 ["dot", "-Tplain"], input=dot_code, text=True, capture_output=True, timeout=30
