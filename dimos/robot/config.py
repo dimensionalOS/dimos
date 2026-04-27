@@ -22,16 +22,17 @@ automatically. Generates RobotModelConfig, HardwareComponent, and TaskConfig.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from pydantic import BaseModel, Field, PrivateAttr
 
+from dimos.control.components import HardwareComponent, HardwareType
+from dimos.control.coordinator import TaskConfig
+from dimos.manipulation.planning.spec.config import RobotModelConfig
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.robot.model_parser import ModelDescription, parse_model
-
-if TYPE_CHECKING:
-    from dimos.control.components import HardwareComponent
-    from dimos.control.coordinator import TaskConfig
-    from dimos.manipulation.planning.spec.config import RobotModelConfig
 
 
 class GripperConfig(BaseModel):
@@ -187,11 +188,6 @@ class RobotConfig(BaseModel):
 
     def to_robot_model_config(self) -> RobotModelConfig:
         """Generate RobotModelConfig for ManipulationModule."""
-        from dimos.manipulation.planning.spec.config import RobotModelConfig
-        from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-        from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-        from dimos.msgs.geometry_msgs.Vector3 import Vector3
-
         if self.end_effector_link is None:
             raise ValueError(
                 f"RobotConfig '{self.name}' has no end_effector_link — "
@@ -236,8 +232,6 @@ class RobotConfig(BaseModel):
 
     def to_hardware_component(self) -> HardwareComponent:
         """Generate HardwareComponent for ControlCoordinator."""
-        from dimos.control.components import HardwareComponent, HardwareType
-
         self._ensure_prefix()
         gripper_joints: list[str] = []
         if self.gripper and self.gripper.joints:
@@ -274,8 +268,6 @@ class RobotConfig(BaseModel):
             **task_kwargs: Extra fields passed to TaskConfig (e.g., model_path,
                 ee_joint_id, hand, gripper_joint, gripper_open_pos, gripper_closed_pos).
         """
-        from dimos.control.coordinator import TaskConfig
-
         return TaskConfig(
             name=task_name if task_name is not None else self.coordinator_task_name,
             type=task_type if task_type is not None else self.task_type,
