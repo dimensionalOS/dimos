@@ -131,9 +131,9 @@ class UnitreeGo2TwistAdapter:
 
         Sequence:
           1. ChannelFactoryInitialize(0) — default domain, default NIC.
-          2. Subscribe rt/sportmodestate for telemetry.
-          3. MotionSwitcher.Init + check_mode() — accepts whatever
-             controller is currently running.
+          2. MotionSwitcher.Init + poll CheckMode() until a sport mode
+             is reported (DDS discovery) or _DISCOVERY_TIMEOUT_S elapses.
+          3. Subscribe rt/sportmodestate for telemetry.
           4. SportClient.Init.
           5. _initialize_locomotion(): StandUp + FreeWalk + SpeedLevel.
           6. If rage_mode=True, set_rage_mode(True).
@@ -154,9 +154,23 @@ class UnitreeGo2TwistAdapter:
                 # Safe to ignore, the existing factory is reused.
                 pass
             motion_switcher = MotionSwitcherClient()
-            motion_switcher.SetTimeout(5.0)
+            motion_switcher.SetTimeout(0.5)
             motion_switcher.Init()
-            time.sleep(1.5)  # DDS discovery settle
+
+            # Poll CheckMode() until DDS discovery completes and mode is reported
+            mode = ""
+            for _ in range(50):
+                code, data = motion_switcher.CheckMode()
+                if code == 0 and isinstance(data, dict):
+                    mode = (data.get("name") or "").strip()
+                    if mode:
+                        break
+                time.sleep(0.1)
+            motion_switcher.SetTimeout(5.0)
+            if not mode:
+                logger.error("[Go2] No sport mode active")
+                return False
+            logger.info(f"[Go2] Sport mode '{mode}' active")
 
             client = SportClient()
             client.SetTimeout(10.0)
@@ -177,13 +191,6 @@ class UnitreeGo2TwistAdapter:
 
             with self._session_lock:
                 self._session = session
-
-            mode = self.check_mode()
-            if not mode:
-                logger.error("[Go2] No sport mode active")
-                self.disconnect()
-                return False
-            logger.info(f"[Go2] Sport mode '{mode}' active")
 
             client.Init()
             time.sleep(2.0)
