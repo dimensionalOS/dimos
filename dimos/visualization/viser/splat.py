@@ -31,7 +31,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
-from plyfile import PlyData
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -110,6 +109,8 @@ def load_splat(ply_path: str | Path, alignment: SplatAlignment | None = None) ->
     """
     if alignment is None:
         alignment = SplatAlignment()
+    from plyfile import PlyData
+
     ply = PlyData.read(str(ply_path))
     v = ply["vertex"]
     props = {p.name for p in v.properties}

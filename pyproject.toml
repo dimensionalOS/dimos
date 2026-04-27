@@ -86,8 +86,6 @@ dependencies = [
     "toolz>=1.1.0",
     "protobuf>=6.33.5,<7",
     "psutil>=7.0.0",
-    "viser>=1.0.26",
-    "plyfile>=1.1.3",
     "sqlite-vec>=0.1.6",
     "lz4>=4.4.5",
     "rpyc>=6.0.0",
@@ -300,11 +298,21 @@ sim = [
     "pygame>=2.6.1",
 ]
 
+# Viser browser viewer + Gaussian splat scene loader.  Opt-in.
+# Required by ViserRenderModule (browser viewer at :8082) and by the
+# splat loader used by both the viewer and the splat camera renderer.
+viz = [
+    "viser>=1.0.26",
+    "plyfile>=1.1.3",
+]
+
 # 3D Gaussian splat camera renderer (Linux+CUDA only).  Opt-in.
 # gsplat builds CUDA kernels via nvcc/ninja on first import; first-time
 # install is slow.  Required only by the SplatCameraModule that
-# publishes splat-rendered camera images alongside the viser viewer.
+# publishes splat-rendered camera images.  Pulls in [viz] for the splat
+# loader.
 splat = [
+    "dimos[viz]",
     "gsplat>=1.5.0",
     "gsplat>=1.5.0; platform_machine == 'x86_64' and sys_platform == 'linux'",
 ]
