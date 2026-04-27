@@ -147,51 +147,57 @@ class UnitreeGo2TwistAdapter:
                 logger.warning("[Go2] Already connected — disconnect first")
                 return False
 
+        # ChannelFactoryInitialize raises if the factory already exists.
         try:
+            ChannelFactoryInitialize(0)
+        except Exception:
+            pass
+
+        motion_switcher = MotionSwitcherClient()
+        motion_switcher.SetTimeout(0.5)
+        motion_switcher.Init()
+
+        # Poll CheckMode() through DDS discovery
+        mode = ""
+        for _ in range(50):
             try:
-                ChannelFactoryInitialize(0)
-            except Exception:
-                # Safe to ignore, the existing factory is reused.
-                pass
-            motion_switcher = MotionSwitcherClient()
-            motion_switcher.SetTimeout(0.5)
-            motion_switcher.Init()
-
-            # Poll CheckMode() until DDS discovery completes and mode is reported
-            mode = ""
-            for _ in range(50):
                 code, data = motion_switcher.CheckMode()
-                if code == 0 and isinstance(data, dict):
-                    mode = (data.get("name") or "").strip()
-                    if mode:
-                        break
+            except (OSError, RuntimeError, TimeoutError):
                 time.sleep(0.1)
-            motion_switcher.SetTimeout(5.0)
-            if not mode:
-                logger.error("[Go2] No sport mode active")
-                return False
-            logger.info(f"[Go2] Sport mode '{mode}' active")
+                continue
+            if code == 0 and isinstance(data, dict):
+                mode = (data.get("name") or "").strip()
+                if mode:
+                    break
+            time.sleep(0.1)
+        motion_switcher.SetTimeout(5.0)
+        if not mode:
+            logger.error("[Go2] No sport mode active")
+            return False
+        logger.info(f"[Go2] Sport mode '{mode}' active")
 
-            client = SportClient()
-            client.SetTimeout(10.0)
+        client = SportClient()
+        client.SetTimeout(10.0)
 
-            session = _Session(
-                client=client,
-                motion_switcher=motion_switcher,
-                lock=threading.Lock(),
-            )
+        session = _Session(
+            client=client,
+            motion_switcher=motion_switcher,
+            lock=threading.Lock(),
+        )
 
-            def state_callback(msg: SportModeState_) -> None:
-                with session.lock:
-                    session.latest_state = msg
+        def state_callback(msg: SportModeState_) -> None:
+            with session.lock:
+                session.latest_state = msg
 
-            state_sub = ChannelSubscriber("rt/sportmodestate", SportModeState_)
-            state_sub.Init(state_callback, 10)
-            session.state_sub = state_sub
+        state_sub = ChannelSubscriber("rt/sportmodestate", SportModeState_)
+        state_sub.Init(state_callback, 10)
+        session.state_sub = state_sub
 
-            with self._session_lock:
-                self._session = session
+        with self._session_lock:
+            self._session = session
 
+        # disconnect() must run on any failure
+        try:
             client.Init()
             logger.info("[Go2] Connected")
 
@@ -200,18 +206,13 @@ class UnitreeGo2TwistAdapter:
                 self.disconnect()
                 return False
 
-            if self._rage_mode_default:
-                if not self.set_rage_mode(True):
-                    logger.warning(
-                        "[Go2] Rage Mode enable failed — continuing with regular locomotion"
-                    )
-
-            return True
-
-        except (OSError, RuntimeError, AttributeError, TimeoutError) as e:
-            logger.error(f"[Go2] Failed to connect: {e}")
+            if self._rage_mode_default and not self.set_rage_mode(True):
+                logger.warning("[Go2] Rage Mode enable failed — continuing with regular locomotion")
+        except Exception:
             self.disconnect()
-            return False
+            raise
+
+        return True
 
     def disconnect(self) -> None:
         """Stop motion, stand the robot down, and tear down DDS resources.
