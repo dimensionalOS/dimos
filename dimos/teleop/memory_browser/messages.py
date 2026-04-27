@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Wire format for the memory-browser <-> Quest WebSocket channel.
 
 Two flavors travel over one ``/ws_memory`` socket:
@@ -27,12 +41,7 @@ MSG_GLOBAL_MAP = 0x03
 def encode_binary(msg_type: int, header: dict[str, Any], payload: bytes) -> bytes:
     """Pack a binary frame with a JSON header and raw payload bytes."""
     header_bytes = json.dumps(header, separators=(",", ":")).encode("utf-8")
-    return (
-        bytes([msg_type & 0xFF])
-        + struct.pack("<I", len(header_bytes))
-        + header_bytes
-        + payload
-    )
+    return bytes([msg_type & 0xFF]) + struct.pack("<I", len(header_bytes)) + header_bytes + payload
 
 
 def encode_text(msg_type: str, **fields: Any) -> str:

@@ -634,35 +634,59 @@ export class RibbonScene {
         if (!refSpace) return;
         for (const inputSource of frame.session.inputSources) {
             if (inputSource.handedness !== 'right') continue;
-            const space = inputSource.gripSpace || inputSource.targetRaySpace;
-            if (!space) continue;
-            const pose = frame.getPose(space, refSpace);
-            if (!pose) continue;
-            const gp = inputSource.gamepad;
-            const grip = gp ? (gp.buttons[1]?.value ?? 0) : 0;
-            const engaged = grip > 0.5;
 
-            const o = pose.transform.orientation;
-            const q = new THREE.Quaternion(o.x, o.y, o.z, o.w);
+            let orient = null;
+            let engaged = false;
+
+            // Prefer hand tracking when joints are available — wrist
+            // orientation drives the dial, thumb↔index distance drives engage.
+            if (inputSource.hand && inputSource.hand.size > 0) {
+                const wrist = inputSource.hand.get('wrist');
+                const thumb = inputSource.hand.get('thumb-tip');
+                const index = inputSource.hand.get('index-finger-tip');
+                if (wrist && thumb && index) {
+                    const wp = frame.getJointPose(wrist, refSpace);
+                    const tp = frame.getJointPose(thumb, refSpace);
+                    const ip = frame.getJointPose(index, refSpace);
+                    if (wp && tp && ip) {
+                        orient = wp.transform.orientation;
+                        const dx = tp.transform.position.x - ip.transform.position.x;
+                        const dy = tp.transform.position.y - ip.transform.position.y;
+                        const dz = tp.transform.position.z - ip.transform.position.z;
+                        const dist = Math.hypot(dx, dy, dz);
+                        if (this._discPinching) {
+                            this._discPinching = dist < 0.040;
+                        } else {
+                            this._discPinching = dist < 0.025;
+                        }
+                        engaged = this._discPinching;
+                    }
+                }
+            }
+
+            // Fall back to controller path.
+            if (!orient) {
+                const space = inputSource.gripSpace || inputSource.targetRaySpace;
+                if (!space) continue;
+                const pose = frame.getPose(space, refSpace);
+                if (!pose) continue;
+                orient = pose.transform.orientation;
+                const gp = inputSource.gamepad;
+                const grip = gp ? (gp.buttons[1]?.value ?? 0) : 0;
+                engaged = grip > 0.5;
+            }
+
+            const q = new THREE.Quaternion(orient.x, orient.y, orient.z, orient.w);
             const e = new THREE.Euler().setFromQuaternion(q, 'YXZ');
-            // Sign chosen so the disc spins in the same direction as the
-            // wrist (positive roll → CCW disc) — flipped from the previous
-            // build, which read inverted.
             const rawRoll = e.z;
 
             if (engaged) {
-                // Capture a baseline on engage so the disc starts at its
-                // current angle and rotates relative to the wrist's pose at
-                // grab time — mirrors how the timeline cursor tracks delta.
                 if (this._wristRollBase === null) {
                     this._wristRollBase = rawRoll - this._wristRoll;
                 }
                 this._wristRoll = rawRoll - this._wristRollBase;
                 this._handDiscSpinner.rotation.z = this._wristRoll;
             } else {
-                // Release: drop the baseline so the next engage re-anchors.
-                // The disc keeps its last angle (no snap-back) so the user
-                // can see where the cursor sits.
                 this._wristRollBase = null;
             }
             return;

@@ -1,3 +1,17 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Memory Browser module — VR memory UI built on top of QuestTeleopModule.
 
 Adds three things on top of the parent's WebSocket + controller plumbing:
@@ -17,9 +31,9 @@ whichever index the server reports as active.
 from __future__ import annotations
 
 import asyncio
-import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+import threading
 from typing import Any
 
 import cv2
@@ -358,7 +372,7 @@ class MemoryBrowserModule(QuestTeleopModule):
                 continue
 
         return thumbnails, meta
-    
+
     def _build_global_map(self) -> tuple[bytes, dict[str, float]] | None:
         """Render a top-down JPEG of the point cloud at ``global_map_path``.
 
@@ -507,7 +521,7 @@ class MemoryBrowserModule(QuestTeleopModule):
     # ---- broadcast helpers -------------------------------------------------
 
     def _broadcast_active_index(self, *, force: bool = False) -> None:
-        idx = int(round(self._cursor_index))
+        idx = round(self._cursor_index)
         if not force and idx == self._last_emitted_index:
             return
         self._last_emitted_index = idx
