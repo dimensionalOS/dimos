@@ -248,7 +248,9 @@ class RerunBridgeModule(Module):
             return None
 
         # compose all converters
-        return lambda msg: pipe(msg, *matches, final_convert)
+        composed = lambda msg: pipe(msg, *matches, final_convert)
+        self._override_cache[entity_path] = composed
+        return composed
 
     def _get_entity_path(self, topic: Any) -> str:
         if self.config.topic_to_entity:
