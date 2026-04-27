@@ -59,14 +59,22 @@ After `schema_version`, object keys follow the field order of `TrajectoryControl
 
 Use `planar_position_divergence_m` vs `commanded_planar_speed_m_s` (and time series on `ref_time_s` or `meas_time_s`) per issue 921 guidance; `pandas.read_json(..., lines=True)` accepts this format if you use pandas.
 
-**Control rate (P4-3):** after you have exports, see `docs/development/trajectory_control_rate_from_logs.md` for how to relate `dt_s` and optional `wall_time_s` to a sensible `local_planner_control_rate_hz` and to plant delay.
+**Control rate (P4-3):** after you have exports, see `docs/development/921_trajectory_controller/docs/trajectory_control_rate_from_logs.md` for how to relate `dt_s` and optional `wall_time_s` to a sensible `local_planner_control_rate_hz` and to plant delay.
 
 **Live navigation export:** set `local_planner_trajectory_tick_log_path` in `GlobalConfig`, run the holonomic path follower, then plot the generated file. This is the normal path for comparing speed vs divergence on a robot or replay harness.
 
-**Built-in recipe (P2-3):** from the repository root, `make plot-trajectory-ticks` writes `dimos/navigation/fixtures/trajectory_control_ticks_sample_921_plot.png` using `uv run --with matplotlib`. For your own export:
+**Built-in recipe (P2-3):** from the repository root, run the plot script with `uv run --with matplotlib`. Example using the in-tree sample JSONL:
 
 ```bash
-uv run --with matplotlib python scripts/plot_trajectory_control_ticks.py path/to/ticks.jsonl -o out.png
+uv run --with matplotlib python docs/development/921_trajectory_controller/simulation/plot_trajectory_control_ticks.py \
+  dimos/navigation/fixtures/trajectory_control_ticks_sample.jsonl \
+  -o dimos/navigation/fixtures/trajectory_control_ticks_sample_921_plot.png
 ```
 
-See [docs/development/trajectory_control_tick_plots.md](../../docs/development/trajectory_control_tick_plots.md) for commands and defaults.
+For your own export:
+
+```bash
+uv run --with matplotlib python docs/development/921_trajectory_controller/simulation/plot_trajectory_control_ticks.py path/to/ticks.jsonl -o out.png
+```
+
+See [docs/development/921_trajectory_controller/docs/trajectory_control_tick_plots.md](../../docs/development/921_trajectory_controller/docs/trajectory_control_tick_plots.md) for commands and defaults.

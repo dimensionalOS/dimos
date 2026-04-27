@@ -74,7 +74,7 @@ def main() -> None:
     except ImportError as e:
         raise SystemExit(
             "matplotlib and numpy are required. Example: "
-            "uv run --with matplotlib python scripts/plot_trajectory_control_ticks.py ..."
+            "uv run --with matplotlib python docs/development/921_trajectory_controller/simulation/plot_trajectory_control_ticks.py ..."
         ) from e
 
     rows = _load_ticks(inp)

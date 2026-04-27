@@ -44,7 +44,17 @@ from typing import Any
 
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+
+def _dimos_repo_root() -> Path:
+    p = Path(__file__).resolve()
+    for parent in p.parents:
+        if (parent / "pyproject.toml").is_file() and (parent / "dimos").is_dir():
+            return parent
+    raise RuntimeError(f"DimOS repository root not found above {p}")
+
+
+REPO_ROOT = _dimos_repo_root()
+_SIMULATION_DIR = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
@@ -1056,7 +1066,7 @@ def _build_gates(metrics: dict[str, Any], gate_config: GateConfig) -> dict[str, 
 def _plot_ticks(ticks_path: Path, plot_path: Path, enabled: bool) -> PlotResult | None:
     if not enabled:
         return None
-    script = REPO_ROOT / "scripts" / "plot_trajectory_control_ticks.py"
+    script = _SIMULATION_DIR / "plot_trajectory_control_ticks.py"
     command = [sys.executable, str(script), str(ticks_path), "-o", str(plot_path)]
     try:
         result = subprocess.run(command, cwd=REPO_ROOT, capture_output=True, text=True, check=False)

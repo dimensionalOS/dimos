@@ -2,7 +2,7 @@
 
 The holonomic local path follower uses a single config knob, `GlobalConfig.local_planner_control_rate_hz`, to pace `LocalPlanner` and to pass a consistent `dt_s` into the controller. That rate should follow **evidence** (issue 921): telemetry, achieved scheduling, and rough plant or actuator delay - not a fixed "high enough" number.
 
-This note ties together: JSONL fields in `dimos/navigation/trajectory_control_tick_jsonl.md`, the plot recipe in `docs/development/trajectory_control_tick_plots.md`, and Python headroom in `docs/development/trajectory_control_tick_benchmark.md`.
+This note ties together: JSONL fields in `dimos/navigation/trajectory_control_tick_jsonl.md`, the plot recipe in [`trajectory_control_tick_plots.md`](trajectory_control_tick_plots.md), and Python headroom in [`trajectory_control_tick_benchmark.md`](trajectory_control_tick_benchmark.md).
 
 ## 1. What the export contains
 
@@ -53,9 +53,9 @@ In short: if logs show you truly achieve **f** Hz, but the plant cannot respond 
 ## 4. A/B a candidate rate (same motion, two exports)
 
 1. Set `local_planner_control_rate_hz` to value **A** (e.g. current default or conservative).
-2. Run the same test track, export JSONL, build the **speed vs planar position divergence** plot (see `docs/development/trajectory_control_tick_plots.md`).
+2. Run the same test track, export JSONL, build the **speed vs planar position divergence** plot (see [`trajectory_control_tick_plots.md`](trajectory_control_tick_plots.md)).
 3. Repeat with rate **B**; keep other gains and max speed the same.
-4. Prefer the rate with **better** divergence at comparable commanded speed, **if** the benchmark in `docs/development/trajectory_control_tick_benchmark.md` shows the Python work still has headroom at that rate, and if Section 2 shows your process actually attains the nominal schedule.
+4. Prefer the rate with **better** divergence at comparable commanded speed, **if** the benchmark in [`trajectory_control_tick_benchmark.md`](trajectory_control_tick_benchmark.md) shows the Python work still has headroom at that rate, and if Section 2 shows your process actually attains the nominal schedule.
 
 A higher number that does not show up in `dt_s` / `wall_time_s` or that does not improve the plot is not a win.
 
@@ -63,4 +63,4 @@ A higher number that does not show up in `dt_s` / `wall_time_s` or that does not
 
 - **`GlobalConfig.local_planner_control_rate_hz`** in `dimos/dimos/core/global_config.py` - default is conservative and validation rejects 100 Hz-style settings on this path; adjust within the allowed range after measurements.
 
-Related: P4-2 cost per tick in `docs/development/trajectory_control_tick_benchmark.md`, field list in `dimos/navigation/trajectory_control_tick_jsonl.md`.
+Related: P4-2 cost per tick in [`trajectory_control_tick_benchmark.md`](trajectory_control_tick_benchmark.md), field list in `dimos/navigation/trajectory_control_tick_jsonl.md`.

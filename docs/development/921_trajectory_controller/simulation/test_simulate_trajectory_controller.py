@@ -260,9 +260,18 @@ def test_config_yaml_and_cli_override_runner_options(tmp_path: Path) -> None:
     assert config["controller"]["gains"] == {"k_position_per_s": 2.0, "k_yaw_per_s": 1.1}
 
 
+def _dimos_repo_root() -> Path:
+    p = Path(__file__).resolve()
+    for parent in p.parents:
+        if (parent / "pyproject.toml").is_file() and (parent / "dimos").is_dir():
+            return parent
+    raise RuntimeError(f"DimOS repository root not found above {p}")
+
+
 def test_calibration_yaml_loads_suggested_gains(tmp_path: Path) -> None:
+    repo_root = _dimos_repo_root()
     fixture = (
-        Path(__file__).resolve().parents[1]
+        repo_root
         / "dimos"
         / "navigation"
         / "fixtures"

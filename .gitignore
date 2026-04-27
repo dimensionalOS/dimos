@@ -78,5 +78,5 @@ htmlcov/
 .coverage
 .coverage.*
 
-# Local trajectory tick plot outputs (scripts/plot_trajectory_control_ticks.py)
-*_921_plot.png
+# Ignore simulation artefacts as per #921 Trajectory Controller(s)
+/docs/development/921_trajectory_controller/simulation/simulation_runs

@@ -59,7 +59,7 @@ The YAML is a generated artifact with a versioned schema. Treat it as calibratio
 For plots, collect JSONL from the live `LocalPlanner` config above or from a test harness, then run:
 
 ```bash
-uv run --with matplotlib python scripts/plot_trajectory_control_ticks.py path/to/ticks.jsonl -o plot.png
+uv run --with matplotlib python docs/development/921_trajectory_controller/simulation/plot_trajectory_control_ticks.py path/to/ticks.jsonl -o plot.png
 ```
 
 Use the primary `commanded_planar_speed_m_s` vs `planar_position_divergence_m` view to compare controller gains, control rates, and speed limits. Use the time-series panels to catch schedule jitter, yaw mistakes, and obvious odometry discontinuities.

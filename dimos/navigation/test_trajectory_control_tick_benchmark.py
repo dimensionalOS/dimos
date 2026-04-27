@@ -16,7 +16,7 @@
 
 Median per-call time is checked against loose ceilings so default CI stays stable
 across hosts; use ``pytest -sv`` locally to print medians and implied single-thread
-headroom in Hz. See ``docs/development/trajectory_control_tick_benchmark.md``.
+headroom in Hz. See ``docs/development/921_trajectory_controller/docs/trajectory_control_tick_benchmark.md``.
 """
 
 from __future__ import annotations
