@@ -131,7 +131,6 @@ def _hex_to_rgba(hex_color: str) -> int:
 
 def _with_graph_tab(bp: Blueprint) -> Blueprint:
     """Add a Graph tab alongside the existing viewer layout without changing it."""
-    import rerun.blueprint as rrb
 
     root = bp.root_container
     return rrb.Blueprint(
@@ -247,11 +246,8 @@ class RerunBridgeModule(Module):
                 return msg.to_rerun()
             return None
 
-        def composed(msg: Any) -> RerunData | None:
-            return pipe(msg, *matches, final_convert)
-
-        self._override_cache[entity_path] = composed
-        return composed
+        # compose all converters
+        return lambda msg: pipe(msg, *matches, final_convert)
 
     def _get_entity_path(self, topic: Any) -> str:
         if self.config.topic_to_entity:
@@ -262,7 +258,7 @@ class RerunBridgeModule(Module):
         return f"{self.config.entity_prefix}{topic_str}"
 
     def _on_message(self, msg: Any, topic: Any) -> None:
-        import rerun as rr
+        """Handle incoming message - log to rerun."""
 
         entity_path: str = self._get_entity_path(topic)
 
@@ -430,7 +426,6 @@ class RerunBridgeModule(Module):
             dot_code: The DOT-format graph (from ``introspection.blueprint.dot.render``).
             module_names: List of module class names (to distinguish modules from channels).
         """
-        import rerun as rr
 
         try:
             result = subprocess.run(
