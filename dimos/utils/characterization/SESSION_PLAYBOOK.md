@@ -420,3 +420,34 @@ finally:
 You're now ready for data processing (Rung 2: FOPDT modeling, Bode
 estimation, controller-budget calculations). The harness's job is
 done; from here it's pandas / scipy on the parquet... uh, sqlite.
+
+---
+
+## Rung 2 step 1 — FOPDT plant model
+
+After `validate` + `aggregate` are done for a session, fit the FOPDT
+plant model to its E1/E2 step recipes:
+
+```
+python -m dimos.utils.characterization.scripts.process_session fit $SESSION
+```
+
+Outputs land in `$SESSION/modeling/`:
+- `model_summary.json`   pooled K/τ/L per (channel, mode) with CIs and
+                         pooling decisions (direction symmetry, linear-
+                         in-amplitude check, gain schedules).
+- `model_report.md`      human-readable summary, per-cell table, pooling
+                         rationale.
+- `plots/<recipe>__overlay.svg`         data + group-mean FOPDT model.
+- `plots/<channel>__params_vs_amp.svg`  K/τ/L vs |amplitude| with CIs.
+- `fits_per_run.json` / `fits_per_group.json` — full traceability.
+
+Cross-mode (default vs rage):
+
+```
+python -m dimos.utils.characterization.scripts.process_session compare-models \
+    --default $DEFAULT_SESSION --rage $RAGE_SESSION --out model_compare.md
+```
+
+This consumes both sessions' `model_summary.json` and emits a per-channel
+verdict (identical / equivalent / differs) plus `model_compare_pooled.json`.

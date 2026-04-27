@@ -144,6 +144,96 @@ def main_envelope(argv: list[str] | None = None) -> int:
     return 0
 
 
+def main_fit(argv: list[str] | None = None) -> int:
+    """``python -m dimos.utils.characterization.scripts.process_session fit`` — FOPDT plant-model fit for one session."""
+    parser = argparse.ArgumentParser(description="Fit FOPDT plant model to step recipes in one session.")
+    parser.add_argument("session_dir")
+    parser.add_argument("--no-plots", action="store_true",
+                        help="Skip overlay / parameter plots (faster; markdown + JSON only)")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
+
+    from dimos.utils.characterization.modeling.session import fit_session
+    s = Path(args.session_dir)
+    print(f"fitting FOPDT: {s}")
+    summary = fit_session(s, write_plots_enabled=not args.no_plots)
+
+    print(f"  mode: {summary['mode']}")
+    for channel, ch in sorted(summary.get("channels", {}).items()):
+        pooled = ch.get("pooled", {})
+        K = pooled.get("K") or {}
+        tau = pooled.get("tau") or {}
+        L = pooled.get("L") or {}
+        asym = "asymmetric" if ch.get("direction_asymmetric") else "symmetric"
+        print(
+            f"  {channel}: K={K.get('mean')} τ={tau.get('mean')} L={L.get('mean')} "
+            f"({asym}, n_groups_K={K.get('n_groups')})"
+        )
+    out_dir = s / "modeling"
+    print(f"artifacts: {out_dir / 'model_summary.json'}, {out_dir / 'model_report.md'}, "
+          f"{out_dir / 'plots'}/")
+    return 0
+
+
+def main_fit_all(argv: list[str] | None = None) -> int:
+    """``python -m dimos.utils.characterization.scripts.process_session fit-all`` — batch FOPDT fits for every session under a parent dir."""
+    parser = argparse.ArgumentParser(description="Fit FOPDT plant model to every session under a parent directory.")
+    parser.add_argument("parent_dir",
+                        help="Directory containing session_* subdirs (e.g. ~/char_runs)")
+    parser.add_argument("--force", action="store_true",
+                        help="Refit sessions that already have model_summary.json")
+    parser.add_argument("--no-plots", action="store_true",
+                        help="Skip overlay / parameter plots (faster)")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
+
+    from dimos.utils.characterization.modeling.session import fit_all_sessions
+    parent = Path(args.parent_dir).expanduser()
+    print(f"fitting every session under: {parent}")
+    index = fit_all_sessions(
+        parent, force=args.force, write_plots_enabled=not args.no_plots,
+    )
+    print(f"  {index['n_sessions']} sessions discovered")
+    print()
+    print(f"  {'session':<32} {'mode':<8} {'runs':>5} {'fits':>5}  status")
+    for row in index["sessions"]:
+        print(
+            f"  {row['session']:<32} {row['mode']:<8} "
+            f"{row['n_runs']:>5} {row['n_groups_with_fit']:>5}  {row['status']}"
+        )
+    print()
+    print(f"index: {parent / 'models_index.json'}")
+    return 0
+
+
+def main_compare_models(argv: list[str] | None = None) -> int:
+    """``python -m dimos.utils.characterization.scripts.process_session compare-models`` — default vs rage FOPDT comparison.
+
+    Accepts multiple sessions per mode; pools RunFits across all sessions
+    on each side before comparing.
+    """
+    parser = argparse.ArgumentParser(description="Compare default-mode and rage-mode FOPDT models (pooled across sessions).")
+    parser.add_argument("--default", nargs="+", required=True,
+                        help="Default-mode session dir(s)")
+    parser.add_argument("--rage", nargs="+", required=True,
+                        help="Rage-mode session dir(s)")
+    parser.add_argument("--out", default="./model_compare.md")
+    args = parser.parse_args(argv)
+
+    from dimos.utils.characterization.modeling.session import compare_pooled
+    verdict = compare_pooled(
+        [Path(p) for p in args.default],
+        [Path(p) for p in args.rage],
+        out_path=Path(args.out),
+    )
+    print(f"wrote {args.out}")
+    for channel, cv in sorted(verdict.get("channels", {}).items()):
+        print(f"  {channel}: {cv.get('verdict')}")
+    return 0
+
+
 def main_compare_modes(argv: list[str] | None = None) -> int:
     """``python -m dimos.utils.characterization.scripts.process_session compare-modes`` — default vs rage comparison."""
     parser = argparse.ArgumentParser(description="Compare default-mode and rage-mode session metrics.")
@@ -171,6 +261,9 @@ _SUBCOMMANDS: dict[str, callable] = {
     "coupling": main_coupling,
     "envelope": main_envelope,
     "compare-modes": main_compare_modes,
+    "fit": main_fit,
+    "fit-all": main_fit_all,
+    "compare-models": main_compare_models,
 }
 
 

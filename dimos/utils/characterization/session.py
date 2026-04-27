@@ -155,6 +155,7 @@ def build_session_blueprint(
         transports[("measured", PoseStamped)] = LCMTransport("/go2/odom", PoseStamped)
 
     atoms = [CharacterizationRecorder.blueprint(db_path=str(db_path))]
+    remappings: list[tuple[Any, str, str]] = []
 
     if include_teleop:
         from dimos.robot.unitree.keyboard_teleop import KeyboardTeleop
@@ -168,8 +169,14 @@ def build_session_blueprint(
             teleop_kwargs["angular_speed"] = 1.2
 
         atoms.append(KeyboardTeleop.blueprint(**teleop_kwargs))
+        # On dev, KeyboardTeleop's Out port is named ``tele_cmd_vel``;
+        # mirror the remap done in ``unitree_go2_webrtc_keyboard_teleop``
+        # so it lands on the ``/cmd_vel`` topic the coordinator listens on.
+        remappings.append((KeyboardTeleop, "tele_cmd_vel", "cmd_vel"))
 
     bp = autoconnect(base, *atoms).transports(transports)
+    if remappings:
+        bp = bp.remappings(remappings)
     return bp
 
 

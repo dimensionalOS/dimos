@@ -56,10 +56,18 @@ python -m dimos.utils.characterization.scripts.process_session deadtime    $SESS
 python -m dimos.utils.characterization.scripts.process_session coupling    $SESSION   # E7
 python -m dimos.utils.characterization.scripts.process_session envelope    $SESSIONS... --mode default --out envelope_default.md
 python -m dimos.utils.characterization.scripts.process_session compare-modes --default <s>... --rage <s>... --out compare.md
+python -m dimos.utils.characterization.scripts.process_session fit          $SESSION   # FOPDT plant model
+python -m dimos.utils.characterization.scripts.process_session compare-models --default <s> --rage <s> --out model_compare.md
 ```
 
 Each step writes derived artifacts; nothing destructive. Per-step rationale
-in `processing/<name>.py` docstrings.
+in `processing/<name>.py` and `modeling/<name>.py` docstrings.
+
+`fit` produces `<session>/modeling/{model_summary.json, model_report.md, plots/}`
+with K/τ/L per (channel, amplitude, direction) plus pooled per-channel
+values, gain-schedule analysis, and overlay plots. Run after `validate` +
+`aggregate`. `compare-models` is the cross-mode follow-up; it consumes
+two `model_summary.json` files and emits a verdict per channel.
 
 ## Velocity reconstruction
 
