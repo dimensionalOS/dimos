@@ -54,7 +54,7 @@ class Embed(Transformer[T, T]):
 ```python
 query_vec = clip.embed_text("a cat in the kitchen")
 
-results = images.transform(Embed(clip)).search(query_vec, k=20).fetch()
+results = images.transform(Embed(clip)).search(query_vec, k=20).to_list()
 # results[0].data       → Image
 # results[0].embedding  → np.ndarray
 # results[0].similarity → 0.93
@@ -64,7 +64,7 @@ results = images.transform(Embed(clip)) \
     .search(query_vec, k=50) \
     .after(one_hour_ago) \
     .near(kitchen_pose, 5.0) \
-    .fetch()
+    .to_list()
 ```
 
 ## Backend Handles Storage Strategy
@@ -109,7 +109,7 @@ for obs in logs.transform(Embed(clip.text)):
     unified.append(obs.data, ts=obs.ts,
                    tags={"modality": "text"}, embedding=obs.embedding)
 
-results = unified.search(query_vec, k=20).fetch()
+results = unified.search(query_vec, k=20).to_list()
 # results[i].tags["modality"] tells you what it is
 ```
 
@@ -140,9 +140,9 @@ FTS is keyword-based, not embedding-based. Complementary, not competing:
 ```python
 # Keyword search via FTS5
 logs = store.stream("logs")
-logs.search_text("motor fault").fetch()
+logs.search_text("motor fault").to_list()
 
 # Semantic search via embeddings
 log_idx = logs.transform(Embed(sentence_model)).store("log_emb")
-log_idx.search(model.embed("motor problems"), k=10).fetch()
+log_idx.search(model.embed("motor problems"), k=10).to_list()
 ```

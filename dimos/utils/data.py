@@ -52,7 +52,7 @@ def _get_user_data_dir() -> Path:
 
 
 @cache
-def _get_repo_root() -> Path:
+def get_project_root() -> Path:
     # Check if running from git repo
     if (DIMOS_PROJECT_ROOT / ".git").exists():
         return DIMOS_PROJECT_ROOT
@@ -107,8 +107,8 @@ def _get_repo_root() -> Path:
 @cache
 def get_data_dir(extra_path: str | None = None) -> Path:
     if extra_path:
-        return _get_repo_root() / "data" / extra_path
-    return _get_repo_root() / "data"
+        return get_project_root() / "data" / extra_path
+    return get_project_root() / "data"
 
 
 @cache
@@ -186,7 +186,7 @@ def _pull_lfs_archive(filename: str | Path) -> Path:
     _check_git_lfs_available()
 
     # Find repository root
-    repo_root = _get_repo_root()
+    repo_root = get_project_root()
 
     # Construct path to test data file
     file_path = _get_lfs_dir() / (str(filename) + ".tar.gz")

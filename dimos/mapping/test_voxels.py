@@ -20,10 +20,10 @@ import pytest
 
 from dimos.core.transport import LCMTransport
 from dimos.mapping.voxels import VoxelGrid
+from dimos.memory.timeseries.legacy import LegacyPickleStore
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import OutputMoment
-from dimos.utils.testing.replay import TimedSensorReplay
 from dimos.utils.testing.test_moment import Go2Moment
 
 
@@ -109,7 +109,7 @@ def test_carving(grid: VoxelGrid, moment1: Go2MapperMoment, moment2: Go2MapperMo
 
 def test_ingest_a_few(grid: VoxelGrid) -> None:
     data_dir = get_data("unitree_go2_office_walk2")
-    lidar_store = TimedSensorReplay(f"{data_dir}/lidar")
+    lidar_store = LegacyPickleStore(f"{data_dir}/lidar")
 
     for i in [1, 4, 8]:
         frame = lidar_store.find_closest_seek(i)
@@ -155,7 +155,7 @@ def test_roundtrip(moment1: Go2MapperMoment, voxel_size: float, expected_points:
 def test_roundtrip_range_preserved(grid: VoxelGrid) -> None:
     """Test that input coordinate ranges are preserved in output."""
     data_dir = get_data("unitree_go2_office_walk2")
-    lidar_store = TimedSensorReplay(f"{data_dir}/lidar")
+    lidar_store = LegacyPickleStore(f"{data_dir}/lidar")
 
     frame = lidar_store.find_closest_seek(1.0)
     assert frame is not None

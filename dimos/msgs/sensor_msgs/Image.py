@@ -375,6 +375,17 @@ class Image(Timestamped):
         return Image(data=cropped_data, format=self.format, frame_id=self.frame_id, ts=self.ts)
 
     @property
+    def brightness(self) -> float:
+        """Return mean brightness in [0, 1].
+
+        Strides to ~256px on the long edge first — ~O(N/step²) cheaper than
+        reading every pixel, and the mean converges quickly (CLT).
+        """
+        max_val = 65535.0 if self.format in (ImageFormat.GRAY16, ImageFormat.DEPTH16) else 255.0
+        step = max(1, max(self.data.shape[:2]) // 256)
+        return float(self.data[::step, ::step].mean() / max_val)
+
+    @property
     def sharpness(self) -> float:
         """Return sharpness score.
 

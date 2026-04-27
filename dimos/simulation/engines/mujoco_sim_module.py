@@ -112,8 +112,6 @@ class MujocoSimModule(
     camera_info: Out[CameraInfo]
     depth_camera_info: Out[CameraInfo]
 
-    default_config = MujocoSimModuleConfig
-
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._engine: MujocoEngine | None = None

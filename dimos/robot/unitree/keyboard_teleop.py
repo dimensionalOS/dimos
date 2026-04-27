@@ -38,7 +38,7 @@ DEFAULT_SLOW_MULTIPLIER: float = 0.5
 class KeyboardTeleop(Module):
     """Pygame-based keyboard control module.
 
-    Outputs standard Twist messages on /cmd_vel for velocity control.
+    Outputs standard Twist messages on /tele_cmd_vel for velocity control.
 
     Speed constants can be tuned at the top of this file, or overridden
     per-instance by passing linear_speed / angular_speed /

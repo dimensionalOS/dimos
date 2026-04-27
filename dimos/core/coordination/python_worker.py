@@ -339,6 +339,7 @@ class _WorkerState:
 def _worker_entrypoint(conn: Connection, worker_id: int) -> None:
     apply_library_config()
 
+    # Without this, workers race with the coordinator (teardown would begin in two places)
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     state = _WorkerState(instances={}, worker_id=worker_id)
 
