@@ -36,7 +36,7 @@ jobs:
           git clean -ffdx -e .venv
 
       - name: Install Python dependencies
-        run: uv sync --frozen --all-extras --no-extra dds --no-extra cuda
+        run: uv sync --all-extras --no-extra dds --frozen
 
       - name: Remove pydrake stubs
         run: |
