@@ -126,7 +126,7 @@ class ChildProcessStats:
 
 def collect_children_stats(pid: int) -> list[ChildProcessStats]:
     """Return per-child CPU stats for all direct children of pid."""
-    result = []
+    result: list[ChildProcessStats] = []
     try:
         proc = _get_process(pid)
     except (psutil.NoSuchProcess, psutil.AccessDenied):

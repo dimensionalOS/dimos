@@ -20,6 +20,11 @@ Usage:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
+
 _COORDINATOR = "coordinator"
 
 _METRIC_LABELS: dict[str, str] = {
@@ -42,7 +47,7 @@ _SCALE: dict[str, float] = {
 }
 
 
-def _load(path: str):
+def _load(path: str) -> tuple[pd.DataFrame, dict[str, str]]:
     import pandas as pd
 
     raw = pd.read_json(path, lines=True)
@@ -60,6 +65,7 @@ def _load(path: str):
 
     labels: dict[str, str] = {_COORDINATOR: _COORDINATOR}
     for role, group in df.groupby("role"):
+        role = str(role)
         if role == _COORDINATOR:
             continue
         mods = next((m for m in group.get("modules", []) if m), None)
@@ -69,7 +75,9 @@ def _load(path: str):
     return df, labels
 
 
-def _plot(df, labels: dict[str, str], metrics: list[str], out: str, show: bool = False) -> None:
+def _plot(
+    df: pd.DataFrame, labels: dict[str, str], metrics: list[str], out: str, show: bool = False
+) -> None:
     import matplotlib.pyplot as plt
 
     fig, axes = plt.subplots(len(metrics), 1, figsize=(12, 3 * len(metrics)), sharex=True)
@@ -82,7 +90,7 @@ def _plot(df, labels: dict[str, str], metrics: list[str], out: str, show: bool =
             continue
         scale = _SCALE.get(metric, 1.0)
         for role, group in df.groupby("role"):
-            ax.plot(group["ts"], group[metric] * scale, label=labels[role])
+            ax.plot(group["ts"], group[metric] * scale, label=labels[str(role)])
         ax.set_ylabel(_METRIC_LABELS.get(metric, metric))
         ax.legend(fontsize=8, loc="center left", bbox_to_anchor=(1.01, 0.5), borderaxespad=0)
         ax.grid(True, alpha=0.3)
