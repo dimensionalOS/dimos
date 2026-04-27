@@ -7,6 +7,37 @@
 
 ---
 
+## Status — PARKED (2026-04-27)
+
+ARISE-on-M20 was put on the back burner after we pivoted to running
+FAST-LIO natively via dimos NativeModule (outside the autonomy-stack
+container). See `06-simplify-remove-container/plan.md` for the pivot
+rationale and `FASTLIO2_LOG.md` Findings #28-#37 for the native
+FAST-LIO integration that's now in production.
+
+Tasks 20-24 in the "Next Steps" section below are unchecked — that's
+where ARISE-revival would resume.
+
+**WIP work preserved at:**
+- Repo: <https://github.com/aphexcx/ros-navigation-autonomy-stack> (fork
+  of `dimensionalOS/ros-navigation-autonomy-stack`)
+- Branch: `arise-m20-rsairy-pointcloud2`
+- Commits:
+  - `9a04a2f` — `fix(m20): ARISE Velodyne timestamp sync — move
+    processing to IMU callback` (Finding #11)
+  - `e10d7fa` — `fastlio2: add PointCloud2 input path (M20 RSAIRY
+    support, WIP)` — adds `lidar_msg_type: livox_custom | pointcloud2`
+    config to fastlio2's lio_node, plus a `Utils::pointcloud2ToPCL`
+    helper that handles dynamic field offsets, intensity, and
+    per-point time relativization (sec/ms/us/ns). Compiles, never
+    validated end-to-end against ARISE-on-M20 navigation.
+
+To revive: clone the fork, check out the branch, follow tasks 20-24
+below. The PointCloud2 path makes it possible to drop ARISE's Livox
+hard dependency for any non-Livox lidar going forward.
+
+---
+
 ## Context
 
 FAST_LIO / fastlio2 blocked by message type incompatibility (fastlio2 hardcoded to Livox CustomMsg, see ROSNAV_MIGRATION_LOG.md Finding #29). ARISE SLAM's Velodyne mode accepts standard sensor_msgs/PointCloud2 — our bridge already publishes this.
