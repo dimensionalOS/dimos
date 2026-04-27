@@ -60,6 +60,7 @@ class KeyboardTeleop(Module):
         angular_speed: float = DEFAULT_ANGULAR_SPEED,
         boost_multiplier: float = DEFAULT_BOOST_MULTIPLIER,
         slow_multiplier: float = DEFAULT_SLOW_MULTIPLIER,
+        publish_only_when_active: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -68,6 +69,13 @@ class KeyboardTeleop(Module):
         self.angular_speed = angular_speed
         self.boost_multiplier = boost_multiplier
         self.slow_multiplier = slow_multiplier
+        # When True, the module only publishes a Twist on frames where at
+        # least one motion key is held. Use this when the teleop module is
+        # running alongside another publisher on the same topic (e.g. the
+        # characterization recipe runner on /cmd_vel) — otherwise the
+        # teleop's continuous zero-Twist stream overwrites the other
+        # publisher's commands on every tick.
+        self.publish_only_when_active = publish_only_when_active
 
     @rpc
     def start(self) -> None:
@@ -162,8 +170,19 @@ class KeyboardTeleop(Module):
             twist.linear.y *= speed_multiplier
             twist.angular.z *= speed_multiplier
 
-            # Always publish twist at 50Hz
-            self.tele_cmd_vel.publish(twist)
+            # Publish at 50Hz unconditionally, OR only when a motion key is
+            # held if configured to coexist with another /cmd_vel publisher.
+            if self.publish_only_when_active:
+                motion_keys = {
+                    pygame.K_w, pygame.K_s, pygame.K_q, pygame.K_e,
+                    pygame.K_a, pygame.K_d,
+                }
+                if not (self._keys_held & motion_keys):
+                    # Update the display + maintain rate, but don't publish.
+                    self._update_display(twist)
+                    self._clock.tick(50)
+                    continue
+            self.cmd_vel.publish(twist)
 
             self._update_display(twist)
 
