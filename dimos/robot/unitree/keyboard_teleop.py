@@ -182,7 +182,7 @@ class KeyboardTeleop(Module):
                     self._update_display(twist)
                     self._clock.tick(50)
                     continue
-            self.cmd_vel.publish(twist)
+            self.tele_cmd_vel.publish(twist)
 
             self._update_display(twist)
 
