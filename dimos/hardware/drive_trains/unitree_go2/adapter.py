@@ -193,7 +193,6 @@ class UnitreeGo2TwistAdapter:
                 self._session = session
 
             client.Init()
-            time.sleep(2.0)
             logger.info("[Go2] Connected")
 
             if not self._initialize_locomotion():
