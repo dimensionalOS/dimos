@@ -14,7 +14,7 @@
 
 """SmartNav composable navigation stack.
 
-`nav_stack(**kwargs)` returns an autoconnected Blueprint containing the core
+`create_nav_stack(**kwargs)` returns an autoconnected Blueprint containing the core
 SmartNav modules (terrain analysis, local planner, path follower, FAR planner,
 PGO, click-to-goal, cmd-vel mux), with optional TARE exploration.
 
@@ -49,7 +49,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-def nav_stack(
+def create_nav_stack(
     *,
     use_tare: bool = False,
     use_terrain_map_ext: bool = True,

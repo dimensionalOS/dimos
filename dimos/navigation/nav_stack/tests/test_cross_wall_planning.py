@@ -72,7 +72,7 @@ class TestCrossWallPlanning:
         from dimos.core.global_config import global_config
         from dimos.msgs.geometry_msgs.PointStamped import PointStamped
         from dimos.msgs.nav_msgs.Odometry import Odometry
-        from dimos.navigation.nav_stack.main import nav_stack, nav_stack_rerun_config
+        from dimos.navigation.nav_stack.main import create_nav_stack, nav_stack_rerun_config
         from dimos.robot.unitree.g1.g1_rerun import (
             g1_static_robot,
         )
@@ -93,7 +93,7 @@ class TestCrossWallPlanning:
                     unity_scene="home_building_1",
                     vehicle_height=1.24,
                 ),
-                nav_stack(
+                create_nav_stack(
                     terrain_analysis={
                         "obstacle_height_threshold": 0.1,
                         "ground_height_threshold": 0.05,
