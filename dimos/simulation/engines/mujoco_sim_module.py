@@ -241,6 +241,7 @@ class MujocoSimModule(
         self._imu_gyro_slice = _find_sensor_slice(
             self._engine.model,
             "imu-pelvis-angular-velocity",
+            "imu-torso-angular-velocity",
             "gyro_pelvis",
             "imu_gyro",
             dim=3,
@@ -248,6 +249,7 @@ class MujocoSimModule(
         self._imu_accel_slice = _find_sensor_slice(
             self._engine.model,
             "imu-pelvis-linear-acceleration",
+            "imu-torso-linear-acceleration",
             "accelerometer_pelvis",
             "imu_accel",
             dim=3,
