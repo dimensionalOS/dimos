@@ -384,7 +384,7 @@ class MyRobotControl(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.cmd_vel.subscribe(self._on_cmd_vel)
+        self.register_disposable(Disposable(self.cmd_vel.subscribe(self.move)))
 
     def _on_cmd_vel(self, twist: Twist) -> None:
         vx = twist.linear.x      # forward/back (m/s)
